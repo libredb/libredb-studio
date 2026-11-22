@@ -6,6 +6,7 @@ import { describe, test, expect, mock, beforeAll, afterAll, beforeEach } from "b
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
+import { admittedFileConnection } from "@/lib/db/provider-files";
 import type { DatabaseConnection, QueryTab } from "@/lib/types";
 
 /**
@@ -141,7 +142,8 @@ async function callRoute(body: Record<string, unknown>) {
 }
 
 beforeAll(async () => {
-  provider = new SQLiteProvider({ ...connection });
+  // Admitted as Studio's provider factory admits it, so the provider opens the file core decided (FND-2 slice 3).
+  provider = new SQLiteProvider(admittedFileConnection({ ...connection }));
   await provider.connect();
   await provider.query("CREATE TABLE orders (id INTEGER PRIMARY KEY, label TEXT)");
   for (let id = 1; id <= SEEDED_ROWS; id++) {

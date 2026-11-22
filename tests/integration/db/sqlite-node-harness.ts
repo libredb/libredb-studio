@@ -15,8 +15,14 @@
 import { existsSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { SQLiteProvider } from "../../../src/lib/db/providers/sql/sqlite";
+import { admittedFileConnection } from "../../../src/lib/db/provider-files";
 import type { DatabaseConnection } from "../../../src/lib/types";
-import type { ReadOnlyStatementBudget } from "../../../src/lib/db/types";
+import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "../../../src/lib/db/types";
+
+/** A SQLite provider on `config` admitted as Studio's provider factory admits it (FND-2 slice 3). */
+function admittedProvider(config: DatabaseConnection, execution: ProviderExecutionContext = {}): SQLiteProvider {
+  return new SQLiteProvider(admittedFileConnection(config), {}, execution);
+}
 
 async function main(): Promise<void> {
   const dbPath = process.argv[2];
@@ -43,7 +49,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const provider = new SQLiteProvider(config);
+  const provider = admittedProvider(config);
 
   // Connect
   await provider.connect();
@@ -273,7 +279,7 @@ async function runAgentReadOnlyProfile(dbPath: string, report: Record<string, un
     createdAt: new Date(),
   };
 
-  const agent = new SQLiteProvider(agentConfig, {}, { readOnly: true });
+  const agent = admittedProvider(agentConfig, { readOnly: true });
   await agent.connect();
   report.agentConnected = agent.isConnected();
 
@@ -316,7 +322,7 @@ async function runAgentReadOnlyProfile(dbPath: string, report: Record<string, un
   await agent.disconnect();
 
   // Nothing landed: re-read with a writable handle.
-  const verifier = new SQLiteProvider({ ...agentConfig, id: "node-driver-harness-verify" });
+  const verifier = admittedProvider({ ...agentConfig, id: "node-driver-harness-verify" });
   await verifier.connect();
   report.agentRowsAfterRejectedWrites = (await verifier.query("SELECT id, name FROM users ORDER BY id")).rows;
   report.agentTablesAfterRejectedWrites = (
@@ -327,18 +333,16 @@ async function runAgentReadOnlyProfile(dbPath: string, report: Record<string, un
   // A missing file in an EXISTING directory must not be created (the shared
   // editor path would create it), and a missing directory must not be either.
   const missingFile = join(dirname(dbPath), "node-agent-never-created.db");
-  const missingFileProvider = new SQLiteProvider(
+  const missingFileProvider = admittedProvider(
     { ...agentConfig, id: "node-driver-harness-missing-file", database: missingFile },
-    {},
     { readOnly: true },
   );
   report.agentMissingOpenRejected = await rejects(() => missingFileProvider.connect());
   report.agentMissingFileCreated = existsSync(missingFile);
 
   const missingDir = join(dirname(dbPath), "node-agent-not-created");
-  const missingDirProvider = new SQLiteProvider(
+  const missingDirProvider = admittedProvider(
     { ...agentConfig, id: "node-driver-harness-missing-dir", database: join(missingDir, "absent.db") },
-    {},
     { readOnly: true },
   );
   report.agentMissingDirOpenRejected = await rejects(() => missingDirProvider.connect());
@@ -351,7 +355,7 @@ async function runAgentReadOnlyProfile(dbPath: string, report: Record<string, un
  * read-only message.
  */
 async function unwritableFileScenario(config: DatabaseConnection, report: Record<string, unknown>): Promise<void> {
-  const provider = new SQLiteProvider(config);
+  const provider = admittedProvider(config);
   await provider.connect();
   try {
     report.connected = provider.isConnected();

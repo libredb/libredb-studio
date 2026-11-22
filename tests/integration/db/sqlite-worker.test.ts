@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GET as apiHealth } from "@/app/api/health/route";
 import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
+import { admittedFileConnection } from "@/lib/db/provider-files";
 import { SQLiteWorkerClient } from "@/lib/db/providers/sql/sqlite-worker";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
@@ -97,8 +98,15 @@ function watchUncaught(): { readonly seen: unknown[]; stop(): void } {
   };
 }
 
+/** A SQLite connection as Studio's provider factory hands it over: on the file `admittedFileConnection` admits. */
 function makeConfig(dbPath: string): DatabaseConnection {
-  return { id: "worker-test", name: "Worker", type: "sqlite", database: dbPath, createdAt: new Date() };
+  return admittedFileConnection({
+    id: "worker-test",
+    name: "Worker",
+    type: "sqlite",
+    database: dbPath,
+    createdAt: new Date(),
+  });
 }
 
 /** Create an on-disk database with one table, then close the writer. */

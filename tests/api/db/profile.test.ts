@@ -97,6 +97,7 @@ const { POST } = await import("@/app/api/db/profile/route");
 const { KafkaProvider } = await import("@/lib/db/providers/stream/kafka/index");
 const { EtcdProvider } = await import("@/lib/db/providers/keyvalue/etcd/index");
 const { SQLiteProvider } = await import("@/lib/db/providers/sql/sqlite");
+const { admittedFileConnection } = await import("@/lib/db/provider-files");
 const { ConnectionError, PermissionDeniedError, QueryError, TimeoutError } = await import("@/lib/db/errors");
 const { InfluxDB3Provider, InfluxDBProvider } = await import("@/lib/db/providers/timeseries/influxdb/index");
 const { createInfluxClient } = await import("@/lib/db/providers/timeseries/influxdb/client");
@@ -272,7 +273,7 @@ describe("POST /api/db/profile", () => {
     };
 
     async function seededSqlite() {
-      const provider = new SQLiteProvider(sqliteConnection);
+      const provider = new SQLiteProvider(admittedFileConnection(sqliteConnection));
       await provider.connect();
       await provider.query("CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT, total REAL, payload BLOB)");
       // ids 1..200, so text ordering would answer max 99; every third name is NULL.
@@ -328,7 +329,7 @@ describe("POST /api/db/profile", () => {
     // A lowercase reserved word passes the bare-name test, so it went into the statement
     // unquoted and the engine read it as a keyword: `COUNT(order)` is a syntax error (#2245).
     test("profiles a column named after a reserved word", async () => {
-      const provider = new SQLiteProvider(sqliteConnection);
+      const provider = new SQLiteProvider(admittedFileConnection(sqliteConnection));
       await provider.connect();
       await provider.query('CREATE TABLE orders (id INTEGER PRIMARY KEY, "order" INTEGER, "group" TEXT)');
       await provider.query("INSERT INTO orders VALUES (1, 10, 'a'), (2, NULL, 'b'), (3, 30, NULL)");

@@ -45,9 +45,9 @@ import { statedLimit } from "@/lib/db/providers/industrial/opcua/limits";
 import { OPCUA_OBJECTS_FOLDER } from "@/lib/db/providers/industrial/opcua/constants";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { openLibrarySession } from "@/lib/db/providers/industrial/opcua/library";
-import { OPCUA_PKI_ROOT_ENV } from "@/lib/db/providers/industrial/opcua/pki";
+import { OPCUA_PKI_ROOT_ENV } from "@/lib/db/provider-files";
 import { OpcuaUnansweredError } from "@/lib/db/providers/industrial/opcua/errors";
-import type { OpcuaConnectionOptions } from "@/lib/db/providers/industrial/opcua/connection";
+import type { OpcuaSessionOptions } from "@/lib/db/providers/industrial/opcua/connection";
 import type { OpcuaReadOnlyClient } from "@/lib/db/providers/industrial/opcua/client";
 
 /**
@@ -71,7 +71,7 @@ function pkiRoot(): string {
   return root;
 }
 
-function options(over: Partial<OpcuaConnectionOptions> = {}): OpcuaConnectionOptions {
+function options(over: Partial<OpcuaSessionOptions> = {}): OpcuaSessionOptions {
   return {
     endpointUrl: ENDPOINT,
     host: "127.0.0.1",
@@ -146,7 +146,7 @@ afterAll(async () => {
 });
 
 /** One session, closed by the caller: every test that opens one closes it. */
-async function session(over: Partial<OpcuaConnectionOptions> = {}): Promise<OpcuaReadOnlyClient> {
+async function session(over: Partial<OpcuaSessionOptions> = {}): Promise<OpcuaReadOnlyClient> {
   return openReadOnlySession(OPCUA_LIBRARY_BRIDGE, options(over));
 }
 

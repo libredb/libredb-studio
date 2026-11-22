@@ -2,15 +2,13 @@
  * What a connection is, and every refusal it makes before anything is dialled (#1677 section 4).
  */
 import { describe, expect, test } from "bun:test";
-import { isAbsolute, resolve } from "node:path";
-import { getDataDir } from "@/lib/data-dir";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { TUNNEL_FAR_END } from "@/lib/types";
 import { readConnection } from "@/lib/db/providers/industrial/opcua/connection";
-import { OPCUA_PKI_DIRECTORY, OPCUA_PKI_ROOT_ENV } from "@/lib/db/providers/industrial/opcua/pki";
 import type { DatabaseConnection } from "@/lib/types";
 
-const ENV = { [OPCUA_PKI_ROOT_ENV]: "/app/data/opcua-pki" } as const;
+/** The PKI root Studio's provider factory decides and the provider hands the reader (`opcuaPkiRoot`). */
+const PKI_ROOT = "/app/data/opcua-pki";
 
 function connection(over: Record<string, unknown>): DatabaseConnection & Record<string, unknown> {
   return {
@@ -24,37 +22,39 @@ function connection(over: Record<string, unknown>): DatabaseConnection & Record<
 
 describe("the endpoint", () => {
   test("host and port are read from the URL, which is the only address there is", () => {
-    const options = readConnection(connection({}), ENV);
+    const options = readConnection(connection({}), PKI_ROOT);
     expect(options.host).toBe("plc.ornek.net");
     expect(options.port).toBe(4840);
     expect(options.endpointUrl).toBe("opc.tcp://plc.ornek.net:4840/");
   });
 
   test("a URL in another scheme is refused", () => {
-    expect(() => readConnection(connection({ host: "http://plc/" }), ENV)).toThrow(DatabaseConfigError);
+    expect(() => readConnection(connection({ host: "http://plc/" }), PKI_ROOT)).toThrow(DatabaseConfigError);
   });
 
   test("an empty endpoint is refused", () => {
-    expect(() => readConnection(connection({ host: "" }), ENV)).toThrow(/needs an endpoint URL/);
+    expect(() => readConnection(connection({ host: "" }), PKI_ROOT)).toThrow(/needs an endpoint URL/);
   });
 });
 
 describe("the security mode", () => {
   /** The strongest mode is the default, because a weaker default would silently downgrade. */
   test("nothing said means SignAndEncrypt", () => {
-    expect(readConnection(connection({}), ENV).mode).toBe("SignAndEncrypt");
+    expect(readConnection(connection({}), PKI_ROOT).mode).toBe("SignAndEncrypt");
   });
 
   test("each of the three modes is taken as given", () => {
     for (const mode of ["None", "Sign", "SignAndEncrypt"] as const) {
-      expect(readConnection(connection({ securityMode: mode }), ENV).mode).toBe(mode);
+      expect(readConnection(connection({ securityMode: mode }), PKI_ROOT).mode).toBe(mode);
     }
   });
 
   /** No default for an unknown mode: defaulting would weaken a connection meant to be secured. */
   test("a mode this does not know is refused rather than defaulted", () => {
-    expect(() => readConnection(connection({ securityMode: "require" }), ENV)).toThrow(/None, Sign or SignAndEncrypt/);
-    expect(() => readConnection(connection({ securityMode: "verify-full" }), ENV)).toThrow(
+    expect(() => readConnection(connection({ securityMode: "require" }), PKI_ROOT)).toThrow(
+      /None, Sign or SignAndEncrypt/,
+    );
+    expect(() => readConnection(connection({ securityMode: "verify-full" }), PKI_ROOT)).toThrow(
       /must not fall back to None/,
     );
   });
@@ -63,27 +63,27 @@ describe("the security mode", () => {
 describe("the security policy", () => {
   test("a typed policy URI is carried trimmed, and a blank one is absent rather than empty", () => {
     const policy = "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256";
-    expect(readConnection(connection({ securityPolicyUri: `  ${policy}  ` }), ENV).policyUri).toBe(policy);
-    expect(readConnection(connection({ securityPolicyUri: "   " }), ENV).policyUri).toBeUndefined();
-    expect(readConnection(connection({}), ENV).policyUri).toBeUndefined();
+    expect(readConnection(connection({ securityPolicyUri: `  ${policy}  ` }), PKI_ROOT).policyUri).toBe(policy);
+    expect(readConnection(connection({ securityPolicyUri: "   " }), PKI_ROOT).policyUri).toBeUndefined();
+    expect(readConnection(connection({}), PKI_ROOT).policyUri).toBeUndefined();
   });
 });
 
 describe("the identity", () => {
   test("no username is an anonymous session", () => {
-    const options = readConnection(connection({}), ENV);
+    const options = readConnection(connection({}), PKI_ROOT);
     expect(options.identity).toBe("anonymous");
     expect(options.user).toBeUndefined();
   });
 
   test("a username is a username session", () => {
-    const options = readConnection(connection({ user: "okuyucu", password: "s3cret" }), ENV);
+    const options = readConnection(connection({ user: "okuyucu", password: "s3cret" }), PKI_ROOT);
     expect(options.identity).toBe("username");
     expect(options.user).toBe("okuyucu");
   });
 
   test("a password with no username names no identity, and is refused", () => {
-    expect(() => readConnection(connection({ password: "s3cret" }), ENV)).toThrow(/names no identity/);
+    expect(() => readConnection(connection({ password: "s3cret" }), PKI_ROOT)).toThrow(/names no identity/);
   });
 });
 
@@ -98,17 +98,19 @@ describe("the pinned server certificate", () => {
           // dialog prints: what the operator actually has on their clipboard.
           serverCertificateThumbprint: PLC.toUpperCase().replace(/(..)(?=.)/g, "$1:"),
         }),
-        ENV,
+        PKI_ROOT,
       ).pinnedThumbprint,
     ).toBe(PLC);
   });
 
   test("no pin is no pin, rather than an empty one", () => {
-    expect(readConnection(connection({ serverCertificateThumbprint: "  " }), ENV).pinnedThumbprint).toBeUndefined();
+    expect(
+      readConnection(connection({ serverCertificateThumbprint: "  " }), PKI_ROOT).pinnedThumbprint,
+    ).toBeUndefined();
   });
 
   test("something that is not a thumbprint is refused, with the form it should take", () => {
-    expect(() => readConnection(connection({ serverCertificateThumbprint: "deadbeef" }), ENV)).toThrow(
+    expect(() => readConnection(connection({ serverCertificateThumbprint: "deadbeef" }), PKI_ROOT)).toThrow(
       /64 hexadecimal/,
     );
   });
@@ -116,19 +118,18 @@ describe("the pinned server certificate", () => {
 
 describe("the PKI root and the client's own identity", () => {
   /**
-   * NO VARIABLE IS STUDIO'S OWN DATA DIRECTORY. The library's default still cannot be used - in the
-   * image `os.homedir()` is `/nonexistent` - which is why the default is a directory Studio already
-   * owns and writes to, rather than nothing at all: measured in a real browser, refusing here meant
-   * a reader who picked OPC UA could not connect until they found an environment variable.
+   * THE ROOT IS THE ONE THE PROVIDER WAS BUILT WITH. Studio's provider factory decides it (`opcuaPkiRoot` in
+   * `src/lib/db/provider-files.ts`, whose tests hold the default under the data directory and the refusal of a relative
+   * variable), so the reader carries it into the options as it is and reads no environment; a provider built without
+   * one carries none, and its session is refused by name (`openReadOnlySession`).
    */
-  test("no PKI variable falls back to Studio's own data directory, absolute", () => {
-    const read = readConnection(connection({}), {});
-    expect(read.pkiRoot).toBe(resolve(getDataDir(), OPCUA_PKI_DIRECTORY));
-    expect(isAbsolute(read.pkiRoot)).toBe(true);
+  test("the PKI root the provider was built with is carried into the options as it is, and none as none", () => {
+    expect(readConnection(connection({}), PKI_ROOT).pkiRoot).toBe(PKI_ROOT);
+    expect("pkiRoot" in readConnection(connection({}), undefined)).toBe(false);
   });
 
   test("a certificate without its key is refused", () => {
-    expect(() => readConnection(connection({ clientCertificatePath: "/c.pem" }), ENV)).toThrow(
+    expect(() => readConnection(connection({ clientCertificatePath: "/c.pem" }), PKI_ROOT)).toThrow(
       /together or not at all/,
     );
   });
@@ -139,7 +140,7 @@ describe("the PKI root and the client's own identity", () => {
         clientCertificatePath: "/run/secrets/c.pem",
         clientPrivateKeyPath: "/run/secrets/k.pem",
       }),
-      ENV,
+      PKI_ROOT,
     );
     expect(options.clientCertificatePath).toBe("/run/secrets/c.pem");
     expect(options.clientPrivateKeyPath).toBe("/run/secrets/k.pem");
@@ -162,11 +163,11 @@ describe("the field the dialog writes", () => {
         sslMode: "verify-full",
         ssl: { mode: "require" },
       }),
-      ENV,
+      PKI_ROOT,
     );
     expect(withSslMode.mode).toBe("None");
     // And with no security mode at all, the provider's own default stands.
-    expect(readConnection(connection({ sslMode: "require" }), ENV).mode).toBe("SignAndEncrypt");
+    expect(readConnection(connection({ sslMode: "require" }), PKI_ROOT).mode).toBe("SignAndEncrypt");
   });
 });
 
@@ -185,22 +186,22 @@ describe("a pin and the mode it is pinned on", () => {
   const PIN = "b9432ed131e30092d2a0619284763a403c33fc3929546728864b27b475c9529a";
 
   test("a pin on None is refused, and the sentence names both ways out", () => {
-    expect(() => readConnection(connection({ securityMode: "None", serverCertificateThumbprint: PIN }), ENV)).toThrow(
-      /cannot be enforced on a None channel/,
-    );
-    expect(() => readConnection(connection({ securityMode: "None", serverCertificateThumbprint: PIN }), ENV)).toThrow(
-      /Choose Sign or Sign and Encrypt[\s\S]*or clear the pin/,
-    );
+    expect(() =>
+      readConnection(connection({ securityMode: "None", serverCertificateThumbprint: PIN }), PKI_ROOT),
+    ).toThrow(/cannot be enforced on a None channel/);
+    expect(() =>
+      readConnection(connection({ securityMode: "None", serverCertificateThumbprint: PIN }), PKI_ROOT),
+    ).toThrow(/Choose Sign or Sign and Encrypt[\s\S]*or clear the pin/);
   });
 
   test.each(["Sign", "SignAndEncrypt"])("a pin on %s is carried, because there it means something", (mode) => {
-    const read = readConnection(connection({ securityMode: mode, serverCertificateThumbprint: PIN }), ENV);
+    const read = readConnection(connection({ securityMode: mode, serverCertificateThumbprint: PIN }), PKI_ROOT);
     expect(read.pinnedThumbprint).toBe(PIN);
   });
 
   /** And None with no pin is still allowed: the refusal is about the PAIR, not about the mode. */
   test("None with no pin is unchanged", () => {
-    const read = readConnection(connection({ securityMode: "None" }), ENV);
+    const read = readConnection(connection({ securityMode: "None" }), PKI_ROOT);
     expect(read.mode).toBe("None");
     expect(read.pinnedThumbprint).toBeUndefined();
   });
@@ -212,9 +213,9 @@ describe("the tunnel", () => {
     const farEnd = {
       [TUNNEL_FAR_END]: { host: "opc.tcp://plc.example.net:4840", port: 4840 },
     };
-    expect(readConnection(connection({ sshTunnel: { enabled: true }, ...farEnd }), ENV).tunnelled).toBe(true);
-    expect(readConnection(connection({ sshTunnel: { enabled: false } }), ENV).tunnelled).toBe(false);
-    expect(readConnection(connection({}), ENV).tunnelled).toBe(false);
+    expect(readConnection(connection({ sshTunnel: { enabled: true }, ...farEnd }), PKI_ROOT).tunnelled).toBe(true);
+    expect(readConnection(connection({ sshTunnel: { enabled: false } }), PKI_ROOT).tunnelled).toBe(false);
+    expect(readConnection(connection({}), PKI_ROOT).tunnelled).toBe(false);
   });
 });
 
@@ -248,7 +249,7 @@ describe("the endpoint URL through a tunnel", () => {
   }
 
   test("the local end is dialled, and the scheme and path the reader typed are kept", () => {
-    const read = readConnection(tunnelled("opc.tcp://plc.example.net:4840/milo") as never, ENV);
+    const read = readConnection(tunnelled("opc.tcp://plc.example.net:4840/milo") as never, PKI_ROOT);
     expect(read.endpointUrl).toBe("opc.tcp://127.0.0.1:57321/milo");
     expect(read.host).toBe("127.0.0.1");
     expect(read.port).toBe(57_321);
@@ -256,23 +257,25 @@ describe("the endpoint URL through a tunnel", () => {
   });
 
   test("a URL with no path keeps none, so the dialled address is the bare authority", () => {
-    const read = readConnection(tunnelled("opc.tcp://plc.example.net:4840") as never, ENV);
+    const read = readConnection(tunnelled("opc.tcp://plc.example.net:4840") as never, PKI_ROOT);
     expect(read.endpointUrl).toBe("opc.tcp://127.0.0.1:57321");
   });
 
   test("a tunnel the factory has not opened is refused, not dialled at the local port of nothing", () => {
-    expect(() => readConnection(connection({ sshTunnel: { enabled: true } }), ENV)).toThrow(
+    expect(() => readConnection(connection({ sshTunnel: { enabled: true } }), PKI_ROOT)).toThrow(
       /tunnel that is not open yet/,
     );
   });
 
   test("the reader's own URL is still validated, so a wrong scheme says so", () => {
-    expect(() => readConnection(tunnelled("https://plc.example.net:4840/") as never, ENV)).toThrow(/opc.tcp:\/\/ only/);
+    expect(() => readConnection(tunnelled("https://plc.example.net:4840/") as never, PKI_ROOT)).toThrow(
+      /opc.tcp:\/\/ only/,
+    );
   });
 
   /** The control: with no tunnel, the typed URL is dialled unchanged. */
   test("without a tunnel nothing is rebuilt", () => {
-    const read = readConnection(connection({ host: "opc.tcp://plc.example.net:4840/milo" }), ENV);
+    const read = readConnection(connection({ host: "opc.tcp://plc.example.net:4840/milo" }), PKI_ROOT);
     expect(read.endpointUrl).toBe("opc.tcp://plc.example.net:4840/milo");
     expect(read.host).toBe("plc.example.net");
   });

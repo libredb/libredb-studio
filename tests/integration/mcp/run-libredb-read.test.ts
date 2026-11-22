@@ -31,7 +31,9 @@ import { join } from "node:path";
 import { CATALOG_PREFIX, kv, open, RESERVED_MARKER, table } from "@libredb/libredb";
 import { languageServer } from "@/lib/agent/languages/server";
 import { getServerAuditBuffer } from "@/lib/audit";
+import { forgetStorageLocation } from "@/lib/data-dir";
 import { LibreDBProvider } from "@/lib/db/providers/embedded/libredb";
+import { admittedFileConnection } from "@/lib/db/provider-files";
 import { McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_CANCELLED_TEXT, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import { timeoutText } from "@/lib/mcp/tools/read-query-limits";
@@ -56,6 +58,8 @@ const STORAGE = join(STATE, "libredb-storage.db");
 const BOOTSTRAP = join(STATE, "auth-bootstrap.json");
 const previousStoragePath = process.env.STORAGE_SQLITE_PATH;
 process.env.STORAGE_SQLITE_PATH = STORAGE;
+// Taken again from the setting above: the storage location is kept once per process.
+forgetStorageLocation();
 
 const KV = join(dir, "kv.libredb");
 const MANY = join(dir, "many.libredb");
@@ -128,6 +132,7 @@ afterEach(async () => {
 afterAll(() => {
   if (previousStoragePath === undefined) delete process.env.STORAGE_SQLITE_PATH;
   else process.env.STORAGE_SQLITE_PATH = previousStoragePath;
+  forgetStorageLocation();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -295,12 +300,14 @@ describe("a read", () => {
   });
 
   test("reads beside the editor's writer, which holds the lock, and sees what it has committed", async () => {
-    const writer = new LibreDBProvider({
-      id: "editor",
-      name: "editor",
-      type: "libredb",
-      database: SCRATCH,
-    } as DatabaseConnection);
+    const writer = new LibreDBProvider(
+      admittedFileConnection({
+        id: "editor",
+        name: "editor",
+        type: "libredb",
+        database: SCRATCH,
+      } as DatabaseConnection),
+    );
     await writer.connect();
     try {
       expect(existsSync(`${SCRATCH}.lock`)).toBe(true);
@@ -365,12 +372,14 @@ describe("a refusal", () => {
       expect(readFileSync(SCRATCH)).toEqual(before);
       expect(existsSync(`${SCRATCH}.lock`)).toBe(false);
       // The positive control: the same command on the editor's writable handle changes the file.
-      const writer = new LibreDBProvider({
-        id: "editor",
-        name: "editor",
-        type: "libredb",
-        database: SCRATCH,
-      } as DatabaseConnection);
+      const writer = new LibreDBProvider(
+        admittedFileConnection({
+          id: "editor",
+          name: "editor",
+          type: "libredb",
+          database: SCRATCH,
+        } as DatabaseConnection),
+      );
       await writer.connect();
       try {
         await writer.query(statement);

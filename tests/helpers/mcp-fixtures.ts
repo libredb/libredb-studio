@@ -91,13 +91,17 @@ export function createSqliteFile(path: string, statements: readonly string[]): v
 /** A file-backed DuckDB database, checkpointed so a read-only handle sees every statement. */
 export async function createDuckdbFile(path: string, statements: readonly string[]): Promise<void> {
   const { DuckDBProvider } = await import("@/lib/db/providers/sql/duckdb");
-  const writer = new DuckDBProvider({
-    id: "fixture-writer",
-    name: "fixture writer",
-    type: "duckdb",
-    database: path,
-    createdAt: new Date(),
-  });
+  const { admittedFileConnection } = await import("@/lib/db/provider-files");
+  // Admitted as Studio's provider factory admits it, so the writer opens the file core decided (FND-2 slice 3).
+  const writer = new DuckDBProvider(
+    admittedFileConnection({
+      id: "fixture-writer",
+      name: "fixture writer",
+      type: "duckdb",
+      database: path,
+      createdAt: new Date(),
+    }),
+  );
   await writer.connect();
   try {
     for (const statement of statements) await writer.query(statement);

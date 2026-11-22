@@ -17,6 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { REFUSES_DENIED_FILE_ACCESS } from "@/lib/db/compatibility";
+import { forgetStorageLocation, storageLocation } from "@/lib/data-dir";
 import { logger } from "@/lib/logger";
 import {
   getSampleSeedState,
@@ -78,6 +79,9 @@ beforeEach(() => {
   process.env.STORAGE_SQLITE_PATH = path.join(temporaryDirectory(), "libredb-storage.db");
   process.env.SEED_ASSETS_DIR = path.join(ROOT, "seed-assets");
   resetSampleSeedStates();
+  // The storage location is taken once per process: forgotten here, the first admission of each test takes it from the
+  // STORAGE_SQLITE_PATH that test sets.
+  forgetStorageLocation();
 });
 
 afterEach(() => {
@@ -87,6 +91,7 @@ afterEach(() => {
     else env[key] = value;
   }
   resetSampleSeedStates();
+  forgetStorageLocation();
   for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
@@ -584,6 +589,9 @@ describe("startSampleSeeding", () => {
   test("marks every enabled sample seeding at once, then copies each and logs one info line", async () => {
     const dataDir = path.dirname(process.env.STORAGE_SQLITE_PATH ?? "");
     const info = spyOn(logger, "info").mockImplementation(() => {});
+    // The boot takes Studio's storage location before it seeds, and logs that line itself, not the sample service.
+    storageLocation();
+    info.mockClear();
     try {
       const seeding = startSampleSeeding();
       expect(getSampleSeedState("sqlite-embedded-sample")).toEqual({ phase: "seeding" });
@@ -613,6 +621,9 @@ describe("startSampleSeeding", () => {
     writeFileSync(path.join(dataDir, "sample.libredb"), "the user's edits");
     const info = spyOn(logger, "info").mockImplementation(() => {});
     const debug = spyOn(logger, "debug").mockImplementation(() => {});
+    // The boot takes Studio's storage location before it seeds, and logs that line itself, not the sample service.
+    storageLocation();
+    info.mockClear();
     try {
       await startSampleSeeding();
       expect(info).not.toHaveBeenCalled();

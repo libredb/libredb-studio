@@ -27,7 +27,7 @@ import { OPCUA_AGENT_FAILURE_SENTENCES } from "@/lib/db/providers/industrial/opc
 import { OPCUA_ROOTS_WARNING, outwardNote } from "@/lib/db/providers/industrial/opcua/agent-roots";
 import { OpcuaProvider } from "@/lib/db/providers/industrial/opcua/index";
 import { openLibrarySession } from "@/lib/db/providers/industrial/opcua/library";
-import { OPCUA_PKI_ROOT_ENV } from "@/lib/db/providers/industrial/opcua/pki";
+import { OPCUA_PKI_ROOT_ENV } from "@/lib/db/provider-files";
 import { McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";

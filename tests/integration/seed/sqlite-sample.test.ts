@@ -9,6 +9,7 @@ import * as os from "os";
 import * as path from "path";
 import { Database } from "bun:sqlite";
 import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
+import { admittedFileConnection } from "@/lib/db/provider-files";
 import { copySampleAsset } from "@/lib/seed/sample-copy";
 import { SAMPLES, sampleAssetPath, sampleEnabled, type SampleSpec } from "@/lib/seed/samples";
 
@@ -51,13 +52,15 @@ afterEach(() => {
 
 /** A provider on the seeded sample, the way the server builds one for the seed connection. */
 function sampleProvider(file: string): SQLiteProvider {
-  return new SQLiteProvider({
-    id: "seed:sqlite-embedded-sample",
-    name: "Sample",
-    type: "sqlite",
-    database: file,
-    createdAt: new Date(0),
-  });
+  return new SQLiteProvider(
+    admittedFileConnection({
+      id: "seed:sqlite-embedded-sample",
+      name: "Sample",
+      type: "sqlite",
+      database: file,
+      createdAt: new Date(0),
+    }),
+  );
 }
 
 describe("the SQLite sample", () => {
