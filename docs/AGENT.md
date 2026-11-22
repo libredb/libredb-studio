@@ -3051,7 +3051,7 @@ Every member an overlay cannot override stays keyed by the persisted family, so 
 The client facet's `posture` supplies words, never a rank: each arm it answers is an `AgentPostureCopy` in `languages/pack.ts`, a qualifier, a title and a body.
 `reads` is required; `widened` is present exactly where one of the language's workflow variants hands a statement to the editor (`canAutoExecute`); `plan` is present only where the shared plan words are not true of the language, as on Modbus, MQTT, Sparkplug B, Prometheus and OPC UA.
 `handoverTerms`, the consent sentence, stays the pack's own text.
-The tone and the headline are `src/lib/agent/posture.ts`'s, derived from the arm, and the arm from core records alone:
+The tone and the headline are `src/lib/agent/posture.ts`'s, derived from the arm, and the arm from the run, the core records and the language's workflow variants (`canAutoExecute`, the fact the start route admits the hand-over from):
 
 | Arm | Chosen when | Tone | Headline |
 | --- | --- | --- | --- |

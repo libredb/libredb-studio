@@ -5,6 +5,8 @@ import * as manifest from "@/lib/agent/agent-manifest";
 import { namedList } from "@/lib/agent/engine-support";
 import * as compatibility from "@/lib/db/compatibility";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
+import { UnknownProviderError } from "@/lib/db/errors";
+import { unknownTypeSentence } from "@/lib/db/type-id";
 import { AGENT_HANDOVER_BUDGET, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import * as clientPacks from "@/lib/agent/languages/client";
 import { languageClientPack } from "@/lib/agent/languages/client";
@@ -306,6 +308,26 @@ describe("agentPosture in agent mode, where it cannot execute", () => {
       `Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: ${EXECUTION_ENGINE_NAMES}. No connection is resolved here, so this panel cannot say which engine you are on, or whether it is one of those: until one is resolved, agent mode executes nothing. The operations workflow sends no statement at all, so it runs wherever a connection does, and plan mode drafts on every engine.`,
     );
   });
+
+  test.each([
+    ["agent mode", "agent", false],
+    ["agent mode with the hand-over ticked", "agent", true],
+    ["plan mode", "planning", false],
+  ] as const)(
+    "an engine id that names no provider is refused with UnknownProviderError in %s",
+    (_label, mode, handover) => {
+      const engine = `nosuch-${crypto.randomUUID()}`;
+      let thrown: unknown;
+      try {
+        agentPosture({ mode, engine: engine as DatabaseType, engineLabel: "Nosuch", handover });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(UnknownProviderError);
+      expect((thrown as UnknownProviderError).reason).toBe("unknown");
+      expect((thrown as UnknownProviderError).message).toBe(unknownTypeSentence(engine));
+    },
+  );
 
   test("the unresolved reading never states an engine label, not even an empty one", () => {
     const posture = agentPosture({ mode: "agent", engine: null, engineLabel: "Postgres-shaped guess", handover: true });
@@ -637,7 +659,7 @@ describe("what a language pack supplies to the posture", () => {
     expect([...modules].sort()).toEqual([...LANGUAGES].sort());
     for (const language of modules) {
       const source = readFileSync(join(LANGUAGES_DIR, language, "client.ts"), "utf8");
-      expect(source, language).not.toMatch(/from "\.\.\/\.\.\/posture"/);
+      expect(source, language).not.toMatch(/from "(?:\.\.\/\.\.\/|@\/lib\/agent\/)posture"/);
       expect(source, language).not.toMatch(/\bAgentPosture(Tone)?\b/);
       expect(source, language).not.toMatch(/\btone:\s*"(safe|reads|widened|blocked)"/);
       // A pack's evidence events write a timeline headline each (`AgentEvidenceTimelineEntry`), and nothing else in a

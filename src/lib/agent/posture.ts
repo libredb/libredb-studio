@@ -21,7 +21,7 @@
  *    from the language's workflow variants, so no pack ranks its own claim.
  *  - **Client-safe imports only** - types, `AGENT_EXECUTION_ENGINES`, the manifest's
  *    `AGENT_STATEMENT_LANGUAGE`, the language packs' client facets (`languages/client.ts`, where each
- *    language's reads, widened and hand-over words live), the engines' client facets (`languages/engines/client.ts`), `getDBConfig` and the policy constants. A provider module here would drag `oracledb`/`mssql` toward a bundle
+ *    language's reads, widened and hand-over words live), the engines' client facets (`languages/engines/client.ts`), `getDBConfig`, the type-id guard (`assertDatabaseType`) and the policy constants. A provider module here would drag `oracledb`/`mssql` toward a bundle
  *    that must not have them, which is the rule the review record's docblock in `src/lib/db/compatibility.ts` records.
  *  - **Every engine name and every number is DERIVED.** Not one is typed as a literal, and
  *    not one is a count. The point of #425 is that "7+" was written when the answer was 7
@@ -41,6 +41,7 @@ import {
 } from "@/lib/agent/agent-manifest";
 import { namedList } from "@/lib/agent/engine-support";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
+import { assertDatabaseType } from "@/lib/db/type-id";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { languageClientPack } from "@/lib/agent/languages/client";
 import { enginesSupporting } from "@/lib/agent/languages/engines/client";
@@ -293,6 +294,11 @@ function readsPosture(language: AgentStatementLanguageId): AgentPosture {
  * that is running. The language is also what the executing arms speak
  * in, so a cluster's posture names Studio's allowlist and RBAC where a SQL engine's names
  * the database's read-only session.
+ *
+ * Before every arm, plan mode's included, an engine that is not a type id is refused by name, as the start route
+ * refuses it, so no arm answers for an engine that names no provider.
+ *
+ * @throws {UnknownProviderError} When `engine` is neither null nor a type id.
  */
 export function agentPosture(input: {
   readonly mode: AgentRunMode;
@@ -302,6 +308,7 @@ export function agentPosture(input: {
   /** The refusal the last run on THIS connection met for the connection itself, if it met one. */
   readonly refusedHere?: string | null;
 }): AgentPosture {
+  if (input.engine !== null) assertDatabaseType(input.engine);
   const language = input.engine === null ? null : AGENT_STATEMENT_LANGUAGE[input.engine];
   if (input.mode === "planning") return planPosture(language);
   if (input.engine === null) return unresolvedPosture();
