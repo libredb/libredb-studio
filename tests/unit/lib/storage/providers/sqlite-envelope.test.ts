@@ -26,6 +26,18 @@ function account(email: string, totpSecret: string | null): StoredAccount {
   };
 }
 
+/** The user_storage table as the previous version created it, and nothing else. */
+function previousVersionStore(file: string): void {
+  const db = new Database(file);
+  try {
+    db.exec(
+      "CREATE TABLE user_storage (user_id TEXT NOT NULL, collection TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY (user_id, collection))",
+    );
+  } finally {
+    db.close();
+  }
+}
+
 describe("SQLiteStorageProvider credential envelope", () => {
   let dir = "";
   let path = "";
@@ -34,6 +46,9 @@ describe("SQLiteStorageProvider credential envelope", () => {
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), "libredb-sqlite-envelope-"));
     path = join(dir, "store.db");
+    // A store a previous version created, so it may hold version 1 values: its first table exists before this
+    // version's initialize runs.
+    previousVersionStore(path);
     provider = new SQLiteStorageProvider(path);
     await provider.initialize();
   });
@@ -57,6 +72,43 @@ describe("SQLiteStorageProvider credential envelope", () => {
   test("initialize creates storage_meta with the other tables", () => {
     const tables = raw((db) => db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all());
     expect(tables.map((row) => (row as { name: string }).name)).toContain("storage_meta");
+  });
+
+  test("a store initialize creates from nothing records credential_envelope = v2 in the same step, and keeps it", async () => {
+    const fresh = join(dir, "fresh.db");
+    const created = new SQLiteStorageProvider(fresh);
+    await created.initialize();
+    try {
+      expect(await created.readEnvelopeState()).toBe("v1-retired");
+      expect(raw((db) => db.prepare("SELECT key, value FROM storage_meta").all(), fresh)).toEqual([
+        { key: "credential_envelope", value: "v2" },
+      ]);
+    } finally {
+      await created.close();
+    }
+    const reopened = new SQLiteStorageProvider(fresh);
+    await reopened.initialize();
+    try {
+      expect(await reopened.readEnvelopeState()).toBe("v1-retired");
+    } finally {
+      await reopened.close();
+    }
+  });
+
+  test("a store whose tables existed before this version keeps no credential_envelope row, so version 1 stays accepted", async () => {
+    expect(raw((db) => db.prepare("SELECT key FROM storage_meta").all())).toEqual([]);
+    expect(await provider.readEnvelopeState()).toBe("v1-accepted");
+
+    // Any one of the store's tables is enough: here only accounts existed.
+    const older = join(dir, "older.db");
+    raw((db) => db.exec("CREATE TABLE accounts (email TEXT PRIMARY KEY)"), older);
+    const opened = new SQLiteStorageProvider(older);
+    await opened.initialize();
+    try {
+      expect(await opened.readEnvelopeState()).toBe("v1-accepted");
+    } finally {
+      await opened.close();
+    }
   });
 
   test("readEnvelopeState answers v1-accepted without a row and v1-retired for v2, and refuses any other value by name", async () => {
@@ -173,7 +225,8 @@ describe("SQLiteStorageProvider credential envelope", () => {
       await expect(
         memory.rewriteStoredCredentials({ connections: () => null, factors: () => null }, LABEL),
       ).rejects.toThrow("in-memory");
-      expect(await memory.readEnvelopeState()).toBe("v1-accepted");
+      // Created from nothing, so it records version 1 as retired from the start.
+      expect(await memory.readEnvelopeState()).toBe("v1-retired");
     } finally {
       await memory.close();
     }

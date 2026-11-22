@@ -4,11 +4,12 @@ import type { ServerStorageProvider } from "@/lib/storage/types";
 // ── Mock better-sqlite3 ─────────────────────────────────────────────────────
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-const mockPrepare = mock((): any => ({
+const emptyStatement = (): any => ({
   all: mock((): any[] => []),
   get: mock((): any => undefined),
   run: mock((..._args: any[]) => {}),
-}));
+});
+const mockPrepare = mock(emptyStatement);
 const mockExec = mock((..._args: any[]) => {});
 // The foreign-key read-back answers 1 unless a case says the engine refused to enable them.
 let foreignKeysReadBack = 1;
@@ -22,8 +23,13 @@ const mockDbInstance = {
   exec: mockExec,
   pragma: mockPragma,
   close: mockClose,
-  transaction: mock((fn: () => void) => fn),
+  transaction: transactionMock(),
 };
+
+/** better-sqlite3's transaction(fn): a function that runs fn, with `.immediate` for BEGIN IMMEDIATE. */
+function transactionMock() {
+  return mock((fn: () => void) => Object.assign(() => fn(), { immediate: () => fn() }));
+}
 
 // When set, the mocked better-sqlite3 constructor throws this error - used to
 // exercise the Node-ABI-mismatch guard in initialize().
@@ -57,6 +63,9 @@ describe("SQLiteStorageProvider", () => {
     mockExec.mockClear();
     mockPragma.mockClear();
     mockClose.mockClear();
+    // Each case starts from statements that answer nothing, whatever replies the case before set.
+    mockPrepare.mockImplementation(emptyStatement);
+    mockDbInstance.transaction = transactionMock();
     provider = new SQLiteStorageProvider(":memory:");
   });
 
@@ -96,6 +105,8 @@ describe("SQLiteStorageProvider", () => {
   });
 
   test("getAllData returns parsed collections", async () => {
+    // Opened first, so the replies set up below answer the call under test, not initialize.
+    await provider.initialize();
     const mockRows = [
       { collection: "connections", data: JSON.stringify([{ id: "c1" }]) },
       { collection: "history", data: JSON.stringify([{ id: "h1" }]) },
@@ -106,7 +117,6 @@ describe("SQLiteStorageProvider", () => {
       run: mock(() => {}),
     });
 
-    await provider.initialize();
     const result = await provider.getAllData("admin@test.com");
 
     expect(result.connections as unknown).toEqual([{ id: "c1" }]);
@@ -114,18 +124,21 @@ describe("SQLiteStorageProvider", () => {
   });
 
   test("getCollection returns null when not found", async () => {
+    // Opened first, so the replies set up below answer the call under test, not initialize.
+    await provider.initialize();
     mockPrepare.mockReturnValue({
       all: mock(() => []),
       get: mock(() => undefined),
       run: mock(() => {}),
     });
 
-    await provider.initialize();
     const result = await provider.getCollection("admin@test.com", "connections");
     expect(result).toBeNull();
   });
 
   test("getCollection returns parsed data", async () => {
+    // Opened first, so the replies set up below answer the call under test, not initialize.
+    await provider.initialize();
     const data = [{ id: "c1", name: "Test" }];
     mockPrepare.mockReturnValue({
       all: mock(() => []),
@@ -133,12 +146,13 @@ describe("SQLiteStorageProvider", () => {
       run: mock(() => {}),
     });
 
-    await provider.initialize();
     const result = await provider.getCollection("admin@test.com", "connections");
     expect(result as unknown).toEqual(data);
   });
 
   test("setCollection calls INSERT OR REPLACE", async () => {
+    // Opened first, so the replies set up below answer the call under test, not initialize.
+    await provider.initialize();
     const mockRun = mock((..._args: unknown[]) => {});
     mockPrepare.mockReturnValue({
       all: mock(() => []),
@@ -146,7 +160,6 @@ describe("SQLiteStorageProvider", () => {
       run: mockRun,
     });
 
-    await provider.initialize();
     await provider.setCollection("admin@test.com", "connections", []);
 
     expect(mockRun).toHaveBeenCalled();
@@ -156,13 +169,14 @@ describe("SQLiteStorageProvider", () => {
   });
 
   test("persists exactly JSON.stringify of what it was given, adding and hiding nothing", async () => {
+    // Opened first, so the replies set up below answer the call under test, not initialize.
+    await provider.initialize();
     // The credential-at-rest threat test asserts on what the DECORATOR hands a provider. That is
     // only a statement about the store if the provider is a faithful serializer, which is what
     // this pins: a provider that re-shaped, re-encoded or supplemented the value would break the
     // chain without any security test noticing.
     const run = mock((..._args: unknown[]) => {});
     mockPrepare.mockImplementation(() => ({ all: mock(() => []), get: mock(() => undefined), run }));
-    await provider.initialize();
     const data = [{ id: "c1", name: "Prod", type: "postgres", password: "v1:aaa:bbb" }];
 
     await provider.setCollection("u@example.org", "connections", data as never);
@@ -171,13 +185,14 @@ describe("SQLiteStorageProvider", () => {
   });
 
   test("isHealthy returns true when db works", async () => {
+    // Opened first, so the replies set up below answer the call under test, not initialize.
+    await provider.initialize();
     mockPrepare.mockReturnValue({
       all: mock(() => []),
       get: mock(() => ({ ok: 1 })),
       run: mock(() => {}),
     });
 
-    await provider.initialize();
     expect(await provider.isHealthy()).toBe(true);
   });
 
@@ -188,6 +203,8 @@ describe("SQLiteStorageProvider", () => {
   });
 
   test("mergeData uses transaction", async () => {
+    // Opened first, so the replies set up below answer the call under test, not initialize.
+    await provider.initialize();
     const mockRun = mock((..._args: unknown[]) => {});
     mockPrepare.mockReturnValue({
       all: mock(() => []),
@@ -198,7 +215,6 @@ describe("SQLiteStorageProvider", () => {
     const txFn = mock((fn: () => void) => fn);
     mockDbInstance.transaction = txFn;
 
-    await provider.initialize();
     await provider.mergeData("admin@test.com", {
       connections: [
         { id: "c1", name: "DB", type: "postgres", host: "localhost", port: 5432, createdAt: new Date() },
@@ -222,6 +238,8 @@ describe("SQLiteStorageProvider", () => {
   });
 
   test("mergeData only writes provided collections", async () => {
+    // Opened first, so the replies set up below answer the call under test, not initialize.
+    await provider.initialize();
     const mockRun = mock((..._args: unknown[]) => {});
     mockPrepare.mockReturnValue({
       all: mock(() => []),
@@ -230,7 +248,6 @@ describe("SQLiteStorageProvider", () => {
     });
     mockDbInstance.transaction = mock((fn: () => void) => fn);
 
-    await provider.initialize();
     await provider.mergeData("admin@test.com", {
       connections: [
         { id: "c1", name: "DB", type: "postgres", host: "localhost", port: 5432, createdAt: new Date() },
@@ -244,6 +261,8 @@ describe("SQLiteStorageProvider", () => {
   });
 
   test("isHealthy returns false on error", async () => {
+    // Opened first, so the replies set up below answer the call under test, not initialize.
+    await provider.initialize();
     mockPrepare.mockReturnValue({
       all: mock(() => []),
       get: mock(() => {
@@ -252,23 +271,25 @@ describe("SQLiteStorageProvider", () => {
       run: mock(() => {}),
     });
 
-    await provider.initialize();
     expect(await provider.isHealthy()).toBe(false);
   });
 
   test("getCollection returns null for corrupted JSON", async () => {
+    // Opened first, so the replies set up below answer the call under test, not initialize.
+    await provider.initialize();
     mockPrepare.mockReturnValue({
       all: mock(() => []),
       get: mock(() => ({ data: "not-valid-json{{{" })),
       run: mock(() => {}),
     });
 
-    await provider.initialize();
     const result = await provider.getCollection("admin@test.com", "connections");
     expect(result).toBeNull();
   });
 
   test("getAllData skips corrupted JSON rows", async () => {
+    // Opened first, so the replies set up below answer the call under test, not initialize.
+    await provider.initialize();
     mockPrepare.mockReturnValue({
       all: mock(() => [
         { collection: "connections", data: JSON.stringify([{ id: "c1" }]) },
@@ -278,7 +299,6 @@ describe("SQLiteStorageProvider", () => {
       run: mock(() => {}),
     });
 
-    await provider.initialize();
     const result = await provider.getAllData("admin@test.com");
     expect(result.connections as unknown).toEqual([{ id: "c1" }]);
     expect(result.history).toBeUndefined();

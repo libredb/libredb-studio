@@ -77,12 +77,17 @@ describe("PostgresStorageProvider", () => {
     await provider.close();
   });
 
+  /** Every statement the pool and its clients received, in order. */
+  const statements = (): string[] => (mockQuery.mock.calls as unknown[][]).map((call) => String(call[0]));
+  /** The one statement initialize creates the tables with. */
+  const tableDdl = (): string => statements().find((sql) => sql.includes("CREATE TABLE IF NOT EXISTS user_storage"))!;
+
   test("initialize creates table", async () => {
     await provider.initialize();
-    // The tables, then the lookup of missing passkey indexes, which finds none here.
-    expect(mockQuery).toHaveBeenCalledTimes(2);
-    const sql = (mockQuery.mock.calls as unknown[][])[0][0] as string;
-    expect(sql).toContain("CREATE TABLE IF NOT EXISTS user_storage");
+    // One transaction (BEGIN, the lock, the check for existing tables, the tables, the marker of a store created from
+    // nothing, COMMIT), then the lookup of missing passkey indexes, which finds none here.
+    expect(mockQuery).toHaveBeenCalledTimes(7);
+    expect(tableDdl()).toContain("CREATE TABLE IF NOT EXISTS user_storage");
   });
 
   test("initialize disables SSL for localhost when no ssl params", async () => {
@@ -423,8 +428,7 @@ describe("PostgresStorageProvider", () => {
 
   test("initialize creates the accounts table", async () => {
     await provider.initialize();
-    const sql = (mockQuery.mock.calls as unknown[][])[0][0] as string;
-    expect(sql).toContain("CREATE TABLE IF NOT EXISTS accounts");
+    expect(tableDdl()).toContain("CREATE TABLE IF NOT EXISTS accounts");
   });
 
   test("lists and reads accounts", async () => {
@@ -699,7 +703,7 @@ describe("PostgresStorageProvider", () => {
 
   test("initialize creates the passkey tables after accounts, with ON DELETE CASCADE and a BIGINT counter", async () => {
     await provider.initialize();
-    const sql = (mockQuery.mock.calls as unknown[][])[0][0] as string;
+    const sql = tableDdl();
     const order = [
       "CREATE TABLE IF NOT EXISTS accounts",
       "CREATE TABLE IF NOT EXISTS passkey_users",
@@ -722,33 +726,35 @@ describe("PostgresStorageProvider", () => {
       "SELECT index_name FROM unnest($1::text[]) AS wanted(index_name) WHERE to_regclass(index_name) IS NULL";
     const indexes = ["passkey_credentials_account", "passkey_spent_challenges_expiry"];
 
+    /** What initialize sends after the transaction that creates the tables, with the lookup answering `missing`. */
+    async function afterTables(missing: string[]): Promise<unknown[][]> {
+      mockQuery.mockClear();
+      mockQuery.mockImplementation(async (sql: string) =>
+        sql === lookup ? { rows: missing.map((index_name) => ({ index_name })) } : { rows: [] },
+      );
+      const initialized = new PostgresStorageProvider("postgresql://localhost:5432/test");
+      try {
+        await initialized.initialize();
+      } finally {
+        await initialized.close();
+        mockQuery.mockImplementation(async () => ({ rows: [] }));
+      }
+      const calls = mockQuery.mock.calls as unknown[][];
+      return calls.slice(calls.findIndex((call) => call[0] === "COMMIT") + 1);
+    }
+
     // A DBA-managed schema that already has both: nothing but the lookup after the tables.
-    await provider.initialize();
-    const present = mockQuery.mock.calls as unknown[][];
-    expect(present).toHaveLength(2);
-    expect(present[1]).toEqual([lookup, [indexes]]);
+    expect(await afterTables([])).toEqual([[lookup, [indexes]]]);
 
     // A schema missing one creates exactly that one.
-    mockQuery.mockClear();
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    mockQuery.mockResolvedValueOnce({ rows: [{ index_name: "passkey_spent_challenges_expiry" }] });
-    const partial = new PostgresStorageProvider("postgresql://localhost:5432/test");
-    await partial.initialize();
-    await partial.close();
-    expect((mockQuery.mock.calls as unknown[][]).map((call) => call[0])).toEqual([
-      expect.stringContaining("CREATE TABLE IF NOT EXISTS user_storage"),
+    expect((await afterTables(["passkey_spent_challenges_expiry"])).map((call) => call[0])).toEqual([
       lookup,
       "CREATE INDEX IF NOT EXISTS passkey_spent_challenges_expiry ON passkey_spent_challenges (expires_at)",
     ]);
 
     // A fresh schema creates both, in order.
-    mockQuery.mockClear();
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    mockQuery.mockResolvedValueOnce({ rows: indexes.map((index_name) => ({ index_name })) });
-    const fresh = new PostgresStorageProvider("postgresql://localhost:5432/test");
-    await fresh.initialize();
-    await fresh.close();
-    expect((mockQuery.mock.calls as unknown[][]).slice(2).map((call) => call[0])).toEqual([
+    expect((await afterTables(indexes)).map((call) => call[0])).toEqual([
+      lookup,
       "CREATE INDEX IF NOT EXISTS passkey_credentials_account ON passkey_credentials (account_email)",
       "CREATE INDEX IF NOT EXISTS passkey_spent_challenges_expiry ON passkey_spent_challenges (expires_at)",
     ]);
@@ -757,8 +763,21 @@ describe("PostgresStorageProvider", () => {
   test("a missing privilege during initialize names the tables, the privileges and the manual DDL", async () => {
     const denied = Object.assign(new Error("permission denied for schema public"), { code: "42501" });
     const errorSpy = spyOn(logger, "error").mockImplementation(() => {});
+    /** The pool answers `failure` to the first statement that contains `needle`, the lookup `missing`, and [] else. */
+    const failOn = (needle: string, failure: Error, missing: string[] = []) => {
+      let failed = false;
+      mockQuery.mockImplementation(async (sql: string) => {
+        if (!failed && sql.includes(needle)) {
+          failed = true;
+          throw failure;
+        }
+        return sql.includes("to_regclass(index_name) IS NULL")
+          ? { rows: missing.map((index_name) => ({ index_name })) }
+          : { rows: [] };
+      });
+    };
     try {
-      mockQuery.mockRejectedValueOnce(denied);
+      failOn("CREATE TABLE", denied);
       const failure = await provider.initialize().then(
         () => null,
         (error: unknown) => error as Error,
@@ -774,9 +793,7 @@ describe("PostgresStorageProvider", () => {
 
       // Creating a missing index on a table the user does not own is the same refusal.
       const notOwner = Object.assign(new Error("must be owner of table passkey_credentials"), { code: "42501" });
-      mockQuery.mockResolvedValueOnce({ rows: [] });
-      mockQuery.mockResolvedValueOnce({ rows: [{ index_name: "passkey_credentials_account" }] });
-      mockQuery.mockRejectedValueOnce(notOwner);
+      failOn("CREATE INDEX", notOwner, ["passkey_credentials_account"]);
       const indexFailure = await new PostgresStorageProvider("postgresql://localhost:5432/test").initialize().then(
         () => null,
         (error: unknown) => error as Error,
@@ -786,10 +803,11 @@ describe("PostgresStorageProvider", () => {
 
       // Any other driver error is rethrown as it came.
       const other = Object.assign(new Error("relation is broken"), { code: "XX000" });
-      mockQuery.mockRejectedValueOnce(other);
+      failOn("CREATE TABLE", other);
       await expect(new PostgresStorageProvider("postgresql://localhost:5432/test").initialize()).rejects.toBe(other);
     } finally {
       errorSpy.mockRestore();
+      mockQuery.mockImplementation(async () => ({ rows: [] }));
     }
   });
 
@@ -930,20 +948,59 @@ describe("PostgresStorageProvider", () => {
 
   test("initialize creates storage_meta with the other tables", async () => {
     await provider.initialize();
-    const sql = (mockQuery.mock.calls as unknown[][])[0][0] as string;
-    expect(sql).toMatch(
+    expect(tableDdl()).toMatch(
       /CREATE TABLE IF NOT EXISTS storage_meta \(\s*key\s+TEXT PRIMARY KEY,\s*value\s+TEXT NOT NULL,/,
     );
   });
 
   test("initialize takes a transaction-scoped advisory lock before the table DDL, so replicas starting together create the tables one at a time", async () => {
     await provider.initialize();
-    const sql = (mockQuery.mock.calls as unknown[][])[0][0] as string;
-    const lock = sql.indexOf("SELECT pg_advisory_xact_lock(");
-    expect(lock).toBeGreaterThanOrEqual(0);
-    expect(lock).toBeLessThan(sql.indexOf("CREATE TABLE IF NOT EXISTS"));
-    // One simple-protocol query string runs as one implicit transaction, so the lock is held until every table exists.
-    expect(sql).not.toContain("BEGIN");
+    const sql = statements();
+    // The lock is taken inside the transaction that creates the tables, so it is held until every table is committed.
+    const order = [
+      sql.indexOf("BEGIN"),
+      sql.findIndex((statement) => statement.startsWith("SELECT pg_advisory_xact_lock(")),
+      sql.indexOf(tableDdl()),
+      sql.indexOf("COMMIT"),
+    ];
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  const PRESENCE = "WHERE to_regclass(table_name) IS NOT NULL";
+
+  test("initialize decides inside the advisory lock that a store is created from nothing, and records v2 in the same transaction", async () => {
+    await provider.initialize();
+
+    const sql = statements();
+    const at = (needle: string) => sql.findIndex((statement) => statement.includes(needle));
+    const order = [
+      at("BEGIN"),
+      at("SELECT pg_advisory_xact_lock("),
+      at(PRESENCE),
+      at("CREATE TABLE IF NOT EXISTS storage_meta"),
+      at("INSERT INTO storage_meta"),
+      at("COMMIT"),
+    ];
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    const calls = mockQuery.mock.calls as unknown[][];
+    expect(calls[at(PRESENCE)][1]).toEqual([BACKED_UP]);
+    expect(calls[at("INSERT INTO storage_meta")][1]).toEqual(["credential_envelope", "v2"]);
+  });
+
+  test("initialize records no row on a store whose tables existed before, so version 1 stays accepted there", async () => {
+    mockQuery.mockImplementation(async (sql: string) =>
+      sql.includes(PRESENCE) ? { rows: [{ table_name: "user_storage" }] } : { rows: [] },
+    );
+    try {
+      await provider.initialize();
+    } finally {
+      mockQuery.mockImplementation(async () => ({ rows: [] }));
+    }
+
+    expect(statements().some((statement) => statement.includes("INSERT INTO storage_meta"))).toBe(false);
+    expect(statements()).toContain("COMMIT");
   });
 
   test("readEnvelopeState answers v1-accepted without a row and v1-retired for v2, and refuses any other value by name", async () => {
@@ -1425,7 +1482,9 @@ describe("PostgresStorageProvider", () => {
       mockQuery.mockImplementation(async (sql: string) => {
         if (sql.includes("pg_namespace")) return { rows: [{ role: "libredb_studio", present: true }] };
         // A fresh schema: both indexes are missing, so initialize() creates them.
-        if (sql.includes("to_regclass")) return { rows: qualifiedIndexes.map((index_name) => ({ index_name })) };
+        if (sql.includes("to_regclass(index_name) IS NULL")) {
+          return { rows: qualifiedIndexes.map((index_name) => ({ index_name })) };
+        }
         return { rows: [], rowCount: 1 };
       });
       const qualified = new PostgresStorageProvider("postgresql://localhost:5432/test");
@@ -1499,8 +1558,11 @@ describe("PostgresStorageProvider", () => {
         "SELECT quote_ident(current_user) AS role, EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = $1) AS present",
         ["studio"],
       ]);
-      expect(poolCalls[2][1]).toEqual([qualifiedIndexes]);
-      expect(poolCalls.slice(3, 5).map((call) => call[0])).toEqual([
+      const presence = poolCalls.find((call) => String(call[0]).includes("to_regclass(table_name) IS NOT NULL"))!;
+      expect(presence[1]).toEqual([STORAGE_TABLES.map((table) => `"studio".${table}`)]);
+      const lookup = poolCalls.findIndex((call) => String(call[0]).includes("to_regclass(index_name) IS NULL"));
+      expect(poolCalls[lookup][1]).toEqual([qualifiedIndexes]);
+      expect(poolCalls.slice(lookup + 1, lookup + 3).map((call) => call[0])).toEqual([
         'CREATE INDEX IF NOT EXISTS passkey_credentials_account ON "studio".passkey_credentials (account_email)',
         'CREATE INDEX IF NOT EXISTS passkey_spent_challenges_expiry ON "studio".passkey_spent_challenges (expires_at)',
       ]);

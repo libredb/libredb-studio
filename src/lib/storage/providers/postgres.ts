@@ -164,13 +164,20 @@ export class PostgresStorageProvider implements ServerStorageProvider {
         }
       }
       // Create table. storage_meta records facts about the store itself, such as its credential
-      // envelope state. The advisory lock comes first: PostgreSQL lets only one of several sessions
-      // running CREATE TABLE IF NOT EXISTS for a missing table at once create it, and the others fail
-      // on a unique index of pg_type, so replicas starting together would fail their first request.
-      // One query string runs as one implicit transaction, which holds the lock until every table is
-      // committed; the next replica then finds them all.
-      await this.pool.query(`
-        SELECT pg_advisory_xact_lock(${STORAGE_SCHEMA_LOCK});
+      // envelope state. One transaction, and the advisory lock comes first: PostgreSQL lets only one
+      // of several sessions running CREATE TABLE IF NOT EXISTS for a missing table at once create
+      // it, and the others fail on a unique index of pg_type, so replicas starting together would
+      // fail their first request. The lock is held until every table is committed; the next replica
+      // then finds them all. Under the lock, a store none of whose tables exists yet is created from
+      // nothing, holds no version 1 value, and records version 1 as retired in the same
+      // transaction; a store that existed before keeps no row.
+      await this.transaction(async (client) => {
+        await client.query(`SELECT pg_advisory_xact_lock(${STORAGE_SCHEMA_LOCK})`);
+        const existing = await client.query(
+          "SELECT table_name FROM unnest($1::text[]) AS store(table_name) WHERE to_regclass(table_name) IS NOT NULL",
+          [STORE_TABLES.map((table) => this.qualify(table))],
+        );
+        await client.query(`
         CREATE TABLE IF NOT EXISTS ${this.tables.storageMeta} (
           key        TEXT PRIMARY KEY,
           value      TEXT NOT NULL,
@@ -218,6 +225,13 @@ export class PostgresStorageProvider implements ServerStorageProvider {
           expires_at     TEXT NOT NULL
         )
       `);
+        if (existing.rows.length === 0) {
+          await client.query(`INSERT INTO ${this.tables.storageMeta} (key, value) VALUES ($1, $2)`, [
+            CREDENTIAL_ENVELOPE_KEY,
+            RETIRED_ENVELOPE_MARKER,
+          ]);
+        }
+      });
       // Keyed by the name to_regclass() looks up, which carries the schema when one is set.
       const indexes = new Map(
         Object.entries(PASSKEY_INDEXES).map(([index, { table, column }]) => [

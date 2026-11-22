@@ -23,7 +23,8 @@
  * it was; two runs at once serialize, one re-sealing and one finding nothing to do; and the documented
  * restore SQL brings every table back as the backup holds it, an account created after the re-seal
  * removed, with the version 1 rows a fresh provider opens again. Before the re-seal, six replicas
- * initialize at once on a store without storage_meta, which all must survive.
+ * initialize at once on a store without storage_meta, which all must survive and none of which may record version 1
+ * as retired there; a store initialize creates from nothing records it at once.
  *
  * It is NOT in `bun run test`: the runner excludes `tests/live/` by name (`EXCLUDED` in
  * `tests/runner/discover.ts`). CI runs it in the "Functional Smoke (PostgreSQL, RabbitMQ)" job of
@@ -149,7 +150,8 @@ async function exerciseTables(url: string, superuser: string): Promise<void> {
     });
 
     const reads: Record<string, boolean> = {
-      storage_meta: (await provider.readEnvelopeState()) === "v1-accepted",
+      // Created from nothing by this initialize, so it records version 1 as retired from the start.
+      storage_meta: (await provider.readEnvelopeState()) === "v1-retired",
       user_storage: Array.isArray(await provider.getCollection(email, "connections")),
       accounts: (await provider.getAccount(email))?.email === email,
       passkey_users: (await provider.getPasskeyUserHandle(email)) === "schema-check-handle",
@@ -201,6 +203,15 @@ async function exerciseTables(url: string, superuser: string): Promise<void> {
       check(reads[table], `${table} in schema ${SCHEMA} did not return what was written`);
       console.log(`ok   ${SCHEMA}.${table} created, written and read`);
     }
+    const marker = await asSuperuser(superuser, async (client) => {
+      const { rows } = await client.query(`SELECT key, value FROM ${SCHEMA}.storage_meta`);
+      return rows as { key: string; value: string }[];
+    });
+    check(
+      JSON.stringify(marker) === JSON.stringify([{ key: "credential_envelope", value: "v2" }]),
+      `a store created from nothing should record credential_envelope = v2, found: ${JSON.stringify(marker)}`,
+    );
+    console.log("ok   a store initialize created from nothing records credential_envelope = v2");
 
     await terminateOpenTransaction(provider, url, superuser, email);
   } finally {
@@ -371,6 +382,9 @@ async function exerciseReseal(url: string, superuser: string): Promise<void> {
   check(
     original.backups.length === 0 && original.marker.length === 0,
     "the store should start with no marker and no backup",
+  );
+  console.log(
+    "ok   a store whose tables existed before records no credential_envelope row, so version 1 stays accepted",
   );
 
   // A rewrite that throws on a later row rolls everything back, its backup tables included.

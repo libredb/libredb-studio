@@ -60,6 +60,16 @@ function isNodeAbiMismatch(error: unknown): boolean {
   return /NODE_MODULE_VERSION|was compiled against a different Node\.js version/i.test(message);
 }
 
+/** Every table of the store; a store in which none of them exists is created from nothing by initialize. */
+const STORE_TABLES = [
+  "storage_meta",
+  "user_storage",
+  "accounts",
+  "passkey_users",
+  "passkey_credentials",
+  "passkey_spent_challenges",
+] as const;
+
 export class SQLiteStorageProvider implements ServerStorageProvider {
   private db: BetterSqlite3.Database | null = null;
   private dbPath: string;
@@ -99,7 +109,14 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
 
       // user_storage is per-user product data. accounts is the local identity registry (#784).
       // storage_meta records facts about the store itself, such as its credential envelope state.
-      this.db!.exec(`
+      // One IMMEDIATE transaction decides whether the store is created from nothing (none of its
+      // tables exists yet), creates the tables, and records version 1 as retired on such a store,
+      // which holds no version 1 value; a store that existed before keeps no row.
+      const create = this.db!.transaction(() => {
+        const existed = this.db!.prepare(
+          `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name IN (${STORE_TABLES.map(() => "?").join(", ")})`,
+        ).get(...STORE_TABLES);
+        this.db!.exec(`
         CREATE TABLE IF NOT EXISTS storage_meta (
           key        TEXT PRIMARY KEY,
           value      TEXT NOT NULL,
@@ -149,6 +166,14 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
         );
         CREATE INDEX IF NOT EXISTS passkey_spent_challenges_expiry ON passkey_spent_challenges (expires_at)
       `);
+        if (existed === undefined) {
+          this.db!.prepare("INSERT INTO storage_meta (key, value) VALUES (?, ?)").run(
+            CREDENTIAL_ENVELOPE_KEY,
+            RETIRED_ENVELOPE_MARKER,
+          );
+        }
+      });
+      create.immediate();
     } catch (error) {
       logger.error("SQLite storage initialization failed", error, { provider: "sqlite", path: this.dbPath });
       if (isNodeAbiMismatch(error)) {

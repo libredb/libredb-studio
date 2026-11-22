@@ -59,8 +59,17 @@ describe("re-sealing a real SQLite store", () => {
     }
   }
 
-  /** The rows the previous version wrote: a v1 password, an unsealed tunnel password, a v1 factor. */
+  /**
+   * The rows the previous version wrote: a v1 password, an unsealed tunnel password, a v1 factor. The store's first
+   * table exists before this version's initialize, as on a store the previous version created, so it records nothing
+   * about version 1.
+   */
   async function previousVersionStore(): Promise<void> {
+    raw((db) =>
+      db.exec(
+        "CREATE TABLE user_storage (user_id TEXT NOT NULL, collection TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY (user_id, collection))",
+      ),
+    );
     const store = new SQLiteStorageProvider(path);
     await store.initialize();
     await store.setCollection("alice", "connections", [
