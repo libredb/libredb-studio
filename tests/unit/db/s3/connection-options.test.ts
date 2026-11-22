@@ -134,14 +134,15 @@ describe("the refusals, in order", () => {
     expect(refusal({ region: true })).toBe(S.wrongType("region", "a string"));
     expect(refusal({ allowInsecureAuth: "yes" })).toBe(S.wrongType("allowInsecureAuth", "true or false"));
     expect(refusal({ seedId: 7 })).toBe(S.wrongType("seedId", "a string"));
-    expect(refusal({ sshTunnel: "on" })).toBe(S.wrongType("sshTunnel", "an object"));
-    expect(refusal({ sshTunnel: { enabled: "yes" } })).toBe(S.wrongType("sshTunnel.enabled", "true or false"));
   });
 
-  test("row 2: a tunnel that did not open", () => {
-    expect(refusal({ sshTunnel: { enabled: true } })).toBe(
-      "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so the S3 server was not dialled directly: the tunnel opens only when both Host and Port are set.",
-    );
+  // Row 2 was this provider's refusal of a tunnel that did not open. Core decides the tunnel before any provider is
+  // built and refuses one that is on and was not opened (tests/security/provider-tunnel-decisions.test.ts), so the far
+  // end alone says a tunnel carries the connection.
+  test("row 2 is core's: reads no sshTunnel, the far end alone says a tunnel was opened (FND-2 slice 5)", () => {
+    for (const sshTunnel of [{ enabled: true }, { enabled: "yes" }, { enabled: false }, null, "on", []]) {
+      expect(build({ sshTunnel }).origin).toEqual(build().origin);
+    }
   });
 
   test("row 3: the shared host and port sentences, dialled and far end", () => {
@@ -274,8 +275,7 @@ describe("the refusals, in order", () => {
   });
 
   test("an earlier row wins over a later one", () => {
-    expect(refusal({ user: 5, sshTunnel: { enabled: true } })).toBe(S.wrongType("user", "a string"));
-    expect(refusal({ sshTunnel: { enabled: true }, host: "bad host" })).toBe(S.tunnelNotOpened);
+    expect(refusal({ user: 5, host: "bad host" })).toBe(S.wrongType("user", "a string"));
     expect(refusal({ host: "bad host", password: "" })).toBe(
       "Invalid host: expected a hostname, an IPv4 address or an IPv6 address",
     );
