@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D485, U17 · 358
+- [Drivers and connections](#drivers-and-connections) — D1-D487, U17 · 360
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U221 · 206
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U222 · 207
 - [Dependencies](#dependencies) — P1-P14 · 12
 - [Documentation](#documentation) — DOC3-DOC38 · 32
 - [Release pipeline](#release-pipeline) — REL1-REL11 · 10
@@ -4810,6 +4810,25 @@ Filed 2026-11-22 on the direction decided that day, outside the provider-plugin 
 
 **Done when:** in `sqlite` and `postgres` modes no response and no `localStorage` key carries a secret field of a stored connection, every route that opens a stored connection resolves it by id on the server, the dialog replaces a secret without reading it back, `local` mode stores each secret sealed and bound to the account, and tests hold all four.
 
+### D486. Studio never closes the server storage provider at shutdown
+
+`closeStorageProvider` in `src/lib/storage/factory.ts` has no production caller, and no shutdown hook (`runShutdownHooks()` in `src/lib/shutdown.ts`, run by `src/lib/shutdown-handler.ts`) closes the store.
+So a server stopped with `STORAGE_PROVIDER=sqlite` leaves the store's `-wal` and `-shm` files beside it, holding committed changes that are not yet in the store file, and a PostgreSQL store's pool ends only with the process.
+`docs/STORAGE.md` ("Downgrading") tells operators to delete or keep those files when they restore a backup.
+
+Found 2026-11-22 while documenting the SQLite restore for the credential envelope.
+
+**Done when:** a shutdown hook closes the storage provider after the requests in flight have drained, a stopped SQLite store leaves no `-wal` file, the "Downgrading" text that works around it is reduced to match, and a test shows the hook closing the provider.
+
+### D487. `STORAGE_ENCRYPTION_REQUIRE_V2` is opt-in
+
+With `STORAGE_ENCRYPTION_REQUIRE_V2` unset, the store's `credential_envelope` row alone decides whether version 1 and unsealed credentials still open (`initialize` in `src/lib/storage/encrypting-provider.ts`).
+The setting is opt-in for this release so that operators have a release to re-seal their stores first ([Re-sealing the store](STORAGE.md#re-sealing-the-store)).
+
+Filed 2026-11-22 with the setting.
+
+**Done when:** a later release refuses version 1 and unsealed credentials by default, with the setting kept only as an explicit statement or removed, the upgrade notes say so, and tests pin the default.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -7542,6 +7561,15 @@ One way is to carry the reason class on the extension's invalid item, so the tre
 Found 2026-11-22 while planning FND-1 slice 5.
 
 **Done when:** the VS Code tree and quick pick show an entry whose type names no provider with the word Studio shows it with, every other refused entry keeps its word, and a unit test in the extension holds both words.
+
+### U222. After a failed `GET /api/storage`, the sync hook still becomes ready and pushes
+
+`pullFromServer` in `src/hooks/use-storage-sync.ts` returns without an error when `GET /api/storage` answers with a status that is not 2xx, and the start-up effect then sets `isReady`.
+The next change in that browser pushes its copy of the collection whole, which replaces the stored list with a copy that may be older than what the server holds.
+
+Found 2026-11-22 while reviewing the credential envelope's read path.
+
+**Done when:** a failed pull leaves the hook not ready, or ready without pushing until a later pull succeeds, the sync state shows the failure, and a hook test drives a failed `GET` followed by a change and shows nothing pushed.
 
 ## Dependencies
 
