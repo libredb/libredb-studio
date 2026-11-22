@@ -260,7 +260,8 @@ const conn = {
 ```
 
 `validate()` ([`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)) requires `host` **and**
-`database` (when no connection string is set — but note [§4.4](#44-connection-string-nuance)).
+`database`, whatever else the connection carries: a connection string never stands in for them
+(see [§4.4](#44-connection-string-nuance)).
 SQL authentication only (`user`/`password`); Windows/AAD auth is not wired.
 
 ### 4.2 Connection pooling
@@ -320,11 +321,10 @@ See the [non-Azure trust caveat](#15-known-limitations--future-work).
 `getCapabilities().supportsConnectionString` is `true` and the UI parser accepts both `mssql://` and
 `sqlserver://` URLs — but it **decomposes them into discrete fields** (`host`/`port`/`user`/`password`/
 `database`) before they reach the provider. `buildConfig()` itself **never reads
-`config.connectionString`**; it always builds from the discrete fields (defaulting `host` to
-`localhost`). So a config carrying *only* a raw `connectionString` would be built against
-`localhost` with the other fields unset — i.e. it targets an unintended server (and would likely
-fail on the missing user/password/database) rather than honouring the URL. In practice the
-connection always has discrete fields because the UI populates them.
+`config.connectionString`**; it always builds from the discrete fields, and `validate()` requires
+`host` and `database`. So a config carrying *only* a raw `connectionString` is refused by name
+(`Host is required for SQL Server`) when the provider is built, and nothing is dialled.
+In practice the connection always has discrete fields because the UI populates them.
 
 The decomposition includes TLS. An ADO.NET keyword string
 (`Server=host,1433;Database=db;Encrypt=True;TrustServerCertificate=True;`) and the query-string form
@@ -1582,7 +1582,7 @@ It writes a `datetime` or `smalldatetime` cell's `yyyy-mm-dd hh:mi:ss[.mmm]` tex
 
 | Situation | Error |
 |-----------|-------|
-| Missing `host`/`database` (no connection string) | `DatabaseConfigError` |
+| Missing `host`/`database` (a connection string does not stand in for them) | `DatabaseConfigError` |
 | Operation before `connect()` | `DatabaseConfigError` (via `ensureConnected()`) |
 | `connect()` fails | `ConnectionError` (carries host/port) |
 | Message contains *cannot open database* (`4060`) | `ConnectionError`, matched **before** the access refusals, because the server's sentence ends in *The login failed.* (#1451) |
@@ -1992,8 +1992,8 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
 - **`connectionString` is ignored by the provider.** `getCapabilities().supportsConnectionString` is
   `true` and the UI accepts `mssql://`/`sqlserver://`, but `buildConfig()` builds only from discrete
   fields and never reads `config.connectionString` ([§4.4](#44-connection-string-nuance)). A
-  config carrying only a raw connection string would connect to `localhost`. *Future:* pass a raw
-  connection string through to the driver, or set the capability honestly.
+  config carrying only a raw connection string is refused by name for its missing host.
+  *Future:* pass a raw connection string through to the driver, or set the capability honestly.
 - **The EDITOR has no Explain button here; the AGENT has an estimating plan.** `supportsExplain` is
   `false`, so the UI hides the *Explain* action, and that half is unchanged: every strategy in
   `src/lib/explain` builds a single-statement PREFIX around the query

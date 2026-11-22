@@ -122,25 +122,18 @@ describe("CONNECTION_STRING_ACCEPTED against each provider's own declaration (Sp
     expect(CONNECTION_STRING_ACCEPTED.mssql).toBe(false);
   });
 
-  test("mssql: a config with only a connection string validates and builds against localhost, the string unread", async () => {
-    // The behaviour the record follows (mssql.ts validate and buildConfig): a seed entry like this would list a
-    // connection that opens localhost instead of db.example, so the seed schema refuses it.
-    const provider = await createDatabaseProvider({
-      id: "connection-string-mssql",
-      name: "Connection string mssql",
-      type: "mssql",
-      connectionString: "mssql://sa:pw@db.example:1433/app",
-      createdAt: new Date(0),
-    });
-    expect(() => provider.validate()).not.toThrow();
-    // buildConfig is private; reached through a cast, as tests/integration/db/mssql-provider.test.ts reaches the
-    // protected escapeIdentifier. Nothing connects.
-    const config = (
-      provider as unknown as { buildConfig(): { server: string; port: number; database?: string } }
-    ).buildConfig();
-    expect(config.server).toBe("localhost");
-    expect(config.port).toBe(1433);
-    expect(config.database).toBeUndefined();
+  test("mssql: a config with only a connection string is refused by name, the string never reaching the provider", async () => {
+    // SQL Server builds from its host and database fields only (mssql.ts validate), so a record that names only a
+    // connection string is refused by name rather than built against a default server.
+    await expect(
+      createDatabaseProvider({
+        id: "connection-string-mssql",
+        name: "Connection string mssql",
+        type: "mssql",
+        connectionString: "mssql://db.example:1433/app",
+        createdAt: new Date(0),
+      }),
+    ).rejects.toThrow("Host is required for SQL Server");
   });
 
   test.each([...SHIPPED_DATABASE_TYPES])("%s declares supportsConnectionString as a boolean", async (type) => {
