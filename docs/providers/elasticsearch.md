@@ -945,7 +945,7 @@ Beyond the hidden and system targets, the check refuses some reads the engine an
 
 The least-privilege role above reads no hidden index anyway: the server refuses it `".security"` itself.
 The check is the boundary that keeps hidden and system indices from an agent statement, whatever the login, and with security off the only rule, since no login exists for the open to check.
-The profile's refusal, the mode's and the statement check's are `RefusedBeforeSendError`s, so the agent and MCP say the statement never reached the SQL endpoint rather than quoting Studio's sentence as the engine's.
+The profile's refusal, the mode's and the statement check's are `RefusedBeforeSendError`s, so the agent and MCP say the statement never reached the SQL endpoint rather than quoting the provider's sentence as the engine's.
 The request asks for a page of one row past the row budget (`fetch_size`), clamped to 10,000, since a hit query past `index.max_result_window`, 10,000 by default, fails ("Result window is too large", measured on 9.1.4); a budget past that is reached by following the cursor.
 The pages are followed while the rows read and their bytes, counted as the JSON array of the rows, stay inside both budgets; an answer past either is refused in the shared row or byte sentence of [`read-only-budget.ts`](../../src/lib/db/providers/sql/read-only-budget.ts), never cut.
 The cursor matters here: asking for a page size opens a search context on the node that only reading to the end, `POST /_sql/close` or the keep-alive releases (measured: `open_contexts` 1 while a cursor is held, 0 after the close), so a refusal closes the cursor it read before it throws.

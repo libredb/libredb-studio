@@ -427,6 +427,8 @@ the model drafted and their stated rationales**, the artifact ids and row counts
 statement, a recorded comparison's two statements and access kinds, and a profile's depth, row count
 and artifact id with the table name fenced.
 A recorded refusal's message is scrubbed of the connection's credential again, since a ledger written before the scrub existed holds the raw text.
+So is a recorded inventory snapshot's provider sentences (a count or an index read refused, a parent the walk could not list, a sampled count, a bounded description) before a prompt carries the snapshot.
+The ledger itself keeps what it recorded: a run recorded before the scrub existed still shows its raw text on its own page and stream.
 A statement refused before sending is restated in Studio's words when the ledger says Studio refused it, and fenced as the provider's text naming the provider otherwise, a refusal recorded before the ledger said who refused included.
 
 ---
@@ -610,6 +612,8 @@ output cap, and what it sends is one objective — see
 
   A provider's own text is the one place a credential could still slip in, for example a driver error that echoes the password it was given.
   So Studio withholds whole any provider error, warning or notice text that holds a credential of the run's own connection, or any form of one (its base64 and URL-encoded forms, each segment of a token), before it reaches a prompt, the run's ledger, a response or a log line (`src/lib/db/operations/provider-text.ts`).
+  The credentials it looks for are the ones the connection's providers receive: on a statement path the agent credential in place of the connection's own password where one is set, and never the SSH tunnel's secrets, which no provider receives.
+  A failure that leaves a drive or a route whose text held one is answered by a sentence that names the failure's class and says its text was withheld.
   The same pass runs on the hand-over and on MCP.
   What it does not catch: a secret that is only part of a field's value (a password inside a connection string, a key inside a credentials document), an echo in a different case, and database rows, which are never scrubbed; each provider scrubs its own server's text at its entry as well.
 
@@ -665,7 +669,7 @@ output cap, and what it sends is one objective — see
 - **Not into the browser as provider text.** A drive failure crosses to the rail as a *label*; the
   provider's or driver's own message stays in the server log, because none of them promises to keep
   a credential or a host name out of it (`docs/AGENT.md`, "A drive that dies before the loop").
-  That log line is withheld the same way: once the run's connection is resolved, a failure leaving the drive whose text holds a credential of that connection is replaced by Studio's withheld sentence (`driveAgentRun` in `runtime.ts`).
+  That log line is withheld the same way: once the run's connection is resolved, a failure leaving the drive whose text holds a credential of that connection is replaced by Studio's withheld sentence, which names the failure's class (`driveAgentRun` in `runtime.ts`).
 
 ---
 
@@ -717,7 +721,7 @@ grep -n "messages.push\|toolResultMessage" src/lib/agent/investigation.ts
 grep -rn "fenceUntrustedContent(" src/lib/agent/ src/lib/ai/
 
 # Every place a provider's text passes the scrub of the connection's credential
-grep -rn "scrubProviderText(\|withScrubbedWarnings(\|withholdProviderError(\|engineMessage(" src/lib/agent/ src/lib/mcp/ src/app/api/agent/
+grep -rn "scrubProviderText(\|withScrubbedWarnings(\|withholdProviderError(\|engineMessage(\|engineError(\|providerTextError(\|scrubSnapshotSentences(" src/lib/agent/ src/lib/mcp/ src/app/api/agent/ src/lib/db/operations/
 
 # Every request that leaves for a model provider
 grep -rn "streamText(" src/lib/agent/
