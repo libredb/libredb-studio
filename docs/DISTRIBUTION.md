@@ -313,6 +313,8 @@ Bun publishes nothing on the channel, so there the drain would see no server and
 npx and `bun start` set nothing there, so Next.js's handler ends the server; a value the operator sets is passed on, and the server refuses `true` at boot.
 A second SIGTERM or SIGINT during the shutdown starts nothing, does not cut it and does not change its exit code; npx delivers every Ctrl+C twice, once from the terminal and once from the launcher.
 In a source checkout, `bun dev` and `bun start` deliver it twice too, since `scripts/next-with-seed-assets.mjs` forwards SIGINT and SIGTERM to the Next.js CLI, which the terminal's Ctrl+C has already reached.
+`bin/studio.js` and `scripts/next-with-seed-assets.mjs` install that forwarding right before they spawn the server, so a SIGTERM or SIGINT never ends a launcher and leaves its server running: one that reaches the launcher while the spawn runs is forwarded as soon as the server exists.
+One that reaches the launcher earlier, while npx downloads, verifies or unpacks the payload or `bun start` and `bun dev` read the `.env` files, ends the launcher, which has started no server yet.
 On Windows neither forward is a second signal: Node.js ends the process it forwards to at once (child_process `subprocess.kill()` on Windows), so a Ctrl+C under npx, `bun dev` or `bun start` cuts the shutdown part way.
 The Windows launcher, `libredb-studio.exe`, forwards nothing and waits for the server.
 Next.js's own handler ignores a repeated signal too, so under neither handler does a second Ctrl+C force the exit.
