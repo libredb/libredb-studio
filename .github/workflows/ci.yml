@@ -1153,8 +1153,12 @@ jobs:
   # SIGTERM and SIGINT sent to the built standalone server, with and without
   # NEXT_MANUAL_SIG_HANDLE, and an unsupported value refused at boot: who ends
   # the process and with which exit code (docs/DISTRIBUTION.md, "Stopping the
-  # server"; tests/live/shutdown-signal-live.ts). Linux only, because the cases
-  # read lines written at exit, which reach a pipe synchronously only there.
+  # server"; tests/live/shutdown-signal-live.ts). The drain cases hold a sign-in
+  # in flight across the signal, and the governance cases stop the server under
+  # the default image's environment with query events queued and a statement in
+  # flight; the script starts its own PostgreSQL container for those, with the
+  # Docker of ubuntu-latest. Linux only, because the cases read lines written at
+  # exit, which reach a pipe synchronously only there.
   shutdown-signal-live:
     name: Shutdown Signal Live Check (Node ${{ matrix.node-version }})
     needs: [engine-payload]
