@@ -276,6 +276,14 @@ reason its own docblock gives: a finding is printed as a file and a line for an 
 rule id. Its scope is `tests/` and `e2e/`, enumerated with `git ls-files` rather than a glob, so an untracked
 draft cannot red a check that CI, which checks out tracked files only, cannot reproduce (#980).
 
+### Golden files
+
+`UPDATE_GOLDEN=1` makes a golden test write its files from the current tree, and the test then throws, so a rewrite is never a silent pass and a CI run with the variable set fails.
+No file under `.github/` and no root `package.json` script sets the variable.
+`tests/unit/golden-update-guard.test.ts` holds both: it parses every tracked code file that names `UPDATE_GOLDEN` and accepts a read only in the condition of an `if`, directly or through a `const` alias used only in `if` conditions, whose then-branch always ends in a `throw` and holds no `return`, `break` or `continue`.
+It names by file and line a read anywhere else, a branch that does not end in a throw or can leave before it, a destructured variable and one set for a child process.
+A dynamic name such as `process.env[name]` is out of a static guard's reach, and so is a throw a surrounding `try` catches and drops; the scan of `.github/` and the package scripts is the second line for both.
+
 ### `bun run test` and the process-wide `mock.module()`, and where isolation has to sit
 
 `mock.module()` is process-wide with no undo, so a mock one layer installs reaches every file that
