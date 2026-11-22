@@ -1,5 +1,5 @@
-import { TUNNEL_FAR_END } from "@/lib/types";
-import type { DatabaseConnection, SSHTunnelConfig, WithTunnelFarEnd } from "@/lib/types";
+import { TUNNEL_FAR_END, TUNNEL_ROUTE } from "@/lib/types";
+import type { DatabaseConnection, SSHTunnelConfig, WithTunnelFarEnd, WithTunnelRoute } from "@/lib/types";
 
 /**
  * The bastion's ROUTE, length-framed inside its own field so a tunnel's four values cannot slide
@@ -148,7 +148,9 @@ export function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
  * `region` (S3) is NOT in the frame either: it changes how a request is signed, never which server receives it;
  * `src/lib/db/provider-cache-key.ts` frames it.
  */
-export async function connectionFingerprint(connection: DatabaseConnection & WithTunnelFarEnd): Promise<string> {
+export async function connectionFingerprint(
+  connection: DatabaseConnection & WithTunnelFarEnd & WithTunnelRoute,
+): Promise<string> {
   // The address this connection actually reaches: the tunnel's far end when the factory
   // rewrote the record, and the record's own otherwise. See the X23 paragraph above.
   const farEnd = connection[TUNNEL_FAR_END];
@@ -162,7 +164,9 @@ export async function connectionFingerprint(connection: DatabaseConnection & Wit
     connection.schema ?? "",
     connection.serviceName ?? "",
     connection.instanceName ?? "",
-    tunnelRoute(connection.sshTunnel),
+    // A provider's config carries the route under core's marker and no `sshTunnel`; a record carries `sshTunnel` and
+    // never a symbol key. See the `sshTunnel` bullet above.
+    connection[TUNNEL_ROUTE] ?? tunnelRoute(connection.sshTunnel),
     // Kubernetes: one host and port can serve many clusters (a Rancher proxy by path, an ingress by TLS name), so
     // both pick the server. Framed only when set and tagged, so every other connection's digest is unchanged.
     ...(connection.apiPath ? [`apiPath=${connection.apiPath}`] : []),

@@ -1,6 +1,8 @@
 import type { ProviderExecutionContext } from "@/lib/db/types";
-import type { DatabaseConnection, SSHTunnelConfig } from "@/lib/types";
+import { TUNNEL_ROUTE } from "@/lib/types";
+import type { DatabaseConnection, SSHTunnelConfig, WithTunnelRoute } from "@/lib/types";
 import { SSH_TUNNEL_FIELDS } from "@/lib/storage/secret-fields";
+import { tunnelRoute } from "./connection-fingerprint";
 import { DatabaseConfigError } from "./errors";
 
 /**
@@ -107,7 +109,7 @@ export function assertExecutionContextIsPlainData(execution: ProviderExecutionCo
  * Core now owns every tunnel decision (FND-2 slice 5); the provider keeps the readable fields only for the route the
  * seal and Databend's latch frame, until core hands that route on by itself and the field leaves the provider's view.
  */
-export function providerConnection<T extends DatabaseConnection>(connection: T): T {
+export function providerConnection<T extends DatabaseConnection>(connection: T): T & WithTunnelRoute {
   const tunnel: unknown = connection.sshTunnel;
   if (tunnel === undefined || tunnel === null) return connection;
   assertTunnelRecordIsPlainData(connection);
@@ -115,7 +117,11 @@ export function providerConnection<T extends DatabaseConnection>(connection: T):
   for (const field of READABLE_TUNNEL_FIELDS) {
     if (Object.hasOwn(tunnel, field)) kept[field] = Reflect.get(tunnel, field);
   }
-  // The one assertion: TypeScript cannot follow the copy of the classified keys above, and the record's values are
-  // kept as they are, malformed ones included, so `kept` is exactly as well-formed as the record's own `sshTunnel`.
-  return { ...connection, sshTunnel: kept as unknown as SSHTunnelConfig };
+  // The assertions: TypeScript cannot follow the copy of the classified keys above, and the record's values are kept
+  // as they are. The route is framed from the record's own tunnel, which core's decision accepted before this runs.
+  return {
+    ...connection,
+    sshTunnel: kept as unknown as SSHTunnelConfig,
+    [TUNNEL_ROUTE]: tunnelRoute(tunnel as SSHTunnelConfig),
+  };
 }
