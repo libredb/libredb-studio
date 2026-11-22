@@ -98,7 +98,9 @@ describe("opt-in HTTP database destination policy", () => {
   test("guards the custom TLS request path too", () => {
     expect(() =>
       nodeRequestJson(
-        "https://169.254.169.254/query/service",
+        // A loopback literal the blocking decision refuses: were the guard to decide otherwise, the dial would fail at
+        // once on this machine instead of reaching the cloud metadata address.
+        "https://127.0.0.1:1/query/service",
         { method: "GET", headers: {} },
         { rejectUnauthorized: true },
         BLOCKS_PRIVATE_HOSTS,

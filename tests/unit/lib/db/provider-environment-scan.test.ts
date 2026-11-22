@@ -6,11 +6,11 @@ import ts from "typescript";
 import { valueImportClosure, valueImportsOf } from "../../../helpers/value-import-closure";
 
 // Core owns the egress decision (FND-2, the provider plugins design section 0.1): one module reads
-// DB_HTTP_BLOCK_PRIVATE_HOSTS, the factory hands its decision to every provider it builds, and the guard takes it as an
-// argument, so no provider reads the setting or imports the module that does. Parsed, not grepped, as the sign-in
-// mode's scan (`tests/unit/lib/config/auth-provider-single-reader.test.ts`) is: comments and sentences that name the
-// variable are not reads. Imports are walked with the repository's own walker, so a type-only import is erased and a
-// dynamic import() counts.
+// DB_HTTP_BLOCK_PRIVATE_HOSTS, the factory hands its decision to every provider that takes a context, and the guard
+// takes it as an argument, so no provider reads the setting or imports the module that does. Parsed, not grepped, as
+// the sign-in mode's scan (`tests/unit/lib/config/auth-provider-single-reader.test.ts`) is: comments and sentences that
+// name the variable are not reads. Imports are walked with the repository's own walker, so a type-only import is erased
+// and a dynamic import() counts.
 const VARIABLE = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const READER = "src/lib/db/egress-decision.ts";
 const PROVIDERS = "src/lib/db/providers/";
@@ -28,7 +28,10 @@ const INTERIM_READERS: Readonly<Record<string, string>> = {
 };
 
 function readsTheSetting(source: string, fileName = "probe.ts"): boolean {
-  const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TSX);
+  // The script kind follows the extension: parsed as TSX, a generic arrow or an angle-bracket assertion in a .ts file
+  // opens a JSX element, and a read after it would never be visited.
+  const kind = fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, false, kind);
   let found = false;
   const visit = (node: ts.Node): void => {
     if (found) return;
@@ -45,6 +48,23 @@ function readsTheSetting(source: string, fileName = "probe.ts"): boolean {
 function trackedSources(...roots: string[]): string[] {
   const listed = execFileSync("git", ["ls-files", ...roots], { cwd: process.cwd(), encoding: "utf8" });
   return listed.split("\n").filter((name) => /\.(ts|tsx|mts|cts)$/.test(name));
+}
+
+/**
+ * The provider modules the reach tests below scan: every tracked module under `src/lib/db/providers/`. The population
+ * tests hold that it is not empty and that every provider module the factory builds from lies inside it, so a provider
+ * module that leaves the directory fails here instead of leaving the scan.
+ */
+function providerModules(): string[] {
+  return trackedSources(PROVIDERS).filter((name) => /\.tsx?$/.test(name));
+}
+
+/** The specifiers of the factory's dynamic `import()` calls, one for each provider module it builds from. */
+function factoryDynamicImports(): string[] {
+  return new Bun.Transpiler({ loader: "ts" })
+    .scanImports(readFileSync(join(process.cwd(), FACTORY), "utf8"))
+    .filter((entry) => entry.kind === "dynamic-import")
+    .map((entry) => entry.path);
 }
 
 function importersOfTheReader(): string[] {
@@ -69,6 +89,23 @@ describe("a setting core owns has one reader, and no provider imports it (FND-2 
     expect(readsTheSetting('const BLOCKED = "Invalid host: blocked by DB_HTTP_BLOCK_PRIVATE_HOSTS";')).toBe(false);
   });
 
+  test("the read detector parses a .ts file as TypeScript, so a generic arrow or an angle-bracket assertion before the read hides nothing", () => {
+    // Parsed as TSX, `<T,>(` and `<string>` open a JSX element and the rest of the file becomes JSX text.
+    expect(
+      readsTheSetting(
+        "export const first = <T,>(items: T[]): T | undefined => items[0];\nexport const a = process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;",
+        "probe.ts",
+      ),
+    ).toBe(true);
+    expect(readsTheSetting("const flag = <string>process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;", "probe.ts")).toBe(true);
+  });
+
+  test("the read detector parses a .tsx file as TSX, so a read inside JSX is found", () => {
+    expect(
+      readsTheSetting("export const Flag = () => <span>{process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS}</span>;", "probe.tsx"),
+    ).toBe(true);
+  });
+
   test("no source file under src/ or vscode-extension/src/ other than src/lib/db/egress-decision.ts reads DB_HTTP_BLOCK_PRIVATE_HOSTS", () => {
     // Each read shape spells the name, so only a file whose text names the variable is parsed.
     const offenders = trackedSources("src", "vscode-extension/src").filter((name) => {
@@ -83,6 +120,17 @@ describe("a setting core owns has one reader, and no provider imports it (FND-2 
     expect(readsTheSetting(readFileSync(join(process.cwd(), READER), "utf8"), READER)).toBe(true);
   });
 
+  test("the provider population the reach tests scan is not empty and holds every provider module the factory builds from", () => {
+    const population = providerModules();
+    expect(population).not.toEqual([]);
+    const dynamic = factoryDynamicImports();
+    expect(dynamic).not.toEqual([]);
+    expect(dynamic.filter((specifier) => !specifier.startsWith("./providers/"))).toEqual([]);
+    const built = valueImportsOf(FACTORY).filter((name) => name.startsWith(PROVIDERS));
+    expect(built).not.toEqual([]);
+    expect(built.filter((name) => !population.includes(name))).toEqual([]);
+  });
+
   test("no module under src/lib/db/providers/ imports src/lib/db/egress-decision.ts", () => {
     expect(importersOfTheReader().filter((name) => name.startsWith(PROVIDERS))).toEqual([]);
   });
@@ -92,12 +140,10 @@ describe("a setting core owns has one reader, and no provider imports it (FND-2 
   });
 
   test("no module under src/lib/db/providers/ reaches the provider factory or the boot preflight through its imports", () => {
-    const reaching = trackedSources(PROVIDERS)
-      .filter((name) => /\.tsx?$/.test(name))
-      .filter((name) => {
-        const { modules } = valueImportClosure(name);
-        return modules.includes(FACTORY) || modules.includes(BOOT_PREFLIGHT);
-      });
+    const reaching = providerModules().filter((name) => {
+      const { modules } = valueImportClosure(name);
+      return modules.includes(FACTORY) || modules.includes(BOOT_PREFLIGHT);
+    });
     expect(reaching).toEqual([]);
   });
 });

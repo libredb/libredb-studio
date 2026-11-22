@@ -77,6 +77,13 @@ mock.module("node:zlib", () => ({
   createBrotliDecompress: () => built(realZlib.createBrotliDecompress()),
 }));
 
+// The guarded path never takes the native fetch. Were the guard to decide by anything but the decision it is handed,
+// a case would pass its URL to the unguarded fetch; this stub fails such a case at once by this sentence, and nothing
+// leaves the machine.
+globalThis.fetch = (() => {
+  throw new Error("the unguarded path took globalThis.fetch");
+}) as unknown as typeof fetch;
+
 const { httpTransportFetch, publicAddressLookup } = await import("@/lib/db/http/egress-policy");
 
 afterEach(() => {
