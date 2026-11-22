@@ -15,8 +15,10 @@
  * request drain has seen the server, sends the signal to the server's PID, waits at most 30 s for it to exit (killing
  * it and failing past that), and removes the data directory.
  *
- * The drain cases (L5, L6) hold a request in flight by its own body: `POST /api/auth/login` with a chunked body whose
+ * The drain cases (L5, L6, L7) hold a request in flight by its own body: `POST /api/auth/login` with a body whose
  * first bytes are sent before the signal, so the client decides when the request ends, and no database is involved.
+ * L7 writes the request on a raw connection, so its last body bytes and the first byte of the next request go in one
+ * write.
  *
  * The governance cases (G1, G2) are the query event delivery at a stop under governance, on the default image's
  * environment: `NEXT_MANUAL_SIG_HANDLE` as the `Dockerfile` runner stage sets it. They start their own PostgreSQL 17
@@ -38,7 +40,7 @@ import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import http from "node:http";
-import { createServer } from "node:net";
+import { connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Client } from "pg";
@@ -162,22 +164,32 @@ async function startServer(extra: Extra): Promise<Server> {
     const started = Date.now();
     while (Date.now() - started < READY_DEADLINE_MS) {
       if (hasExited) throw new Error("the server exited before it answered GET /health");
+      let status: number;
       try {
         const response = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(2000) });
         // Each body is read to its end, so the response has ended on the server too when the signal follows.
         await response.text();
-        if (response.status === 200) {
-          // The 200 proves `register()` has run, not that its own request came after the drain subscribed; this one
-          // does, so every Studio-owned start line counts the server.
-          const seen = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(2000) });
-          await seen.text();
-          if (seen.status !== 200) throw new Error(`the second GET /health answered ${seen.status}`);
-          return;
-        }
-      } catch (error) {
-        // Not listening yet, or the handlers are not ready yet; a failed second request is not either.
-        if ((error as Error).message.startsWith("the second GET /health")) throw error;
+        status = response.status;
+      } catch {
+        // Not listening yet.
+        await delay(100);
+        continue;
       }
+      if (status === 200) {
+        // The 200 proves `register()` has run, not that its own request came after the drain subscribed; this one
+        // does, so every Studio-owned start line counts the server. Once the first answered, a failure here is one.
+        let seen: number;
+        try {
+          const response = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(2000) });
+          await response.text();
+          seen = response.status;
+        } catch (error) {
+          throw new Error(`the second GET /health failed: ${(error as Error).message}`, { cause: error });
+        }
+        if (seen !== 200) throw new Error(`the second GET /health answered ${seen}`);
+        return;
+      }
+      // The handlers are not ready yet.
       await delay(100);
     }
     throw new Error(`the server did not answer GET /health with 200 within ${READY_DEADLINE_MS} ms`);
@@ -463,16 +475,22 @@ async function startGovernance(): Promise<Governance> {
   const pgPort = Number(binding.slice(binding.lastIndexOf(":") + 1));
   if (!Number.isInteger(pgPort) || pgPort <= 0) throw new Error(`Docker published no port: "${binding}"`);
   let ready = false;
+  let lastError: unknown;
   for (let attempt = 0; attempt < 60 && !ready; attempt += 1) {
     try {
       // Over TCP, where only the real server listens (see tests/live/postgres-read-only-live.ts).
       docker(["exec", PG_CONTAINER, "pg_isready", "-q", "-h", "127.0.0.1", "-p", "5432", "-U", "postgres"]);
       ready = true;
-    } catch {
+    } catch (error) {
+      lastError = error;
       await delay(1000);
     }
   }
-  if (!ready) throw new Error("PostgreSQL did not become ready within 60 s");
+  if (!ready) {
+    throw new Error(`PostgreSQL did not become ready within 60 s: ${(lastError as Error).message}`, {
+      cause: lastError,
+    });
+  }
 
   const manifest = readFixtureManifest();
   const schema = `"${manifest.schema}"`;
@@ -584,22 +602,88 @@ async function terminateGovernanceBackends(watcher: Client, database: string): P
   );
 }
 
+/**
+ * L7: a sign-in held in flight across SIGTERM on a raw connection, whose last body bytes go in one write with the first
+ * byte of the next request, so that connection is not idle when the answer ends: the answer carries
+ * `Connection: close`, the connection ends with it, and the exit is 0.
+ */
+async function begunNextRequestCase(): Promise<{ problems: string[]; output: string }> {
+  const credentials = { email: "admin@libredb.org", password: randomUUID() };
+  const server = await readyServer({
+    NEXT_MANUAL_SIG_HANDLE: "true",
+    ADMIN_EMAIL: credentials.email,
+    ADMIN_PASSWORD: credentials.password,
+  });
+  const socket = connect(server.port, "127.0.0.1");
+  try {
+    if (server.child.pid === undefined) throw new Error("the server has no PID");
+    let text = "";
+    socket.on("data", (chunk: Buffer) => {
+      text += chunk.toString("latin1");
+    });
+    socket.on("error", () => {});
+    const ended = new Promise<void>((resolve) => socket.once("close", () => resolve()));
+    await new Promise<void>((resolve) => socket.once("connect", () => resolve()));
+    const body = JSON.stringify(credentials);
+    socket.write(
+      `POST /api/auth/login HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body.slice(0, 10)}`,
+    );
+    await delay(IN_FLIGHT_SETTLE_MS);
+    process.kill(server.child.pid, "SIGTERM");
+    await delay(300);
+    socket.write(`${body.slice(10)}G`);
+    const answered = await until(async () => /\r\n\r\n/.test(text), 5000);
+    const closedWithAnswer = await Promise.race([ended.then(() => true), delay(1000).then(() => false)]);
+    const head = text.split("\r\n\r\n")[0] ?? "";
+    const exit = await endOf(server);
+    const output = server.output();
+    return {
+      problems: [
+        ...(answered && head.startsWith("HTTP/1.1 200") ? [] : [`the sign-in in flight was not answered 200: ${head}`]),
+        ...(/^connection: close$/im.test(head) ? [] : [`the answer did not carry Connection: close: ${head}`]),
+        ...(closedWithAnswer ? [] : ["the connection did not end within 1 s of the answer"]),
+        ...(exit.code === 0 && exit.signal === null ? [] : [`expected exit code 0, got ${describeEnd(exit)}`]),
+        ...(output.includes(studioStart(STUDIO_OWNS_SIGTERM, 1, 1))
+          ? []
+          : ["the start line with servers=1, inFlight=1 is missing"]),
+        ...(output.includes(COMPLETE) ? [] : ["Studio's end line is missing"]),
+      ],
+      output,
+    };
+  } finally {
+    socket.destroy();
+    if (!server.hasExited()) {
+      server.child.kill("SIGKILL");
+      await server.exited;
+    }
+    server.remove();
+  }
+}
+
 /** A server under governance with its own instance id, ready, with one query's event inserted. */
 async function governedServer(fixture: Governance, watcher: Client): Promise<{ server: Server; instance: string }> {
   const instance = `shutdown-live-${randomBytes(4).toString("hex")}`;
   const server = await readyServer({ ...fixture.env, ...imageSignalHandling(), GOVERNANCE_INSTANCE_ID: instance });
-  const ready = await until(async () => {
-    const answer = await request(server.port, "GET", "/api/ready");
-    return answer.ok && answer.status === 200 && (answer.body ?? "").includes('"ok"');
-  }, READY_DEADLINE_MS);
-  if (!ready) throw new Error(`GET /api/ready did not answer ok under governance\n${server.output()}`);
-  const warm = await query(server, fixture, "SELECT 1 AS one");
-  if (!warm.ok || warm.status !== 200) throw new Error(`the first query was not answered 200: ${describeAnswer(warm)}`);
-  // So the case starts with the sink idle.
-  if (!(await until(async () => (await rowsOf(watcher, fixture, instance)) === 1, 10_000))) {
-    throw new Error("the first query's event was not inserted within 10 s");
+  try {
+    const ready = await until(async () => {
+      const answer = await request(server.port, "GET", "/api/ready");
+      return answer.ok && answer.status === 200 && (answer.body ?? "").includes('"ok"');
+    }, READY_DEADLINE_MS);
+    if (!ready) throw new Error("GET /api/ready did not answer ok under governance");
+    const warm = await query(server, fixture, "SELECT 1 AS one");
+    if (!warm.ok || warm.status !== 200) {
+      throw new Error(`the first query was not answered 200: ${describeAnswer(warm)} ${warm.body ?? ""}`);
+    }
+    // So the case starts with the sink idle.
+    if (!(await until(async () => (await rowsOf(watcher, fixture, instance)) === 1, 10_000))) {
+      throw new Error("the first query's event was not inserted within 10 s");
+    }
+    return { server, instance };
+  } catch (error) {
+    // The caller never gets this server, so it is stopped by PID and its data directory removed here.
+    await release(server);
+    throw new Error(`${(error as Error).message}\n${server.output()}`, { cause: error });
   }
-  return { server, instance };
 }
 
 function query(server: Server, fixture: Governance, sql: string): Promise<Answer & { body?: string }> {
@@ -640,15 +724,21 @@ function queuedEventsCase(): Promise<{ problems: string[]; output: string }> {
   return governanceCase(async (fixture, watcher) => {
     const { server, instance } = await governedServer(fixture, watcher);
     const locker = new Client({ connectionString: fixture.fixtureUrl });
-    await locker.connect();
+    try {
+      await locker.connect();
+    } catch (error) {
+      await release(server);
+      throw error;
+    }
     try {
       if (server.child.pid === undefined) throw new Error("the server has no PID");
       await locker.query("BEGIN");
       await locker.query(`LOCK TABLE ${fixture.schema}.query_event IN ACCESS EXCLUSIVE MODE`);
       for (const n of [2, 3, 4]) {
         const answer = await query(server, fixture, `SELECT ${n} AS n`);
-        if (!answer.ok || answer.status !== 200)
-          throw new Error(`SELECT ${n} was not answered 200: ${describeAnswer(answer)}`);
+        if (!answer.ok || answer.status !== 200) {
+          throw new Error(`SELECT ${n} was not answered 200: ${describeAnswer(answer)} ${answer.body ?? ""}`);
+        }
       }
       const waiting = await until(async () => {
         const result = await watcher.query(
@@ -675,6 +765,8 @@ function queuedEventsCase(): Promise<{ problems: string[]; output: string }> {
         ],
         output,
       };
+    } catch (error) {
+      throw new Error(`${(error as Error).message}\n${server.output()}`, { cause: error });
     } finally {
       await locker.end();
       await release(server);
@@ -721,6 +813,8 @@ function inFlightStatementCase(): Promise<{ problems: string[]; output: string }
         ],
         output,
       };
+    } catch (error) {
+      throw new Error(`${(error as Error).message}\n${server.output()}`, { cause: error });
     } finally {
       await release(server);
     }
@@ -784,6 +878,10 @@ const CASES: { name: string; run: () => Promise<{ problems: string[]; output: st
   {
     name: "L6 NEXT_MANUAL_SIG_HANDLE=true, SIGTERM with a sign-in that never completes: cut at the drain's deadline, exit 143 with responsesCut=1",
     run: () => drainCase("never"),
+  },
+  {
+    name: "L7 NEXT_MANUAL_SIG_HANDLE=true, SIGTERM with a sign-in in flight whose connection has begun its next request: answered with Connection: close, the connection ended, exit 0",
+    run: begunNextRequestCase,
   },
   {
     name: "G1 the default image's environment under governance, SIGTERM with query events queued behind a lock: all inserted before the exit, exit 0",
