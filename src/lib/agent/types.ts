@@ -355,7 +355,10 @@ export type AgentRunFailureReason =
    * acquisition IS attempted on all nine — the sentence here used to say none was, which
    * was true only until the second reading existed. What survives is the conclusion: the
    * profile whose acquisition would be refused is never the profile that capture asks for
-   * on an engine that would refuse it.
+   * on an engine that would refuse it, while every engine whose overlay supplies a
+   * `catalogCapture` is on the review record, which the shipped record is and the language
+   * census holds. On such an engine off the record the capture is refused
+   * `PROFILE_ENGINE_NOT_REVIEWED` and a plan or operations run begins ungrounded.
    *
    * ONLY the engine's own refusal, since B47: the other causes of the same error type
    * are `agent-credential-unusable`, the three principal and server reasons and

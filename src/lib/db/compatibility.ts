@@ -589,7 +589,8 @@ export const SINGLE_WRITER_FILE: Readonly<Record<DatabaseType, boolean>> = Objec
  * list is refused by name, whatever its provider implements: the start of a statement-sending
  * agent run (`workflowAvailability`, `src/lib/agent/agent-manifest.ts`), the factory's
  * `agent-read-only` and `agent-handover` acquisition and the core read path every agent,
- * hand-over and MCP statement passes (`runReadOnlyReading`), both through
+ * hand-over and MCP read-only statement passes (`runReadOnlyReading`; plan mode's statistics
+ * read under `agent-operations` does not), both through
  * `assertStatementsReviewed` (`src/lib/db/statement-review.ts`, `PROFILE_ENGINE_NOT_REVIEWED`),
  * and MCP's served set (`src/lib/mcp/tools/served-engines.ts`). A provider's read-only
  * statement path is a second precondition, required and never enough: an engine on the record

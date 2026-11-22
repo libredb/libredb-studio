@@ -3,8 +3,9 @@
  *
  * `AGENT_EXECUTION_ENGINES` (src/lib/db/compatibility.ts) is that record. Every statement-sending gate reads it here at
  * run time: the provider factory's acquisition of a profile that sends statements, and the core read path
- * (`runReadOnlyReading` in src/lib/db/operations/read-only-statement.ts) that every agent, hand-over and MCP statement
- * and every budgeted reading passes. A provider's `queryReadOnly` is required as well and is never enough: an engine
+ * (`runReadOnlyReading` in src/lib/db/operations/read-only-statement.ts) that every agent, hand-over and MCP read-only
+ * statement and every budgeted reading passes; plan mode's statistics read under `agent-operations` does not, as that
+ * module's docblock says. A provider's `queryReadOnly` is required as well and is never enough: an engine
  * the record does not list is refused by name, whatever its provider implements.
  *
  * Its own module rather than a function in compatibility.ts, so that module stays type-only and client-safe; the

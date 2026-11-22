@@ -3368,7 +3368,9 @@ describe("acquireExecutionProfileProvider", () => {
     // review record, as `agent-read-only` is. Its own key in the profiled cache is the
     // other half: two profiles are two entries, so a later change to one path's lifecycle
     // cannot reach the other, and neither is ever the editor's writable pool. The method
-    // precondition for both profiles is held by the test above.
+    // precondition for both profiles is held by the test "refuses %s on an engine on the
+    // review record whose provider implements no read-only statement path, before connecting
+    // it, and query() is never the fallback".
     const refused: unknown = await acquireExecutionProfileProvider(
       makeConnection("spark", { id: "spark-handover" }),
       "agent-handover",
