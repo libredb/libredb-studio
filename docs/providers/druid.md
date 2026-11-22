@@ -1634,9 +1634,9 @@ only where `kill` is declared, so it does not render for Druid either.
 `runMaintenance(type)` ([`index.ts`](../../src/lib/db/providers/sql/druid/index.ts)) exists because
 the `DatabaseProvider` interface obliges every provider to implement it, and **not** because any
 request reaches it: `/api/db/maintenance`
-([route.ts](../../src/app/api/db/maintenance/route.ts)) checks `supportsMaintenance` and returns
-`{ "error": "Maintenance operations not supported for this database" }` with status 400 before it
-would ever call the provider. So the message below is what a *programmatic* caller of the
+([route.ts](../../src/app/api/db/maintenance/route.ts)) reads Druid's engine facets row, which offers
+no maintenance operation ([Engine facets](#engine-facets)), and refuses every operation by name with
+`400 FACET_NOT_OFFERED` before it builds a provider or opens a connection. So the message below is what a *programmatic* caller of the
 `@libredb/studio` package sees, not what the HTTP API returns — `docs/API_DOCS.md` documents the
 route's own wording. It throws a `QueryError` naming the reason:
 
@@ -1979,8 +1979,8 @@ generated alias is the habit worth keeping.
 ### 12.2 Over the API
 
 `POST /api/db/query` with the SQL statement in the `sql` field — the same contract every SQL provider
-uses. `POST /api/db/maintenance` has nothing to accept for Druid and any call throws with the reason
-([§8](#8-maintenance)). The transaction and cancel routes do not apply: `/api/db/cancel` reports
+uses. `POST /api/db/maintenance` has nothing to accept for Druid and refuses every operation by name
+with `400 FACET_NOT_OFFERED` before it builds a provider ([§8](#8-maintenance)). The transaction and cancel routes do not apply: `/api/db/cancel` reports
 cancellation as unsupported because the provider exposes no `cancelQuery`
 ([§13](#13-known-limitations--future-work)).
 

@@ -1637,7 +1637,9 @@ altogether:
 
 `runMaintenance(type)` ([`search/index.ts`](../../src/lib/db/providers/sql/search/index.ts)) exists because
 the `DatabaseProvider` interface obliges every provider to implement it, and **not** because a request
-reaches it: `/api/db/maintenance` checks `supportsMaintenance` and answers 400 first. So the message
+reaches it: `/api/db/maintenance` reads the engine facets row, which offers no maintenance operation
+([Engine facets](#engine-facets)), and refuses every operation by name with `400 FACET_NOT_OFFERED`
+before it builds a provider. So the message
 below is what a *programmatic* caller of `@libredb/studio` sees:
 
 > Elasticsearch has no SQL-reachable maintenance operation, so "\<type\>" cannot run here. Refreshing,
@@ -1937,7 +1939,7 @@ semicolon**, and double quotes — never backticks — if an identifier needs qu
 ### 12.2 Over the API
 
 `POST /api/db/query` with the statement in the `sql` field — the same contract every SQL provider
-uses. `POST /api/db/maintenance` answers 400 before reaching the provider ([§8](#8-maintenance)). The
+uses. `POST /api/db/maintenance` refuses every operation by name with `400 FACET_NOT_OFFERED` before it builds a provider ([§8](#8-maintenance)). The
 transaction and cancel routes do not apply: `/api/db/cancel` reports cancellation as unsupported
 because the provider exposes no `cancelQuery` ([§3.8](#38-the-deadline-is-the-clients-and-only-the-clients)).
 

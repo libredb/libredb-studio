@@ -1247,12 +1247,20 @@ Redis `analyze` is the only operation that fills them today: it runs `INFO` and 
 **Response (400 Bad Request):**
 ```json
 {
-  "error": "Operation 'vacuum' not supported for this database. Supported: analyze, optimize, check, kill"
+  "error": "\"vacuum\" is not a maintenance operation LibreDB Studio offers on MySQL, which offers analyze, optimize, check, kill; no connection was opened and nothing was run.",
+  "code": "FACET_NOT_OFFERED",
+  "statusCode": 400
 }
 ```
 
-The handler validates against the target provider's capabilities: `type` is required (`{ "error": "Maintenance type is required" }`), the provider must support maintenance at all, and the requested operation must be in that provider's supported set (see the matrix above) — otherwise a `400` is returned listing what the provider does support.
+The handler checks a request in this order, and runs and records nothing for a request refused on the way.
 A body that is not JSON, or JSON that is not an object, answers `400` with `{ "error": "Invalid request body" }` before any provider is opened.
+`type` is required (`{ "error": "Maintenance type is required" }`), and a `type` that is not a string answers `{ "error": "\"type\" must be a string naming a maintenance operation" }`, which repeats nothing of the value.
+`container` and `target` are type-checked next, as the paragraphs below describe.
+Then the operation must be one the connection's engine offers: the `maintenance` list of its `ENGINE_FACETS` row, stated in the `Engine facets` subsection of each `docs/providers/<type-id>.md` (see the matrix above).
+Any other operation answers `400` with code `FACET_NOT_OFFERED`, in a sentence naming the operation, the engine and the operations it offers, before any provider is built, any SSH tunnel opened or any connection made.
+Only then is the provider opened, and the operation must also be one the connected server accepts, with the same code (see the PostgreSQL and MySQL paragraph below), before the placement check.
+Earlier releases answered these refusals with a sentence and no `code`, after connecting; a client reads the code.
 
 `container` is type-checked before any provider is opened: a value that is neither absent nor a string
 answers `{ "error": "\"container\" must be a string naming the target's container" }` with `400`.
@@ -1275,11 +1283,11 @@ operation that has no whole-database form. An operation whose declaration offers
 is not refused: its target is a session or query id that neither half describes (every engine's
 `kill`), so the request passes through.
 
-A `druid` connection fails the second check whatever the `type` is, with `{ "error": "Maintenance operations not supported for this database" }`: no maintenance operation is reachable from Druid SQL, so its supported set is empty by design. Compaction and retention are Coordinator and task concerns, and Druid publishes no catalog of running queries, so there is no id for `kill` to name.
+A `druid` connection is refused whatever the `type` is, by name with `FACET_NOT_OFFERED` and before any provider is built, in a sentence ending "which offers none": no maintenance operation is reachable from Druid SQL, so its row offers none by design. Compaction and retention are Coordinator and task concerns, and Druid publishes no catalog of running queries, so there is no id for `kill` to name.
 
-A `trino` connection passes it for `kill` and fails it for everything else, which is the difference between an empty supported set and a set of one: `CALL system.runtime.kill_query` really terminates a statement (verified end to end - the target then fails `ADMINISTRATIVELY_KILLED`), while vacuum, reindex, optimize, check and analyze all describe work that belongs to the connector behind a catalog rather than to the engine.
+A `trino` connection is offered `kill` and refused everything else, which is the difference between an empty supported set and a set of one: `CALL system.runtime.kill_query` really terminates a statement (verified end to end - the target then fails `ADMINISTRATIVELY_KILLED`), while vacuum, reindex, optimize, check and analyze all describe work that belongs to the connector behind a catalog rather than to the engine.
 
-On a `postgres` or `mysql` connection the supported set and its placements are the CONNECTED server's, measured when the provider connects, and not the type id's (#1387): CockroachDB keeps only a targeted `analyze`, RisingWave keeps only `kill`, YugabyteDB loses `reindex`, TiDB keeps `analyze` and Vitess loses `check`. A request for an operation the server refused gets the same `400` as any other unsupported operation, before anything is sent. The per-engine measurements are in `docs/providers/postgres.md` section 9.1 and `docs/providers/mysql.md` section 9.1.
+On a `postgres` or `mysql` connection the supported set and its placements are the CONNECTED server's, measured when the provider connects, and not the type id's (#1387): CockroachDB keeps only a targeted `analyze`, RisingWave keeps only `kill`, YugabyteDB loses `reindex`, TiDB keeps `analyze` and Vitess loses `check`. A request for an operation the server refused is answered after connect with the same `400` and code `FACET_NOT_OFFERED`, before anything is sent, in its own sentence naming what the connected server accepts, for example `"reindex" is not a maintenance operation the PostgreSQL server this connection reaches accepts, which accepts vacuum, analyze, kill; nothing was run.` The per-engine measurements are in `docs/providers/postgres.md` section 9.1 and `docs/providers/mysql.md` section 9.1.
 
 When the engine itself refuses the statement, the reply is the engine's answer, not a server fault (#1387): the thrown driver error is typed by `mapDatabaseError`, and one whose driver code says the statement is at fault answers `400` with `code: "QUERY_ERROR"` and the engine's own sentence, for example `{ "error": "at or near \"vacuum\": syntax error", "code": "QUERY_ERROR", "statusCode": 400 }`. Any other thrown error keeps a `5xx`.
 
@@ -1320,14 +1328,14 @@ It calls the provider's `previewMaintenance(type, path)` and nothing else, and w
 `preview` is a `MaintenancePreview`, published from `@libredb/studio/types`.
 A dialog that receives a `refusal` shows it and offers no confirm button.
 
-**Response (400 Bad Request):** the checks of `POST /api/db/maintenance`, made in the same order before the provider's method runs (a body that is not a JSON object, a missing `type`, a non-string `container`, maintenance unsupported, an operation the provider does not declare, an operation that takes no target), and these two:
+**Response (400 Bad Request):** the checks of `POST /api/db/maintenance`, made in the same order before the provider's method runs (a body that is not a JSON object, a missing `type`, a `type` that is not a string, a non-string `container`, an operation the engine's `ENGINE_FACETS` row does not offer, answered `FACET_NOT_OFFERED` before any provider is built, an operation the connected server does not accept, answered with the same code, an operation that takes no target), and these two:
 
 | Condition | Body |
 |---|---|
 | `target` absent, empty or not a string | `{ "error": "\"target\" must name the object the operation would run on" }` |
 | The operation's spec does not declare `perEntity: true` and `preview: true`, or the provider does not implement `previewMaintenance` | `{ "error": "This operation has no preview" }` |
 
-A missing `type`, a non-string `container` and a missing `target` are refused before any provider is opened.
+A missing `type`, a `type` that is not a string, a non-string `container`, a missing `target` and an operation the engine does not offer are refused before any provider is opened.
 Whether the object exists is the provider's to say: its `previewMaintenance` raises a `QueryError` naming what is missing, answered with `400`.
 
 **Declaring a per-object operation.** A provider declares it on the operation's `MaintenanceOperationSpec` in `maintenanceOperationSpecs`:
@@ -2781,6 +2789,7 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 | `QUERY_CANCELLED` | Query cancelled by the client (499) |
 | `CONFIG_ERROR` | Invalid database configuration (400) |
 | `PROVIDER_UNKNOWN` | The connection's `type` is absent, not text, or names no provider this Studio has (400), answered before any provider is built or any SSH tunnel opened, with a sentence that quotes the type when it is a non-empty string; the type ids are the `type DatabaseType` union this page lists |
+| `FACET_NOT_OFFERED` | The request names a maintenance operation the connection's engine does not offer (400), answered before any provider is built or any SSH tunnel opened, or one the connected server does not accept, answered after connect; the sentence names the operation and the engine (`POST /api/db/maintenance` and its preview) |
 | `AUTH_ERROR` | A database refused the credential (401), read from the driver's code as the paragraph above says |
 | `PERMISSION_DENIED` | A database accepted the credential and refused the statement for a privilege that credential lacks (403), with `"Permission denied: "` in front of the engine's own sentence; read from the driver's code as the paragraph above says. The browser treats it as the statement's error and never signs in again for it |
 | `CUSTOM_CONNECTIONS_DISABLED` | `ALLOW_CUSTOM_CONNECTIONS` is off, or governance mode is on, and the request supplied a connection that is not a seed (403); see `GET /api/connections/policy`. A seed the caller's role may not open is refused with `AUTH_ERROR` (403) instead |
