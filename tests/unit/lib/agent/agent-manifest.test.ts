@@ -8,6 +8,7 @@ import {
   type AgentStatementArgument,
   type AgentStatementLanguageId,
   agentVariant,
+  notReviewedSentence,
   PLAN_ESTIMATE_OPERATIONS,
   persistedRunFacts,
   planDeliverableOf,
@@ -19,7 +20,7 @@ import { composesCatalogFor, composesEstimatingExplainFor } from "@/lib/agent/co
 import { AGENT_WORKFLOW_GOALS } from "@/lib/agent/goal-verifier";
 import { agentToolDefinition } from "@/lib/agent/tools";
 import { AGENT_WORKFLOW_PRESENTS_ANSWER, type AgentRunWorkflowType } from "@/lib/agent/types";
-import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { AGENT_EXECUTION_ENGINES, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { UnknownProviderError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { typeIdRefusal } from "@/lib/db/type-id";
@@ -54,6 +55,13 @@ describe("AGENT_STATEMENT_LANGUAGE", () => {
 
   test("is frozen", () => {
     expect(Object.isFrozen(AGENT_STATEMENT_LANGUAGE)).toBe(true);
+  });
+
+  // The start route reads the language and then the review record, so the two agree on every shipped engine and the
+  // record's own refusal there is reached only by an engine a later build drops from it.
+  test("an engine has a language exactly when the review record lists it", () => {
+    const withLanguage = SHIPPED_DATABASE_TYPES.filter((type) => AGENT_STATEMENT_LANGUAGE[type] !== null);
+    expect([...withLanguage].sort()).toEqual([...AGENT_EXECUTION_ENGINES].sort());
   });
 });
 
@@ -590,6 +598,7 @@ describe("workflowAvailability", () => {
     },
     // Held empty here whatever the live mirror says, so the refusal is driven by the table and not by the census.
     requirementEngines: { ...AGENT_REQUIREMENT_ENGINES, "cluster-usage-reading": [] },
+    reviewed: AGENT_EXECUTION_ENGINES,
   } as const;
 
   test("a workflow the language has no variant of is refused with the no-variant sentence", () => {
@@ -635,6 +644,7 @@ describe("workflowAvailability", () => {
     languages: AGENT_STATEMENT_LANGUAGE,
     variants: AGENT_WORKFLOW_VARIANTS,
     requirementEngines: { ...AGENT_REQUIREMENT_ENGINES, "sql-catalog": ["duckdb"], "sql-composers": [] },
+    reviewed: AGENT_EXECUTION_ENGINES,
   } as const;
 
   test.each(["investigation", "database-assessment", "data-analysis"] as const)(
@@ -676,6 +686,39 @@ describe("workflowAvailability", () => {
       sentence:
         "Agent mode has no verified catalog composition for this engine, so this workflow's tools could only refuse. The operations workflow runs here, and plan mode drafts here.",
     });
+  });
+
+  /*
+    An engine whose language would open a statement workflow but which the review record does not list: driven through
+    the shipped tables with PostgreSQL left off the record, since no shipped engine has a language and no review row.
+  */
+  const unreviewedPostgres = {
+    languages: AGENT_STATEMENT_LANGUAGE,
+    variants: AGENT_WORKFLOW_VARIANTS,
+    requirementEngines: AGENT_REQUIREMENT_ENGINES,
+    reviewed: AGENT_EXECUTION_ENGINES.filter((type) => type !== "postgres"),
+  } as const;
+
+  test("a statement workflow in agent mode on an engine the review record does not list is refused as not reviewed, though its language would open it", () => {
+    for (const workflow of statementWorkflows) {
+      expect(workflowAvailability("agent", workflow, "postgres", unreviewedPostgres)).toEqual({
+        open: false,
+        cause: "not-reviewed",
+      });
+    }
+  });
+
+  test("plan mode and the operations workflow still open on such an engine", () => {
+    expect(workflowAvailability("agent", "operations", "postgres", unreviewedPostgres).open).toBe(true);
+    for (const workflow of [...statementWorkflows, "operations"] as const) {
+      expect(workflowAvailability("planning", workflow, "postgres", unreviewedPostgres).open).toBe(true);
+    }
+  });
+
+  test("notReviewedSentence names the engine and the ways forward that remain", () => {
+    expect(notReviewedSentence("PostgreSQL")).toBe(
+      "Agent mode runs statements only on the engines whose read-only statement path Studio has reviewed, and PostgreSQL is not one of them, so a run whose workflow sends a statement is not opened on it. The operations workflow runs here, and plan mode drafts here.",
+    );
   });
 
   test("an SQL run persists nothing, so its ledger header is the bytes it always was", () => {
