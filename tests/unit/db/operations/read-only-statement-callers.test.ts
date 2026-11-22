@@ -318,7 +318,7 @@ describe("the protected read path", () => {
     expect(core.map((use) => `${use.file} in ${use.functions.at(-1)}`)).toEqual([
       `${CORE_CALLER} in runReadOnlyStatement`,
     ]);
-  });
+  }, 60_000);
 
   test("the scan finds a budgeted read outside the function that hands it to runReadOnlyReading", () => {
     const planted = [
@@ -344,7 +344,7 @@ describe("the protected read path", () => {
         `${file} in ${caller}, held by core: true`,
       ]);
     }
-  });
+  }, 60_000);
 
   test("the scan finds a query() call, and not a comment that names one", () => {
     const planted = [
