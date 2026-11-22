@@ -23,8 +23,9 @@ import {
   providerConnection,
 } from "./provider-connection";
 import { egressDecision } from "./egress-decision";
+import { trustMaterial } from "./trust-material";
 import { registerOwnerRemoval } from "./owner-removal";
-import { READ_ONLY_ENFORCED, READS_FILE_ACCESS_POSTURE } from "./compatibility";
+import { READ_ONLY_ENFORCED, READS_FILE_ACCESS_POSTURE, READS_TRUST_MATERIAL } from "./compatibility";
 import { assertStatementsReviewed } from "./statement-review";
 import { assertDatabaseType, typeIdRow } from "./type-id";
 import { enabledProviderTypes } from "./enabled-providers";
@@ -65,7 +66,10 @@ import * as path from "path";
  *   `false`, so called without a context it opens with the trusted reach. An `owner` makes the provider
  *   that user's own (docs/GOVERNANCE.md#per-user-providers): its pool opens with `min: 0` and `max: ownerPoolMax`.
  *   A provider that takes a context is handed a copy of this one with the process's egress decision added, as
- *   `ProviderBuildContext` (types.ts), so no provider reads `DB_HTTP_BLOCK_PRIVATE_HOSTS` itself.
+ *   `ProviderBuildContext` (types.ts), so no provider reads `DB_HTTP_BLOCK_PRIVATE_HOSTS` itself; an engine whose
+ *   `READS_TRUST_MATERIAL` row (./compatibility) is true, Db2 today, is also handed the trust material core read from
+ *   the file `NODE_EXTRA_CA_CERTS` names (./trust-material), and every other engine `trust: undefined`, so no provider
+ *   reads that variable or file either. A caller's `egress` or `trust` is never handed on.
  * @returns Promise<DatabaseProvider> instance
  * @throws UnknownProviderError if the connection's type is absent or names no provider, before anything else is
  *   checked, logged or built (FND-1; see `assertDatabaseType` in ./type-id)
@@ -73,7 +77,12 @@ import * as path from "path";
  *   `LIBREDB_ENABLED_PROVIDERS` (see assertProviderEnabled), if its `readOnly` cannot be
  *   honoured (see assertReadOnlyHonoured), or if an owner comes without a whole `ownerPoolMax`
  *   from 1 (see assertOwnerPoolHonoured), or if the execution context is not plain data: a class instance, a getter,
- *   an inherited field or a field that is not enumerable (see assertExecutionContextIsPlainData)
+ *   an inherited field or a field that is not enumerable (see assertExecutionContextIsPlainData), or, for an engine
+ *   whose `READS_TRUST_MATERIAL` row is true, if the file `NODE_EXTRA_CA_CERTS` names is missing, unreadable, empty,
+ *   holds a block under the legacy `X509 CERTIFICATE` label, holds no certificate block or leaves one unclosed
+ *   (`Invalid NODE_EXTRA_CA_CERTS: <reason>`, see trustMaterial in
+ *   ./trust-material): the first such build of a process with no boot hook reads the file and keeps the outcome, and an
+ *   invalid file refuses every such build, before the log line, while every other engine is built as before
  *
  * @example
  * // SQL Database
@@ -257,9 +266,16 @@ export async function createDatabaseProvider(
   // opens none. A tunnel or record that is not plain data is refused here, by name, before the log line below.
   connection = providerConnection(connection);
   // What every provider that takes a context is handed: a copy of the caller's execution context, plain data as checked
-  // above, and the process's egress decision, which a guarded provider hands its guard (FND-2, the provider plugins
-  // design section 0.1). One rule for every case below, and never a caller's `egress`: the decision is set here, last.
-  const context: ProviderBuildContext = { ...execution, egress };
+  // above, the process's egress decision, which a guarded provider hands its guard, and, for an engine whose
+  // `READS_TRUST_MATERIAL` row is true, the trust material core read from the file NODE_EXTRA_CA_CERTS names, which that
+  // provider's own TLS library would never read (FND-2, the provider plugins design section 0.1). The material is read
+  // only for such an engine, so an invalid bundle refuses that build here, before the log line, and no other. One rule
+  // for every case below, and never a caller's `egress` or `trust`: both are set here, last.
+  const context: ProviderBuildContext = {
+    ...execution,
+    egress,
+    trust: typeIdRow(READS_TRUST_MATERIAL, connection.type) === true ? trustMaterial() : undefined,
+  };
   console.log(`[DB] Creating ${sanitize(connection.type)} provider for "${sanitize(connection.name || "")}"`);
 
   // Explicit overrides (such as the connectivity probe) take precedence over saved settings.

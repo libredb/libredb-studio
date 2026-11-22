@@ -114,6 +114,7 @@ export const PROGRAMME_CONTROL_IDS = [
   "3.41",
   "3.42",
   "3.43",
+  "3.44",
 ];
 
 export const STATUSES = new Set(["Implemented", "Partial", "Not implemented"]);

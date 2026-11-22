@@ -47,7 +47,7 @@ The defects 1.0.22 had were reported upstream at [gurungabit/db2-node#12](https:
 |---|---|
 | `capabilities.ts` | `DB2_CONTAINER_LEVELS`, `DB2_OBJECT_KINDS`, `db2Capabilities`, `db2Labels`: pure data, no driver import |
 | `driver.ts` | The `Db2Driver` types, `loadDb2Driver()`, the one `import("db2-node")`, and `describeDriverAbsence()` |
-| `connection.ts` | `resolveTarget()`, `assertTransport()`, `clientOptions()` and `openClient()`: the TLS mapping and the CA temp-file lifecycle |
+| `connection.ts` | `resolveTarget()`, `assertTransport()`, `caPemFor()`, `clientOptions()` and `openClient()`: the TLS mapping, the choice of the CA file's certificates and the CA temp-file lifecycle |
 | `params.ts` | `normaliseParams()`, which refuses an array or object parameter before the driver reads it as bytes |
 | `values.ts` | `db2TypeName()`, `readResult()` and its LOB integrity warning, and `DB2_PREVIEW_PROJECTION` |
 | `catalog.ts` | The catalog SQL, and the decoders that read its rows: names, column types, object detail and source text |
@@ -57,7 +57,7 @@ The defects 1.0.22 had were reported upstream at [gurungabit/db2-node#12](https:
 | `index.ts` | The composition root |
 
 The constructor opens nothing.
-`connect()` resolves the target, checks the transport, loads the driver, writes the CA file when one is given and opens one `Client`; there is no pool.
+`connect()` resolves the target, checks the transport, chooses the CA file's certificates (`caPemFor()`: the connection's own CA, or in Verify (system trust) and Verify full without one the `NODE_EXTRA_CA_CERTS` certificates Studio handed the provider, refusing with "This provider was built without the trust material ..." when it was handed none), loads the driver, writes the CA file when there are certificates to write and opens one `Client`; there is no pool.
 `disconnect()` closes that client, removes the CA file and its directory, and marks the provider disconnected.
 A deployment without the driver answers `describeDriverAbsence()`'s message, "Db2 is not available in this deployment: the db2-node driver is not installed. Install it, or use an image that ships it, to open Db2 connections.", and every other engine keeps working.
 
@@ -105,17 +105,25 @@ The SSL panel's modes map to `db2-node` options as follows:
 |---|---|---|
 | Disabled, with the insecure opt-in | `ssl: false, securityMechanism: "userPassword"` | Nothing; the password travels in cleartext |
 | Require (no verification) | `ssl: true, rejectUnauthorized: false` | Encryption only; a server that impersonates the host is not detected |
-| Verify (system trust) | `ssl: true, rejectUnauthorized: true` | The chain, against the system trust store |
+| Verify (system trust) | `ssl: true, rejectUnauthorized: true, sslClientHostnameValidation: "Basic"`, and `caCert: <file>` with the `NODE_EXTRA_CA_CERTS` certificates when that variable names a bundle | The chain, against the system trust store and the `NODE_EXTRA_CA_CERTS` certificates, and the host name |
 | Verify CA | `ssl: true, rejectUnauthorized: true, caCert: <file>, sslClientHostnameValidation: "OFF"` | The chain, against your CA; not the host name |
 | Verify full | `ssl: true, rejectUnauthorized: true, caCert: <file>, sslClientHostnameValidation: "Basic"` | The chain and the host name |
 
 Verification is the default once TLS is on; "Require" is a separate choice you make on purpose.
-Verify full without a CA certificate checks the chain against the system trust store, and the host name as before.
+`db2-node`'s TLS library, rustls, reads the operating system's trust store and never Node.js's, so `NODE_EXTRA_CA_CERTS` does not reach it on its own.
+Studio reads the file that variable names once per process, at boot on a standalone server, and hands its certificates to the provider, which writes them to `ca.pem` as it writes a pasted CA, for Verify (system trust) and for Verify full without a CA certificate.
+A connection with a CA certificate of its own is not handed them.
+The Debian image (`Dockerfile`) carries no system trust store, so there, with `SSL_CERT_FILE` and `SSL_CERT_DIR` unset (rustls reads them as the system trust store), Verify (system trust) trusts exactly the `NODE_EXTRA_CA_CERTS` certificates, and with the variable unset it answers `TLS verification is enabled but no root certificates are available` (measured on 2026-11-22 with the image's Node 26.13.1).
+Studio does not parse the blocks of that file as certificates, and the driver reads them all at connect: when one block is framed as a certificate but its body is not one, where Node.js warns and keeps the certificates before it, every Verify (system trust) connection and every Verify full connection without a CA certificate fails with `TLS error: Failed to add CA cert: invalid peer certificate: BadEncoding`, whatever server it dials (measured on 2026-11-22 through 1.0.25 under Bun 1.4.4); repair or remove that block in the `NODE_EXTRA_CA_CERTS` file.
+A Db2 provider built without Studio's provider factory has none of them, and refuses such a connection with "This provider was built without the trust material Studio reads from the file NODE_EXTRA_CA_CERTS names, so it dials nothing" before it loads the driver.
+Verify (system trust) names `sslClientHostnameValidation: "Basic"`, the driver's own default, so the host name check does not rest on a default in a mode that may carry a CA file.
+Verify full without a CA certificate checks the chain against the system trust store and the `NODE_EXTRA_CA_CERTS` certificates, and the host name as before.
 Verify CA without a CA certificate is refused: it checks no host name, so against the system trust store it would accept any publicly trusted certificate, issued for any name, and send it the password.
-The panel holds the CA as PEM text and `db2-node` wants a file path, so the provider writes the PEM to `ca.pem` in a fresh `libredb-db2-` directory under the system temp directory, mode 0600, on connect, and removes the directory on disconnect and on a failed connect.
+The panel holds the CA as PEM text, Studio holds the operator's `NODE_EXTRA_CA_CERTS` certificates as PEM text too, and `db2-node` wants a file path, so the provider writes the PEM to `ca.pem` in a fresh `libredb-db2-` directory under the system temp directory, mode 0600, on connect, and removes the directory on disconnect and on a failed connect.
 On Windows the mode bits do not apply, and the file is private through the per-user access control on the temp directory under the user profile.
 A client certificate or key is refused with "db2-node 1.0.25 has no client-certificate authentication; remove the client certificate and key from this Db2 connection.", never ignored.
 
+Measured on 2026-11-22 through 1.0.25 under Bun 1.4.4, against a TLS server whose certificate only a CA made for the test signs (`tests/integration/db/db2-trust-material.test.ts`): with that CA in `NODE_EXTRA_CA_CERTS`, Verify (system trust) and Verify full without a CA certificate complete the handshake; with the variable unset the same connection answers `UnknownIssuer` and completes none; with an unrelated CA pasted under Verify full it completes none; and a certificate for another name is refused with "certificate not valid for name".
 Measured through 1.0.24 on 12.1.0.0 and 11.5.9.0, and again through 1.0.25: Verify CA with the CA held as PEM text connects through the provider, and the opt-in connects without TLS where the same connection without the named mechanism is refused.
 Measured through 1.0.22: the connection negotiates TLS 1.3; a CA certificate with host-name validation, host-name validation `OFF` and `rejectUnauthorized: false` each connect; the system trust store alone answers `UnknownIssuer` for a server signed by a private CA; Verify full by an IP address the certificate does not name fails with "invalid peer certificate: certificate not valid for name", where Verify CA connects; and a plaintext connection to the TLS port is reset.
 

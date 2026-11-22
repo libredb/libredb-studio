@@ -27,7 +27,7 @@ const INTERIM_READERS: Readonly<Record<string, string>> = {
   "src/lib/db/http/node-transport.ts": "createNodeTransport and createNodeByteTransport, until slice 2b-4",
 };
 
-function readsTheSetting(source: string, fileName = "probe.ts"): boolean {
+function readsTheSetting(source: string, fileName = "probe.ts", variable = VARIABLE): boolean {
   // The script kind follows the extension: parsed as TSX, a generic arrow or an angle-bracket assertion in a .ts file
   // opens a JSX element, and a read after it would never be visited.
   const kind = fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
@@ -35,10 +35,10 @@ function readsTheSetting(source: string, fileName = "probe.ts"): boolean {
   let found = false;
   const visit = (node: ts.Node): void => {
     if (found) return;
-    if (ts.isPropertyAccessExpression(node) && node.name.text === VARIABLE) found = true;
-    else if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) && node.text === VARIABLE)
+    if (ts.isPropertyAccessExpression(node) && node.name.text === variable) found = true;
+    else if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) && node.text === variable)
       found = true;
-    else if (ts.isBindingElement(node) && (node.propertyName ?? node.name).getText(file) === VARIABLE) found = true;
+    else if (ts.isBindingElement(node) && (node.propertyName ?? node.name).getText(file) === variable) found = true;
     else ts.forEachChild(node, visit);
   };
   visit(file);
@@ -147,6 +147,71 @@ describe("a setting core owns has one reader, and no provider imports it (FND-2 
     const reaching = providerModules().filter((name) => {
       const { modules } = valueImportClosure(name);
       return modules.includes(FACTORY) || modules.includes(BOOT_PREFLIGHT);
+    });
+    expect(reaching).toEqual([]);
+  });
+});
+
+// The operator's CA bundle is core's to read too (FND-2 slice 4, the provider plugins design section 0.1):
+// `src/lib/db/trust-material.ts` reads the file NODE_EXTRA_CA_CERTS names once per process, and the factory hands its
+// certificates to the providers whose TLS library does not read Node's store, so no provider reads the variable or
+// reaches a module that does. Sign-in's token trust (`src/lib/openshift-auth/http.ts`) reads it on every token call by
+// design; it is core code, not a provider, and no provider reaches it either.
+const CA_VARIABLE = "NODE_EXTRA_CA_CERTS";
+const TRUST_READER = "src/lib/db/trust-material.ts";
+const TOKEN_TRUST_READER = "src/lib/openshift-auth/http.ts";
+const CA_PREFLIGHT = "src/lib/config/ca-bundle-preflight.ts";
+
+describe("the operator's CA bundle is read by core alone, and no provider reaches a module that reads it (FND-2 slice 4)", () => {
+  test("the read detector finds NODE_EXTRA_CA_CERTS in a property, an element, a destructuring and the name as a string literal, and ignores a sentence that names it", () => {
+    expect(readsTheSetting("const a = process.env.NODE_EXTRA_CA_CERTS;", "probe.ts", CA_VARIABLE)).toBe(true);
+    expect(readsTheSetting('const a = process.env["NODE_EXTRA_CA_CERTS"];', "probe.ts", CA_VARIABLE)).toBe(true);
+    expect(readsTheSetting("const a = process.env['NODE_EXTRA_CA_CERTS'];", "probe.ts", CA_VARIABLE)).toBe(true);
+    expect(readsTheSetting("const a = process.env[`NODE_EXTRA_CA_CERTS`];", "probe.ts", CA_VARIABLE)).toBe(true);
+    expect(readsTheSetting("const { NODE_EXTRA_CA_CERTS } = process.env;", "probe.ts", CA_VARIABLE)).toBe(true);
+    expect(readsTheSetting("const { NODE_EXTRA_CA_CERTS: bundle = '' } = process.env;", "probe.ts", CA_VARIABLE)).toBe(
+      true,
+    );
+    expect(readsTheSetting('const KEY = "NODE_EXTRA_CA_CERTS";', "probe.ts", CA_VARIABLE)).toBe(true);
+    expect(readsTheSetting("// process.env.NODE_EXTRA_CA_CERTS", "probe.ts", CA_VARIABLE)).toBe(false);
+    expect(
+      readsTheSetting('const SENTENCE = "Point NODE_EXTRA_CA_CERTS at a PEM file";', "probe.ts", CA_VARIABLE),
+    ).toBe(false);
+    // The default variable is the egress one, so a read of another is not a read of it.
+    expect(readsTheSetting("const a = process.env.NODE_EXTRA_CA_CERTS;")).toBe(false);
+  });
+
+  test("the modules under src/ and vscode-extension/src/ that read NODE_EXTRA_CA_CERTS are src/lib/db/trust-material.ts and src/lib/openshift-auth/http.ts", () => {
+    // Each read shape spells the name, so only a file whose text names the variable is parsed.
+    const readers = trackedSources("src", "vscode-extension/src").filter((name) => {
+      const source = readFileSync(join(process.cwd(), name), "utf8");
+      return source.includes(CA_VARIABLE) && readsTheSetting(source, name, CA_VARIABLE);
+    });
+    expect(readers.sort()).toEqual([TRUST_READER, TOKEN_TRUST_READER].sort());
+  });
+
+  test("src/lib/db/trust-material.ts reads it", () => {
+    const source = readFileSync(join(process.cwd(), TRUST_READER), "utf8");
+    expect(readsTheSetting(source, TRUST_READER, CA_VARIABLE)).toBe(true);
+  });
+
+  const importersOfTheTrustReader = (): string[] =>
+    trackedSources("src")
+      .filter((name) => /\.tsx?$/.test(name) && valueImportsOf(name).includes(TRUST_READER))
+      .sort();
+
+  test("no module under src/lib/db/providers/ imports src/lib/db/trust-material.ts", () => {
+    expect(importersOfTheTrustReader().filter((name) => name.startsWith(PROVIDERS))).toEqual([]);
+  });
+
+  test("the modules that import src/lib/db/trust-material.ts are the provider factory and the CA bundle preflight", () => {
+    expect(importersOfTheTrustReader()).toEqual([CA_PREFLIGHT, FACTORY].sort());
+  });
+
+  test("no module under src/lib/db/providers/ reaches a module that reads NODE_EXTRA_CA_CERTS, or the CA bundle preflight, through its imports", () => {
+    const reaching = providerModules().filter((name) => {
+      const { modules } = valueImportClosure(name);
+      return [TRUST_READER, TOKEN_TRUST_READER, CA_PREFLIGHT].some((module) => modules.includes(module));
     });
     expect(reaching).toEqual([]);
   });

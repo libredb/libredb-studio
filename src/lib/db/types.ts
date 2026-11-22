@@ -2722,8 +2722,9 @@ export interface ProviderOptions {
  * factory called without a context opens a DuckDB handle with file access denied, see
  * `allowExternalFileAccess`.
  *
- * The factory hands a provider a copy of this context with core's egress decision added, as `ProviderBuildContext`,
- * so `createDatabaseProvider` refuses a context that is not plain data with a `DatabaseConfigError`.
+ * The factory hands a provider a copy of this context with core's egress decision and, for the engines that take it,
+ * core's trust material added, as `ProviderBuildContext`, so `createDatabaseProvider` refuses a context that is not
+ * plain data with a `DatabaseConfigError`.
  */
 export interface ProviderExecutionContext {
   /**
@@ -2841,15 +2842,36 @@ export interface EgressDecision {
 }
 
 /**
- * What `createDatabaseProvider` hands a provider it builds as its context argument: the caller's execution context
- * and `egress`, the egress decision core took (FND-2, the provider plugins design section 0.1). The factory builds it;
- * `egress` is always core's decision, never a caller's. A provider whose connections pass the shared egress guard
- * keeps it and, when it builds its origin, transport or dial, hands `requireEgressDecision(context.egress)` from
- * `./http/egress-policy` to the guard, so a provider built without a decision refuses by name and dials nothing.
+ * The trust material: the certificate blocks of the file `NODE_EXTRA_CA_CERTS` names, in the file's order, each from its
+ * `-----BEGIN CERTIFICATE-----` line through its `-----END CERTIFICATE-----` line, with every other text of the file
+ * dropped; no certificate when the variable is unset or empty. Core reads it once per process (`./trust-material`); it
+ * lives here, beside `ProviderBuildContext`, so a provider names the type without importing the module that reads the
+ * file. It holds certificates only, never the path. Frozen, with its list.
+ */
+export interface TrustMaterial {
+  readonly certificates: readonly string[];
+}
+
+/**
+ * What `createDatabaseProvider` hands a provider it builds as its context argument: the caller's execution context,
+ * `egress`, the egress decision core took, and `trust`, the trust material core read (FND-2, the provider plugins
+ * design section 0.1). The factory builds it; `egress` and `trust` are always core's, never a caller's. A provider whose
+ * connections pass the shared egress guard keeps `egress` and, when it builds its origin, transport or dial, hands
+ * `requireEgressDecision(context.egress)` from `./http/egress-policy` to the guard, so a provider built without a
+ * decision refuses by name and dials nothing.
  * Internal: the package exports `ProviderExecutionContext`, not this type.
  */
 export interface ProviderBuildContext extends ProviderExecutionContext {
   readonly egress?: EgressDecision;
+  /**
+   * Core's trust material, for an engine whose `READS_TRUST_MATERIAL` row in `./compatibility` is true, the engines
+   * whose TLS library does not read Node.js's trust store and so never sees `NODE_EXTRA_CA_CERTS` on its own (Db2
+   * today); `undefined` for every other engine, whose TLS Node.js already gives the variable's certificates. Such a
+   * provider hands `requireTrustMaterial(context.trust)` from `./utils/require-trust-material` to its TLS wherever a
+   * connection verifies against the system trust store, so built without it the provider refuses by name and dials
+   * nothing.
+   */
+  readonly trust?: TrustMaterial;
 }
 
 // ============================================================================

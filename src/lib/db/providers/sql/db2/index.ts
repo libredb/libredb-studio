@@ -40,8 +40,8 @@ import type {
   ObjectSourceDocument,
   PerformanceMetrics,
   PreparedQuery,
+  ProviderBuildContext,
   ProviderCapabilities,
-  ProviderExecutionContext,
   ProviderLabels,
   ProviderOptions,
   QueryPrepareOptions,
@@ -51,6 +51,7 @@ import type {
   SlowQueryStats,
   StorageStats,
   TableStats,
+  TrustMaterial,
 } from "../../../types";
 import {
   ConnectionError,
@@ -140,6 +141,14 @@ export class Db2Provider extends SQLBaseProvider {
   private readonly caFileSystem: CaFileSystem;
 
   /**
+   * The trust material the factory built this provider with (`ProviderBuildContext.trust`): the CA certificates core read
+   * from the file `NODE_EXTRA_CA_CERTS` names, which db2-node's own TLS never reads. Every client this provider opens,
+   * the shared one, a transaction's session and an agent call's, takes it in the modes that verify against the system
+   * trust store (`caPemFor` in `connection.ts`); absent, those modes are refused by name before anything is dialled.
+   */
+  private readonly trust: TrustMaterial | undefined;
+
+  /**
    * Whether this provider was opened to send an agent's statements: under an execution profile (`readOnly`) whose
    * acquisition calls `queryReadOnly` (`sendsStatements`). Only then does `queryReadOnly` answer, and only after the
    * user is proved on the statement's own connection (`verifyAgentPrincipal` in `agent-read.ts`). The operations
@@ -161,10 +170,11 @@ export class Db2Provider extends SQLBaseProvider {
   constructor(
     config: Db2Connection,
     options: ProviderOptions = {},
-    execution: ProviderExecutionContext = {},
+    execution: ProviderBuildContext = {},
     seams: Db2ProviderSeams = {},
   ) {
     super(config, options);
+    this.trust = execution.trust;
     this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
     this.valueFree = execution.readOnly === true;
     const columns: ColumnSource = this.valueFree ? VALUE_FREE_COLUMNS : SYSCAT_COLUMNS;
@@ -200,7 +210,7 @@ export class Db2Provider extends SQLBaseProvider {
 
   public async connect(): Promise<void> {
     try {
-      const opened = await openClient(this.config, this.loadDriver, this.caFileSystem);
+      const opened = await openClient(this.config, this.trust, this.loadDriver, this.caFileSystem);
       this.client = opened.client;
       this.caDir = opened.caDir;
       this.setConnected(true);
@@ -342,7 +352,7 @@ export class Db2Provider extends SQLBaseProvider {
     budget: ReadOnlyStatementBudget,
     work: (transaction: Db2Transaction) => Promise<T>,
   ): Promise<T> {
-    const opened = await openClient(this.config, this.loadDriver, this.caFileSystem);
+    const opened = await openClient(this.config, this.trust, this.loadDriver, this.caFileSystem);
     let transaction: Db2Transaction | undefined;
     let retired = false;
     try {
@@ -391,7 +401,7 @@ export class Db2Provider extends SQLBaseProvider {
     this.opening = true;
     const generation = this.generation;
     try {
-      const opened = await openClient(this.config, this.loadDriver, this.caFileSystem);
+      const opened = await openClient(this.config, this.trust, this.loadDriver, this.caFileSystem);
       let transaction: Db2Transaction;
       try {
         transaction = await opened.client.beginTransaction();

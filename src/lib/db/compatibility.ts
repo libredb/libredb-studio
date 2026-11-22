@@ -457,6 +457,80 @@ export const READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> 
 });
 
 /**
+ * Which shipped engines are handed core's trust material, the CA certificates of the file `NODE_EXTRA_CA_CERTS` names
+ * (`TrustMaterial` in `./types`, read once per process by `./trust-material`): true for an engine whose provider's TLS
+ * library does not read Node.js's trust store, so the variable never reaches it on its own.
+ *
+ * `createDatabaseProvider` reads this row, through `typeIdRow`, to set `ProviderBuildContext.trust`: core's material
+ * where it is true, `undefined` everywhere else. Node.js adds the variable's certificates to every TLS connection it
+ * opens without a `ca` of its own, so a provider on `node:tls`, `node:https`, `fetch` or a driver built on them needs
+ * nothing, and is handed nothing.
+ *
+ * Measured on 2026-11-22 for every type-id whose provider opens TLS, in Verify (system trust) against a server whose
+ * certificate only a private CA in `NODE_EXTRA_CA_CERTS` signs: every one reached it but Db2, whose driver, db2-node,
+ * verifies with rustls against the operating system's store and never reads the variable. The engines with a
+ * configurable host were built through the provider factory on Node.js 26.13.1 in the runner image, Node.js 24.22.1
+ * and Bun 1.4.4; RabbitMQ's AMQPS leg was dialled through its `dialAmqp`, not built by the factory, on Node.js 26.13.1
+ * in the runner image and Bun 1.4.4;
+ * Snowflake, BigQuery and Firestore, whose hosts are fixed on port 443, only on Node.js 26.13.1 in the runner image.
+ * Not measured:
+ * Oracle in Thick mode, whose TLS is the Oracle Client's own (docs/BACKLOG.md). A new provider sets its row to true
+ * only when its TLS library is not Node's, such as a native addon with a TLS stack of its own, and then hands
+ * `requireTrustMaterial(context.trust)` from `./utils/require-trust-material` to its TLS wherever a connection
+ * verifies against the system trust store (docs/ADDING_A_PROVIDER.md, "Step 3: Register in the Factory").
+ *
+ * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone answering, and
+ * `tests/security/provider-trust-material.test.ts` holds every entry against the material that engine's provider
+ * holds when the factory builds it. Frozen like the records above it.
+ */
+export const READS_TRUST_MATERIAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
+  postgres: false,
+  bigquery: false,
+  snowflake: false,
+  spark: false,
+  mysql: false,
+  sqlite: false,
+  libsql: false,
+  duckdb: false,
+  oracle: false,
+  // db2-node verifies with rustls against the operating system's store, so NODE_EXTRA_CA_CERTS never reaches it.
+  db2: true,
+  mssql: false,
+  clickhouse: false,
+  druid: false,
+  trino: false,
+  cassandra: false,
+  elasticsearch: false,
+  opensearch: false,
+  mongodb: false,
+  couchbase: false,
+  redis: false,
+  prometheus: false,
+  kafka: false,
+  etcd: false,
+  neo4j: false,
+  milvus: false,
+  qdrant: false,
+  weaviate: false,
+  influxdb: false,
+  influxdb3: false,
+  oxia: false,
+  databend: false,
+  s3: false,
+  kubernetes: false,
+  mqtt: false,
+  firestore: false,
+  rabbitmq: false,
+  opcua: false,
+  mtconnect: false,
+  modbus: false,
+  netconf: false,
+  snmp: false,
+  sparkplug: false,
+  libredb: false,
+});
+
+/**
  * Which shipped engines refuse to open a handle at all when its file-access posture is denied, rather
  * than confining it. SQLite's `connect()` refuses before any file I/O because its drivers cannot confine
  * statement-level file access, while DuckDB, the other engine that reads the posture, opens the handle

@@ -17,6 +17,14 @@
  * The CA certificate arrives as PEM text and db2-node wants a FILE PATH, so it is written to a
  * private temporary directory for the life of the connection and removed on disconnect and on a
  * failed connect.
+ *
+ * db2-node's TLS library, rustls, checks a chain against the operating system's trust store and
+ * never reads Node.js's, so `NODE_EXTRA_CA_CERTS` does not reach it on its own. In the two modes
+ * that verify against the system trust store, Verify (system trust) and Verify full without a CA
+ * of its own, the CA file carries instead the operator's certificates core read from that
+ * variable's file and the factory handed this provider as its trust material (`caPemFor`). A
+ * connection with a CA of its own is handed none of them, as Node.js hands a `ca` none of the
+ * variable's.
  */
 
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -25,6 +33,8 @@ import { join } from "node:path";
 import { TUNNEL_FAR_END, type DatabaseConnection, type SSLMode, type WithTunnelFarEnd } from "@/lib/types";
 import { parseConnectionString } from "@/lib/connection-string-parser";
 import { ConnectionError, DatabaseConfigError } from "../../../errors";
+import type { TrustMaterial } from "../../../types";
+import { requireTrustMaterial } from "../../../utils/require-trust-material";
 import { type Db2Client, type Db2ClientOptions, type Db2Driver, describeDriverAbsence, loadDb2Driver } from "./driver";
 
 /** Db2 LUW's registered port, and the form's default. */
@@ -195,6 +205,27 @@ export function assertTransport(config: Db2Connection, target: Db2Target): void 
   }
 }
 
+/** The modes in which db2-node checks the chain against the system trust store: no CA of the connection's own. */
+const VERIFIES_AGAINST_SYSTEM_STORE = new Set<SSLMode>(["verify-system", "verify-full"]);
+
+/**
+ * The PEM the CA file carries for one target, or none.
+ *
+ * A connection's own CA (`target.caPem`, Verify CA and Verify full) is taken alone. In a mode that
+ * verifies against the system trust store, Verify (system trust) and Verify full without a CA of its
+ * own, the operator's certificates are taken, joined in order: the trust material the factory built
+ * this provider with, required, so a provider built without it is refused by name with
+ * `TRUST_MATERIAL_MISSING` before anything is dialled. With no certificate in it (`NODE_EXTRA_CA_CERTS`
+ * unset) there is no CA file, and the driver checks against the system trust store alone. Require and
+ * no TLS take none and need no material.
+ */
+export function caPemFor(target: Db2Target, trust: TrustMaterial | undefined): string | undefined {
+  if (target.caPem !== undefined) return target.caPem;
+  if (target.tls === undefined || !VERIFIES_AGAINST_SYSTEM_STORE.has(target.tls)) return undefined;
+  const { certificates } = requireTrustMaterial(trust);
+  return certificates.length === 0 ? undefined : certificates.join("\n");
+}
+
 /**
  * The driver options for one target, per the TLS table in `docs/providers/db2.md`. Neither
  * `queryTimeout` nor `currentSchema` is ever set (M6, M4). Without TLS, which `assertTransport`
@@ -217,7 +248,9 @@ export function clientOptions(target: Db2Target, caFile?: string): Db2ClientOpti
     case "require":
       return { ...base, ssl: true, rejectUnauthorized: false };
     case "verify-system":
-      return { ...base, ssl: true, rejectUnauthorized: true };
+      // The host check is named although it equals the driver's measured default, so it does not rest on a default in
+      // a mode that may now carry a CA file.
+      return { ...base, ssl: true, rejectUnauthorized: true, sslClientHostnameValidation: "Basic", ...ca };
     case "verify-ca":
       return { ...base, ssl: true, rejectUnauthorized: true, sslClientHostnameValidation: "OFF", ...ca };
     case "verify-full":
@@ -263,18 +296,23 @@ export interface OpenedClient {
 /**
  * The driver loaded, the client built and connected.
  *
- * A failed connect removes the CA directory and answers `Failed to connect to Db2: <reason>`,
- * except the driver's own absence, which keeps its message: it names the remedy.
+ * `trust` is the trust material the provider was built with (`caPemFor`); a mode that verifies
+ * against the system trust store is refused without it, after the transport rules and before the
+ * driver is loaded. A failed connect removes the CA directory and answers
+ * `Failed to connect to Db2: <reason>`, except the driver's own absence, which keeps its message: it
+ * names the remedy.
  */
 export async function openClient(
   config: Db2Connection,
+  trust: TrustMaterial | undefined,
   load: () => Promise<Db2Driver> = loadDb2Driver,
   fs: CaFileSystem = NODE_CA_FILE_SYSTEM,
 ): Promise<OpenedClient> {
   const target = resolveTarget(config);
   assertTransport(config, target);
+  const pem = caPemFor(target, trust);
   const driver = await load();
-  const ca = target.caPem === undefined ? undefined : await writeCaFile(target.caPem, fs);
+  const ca = pem === undefined ? undefined : await writeCaFile(pem, fs);
   try {
     const client = new driver.Client(clientOptions(target, ca?.file));
     await client.connect();

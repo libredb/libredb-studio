@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D488, U17 · 361
+- [Drivers and connections](#drivers-and-connections) — D1-D490, U17 · 363
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U222 · 207
@@ -4844,6 +4844,28 @@ Measured 2026-11-22 with factory-built providers against a counting server: with
 Found 2026-11-22 while building FND-2 slice 2b-3a.
 
 **Done when:** every unit that dials a host from the connection refuses link-local addresses and AWS's IPv6 instance metadata address whatever the flag says, as the byte transport, MQTT, NETCONF and Sparkplug B do, a census test holds it, and `docs/SECURITY.md` "Known limits" says so.
+
+### D489. Oracle Thick mode is not shown to trust the `NODE_EXTRA_CA_CERTS` certificates
+
+Studio hands its trust material, the certificates of the file `NODE_EXTRA_CA_CERTS` names, only to the engines whose TLS does not read Node.js's store (`READS_TRUST_MATERIAL` in `src/lib/db/compatibility.ts`), measured on 2026-11-22 for every provider that opens TLS.
+Oracle in Thin mode is on Node's TLS and reached the private CA.
+Thick mode (`ORACLE_CLIENT_LIB_DIR`) negotiates TLS in the Oracle Client with the trust of its wallet, and node-oracledb's `walletContent` is a Thin attribute, so neither the variable nor a pasted CA is shown to reach it.
+Not measured, for want of an Oracle Client in the measurement.
+
+Found 2026-11-22 while measuring which providers the operator's CA bundle reaches in process.
+
+**Done when:** a TCPS connection in Thick mode to a listener whose certificate only a private CA signs is measured with and without that CA in `NODE_EXTRA_CA_CERTS`, and either Studio hands Thick mode its trust material, held by a test, or `docs/providers/oracle.md` names the wallet route and the limit.
+
+### D490. The chart README lists fewer `NODE_EXTRA_CA_CERTS` boot refusals than Studio makes
+
+The CA bundle preflight also refuses a file that holds a block under the legacy `-----BEGIN X509 CERTIFICATE-----` label, and a file with a certificate block that has no END line.
+The chart README's "Trusting a private CA" and "The cluster's trusted CA bundle" sections, and their copy under `operator/helm-charts/`, still list only a missing, unreadable, empty or whitespace-only file and one with no PEM certificate.
+An operator whose bundle ends in a truncated block reads there that it boots, and meets a refused boot whose banner names the reason.
+`.env.example` names every refusal; the chart README waits for the next chart change, because a packaged chart file needs a chart version bump.
+
+Found 2026-11-22 in review of the trust material change.
+
+**Done when:** both chart README sections, in the chart and in its operator copy, name every refusal the preflight makes, with the chart version bump that change needs.
 
 ## Value interpolation
 
