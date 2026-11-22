@@ -621,9 +621,17 @@ async function begunNextRequestCase(): Promise<{ problems: string[]; output: str
     socket.on("data", (chunk: Buffer) => {
       text += chunk.toString("latin1");
     });
-    socket.on("error", () => {});
     const ended = new Promise<void>((resolve) => socket.once("close", () => resolve()));
-    await new Promise<void>((resolve) => socket.once("connect", () => resolve()));
+    // A connection refused or reset before it opens fails the case by name, and its finally stops the server.
+    await new Promise<void>((resolve, reject) => {
+      socket.once("connect", () => resolve());
+      socket.once("error", (error) => reject(new Error(`the raw connection did not open: ${error.message}`)));
+    });
+    // An error once it is open, such as a reset instead of the end of the connection, is a problem of the case.
+    let failure: Error | undefined;
+    socket.on("error", (error) => {
+      failure = error;
+    });
     const body = JSON.stringify(credentials);
     socket.write(
       `POST /api/auth/login HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body.slice(0, 10)}`,
@@ -642,6 +650,7 @@ async function begunNextRequestCase(): Promise<{ problems: string[]; output: str
         ...(answered && head.startsWith("HTTP/1.1 200") ? [] : [`the sign-in in flight was not answered 200: ${head}`]),
         ...(/^connection: close$/im.test(head) ? [] : [`the answer did not carry Connection: close: ${head}`]),
         ...(closedWithAnswer ? [] : ["the connection did not end within 1 s of the answer"]),
+        ...(failure === undefined ? [] : [`the connection failed: ${failure.message}`]),
         ...(exit.code === 0 && exit.signal === null ? [] : [`expected exit code 0, got ${describeEnd(exit)}`]),
         ...(output.includes(studioStart(STUDIO_OWNS_SIGTERM, 1, 1))
           ? []
