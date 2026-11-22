@@ -42,7 +42,8 @@ export async function register(): Promise<void> {
 
   // Private CA preflight: Node only warns when NODE_EXTRA_CA_CERTS names a missing or
   // empty file, so refuse to boot instead; on OpenShift the cluster fills the chart's
-  // trusted-CA ConfigMap after start, and the restart picks the bundle up.
+  // trusted-CA ConfigMap after start, and the restart picks the bundle up. Its read is the
+  // one core keeps for the providers whose TLS does not read Node's store (Db2).
   const { verifyExtraCaCertsAtBoot } = await import("@/lib/config/ca-bundle-preflight");
   if (!verifyExtraCaCertsAtBoot()) return;
 

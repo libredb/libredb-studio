@@ -4,6 +4,7 @@ import * as os from "os";
 import * as path from "path";
 import { register } from "@/instrumentation";
 import { forgetEgressDecision } from "@/lib/db/egress-decision";
+import { forgetTrustMaterial } from "@/lib/db/trust-material";
 import { logger } from "@/lib/logger";
 import { closeStorageProvider } from "@/lib/storage/factory";
 import { getPendingSeeds, getUnavailableSamples } from "@/lib/seed";
@@ -91,8 +92,10 @@ describe("instrumentation register()", () => {
     // back in explicitly.
     process.env.LIBREDB_NO_BANNER = "1";
     resetSampleSeedStates();
-    // register() takes the egress decision once per process; forgotten here, each boot below decides as a new one.
+    // register() takes the egress decision and reads the trust material once per process; forgotten here, each boot
+    // below decides as a new one.
     forgetEgressDecision();
+    forgetTrustMaterial();
     // register() installs the uncaught-exception exit once per process; installed on a stand-in here first, its own
     // install attaches nothing, so no test in this file binds the real process.exit. The tests about that install
     // reset this one first.
@@ -128,6 +131,7 @@ describe("instrumentation register()", () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
       resetSampleSeedStates();
       forgetEgressDecision();
+      forgetTrustMaterial();
       resetUncaughtExceptionExit();
       resetShutdownHandler();
     }

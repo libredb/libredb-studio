@@ -54,7 +54,8 @@ export function mcpUrlFor(hostname, port) {
  * - VAULT_K8S_TOKEN_PATH: src/lib/seed/vault-client.ts
  * - WORKFLOW_LOCAL_DATA_DIR, AGENT_MODEL_TUNING_PATH: src/lib/agent/config.ts
  * - ORACLE_CLIENT_LIB_DIR: src/lib/db/providers/sql/oracle/index.ts (Thick mode libDir)
- * - NODE_EXTRA_CA_CERTS: read by Node itself when server.js starts, and checked at boot by src/lib/config/ca-bundle-preflight.ts (docs/OIDC.md)
+ * - NODE_EXTRA_CA_CERTS: read by Node itself when server.js starts, and by src/lib/db/trust-material.ts, which the boot
+ *   check src/lib/config/ca-bundle-preflight.ts runs and which keeps its CA certificates for Db2 (docs/OIDC.md)
  * - GOOGLE_APPLICATION_CREDENTIALS: src/lib/db/auth/google/credentials.ts, read only on a provider's
  *   server-credentials opt-in
  * - GOVERNANCE_PRIVATE_KEYS_FILE: src/lib/governance/keyring.ts, read only under governance
