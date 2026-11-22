@@ -1373,7 +1373,7 @@ describe("a provider's text on inspect_schema", () => {
   const AUTHOR = "PostgreSQL provider, bundled with Studio";
 
   /** inspect_schema through a context over one credentialed PostgreSQL-typed connection whose open does `acquire`. */
-  function inspectOpening(acquire: () => Promise<DatabaseProvider>) {
+  function inspectOpening(acquire: () => Promise<DatabaseProvider>, args: Record<string, unknown> = {}) {
     const connection = {
       id: "seed:fixed",
       name: "fixed",
@@ -1388,11 +1388,34 @@ describe("a provider's text on inspect_schema", () => {
       textScrub: fakeTextScrub,
       acquire,
     } as unknown as McpConnectionContext;
-    return inspectSchema(InspectSchemaInputSchema.parse({ connection_id: "seed:fixed" }), {
+    return inspectSchema(InspectSchemaInputSchema.parse({ connection_id: "seed:fixed", ...args }), {
       context,
       signal: new AbortController().signal,
     });
   }
+
+  /** A one-table provider whose index read is refused with `sentence`, as ClickHouse refuses it on ACCESS_DENIED. */
+  const refusingIndexes = (sentence: string) =>
+    Object.assign(new FixedProvider(0), {
+      describeObject: async (path: readonly string[]) => ({
+        path,
+        columns: [],
+        indexes: { unavailable: sentence },
+        foreignKeys: [],
+      }),
+    }) as unknown as DatabaseProvider;
+
+  test.each(secretForms([password]).map((form) => [form]))(
+    "an index read the provider refused, its sentence holding %s, is withheld",
+    async (form) => {
+      const result = await inspectOpening(async () => refusingIndexes(`Code: 497. ${form} (ACCESS_DENIED)`), {
+        include_indexes: true,
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.structuredContent?.tables).toMatchObject([{ indexes: { unavailable: PROVIDER_TEXT_WITHHELD } }]);
+      for (const each of secretForms([password])) expect(JSON.stringify(result)).not.toContain(each);
+    },
+  );
 
   test.each(
     (

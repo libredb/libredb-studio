@@ -134,6 +134,7 @@ import {
   enumerableKinds,
   isCountSampled,
   isCountUnavailable,
+  isIndexesUnavailable,
   kindCountIsListing,
   kindNamesWithheld,
 } from "@/lib/db/object-kinds";
@@ -2819,7 +2820,7 @@ async function walkObjectInventory(
         else if (isCountUnavailable(count)) unavailable.set(spec.id, scrubProviderText(scrub, count.unavailable));
         else {
           withheld.set(spec.id, (withheld.get(spec.id) ?? 0) + count.count);
-          if (isCountSampled(count)) sampledFrom.set(spec.id, count.sampledFrom);
+          if (isCountSampled(count)) sampledFrom.set(spec.id, scrubProviderText(scrub, count.sampledFrom));
         }
         continue;
       }
@@ -2829,7 +2830,9 @@ async function walkObjectInventory(
         unavailable.set(spec.id, scrubProviderText(scrub, count.unavailable));
         continue;
       }
-      if (count !== undefined && isCountSampled(count)) sampledFrom.set(spec.id, count.sampledFrom);
+      if (count !== undefined && isCountSampled(count)) {
+        sampledFrom.set(spec.id, scrubProviderText(scrub, count.sampledFrom));
+      }
       if (pairs >= INVENTORY_PAIR_LIMIT) {
         truncated = { limit: INVENTORY_PAIR_LIMIT, reason: PAIR_TRUNCATION_REASON };
         break;
@@ -2856,7 +2859,9 @@ async function walkObjectInventory(
         // The provider's own bound in the provider's own words. Reported even when the listing
         // fitted, because a complete list of objects whose columns were cut is still an
         // incomplete reading, and a model told otherwise reads a missing column as an absent one.
-        if (batch.truncated !== undefined) truncated = batch.truncated;
+        if (batch.truncated !== undefined) {
+          truncated = { limit: batch.truncated.limit, reason: scrubProviderText(scrub, batch.truncated.reason) };
+        }
       }
       const byPath = new Map(details.map((detail) => [pathKey(detail.path), detail]));
       for (const object of listed) {
@@ -2873,7 +2878,10 @@ async function walkObjectInventory(
           // A column the engine only inferred from sampled data is named by the data, so it never enters the
           // inventory a model is grounded on.
           columns: machineColumns(detail?.columns ?? []),
-          indexes: detail?.indexes ?? [],
+          // A refused index read carries the provider's sentence, scrubbed like every other provider text here.
+          indexes: isIndexesUnavailable(detail?.indexes)
+            ? { unavailable: scrubProviderText(scrub, detail.indexes.unavailable) }
+            : (detail?.indexes ?? []),
           foreignKeys: detail?.foreignKeys ?? [],
           // `rowCount` and `sizeBytes` are deliberately NOT carried, and the reason is the
           // fingerprint: a snapshot's identity is over the schema, so a row estimate on it

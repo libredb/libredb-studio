@@ -30,6 +30,7 @@ import type {
   DatabaseObject,
   DatabaseProvider,
   KindCount,
+  ObjectDetailBatch,
   ObjectKindSpec,
   ProviderCapabilities,
 } from "@/lib/db/types";
@@ -76,6 +77,8 @@ interface Stub {
   readonly needs?: { readonly reason: string | undefined };
   /** Fields the run's connection carries beyond the fixture's, such as a password. */
   readonly connection?: Partial<AgentToolContext["connection"]>;
+  /** The bulk description of one folder; absent answers no detail. */
+  readonly describe?: (container: readonly string[], kind: string) => ObjectDetailBatch;
 }
 
 function stub(options: Stub = {}) {
@@ -99,9 +102,10 @@ function stub(options: Stub = {}) {
         { path: ["shop"], name: "shop", level: 0 },
       ],
   );
-  const describeObjects = mock(async (_container: readonly string[], _kind: string, ..._rest: unknown[]) => ({
-    details: [],
-  }));
+  const describeObjects = mock(
+    async (container: readonly string[], kind: string, ..._rest: unknown[]): Promise<ObjectDetailBatch> =>
+      options.describe?.(container, kind) ?? { details: [] },
+  );
   const inventoryNeedsConfiguration = mock(async () => options.needs?.reason);
   const provider = {
     listObjects,
@@ -252,6 +256,100 @@ describe("a kind whose names are withheld", () => {
  * asks it nothing more. Every kind carries the provider's sentence as `unavailable`, the note a refused kind already
  * has, and the packings say that nothing was listed instead of "This database reported no tables".
  */
+describe("a provider's sentence that carries the connection's credential", () => {
+  const DEFAULT_ONLY: readonly Container[] = [{ path: ["default"], name: "default", level: 0, isSessionDefault: true }];
+
+  /** The capture holds no form of `password`, and neither packing does. */
+  function expectAbsent(snapshot: AgentContextSnapshot, password: string): void {
+    expect(JSON.stringify(snapshot)).not.toContain(password);
+    for (const packed of packings(snapshot)) expect(packed).not.toContain(password);
+  }
+
+  test("a countIsListing kind's refused count is withheld, and its listing is never sent", async () => {
+    const password = crypto.randomUUID();
+    const { snapshot, harness } = await captured({
+      kinds: [POD, { ...POD, id: "leases", label: "Lease", labelPlural: "Leases", countIsListing: true }],
+      containers: DEFAULT_ONLY,
+      counts: () => ({ pods: { count: 1 }, leases: { unavailable: `permission denied for ${password}` } }),
+      connection: { password },
+    });
+
+    expect(harness.listObjects.mock.calls.map((call) => call[1])).toEqual(["pods"]);
+    expect(snapshot.kinds?.find((kind) => kind.id === "leases")?.unavailable).toBe(PROVIDER_TEXT_WITHHELD);
+    expectAbsent(snapshot, password);
+  });
+
+  test("an index read the provider refused is withheld on the object", async () => {
+    const password = crypto.randomUUID();
+    const { snapshot } = await captured({
+      kinds: [POD],
+      containers: DEFAULT_ONLY,
+      counts: () => ({ pods: { count: 1 } }),
+      describe: (container) => ({
+        details: [
+          {
+            path: [...container, "pod/web"],
+            columns: [],
+            indexes: { unavailable: `Code: 497. ${password}: Not enough privileges (ACCESS_DENIED)` },
+            foreignKeys: [],
+          },
+        ],
+      }),
+      connection: { password },
+    });
+
+    expect(snapshot.objects[0]?.indexes).toEqual({ unavailable: PROVIDER_TEXT_WITHHELD });
+    expect(packOperationsInventory(snapshot)).toContain(`indexes unavailable (${PROVIDER_TEXT_WITHHELD})`);
+    expectAbsent(snapshot, password);
+  });
+
+  test("an index read the provider refused keeps its sentence when it holds no credential", async () => {
+    const sentence = "Not enough privileges to read the index list";
+    const { snapshot } = await captured({
+      kinds: [POD],
+      containers: DEFAULT_ONLY,
+      counts: () => ({ pods: { count: 1 } }),
+      describe: (container) => ({
+        details: [
+          { path: [...container, "pod/web"], columns: [], indexes: { unavailable: sentence }, foreignKeys: [] },
+        ],
+      }),
+      connection: { password: crypto.randomUUID() },
+    });
+
+    expect(snapshot.objects[0]?.indexes).toEqual({ unavailable: sentence });
+  });
+
+  test("a sampled count's sentence is withheld, on a listed kind and on one whose names are withheld", async () => {
+    const password = crypto.randomUUID();
+    const { snapshot } = await captured({
+      containers: DEFAULT_ONLY,
+      counts: () => ({
+        pods: { count: 1, sampledFrom: `one walk as ${password}` },
+        secrets: { count: 2, sampledFrom: `one walk as ${password}` },
+      }),
+      connection: { password },
+    });
+
+    expect(snapshot.kinds?.map((kind) => kind.sampledFrom)).toEqual([PROVIDER_TEXT_WITHHELD, PROVIDER_TEXT_WITHHELD]);
+    expectAbsent(snapshot, password);
+  });
+
+  test("the reason a provider gives for a bounded description is withheld", async () => {
+    const password = crypto.randomUUID();
+    const { snapshot } = await captured({
+      kinds: [POD],
+      containers: DEFAULT_ONLY,
+      counts: () => ({ pods: { count: 1 } }),
+      describe: () => ({ details: [], truncated: { limit: 1, reason: `bounded for ${password}` } }),
+      connection: { password },
+    });
+
+    expect(snapshot.truncated).toEqual({ limit: 1, reason: PROVIDER_TEXT_WITHHELD });
+    expectAbsent(snapshot, password);
+  });
+});
+
 describe("an inventory its provider cannot list without configuration", () => {
   const reason = "this connection keeps no map, so none of its objects can be listed";
 

@@ -5,6 +5,7 @@ import { ExecutionProfileError } from "@/lib/db/errors";
 import {
   isStudioRefusal,
   providerAuthor,
+  type ProviderTextScrub,
   providerTextScrub,
   scrubProviderText,
 } from "@/lib/db/operations/provider-text";
@@ -34,6 +35,7 @@ import {
 import {
   cutUtf8,
   engineError,
+  engineMessage,
   MCP_CANCELLED_TEXT,
   MCP_ENGINE_ERROR_PREFIX,
   MCP_NOT_VISIBLE_TEXT,
@@ -250,6 +252,7 @@ async function inspectTable(
   object: DatabaseObject,
   args: InspectSchemaInput,
   step: Step,
+  scrub: ProviderTextScrub,
 ): Promise<InspectedTable> {
   const readsForeignKeys = args.include_foreign_keys && provider.getCapabilities().declaresForeignKeys !== false;
   const detail =
@@ -283,7 +286,8 @@ async function inspectTable(
     ...(args.include_indexes
       ? {
           indexes: indexesUnavailable
-            ? { unavailable: detail.indexes.unavailable }
+            ? // The provider's sentence for a refused index read, scrubbed, redacted and cut as an engine message is.
+              { unavailable: engineMessage(detail.indexes.unavailable, scrub) }
             : indexes
                 .slice(0, MAX_INDEXES)
                 .map((index) => ({ name: index.name, columns: [...index.columns], is_unique: index.unique })),
@@ -360,6 +364,7 @@ async function readPage(
   args: InspectSchemaInput,
   signal: AbortSignal,
   step: Step,
+  scrub: ProviderTextScrub,
 ): Promise<{ readonly result: ToolResult; readonly failure?: McpToolAuditReason }> {
   const choice = await chooseContainer(provider, args.schema, step);
   if (choice.kind === "not-found")
@@ -376,7 +381,7 @@ async function readPage(
   const tables: InspectedTable[] = [];
   for (const object of filtered.slice(args.offset, args.offset + args.limit)) {
     if (signal.aborted) return { result: ownWordsError(MCP_CANCELLED_TEXT), failure: "mcp_cancelled" };
-    const table = await inspectTable(provider, object, args, step);
+    const table = await inspectTable(provider, object, args, step, scrub);
     if (
       resultBytes(pageResult(args, container, names, filtered.length, [...tables, table], false)) > MCP_RESULT_CAP_BYTES
     ) {
@@ -446,7 +451,7 @@ export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall)
       );
     }
     if (call.signal.aborted) return finish(ownWordsError(MCP_CANCELLED_TEXT), "mcp_cancelled");
-    const { result, failure } = await readPage(choice.provider, args, call.signal, step);
+    const { result, failure } = await readPage(choice.provider, args, call.signal, step, scrub);
     return finish(result, failure);
   } catch (error) {
     if (error instanceof InspectStopped) {

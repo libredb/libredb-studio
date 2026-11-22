@@ -197,11 +197,12 @@ function caughtNames(node: ts.Node): Set<string> {
 }
 
 const PROVIDER_TEXT_MEMBERS = new Set(["message", "stack", "name", "detail", "fixStatement"]);
+const PROVIDER_SENTENCE_MEMBERS = new Set(["unavailable", "sampledFrom"]);
 
 /**
  * Every read of a provider's text in `text`, as "file: declaration: read": a text member of a caught error, of an
- * `error` or `refusal` property or of a `refusal`; any `warnings`; the error a `logger.error` line is given; the error
- * `createErrorResponse` renders.
+ * `error` or `refusal` property or of a `refusal`; any `warnings`; any `unavailable` or `sampledFrom` sentence and a
+ * `truncated.reason`; the error a `logger.error` line is given; the error `createErrorResponse` renders.
  */
 function providerTextReads(file: string, text: string): string[] {
   const source = parse(file, text);
@@ -219,6 +220,14 @@ function providerTextReads(file: string, text: string): string[] {
         at(node, owner.getText(source) + "." + member);
       }
       if (member === "warnings") at(node, owner.getText(source) + ".warnings");
+      // The sentences a provider writes on its inventory answers: a refused count or index read, a sampled count, a
+      // bounded description.
+      if (
+        PROVIDER_SENTENCE_MEMBERS.has(member) ||
+        (member === "reason" && ts.isPropertyAccessExpression(owner) && owner.name.text === "truncated")
+      ) {
+        at(node, owner.getText(source) + "." + member);
+      }
     }
     if (ts.isCallExpression(node)) {
       const callee = node.expression;
@@ -294,7 +303,11 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   [mcp("tools", "inspect-schema.ts"), "inspectSchema", "textScrub"],
   [mcp("tools", "inspect-schema.ts"), "inspectSchema", "providerTextError"],
   [mcp("tools", "inspect-schema.ts"), "inspectSchema", "scrubProviderText"],
+  [mcp("tools", "inspect-schema.ts"), "inspectTable", "engineMessage"],
 ];
+
+/** The reason a read of an inventory snapshot's provider sentence is no crossing of its own. */
+const SNAPSHOT_SENTENCE = "a snapshot's provider sentence, which walkObjectInventory scrubbed when it was captured";
 
 /**
  * Every read of such a text on the three paths outside a recorded crossing, each with the reason it is not a
@@ -303,6 +316,12 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
 const NOT_PROVIDER_TEXT: Readonly<Record<string, string>> = {
   [`${agent("model-tuning", "index.ts")}: readOperatorDocument: error.message`]: "an operator document's parse error",
   [`${agent("capability-probe.ts")}: observeProbe: part.warnings`]: "the model SDK's warnings on a probe",
+  [`${agent("inventory-objects.ts")}: unlistedInventoryReason: kinds[0].unavailable`]: SNAPSHOT_SENTENCE,
+  [`${agent("inventory-objects.ts")}: unlistedInventoryReason: kind.unavailable`]: SNAPSHOT_SENTENCE,
+  [`${agent("context-snapshot.ts")}: fingerprintInventory: table.indexes.unavailable`]: SNAPSHOT_SENTENCE,
+  [`${agent("context-snapshot.ts")}: inventoryNotes: kind.unavailable`]: SNAPSHOT_SENTENCE,
+  [`${agent("context-snapshot.ts")}: inventoryNotes: kind.sampledFrom`]: SNAPSHOT_SENTENCE,
+  [`${agent("context-snapshot.ts")}: renderOperationsTable: table.indexes.unavailable`]: SNAPSHOT_SENTENCE,
   [`${agent("model-adapter.ts")}: createAgentModel: error.message`]: "an LLM provider configuration error",
   [`${agent("provider-registry.ts")}: openAIResponsesRequestWarnings: prepared.warnings`]: "the model SDK's warnings",
   [`${agent("run-service.ts")}: releaseDrive: logger.error(error)`]: "the run ledger's own failure",
@@ -364,6 +383,9 @@ describe("the one scrub of provider text", () => {
       "  promise.catch((failure) => failure.message);",
       "  return [refusal.message, result.warnings, settled.error.stack];",
       "}",
+      "function walk(detail, count, batch, error) {",
+      "  return [detail.indexes.unavailable, count.sampledFrom, batch.truncated.reason, error.reason];",
+      "}",
     ].join("\n");
     expect(providerTextReads("planted.ts", planted)).toEqual([
       "planted.ts: answer: logger.error(error)",
@@ -372,6 +394,9 @@ describe("the one scrub of provider text", () => {
       "planted.ts: answer: refusal.message",
       "planted.ts: answer: result.warnings",
       "planted.ts: answer: settled.error.stack",
+      "planted.ts: walk: detail.indexes.unavailable",
+      "planted.ts: walk: count.sampledFrom",
+      "planted.ts: walk: batch.truncated.reason",
     ]);
   });
 
