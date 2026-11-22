@@ -9,7 +9,7 @@
  * token goes to no address the connection does not name (C2 to C5).
  *
  * The endpoint host rule and the TLS panel are the shared gRPC transport's (src/lib/db/grpc/tls.ts), with no
- * client-certificate preflight (etcd's choice); `tunnelFarEnd`, `readOnlySource`, `callTimeout` and the optional readers
+ * client-certificate preflight (etcd's choice); `readOnlySource`, `callTimeout` and the optional readers
  * are written again from the Milvus provider's file under the isolation rule.
  *
  * The parameter is named `config` on purpose: tests/unit/lib/db-ui-config.test.ts finds which addressing fields a
@@ -28,13 +28,7 @@ import {
 } from "@/lib/db/grpc/tls";
 import { plaintextSecretRefusal, validateHost, validatePort } from "@/lib/db/http/endpoint";
 import { secretForms } from "@/lib/db/utils/server-text";
-import {
-  type DatabaseConnection,
-  type SSHTunnelConfig,
-  TUNNEL_FAR_END,
-  type TunnelFarEnd,
-  type WithTunnelFarEnd,
-} from "@/lib/types";
+import { type DatabaseConnection, TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
 import type { OxiaEndpoint, OxiaLeader } from "./client";
 import {
   OXIA_DEFAULT_NAMESPACE,
@@ -101,8 +95,6 @@ const MAX_QUERY_TIMEOUT_MS = 2_147_483_647;
 /** The consent box's label as the dialog draws it (src/components/ConnectionModal.tsx), and what it covers. */
 const CONSENT_CLAUSE =
   ' Or tick "Send the password without TLS", which then also covers every address under Data servers.';
-const TUNNEL_NOT_OPENED =
-  "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so Oxia was not dialled directly: the tunnel opens only when both Host and Port are set.";
 const NO_USER = "Oxia has no user name: clear User. A bearer token goes under Token.";
 const TOKEN_CHARACTERS =
   "The Token holds a character a bearer token cannot carry: only letters, digits and . _ ~ + / = - are allowed, with no space, tab or line break. Paste the token again; nothing was sent.";
@@ -125,7 +117,7 @@ export function buildOxiaConnectionOptions(
   config: DatabaseConnection & WithTunnelFarEnd,
   context: { readonly executionReadOnly: boolean; readonly queryTimeout: number },
 ): OxiaConnectionOptions {
-  const farEnd = tunnelFarEnd(config);
+  const farEnd = config[TUNNEL_FAR_END];
   const targetHost = grpcEndpointHost(config.host, WORDS);
   const targetPort = shared(() => validatePort(config.port ?? OXIA_DEFAULT_PORT));
   const endpoint: OxiaEndpoint =
@@ -416,14 +408,6 @@ function namespaceOf(value: unknown): string {
   return namespace;
 }
 
-function tunnelFarEnd(config: DatabaseConnection & WithTunnelFarEnd): TunnelFarEnd | undefined {
-  const tunnel = optionalObject<keyof SSHTunnelConfig>(config.sshTunnel, "sshTunnel");
-  const enabled = optionalBoolean(tunnel?.enabled, "sshTunnel.enabled") === true;
-  const farEnd = config[TUNNEL_FAR_END];
-  if (enabled && farEnd === undefined) throw configError(TUNNEL_NOT_OPENED);
-  return farEnd;
-}
-
 /** The shared validators refuse with a DatabaseConfigError that names no provider; re-raised as Oxia's. */
 function shared<T>(validate: () => T): T {
   try {
@@ -449,12 +433,6 @@ function callTimeout(queryTimeout: number): number {
     throw configError(QUERY_TIMEOUT_RANGE);
   }
   return queryTimeout;
-}
-
-function optionalObject<Key extends string>(value: unknown, field: string): Partial<Record<Key, unknown>> | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "object" || Array.isArray(value)) throw wrongType(field, "an object");
-  return value as Partial<Record<Key, unknown>>;
 }
 
 function optionalText(value: unknown, field: string): string | undefined {

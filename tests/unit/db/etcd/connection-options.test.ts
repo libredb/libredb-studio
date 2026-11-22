@@ -112,8 +112,6 @@ const CLIENT_KEY_ENCRYPTED =
   "The Client Private Key under SSL / TLS is encrypted, and SSL / TLS has no passphrase field: paste the key unencrypted there.";
 const CLIENT_KEY_MISMATCH =
   "The Client Private Key under SSL / TLS is not the key of the Client Certificate: paste the private key issued with that certificate there.";
-const TUNNEL_NOT_OPENED =
-  "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so etcd was not dialled directly: the tunnel opens only when both Host and Port are set.";
 const QUERY_TIMEOUT_RANGE = "Query timeout must be a whole number between 1 and 2147483647 milliseconds.";
 
 const dir = mkdtempSync(join(tmpdir(), "etcd-connection-options-"));
@@ -490,32 +488,12 @@ describe("E3 and E5: a tunnel carries the connection to its far end", () => {
     expect(mapped(tunnelled({ host: "Etcd.Test", port: 2379 })).endpoint).toEqual({ host: "etcd.test", port: 2379 });
   });
 
-  test("a tunnel that is on but arrived without its far end is refused, so etcd is never dialled past it", () => {
-    const tunnelOn = {
-      ...base,
-      sshTunnel: { enabled: true, host: "bastion.test", port: 22, username: "u", authMethod: "password" },
-    };
-    expect(refusalOf(tunnelOn)).toBe(TUNNEL_NOT_OPENED);
-    expect(mapped({ ...tunnelOn, sshTunnel: { ...tunnelOn.sshTunnel, enabled: false } }).target).toBe(
-      "dns:etcd.test:2379",
-    );
-    expect(mapped({ ...base, sshTunnel: null }).target).toBe("dns:etcd.test:2379");
-  });
-
-  test.each([
-    [
-      "a tunnel that is not an object",
-      { sshTunnel: "on" },
-      "The connection's sshTunnel must be an object; nothing was sent",
-    ],
-    ["a tunnel that is an array", { sshTunnel: [] }, "The connection's sshTunnel must be an object; nothing was sent"],
-    [
-      "an enabled flag that is not a boolean",
-      { sshTunnel: { enabled: "true" } },
-      "The connection's sshTunnel.enabled must be true or false; nothing was sent",
-    ],
-  ])("%s is refused naming the field", (_label, extra, message) => {
-    expect(refusalOf({ ...base, ...extra })).toBe(message);
+  // Core decides the tunnel before any provider is built and refuses one that is on and was not opened
+  // (tests/security/provider-tunnel-decisions.test.ts), so the far end alone says a tunnel carries the connection.
+  test("reads no sshTunnel: the far end alone says a tunnel was opened (FND-2 slice 5)", () => {
+    for (const sshTunnel of [{ enabled: true }, { enabled: "true" }, { enabled: false }, null, "on", []]) {
+      expect(mapped({ ...base, sshTunnel }).target).toBe("dns:etcd.test:2379");
+    }
   });
 });
 

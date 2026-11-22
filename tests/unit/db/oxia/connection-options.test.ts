@@ -80,11 +80,12 @@ afterEach(() => {
 });
 
 describe("fields read in order, with every refusal (SB1-4.2)", () => {
-  test("1. the tunnel: on without its far end, and not an object", () => {
-    expect(refusal({ sshTunnel: { enabled: true } })).toBe(
-      "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so Oxia was not dialled directly: the tunnel opens only when both Host and Port are set.",
-    );
-    expect(refusal({ sshTunnel: "x" })).toBe("The connection's sshTunnel must be an object; nothing was sent.");
+  // Core decides the tunnel before any provider is built and refuses one that is on and was not opened
+  // (tests/security/provider-tunnel-decisions.test.ts), so the far end alone says a tunnel carries the connection.
+  test("1. reads no sshTunnel: the far end alone says a tunnel was opened (FND-2 slice 5)", () => {
+    for (const sshTunnel of [{ enabled: true }, { enabled: "yes" }, { enabled: false }, null, "x", []]) {
+      expect(build({ sshTunnel }).target).toBe(build().target);
+    }
   });
 
   test("2. the host: a pasted endpoint, and a host that is not one", () => {
@@ -248,7 +249,6 @@ describe("fields read in order, with every refusal (SB1-4.2)", () => {
 
   test("16. the order of the checks", () => {
     const wrong: Overrides = {
-      sshTunnel: { enabled: true },
       host: "bad host!",
       port: 0,
       user: "root",
@@ -260,7 +260,6 @@ describe("fields read in order, with every refusal (SB1-4.2)", () => {
       readOnly: "yes",
     };
     const steps: ReadonlyArray<readonly [Overrides, string]> = [
-      [{ sshTunnel: undefined }, "This connection's SSH tunnel is on"],
       [{ host: "oxia.example" }, "Invalid host"],
       [{ port: 6648 }, "Invalid port"],
       [{ user: undefined }, "Oxia has no user name"],
