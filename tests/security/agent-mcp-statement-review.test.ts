@@ -80,13 +80,16 @@ function settled<T>(promise: Promise<T>): Promise<T | unknown> {
   );
 }
 
-/** Asserts the refusal by its class, code and message only, so an answer that is not one prints as a short line. */
+/**
+ * Asserts the refusal by its class, code and message only, so an answer that is not one prints as a short line. The
+ * class is `StudioProfileRefusal`, the execution profile refusal Studio's own code writes.
+ */
 function expectNotReviewed(error: unknown, type: DatabaseType): void {
   const seen =
     error instanceof ExecutionProfileError
       ? [error.constructor.name, error.reasonCode, error.message]
       : `not refused: ${Object.prototype.toString.call(error)} ${error?.constructor?.name ?? ""}`;
-  expect(seen).toEqual(["ExecutionProfileError", "PROFILE_ENGINE_NOT_REVIEWED", notReviewed(type)]);
+  expect(seen).toEqual(["StudioProfileRefusal", "PROFILE_ENGINE_NOT_REVIEWED", notReviewed(type)]);
 }
 
 describe("an engine the review record does not list, though its provider implements queryReadOnly", () => {

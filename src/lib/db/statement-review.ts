@@ -13,19 +13,19 @@
  */
 import type { DatabaseType } from "@/lib/types";
 import { AGENT_EXECUTION_ENGINES } from "./compatibility";
-import { ExecutionProfileError } from "./errors";
+import { StudioProfileRefusal } from "./errors";
 import { assertDatabaseType } from "./type-id";
 
 /**
  * Refuses, by name, an engine Studio's review record does not list, before any statement is sent on it.
  *
  * @throws {UnknownProviderError} When `type` is not a type id, before the record is read.
- * @throws {ExecutionProfileError} `PROFILE_ENGINE_NOT_REVIEWED`, when the record does not list `type`.
+ * @throws {StudioProfileRefusal} `PROFILE_ENGINE_NOT_REVIEWED`, when the record does not list `type`.
  */
 export function assertStatementsReviewed(type: DatabaseType): void {
   assertDatabaseType(type);
   if (!AGENT_EXECUTION_ENGINES.includes(type)) {
-    throw new ExecutionProfileError(
+    throw new StudioProfileRefusal(
       `Provider type "${type}" is not on the review record of engines that run agent and MCP statements (AGENT_EXECUTION_ENGINES), so no statement is sent on it, whatever its provider implements`,
       "PROFILE_ENGINE_NOT_REVIEWED",
     );

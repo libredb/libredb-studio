@@ -2,7 +2,7 @@ import type { AuthInfo } from "@modelcontextprotocol/server";
 import type { Role } from "@/lib/auth";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { MCP_AGENT_CREDENTIAL_REQUIRED, READ_ROOTS_REQUIRED } from "@/lib/db/compatibility";
-import { ExecutionProfileError } from "@/lib/db/errors";
+import { StudioProfileRefusal } from "@/lib/db/errors";
 import { assertDatabaseType } from "@/lib/db/type-id";
 import { acquireExecutionProfileProvider, profiledCacheKey, type ExecutionProfile } from "@/lib/db/factory";
 import type { DatabaseProvider } from "@/lib/db/types";
@@ -77,7 +77,7 @@ export function mcpCaller(authInfo: AuthInfo): McpCaller {
 const pendingAcquisitions = new Map<string, Promise<DatabaseProvider>>();
 
 /**
- * The connection with its `${vault:...}` references read, or an ExecutionProfileError naming it, so both tools answer
+ * The connection with its `${vault:...}` references read, or a StudioProfileRefusal naming it, so both tools answer
  * the refusal in Studio's words. The VaultError's own text stays in the server log: it may quote the reference.
  */
 async function resolvedSecrets(connection: ManagedConnection): Promise<ManagedConnection> {
@@ -90,7 +90,7 @@ async function resolvedSecrets(connection: ManagedConnection): Promise<ManagedCo
       route: "/api/mcp",
       connectionId: connection.id,
     });
-    throw new ExecutionProfileError(
+    throw new StudioProfileRefusal(
       `Connection "${connection.id}" could not be opened: a secret reference in its seed entry could not be read from Vault, so nothing was sent to the database. The server log names the cause.`,
       "CONNECTION_SECRET_UNRESOLVABLE",
     );
@@ -113,7 +113,7 @@ export function assertAgentCredentialWhereRequired(
   assertDatabaseType(connection.type);
   if (!required[connection.type]) return;
   if (connection.agentUser !== undefined || connection.agentPassword !== undefined) return;
-  throw new ExecutionProfileError(
+  throw new StudioProfileRefusal(
     `Connection "${connection.id}" is read by MCP only under a read credential of its own (agentUser and agentPassword), and it has none: an operator sets agentUser and agentPassword on this seed.`,
     "AGENT_CREDENTIAL_REQUIRED",
   );
@@ -132,7 +132,7 @@ export function assertReadRootsWhereRequired(
 ): void {
   assertDatabaseType(connection.type);
   if (!required[connection.type] || connection.agentReadRoots !== undefined) return;
-  throw new ExecutionProfileError(
+  throw new StudioProfileRefusal(
     `Connection "${connection.id}" is read by MCP only beneath read roots its seed entry declares, and it declares none: an operator sets agentReadRoots on this seed.`,
     "READ_ROOTS_REQUIRED",
   );

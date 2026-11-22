@@ -65,7 +65,7 @@
  * execution-profile acquisition uses; `query()` is never the fallback.
  */
 
-import { ExecutionProfileError, QueryError } from "@/lib/db/errors";
+import { QueryError, StudioProfileRefusal } from "@/lib/db/errors";
 import {
   assertReadOnlyBudget,
   byteBudgetSentence,
@@ -149,7 +149,7 @@ export async function runReadOnlyStatement(
     ...(call.holdUntilSettled === undefined ? {} : { holdUntilSettled: call.holdUntilSettled }),
     read: () => {
       if (typeof provider.queryReadOnly !== "function") {
-        throw new ExecutionProfileError(
+        throw new StudioProfileRefusal(
           `Provider type "${type}" implements no read-only statement path (queryReadOnly)`,
           "PROFILE_UNSUPPORTED_BY_PROVIDER",
         );
