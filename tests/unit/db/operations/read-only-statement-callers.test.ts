@@ -444,23 +444,35 @@ function gatedBefore(node: ts.Node, gate: string, reaches: readonly string[]): R
   );
 }
 
-/** Whether `statement` ends the branch it is: a `throw`, a `return`, or a block whose last statement is one. */
-function endsInThrowOrReturn(statement: ts.Statement): boolean {
-  if (ts.isThrowStatement(statement) || ts.isReturnStatement(statement)) return true;
-  if (ts.isBlock(statement)) {
-    const last = statement.statements.at(-1);
-    return last !== undefined && (ts.isThrowStatement(last) || ts.isReturnStatement(last));
-  }
-  return false;
+/**
+ * How `statement`, the then-branch of an absence test, refuses: `"throw"` when it is a `throw` or a block whose last
+ * statement is one, `"returned-refusal"` when it is (or a block ends in) `return [ownWordsError(...), "<reason>"]`,
+ * the shape a tool that answers its refusal as a value returns, and `null` for anything else. A bare `return`, a
+ * default result, a `query()` fallback or any other value is not a refusal, whatever the branch logs first.
+ */
+function refusalOf(statement: ts.Statement): PresenceTest["refusal"] {
+  const last = ts.isBlock(statement) ? statement.statements.at(-1) : statement;
+  if (last === undefined) return null;
+  if (ts.isThrowStatement(last)) return "throw";
+  if (!ts.isReturnStatement(last) || last.expression === undefined) return null;
+  const returned = inner(last.expression);
+  if (!ts.isArrayLiteralExpression(returned) || returned.elements.length !== 2) return null;
+  const [error, reason] = returned.elements.map(inner);
+  return ts.isCallExpression(error) &&
+    ts.isIdentifier(error.expression) &&
+    error.expression.text === "ownWordsError" &&
+    ts.isStringLiteralLike(reason)
+    ? "returned-refusal"
+    : null;
 }
 
 /**
- * Whether the `typeof` test `test` only refuses the method's absence: it is one operand of a `!==` or `!=` comparison
- * with the string `"function"`, that comparison reaches an `if` condition only through parentheses, `&&` and `||`, and
- * the `if`'s then-branch ends in `throw` or `return`. Anything else (a `===` test, a negation, a ternary, a value kept
- * in a name) is a presence test that could open a path.
+ * How the `typeof` test `test` refuses the method's absence, or `null` where it does not only refuse it: it is one
+ * operand of a `!==` or `!=` comparison with the string `"function"`, that comparison reaches an `if` condition only
+ * through parentheses, `&&` and `||`, and the `if`'s then-branch refuses (`refusalOf`). Anything else (a `===` test, a
+ * negation, a ternary, a value kept in a name) is a presence test that could open a path.
  */
-function refusesAbsence(test: ts.TypeOfExpression): boolean {
+function absenceRefusal(test: ts.TypeOfExpression): PresenceTest["refusal"] {
   const comparison = outer(test);
   if (
     comparison === undefined ||
@@ -469,10 +481,10 @@ function refusesAbsence(test: ts.TypeOfExpression): boolean {
       comparison.operatorToken.kind,
     )
   ) {
-    return false;
+    return null;
   }
   const other = inner(comparison.left) === test ? comparison.right : comparison.left;
-  if (!ts.isStringLiteralLike(inner(other)) || (inner(other) as ts.StringLiteralLike).text !== "function") return false;
+  if (!ts.isStringLiteralLike(inner(other)) || (inner(other) as ts.StringLiteralLike).text !== "function") return null;
   let at: ts.Node = comparison;
   let parent = at.parent;
   while (
@@ -484,27 +496,24 @@ function refusesAbsence(test: ts.TypeOfExpression): boolean {
     at = parent;
     parent = at.parent;
   }
-  return (
-    parent !== undefined &&
-    ts.isIfStatement(parent) &&
-    parent.expression === at &&
-    endsInThrowOrReturn(parent.thenStatement)
-  );
+  return parent !== undefined && ts.isIfStatement(parent) && parent.expression === at
+    ? refusalOf(parent.thenStatement)
+    : null;
 }
 
 interface PresenceTest {
   readonly file: string;
   readonly declaration: string;
-  readonly refusesAbsence: boolean;
+  readonly refusal: "throw" | "returned-refusal" | null;
 }
 
-/** Every `typeof` test of a member called `queryReadOnly` in `text`, with whether it only refuses the absence. */
+/** Every `typeof` test of a member called `queryReadOnly` in `text`, with how it refuses the absence. */
 function presenceTests(file: string, text: string): PresenceTest[] {
   const source = parse(file, text);
   const found: PresenceTest[] = [];
   const visit = (node: ts.Node) => {
     if (ts.isTypeOfExpression(node) && readsMember(inner(node.expression), "queryReadOnly")) {
-      found.push({ file, declaration: enclosingDeclaration(node), refusesAbsence: refusesAbsence(node) });
+      found.push({ file, declaration: enclosingDeclaration(node), refusal: absenceRefusal(node) });
     }
     ts.forEachChild(node, visit);
   };
@@ -522,6 +531,8 @@ const KNOWN_PRESENCE_TESTS: readonly string[] = [
   `${CORE_CALLER} in read`,
   `${join("src", "lib", "mcp", "tools", "run-statement.ts")} in execute`,
 ];
+/** The presence tests that return their refusal as a value: MCP's statement tool answers every refusal that way. */
+const RETURNED_REFUSALS: readonly string[] = [`${join("src", "lib", "mcp", "tools", "run-statement.ts")} in execute`];
 
 describe("the review record gates the protected read path", () => {
   test("the scan finds a presence test that opens, and not one that refuses the absence", () => {
@@ -532,27 +543,52 @@ describe("the review record gates the protected read path", () => {
       "function negated(p) { if (!(typeof p.queryReadOnly !== 'function')) run(); }",
       "function throws(p) { if (typeof p.queryReadOnly !== 'function') throw new Error('no path'); }",
       "async function cleans(p, gate) { if (gate && typeof p.queryReadOnly !== 'function') { await cleanup(); throw new Error('no path'); } }",
-      "function returns(p) { if (typeof p.queryReadOnly !== 'function') return refusal; }",
+      "function returnsName(p) { if (typeof p.queryReadOnly !== 'function') return refusal; }",
+      "function returnsNothing(p) { if (typeof p.queryReadOnly !== 'function') return; }",
+      "function fallsBack(p, sql) { if (typeof p.queryReadOnly !== 'function') return p.query(sql); }",
+      "function defaults(p) { if (typeof p.queryReadOnly !== 'function') return { rows: [], fields: [], rowCount: 0 }; }",
+      "function warns(p) { if (typeof p.queryReadOnly !== 'function') { logger.warn('no path'); return null; } }",
+      "function otherTuple(p) { if (typeof p.queryReadOnly !== 'function') return [result, 'mcp_execution_failed']; }",
+      "function tuple(p) { if (typeof p.queryReadOnly !== 'function') { const refusal = text(); return [ownWordsError(refusal), 'mcp_execution_failed']; } }",
     ].join("\n");
     expect(
       presenceTests("planted.ts", planted)
-        .filter((found) => !found.refusesAbsence)
+        .filter((found) => found.refusal === null)
         .map((found) => found.declaration),
-    ).toEqual(["opens", "ternary", "kept", "negated"]);
+    ).toEqual([
+      "opens",
+      "ternary",
+      "kept",
+      "negated",
+      "returnsName",
+      "returnsNothing",
+      "fallsBack",
+      "defaults",
+      "warns",
+      "otherTuple",
+    ]);
     expect(
       presenceTests("planted.ts", planted)
-        .filter((found) => found.refusesAbsence)
-        .map((found) => found.declaration),
-    ).toEqual(["throws", "cleans", "returns"]);
+        .filter((found) => found.refusal !== null)
+        .map((found) => [found.declaration, found.refusal]),
+    ).toEqual([
+      ["throws", "throw"],
+      ["cleans", "throw"],
+      ["tuple", "returned-refusal"],
+    ]);
   });
 
   test("no module outside the providers decides from the presence of queryReadOnly", () => {
     const outside = SOURCE_ROOTS.flatMap(sourceFiles).filter((file) => !file.startsWith(PROVIDER_CODE));
     expect(outside.length).toBeGreaterThan(0);
     const found = outside.flatMap((file) => presenceTests(file, readFileSync(join(ROOT, file), "utf8")));
-    expect(found.filter((test) => !test.refusesAbsence).map((test) => `${test.file} in ${test.declaration}`)).toEqual(
+    expect(found.filter((test) => test.refusal === null).map((test) => `${test.file} in ${test.declaration}`)).toEqual(
       [],
     );
+    // A refusal returned as a value is admitted only where the tool answers its refusal as a value.
+    expect(
+      found.filter((test) => test.refusal === "returned-refusal").map((test) => `${test.file} in ${test.declaration}`),
+    ).toEqual([...RETURNED_REFUSALS]);
     // Not vacuous: the known presence tests are found, each one a refusal of the absence.
     expect(found.map((test) => `${test.file} in ${test.declaration}`).sort()).toEqual([...KNOWN_PRESENCE_TESTS]);
   });
