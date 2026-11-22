@@ -726,7 +726,7 @@ describe("PostgresStorageProvider", () => {
       "SELECT index_name FROM unnest($1::text[]) AS wanted(index_name) WHERE to_regclass(index_name) IS NULL";
     const indexes = ["passkey_credentials_account", "passkey_spent_challenges_expiry"];
 
-    /** What initialize sends after the transaction that creates the tables, with the lookup answering `missing`. */
+    /** The index lookup and the index DDL initialize sends, with the lookup answering `missing`. */
     async function afterTables(missing: string[]): Promise<unknown[][]> {
       mockQuery.mockClear();
       mockQuery.mockImplementation(async (sql: string) =>
@@ -740,7 +740,7 @@ describe("PostgresStorageProvider", () => {
         mockQuery.mockImplementation(async () => ({ rows: [] }));
       }
       const calls = mockQuery.mock.calls as unknown[][];
-      return calls.slice(calls.findIndex((call) => call[0] === "COMMIT") + 1);
+      return calls.filter((call) => call[0] === lookup || String(call[0]).startsWith("CREATE INDEX"));
     }
 
     // A DBA-managed schema that already has both: nothing but the lookup after the tables.
@@ -758,6 +758,32 @@ describe("PostgresStorageProvider", () => {
       "CREATE INDEX IF NOT EXISTS passkey_credentials_account ON passkey_credentials (account_email)",
       "CREATE INDEX IF NOT EXISTS passkey_spent_challenges_expiry ON passkey_spent_challenges (expires_at)",
     ]);
+  });
+
+  test("initialize looks up and creates the missing passkey indexes inside the advisory-lock transaction, so replicas starting together create them one at a time", async () => {
+    const missing = ["passkey_credentials_account", "passkey_spent_challenges_expiry"];
+    mockQuery.mockImplementation(async (sql: string) =>
+      sql.includes("to_regclass(index_name) IS NULL")
+        ? { rows: missing.map((index_name) => ({ index_name })) }
+        : { rows: [] },
+    );
+    try {
+      await provider.initialize();
+    } finally {
+      mockQuery.mockImplementation(async () => ({ rows: [] }));
+    }
+    const sql = statements();
+    const lock = sql.findIndex((statement) => statement.startsWith("SELECT pg_advisory_xact_lock("));
+    const lookup = sql.findIndex((statement) => statement.includes("to_regclass(index_name) IS NULL"));
+    const created = sql.flatMap((statement, at) => (statement.startsWith("CREATE INDEX") ? [at] : []));
+    const commit = sql.indexOf("COMMIT");
+    expect(created).toHaveLength(2);
+    expect(lock).toBeLessThan(sql.indexOf(tableDdl()));
+    expect(sql.indexOf(tableDdl())).toBeLessThan(lookup);
+    expect(lookup).toBeLessThan(created[0]);
+    expect(created[1]).toBeLessThan(commit);
+    // Nothing runs after the transaction commits, so the lock covers every statement that creates an object.
+    expect(commit).toBe(sql.length - 1);
   });
 
   test("a missing privilege during initialize names the tables, the privileges and the manual DDL", async () => {

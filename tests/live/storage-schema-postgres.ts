@@ -25,6 +25,8 @@
  * removed, with the version 1 rows a fresh provider opens again. Before the re-seal, six replicas
  * initialize at once on a store without storage_meta, which all must survive and none of which may record version 1
  * as retired there; a store initialize creates from nothing records it at once.
+ * First of all, six replicas initialize at once on an empty schema, in five rounds: every one must survive, because the
+ * tables and the passkey indexes are created under one lock, and the store must hold exactly one marker row.
  *
  * It is NOT in `bun run test`: the runner excludes `tests/live/` by name (`EXCLUDED` in
  * `tests/runner/discover.ts`). CI runs it in the "Functional Smoke (PostgreSQL, RabbitMQ)" job of
@@ -309,6 +311,44 @@ async function storeState(superuser: string) {
     );
     return { rows: rows.rows, factors: factors.rows, marker: marker.rows, backups: backups.rows };
   });
+}
+
+/**
+ * Replicas of this version starting together on an empty schema: every table and both passkey indexes are missing,
+ * and initialize's advisory lock lets every one of them create or find them, the indexes included.
+ */
+async function exerciseConcurrentCreation(url: string, superuser: string): Promise<void> {
+  process.env.STORAGE_POSTGRES_SCHEMA = SCHEMA;
+  for (let round = 0; round < 5; round++) {
+    // oxlint-disable-next-line no-await-in-loop -- one round at a time, each from an empty schema.
+    await asSuperuser(superuser, (client) =>
+      client.query(`DROP TABLE IF EXISTS ${TABLES.map((table) => `${SCHEMA}.${table}`).join(", ")} CASCADE`),
+    );
+    const replicas = Array.from({ length: 6 }, () => new PostgresStorageProvider(url));
+    // oxlint-disable-next-line no-await-in-loop -- the six initialize at once within a round.
+    const outcomes = await Promise.allSettled(replicas.map((replica) => replica.initialize()));
+    // oxlint-disable-next-line no-await-in-loop -- each round closes its replicas before the next one.
+    await Promise.all(replicas.map((replica) => replica.close()));
+    const failed = outcomes.filter((outcome) => outcome.status === "rejected") as PromiseRejectedResult[];
+    check(
+      failed.length === 0,
+      `six replicas initializing at once on an empty schema should all succeed, ${failed.length} failed: ${failed.map((outcome) => String(outcome.reason)).join("; ")}`,
+    );
+    // oxlint-disable-next-line no-await-in-loop -- read after the round's replicas closed.
+    const marker = await asSuperuser(superuser, (client) =>
+      client.query(`SELECT key, value FROM ${SCHEMA}.storage_meta`),
+    );
+    check(
+      JSON.stringify(marker.rows) === JSON.stringify([{ key: "credential_envelope", value: "v2" }]),
+      `an empty schema should end with one credential_envelope = v2 row, got: ${JSON.stringify(marker.rows)}`,
+    );
+  }
+  await asSuperuser(superuser, (client) =>
+    client.query(`DROP TABLE IF EXISTS ${TABLES.map((table) => `${SCHEMA}.${table}`).join(", ")} CASCADE`),
+  );
+  console.log(
+    "ok   six replicas initializing at once on an empty schema all succeed and record one marker, in five rounds",
+  );
 }
 
 /** A Studio storage provider as the factory hands it out, initialized. */
@@ -624,6 +664,7 @@ async function main(): Promise<void> {
       const { rows } = await client.query("SELECT has_schema_privilege($1, 'public', 'CREATE') AS can", [role.name]);
       check((rows as { can: boolean }[])[0].can === false, `${role.name} must not hold CREATE on schema public`);
     });
+    await exerciseConcurrentCreation(urlFor(admin, database, role), urlFor(admin, database));
     await exerciseTables(urlFor(admin, database, role), urlFor(admin, database));
     await exerciseReseal(urlFor(admin, database, role), urlFor(admin, database));
   } catch (error) {

@@ -689,7 +689,7 @@ A value that is never written again keeps its old form until the operator re-sea
 While the store still accepts version 1, each server logs one warning at its first use of the store that names the state and the steps below.
 
 A store this version creates from nothing, because none of its tables exists yet, holds no version 1 value, so its first start records `credential_envelope = v2` in `storage_meta` in the same step and refuses version 1 from then on.
-On PostgreSQL that decision is taken under the lock that serializes the table creation, so replicas starting together on an empty schema agree on it.
+On PostgreSQL that decision is taken under the lock that serializes the creation of the tables and their indexes, so replicas starting together on an empty schema agree on it.
 A store that existed before keeps accepting version 1 until the re-seal.
 Older servers must not share a store this version created: stop them before new ones start, as [Upgrading to envelope v2](#upgrading-to-envelope-v2) says.
 

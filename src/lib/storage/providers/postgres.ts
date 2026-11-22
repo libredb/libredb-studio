@@ -167,7 +167,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
       // envelope state. One transaction, and the advisory lock comes first: PostgreSQL lets only one
       // of several sessions running CREATE TABLE IF NOT EXISTS for a missing table at once create
       // it, and the others fail on a unique index of pg_type, so replicas starting together would
-      // fail their first request. The lock is held until every table is committed; the next replica
+      // fail their first request. The lock is held until every table and index is committed; the next replica
       // then finds them all. Under the lock, a store none of whose tables exists yet is created from
       // nothing, holds no version 1 value, and records version 1 as retired in the same
       // transaction; a store that existed before keeps no row.
@@ -231,22 +231,24 @@ export class PostgresStorageProvider implements ServerStorageProvider {
             RETIRED_ENVELOPE_MARKER,
           ]);
         }
+        // The passkey indexes under the same lock, for the same reason: two sessions creating one missing index at
+        // once fail on a unique index of pg_class. Keyed by the name to_regclass() looks up, which carries the schema
+        // when one is set; only the missing ones are created, because CREATE INDEX checks table ownership first.
+        const indexes = new Map(
+          Object.entries(PASSKEY_INDEXES).map(([index, { table, column }]) => [
+            this.qualify(index),
+            `CREATE INDEX IF NOT EXISTS ${index} ON ${this.qualify(table)} (${column})`,
+          ]),
+        );
+        const missing = await client.query(
+          "SELECT index_name FROM unnest($1::text[]) AS wanted(index_name) WHERE to_regclass(index_name) IS NULL",
+          [[...indexes.keys()]],
+        );
+        for (const { index_name } of missing.rows as { index_name: string }[]) {
+          // oxlint-disable-next-line no-await-in-loop -- one DDL statement at a time on the transaction's client.
+          await client.query(indexes.get(index_name)!);
+        }
       });
-      // Keyed by the name to_regclass() looks up, which carries the schema when one is set.
-      const indexes = new Map(
-        Object.entries(PASSKEY_INDEXES).map(([index, { table, column }]) => [
-          this.qualify(index),
-          `CREATE INDEX IF NOT EXISTS ${index} ON ${this.qualify(table)} (${column})`,
-        ]),
-      );
-      const missing = await this.pool.query(
-        "SELECT index_name FROM unnest($1::text[]) AS wanted(index_name) WHERE to_regclass(index_name) IS NULL",
-        [[...indexes.keys()]],
-      );
-      for (const { index_name } of missing.rows as { index_name: string }[]) {
-        // oxlint-disable-next-line no-await-in-loop -- one DDL statement at a time on the pool, in a fixed order.
-        await this.pool.query(indexes.get(index_name)!);
-      }
     } catch (error) {
       if (error instanceof Error && error.message.includes("does not support SSL")) {
         throw new Error(
