@@ -13,6 +13,7 @@ import {
   UnknownProviderError,
   FacetNotOfferedError,
   TransactionLostError,
+  StudioProfileRefusal,
   isDatabaseError,
   isConnectionError,
   isQueryError,
@@ -1129,5 +1130,32 @@ describe("connectPhase", () => {
     const denied = new AuthenticationError("bad token", "kubernetes");
     expect(await connectPhase(() => Promise.reject(refused)).catch((e: unknown) => e)).toBe(refused);
     expect(await connectPhase(() => Promise.reject(denied)).catch((e: unknown) => e)).toBe(denied);
+  });
+
+  test("a failure the connect raises keeps its identity and answers not-sent", async () => {
+    const raised = [
+      new ConnectionError("No answer from db.test:5432", "postgres"),
+      new AuthenticationError("bad token", "kubernetes"),
+      new DatabaseConfigError("bad config", "postgres"),
+      new StudioProfileRefusal("refused", "PROFILE_UNSUPPORTED_TARGET"),
+    ];
+    for (const error of raised) {
+      expect(await connectPhase(() => Promise.reject(error)).catch((e: unknown) => e)).toBe(error);
+      expect(error.outcome).toBe("not-sent");
+    }
+    const outside = new ConnectionError("Connection terminated unexpectedly", "postgres");
+    expect(outside.outcome).toBeUndefined();
+    expect(Object.keys(outside)).not.toContain("outcome");
+    const raw = new Error("socket hang up");
+    expect(await connectPhase(() => Promise.reject(raw)).catch((e: unknown) => e)).toBe(raw);
+    expect(Object.keys(raw)).toEqual([]);
+  });
+
+  test("a connect deadline becomes a ConnectionError that answers not-sent", async () => {
+    const deadline = new TimeoutError("The API server did not answer the request within 10 s.", "kubernetes", 10000);
+    const error = await connectPhase(() => Promise.reject(deadline)).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as ConnectionError).outcome).toBe("not-sent");
+    expect(deadline.outcome).toBeUndefined();
   });
 });

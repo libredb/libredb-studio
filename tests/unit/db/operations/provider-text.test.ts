@@ -9,6 +9,7 @@ import { CONNECTION_FORM } from "@/lib/db/connection-form";
 import {
   AuthenticationError,
   ConnectionError,
+  connectPhase,
   ExecutionProfileError,
   QueryError,
   ReadAllowanceExceededError,
@@ -20,6 +21,7 @@ import {
   TimeoutError,
 } from "@/lib/db/errors";
 import {
+  errorRecord,
   isStudioRefusal,
   PROVIDER_TEXT_WITHHELD,
   providerAuthor,
@@ -347,5 +349,71 @@ describe("isStudioRefusal", () => {
     expect(refusal).toBeInstanceOf(ExecutionProfileError);
     expect(refusal.name).toBe("ExecutionProfileError");
     expect(refusal.reasonCode).toBe("AGENT_CREDENTIAL_REQUIRED");
+  });
+});
+
+describe("the error record", () => {
+  /** A five-character credential shaped as a SQLSTATE: upper-case hex with a digit, generated at run time. */
+  const sqlstateShaped = () =>
+    `${Math.floor(Math.random() * 10)}${crypto.randomUUID().replace(/-/g, "").slice(0, 4)}`.toUpperCase();
+  const password = sqlstateShaped();
+  const scrub = providerTextScrub(connectionWith({ password }), "any");
+
+  function withSqlstate<T extends QueryError | RefusedBeforeSendError>(error: T, sqlstate: string): T {
+    error.sqlstate = sqlstate;
+    return error;
+  }
+
+  test("a credential in an error's SQLSTATE withholds the error, and the record holds no sqlState", () => {
+    expect(password).toMatch(/^(?=[A-Z]*\d)[0-9A-Z]{5}$/);
+    const error = withSqlstate(new QueryError("relation does not exist", "postgres"), password);
+    expect(withholdProviderError(scrub, error)).toBeInstanceOf(ProviderTextWithheldError);
+    const record = errorRecord(scrub, error);
+    expect(record).toEqual({ kind: "provider-text-withheld", code: "DATABASE_ERROR", outcome: "unknown" });
+    expect(JSON.stringify(record)).not.toContain(password);
+  });
+
+  test("a withheld error keeps the outcome of the error it replaced", async () => {
+    const connectFailure = new ConnectionError(`could not connect with ${password}`, "postgres");
+    const raised = await connectPhase(() => Promise.reject(connectFailure)).catch((error: unknown) => error);
+    expect(errorRecord(scrub, raised)).toEqual({
+      kind: "provider-text-withheld",
+      code: "DATABASE_ERROR",
+      outcome: "not-sent",
+    });
+    const refused = withSqlstate(new RefusedBeforeSendError("refused", "postgres"), password);
+    expect(errorRecord(scrub, refused)).toEqual({
+      kind: "provider-text-withheld",
+      code: "DATABASE_ERROR",
+      outcome: "not-sent",
+    });
+    const statementFailure = new ConnectionError(`lost ${password}`, "postgres");
+    expect(errorRecord(scrub, statementFailure).outcome).toBe("unknown");
+  });
+
+  test("the error given is never changed", () => {
+    for (const error of [
+      withSqlstate(new QueryError("relation does not exist", "postgres"), password),
+      withSqlstate(new RefusedBeforeSendError(`refused ${password}`, "postgres"), password),
+    ]) {
+      const keys = Object.keys(error);
+      const own = keys.map((key) => (error as unknown as Record<string, unknown>)[key]);
+      errorRecord(scrub, error);
+      expect(Object.keys(error)).toEqual(keys);
+      expect(keys.map((key) => (error as unknown as Record<string, unknown>)[key])).toEqual(own);
+    }
+  });
+
+  test("a SQLSTATE with no credential form is kept", () => {
+    let kept = sqlstateShaped();
+    while (kept === password) kept = sqlstateShaped();
+    const error = withSqlstate(new QueryError("relation does not exist", "postgres"), kept);
+    expect(withholdProviderError(scrub, error)).toBe(error);
+    expect(errorRecord(scrub, error)).toEqual({
+      kind: "query",
+      code: "QUERY_ERROR",
+      sqlState: kept,
+      outcome: "unknown",
+    });
   });
 });

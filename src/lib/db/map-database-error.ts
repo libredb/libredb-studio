@@ -6,6 +6,7 @@
 
 import type { DatabaseType } from "./types";
 import { DRIVER_ERROR_CLASSIFIERS } from "@/lib/db/driver-errors";
+import { SQLSTATE_PATTERN } from "@/lib/db/error-record";
 import type { AccessRefusal, DriverErrorClassifier, DriverErrorFields } from "@/lib/db/driver-errors/types";
 import {
   AuthenticationError,
@@ -60,14 +61,11 @@ function isStatementFault(error: Error): boolean {
   return firstAnswer((row) => row.statementFault?.(fields)) ?? false;
 }
 
-/** A SQLSTATE: five digits or uppercase letters, with a digit, so a system code such as `EPIPE` is not read as one. */
-const SQLSTATE = /^(?=[A-Z]*\d)[0-9A-Z]{5}$/;
-
 /** The SQLSTATE in a driver error's own code fields, read the way `isStatementFault` reads them, or undefined. */
 function driverSqlstate(error: Error): string | undefined {
   const fields = error as Error & { code?: unknown; sqlState?: unknown; sqlstate?: unknown };
   return [fields.code, fields.sqlState, fields.sqlstate].find(
-    (state): state is string => typeof state === "string" && SQLSTATE.test(state),
+    (state): state is string => typeof state === "string" && SQLSTATE_PATTERN.test(state),
   );
 }
 

@@ -421,6 +421,22 @@ Every other value, and every malformed or unknown tag on decode, is refused with
 The module uses no Node-only global, so it loads in the browser as well as on the server.
 The SQLite worker's line is the hop that carries it: the parent encodes parameters and decodes answers with the module, and the child's bootstrap carries a restricted copy ([`docs/providers/sqlite.md`](providers/sqlite.md#34-no-transactions-api-no-pool-cancellation-via-the-child-process-worker)).
 
+### 4.14. Error records (`src/lib/db/error-record.ts`)
+
+A failed call answers, beside its words, a closed record a reader can branch on.
+`kind` names the class of failure: one kind per error class of `src/lib/db/errors.ts`, and `internal` for any other thrown value.
+A class declared elsewhere, such as a provider's own `QueryError` subclass, takes the kind of its nearest class there, found by walking the prototype chain, so a kind decides exactly what `instanceof` decides.
+`code` is the error's API code, or for the two execution profile kinds the refusal's deny code.
+`sqlState` is the SQLSTATE the driver reported, when it reported one.
+`engineCode` is an engine's own error code; no error carries one yet.
+`outcome` is `not-sent` when the statement never reached the database: a refusal before send (`RefusedBeforeSendError` and its subclasses), or whatever a provider's connect raised, which `connectPhase` marks.
+Every other failure answers `unknown`, since the statement may have run.
+`sessionState` says whether the session is in a transaction; no error carries one yet.
+The record holds no text of the error: no message, detail, statement or identifier.
+The full record is built only by `errorRecord` in `src/lib/db/operations/provider-text.ts`, which applies the core scrub first, so a credential of the connection in the SQLSTATE withholds the error whole, as one in the message does; the withheld error keeps the replaced error's `outcome`.
+`readErrorRecord` reads a record strictly and refuses anything else with an `ErrorRecordError` that names the field, never its value.
+The module uses no Node-only global.
+
 ## 5. Directory Structure
 
 ```
