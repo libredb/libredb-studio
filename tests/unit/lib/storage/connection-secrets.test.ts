@@ -209,13 +209,66 @@ describe("the classification is exhaustive by construction", () => {
     );
   });
 
+  test("exactly the thirty identity fields are classified identity", () => {
+    // The identity set is part of the stored envelope format: moving an existing field into or out of it changes the
+    // digest every sealed value of a record carrying that field was bound to, and those values then read as
+    // undecryptable. A change to this list is a new envelope version with its own re-seal (docs/STORAGE.md).
+    const identity = [
+      ...Object.keys(CONNECTION_FIELDS).filter((k) => CONNECTION_FIELDS[k as never] === "identity"),
+      ...Object.keys(SSL_FIELDS)
+        .filter((k) => SSL_FIELDS[k as never] === "identity")
+        .map((k) => `ssl.${k}`),
+      ...Object.keys(SSH_TUNNEL_FIELDS)
+        .filter((k) => SSH_TUNNEL_FIELDS[k as never] === "identity")
+        .map((k) => `sshTunnel.${k}`),
+    ].sort();
+
+    expect(identity).toEqual(
+      [
+        "type",
+        "host",
+        "port",
+        "user",
+        "database",
+        "serviceName",
+        "instanceName",
+        "authSource",
+        "saslMechanism",
+        "allowInsecureAuth",
+        "dataServers",
+        "apiPath",
+        "tlsServerName",
+        "amqpPort",
+        "securityMode",
+        "securityPolicyUri",
+        "serverCertificateThumbprint",
+        "hostKeyFingerprint",
+        "clientCertificatePath",
+        "clientPrivateKeyPath",
+        "agentUser",
+        "ssl.mode",
+        "ssl.rejectUnauthorized",
+        "ssl.caCert",
+        "ssl.clientCert",
+        "sshTunnel.enabled",
+        "sshTunnel.host",
+        "sshTunnel.port",
+        "sshTunnel.username",
+        "sshTunnel.hostKeyFingerprint",
+      ].sort(),
+    );
+    expect(identity).toHaveLength(30);
+  });
+
   test("a certificate is not a secret and stays readable for diagnosis", () => {
-    expect(SSL_FIELDS.caCert).toBe("public");
-    expect(SSL_FIELDS.clientCert).toBe("public");
+    // Readable, and bound into every sealed value of its connection: it decides whom the credential is sent to.
+    expect(SSL_FIELDS.caCert).toBe("identity");
+    expect(SSL_FIELDS.clientCert).toBe("identity");
   });
 
   test("a SASL mechanism names how the password is checked, and is no secret itself", () => {
-    expect(CONNECTION_FIELDS.saslMechanism).toBe("public");
+    // Readable, and bound: PLAIN sends the password itself where SCRAM sends a proof.
+    expect(CONNECTION_FIELDS.saslMechanism).toBe("identity");
   });
 
   test("the read-only mode is public, because the browser reads it to draw the marker (#1089)", () => {
@@ -414,8 +467,10 @@ describe("withoutSecretFields", () => {
     const withheld = withoutSecretFields(fullConnection());
     const before = groups(original);
     const after = groups(withheld);
+    const readable = (map: Record<string, FieldClass>): string[] =>
+      Object.keys(map).filter((key) => map[key] !== "secret" && map[key] !== "nested");
     for (const [index, [group, map]] of before.entries()) {
-      for (const key of keysOf(map, "public")) {
+      for (const key of readable(map)) {
         expect(after[index][0][key]).toEqual(group[key]);
       }
     }
@@ -445,7 +500,7 @@ describe("withoutSecretFields", () => {
     const withheld = withoutSecretFields(managed);
     expect(withheld.dataServers).toBe("oxia-0.internal:6648,oxia-1.internal:6648");
     expect("password" in withheld).toBe(false);
-    expect(CONNECTION_FIELDS.dataServers).toBe("public");
+    expect(CONNECTION_FIELDS.dataServers).toBe("identity");
   });
 
   test("leaves the connection it was given untouched", () => {

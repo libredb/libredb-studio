@@ -244,7 +244,7 @@ describe("one classification, reached through connection-secrets too", () => {
   const isClassificationMap = (value: unknown): boolean => {
     if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
     const values = Object.values(value);
-    return values.length > 0 && values.every((entry) => entry === "secret" || entry === "public" || entry === "nested");
+    return values.length > 0 && values.every((entry) => entry === "secret" || entry === "public" || entry === "identity" || entry === "nested");
   };
 
   test("the leaf's classification maps are exactly SECRET_FIELD_MAPS, and connection-secrets re-exports each", () => {
