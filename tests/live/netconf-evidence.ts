@@ -58,6 +58,7 @@ import { openNetconfReader } from "@/lib/db/providers/network/netconf/open";
 import { netconfXmlPort } from "@/lib/db/providers/network/netconf/xml";
 import { scrubCredentialValues } from "./netconf-capture-scrub";
 import type { DatabaseConnection } from "@/lib/types";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 const DEFAULT_TARGET = "127.0.0.1:1830";
 const DEFAULT_OUT = "tests/fixtures/netconf";
@@ -202,6 +203,7 @@ const reader = await openNetconfReader(connection, {
   xml: netconfXmlPort,
   socket: nodeSocketPort,
   ssh: recordingSshPort(capture),
+  egress: egressDecision(),
 });
 
 /**

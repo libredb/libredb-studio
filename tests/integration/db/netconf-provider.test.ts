@@ -11,6 +11,8 @@ import type { SocketPort, SshPort } from "@/lib/db/providers/network/netconf/dia
 import type { Transport } from "@/lib/db/providers/network/netconf/session";
 import { fingerprintOf } from "@/lib/db/providers/network/netconf/hostkey";
 import type { DatabaseConnection } from "@/lib/types";
+import type { EgressDecision } from "@/lib/db/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 
 /**
  * The NETCONF provider end to end over bytes a real device sent, and without Docker.
@@ -66,7 +68,7 @@ const CAPTURE = JSON.parse(
 const withoutMessageId = (rpc: string): string => rpc.replace(/message-id="[^"]*"/g, 'message-id=""');
 
 interface Replay {
-  readonly ports: { xml: typeof netconfXmlPort; ssh: SshPort; socket: SocketPort };
+  readonly ports: { xml: typeof netconfXmlPort; ssh: SshPort; socket: SocketPort; egress: EgressDecision };
   /** Every request the code under test wrote, so a test can say what it asked. */
   readonly wrote: string[];
   readonly closes: { count: number };
@@ -112,6 +114,8 @@ function replay(capture: Capture = CAPTURE): Replay {
     closes,
     ports: {
       xml: netconfXmlPort,
+      // The decision a factory-built provider holds while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset.
+      egress: ALLOWS_PRIVATE_HOSTS,
       socket: { connect: async () => ({ socket: true }) as never },
       ssh: {
         connect: (options) => {
@@ -434,7 +438,11 @@ afterAll(() => {
 function deviceProvider(helloMs = NETCONF_SESSION_LIMITS.helloMs): NetconfProvider {
   const config = connection({ port: devicePort, hostKeyFingerprint: devicePin, password: DEVICE_LOGIN });
   return new NetconfProvider(config, {}, {}, async (c) =>
-    openNetconfReader(c, { xml: netconfXmlPort, limits: { ...NETCONF_SESSION_LIMITS, helloMs } }),
+    openNetconfReader(c, {
+      xml: netconfXmlPort,
+      limits: { ...NETCONF_SESSION_LIMITS, helloMs },
+      egress: ALLOWS_PRIVATE_HOSTS,
+    }),
   );
 }
 
@@ -574,7 +582,7 @@ describe("a key that cannot be read", () => {
       privateKey: KEY_CANARY,
     });
     const provider = new NetconfProvider(config, {}, {}, async (c) =>
-      openNetconfReader(c, { xml: netconfXmlPort, limits: NETCONF_SESSION_LIMITS }),
+      openNetconfReader(c, { xml: netconfXmlPort, limits: NETCONF_SESSION_LIMITS, egress: ALLOWS_PRIVATE_HOSTS }),
     );
     const failure = await provider.connect().catch((e: unknown) => e);
     expect(failure).toBeInstanceOf(DatabaseConfigError);

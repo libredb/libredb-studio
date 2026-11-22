@@ -400,6 +400,7 @@ A name is written as a JSON string literal, with control, line-separator and bid
 | Anything else | `QueryError` | Studio could not read the broker's answer for {route}. |
 
 The shared egress refusals of `DB_HTTP_BLOCK_PRIVATE_HOSTS` apply to both endpoints and pass through unchanged.
+A provider built outside Studio's provider factory without the egress decision refuses its AMQP dial with a sentence that names the missing decision, which passes through unchanged too.
 The web server replaces every `TimeoutError`'s sentence with its shared timeout sentence, so the timeout sentences above are not yet shown through the query route.
 
 ## 12. Standards and deviations

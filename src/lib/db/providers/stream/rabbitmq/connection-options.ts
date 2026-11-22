@@ -14,6 +14,7 @@
 import { type HttpOrigin, httpOrigin, plaintextSecretRefusal } from "@/lib/db/http/endpoint";
 import { type NodeTlsMaterial, nodeTlsMaterial } from "@/lib/db/http/node-transport";
 import { type DatabaseConnection, type SSHTunnelConfig, TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
+import type { EgressDecision } from "@/lib/db/types";
 import {
   AMQP_PORT_SHAPE,
   configError,
@@ -54,6 +55,8 @@ export interface AmqpEndpoint {
   readonly username: string;
   readonly password: string;
   readonly display: string;
+  /** The egress decision the provider was built with, added by the provider; `dialAmqp` refuses without one. */
+  readonly egress?: EgressDecision;
 }
 
 export interface RabbitMQEndpoints {

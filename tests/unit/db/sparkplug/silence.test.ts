@@ -4,6 +4,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { ConnectionError } from "@/lib/db/errors";
 import { SparkplugProvider } from "@/lib/db/providers/industrial/sparkplug";
 import type { DatabaseConnection } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 /*
  * THE THREE SILENCES, AND WHY ONLY ONE OF THEM IS A SUCCESS.
@@ -84,15 +85,19 @@ async function readAgainst(answer: (socket: Socket) => void): Promise<{
   open = server;
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as { port: number };
-  const provider = new SparkplugProvider({
-    id: "c1",
-    name: "plant",
-    type: "sparkplug",
-    host: "127.0.0.1",
-    port,
-    // One second rather than the default window: the case is the silence, not the waiting.
-    database: JSON.stringify({ seconds: 1 }),
-  } as DatabaseConnection);
+  const provider = new SparkplugProvider(
+    {
+      id: "c1",
+      name: "plant",
+      type: "sparkplug",
+      host: "127.0.0.1",
+      port,
+      // One second rather than the default window: the case is the silence, not the waiting.
+      database: JSON.stringify({ seconds: 1 }),
+    } as DatabaseConnection,
+    {},
+    { egress: ALLOWS_PRIVATE_HOSTS },
+  );
   const error = await provider.connect().then(
     () => undefined,
     (caught: unknown) => caught as Error,

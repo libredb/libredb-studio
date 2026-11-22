@@ -33,6 +33,7 @@ import type { XmlElement } from "@/lib/db/providers/network/netconf/reader-port"
 import { netconfXmlPort } from "@/lib/db/providers/network/netconf/xml";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 function env(name: string): string {
   const value = process.env[name];
@@ -47,7 +48,7 @@ const FINGERPRINT = env("NETCONF_AGENT_FINGERPRINT");
 const DATE = new Date().toISOString().slice(0, 10);
 const AGENT: ProviderExecutionContext = { readOnly: true, sendsStatements: true };
 const BUDGET: ReadOnlyStatementBudget = { maxResultRows: 50, maxResultBytes: 1_000_000, statementTimeoutMs: 20_000 };
-const ports = { xml: netconfXmlPort, ssh: nodeSshPort, socket: nodeSocketPort };
+const ports = { xml: netconfXmlPort, ssh: nodeSshPort, socket: nodeSocketPort, egress: egressDecision() };
 
 const connection = {
   id: "agent-boundary",

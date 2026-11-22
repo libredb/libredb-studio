@@ -38,6 +38,7 @@ import {
   TestAmqpConnection,
   TestPublisher,
 } from "../helpers/rabbitmq-test-amqp091";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 function env(name: string): string {
   const value = process.env[name];
@@ -211,7 +212,12 @@ function readerProvider(execution: ProviderExecutionContext, liarTypeCheck = fal
   const transport: ManagementTransportFactory = liarTypeCheck
     ? streamTypeCheck(createNodeTransport)
     : createNodeTransport;
-  return new RabbitMQProvider(connection, {}, execution, { managementTransport: transport });
+  return new RabbitMQProvider(
+    connection,
+    {},
+    { ...execution, egress: egressDecision() },
+    { managementTransport: transport },
+  );
 }
 
 /** A transport whose type check answers "stream" for every name, so a read reaches the AMQP side of its refusal. */

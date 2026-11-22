@@ -262,6 +262,16 @@ reason is measured rather than assumed: there is no documented vendor default ac
 about, no JWT, and the "no secret" case is unreachable because a missing, empty or wrong
 credential all end in the same refusal.
 
+### 4.4 Where the dial may connect
+
+The dial applies the shared egress rule, `socketEgress` in [`egress-policy.ts`](../../src/lib/db/http/egress-policy.ts), to the socket it hands `ssh2`.
+A link-local address or AWS's IPv6 instance metadata address is never reached, whatever `DB_HTTP_BLOCK_PRIVATE_HOSTS` says.
+With the flag on, a loopback, private or other non-public address is refused as well, before any byte reaches the device: an IP literal before any socket opens, with the shared sentence, and a name at the lookup the socket dials through.
+
+Through an SSH tunnel the socket dials the local forward, a loopback address, and the rule is checked against that address.
+So with the flag on a tunnelled connection is refused, and with it off the forward is dialled.
+The device at the far end is not checked here: a link-local or metadata address there is reached through the tunnel, and a name is resolved by the SSH server, where Studio cannot check it.
+
 ### Connection string
 
 `netconf` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/network/netconf/connection-string.ts)).
@@ -540,7 +550,7 @@ The refusal reason it prints, verbatim:
 ## 14. Agent mode
 
 Agent mode reads a NETCONF device through `queryReadOnly`, on a handle opened under the agent read-only profile only; on an editor handle it is refused before anything is sent.
-The provider takes the execution context as its third constructor argument, the injected device layer fourth and the agent's door, a session per read, fifth.
+The provider takes the build context, the execution context plus the egress decision core took, as its third constructor argument, the injected device layer fourth and the agent's door, a session per read, fifth, and each of the two openers is handed the connection and the egress decision from that build context.
 
 ### 14.1 The boundary
 
@@ -594,6 +604,7 @@ Measured on the fixture under the read-only account (`tests/fixtures/netconf/2.8
 
 A list holding more entries than the request's `limit` or the row budget is refused rather than cut, an answer past the byte budget is refused, and a read past the time budget, which covers the session, the module check and the read, is refused in Studio's words.
 A failure is worded by its category: an `rpc-error` by its RFC 6241 error-tag alone, never by the device's message, path or info, which can echo a value, and a dial, credential or session failure by its class, never with a credential or host key.
+A provider built outside Studio's provider factory without the egress decision refuses the read with the sentence that names the missing decision, as its `connect()` does, and not with the settings sentence.
 
 On a handle of either agent profile, the console, a node's or key's source and the overview are refused with their reason, since none passes through the check; the object surface answers names only, as on every handle, and the metric, session, table and storage readings already answer their reason.
 

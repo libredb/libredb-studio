@@ -16,7 +16,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createSocket, type Socket } from "node:dgram";
 import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
+import { type AddressInfo, createServer as createTcpServer, type Socket as TcpSocket } from "node:net";
 import { egressDecision } from "@/lib/db/egress-decision";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
@@ -29,7 +29,7 @@ import { ALLOWS_PRIVATE_HOSTS } from "../helpers/egress-decisions";
 import { setEgressFlag } from "../helpers/egress-flag";
 import { pathsToObject } from "../helpers/reachable-markers";
 
-/** The engines whose guard calls take the decision as an argument since slice 2b-1. */
+/** The engines whose guard calls take the decision as an argument since slices 2b-1 and 2b-2. */
 const GUARDED_ENGINES: readonly DatabaseType[] = [
   "clickhouse",
   "druid",
@@ -40,6 +40,11 @@ const GUARDED_ENGINES: readonly DatabaseType[] = [
   "couchbase",
   "prometheus",
   "snmp",
+  "mqtt",
+  "sparkplug",
+  "netconf",
+  "modbus",
+  "rabbitmq",
 ];
 
 const original = process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
@@ -148,6 +153,40 @@ describe("a guarded provider is built with the egress decision core took (FND-2 
       expect(hits).toBe(0);
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  test("an MQTT connection built by createDatabaseProvider with DB_HTTP_BLOCK_PRIVATE_HOSTS true is refused at 127.0.0.1 and the listener accepts nothing", async () => {
+    setEgressFlag("true");
+    let accepted = 0;
+    const sockets: TcpSocket[] = [];
+    const listener = createTcpServer((socket) => {
+      accepted += 1;
+      sockets.push(socket);
+      socket.destroy();
+    });
+    await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+    try {
+      const connection: DatabaseConnection = {
+        id: "egress-census-mqtt",
+        name: "egress census mqtt",
+        type: "mqtt",
+        host: "127.0.0.1",
+        port: (listener.address() as AddressInfo).port,
+        createdAt: new Date(),
+      };
+      const failure = await createDatabaseProvider(connection)
+        .then((provider) => provider.connect())
+        .then(
+          () => null,
+          (error: unknown) => error,
+        );
+      expect(failure).toBeInstanceOf(DatabaseConfigError);
+      expect((failure as Error).message).toBe(BLOCKED_HOST);
+      expect(accepted).toBe(0);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>((resolve, reject) => listener.close((error) => (error ? reject(error) : resolve())));
     }
   });
 

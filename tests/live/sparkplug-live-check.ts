@@ -43,6 +43,7 @@ import path from "node:path";
 import { SparkplugProvider } from "@/lib/db/providers/industrial/sparkplug";
 import { summarizeWriteReach } from "@/lib/db/write-reach";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 const HOST = argument("host", "127.0.0.1");
 const PORT = Number(argument("port", "1884"));
@@ -116,14 +117,18 @@ class SkipItem extends Error {}
  * and building it directly is what lets the same file run under both runtimes.
  */
 async function open(group = ""): Promise<SparkplugProvider> {
-  const provider = new SparkplugProvider({
-    id: "sparkplug-live",
-    name: "fixture",
-    type: "sparkplug",
-    host: HOST,
-    port: PORT,
-    database: group,
-  } as DatabaseConnection);
+  const provider = new SparkplugProvider(
+    {
+      id: "sparkplug-live",
+      name: "fixture",
+      type: "sparkplug",
+      host: HOST,
+      port: PORT,
+      database: group,
+    } as DatabaseConnection,
+    {},
+    { egress: egressDecision() },
+  );
   await provider.connect();
   return provider;
 }
@@ -311,14 +316,18 @@ const ITEMS: { readonly name: string; readonly run: () => Promise<void> }[] = [
     run: async () => {
       // The other half of rule 5: silence must be told apart from an answer. Port 1 is never a
       // broker, and the provider has to say so rather than return zero rows.
-      const provider = new SparkplugProvider({
-        id: "sparkplug-live-silent",
-        name: "silent",
-        type: "sparkplug",
-        host: "127.0.0.1",
-        port: 1,
-        database: "",
-      } as DatabaseConnection);
+      const provider = new SparkplugProvider(
+        {
+          id: "sparkplug-live-silent",
+          name: "silent",
+          type: "sparkplug",
+          host: "127.0.0.1",
+          port: 1,
+          database: "",
+        } as DatabaseConnection,
+        {},
+        { egress: egressDecision() },
+      );
       try {
         await provider.connect();
         throw new Error("a port with nothing on it was accepted as a connection");

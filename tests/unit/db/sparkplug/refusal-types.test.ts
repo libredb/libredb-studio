@@ -16,6 +16,7 @@ import { encodeSubscribe, mqttString, varint } from "@/lib/db/providers/industri
 import { parseReadQuery } from "@/lib/db/providers/industrial/sparkplug/request";
 import { ReadState } from "@/lib/db/providers/industrial/sparkplug/state";
 import type { DatabaseConnection } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const connection = (over: Partial<DatabaseConnection> = {}): DatabaseConnection =>
   ({ id: "c1", name: "plant", type: "mqtt", host: "broker.invalid", port: 1883, ...over }) as DatabaseConnection;
@@ -127,7 +128,9 @@ describe("a connection's own refusals are configuration errors, which is a diffe
     // real socket; `broker.invalid` resolves nowhere, so this is the live form of `dial-failed`.
     // It used to assert a QueryError, which is how the route came to answer a wrong address with
     // `400 QUERY_ERROR`. The sentence is unchanged; only the class, and with it the status.
-    const error = await thrownAsync(() => new SparkplugProvider(connection()).connect());
+    const error = await thrownAsync(() =>
+      new SparkplugProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).connect(),
+    );
     expect(error instanceof ConnectionError).toBe(true);
     expect(error instanceof QueryError).toBe(false);
   });

@@ -6,7 +6,6 @@ import { BlockList, isIP, type LookupFunction } from "node:net";
 import { PassThrough, Readable } from "node:stream";
 import { urlToHttpOptions } from "node:url";
 import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
-import { egressDecision } from "@/lib/db/egress-decision";
 import { DatabaseConfigError, DatabaseError } from "@/lib/db/errors";
 import type { EgressDecision } from "@/lib/db/types";
 
@@ -227,18 +226,21 @@ export const guardedLinkLocalRefusingLookup: LookupFunction = checkedLookup((add
 });
 
 /**
- * The egress rule for one socket dial to `host`, which may be an IPv6 literal with or without its brackets. The literal
- * checks run first, because an IP literal never reaches a lookup: with DB_HTTP_BLOCK_PRIVATE_HOSTS on the guard's, which
- * also refuses an empty host, and then with `refusesLinkLocal` the link-local check whatever the flag says, so the
+ * The egress rule for one socket dial to `host`, which may be an IPv6 literal with or without its brackets. `egress` is
+ * the decision the dialling provider was built with; the rule reads no setting. The literal checks run first, because
+ * an IP literal never reaches a lookup: with a decision that blocks private destinations the guard's, which also
+ * refuses an empty host, and then with `refusesLinkLocal` the link-local check whatever the decision says, so the
  * guard's sentence wins where both refuse. The answer is the lookup the socket dials through, which checks the address
- * it dials and hands that address to the socket: both checks with the flag on and `refusesLinkLocal`, the link-local
- * one alone with the flag off, the guard's alone without `refusesLinkLocal`, and undefined, the runtime's own lookup,
- * with neither.
+ * it dials and hands that address to the socket: both checks with a blocking decision and `refusesLinkLocal`, the
+ * link-local one alone with an allowing decision, the guard's alone without `refusesLinkLocal`, and undefined, the
+ * runtime's own lookup, with neither.
  */
-export function socketEgress(host: string, rules: { readonly refusesLinkLocal: boolean }): LookupFunction | undefined {
-  // An interim reader: it reads core's decision on the socket dials' behalf until FND-2 slice 2b-2 hands it the
-  // decision as an argument (tests/unit/lib/db/provider-environment-scan.test.ts lists it until then).
-  const { lookup: guardLookup } = guardedNodeOptions(host, egressDecision());
+export function socketEgress(
+  host: string,
+  rules: { readonly refusesLinkLocal: boolean },
+  egress: EgressDecision,
+): LookupFunction | undefined {
+  const { lookup: guardLookup } = guardedNodeOptions(host, egress);
   if (!rules.refusesLinkLocal) return guardLookup;
   assertNotLinkLocalLiteral(host);
   return guardLookup === undefined ? linkLocalRefusingLookup : guardedLinkLocalRefusingLookup;

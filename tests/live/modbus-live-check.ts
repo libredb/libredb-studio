@@ -41,6 +41,7 @@
 import { connect, type Socket } from "node:net";
 import { ModbusProvider } from "@/lib/db/providers/industrial/modbus/index";
 import type { DatabaseConnection } from "@/lib/types";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 const DEFAULT_TARGET = "127.0.0.1:1502";
 const RUNTIME = typeof Bun === "undefined" ? `node ${process.versions.node}` : `bun ${Bun.version}`;
@@ -142,14 +143,18 @@ const MAP = JSON.stringify([
 ]);
 
 function engine(): ModbusProvider {
-  return new ModbusProvider({
-    id: "live",
-    name: "fixture",
-    type: "modbus",
-    host: HOST,
-    port: PORT,
-    registerMap: MAP,
-  } as unknown as DatabaseConnection);
+  return new ModbusProvider(
+    {
+      id: "live",
+      name: "fixture",
+      type: "modbus",
+      host: HOST,
+      port: PORT,
+      registerMap: MAP,
+    } as unknown as DatabaseConnection,
+    {},
+    { egress: egressDecision() },
+  );
 }
 
 async function values(statement: string): Promise<unknown[]> {

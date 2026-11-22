@@ -8,7 +8,9 @@
  * outside it because grpc-js resolves names itself (`docs/BACKLOG.md` D212).
  *
  * The same pattern is already in the tree: `providers/stream/rabbitmq/amqp/dial.ts` dials through
- * `socketEgress(host, { refusesLinkLocal: true })` with `noDelay: true`, and this follows it.
+ * `socketEgress(host, { refusesLinkLocal: true }, decision)` with `noDelay: true`, and this follows it: the
+ * decision is the one the provider was built with, carried in `DialConfig.egress`, and the dial refuses
+ * without one, after the pin is read and before any socket.
  *
  * MEASURED 2026-10-13 against the pinned fixture, and each measurement is a rule below:
  *   ssh2 accepts a socket it did not open, and a NETCONF session over it behaves identically;
@@ -18,7 +20,8 @@
  *   the forward is the device's own and not the bastion's.
  */
 
-import { socketEgress } from "@/lib/db/http/egress-policy";
+import { requireEgressDecision, socketEgress } from "@/lib/db/http/egress-policy";
+import type { EgressDecision } from "@/lib/db/types";
 import { checkHostKey, readPin } from "./hostkey";
 import { classifyLoginFailure, type LoginFailure } from "./auth";
 import type { Transport } from "./session";
@@ -40,6 +43,8 @@ export interface DialConfig {
   readonly passphrase?: string;
   /** Milliseconds the handshake may take. */
   readonly readyMs: number;
+  /** The egress decision the provider was built with; the dial refuses without one, before any socket. */
+  readonly egress?: EgressDecision;
 }
 
 /**
@@ -105,7 +110,7 @@ export async function dialNetconf(config: DialConfig, ssh: SshPort, socket: Sock
   // `assertNotLinkLocalLiteral` here as well; a planted mutation removing that call failed no
   // test, because the refusal still came from inside `socketEgress`. The call was dead and is
   // gone rather than kept as a comfort.
-  const lookup = socketEgress(config.host, { refusesLinkLocal: true });
+  const lookup = socketEgress(config.host, { refusesLinkLocal: true }, requireEgressDecision(config.egress));
   const port = config.port ?? NETCONF_PORT;
   // The socket's own failure is a DialError too, and it was NOT before. MEASURED through the real
   // route: an address with nobody on it answered HTTP 500 `INTERNAL_ERROR`, logged "Unhandled

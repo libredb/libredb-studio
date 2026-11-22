@@ -22,6 +22,7 @@ import { createServer, type Server } from "node:tls";
 import { MqttProvider } from "@/lib/db/providers/keyvalue/mqtt/index";
 import { loadTlsFixtures } from "@/../tests/helpers/tls-fixtures";
 import { TUNNEL_FAR_END, type DatabaseConnection, type SSLMode } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const tls = loadTlsFixtures();
 const servers: Server[] = [];
@@ -48,10 +49,15 @@ function connection(over: Record<string, unknown>): DatabaseConnection {
   } as unknown as DatabaseConnection;
 }
 
+/** A provider of `config` handed an allowing egress decision, so the loopback test server is reachable. */
+function provider(config: DatabaseConnection): MqttProvider {
+  return new MqttProvider(config, {}, { egress: ALLOWS_PRIVATE_HOSTS });
+}
+
 /** What a read against a non-broker TLS server settles as, so the two outcomes are told apart by name. */
-async function outcome(provider: MqttProvider): Promise<string> {
+async function outcome(built: MqttProvider): Promise<string> {
   try {
-    await provider.connect();
+    await built.connect();
     return "connected";
   } catch (error) {
     return (error as Error).message;
@@ -68,7 +74,7 @@ describe("verified TLS to a broker addressed by IP", () => {
   test("connects in every verifying mode, because the certificate is checked against the address", async () => {
     const port = await tlsServer();
     for (const mode of ["verify-ca", "verify-full"] as const satisfies readonly SSLMode[]) {
-      const said = await outcome(new MqttProvider(connection({ port, ssl: { mode, caCert: tls.ca } })));
+      const said = await outcome(provider(connection({ port, ssl: { mode, caCert: tls.ca } })));
       if (!GOT_THROUGH.test(said)) throw new Error(`${mode} did not get past the TLS handshake: ${said}`);
       expect(said).not.toMatch(/ALTNAME|certificate|ServerName/i);
     }
@@ -77,7 +83,7 @@ describe("verified TLS to a broker addressed by IP", () => {
   /** `require` verifies nothing, so it got through before the fix too; it is the control, not the proof. */
   test("connects in require, which verifies nothing", async () => {
     const port = await tlsServer();
-    const said = await outcome(new MqttProvider(connection({ port, ssl: { mode: "require" } })));
+    const said = await outcome(provider(connection({ port, ssl: { mode: "require" } })));
     expect(said).toMatch(GOT_THROUGH);
   }, 30_000);
 
@@ -87,7 +93,7 @@ describe("verified TLS to a broker addressed by IP", () => {
    */
   test("refuses a certificate signed by a CA the connection does not name", async () => {
     const port = await tlsServer();
-    const said = await outcome(new MqttProvider(connection({ port, ssl: { mode: "verify-ca", caCert: tls.otherCa } })));
+    const said = await outcome(provider(connection({ port, ssl: { mode: "verify-ca", caCert: tls.otherCa } })));
     expect(said).not.toMatch(GOT_THROUGH);
     expect(said).toMatch(/certificate/i);
   }, 30_000);
@@ -106,7 +112,7 @@ describe("verified TLS to a broker addressed by IP", () => {
     const port = (server.address() as AddressInfo).port;
 
     await outcome(
-      new MqttProvider(
+      provider(
         connection({
           port,
           ssl: { mode: "verify-ca", caCert: tls.ca, clientCert: tls.client.cert, clientKey: tls.client.key },
@@ -126,7 +132,7 @@ describe("verified TLS through an SSH tunnel", () => {
   test("checks the certificate against the far end, not against the forward", async () => {
     const port = await tlsServer();
     const said = await outcome(
-      new MqttProvider(
+      provider(
         connection({
           port,
           ssl: { mode: "verify-full", caCert: tls.ca },
@@ -141,7 +147,7 @@ describe("verified TLS through an SSH tunnel", () => {
   test("and refuses a far end the certificate does not name", async () => {
     const port = await tlsServer();
     const said = await outcome(
-      new MqttProvider(
+      provider(
         connection({
           port,
           ssl: { mode: "verify-full", caCert: tls.ca },

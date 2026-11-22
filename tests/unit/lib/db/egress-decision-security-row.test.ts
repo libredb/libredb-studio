@@ -29,6 +29,9 @@ describe("control 0.6 names the egress decision", () => {
     "src/instrumentation.ts",
     "src/lib/db/factory.ts",
     "src/lib/db/providers/network/snmp/client.ts",
+    "src/lib/db/providers/industrial/modbus/client.ts",
+    "src/lib/db/providers/network/netconf/dial.ts",
+    "src/lib/db/providers/industrial/sparkplug/session.ts",
   ])("enforced in %s", (file) => {
     expect(enforcedIn).toContain(`[\`${file}\`](../${file})`);
   });
@@ -43,6 +46,7 @@ describe("control 0.6 names the egress decision", () => {
     "tests/unit/lib/db/egress-decision-security-row.test.ts",
     "tests/unit/lib/db/provider-environment-scan.test.ts",
     "tests/security/provider-egress-decision.test.ts",
+    "tests/unit/db/http/egress-policy-socket-dials.test.ts",
   ])("verified by %s", (file) => {
     expect(verifiedBy).toContain(`[\`${file}\`](../${file})`);
   });
@@ -59,7 +63,7 @@ describe("control 0.6 names the egress decision", () => {
 
   test("the control says the factory hands the decision to every provider that takes a context, and which requests are checked against it", () => {
     expect(control).toContain(
-      "refuses such a value by name, and the factory hands the decision to every provider that takes a context, all but Databend, BigQuery, Snowflake and Spark, so the HTTP requests of ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, libSQL and Prometheus, Couchbase's own fetch and TLS paths and SNMP's name lookup are checked against the decision their provider was handed, and every other guarded path against the same decision, which core's guard reads on the provider's behalf",
+      "refuses such a value by name, and the factory hands the decision to every provider that takes a context, all but Databend, BigQuery, Snowflake and Spark, so the HTTP requests of ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, libSQL and Prometheus, Couchbase's own fetch and TLS paths, the AMQP, MQTT, Modbus, NETCONF and Sparkplug B dials and SNMP's name lookup are checked against the decision their provider was handed, and every other guarded path against the same decision, which core's guard reads on the provider's behalf",
     );
   });
 

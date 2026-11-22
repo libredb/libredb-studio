@@ -174,6 +174,16 @@ TLS is not absent: the broker is dialled over TLS from the connection's SSL / TL
 With no panel, or the `disable` mode, the socket is plain.
 Through an SSH tunnel the certificate is checked against the broker the user named, not the local forward.
 
+### 4.3 Where the dial may connect
+
+The dial applies the shared egress rule, `socketEgress` in [`egress-policy.ts`](../../src/lib/db/http/egress-policy.ts), and writes no address check of its own.
+A link-local address or AWS's IPv6 instance metadata address is never reached, whatever `DB_HTTP_BLOCK_PRIVATE_HOSTS` says.
+With the flag on, a loopback, private or other non-public address is refused as well, before any byte reaches the broker: an IP literal before any socket opens, with the shared sentence, and a name at the lookup the socket dials through.
+
+Through an SSH tunnel the socket dials the local forward, a loopback address, and the rule is checked against that address.
+So with the flag on a tunnelled connection is refused, and with it off the forward is dialled.
+The broker at the far end is not checked here: a link-local or metadata address there is reached through the tunnel, and a name is resolved by the SSH server, where Studio cannot check it.
+
 ### Connection string
 
 `sparkplug` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/industrial/sparkplug/connection-string.ts)).

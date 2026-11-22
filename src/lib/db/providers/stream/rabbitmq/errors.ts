@@ -8,8 +8,8 @@
  * and cut after 64 characters in prose. A name inside a request a sentence quotes is never cut, because a cut name
  * addresses another stream.
  *
- * An error built here is registered as the provider's own, and `rabbitmqBoundary` passes through only those and the
- * shared egress refusal; anything else becomes a fixed sentence and its original value is dropped, because the query
+ * An error built here is registered as the provider's own, and `rabbitmqBoundary` passes through only those, the
+ * shared egress refusal and the missing egress decision's refusal; anything else becomes a fixed sentence and its original value is dropped, because the query
  * route sends an error's message to the client and history keeps it. docs/providers/rabbitmq.md prints the table.
  */
 import {
@@ -20,7 +20,7 @@ import {
   QueryError,
   TimeoutError,
 } from "@/lib/db/errors";
-import { EGRESS_REFUSAL_SENTENCES } from "@/lib/db/http/egress-policy";
+import { EGRESS_DECISION_MISSING, EGRESS_REFUSAL_SENTENCES } from "@/lib/db/http/egress-policy";
 import { isTlsFailureCode, TransportError } from "@/lib/db/http/node-transport";
 import {
   RABBITMQ_BODY_CEILING_BYTES,
@@ -542,14 +542,16 @@ export interface BoundaryContext {
 }
 
 /**
- * The one boundary every public method and every path of a read ends in. An own error and the shared egress
- * refusal pass through unchanged; a TransportError the client did not map becomes its row by kind; anything else,
+ * The one boundary every public method and every path of a read ends in. An own error, the shared egress
+ * refusal and the refusal of a dial made without an egress decision (a provider built outside Studio's factory) pass
+ * through unchanged; a TransportError the client did not map becomes its row by kind; anything else,
  * a SyntaxError, a TypeError or a DOMException included, becomes the unexpected-answer sentence. The original value is never the message,
  * the detail or the cause.
  */
 export function rabbitmqBoundary(error: unknown, context: BoundaryContext): Error {
   if (isOwnError(error)) return error as Error;
   if (error instanceof DatabaseConfigError && EGRESS_REFUSAL_SENTENCES.has(error.message)) return error;
+  if (error instanceof DatabaseConfigError && error.message === EGRESS_DECISION_MISSING) return error;
   if (error instanceof TransportError) {
     switch (error.kind) {
       case "aborted":

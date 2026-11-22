@@ -264,10 +264,11 @@ is a connection field, not an object. Editing the VALUE would be writing to a pl
 
 ## 7. Security
 
-The requirements are in `docs/SECURITY.md` under MB-S1 to MB-S13. The short form:
+The requirements are MB-S1 to MB-S13, in section 5 of [#1723](https://github.com/libredb/libredb-studio/issues/1723). The short form:
 
 - Read-only by construction, re-checked at the socket (MB-S1).
 - The shared egress rule applies, and a link-local address is refused by default (MB-S10).
+- With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, a loopback, private or other non-public address is refused too, before any byte reaches the device: an IP literal before any socket opens and a name at the lookup the socket dials through, both with the shared sentence.
 - The identification walk is bounded (MB-S6).
 - A value is data, never markup (MB-S13).
 - `mbaps` checks the chain and the host name, and not revocation, and says so.
@@ -307,6 +308,7 @@ The admission also refuses a request longer than 4,096 characters.
 A points or block read answers a number of rows its request decides, so one past the row budget is refused before anything is sent, never cut (`Read-only execution exceeded the row budget: 5 rows > 4 allowed`); an identification answer's rows are the device's, so they are held to the row budget once read; every result is held to the byte budget.
 An identification walk the device was still continuing after 8 rounds is refused rather than answered in part, where the console answers what it has with a warning ([section 3.6](#36-bounds-are-ours-not-the-devices-word)).
 A failure is worded by its category and quotes nothing the device sent: the device's silence for one request's 3,000 ms, its exception by code with this provider's sentence for that code, an answer that cannot be read as an answer to this read, a value the map's declaration cannot decode, an address nothing answers, and settings the egress rule refuses.
+A provider built outside Studio's provider factory without the egress decision refuses the read with the sentence that names the missing decision, as its `connect()` does, and not with the settings sentence.
 
 ### 8.3 Pacing
 

@@ -38,7 +38,7 @@ import type {
   PerformanceMetrics,
   PreparedQuery,
   ProviderCapabilities,
-  ProviderExecutionContext,
+  ProviderBuildContext,
   ProviderLabels,
   QueryResult,
   ReadOnlyStatementBudget,
@@ -118,7 +118,7 @@ export class MqttProvider extends BaseDatabaseProvider {
   public constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    private readonly execution: ProviderExecutionContext = {},
+    private readonly execution: ProviderBuildContext = {},
     private readonly openTransport?: MqttTransportFactory,
   ) {
     super(config, options);
@@ -278,6 +278,7 @@ export class MqttProvider extends BaseDatabaseProvider {
       // The connection's Database field carries the discovery filter, as Oxia's carries a namespace.
       ...(filter === "" ? {} : { filter }),
       ...(this.openTransport === undefined ? {} : { openTransport: this.openTransport }),
+      ...(this.execution.egress === undefined ? {} : { egress: this.execution.egress }),
     };
   }
 

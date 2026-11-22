@@ -5,7 +5,7 @@ import { splitMaskedColumns } from "@/lib/db/masking-exemption";
 import { DEFAULT_MASKING_CONFIG } from "@/lib/data-masking";
 import { offersColumnProfiling } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
-import { setEgressFlag } from "../../helpers/egress-flag";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 
 /**
  * THE DEFECT THIS FILE HOLDS: a Modbus read answers a column called `address`, and the grid drew
@@ -25,14 +25,11 @@ import { setEgressFlag } from "../../helpers/egress-flag";
  * wrong at that layer to hold. This is the layer where the decision is made.
  */
 
-const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
-const originalFlag = process.env[FLAG];
 let open: Server | undefined;
 
 afterEach(() => {
   open?.close();
   open = undefined;
-  setEgressFlag(originalFlag);
 });
 
 /** A Modbus TCP device small enough to answer one read, and real enough to be answered by one. */
@@ -66,18 +63,22 @@ const MAP = JSON.stringify([
 ]);
 
 const provider = (port: number) =>
-  new ModbusProvider({
-    id: "m",
-    name: "device",
-    type: "modbus",
-    host: "127.0.0.1",
-    port,
-    registerMap: MAP,
-  } as unknown as DatabaseConnection);
+  new ModbusProvider(
+    {
+      id: "m",
+      name: "device",
+      type: "modbus",
+      host: "127.0.0.1",
+      port,
+      registerMap: MAP,
+    } as unknown as DatabaseConnection,
+    {},
+    // The decision a factory-built provider holds while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset.
+    { egress: ALLOWS_PRIVATE_HOSTS },
+  );
 
 /** The columns a real read answers with, and the capabilities of the provider that answered. */
 async function readColumns(statement: string): Promise<{ fields: readonly string[]; engine: ModbusProvider }> {
-  setEgressFlag(undefined);
   const port = await device([230, 231, 232]);
   const engine = provider(port);
   const result = await engine.query(statement);

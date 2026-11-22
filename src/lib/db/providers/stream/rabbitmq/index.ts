@@ -42,7 +42,7 @@ import type {
   PerformanceMetrics,
   ProviderCapabilities,
   ProviderLabels,
-  ProviderExecutionContext,
+  ProviderBuildContext,
   ProviderOptions,
   QueryResult,
   ReadOnlyStatementBudget,
@@ -185,7 +185,7 @@ export class RabbitMQProvider extends BaseDatabaseProvider {
   constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    private readonly execution: ProviderExecutionContext = {},
+    private readonly execution: ProviderBuildContext = {},
     seams: Partial<RabbitMQSeams> = {},
   ) {
     super(config, options);
@@ -293,7 +293,11 @@ export class RabbitMQProvider extends BaseDatabaseProvider {
     if (this.session !== null) return;
     let endpoints: RabbitMQEndpoints;
     try {
-      endpoints = readConnectionOptions(this.config);
+      const read = readConnectionOptions(this.config);
+      endpoints =
+        read.amqp === null || this.execution.egress === undefined
+          ? read
+          : { ...read, amqp: { ...read.amqp, egress: this.execution.egress } };
     } catch (error) {
       throw rabbitmqBoundary(error, { site: "connect", endpoint: "", route: label("whoami") });
     }

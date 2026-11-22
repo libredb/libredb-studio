@@ -58,6 +58,7 @@ import {
 import { createManagementStub, requestKey } from "../../helpers/rabbitmq-management-stub";
 import { ByteReader } from "../../helpers/rabbitmq-test-amqp091";
 import { RABBITMQ_SEED_EXCHANGES, RABBITMQ_SEED_TABLE } from "../../live/rabbitmq-seed";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 
 const PINNED: readonly CaptureSet[] = ["4.3.6", "4.2.9"];
 // The default vhost also holds amq.rabbitmq.log, which the broker declares there alone; billing has the other seven.
@@ -90,7 +91,13 @@ function replayed(
   extra: Record<string, { status: number; body: string; contentType?: string }> = {},
 ) {
   const stub = createManagementStub({ ...stubAnswers(loadManagementCapture(set, name)), ...extra });
-  const provider = new RabbitMQProvider(connectionFor(amqpPort, user), {}, {}, { managementTransport: stub.factory });
+  // The decision a factory-built provider holds while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset.
+  const provider = new RabbitMQProvider(
+    connectionFor(amqpPort, user),
+    {},
+    { egress: ALLOWS_PRIVATE_HOSTS },
+    { managementTransport: stub.factory },
+  );
   return { provider, stub };
 }
 
@@ -710,6 +717,7 @@ describe("the three routes' full JSON bodies on Node (R-S5, R-S7)", () => {
         `import { clearRateLimitState } from ${source("src/lib/api/rate-limit.ts")};`,
         `import { RabbitMQProvider } from ${source("src/lib/db/providers/stream/rabbitmq/index.ts")};`,
         `import { rabbitmqConnection } from ${source("tests/helpers/rabbitmq-connection.ts")};`,
+        `import { ALLOWS_PRIVATE_HOSTS } from ${source("tests/helpers/egress-decisions.ts")};`,
         'import { useProvider } from "./provider-slot.ts";',
         'const routes = { query, "test-connection": testConnection, "objects/source": objectSource };',
         'const cases = JSON.parse(readFileSync(process.argv[2], "utf8"));',
@@ -734,7 +742,8 @@ describe("the three routes' full JSON bodies on Node (R-S5, R-S7)", () => {
         "    },",
         "    close() {},",
         "  });",
-        "  const provider = new RabbitMQProvider(connection, {}, {}, { managementTransport });",
+        "  const execution = { egress: ALLOWS_PRIVATE_HOSTS };",
+        "  const provider = new RabbitMQProvider(connection, {}, execution, { managementTransport });",
         "  if (each.connect) await provider.connect();",
         "  useProvider(provider);",
         "  const request = new Request(`http://localhost:3000/api/db/${each.route}`, {",

@@ -33,6 +33,7 @@ import {
   serverFrames,
   startFakePeer,
 } from "../../../helpers/rabbitmq-fake-peer";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const SENTINEL = "PEER-SENTINEL";
 const CONNECTION = rabbitmqConnection();
@@ -124,7 +125,8 @@ async function provider(
   current = new RabbitMQProvider(
     { ...CONNECTION, ...options.connection },
     {},
-    {},
+    // The decision a factory-built provider holds while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset.
+    { egress: ALLOWS_PRIVATE_HOSTS },
     { managementTransport: management, ...(options.dial === undefined ? {} : { dial: options.dial }) },
   );
   if (options.connect !== false) await current.connect();

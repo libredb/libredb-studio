@@ -14,7 +14,7 @@
  * lockout the pacing rests on, and what a raw write, sent by the capture script and never by Studio, does on the
  * fixture.
  */
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { ModbusDevicePacer, MODBUS_AGENT_DEVICE_GAP_MS } from "@/lib/db/providers/industrial/modbus/agent-pacing";
@@ -24,7 +24,7 @@ import { assertOutboundAllowed, ModbusValveDefect } from "@/lib/db/providers/ind
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import type { DatabaseConnection } from "@/lib/types";
 import { fakeModbusDevice, readAdu, type FakeModbusDevice } from "../../../helpers/modbus-fake-device";
-import { setEgressFlag } from "../../../helpers/egress-flag";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const MODBUS = path.join(ROOT, "src/lib/db/providers/industrial/modbus");
@@ -77,18 +77,11 @@ describe("in the source", () => {
 });
 
 describe("on the wire", () => {
-  const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
-  const original = process.env[FLAG];
   let dev: FakeModbusDevice | undefined;
-
-  beforeEach(() => {
-    setEgressFlag(undefined);
-  });
 
   afterEach(async () => {
     await dev?.close();
     dev = undefined;
-    setEgressFlag(original);
   });
 
   test("every frame of every admitted shape is a read or 43/14, and nothing else ever leaves", async () => {
@@ -120,7 +113,7 @@ describe("on the wire", () => {
         registerMap: map,
       } as unknown as DatabaseConnection,
       {},
-      { readOnly: true, sendsStatements: true },
+      { readOnly: true, sendsStatements: true, egress: ALLOWS_PRIVATE_HOSTS },
       { dial: recording, pacer: new ModbusDevicePacer(0) },
     );
     const statements = [
