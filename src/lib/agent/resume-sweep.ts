@@ -41,8 +41,8 @@ export interface ResumeSweepOutcome {
   readonly claimed: number;
   readonly skipped: number;
   /**
-   * Runs whose ledger names a statement language or goal rule this build does not have: left as they are and never
-   * driven, on this pass and every later one, since the ledger is what names them and nothing here changes it.
+   * Runs whose ledger names a statement language, workflow or goal rule this build does not have: left as they are and
+   * never driven, on this pass and every later one, since the ledger is what names them and nothing here changes it.
    */
   readonly unavailable: number;
 }
@@ -107,6 +107,25 @@ export async function listLocalAgentRunIds(directory = resolveAgentLedgerDirecto
 }
 
 /**
+ * The ids of the runs this process has already reported as unavailable to the sweep. Such a run stays `running` on its
+ * ledger and is met again on every pass, while no history list or rail names it, so the first meeting is logged at warn
+ * and later passes stay quiet: one line per stranded run per process, not one per pass. Process memory on purpose: a
+ * restarted process reports each such run again, once.
+ */
+const REPORTED_UNAVAILABLE_RUNS = new Set<string>();
+
+function reportUnavailableRun(error: AgentRunUnavailableError): void {
+  if (REPORTED_UNAVAILABLE_RUNS.has(error.runId)) return;
+  REPORTED_UNAVAILABLE_RUNS.add(error.runId);
+  logger.warn("agent resume sweep left a run it cannot read as it is", {
+    route: "agent-resume-sweep",
+    runId: error.runId,
+    field: error.refusal.field,
+    reason: error.refusal.reason,
+  });
+}
+
+/**
  * One pass over the candidate run ids: stale running runs are driven, and the
  * drive is the single-flight — `runInvestigation` claims the run before it
  * steps, so a run another drive already owns refuses with `RUN_ALREADY_DRIVEN`
@@ -115,7 +134,9 @@ export async function listLocalAgentRunIds(directory = resolveAgentLedgerDirecto
  * `try/catch`, so one run's throw never prevents a later run id from being
  * reached. A run whose ledger the store refuses as naming an id this build does
  * not have (`AgentRunUnavailableError`) is counted as `unavailable` and left as
- * it is. Any other refusal of a status read still ends the pass (B174).
+ * it is, with one warn line the first time this process meets it
+ * (`REPORTED_UNAVAILABLE_RUNS`). Any other refusal of a status read still ends
+ * the pass (B174).
  */
 export async function sweepStaleRuns(options: {
   readonly service: AgentRunService;
@@ -136,6 +157,7 @@ export async function sweepStaleRuns(options: {
       report = await options.service.status(runId);
     } catch (error) {
       if (!(error instanceof AgentRunUnavailableError)) throw error;
+      reportUnavailableRun(error);
       unavailable += 1;
       continue;
     }
@@ -203,7 +225,8 @@ export async function runResumeSweepOnce(
     const service = await getAgentRunService();
     const outcome = await sweep({ service, drive: driveAgentRun });
     // Only a claim or a skip makes the line: an unavailable run is left as it is on
-    // every pass by design, so counting it alone would log the same line forever.
+    // every pass by design and reports itself once (`REPORTED_UNAVAILABLE_RUNS`), so
+    // counting it alone would log the same line forever.
     if (outcome.claimed > 0 || outcome.skipped > 0) {
       logger.info("agent resume sweep finished", { route: "agent-resume-sweep", ...outcome });
     }
