@@ -214,8 +214,40 @@ import "@libredb/studio/styles.css"; // required once, before any studio compone
 
 `build:lib` is `tsup && node scripts/copy-theme.mjs`, and the order is load-bearing: tsup runs with
 `clean: true`, so anything staged into `dist/` before it is wiped. The copy has to come after.
+
+`dist/styles.css` is the line `@import "@xyflow/react/dist/style.css";`, the ER diagram's base styles, followed by `src/styles/theme.css` unchanged.
+The published JavaScript imports no stylesheet: `tsup.config.ts` puts `/\.css$/` in `noExternal` and loads it with esbuild's `empty` loader (`loader: { ".css": "empty" }`), because Node cannot load a `.css` import, and before this a host's `import("@libredb/studio")` or `require("@libredb/studio")` under Node failed on the SchemaDiagram chunk's import of that sheet.
+Both options are needed: tsup marks a dependency's stylesheet external by its package name before any user esbuild plugin runs, and tsup's own postcss step then loads every bundled `.css` with the configured loader.
+The earlier `handle-css-and-xyflow` plugin never ran for that reason and was removed.
+So the ER diagram's styles reach a host through the one documented import, as an `@import` the host's bundler resolves from the package's location (measured with esbuild and with Tailwind 4's PostCSS plugin), which redistributes none of xyflow's text.
+`scripts/copy-theme.mjs` exits 1 naming the sheet when it does not resolve from the repository's install.
+
+### The packed library loads (`lib:load`)
+
+attw resolves the declared types and `lib:closure` reads the built text, and both passed a dist that could not load: one whose JavaScript or declarations named an unpublished workspace package, and one that imported a stylesheet.
+`bun run lib:load` (`scripts/check-lib-load.mjs`), run after `build:lib`, is the check that installs the package the way a consumer gets it and loads it under Node:
+
+1. It packs the repository with `bun pm pack` (as `attw` does), extracts the tarball to `<os.tmpdir()>/lib-load-<random>/node_modules/@libredb/studio/`, and fails by name when `dist/index.mjs`, `dist/index.js`, `dist/providers.mjs` or `dist/providers.js` is not in it.
+2. It applies the two workspace rules below to the packed `package.json`.
+3. It reads every module specifier of every `.js`, `.mjs`, `.d.ts` and `.d.mts` file of the packed `dist/` with the TypeScript parser, so SQL or fixture text inside a string is never taken for an import, and fails naming the file and the specifier unless the specifier is relative, a `dependencies` or `peerDependencies` name of the packed manifest (subpath dropped), a Node builtin (`module.isBuiltin`, so `node:sqlite` passes and a stripped `sqlite` fails), or a Bun runtime module (`bun:`, today only `bun:sqlite`).
+   A computed `import()` or `require()` fails too, naming the file, because what it loads cannot be checked; there is none today.
+4. It links only the declared names into the temporary `node_modules`, each to the repository's install, and a child `node` (`scripts/load-lib-closure.mjs`) loads every module of the `index` and `providers` closures once, ESM by `import()` and CJS by `require`, dynamic imports included, reporting each failing module with its error code and the first line of its message.
+
+The load is isolated so that only a declared package can resolve.
+The check refuses a temporary root that has an ancestor directory holding `node_modules`, and refuses when `<node prefix>/lib/node` exists.
+The child runs without `NODE_PATH` and `NODE_OPTIONS`, with `HOME` and `USERPROFILE` set to an empty directory, because Node's CommonJS loader also searches `$HOME/.node_modules` and `$HOME/.node_libraries`.
+The child has a 1 GB heap and a 120 s timeout, so a module whose top-level code hangs is named rather than waited on.
+The temporary root is always removed.
+
+The workspace rules: the packed manifest names no workspace package under `dependencies`, `peerDependencies` or `optionalDependencies`, since a consumer cannot install an unpublished package (`devDependencies` may name one); and every `dependencies` and `peerDependencies` name of a workspace package is a root `dependencies` or `peerDependencies` name, since tsup computes its externals from the root manifest alone and would otherwise inline the package's driver silently.
+A workspace dependency is recognised by name, because `bun pm pack` writes `workspace:*` as the package's own version.
+
+The packed manifest keeps `"workspaces": ["packages/*"]`.
+Measured with npm 11.19.1 and bun 1.4.4, neither `npm install` nor `bun add` reads `workspaces` from a dependency's manifest, even when the tarball ships the directory, so the field is inert for consumers; it sits beside other root-only fields the packed manifest already carries unchanged (`scripts`, `devDependencies`, `overrides`, `patchedDependencies`), and removing it would need a pack-time rewrite of the tracked `package.json`.
+
+Measured cost on main's dist: pack about 1.4 s, load about 1.4 s, scan under 1 s; the whole check takes about 4 s.
 - Git-ignore `.attw/` and `*.tgz` (packaging scratch).
-- CI: the `lint-and-build` job runs `build:lib` then `attw` (plus a Biome format check) so the package
+- CI: the `lint-and-build` job runs `build:lib`, `attw`, `lib:closure` and `lib:load`, in that order (plus a Biome format check), so the package
   surface is gated on every PR.
 
 ## Phase 5 - knip (keep, verify)
@@ -229,7 +261,7 @@ from `@arethetypeswrong/cli`, and `typescript-eslint` is seen via the `eslint.co
 
 As implemented in `.github/workflows/ci.yml`, the "Lint, Typecheck and Build" job runs, in order: Biome format
 check (`bun run format`), linters (`bun run lint`, i.e. oxlint then ESLint), typecheck, knip, `next build`,
-`build:lib`, then `attw`. oxlint is folded into `bun run lint` rather than a separate step. The pre-commit git
+`build:lib`, `attw`, `lib:closure`, then `lib:load`. oxlint is folded into `bun run lint` rather than a separate step. The pre-commit git
 hook (`.claude/settings.json`) runs `lint && typecheck && test && build` and now transitively enforces oxlint
 and the type-aware layer via `bun run lint`.
 In every workflow, the type check, `next build` and the Playwright runs whose first server builds run Node with `NODE_OPTIONS=--max-old-space-size=6144`, as the release payload build has since #1535, because `tsconfig.json` takes every TypeScript file, tests included, and that program peaks within tens of MB of Node's default heap of about 4 GB on a GitHub runner (`tests/unit/ci-node-heap.test.ts`).
@@ -617,6 +649,11 @@ The builder asserts that `.next/standalone/packages` does not exist, and `script
 - SonarCloud: `sonar.sources` and `sonar.tests` both name `packages`, kept apart by patterns: package tests are `sonar.test.inclusions` and `sonar.exclusions`, and out of duplication detection.
 - The VS Code extension: the host bundle refuses any `packages/` input, and the webview bundles a package file only when a sql-grammar row reaches it, as it does a file under `src/lib/db/providers/`.
 - The standalone payload: pruned, as above.
+- The library: `tsup.config.ts` bundles every package, its code through `noExternal` and its declarations through `dts.resolve`, both read from `workspacePackageNames` in `scripts/workspace-packages.mjs`, because `@libredb/studio` on npm cannot depend on an unpublished package.
+  tsup's declaration resolver reads a package's `types` field, not its `exports`, so a package points `types` under its `src/`; without it the declarations keep a bare import of the package.
+  `bun run lib:load` fails by name on that bare import, on a packed manifest that names a package, and on a package dependency the root does not declare ("The packed library loads (`lib:load`)").
+
+Tests resolve source: `tests/unit/source-plane.test.ts` holds every package's entry points (`exports`, `main`, `module`, `types`) under its `src/`, and fails a test under `tests/` or `packages/<name>/tests/` that imports a `dist/` path, the root package by name or a package's `dist/` subpath, so `lib:load` is the only path through a built artifact.
 
 `tests/unit/package-gates.test.ts` proves the install, Biome, ESLint and knip rows on a throwaway root that carries the repository's own configuration file and one planted violation, so a tool upgrade that changes one of these behaviours fails a named test.
 The other rows are held by the tests of the script that implements them.
