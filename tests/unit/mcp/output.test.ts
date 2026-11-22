@@ -82,7 +82,8 @@ describe("UTF-8 lengths and cuts", () => {
 
 describe("engine messages", () => {
   test("are redacted and passed through when short", () => {
-    expect(engineMessage(new Error("connect to postgres://reader:hunter-two@db.internal/app failed"), NO_FORMS)).toBe(
+    const uri = `postgres://reader:${crypto.randomUUID()}@db.internal/app`;
+    expect(engineMessage(new Error(`connect to ${uri} failed`), NO_FORMS)).toBe(
       "connect to postgres://[REDACTED]@db.internal/app failed",
     );
   });
@@ -93,12 +94,12 @@ describe("engine messages", () => {
   });
 
   test("redact a secret the cut point would have split, because redaction runs first", () => {
-    const message = engineMessage(
-      new Error(`${"x".repeat(4_070)} postgres://reader:hunter-two@db.internal/app`),
-      NO_FORMS,
-    );
+    // A 10-character generated password, so the cut falls where this case measures it.
+    const uri = `postgres://reader:${crypto.randomUUID().slice(0, 10)}@db.internal/app`;
+    const message = engineMessage(new Error(`${"x".repeat(4_070)} ${uri}`), NO_FORMS);
     // Redacted first, the marker ends at byte 4,093 and only "db." of the host fits; cut first, the
-    // "@" would fall past the cut, the userinfo pattern would never match and "reader:hunter-" would leak.
+    // "@" would fall past the cut, the userinfo pattern would never match and "reader:" and most of the
+    // password would leak.
     expect(message).toBe(`${"x".repeat(4_070)} postgres://[REDACTED]@db.${MCP_ENGINE_MESSAGE_CUT_SUFFIX}`);
     expect(message).not.toContain("reader");
   });
@@ -147,7 +148,9 @@ describe("the four result shapes", () => {
   });
 
   test("engineError quotes the redacted engine message after the notice, with no structuredContent", () => {
-    expect(engineError(MCP_ENGINE_ERROR_PREFIX, new Error("password=hunter-two rejected"), NO_FORMS)).toEqual({
+    expect(
+      engineError(MCP_ENGINE_ERROR_PREFIX, new Error(`password=${crypto.randomUUID()} rejected`), NO_FORMS),
+    ).toEqual({
       content: [
         { type: "text", text: MCP_UNTRUSTED_NOTICE },
         { type: "text", text: `${MCP_ENGINE_ERROR_PREFIX}password=[REDACTED] rejected` },

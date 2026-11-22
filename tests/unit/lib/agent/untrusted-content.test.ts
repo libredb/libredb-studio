@@ -357,12 +357,24 @@ describe("fenceProviderText: a provider's own text", () => {
     ].join(" ");
     const database = fenceUntrustedContent(hostile, source);
     const provider = fenceProviderText(hostile, providerSource);
-    for (const fenced of [database, provider]) {
-      for (const marker of [UNTRUSTED_CONTENT_END, UNTRUSTED_PROVIDER_TEXT_END]) {
-        expect(fenced.split(marker).length - 1).toBeLessThanOrEqual(1);
-      }
-      expect(fenced.toLowerCase().split(UNTRUSTED_CONTENT_BEGIN.toLowerCase()).length - 1).toBeLessThanOrEqual(1);
-      expect(fenced.toLowerCase().split(UNTRUSTED_PROVIDER_TEXT_BEGIN.toLowerCase()).length - 1).toBeLessThanOrEqual(1);
+    const count = (fenced: string, marker: string) => fenced.toLowerCase().split(marker.toLowerCase()).length - 1;
+    // Each fence holds exactly its own pair, the one it wrote, and none of the other's.
+    for (const [fenced, own, other] of [
+      [
+        database,
+        [UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END],
+        [UNTRUSTED_PROVIDER_TEXT_BEGIN, UNTRUSTED_PROVIDER_TEXT_END],
+      ],
+      [
+        provider,
+        [UNTRUSTED_PROVIDER_TEXT_BEGIN, UNTRUSTED_PROVIDER_TEXT_END],
+        [UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END],
+      ],
+    ] as const) {
+      for (const marker of own) expect(count(fenced, marker)).toBe(1);
+      for (const marker of other) expect(count(fenced, marker)).toBe(0);
+      expect(fenced).toContain("(neutralised marker: END UNTRUSTED PROVIDER TEXT)");
+      expect(fenced).toContain("(neutralised marker: END UNTRUSTED DATABASE CONTENT)");
     }
     expect(neutraliseUntrustedMarkers(UNTRUSTED_PROVIDER_TEXT_END)).toBe(
       "(neutralised marker: END UNTRUSTED PROVIDER TEXT)",

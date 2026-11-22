@@ -88,11 +88,12 @@ describe("serverText", () => {
 
 describe("holdsSecretForm", () => {
   test("holdsSecretForm is the predicate serverText applies", () => {
-    const forms = secretForms(["s3cr3t/pass word"]);
-    for (const raw of ["auth failed for s3cr3t/pass word", "Secret rejected", "no form here", ""]) {
+    const secret = `${crypto.randomUUID()}/pass word`;
+    const forms = secretForms([secret]);
+    for (const raw of [`auth failed for ${secret}`, "Secret rejected", "no form here", ""]) {
       expect(holdsSecretForm(raw, forms)).toBe(serverText(raw, forms) === WITHHELD);
     }
     expect(holdsSecretForm("anything", [""])).toBe(false);
-    expect(holdsSecretForm("rejected s3cr3t/pass word", forms)).toBe(true);
+    expect(holdsSecretForm(`rejected ${secret}`, forms)).toBe(true);
   });
 });

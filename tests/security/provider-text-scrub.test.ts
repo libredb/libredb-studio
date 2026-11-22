@@ -20,7 +20,8 @@ import { secretForms } from "@/lib/db/utils/server-text";
 import { logger } from "@/lib/logger";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import { InspectSchemaInputSchema, inspectSchema } from "@/lib/mcp/tools/inspect-schema";
-import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
+import { type McpStatementInput, runStatement } from "@/lib/mcp/tools/run-statement";
+import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import type { QueryResult } from "@/lib/types";
 import { type EvalRun, openEvalRun } from "../isolated/fixtures/agent-eval-harness";
@@ -218,11 +219,41 @@ describe("on MCP", () => {
   );
 
   test.each(forms.map((form) => [form]))("notes holding %s are withheld", async (form) => {
-    const answer = await runReadQuery(
-      RunReadQueryInputSchema.parse({ connection_id: "seed:fake", sql: "SELECT 1" }) as McpStatementInput,
-      { context: context(answering(undefined, [{ message: `notice ${form}` }])), signal: new AbortController().signal },
+    // run_s3_read's facet answers the provider's warnings as notes; run_read_query's answers none.
+    const store = {
+      ...connection,
+      type: "s3",
+      host: "127.0.0.1",
+      port: 9000,
+      user: "own-key",
+      agentUser: "agent-key",
+      agentPassword: password,
+    } as ManagedConnection;
+    const provider = {
+      getCapabilities: () => ({}),
+      queryReadOnly: async () => ({
+        rows: [{ bucket: "sales" }],
+        fields: ["bucket"],
+        rowCount: 1,
+        executionTime: 1,
+        warnings: [{ message: `signed with ${form}` }, { message: "a note of its own" }],
+      }),
+    };
+    const mcpContext = {
+      caller: { username: "alice", role: "admin" },
+      resolve: async () => store,
+      textScrub: fakeTextScrub,
+      acquire: async () => provider,
+    } as unknown as McpConnectionContext;
+    const arm = mcpStatementArm("run_s3_read");
+    const answer = await runStatement(
+      arm,
+      arm.inputSchema.parse({ connection_id: store.id, statement: "aws s3api list-buckets" }) as McpStatementInput,
+      { context: mcpContext, signal: new AbortController().signal },
     );
-    // run_read_query's facet answers no notes; the warnings are scrubbed before the answer is built either way.
+
+    expect(answer.structuredContent?.notes).toEqual([PROVIDER_TEXT_WITHHELD, "a note of its own"]);
     expectNoForm("an answer", JSON.stringify(answer));
+    expectNoForm("a log line", written.join("\n"));
   });
 });
