@@ -24,6 +24,10 @@ import ts from "typescript";
  *
  * The scan reads the TypeScript syntax tree, so a comment naming a class is never a finding, and a finding names its
  * file and innermost declaration, never a line.
+ *
+ * Every source file is parsed once, when this module loads, and only what the tests ask of it is kept: its
+ * constructions, the identifiers it names, its reads of provider text and the calls each declaration makes. A test reads
+ * that census and never parses the tree again, so no test pays a whole-tree parse inside its own time budget.
  */
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
@@ -77,82 +81,7 @@ function enclosingDeclaration(node: ts.Node): string {
   return "(top level)";
 }
 
-/** Every `new <className>(...)` in `text`, as "file: declaration". */
-function constructions(file: string, text: string, className: string): string[] {
-  const found: string[] = [];
-  const visit = (node: ts.Node) => {
-    if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === className) {
-      found.push(`${file}: ${enclosingDeclaration(node)}`);
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(parse(file, text));
-  return found;
-}
-
-const FILES = SOURCE_ROOTS.flatMap(sourceFiles).map((file) => ({
-  file,
-  text: readFileSync(join(ROOT, file), "utf8"),
-  provider: file.startsWith(PROVIDER_CODE),
-}));
-
-/** The constructions of `className` in the files `where` keeps. */
-function constructed(className: string, where: (file: { file: string; provider: boolean }) => boolean): string[] {
-  return FILES.filter(where).flatMap(({ file, text }) => constructions(file, text, className));
-}
-
-describe("who wrote a refusal", () => {
-  test("the scan finds a construction and not a comment naming one", () => {
-    const planted = [
-      "// new ExecutionProfileError('x', 'UNSUPPORTED_PROFILE')",
-      "/** new ExecutionProfileError */",
-      "function acquire() { throw new ExecutionProfileError('x', 'UNSUPPORTED_PROFILE'); }",
-    ].join("\n");
-    expect(constructions("planted.ts", planted, "ExecutionProfileError")).toEqual(["planted.ts: acquire"]);
-  });
-
-  test("no module outside provider code constructs a plain ExecutionProfileError", () => {
-    expect(constructed("ExecutionProfileError", (file) => !file.provider)).toEqual([]);
-  });
-
-  test("no provider module constructs StudioProfileRefusal, ReadAllowanceExceededError or ProviderTextWithheldError", () => {
-    for (const className of ["StudioProfileRefusal", "ReadAllowanceExceededError", "ProviderTextWithheldError"]) {
-      expect(constructed(className, (file) => file.provider)).toEqual([]);
-    }
-  });
-
-  test("outside provider code only the read allowance constructs a RefusedBeforeSendError, and nothing constructs an OffsetUnsupportedError", () => {
-    expect(constructed("RefusedBeforeSendError", (file) => !file.provider)).toEqual([]);
-    expect(
-      constructed("ReadAllowanceExceededError", (file) => !file.provider).every((finding) =>
-        finding.startsWith(`${READ_ALLOWANCE}: `),
-      ),
-    ).toBe(true);
-    expect(constructed("ReadAllowanceExceededError", (file) => !file.provider).length).toBeGreaterThan(0);
-    expect(constructed("OffsetUnsupportedError", (file) => !file.provider)).toEqual([]);
-  });
-
-  test("only the core scrub constructs a ProviderTextWithheldError", () => {
-    const found = constructed("ProviderTextWithheldError", () => true);
-    expect(found.length).toBeGreaterThan(0);
-    expect(found.every((finding) => finding.startsWith(`${PROVIDER_TEXT}: `))).toBe(true);
-  });
-});
-
-/** The paths the census covers: the agent, the hand-over and MCP, and the core read path they share. */
-const PROVIDER_TEXT_PATHS = [
-  join("src", "lib", "agent"),
-  join("src", "lib", "mcp"),
-  join("src", "app", "api", "agent"),
-  join("src", "app", "api", "mcp"),
-  join("src", "lib", "db", "operations", "read-only-statement.ts"),
-];
-
-function pathFiles(path: string): string[] {
-  return statSync(join(ROOT, path)).isDirectory() ? sourceFiles(path) : [path];
-}
-
-/** The innermost named function or method around `node`, as `constructions` names it, without classes. */
+/** The innermost named function or method around `node`, as `enclosingDeclaration` names it, without classes. */
 function functionAround(node: ts.Node): string {
   for (let at: ts.Node | undefined = node.parent; at !== undefined; at = at.parent) {
     if (
@@ -199,16 +128,35 @@ function caughtNames(node: ts.Node): Set<string> {
 const PROVIDER_TEXT_MEMBERS = new Set(["message", "stack", "name", "detail", "fixStatement"]);
 const PROVIDER_SENTENCE_MEMBERS = new Set(["unavailable", "sampledFrom"]);
 
-/**
- * Every read of a provider's text in `text`, as "file: declaration: read": a text member of a caught error, of an
- * `error` or `refusal` property or of a `refusal`; any `warnings`; any `unavailable` or `sampledFrom` sentence and a
- * `truncated.reason`; the error a `logger.error` line is given; the error `createErrorResponse` renders.
- */
-function providerTextReads(file: string, text: string): string[] {
+/** What the tests ask of one source file, read from its syntax tree in one walk; the tree itself is not kept. */
+type Census = {
+  /** Every `new <Class>(...)`, by class name, as "file: declaration". */
+  constructions: Map<string, string[]>;
+  /** Every name the file uses as an identifier, a comment never counting. */
+  identifiers: Set<string>;
+  /**
+   * Every read of a provider's text, as "file: declaration: read": a text member of a caught error, of an `error` or
+   * `refusal` property or of a `refusal`; any `warnings`; any `unavailable` or `sampledFrom` sentence and a
+   * `truncated.reason`; the error a `logger.error` line is given; the error `createErrorResponse` renders.
+   */
+  providerTextReads: string[];
+  /** The functions and methods each named function or method calls, as a function or as a method. */
+  calls: Map<string, Set<string>>;
+};
+
+function scan(file: string, text: string): Census {
   const source = parse(file, text);
-  const found: string[] = [];
-  const at = (node: ts.Node, read: string) => found.push(`${file}: ${functionAround(node)}: ${read}`);
+  const found: Census = { constructions: new Map(), identifiers: new Set(), providerTextReads: [], calls: new Map() };
+  const at = (node: ts.Node, read: string) => found.providerTextReads.push(`${file}: ${functionAround(node)}: ${read}`);
   const visit = (node: ts.Node) => {
+    if (ts.isNewExpression(node) && ts.isIdentifier(node.expression)) {
+      const className = node.expression.text;
+      found.constructions.set(className, [
+        ...(found.constructions.get(className) ?? []),
+        `${file}: ${enclosingDeclaration(node)}`,
+      ]);
+    }
+    if (ts.isIdentifier(node)) found.identifiers.add(node.text);
     if (ts.isPropertyAccessExpression(node)) {
       const member = node.name.text;
       const owner = node.expression;
@@ -242,6 +190,15 @@ function providerTextReads(file: string, text: string): string[] {
       if (ts.isIdentifier(callee) && callee.text === "createErrorResponse" && node.arguments[0] !== undefined) {
         at(node, `createErrorResponse(${node.arguments[0].getText(source)})`);
       }
+      const name = ts.isIdentifier(callee)
+        ? callee.text
+        : ts.isPropertyAccessExpression(callee)
+          ? callee.name.text
+          : undefined;
+      if (name !== undefined) {
+        const declaration = functionAround(node);
+        found.calls.set(declaration, (found.calls.get(declaration) ?? new Set()).add(name));
+      }
     }
     ts.forEachChild(node, visit);
   };
@@ -249,22 +206,75 @@ function providerTextReads(file: string, text: string): string[] {
   return found;
 }
 
-/** Whether the function or method called `declaration` in `text` calls `callee`, as a function or as a method. */
-function declarationCalls(file: string, text: string, declaration: string, callee: string): boolean {
-  let calls = false;
-  const visit = (node: ts.Node) => {
-    if (ts.isCallExpression(node) && functionAround(node) === declaration) {
-      const name = ts.isIdentifier(node.expression)
-        ? node.expression.text
-        : ts.isPropertyAccessExpression(node.expression)
-          ? node.expression.name.text
-          : undefined;
-      if (name === callee) calls = true;
+const FILES = SOURCE_ROOTS.flatMap(sourceFiles).map((file) => ({
+  file,
+  provider: file.startsWith(PROVIDER_CODE),
+  census: scan(file, readFileSync(join(ROOT, file), "utf8")),
+}));
+
+const CENSUS = new Map(FILES.map(({ file, census }) => [file, census]));
+
+/** The census of `file`, which must be a source file under one of the roots. */
+function censusOf(file: string): Census {
+  const found = CENSUS.get(file);
+  if (found === undefined) throw new Error(`${file} is not a source file under ${SOURCE_ROOTS.join(" or ")}`);
+  return found;
+}
+
+/** The constructions of `className` in the files `where` keeps. */
+function constructed(className: string, where: (file: { file: string; provider: boolean }) => boolean): string[] {
+  return FILES.filter(where).flatMap(({ census }) => census.constructions.get(className) ?? []);
+}
+
+describe("who wrote a refusal", () => {
+  test("the scan finds a construction and not a comment naming one", () => {
+    const planted = [
+      "// new ExecutionProfileError('x', 'UNSUPPORTED_PROFILE')",
+      "/** new ExecutionProfileError */",
+      "function acquire() { throw new ExecutionProfileError('x', 'UNSUPPORTED_PROFILE'); }",
+    ].join("\n");
+    expect(scan("planted.ts", planted).constructions.get("ExecutionProfileError")).toEqual(["planted.ts: acquire"]);
+  });
+
+  test("no module outside provider code constructs a plain ExecutionProfileError", () => {
+    expect(constructed("ExecutionProfileError", (file) => !file.provider)).toEqual([]);
+  });
+
+  test("no provider module constructs StudioProfileRefusal, ReadAllowanceExceededError or ProviderTextWithheldError", () => {
+    for (const className of ["StudioProfileRefusal", "ReadAllowanceExceededError", "ProviderTextWithheldError"]) {
+      expect(constructed(className, (file) => file.provider)).toEqual([]);
     }
-    ts.forEachChild(node, visit);
-  };
-  visit(parse(file, text));
-  return calls;
+  });
+
+  test("outside provider code only the read allowance constructs a RefusedBeforeSendError, and nothing constructs an OffsetUnsupportedError", () => {
+    expect(constructed("RefusedBeforeSendError", (file) => !file.provider)).toEqual([]);
+    expect(
+      constructed("ReadAllowanceExceededError", (file) => !file.provider).every((finding) =>
+        finding.startsWith(`${READ_ALLOWANCE}: `),
+      ),
+    ).toBe(true);
+    expect(constructed("ReadAllowanceExceededError", (file) => !file.provider).length).toBeGreaterThan(0);
+    expect(constructed("OffsetUnsupportedError", (file) => !file.provider)).toEqual([]);
+  });
+
+  test("only the core scrub constructs a ProviderTextWithheldError", () => {
+    const found = constructed("ProviderTextWithheldError", () => true);
+    expect(found.length).toBeGreaterThan(0);
+    expect(found.every((finding) => finding.startsWith(`${PROVIDER_TEXT}: `))).toBe(true);
+  });
+});
+
+/** The paths the census covers: the agent, the hand-over and MCP, and the core read path they share. */
+const PROVIDER_TEXT_PATHS = [
+  join("src", "lib", "agent"),
+  join("src", "lib", "mcp"),
+  join("src", "app", "api", "agent"),
+  join("src", "app", "api", "mcp"),
+  join("src", "lib", "db", "operations", "read-only-statement.ts"),
+];
+
+function pathFiles(path: string): string[] {
+  return statSync(join(ROOT, path)).isDirectory() ? sourceFiles(path) : [path];
 }
 
 const agent = (...path: string[]) => join("src", "lib", "agent", ...path);
@@ -389,7 +399,7 @@ describe("the one scrub of provider text", () => {
       "  return [detail.indexes.unavailable, count.sampledFrom, batch.truncated.reason, error.reason];",
       "}",
     ].join("\n");
-    expect(providerTextReads("planted.ts", planted)).toEqual([
+    expect(scan("planted.ts", planted).providerTextReads).toEqual([
       "planted.ts: answer: logger.error(error)",
       "planted.ts: answer: createErrorResponse(error)",
       "planted.ts: answer: failure.message",
@@ -409,30 +419,27 @@ describe("the one scrub of provider text", () => {
         !allowed.some((prefix) => file.startsWith(prefix)) &&
         file !== PROVIDER_TEXT &&
         file !== join("src", "lib", "db", "utils", "server-text.ts"),
-    ).filter(({ file, text }) => referencesIdentifier(file, text, ["secretForms", "holdsSecretForm"]));
+    ).filter(({ census }) => ["secretForms", "holdsSecretForm"].some((name) => census.identifiers.has(name)));
     expect(readers.map(({ file }) => file)).toEqual([]);
   });
 
   test("on the agent, hand-over and MCP paths only the core module reads secretFieldValues", () => {
     const readers = PROVIDER_TEXT_PATHS.flatMap(pathFiles).filter((file) =>
-      referencesIdentifier(file, readFileSync(join(ROOT, file), "utf8"), ["secretFieldValues"]),
+      censusOf(file).identifiers.has("secretFieldValues"),
     );
     expect(readers).toEqual([]);
   });
 
   test("every crossing the census records calls the core function it is listed with", () => {
     const missing = CROSSINGS.filter(
-      ([file, declaration, callee]) =>
-        !declarationCalls(file, readFileSync(join(ROOT, file), "utf8"), declaration, callee),
+      ([file, declaration, callee]) => !censusOf(file).calls.get(declaration)?.has(callee),
     ).map((row) => row.join(": "));
     expect(missing).toEqual([]);
   });
 
   test("every provider text read and every error rendered on those paths is a recorded crossing or classified as not provider text", () => {
     const crossings = new Set(CROSSINGS.map(([file, declaration]) => `${file}: ${declaration}`));
-    const findings = PROVIDER_TEXT_PATHS.flatMap(pathFiles).flatMap((file) =>
-      providerTextReads(file, readFileSync(join(ROOT, file), "utf8")),
-    );
+    const findings = PROVIDER_TEXT_PATHS.flatMap(pathFiles).flatMap((file) => censusOf(file).providerTextReads);
     const unrecorded = findings.filter((finding) => {
       const [file, declaration] = finding.split(": ");
       return !crossings.has(`${file}: ${declaration}`) && !Object.hasOwn(NOT_PROVIDER_TEXT, finding);
@@ -443,14 +450,3 @@ describe("the one scrub of provider text", () => {
     expect(Object.keys(NOT_PROVIDER_TEXT).filter((entry) => !found.has(entry))).toEqual([]);
   });
 });
-
-/** Whether `text` names any of `names` as an identifier, a comment never counting. */
-function referencesIdentifier(file: string, text: string, names: readonly string[]): boolean {
-  let found = false;
-  const visit = (node: ts.Node) => {
-    if (ts.isIdentifier(node) && names.includes(node.text)) found = true;
-    ts.forEachChild(node, visit);
-  };
-  visit(parse(file, text));
-  return found;
-}
