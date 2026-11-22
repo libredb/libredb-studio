@@ -1725,9 +1725,9 @@ function sameUser(agentUser: string | undefined, user: string | undefined): bool
  * `requester` is the editor posture of the caller this acquisition serves, as
  * `editorExecutionContext` derives it (non-admin DuckDB file access). It reaches the profiled
  * handle and its cache key, as the editor's posture does: SQLite's drivers cannot confine a
- * statement's file access even on a read-only handle, so a denied requester is refused at connect
- * here too, while DuckDB's read-only profile already closes file access whatever the posture. It
- * also decides which open single-writer handle an `agent-operations` acquisition may borrow:
+ * statement's file access even on a read-only handle, so a denied requester is refused before its
+ * provider is built here too, while DuckDB's read-only profile already closes file access whatever
+ * the posture. It also decides which open single-writer handle an `agent-operations` acquisition may borrow:
  * one opened under that same posture, so an admin's agent is grounded from the admin's
  * own editor handle as before, and a requester is never lent a handle wider than its own.
  * Absent means deny, like everywhere else on this channel. Its owner (docs/GOVERNANCE.md#per-user-providers) makes the

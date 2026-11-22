@@ -538,7 +538,7 @@ export const READS_TRUST_MATERIAL: Readonly<Record<DatabaseType, boolean>> = Obj
  *
  * The provider factory (`createDatabaseProvider` in `./factory`) refuses such a connection whose execution context sets
  * `allowExternalFileAccess: false`, the provider's own condition, with this sentence as a `DatabaseConfigError` naming
- * the connection's type, before any other check of the connection and before the provider is built: a connection the
+ * the connection's type, before the storage location, the file admission and the provider build: a connection the
  * posture denies file access is refused before Studio reads the path it names. The provider raises the same sentence
  * at `connect()` for a handle built with that context, before it opens anything.
  *

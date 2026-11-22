@@ -161,10 +161,11 @@ function storeBackups(location: StorageLocation): string[] {
  * and `-shm` files, every name that starts with the store file's name and `.pre-reseal-` (the re-seal's backups of the
  * store and their sidecars, `STORE_BACKUP_LABEL_PREFIX`), and the bootstrap credentials file with its `.bak` and
  * temporary (`<file>.<id>.tmp`) names, as configured and as real paths, each name also resolved on its own, so a
- * symbolic link at a sidecar or backup name reserves the file it points to. The names are those of the storage location this process took (`storageLocation`),
- * and their real paths are read at each call. Two spellings that differ only in letter case, or only in Unicode
- * normalization form (NFC against NFD), are one file here on every OS, because on macOS (both) and Windows (letter
- * case) they name one file, whether or not it exists yet. Throws what the path check throws.
+ * symbolic link at a sidecar or backup name reserves the file it points to. The names are those of the storage
+ * location this process took (`storageLocation`), and their real paths are read at each call. Two spellings that
+ * differ only in letter case, or only in Unicode normalization form (NFC against NFD), are one file here on every OS,
+ * because on macOS (both) and Windows (letter case) they name one file, whether or not it exists yet. Throws what the
+ * path check throws.
  */
 export function reservedStorageKey(): (key: string) => boolean {
   const location = storageLocation();
