@@ -52,8 +52,7 @@ function parseArguments(args) {
 function packagesWithoutRecords(root, files) {
   return workspacePackageDirectories(root).filter(
     (directory) =>
-      fs.existsSync(path.join(root, directory, "src")) &&
-      !files.some((file) => file.startsWith(`${directory}/src/`)),
+      fs.existsSync(path.join(root, directory, "src")) && !files.some((file) => file.startsWith(`${directory}/src/`)),
   );
 }
 
@@ -107,7 +106,9 @@ function main() {
   if (packagesFrom !== null) {
     const missing = packagesWithoutRecords(packagesFrom, files);
     if (missing.length > 0) {
-      console.error(`check-coverage: FAIL, ${missing.length} workspace package(s) have source and no record in ${reportPath}:`);
+      console.error(
+        `check-coverage: FAIL, ${missing.length} workspace package(s) have source and no record in ${reportPath}:`,
+      );
       for (const directory of missing) {
         console.error(`  ${directory}: no coverage record under ${directory}/src/, so no test loads its source`);
       }

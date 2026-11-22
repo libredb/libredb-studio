@@ -158,6 +158,8 @@ describe("check-coverage expects every workspace package", () => {
   test("the root coverage:check script passes --packages-from=.", () => {
     const manifest = JSON.parse(readFileSync(path.resolve(import.meta.dir, "../../package.json"), "utf8"));
 
-    expect(manifest.scripts["coverage:check"]).toBe("node scripts/check-coverage.mjs --packages-from=. coverage/lcov.info");
+    expect(manifest.scripts["coverage:check"]).toBe(
+      "node scripts/check-coverage.mjs --packages-from=. coverage/lcov.info",
+    );
   });
 });

@@ -219,7 +219,9 @@ export function runOnlyCheck(root, options = {}) {
   if (found.length === 0) {
     return {
       code: 0,
-      lines: [`only-check: OK — ${files.length} tracked file(s) under ${[...SCAN_ROOTS, `${PACKAGES_DIRECTORY}/*/tests`].join("/, ")}/, none focused.`],
+      lines: [
+        `only-check: OK, ${files.length} tracked file(s) under ${[...SCAN_ROOTS, `${PACKAGES_DIRECTORY}/*/tests`].join("/, ")}/, none focused.`,
+      ],
     };
   }
 

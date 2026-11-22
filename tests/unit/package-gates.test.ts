@@ -58,7 +58,10 @@ describe("the gates see a workspace package", () => {
     const made = root({
       copy: ["biome.json"],
       workspaces: true,
-      files: { "packages/planted/package.json": PLANTED_MANIFEST, "packages/planted/src/fmt.ts": "export   const x=1\n" },
+      files: {
+        "packages/planted/package.json": PLANTED_MANIFEST,
+        "packages/planted/src/fmt.ts": "export   const x=1\n",
+      },
       linkNodeModules: true,
     });
 

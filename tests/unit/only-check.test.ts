@@ -319,7 +319,9 @@ describe("runOnlyCheck", () => {
     const { code, lines } = runOnlyCheck(root);
 
     expect(code).toBe(0);
-    expect(lines.join("\n")).toContain("1 tracked file(s) under tests/, e2e/, vscode-extension/test/, packages/*/tests/");
+    expect(lines.join("\n")).toContain(
+      "1 tracked file(s) under tests/, e2e/, vscode-extension/test/, packages/*/tests/",
+    );
   });
 
   test("the control fixture passes, so a red run is about the `.only` and nothing else", () => {

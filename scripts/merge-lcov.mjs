@@ -358,9 +358,7 @@ function main() {
 
   const skipped = merged.length - filtered.length;
   if (skipped > 0) {
-    console.log(
-      `Filtered ${skipped} record(s) outside src/ and packages/<name>/src/, or under src/components/ui/`,
-    );
+    console.log(`Filtered ${skipped} record(s) outside src/ and packages/<name>/src/, or under src/components/ui/`);
   }
 
   const serialized = serializeRecords(filtered);

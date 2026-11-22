@@ -185,9 +185,7 @@ describe("merge-lcov and workspace packages", () => {
     ]);
 
     expect([...records.keys()]).toEqual(["src/virtual/kept.ts"]);
-    expect(stdout).toContain(
-      "Filtered 4 record(s) outside src/ and packages/<name>/src/, or under src/components/ui/",
-    );
+    expect(stdout).toContain("Filtered 4 record(s) outside src/ and packages/<name>/src/, or under src/components/ui/");
   });
 
   test("a planted package's uncovered line reaches the 100% gate", () => {
