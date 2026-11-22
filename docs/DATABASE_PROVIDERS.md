@@ -498,11 +498,13 @@ A non-object `sshTunnel`, a class instance, a getter or a field that is not enum
 The first call reads `DB_HTTP_BLOCK_PRIVATE_HOSTS`, logs which way it decided and whether that is the default in one info line, which a `LOG_LEVEL` of `warn` or `error` hides, and keeps the decision for the life of the process, so set the variable before the first call: a later change takes effect when the process restarts.
 A value other than `true`, `on`, `1`, `false`, `off`, `0` or empty (trimmed, any case) is refused with a `DatabaseConfigError` naming the variable, on that call and every later one, and nothing is built.
 A standalone Studio takes the decision at boot instead, and refuses to start on such a value.
-Each provider that takes a context, every one but Databend, BigQuery, Snowflake and Spark, is built with that decision; for the others core's guard reads the same decision on the provider's behalf, so no provider reads the variable itself.
+Each provider that takes a context, every one but Databend, BigQuery, Snowflake and Spark, is built with that decision; for Databend, BigQuery and Snowflake core's guard reads the same decision on the provider's behalf, and Spark passes no guard, so no provider reads the variable itself.
 
 ### DuckDB file access and the execution context
 
 Both factories take a third argument, a server-side execution context.
+`createDatabaseProvider` takes only a plain-data context, as an object literal or parsed JSON is: a class instance, a getter, an inherited field or a field that is not enumerable is refused with a `DatabaseConfigError` and nothing is built, because the provider receives a copy of it.
+`getOrCreateProvider` reads only the context's fields, so it does not refuse such an object.
 Several providers read its `readOnly` field, but only DuckDB reads its `allowExternalFileAccess` field.
 Without it, a DuckDB handle opens with `enable_external_access: 'false'`: a statement that reads or writes a file or reaches the network (`read_csv`, `COPY`, `ATTACH` of a file, `INSTALL`) is refused outside the handle's private temp directory and its database's own file names ([section 3.16 of the DuckDB page](providers/duckdb.md)), while the database the connection names stays writable.
 That default is fail-closed on purpose, and it changed what a call without the argument does: before it, every DuckDB handle had that reach.

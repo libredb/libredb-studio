@@ -63,7 +63,7 @@ import * as path from "path";
  *   `{ allowExternalFileAccess: true }` for the full editor reach. SQLite refuses only an explicit
  *   `false`, so called without a context it opens with the trusted reach. An `owner` makes the provider
  *   that user's own (docs/GOVERNANCE.md#per-user-providers): its pool opens with `min: 0` and `max: ownerPoolMax`.
- *   A provider that takes a context is handed this one with the process's egress decision added, as
+ *   A provider that takes a context is handed a copy of this one with the process's egress decision added, as
  *   `ProviderBuildContext` (types.ts), so no provider reads `DB_HTTP_BLOCK_PRIVATE_HOSTS` itself.
  * @returns Promise<DatabaseProvider> instance
  * @throws UnknownProviderError if the connection's type is absent or names no provider, before anything else is
@@ -71,7 +71,8 @@ import * as path from "path";
  * @throws DatabaseConfigError if connection type is left out of a set
  *   `LIBREDB_ENABLED_PROVIDERS` (see assertProviderEnabled), if its `readOnly` cannot be
  *   honoured (see assertReadOnlyHonoured), or if an owner comes without a whole `ownerPoolMax`
- *   from 1 (see assertOwnerPoolHonoured)
+ *   from 1 (see assertOwnerPoolHonoured), or if the execution context is not plain data: a class instance, a getter,
+ *   an inherited field or a field that is not enumerable (see assertExecutionContextIsPlainData)
  *
  * @example
  * // SQL Database

@@ -2721,7 +2721,8 @@ export interface ProviderOptions {
  * factory called without a context opens a DuckDB handle with file access denied, see
  * `allowExternalFileAccess`.
  *
- * The factory hands a provider this context with core's egress decision added, as `ProviderBuildContext`.
+ * The factory hands a provider a copy of this context with core's egress decision added, as `ProviderBuildContext`,
+ * so `createDatabaseProvider` refuses a context that is not plain data with a `DatabaseConfigError`.
  */
 export interface ProviderExecutionContext {
   /**
