@@ -28,7 +28,9 @@ mock.module("@/lib/db/compatibility", () => ({
 }));
 
 const { workflowAvailability } = await import("@/lib/agent/agent-manifest");
-const { acquireExecutionProfileProvider, clearProviderCache } = await import("@/lib/db/factory");
+const { acquireExecutionProfileProvider, clearProviderCache, getExecutionProfileCacheStats } = await import(
+  "@/lib/db/factory"
+);
 const { SQLiteProvider } = await import("@/lib/db/providers/sql/sqlite");
 const { ExecutionProfileError } = await import("@/lib/db/errors");
 const { runReadOnlyReading, runReadOnlyStatement } = await import("@/lib/db/operations/read-only-statement");
@@ -103,59 +105,67 @@ describe("an engine the review record does not list, though its provider impleme
     expect(workflowAvailability("agent", "investigation", "postgres").open).toBe(true);
   });
 
-  test("plan mode and the operations workflow open on SQLite but run ungrounded: their composed catalog read is a statement, so its agent-read-only acquisition is refused by name", async () => {
-    const connection: DatabaseConnection = {
-      id: "review-grounding",
-      name: "Shop",
-      type: "sqlite",
-      database: sqliteFile,
-      createdAt: new Date(0),
-    };
-    const capabilities = new SQLiteProvider(connection).getCapabilities();
-    try {
-      for (const [mode, workflowType] of [
-        ["planning", "investigation"],
-        ["agent", "operations"],
-      ] as const) {
-        expect(workflowAvailability(mode, workflowType, "sqlite").open).toBe(true);
-        const profiles: string[] = [];
-        const context: AgentToolContext = {
-          runId: `run-grounding-${mode}`,
-          modelId: "unmeasured-model-for-tests",
-          mode,
-          workflowType,
-          actor: { sessionId: "session-grounding", role: "admin" },
-          connection,
-          capabilities,
-          labels: TABLE_LABELS,
-          registry: createCanonicalOperationRegistry(),
-          scope: createTargetScope(connection.id),
-          tracker: new ExecutionBudgetTracker(),
-          artifacts: new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 }),
-          deadline: new AgentRunDeadline(
-            AGENT_WORKFLOW_BUDGETS[workflowType].policy.budgets.maxTotalRunMs,
-            () => 1_000,
-          ),
-          repairs: new AgentRepairLedger(),
-          acquireProvider: (target, profile) => {
-            profiles.push(profile);
-            return acquireExecutionProfileProvider(target, profile, {}, { allowExternalFileAccess: true });
-          },
-          clock: () => 1_000,
-        };
-
+  test.each([
+    ["planning", "investigation"],
+    ["agent", "operations"],
+  ] as const)(
+    "%s mode's %s workflow opens on SQLite but runs ungrounded: its composed catalog read is a statement, so the factory refuses its agent-read-only acquisition by name and nothing is built",
+    async (mode, workflowType) => {
+      const connection: DatabaseConnection = {
+        id: `review-grounding-${mode}`,
+        name: "Shop",
+        type: "sqlite",
+        database: sqliteFile,
+        createdAt: new Date(0),
+      };
+      expect(workflowAvailability(mode, workflowType, "sqlite").open).toBe(true);
+      const acquisitions: Array<[string, unknown]> = [];
+      const context: AgentToolContext = {
+        runId: `run-grounding-${mode}`,
+        modelId: "unmeasured-model-for-tests",
+        mode,
+        workflowType,
+        actor: { sessionId: "session-grounding", role: "admin" },
+        connection,
+        capabilities: new SQLiteProvider(connection).getCapabilities(),
+        labels: TABLE_LABELS,
+        registry: createCanonicalOperationRegistry(),
+        scope: createTargetScope(connection.id),
+        tracker: new ExecutionBudgetTracker(),
+        artifacts: new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 }),
+        deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS[workflowType].policy.budgets.maxTotalRunMs, () => 1_000),
+        repairs: new AgentRepairLedger(),
+        acquireProvider: async (target, profile) => {
+          try {
+            const provider = await acquireExecutionProfileProvider(
+              target,
+              profile,
+              {},
+              { allowExternalFileAccess: true },
+            );
+            acquisitions.push([profile, "granted"]);
+            return provider;
+          } catch (error) {
+            acquisitions.push([profile, error]);
+            throw error;
+          }
+        },
+        clock: () => 1_000,
+      };
+      try {
         const capture = await captureContextSnapshot(context);
-        expect([mode, profiles]).toEqual([mode, ["agent-read-only"]]);
+        expect(acquisitions.map(([profile]) => profile)).toEqual(["agent-read-only"]);
+        expectNotReviewed(acquisitions[0]?.[1], "sqlite");
+        expect(getExecutionProfileCacheStats().size).toBe(0);
         expect([
-          mode,
           capture.kind,
           capture.kind === "unavailable" ? capture.profileRefusal?.reasonCode : "not refused",
-        ]).toEqual([mode, "unavailable", "PROFILE_ENGINE_NOT_REVIEWED"]);
+        ]).toEqual(["unavailable", "PROFILE_ENGINE_NOT_REVIEWED"]);
+      } finally {
+        await clearProviderCache();
       }
-    } finally {
-      await clearProviderCache();
-    }
-  });
+    },
+  );
 
   test("the agent-read-only and agent-handover acquisitions of a SQLite file are refused by name though its provider implements queryReadOnly, and nothing is connected; agent-operations still opens it", async () => {
     const connection: DatabaseConnection = {
