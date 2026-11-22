@@ -22,7 +22,16 @@
  * past the byte budget and a read past the time budget are refused. A failure is worded by its category, Studio's own
  * refusals as Studio's, and never by the device's own text or a credential.
  */
-import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import {
+  AuthenticationError,
+  ByteBudgetRefusal,
+  ConnectionError,
+  DatabaseConfigError,
+  isBudgetRefusal,
+  QueryError,
+  RowBudgetRefusal,
+  TimeBudgetRefusal,
+} from "@/lib/db/errors";
 import { EGRESS_DECISION_MISSING } from "@/lib/db/http/egress-policy";
 import {
   byteBudgetSentence,
@@ -168,13 +177,16 @@ async function runNetconfAgentRead(
   if (plan.limit !== undefined && plan.limit < budget.maxResultRows && built.rows.length > plan.limit) {
     return fail(F.overLimit(plan.limit));
   }
-  if (built.rows.length > budget.maxResultRows) return fail(F.overRows(budget.maxResultRows));
+  if (built.rows.length > budget.maxResultRows) throw new RowBudgetRefusal(F.overRows(budget.maxResultRows), "netconf");
   return { fields: [...built.columns], rows: built.rows, withheld };
 }
 
-/** A failure of the read worded by its category; Studio's own refusals pass as they are, and a defect rises unchanged. */
+/**
+ * A failure of the read worded by its category; Studio's own refusals and a budget refusal (`isBudgetRefusal`) pass as
+ * they are, so each keeps its class and kind, and a defect rises unchanged.
+ */
 function categorized(error: unknown): unknown {
-  if (error instanceof NetconfAgentError) return error;
+  if (error instanceof NetconfAgentError || isBudgetRefusal(error)) return error;
   if (error instanceof MetadataProjectionError) return new NetconfAgentError(error.message);
   if (error instanceof AuthenticationError) return new NetconfAgentError(F.credential);
   // A provider built without the egress decision is refused by name, as its connect() is, never as the settings.
@@ -202,7 +214,7 @@ export async function runNetconfAgentReadWithin(
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       expired = true;
-      reject(new NetconfAgentError(F.time(ms)));
+      reject(new TimeBudgetRefusal(F.time(ms), "netconf"));
     }, ms);
   });
   const opened = open();
@@ -213,7 +225,7 @@ export async function runNetconfAgentReadWithin(
   const live =
     <A extends unknown[], R>(call: (...args: A) => Promise<R>) =>
     (...args: A): Promise<R> =>
-      expired ? Promise.reject(new NetconfAgentError(F.time(ms))) : call(...args);
+      expired ? Promise.reject(new TimeBudgetRefusal(F.time(ms), "netconf")) : call(...args);
   const guarded = opened.then(
     (client): NetconfAgentClient => ({
       library: live(client.library),
@@ -239,9 +251,13 @@ export function netconfAgentResult(
   executionTime: number,
 ): QueryResult {
   const rows = answer.rows.map((row) => ({ ...row }));
-  if (rows.length > budget.maxResultRows) fail(rowBudgetSentence(rows.length, budget.maxResultRows));
+  if (rows.length > budget.maxResultRows) {
+    throw new RowBudgetRefusal(rowBudgetSentence(rows.length, budget.maxResultRows), "netconf");
+  }
   const bytes = measureResultBytes(rows);
-  if (bytes > budget.maxResultBytes) fail(byteBudgetSentence(bytes, budget.maxResultBytes));
+  if (bytes > budget.maxResultBytes) {
+    throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), "netconf");
+  }
   const warnings = answer.withheld.map((row) => ({ message: withheldWarning(row) }));
   return {
     fields: [...answer.fields],

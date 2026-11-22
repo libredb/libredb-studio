@@ -8,7 +8,8 @@
 // oxlint-disable no-await-in-loop -- each statement runs after the one before, so each request is one statement's.
 import { afterEach, describe, expect, test } from "bun:test";
 import { fenceUntrustedContent, UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
-import { DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { errorKind } from "@/lib/db/error-record";
+import { DatabaseConfigError, QueryError, RefusedBeforeSendError, TimeBudgetRefusal } from "@/lib/db/errors";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { SNMP_PROVIDER_SENTENCES as S, SnmpProvider } from "@/lib/db/providers/network/snmp";
 import { SNMP_AGENT_FAILURE_SENTENCES as F, SnmpAgentError } from "@/lib/db/providers/network/snmp/agent-read";
@@ -242,7 +243,8 @@ describe("failures and budgets", () => {
     const started = Date.now();
     const error = await provider.queryReadOnly("get sysDescr.0", BUDGET).catch((caught: unknown) => caught);
     expect(Date.now() - started).toBeLessThan(1_500);
-    expect(error).toBeInstanceOf(SnmpAgentError);
+    expect(error).toBeInstanceOf(TimeBudgetRefusal);
+    expect(errorKind(error)).toBe("time-budget-refusal");
     expect((error as Error).message).toBe(F.silence(400));
     expect(leaks(error)).toBe(false);
     const after = await provider.queryReadOnly("get sysName.0", BUDGET);
@@ -251,14 +253,19 @@ describe("failures and budgets", () => {
 
   test("an error-status is the agent's refusal by its number", async () => {
     const { provider } = await connected(READ_ONLY, { errorStatus: (request) => (request === 2 ? 5 : 0) });
-    await expect(provider.queryReadOnly("get sysDescr.0", BUDGET)).rejects.toThrow(F.refused(5));
+    const error = await provider.queryReadOnly("get sysDescr.0", BUDGET).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(SnmpAgentError);
+    expect((error as Error).message).toBe(F.refused(5));
+    expect(errorKind(error)).toBe("query");
   });
 
   test("a walk past the row budget is Studio's refusal, never cut", async () => {
     const { provider } = await connected(READ_ONLY);
-    await expect(provider.queryReadOnly("walk ifEntry", { ...BUDGET, maxResultRows: 3 })).rejects.toThrow(
-      "Read-only execution exceeded the row budget: 5 rows > 3 allowed",
-    );
+    const error = await provider
+      .queryReadOnly("walk ifEntry", { ...BUDGET, maxResultRows: 3 })
+      .catch((caught: unknown) => caught);
+    expect((error as Error).message).toContain("Read-only execution exceeded the row budget: 5 rows > 3 allowed");
+    expect(errorKind(error)).toBe("row-budget-refusal");
   });
 });
 
