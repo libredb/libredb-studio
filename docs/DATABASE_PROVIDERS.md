@@ -510,6 +510,7 @@ A file that is missing, unreadable, empty, holds a block under the legacy `X509 
 A standalone Studio reads the file at boot instead, and refuses to start on such a file.
 
 `createDatabaseProvider` decides the file a SQLite, DuckDB or LibreDB connection names before it builds the provider: a relative path is resolved against the working directory of that call, a path with a NUL byte, one of Studio's own storage files, a path the reserved check cannot read and a SQLite connection string that names no file after `file:` are refused with a `DatabaseConfigError` and nothing is built, and the provider opens the absolute path; `provider.config.database` stays as passed.
+A path whose resolution follows more than 40 symbolic links is one the reserved check cannot read, refused with `ELOOP` as its reason.
 The first call of a process, whatever engine it builds, takes Studio's storage location from `STORAGE_SQLITE_PATH` and the working directory, logs it once at info and keeps it for the life of the process.
 
 ### DuckDB file access and the execution context

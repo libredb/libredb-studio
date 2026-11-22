@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import * as dataDir from "@/lib/data-dir";
-import { forgetStorageLocation, storageLocation } from "@/lib/data-dir";
+import { forgetStorageLocation, LINKS_FOLLOWED_LIMIT, storageLocation } from "@/lib/data-dir";
 import { OPENS_LOCAL_FILE } from "@/lib/db/compatibility";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
@@ -276,6 +276,51 @@ describe("core decides the file a local-file connection opens (FND-2 slice 3)", 
       },
     );
   }
+
+  /**
+   * A path whose resolution follows more than `LINKS_FOLLOWED_LIMIT` links is one the check cannot read. The real-path
+   * read of every path under the chain's directory answers "no such file" here, so the check follows each link itself
+   * and the kernel's own link limit never decides.
+   */
+  // Windows makes a symbolic link only with a privilege the runner may lack (the rows above).
+  test.skipIf(onWindows)(
+    "a path whose resolution follows more than LINKS_FOLLOWED_LIMIT links is refused by name with ELOOP when the provider is built, for every engine OPENS_LOCAL_FILE marks",
+    async () => {
+      const chain = path.join(scratch, "link-chain");
+      fs.mkdirSync(chain);
+      for (let i = 1; i <= LINKS_FOLLOWED_LIMIT + 1; i++)
+        fs.symlinkSync(path.join(chain, `n${i + 1}`), path.join(chain, `n${i}`));
+      const database = path.join(chain, "n1");
+      const realpath = fs.realpathSync;
+      const missing = spyOn(fs, "realpathSync").mockImplementation(((file: fs.PathLike, options?: unknown) => {
+        if (String(file).startsWith(`${chain}${path.sep}`)) {
+          throw Object.assign(new Error(`ENOENT: no such file or directory, lstat '${String(file)}'`), {
+            code: "ENOENT",
+          });
+        }
+        return realpath(file, options as fs.EncodingOption);
+      }) as typeof fs.realpathSync);
+      try {
+        const marked = (Object.keys(OPENS_LOCAL_FILE) as DatabaseType[]).filter((type) => OPENS_LOCAL_FILE[type]);
+        for (const type of marked) {
+          // oxlint-disable-next-line no-await-in-loop -- each refusal is read before the next build.
+          const refused = await createDatabaseProvider(connection(type, { database })).then(
+            () => null,
+            (error: unknown) => error,
+          );
+          expect(refused).toBeInstanceOf(DatabaseConfigError);
+          const error = refused as DatabaseConfigError;
+          expect([type, error.provider]).toEqual([type, type]);
+          expect(error.message).toBe(
+            `${PATH_NOT_CHECKED}: ELOOP: more than ${LINKS_FOLLOWED_LIMIT} symbolic links followed while resolving '${database}'`,
+          );
+          expect((error.cause as NodeJS.ErrnoException).code).toBe("ELOOP");
+        }
+      } finally {
+        missing.mockRestore();
+      }
+    },
+  );
 
   // POSIX reports a path through a regular file as ENOTDIR; Windows reports it as absent (see the rows above).
   test.skipIf(onWindows)(

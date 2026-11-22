@@ -89,6 +89,13 @@ export function reservedStoragePaths(): string[] {
   return [base, `${base}-wal`, `${base}-shm`];
 }
 
+/**
+ * The number of symbolic links `canonicalPath` follows in one call before it refuses the path with ELOOP: the 40 links
+ * Linux follows in one path resolution before it answers ELOOP. macOS stops at 32, so a chain the kernel would refuse
+ * is refused here too, never admitted for want of a check.
+ */
+export const LINKS_FOLLOWED_LIMIT = 40;
+
 /** The errors of a real-path read after which `canonicalPath` canonicalizes the path from its parent. */
 const CANONICAL_FROM_PARENT = new Set(["ENOENT", "EACCES", "EPERM"]);
 
@@ -99,19 +106,71 @@ const CANONICAL_FROM_PARENT = new Set(["ENOENT", "EACCES", "EPERM"]);
  * canonicalized from its parent, as a missing one is: a symbolic link there is followed, and anything else is the
  * parent's real path joined with its name. Any other error, any error reading the link, and such an error on the root,
  * which has no parent, is thrown.
+ *
+ * The walk is one loop, not a recursion, so no runtime's stack limit decides the answer however many missing components
+ * a path or a link's target holds, and a path past a missing component is resolved with one lookup per ancestor
+ * (`deepestExistingAncestor`), not one real-path read per missing name. It follows at most `LINKS_FOLLOWED_LIMIT`
+ * links in one call, counting the links it follows while canonicalizing the path's ancestors, and past that throws an
+ * `Error` with code `ELOOP` and the candidate as its `path`: a link's target is resolved without the filesystem (`path.resolve`), so a target that leads
+ * back to the link through a missing directory is a loop the filesystem's own limit never sees. ELOOP is the code the
+ * filesystem gives a path whose links do not end, so every caller already names it: a connection is refused with
+ * `PATH_NOT_CHECKED`, a sample with `target-unreadable (ELOOP)`, and on Studio's own paths it is raised as the
+ * server's, as every other filesystem error is.
  */
 export function canonicalPath(candidate: string): string {
-  try {
-    return fs.realpathSync(candidate);
-  } catch (error) {
-    if (!CANONICAL_FROM_PARENT.has((error as NodeJS.ErrnoException).code ?? "")) throw error;
-    const parent = path.dirname(candidate);
-    if (parent === candidate) throw error;
-    if (fs.lstatSync(candidate, { throwIfNoEntry: false })?.isSymbolicLink()) {
-      return canonicalPath(path.resolve(parent, fs.readlinkSync(candidate)));
+  const names: string[] = [];
+  let current = candidate;
+  let followed = 0;
+  for (;;) {
+    let real: string;
+    try {
+      real = fs.realpathSync(current);
+    } catch (error) {
+      if (!CANONICAL_FROM_PARENT.has((error as NodeJS.ErrnoException).code ?? "")) throw error;
+      const parent = path.dirname(current);
+      if (parent === current) throw error;
+      const entry = fs.lstatSync(current, { throwIfNoEntry: false });
+      if (entry?.isSymbolicLink()) {
+        followed += 1;
+        if (followed > LINKS_FOLLOWED_LIMIT) throw tooManyLinks(candidate);
+        current = path.resolve(parent, fs.readlinkSync(current));
+      } else if (entry === undefined) {
+        current = deepestExistingAncestor(current, names);
+      } else {
+        names.push(path.basename(current));
+        current = parent;
+      }
+      continue;
     }
-    return path.join(canonicalPath(parent), path.basename(candidate));
+    // Joined into one string first: Bun passes at most 65,536 arguments to a call made with a spread and drops the
+    // rest without an error, and 40 links can each add over a thousand names.
+    return names.length === 0 ? real : path.join(real, names.reverse().join(path.sep));
   }
+}
+
+/**
+ * The deepest ancestor of `missing`, a path with no entry, that has one, or the root when none below it has; the names
+ * of `missing` and of every ancestor past the one returned are pushed onto `names`, last component first. The ancestors
+ * are looked up from the root forward, one lookup each, and the first one without an entry ends the walk: a path that
+ * names something inside a missing directory has no entry either, so every ancestor past it is missing too.
+ */
+function deepestExistingAncestor(missing: string, names: string[]): string {
+  const ancestors = [missing];
+  for (let up = path.dirname(missing); up !== ancestors[ancestors.length - 1]; up = path.dirname(up)) {
+    ancestors.push(up);
+  }
+  let deepest = ancestors.length - 1;
+  while (deepest > 1 && fs.lstatSync(ancestors[deepest - 1], { throwIfNoEntry: false }) !== undefined) deepest -= 1;
+  for (let i = 0; i < deepest; i++) names.push(path.basename(ancestors[i]));
+  return ancestors[deepest];
+}
+
+/** The error `canonicalPath` throws for a path whose resolution follows more than `LINKS_FOLLOWED_LIMIT` links. */
+function tooManyLinks(candidate: string): Error {
+  return Object.assign(
+    new Error(`ELOOP: more than ${LINKS_FOLLOWED_LIMIT} symbolic links followed while resolving '${candidate}'`),
+    { code: "ELOOP", path: candidate },
+  );
 }
 
 function fileIdentity(candidate: string): fs.Stats | undefined {
