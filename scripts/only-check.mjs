@@ -24,7 +24,9 @@
  * pipeline is layered the way it is.
  *
  * Scope is the directories the runner, Playwright and the extension's Mocha legs
- * read: `tests/`, `e2e/` and `vscode-extension/test/`. Enumeration is `git ls-files`, for the reason #980 gives from the other
+ * read: `tests/`, `e2e/`, `vscode-extension/test/` and each workspace package's
+ * `packages/<name>/tests/` (the layout is `scripts/workspace-packages.mjs`'s rule).
+ * Enumeration is `git ls-files`, for the reason #980 gives from the other
  * side - a glob walks whatever is on disk, so an untracked draft in the working
  * tree would red a gate that CI, which checks out tracked files only, cannot see.
  *
@@ -45,6 +47,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isPackageTestPath, PACKAGES_DIRECTORY } from "./workspace-packages.mjs";
 
 /**
  * The directories the runner, Playwright and the extension's Mocha legs read:
@@ -102,12 +105,12 @@ export const FOCUSED = /\.only(?:\s*\.\s*[A-Za-z_$][\w$]*)*[ \t]*\(/;
  */
 const EVERY_FOCUS = new RegExp(FOCUSED.source, "g");
 
-/** Whether a tracked path is one this guard reads. */
+/** Whether a tracked path is one this guard reads: under `SCAN_ROOTS` or a workspace package's `tests/`. */
 export function isScannedFile(file) {
   if (file.endsWith(".d.ts")) {
     return false;
   }
-  if (!SCAN_ROOTS.some((root) => file.startsWith(`${root}/`))) {
+  if (!SCAN_ROOTS.some((root) => file.startsWith(`${root}/`)) && !isPackageTestPath(file)) {
     return false;
   }
   return TEST_FILE.test(file);
@@ -154,14 +157,16 @@ export function findFocusedTests(entries, readFile = (file) => fs.readFileSync(f
 }
 
 /**
- * Every tracked file under `SCAN_ROOTS`, as repository-relative `tests/...` paths.
+ * Every tracked file under `SCAN_ROOTS` and under a workspace package's `tests/`, as
+ * repository-relative paths. `packages/` is listed whole and narrowed by `isScannedFile`,
+ * so a package's `src/` is never read.
  *
  * Paths are normalised to forward slashes because git answers in the platform's
  * separator on Windows, while every path the guard prints, and every path a
  * docblock or an editor link in this repository uses, is a forward-slashed one.
  */
 export function trackedFiles(root, git = (args) => execFileSync("git", args, { cwd: root, encoding: "utf8" })) {
-  const lists = SCAN_ROOTS.map((dir) => {
+  const lists = [...SCAN_ROOTS, PACKAGES_DIRECTORY].map((dir) => {
     // `-z` because git otherwise quotes a path holding a non-ASCII byte, and this
     // repository's own test titles are not ASCII. A quoted path would never match
     // the leading `tests/` that isScannedFile looks for.
@@ -214,7 +219,7 @@ export function runOnlyCheck(root, options = {}) {
   if (found.length === 0) {
     return {
       code: 0,
-      lines: [`only-check: OK — ${files.length} tracked file(s) under ${SCAN_ROOTS.join("/, ")}/, none focused.`],
+      lines: [`only-check: OK — ${files.length} tracked file(s) under ${[...SCAN_ROOTS, `${PACKAGES_DIRECTORY}/*/tests`].join("/, ")}/, none focused.`],
     };
   }
 

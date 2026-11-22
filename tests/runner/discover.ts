@@ -1,13 +1,16 @@
 /**
  * Which files the test runner runs, and which of them are measured for coverage.
  *
- * One rule, in one place: every `*.test.ts` / `*.test.tsx` file under `tests/`,
- * except `tests/live/`, whose files drive real database engines and are started by
- * hand (`bun tests/live/<file>.ts`). The rule is deliberately a rule and not a
+ * One rule, in one place: every `*.test.ts` / `*.test.tsx` file under `tests/` and
+ * under each workspace package's `packages/<name>/tests/`, except a `live/` directory
+ * directly under either, whose files drive real database engines and are started by
+ * hand (`bun tests/live/<file>.ts`). Which directories under `packages/` are packages
+ * is `scripts/workspace-packages.mjs`'s rule, and a directory there without a
+ * `package.json` is refused by name rather than skipped. The rule is deliberately a rule and not a
  * hand-written list: `tests/components/WireCompatibilityHint.test.tsx` shipped with
  * #426 and never ran once, because the runner of the day named its files one by one.
  *
- * A symbolic link or junction under `tests/` is refused by name rather than followed:
+ * A symbolic link or junction under a test root is refused by name rather than followed:
  * following one can run files from outside the repository, loop on a link to a parent
  * and list one file twice under two names, while skipping it drops its tests silently.
  *
@@ -17,11 +20,12 @@
  */
 import { existsSync, lstatSync, readdirSync, realpathSync } from "node:fs";
 import path from "node:path";
+import { isPackageTestPath, workspacePackageDirectories } from "../../scripts/workspace-packages.mjs";
 
 const TESTS_DIRECTORY = "tests";
 const TEST_FILE = /\.test\.tsx?$/;
 
-/** Directories under `tests/` that the runner never collects, with the reason. */
+/** Directories directly under a test root that the runner never collects, with the reason. */
 const EXCLUDED = new Map([["live", "drives real engines, started by hand"]]);
 
 /**
@@ -56,7 +60,7 @@ export const COVERAGE_EXEMPT_FILES: readonly string[] = [
  * over the 543 files the tree held then, `discoverTestFiles` went from 0.43 ms to
  * 1.1 ms a call.
  */
-function collect(root: string, directory: string): string[] {
+function collect(root: string, testRoot: string, directory: string): string[] {
   return readdirSync(path.join(root, directory)).flatMap((name) => {
     const child = `${directory}/${name}`;
     const stats = lstatSync(path.join(root, child));
@@ -66,15 +70,36 @@ function collect(root: string, directory: string): string[] {
       );
     }
     if (stats.isDirectory()) {
-      return directory === TESTS_DIRECTORY && EXCLUDED.has(name) ? [] : collect(root, child);
+      return directory === testRoot && EXCLUDED.has(name) ? [] : collect(root, testRoot, child);
     }
     return stats.isFile() && TEST_FILE.test(name) ? [child] : [];
   });
 }
 
+/**
+ * The directories test files are collected from: `tests/`, and the `tests/` of every
+ * workspace package that has one. A package without `tests/` contributes no file; its
+ * source then has no record, which is the coverage gate's to refuse
+ * (`scripts/check-coverage.mjs --packages-from`).
+ */
+function testRoots(root: string): string[] {
+  const packageRoots = workspacePackageDirectories(root)
+    .map((directory) => `${directory}/${TESTS_DIRECTORY}`)
+    .filter((directory) => existsSync(path.join(root, directory)));
+  return [TESTS_DIRECTORY, ...packageRoots];
+}
+
 /** Every test file the runner runs, as repository-relative POSIX paths, sorted. */
 export function discoverTestFiles(root: string): string[] {
-  return collect(root, TESTS_DIRECTORY).sort();
+  return testRoots(root)
+    .flatMap((testRoot) => collect(root, testRoot, testRoot))
+    .sort();
+}
+
+/** Whether a selector, reduced to a repository-relative path, is inside a directory tests are collected from. */
+function isUnderTestRoot(target: string): boolean {
+  if (target === TESTS_DIRECTORY || target.startsWith(`${TESTS_DIRECTORY}/`)) return true;
+  return isPackageTestPath(`${target}/`);
 }
 
 /**
@@ -122,8 +147,10 @@ export function selectTestFiles(root: string, selectors: string[]): string[] {
   const selected = new Set<string>();
   for (const selector of selectors) {
     const target = normalizeSelector(root, selector);
-    if (target !== TESTS_DIRECTORY && !target.startsWith(`${TESTS_DIRECTORY}/`)) {
-      throw new Error(`"${selector}" is not under tests/: name a test file or a directory under tests/.`);
+    if (!isUnderTestRoot(target)) {
+      throw new Error(
+        `"${selector}" is not under tests/ or packages/<name>/tests/: name a test file or a directory under one of them.`,
+      );
     }
 
     const matches = all.filter((file) => file === target || file.startsWith(`${target}/`));

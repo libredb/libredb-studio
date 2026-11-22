@@ -215,3 +215,93 @@ describe("test discovery", () => {
     }
   });
 });
+
+/** A throwaway root holding the given empty files; the caller removes it. */
+function rootWith(files: string[]): string {
+  const scratch = mkdtempSync(path.join(tmpdir(), "runner-packages-"));
+  for (const file of files) {
+    mkdirSync(path.dirname(path.join(scratch, file)), { recursive: true });
+    writeFileSync(path.join(scratch, file), "");
+  }
+  return scratch;
+}
+
+describe("test discovery in workspace packages", () => {
+  const planted = [
+    "tests/unit/real.test.ts",
+    "packages/README.md",
+    "packages/planted/package.json",
+    "packages/planted/src/index.ts",
+    "packages/planted/src/inside-src.test.ts",
+    "packages/planted/tests/a.test.ts",
+    "packages/planted/tests/unit/c.test.tsx",
+    "packages/planted/tests/live/b.test.ts",
+  ];
+
+  test("runs a package's tests beside the root's, except its tests/live and anything outside its tests/", () => {
+    const repository = rootWith(planted);
+    try {
+      expect(discoverTestFiles(repository)).toEqual([
+        "packages/planted/tests/a.test.ts",
+        "packages/planted/tests/unit/c.test.tsx",
+        "tests/unit/real.test.ts",
+      ]);
+    } finally {
+      rmSync(repository, { recursive: true, force: true });
+    }
+  });
+
+  test("a link under a package's tests/ is refused by name", () => {
+    const repository = rootWith(planted);
+    const elsewhere = mkdtempSync(path.join(tmpdir(), "runner-packages-target-"));
+    try {
+      writeFileSync(path.join(elsewhere, "other.test.ts"), "");
+      symlinkSync(elsewhere, path.join(repository, "packages/planted/tests/linked"), "junction");
+      expect(() => discoverTestFiles(repository)).toThrow(/packages\/planted\/tests\/linked .*does not follow links/);
+    } finally {
+      rmSync(repository, { recursive: true, force: true });
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  test("a directory under packages/ without a package.json is refused by name, so its tests never go unrun", () => {
+    const repository = rootWith([...planted, "packages/stray/tests/d.test.ts"]);
+    try {
+      expect(() => discoverTestFiles(repository)).toThrow(/packages\/stray has no package\.json/);
+    } finally {
+      rmSync(repository, { recursive: true, force: true });
+    }
+  });
+
+  test("a package with no tests/ contributes no file, and its source is the coverage gate's to miss", () => {
+    const repository = rootWith(["tests/unit/real.test.ts", "packages/bare/package.json", "packages/bare/src/a.ts"]);
+    try {
+      expect(discoverTestFiles(repository)).toEqual(["tests/unit/real.test.ts"]);
+    } finally {
+      rmSync(repository, { recursive: true, force: true });
+    }
+  });
+
+  test("a selector may name a package's tests/, and a package's src/ is refused for where it is", () => {
+    const repository = rootWith(planted);
+    const cwd = process.cwd();
+    try {
+      process.chdir(repository);
+      expect(selectTestFiles(repository, ["packages/planted/tests"])).toEqual([
+        "packages/planted/tests/a.test.ts",
+        "packages/planted/tests/unit/c.test.tsx",
+      ]);
+      expect(selectTestFiles(repository, ["packages/planted/tests/a.test.ts"])).toEqual([
+        "packages/planted/tests/a.test.ts",
+      ]);
+      expect(() => selectTestFiles(repository, ["packages/planted/src"])).toThrow(
+        /"packages\/planted\/src" is not under tests\/ or packages\/<name>\/tests\//,
+      );
+      expect(() => selectTestFiles(repository, ["packages/planted"])).toThrow(/is not under tests\/ or packages/);
+      expect(() => selectTestFiles(repository, ["packages/planted/tests/live"])).toThrow(/matched no test files/);
+    } finally {
+      process.chdir(cwd);
+      rmSync(repository, { recursive: true, force: true });
+    }
+  });
+});
