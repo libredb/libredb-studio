@@ -609,6 +609,14 @@ The previous release wrote `v1:<iv>:<ciphertext>`; this one reads that form unti
 Each sealed value opens only in the place it was sealed for: the row owner, the connection (or the account), the field, and the connection's identity fields.
 Anywhere else it is omitted and named in the server log, exactly as a value the key cannot open is, and it is never returned raw.
 
+Four more rules hold for every connection, on read, on write and in the re-seal (`src/lib/storage/connection-secrets.ts`):
+
+- A list element that is not an object is not a connection, and is left exactly as it is.
+- A secret field holding a value that is neither text nor null, such as a number, a list or an object, is omitted on read as `not-text`, refused on write with a `400` that names the list index and the field, and left and named by the re-seal.
+- This version seals every secret of a connection on every write, so a version 1 or unsealed value beside a `v2` value of the same connection was put there outside Studio.
+  It is omitted as `mixed`, whatever the store's envelope state, and the re-seal leaves and names it.
+- A connection whose `id` or identity fields nest deeper than 32 levels has no binding, since no connection does: its secrets are omitted as `unbindable`, a write of it is refused with a `400` that names the list index, and the re-seal leaves and names it.
+
 The place is the value's AES-256-GCM additional authenticated data: the UTF-8 of the RFC 8785 canonical JSON of `{d, f, o, r, s, t}` (`src/lib/storage/envelope-binding.ts`):
 
 | Member | Value |
@@ -634,6 +642,7 @@ A change made outside Studio leaves the sealed values bound to the old fields, s
 
 The identity set is part of the `v2` format.
 A field added later as identity changes nothing stored, because records written before it do not carry it.
+Such an addition is safe for upgrades only: an older version leaves the field out of the digest, so it opens no sealed value of a record that carries it, which makes the addition a downgrade boundary, as a new envelope version is.
 Moving an existing field into or out of the set would change the digest of every record that carries it, so it is a new envelope version with its own re-seal, never an edit.
 
 ### The key
@@ -662,15 +671,15 @@ What happens is bounded and recoverable:
 
 - The **connection survives**. Its name, host, port, user and database are still there.
 - The unreadable field is **omitted**, not replaced with garbage. The password box is empty.
-- A warning is written to the server log once per read, naming each omitted value by its
-  connection id, its field and the reason: `Stored connection secrets could not be decrypted: N
-  field(s) were omitted: <id> <field> (unopenable), ...`, followed by what to do.
+- A warning is written to the server log once per read, naming each omitted value by its connection id, its field and the reason, followed by what to do: `Stored connection secrets could not be decrypted: N field(s) were omitted: <id> <field> (unopenable), ...`.
 - Nothing is deleted from the database by the read itself.
 
 To recover, restore the previous key and restart, **before** using the app. Reads happen on page
 load; the first time the app writes that collection back, the omitted values are gone for good,
 because the browser copy is the source the server is updated from. If you cannot restore the key,
 re-enter the affected passwords once and they are re-encrypted under the current key.
+
+After a re-seal, restoring the key does not bring back a version 1 value the re-seal could not open: see [Re-sealing the store](#re-sealing-the-store).
 
 ### Existing deployments migrate themselves
 
@@ -690,35 +699,55 @@ At its start, before it serves, the first server:
 4. Records in `storage_meta` (`credential_envelope = v2`) that version 1 is retired, and commits.
 
 From then on a version 1 or unsealed value is refused by name, as `retired`, and omitted like any value that does not open.
+
 Every other server that starts while the first holds the lock waits for it, finds the store retired, and logs that nothing was read, written or backed up.
 Remove `STORAGE_ENCRYPTION_RESEAL` afterwards; a store that is already retired is never read, written or backed up again, but the variable has no further use.
+
+The re-seal opens each value with the key the server runs with.
+It derives that key before it reads anything, so a server with no usable key material refuses the start by name and changes nothing.
+A value it cannot open is left exactly as it was, named on the `open nowhere here` line, and stays unreadable.
+A version 1 value among them is refused as `retired` from then on, even after the key that sealed it is back, and a second re-seal finds nothing to do, because the store is already retired.
+So check before the re-sealing start that the key in use, `STORAGE_ENCRYPTION_KEY` or `JWT_SECRET` when it is unset, is the one the store was written with.
+If the line names values because the key was wrong:
+
+- Stop every server, restore the key that sealed them, delete the `credential_envelope` row of `storage_meta` (schema-qualified when `STORAGE_POSTGRES_SCHEMA` is set), and start again with `STORAGE_ENCRYPTION_RESEAL` set.
+  The re-seal then opens them and loses nothing, except values the servers sealed under the wrong key in between.
+  Deleting the row accepts every version 1 value in the store again, wherever it was put, so re-seal at once.
+- Or restore the re-seal's backup ([Downgrading](#downgrading) gives the steps) and start again with the right key and `STORAGE_ENCRYPTION_RESEAL` set; every change made since the backup is lost.
 
 The backup:
 
 | Provider | Backup | Where |
 |----------|--------|-------|
-| `sqlite` | `VACUUM INTO` a standalone database file, taken on a second connection under the re-seal's write lock | `<STORAGE_SQLITE_PATH>.pre-reseal-<UTC yyyymmddThhmmssZ>`, beside the store file |
+| `sqlite` | `VACUUM INTO` a standalone database file, taken on a second connection under the re-seal's write lock, and created first with the store file's own permission bits, so it is no more readable than the store | `<STORAGE_SQLITE_PATH>.pre-reseal-<UTC yyyymmddThhmmssZ>`, beside the store file |
 | `postgres` | `CREATE TABLE <table>_pre_reseal_<stamp> AS TABLE <table>` for all six store tables, inside the re-seal transaction | In the store's own schema (`STORAGE_POSTGRES_SCHEMA` when set), for example `user_storage_pre_reseal_20261122t053000z` |
 
 The start refuses, with a banner and exit status 1, when:
 
 - the value is anything other than `true`, `1`, `on`, `false`, `0`, `off` or empty, because a requested re-seal that cannot be read must not be skipped;
 - `STORAGE_PROVIDER` is `local`, which has no server store;
+- the store cannot be opened, or its `credential_envelope` row holds a value this version does not know;
+- the server has no usable key material;
 - the backup cannot be written (a target that already exists, a directory the process cannot write, or an in-memory SQLite store);
 - anything else fails during the re-seal.
 
-A refused or failed run leaves the store exactly as it was, and version 1 still accepted.
+A refusal before the re-seal's transaction changes nothing, and a failure inside it rolls every change back.
+A database connection lost during the commit can lose only the answer to a commit that happened, so the banner does not claim that the store is unchanged.
+Start again with the variable still set: that run reports the store's state, retired already or re-sealed now.
 
 The log lines, at warning level:
 
 ```
 STORAGE_ENCRYPTION_RESEAL: backed up the store to <backup>, re-sealed N value(s) and kept M already sealed for their place; version 1 is retired.
-STORAGE_ENCRYPTION_RESEAL: left N value(s) as they were, because they open nowhere here: <owner> <connection id> <field>, ...
-STORAGE_ENCRYPTION_RESEAL: left N row(s) or element(s) unread, because they are not connections: <owner> connections, ...
+STORAGE_ENCRYPTION_RESEAL: left N value(s) as they were, because they open nowhere here: <entry>, ... <what to do>
+STORAGE_ENCRYPTION_RESEAL: left N value(s) as they were, because they are not text or sit beside a value sealed as v2: <entry> (<reason>), ...
+STORAGE_ENCRYPTION_RESEAL: left N row(s) or element(s) unread, because they are not connections or nest too deep to bind: <entry>, ...
 STORAGE_ENCRYPTION_RESEAL: remove it now; every start re-checks the store while it is set.
 ```
 
-The second and third lines appear only when they have something to name.
+The second, third and fourth lines appear only when they have something to name.
+On the second and third lines an entry is `<owner> <connection id> <field>` for a connection value, or `<email> <field>` for an account's second factor (`totpSecret` or `totpPending`); the reason on the third is `not-text` or `mixed`.
+On the fourth an entry is `<owner> connections` for a row whose data is not a JSON list, or `<owner> connections[<index>]` for one element of the list.
 
 How to set it:
 
@@ -726,20 +755,35 @@ How to set it:
 |---------|-------|
 | Docker, Docker Compose | `-e STORAGE_ENCRYPTION_RESEAL=true`, or the service's `environment` |
 | `npx @libredb/studio`, packages | The environment of the process |
-| Helm chart | `extraEnv`, for example `--set 'extraEnv[0].name=STORAGE_ENCRYPTION_RESEAL' --set-string 'extraEnv[0].value=true'`; no chart change is needed |
+| Helm chart | An `extraEnv` entry added after the ones you already have; no chart change is needed |
+
+On the Helm chart, add the entry to the `extraEnv` list in your values file, beside the entries already there:
+
+```yaml
+extraEnv:
+  # ...the entries you already have, such as STORAGE_ENCRYPTION_KEY...
+  - name: STORAGE_ENCRYPTION_RESEAL
+    value: "true"
+```
+
+Do not set it with `--set 'extraEnv[0]...'`: an index overwrites the entry at that index of a values file's list, which is where the chart README puts `STORAGE_ENCRYPTION_KEY`.
+With `--reuse-values`, any `--set` of an `extraEnv` index replaces the whole stored list, because Helm replaces a list whole when it merges values, so every earlier entry is dropped.
+Either way the re-sealing start can run without `STORAGE_ENCRYPTION_KEY`, under a key derived from `JWT_SECRET`, which opens none of the stored values.
+Before that start, check that the rendered Deployment still carries every entry you set, for example with `helm template` or `helm get manifest`.
 
 ### Upgrading to envelope v2
 
 In this order:
 
 1. Back up the store as usual.
-   This version writes `v2` from its first save, which an older version cannot read.
+   This version writes `v2` from its first save, which an older version cannot read, so this backup is the only one an older version reads in full.
+   For SQLite, stop the server and copy the store file together with its `-wal` file, or take a consistent copy while it runs with `sqlite3 <store file> ".backup <copy>"`: the `-wal` file holds committed changes that are not yet in the store file.
 2. Upgrade every server.
 3. Once no older server runs, set `STORAGE_ENCRYPTION_RESEAL=true` on every server and restart them.
    The first start backs up, re-seals and retires version 1; the others wait on the lock and find nothing to do.
 4. Remove `STORAGE_ENCRYPTION_RESEAL`.
 5. Keep the re-seal's backup until a downgrade is out of the question, then delete it: the file, or `DROP TABLE` each `*_pre_reseal_*` table.
-   It holds version 1 values.
+   It holds every credential of the store, version 1 values among them, so keep it as protected as the store.
 
 The chart's SQLite deployment runs one replica and stops the old pod before the new one starts, so the two versions never serve one store together.
 PostgreSQL deployments with several replicas roll pods one by one, so for a while both versions serve the same store:
@@ -757,30 +801,55 @@ A server that started before another one re-sealed keeps accepting version 1 unt
 #### Downgrading
 
 Every value this version wrote, through any save, any account change or the re-seal, is unreadable to an older version: the field is omitted and the next save drops it, and an account with a second factor is locked until an admin clears it (the environment admin through `ADMIN_PASSWORD_RESET`).
-To downgrade, stop every server, restore the re-seal's backup, and start the older version.
-Every change made after the backup is lost.
+Only the backup taken in step 1, before the upgrade, is fully readable by an older version.
+The re-seal's backup is not: a save seals every secret of the connections it writes and an account change seals both factors, so the re-seal's backup already holds `v2` for every connection saved and every account changed between the upgrade and the re-seal.
 
-- SQLite: put the backup file in place of the store file, or point `STORAGE_SQLITE_PATH` at it.
-- PostgreSQL: run, with `<stamp>` the backup's suffix and every name schema-qualified when `STORAGE_POSTGRES_SCHEMA` is set:
+To downgrade, stop every server, then choose:
+
+- Restore the step 1 backup: every change made since the upgrade is lost, and the older version reads everything the backup holds.
+- Restore the re-seal's backup: every change made since the re-seal is lost, and the older version omits what this version wrote as `v2` before the re-seal.
+- Restore nothing: the older version omits every `v2` value.
+  The store's `storage_meta` still records that version 1 is retired, and the older version does not read that table, so delete the row before it serves: `DELETE FROM storage_meta WHERE key = 'credential_envelope'`, schema-qualified when `STORAGE_POSTGRES_SCHEMA` is set, or `sqlite3 <store file> "DELETE FROM storage_meta WHERE key = 'credential_envelope'"`.
+  Left in place, it makes the next upgrade refuse as `retired` every version 1 value the older version writes, and that upgrade's re-seal finds nothing to do.
+
+Then start the older version.
+
+For SQLite, the store runs in WAL mode and Studio does not close it at shutdown, so a stopped server leaves `<store file>-wal` and `<store file>-shm` beside the store file, and the `-wal` file holds committed changes.
+They belong to the store being replaced: delete both before you put a backup in place of the store file, or SQLite replays them onto the restored file.
+Pointing `STORAGE_SQLITE_PATH` at the backup file instead needs no deletion, because a `VACUUM INTO` copy has no such files.
+
+For PostgreSQL, restore every store table from the re-seal's backup in one transaction, as the role that owns the tables: children are emptied before their parents, and parents filled before their children.
+With `<stamp>` the backup's suffix and every name schema-qualified when `STORAGE_POSTGRES_SCHEMA` is set:
 
 ```sql
 BEGIN;
+DELETE FROM passkey_spent_challenges;
+DELETE FROM passkey_credentials;
+DELETE FROM passkey_users;
+DELETE FROM accounts;
 DELETE FROM user_storage;
+DELETE FROM storage_meta;
+INSERT INTO storage_meta SELECT * FROM storage_meta_pre_reseal_<stamp>;
 INSERT INTO user_storage SELECT * FROM user_storage_pre_reseal_<stamp>;
-UPDATE accounts AS a SET totp_secret = b.totp_secret, totp_pending = b.totp_pending
-  FROM accounts_pre_reseal_<stamp> AS b WHERE a.email = b.email;
-DELETE FROM storage_meta WHERE key = 'credential_envelope';
+INSERT INTO accounts SELECT * FROM accounts_pre_reseal_<stamp>;
+INSERT INTO passkey_users SELECT * FROM passkey_users_pre_reseal_<stamp>;
+INSERT INTO passkey_credentials SELECT * FROM passkey_credentials_pre_reseal_<stamp>;
+INSERT INTO passkey_spent_challenges SELECT * FROM passkey_spent_challenges_pre_reseal_<stamp>;
 COMMIT;
 ```
+
+Every table then holds exactly what the backup holds: an account deleted since the re-seal comes back with its rows, and one created since is gone with its passkeys.
+The backup's `storage_meta` has no `credential_envelope` row, so version 1 is accepted again.
 
 Restoring a full snapshot taken before the re-seal also restores "version 1 accepted", so run the re-seal again after upgrading.
 
 #### An interrupted re-seal
 
 The re-seal is one transaction.
-An error, a lost database connection or a killed process leaves every row as it was and version 1 accepted, and the start stops with the reason.
-A SQLite run that stopped after its backup leaves that file, a copy of the unchanged store; delete it or keep it.
-Fix the cause and start again.
+An error, a lost database connection or a killed process before the commit leaves every row as it was and version 1 accepted, and the start stops with the reason.
+A connection lost during the commit itself can lose only the answer to a commit that happened, so the banner says that the run did not complete, not that the store is unchanged.
+A SQLite run that stopped after its backup leaves that file, a copy of the store as it was; delete it or keep it.
+Fix the cause and start again with `STORAGE_ENCRYPTION_RESEAL` still set: that run reports the store's state, retired already or re-sealed now.
 On PostgreSQL the re-seal blocks writes, not reads, for its duration; a start probe that kills a very slow re-seal makes it roll back and run again at the next start, so for a very large store run the first re-sealing start with one replica or a longer start probe.
 
 ### Paths that change an identity field
@@ -822,10 +891,8 @@ On PostgreSQL the re-seal blocks writes, not reads, for its duration; a start pr
   separate from the database that gets backed up.
 - **`GET /api/storage` returns credentials in plaintext to their authenticated owner.** It has to:
   the app must be able to redisplay a saved password for editing.
-- **Readable fields are neither sealed nor authenticated.** The binding protects the sealed values:
-  a change to an identity field outside Studio makes that connection's sealed values unreadable
-  rather than sending them on, but it does not make `host`, `name` or any other readable field
-  tamper-proof.
+- **Readable fields are neither sealed nor authenticated.**
+  The binding protects the sealed values: a change to an identity field outside Studio makes that connection's sealed values unreadable rather than sending them on, but it does not make `host`, `name` or any other readable field tamper-proof.
 
 ---
 
@@ -933,21 +1000,26 @@ Stored connection secrets could not be decrypted: 3 field(s) were omitted: c1 pa
 The line names each omitted value by its connection id, its field and the reason.
 For `unopenable`, the encryption key changed, or the value is not stored in the place it was sealed for (see [Where a sealed value opens](#where-a-sealed-value-opens)).
 For `retired`, see the next entry.
+For `mixed`, `not-text` and `unbindable`, the record was changed outside Studio (see the rules in [Where a sealed value opens](#where-a-sealed-value-opens)): re-enter the credential, or for `unbindable` delete the connection and create it again.
 
-The encryption key changes when `JWT_SECRET` is rotated (and `STORAGE_ENCRYPTION_KEY` is not
-set), when `STORAGE_ENCRYPTION_KEY` itself changes, or when the data directory holding
-`auth-bootstrap.json` was not persisted so a fresh `JWT_SECRET` was generated on start.
+The encryption key changes when `JWT_SECRET` is rotated (and `STORAGE_ENCRYPTION_KEY` is not set), when `STORAGE_ENCRYPTION_KEY` itself changes, or when the data directory holding `auth-bootstrap.json` was not persisted so a fresh `JWT_SECRET` was generated on start.
 
-Restore the previous key and restart **before** using the app — see
-[Rotating a key invalidates stored credentials](#rotating-a-key-invalidates-stored-credentials).
+Restore the previous key and restart **before** using the app: see [Rotating a key invalidates stored credentials](#rotating-a-key-invalidates-stored-credentials).
 If the key is gone, re-enter the affected passwords; everything else about the connection is intact.
 
 ### "Values refused as retired after the re-seal"
 
 The warning line names a value with the reason `retired`, or an account's second factor stops working with `(retired)` in the log.
 The value is a version 1 envelope or an unsealed value, which the store refuses since `STORAGE_ENCRYPTION_RESEAL` retired version 1.
-It was written after the re-seal, by a server of an older version or by an edit outside Studio.
-Stop every older server, then re-enter the affected credentials; an admin clears an affected second factor.
+It is one of these:
+
+- A value the re-seal left because the key then in use did not open it: its `open nowhere here` line named it.
+- A value an older server wrote after a downgrade that kept the store's `credential_envelope` row ([Downgrading](#downgrading)).
+- A value written after the re-seal by a server of an older version during a mixed rollout, or by an edit outside Studio.
+
+For the first two, the value still opens under the key that sealed it: stop every server, make sure that key is in use, delete the `credential_envelope` row of `storage_meta`, and start again with `STORAGE_ENCRYPTION_RESEAL` set, as [Re-sealing the store](#re-sealing-the-store) describes.
+Restoring a dump of `user_storage` taken before the re-seal, without that step, meets the same refusal.
+For the third, stop every older server, then re-enter the affected credentials; an admin clears an affected second factor.
 
 ### "Duplicate data after migration"
 
@@ -1094,7 +1166,7 @@ Each row stores **one user's one collection** as a JSON blob. Adding a new colle
 
 | `key` | `value` | Meaning |
 |-------|---------|---------|
-| `credential_envelope` | `v2` | The credential re-seal retired version 1 envelopes ([Re-sealing the store](#re-sealing-the-store)); no row means version 1 is still accepted, and any other value stops the start, as a store written by a newer version |
+| `credential_envelope` | `v2` | The credential re-seal retired version 1 envelopes ([Re-sealing the store](#re-sealing-the-store)); no row means version 1 is still accepted. Any other value was written by a newer version: this version refuses to open the store, so every request that needs it fails naming the row, while the process keeps serving and its health and readiness routes stay green, because they do not open the store. With `STORAGE_ENCRYPTION_RESEAL` set, the start itself stops on it |
 
 The passkey tables:
 

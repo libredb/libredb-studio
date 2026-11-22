@@ -424,8 +424,9 @@ In Secure mode every sign-in and sign-out also deletes the plain-named session c
 Eleven connection fields and an account's two second-factor fields are encrypted; `host`, `port`, `user`, `agentUser`, `database`, `name` and the TLS certificates stay readable so a dump can still be identified.
 Each value is a `v2` envelope whose additional authenticated data names the row owner, the connection or account, the field and a digest of the connection's identity fields, so it opens only in the place it was sealed for and is omitted and named anywhere else.
 Version 1 envelopes and unsealed values are read until `STORAGE_ENCRYPTION_RESEAL` re-seals the store after a complete backup and records that version 1 is retired; from then on they are refused by name.
-Rotating the key makes stored credentials unreadable: the connection survives, the
-field is omitted. For `STORAGE_PROVIDER=sqlite` with no `STORAGE_ENCRYPTION_KEY` set, the fallback
+A version 1 or unsealed value beside a `v2` value of the same connection, and a secret field that does not hold text, are refused by name in either state, because this version never writes either.
+Rotating the key makes stored credentials unreadable: the connection survives, the field is omitted.
+For `STORAGE_PROVIDER=sqlite` with no `STORAGE_ENCRYPTION_KEY` set, the fallback
 key is persisted beside the SQLite file, in the same directory the Helm chart mounts as one volume
 — a backup or snapshot of it carries the key alongside the ciphertext it opens. Set
 `STORAGE_ENCRYPTION_KEY` from outside that volume (a Kubernetes Secret, an environment variable) to

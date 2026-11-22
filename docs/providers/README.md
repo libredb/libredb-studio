@@ -277,8 +277,9 @@ Three deliberate limits, so nobody reads more into this than it does:
 The fingerprint is stored and displayed **in the clear**, on purpose. It is public key material: it
 authenticates the bastion to Studio, grants no access, unlocks nothing, and it has to be readable for
 the comparison above to be possible at all. `src/lib/storage/secret-fields.ts` classifies it
-`identity` alongside the certificates in `ssl`: readable, and bound into the tunnel's sealed credentials ([STORAGE.md](../STORAGE.md#where-a-sealed-value-opens)); the tunnel's password, private key and passphrase stay
-encrypted at rest.
+`identity` alongside the certificates in `ssl`.
+It stays readable, and it is bound into every sealed credential of the connection, the database password included, not only the tunnel's ([STORAGE.md](../STORAGE.md#where-a-sealed-value-opens)).
+The tunnel's password, private key and passphrase stay encrypted at rest.
 
 **One forward per connection, bastion, far end, credential and pin.** Studio pools each open tunnel forward and hands it to every provider of the same connection that asks for the same bastion route and far end, and a forward is shared only by calls that present the credential it was opened with and pin the same host key (or none).
 A changed credential (another auth method, password, private key or passphrase) or another pin opens its own forward.
