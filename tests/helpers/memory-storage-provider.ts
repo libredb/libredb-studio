@@ -75,7 +75,7 @@ export class MemoryStorageProvider implements ServerStorageProvider {
   }
 
   async listAccounts(): Promise<StoredAccount[]> {
-    return [...this.accounts.values()].map((account) => ({ ...account }));
+    return [...this.accounts.values()].map((account) => structuredClone(account));
   }
 
   async getAccount(email: string): Promise<StoredAccount | null> {

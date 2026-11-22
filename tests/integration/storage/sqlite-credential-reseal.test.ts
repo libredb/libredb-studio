@@ -40,7 +40,7 @@ describe("re-sealing a real SQLite store", () => {
   });
 
   afterEach(async () => {
-    for (const provider of open.splice(0)) await provider.close();
+    await Promise.all(open.splice(0).map((provider) => provider.close()));
     for (const key of SAVED) {
       if (saved[key] === undefined) delete (process.env as Record<string, string | undefined>)[key];
       else (process.env as Record<string, string>)[key] = saved[key];
@@ -180,7 +180,9 @@ describe("re-sealing a real SQLite store", () => {
 
     expect(await resealStore(store, new Date("2026-11-22T06:00:00.000Z"))).toEqual({ kind: "already-retired" });
     expect(dump()).toEqual(after);
-    expect(readdirSync(dir).filter((name) => name.includes("pre-reseal"))).toEqual(["store.db.pre-reseal-20261122T053000Z"]);
+    expect(readdirSync(dir).filter((name) => name.includes("pre-reseal"))).toEqual([
+      "store.db.pre-reseal-20261122T053000Z",
+    ]);
   });
 
   test("a backup that cannot be written refuses the run and leaves the store unchanged", async () => {

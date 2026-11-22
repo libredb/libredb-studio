@@ -371,7 +371,8 @@ describe("assertPersistableState — CREDENTIAL_KEY", () => {
       if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
       const values = Object.values(value);
       return (
-        values.length > 0 && values.every((entry) => entry === "secret" || entry === "public" || entry === "identity" || entry === "nested")
+        values.length > 0 &&
+        values.every((entry) => entry === "secret" || entry === "public" || entry === "identity" || entry === "nested")
       );
     };
 

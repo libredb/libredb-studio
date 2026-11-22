@@ -59,7 +59,13 @@ const HERE = (): EnvelopeBinding => connectionBinding("alice", record()).field("
 function sealByHand(plaintext: string, aad: Record<string, unknown>): string {
   const material = process.env.STORAGE_ENCRYPTION_KEY || process.env.JWT_SECRET!;
   const key = Buffer.from(
-    hkdfSync("sha256", new TextEncoder().encode(material), new Uint8Array(0), "libredb-studio/storage-encryption/v1", 32),
+    hkdfSync(
+      "sha256",
+      new TextEncoder().encode(material),
+      new Uint8Array(0),
+      "libredb-studio/storage-encryption/v1",
+      32,
+    ),
   );
   const keys = Object.keys(aad).sort();
   const text = `{${keys.map((k) => `${JSON.stringify(k)}:${JSON.stringify(aad[k])}`).join(",")}}`;
@@ -166,9 +172,15 @@ describe("the binding", () => {
       table: accountBinding("alice").field("totpSecret"),
     };
 
-    expect(Object.fromEntries(Object.entries(elsewhere).map(([name, b]) => [name, openSecret(sealed, b).kind]))).toEqual(
-      { identity: "unopenable", field: "unopenable", owner: "unopenable", record: "unopenable", table: "unopenable" },
-    );
+    expect(
+      Object.fromEntries(Object.entries(elsewhere).map(([name, b]) => [name, openSecret(sealed, b).kind])),
+    ).toEqual({
+      identity: "unopenable",
+      field: "unopenable",
+      owner: "unopenable",
+      record: "unopenable",
+      table: "unopenable",
+    });
   });
 
   test("a v1 envelope relabelled v2, or a v2 envelope relabelled v1, does not open", () => {

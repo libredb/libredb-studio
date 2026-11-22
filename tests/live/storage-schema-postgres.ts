@@ -287,7 +287,9 @@ async function terminateOpenTransaction(
 async function storeState(superuser: string) {
   return asSuperuser(superuser, async (client) => {
     const rows = await client.query(`SELECT user_id, data FROM ${SCHEMA}.user_storage ORDER BY user_id, collection`);
-    const factors = await client.query(`SELECT email, totp_secret, totp_pending FROM ${SCHEMA}.accounts ORDER BY email`);
+    const factors = await client.query(
+      `SELECT email, totp_secret, totp_pending FROM ${SCHEMA}.accounts ORDER BY email`,
+    );
     const marker = await client.query(`SELECT key, value FROM ${SCHEMA}.storage_meta`);
     const backups = await client.query(
       "SELECT table_schema, table_name FROM information_schema.tables WHERE table_name LIKE '%\\_pre\\_reseal\\_%' ORDER BY table_schema, table_name",
@@ -320,8 +322,15 @@ async function exerciseReseal(url: string, superuser: string): Promise<void> {
       ["alice", secrets.alice],
       ["bob", secrets.bob],
     ] as const) {
+      // oxlint-disable-next-line no-await-in-loop -- one row at a time on the store.
       await raw.setCollection(owner, "connections", [
-        { id: `${owner}-c1`, name: owner, type: "postgres", host: `${owner}.internal`, password: sealVersionOne(secret) },
+        {
+          id: `${owner}-c1`,
+          name: owner,
+          type: "postgres",
+          host: `${owner}.internal`,
+          password: sealVersionOne(secret),
+        },
       ] as never);
     }
     await raw.insertAccount({
@@ -339,7 +348,10 @@ async function exerciseReseal(url: string, superuser: string): Promise<void> {
     await raw.close();
   }
   const original = await storeState(superuser);
-  check(original.backups.length === 0 && original.marker.length === 0, "the store should start with no marker and no backup");
+  check(
+    original.backups.length === 0 && original.marker.length === 0,
+    "the store should start with no marker and no backup",
+  );
 
   // A rewrite that throws on a later row rolls everything back, its backup tables included.
   const failing = new PostgresStorageProvider(url);
@@ -362,7 +374,10 @@ async function exerciseReseal(url: string, superuser: string): Promise<void> {
         () => null,
         (error: unknown) => error as Error,
       );
-    check(failure?.message === "rewrite failed on a later row", `the failing rewrite should reject, got: ${failure?.message}`);
+    check(
+      failure?.message === "rewrite failed on a later row",
+      `the failing rewrite should reject, got: ${failure?.message}`,
+    );
   } finally {
     await failing.close();
   }
@@ -404,7 +419,10 @@ async function exerciseReseal(url: string, superuser: string): Promise<void> {
     await holder.end();
     await waiting.close();
   }
-  check(JSON.stringify(await storeState(superuser)) === JSON.stringify(original), "a terminated re-seal changed the store");
+  check(
+    JSON.stringify(await storeState(superuser)) === JSON.stringify(original),
+    "a terminated re-seal changed the store",
+  );
   console.log("ok   a re-seal terminated while it waits for the lock leaves the store as it was");
 
   // Two runs at once: one re-seals after the backup, the other waits on the lock and finds nothing to do.
@@ -416,7 +434,10 @@ async function exerciseReseal(url: string, superuser: string): Promise<void> {
       resealStore(second, new Date("2026-11-22T05:20:01.000Z")),
     ]);
     const kinds = reports.map((report) => report.kind).sort();
-    check(JSON.stringify(kinds) === '["already-retired","rewritten"]', `two runs should serialize, got: ${kinds.join(", ")}`);
+    check(
+      JSON.stringify(kinds) === '["already-retired","rewritten"]',
+      `two runs should serialize, got: ${kinds.join(", ")}`,
+    );
   } finally {
     await first.close();
     await second.close();
@@ -429,7 +450,10 @@ async function exerciseReseal(url: string, superuser: string): Promise<void> {
     ),
     "a factor was not re-sealed",
   );
-  check(JSON.stringify(resealed.marker) === '[{"key":"credential_envelope","value":"v2"}]', "the marker was not written");
+  check(
+    JSON.stringify(resealed.marker) === '[{"key":"credential_envelope","value":"v2"}]',
+    "the marker was not written",
+  );
   const backups = resealed.backups as { table_schema: string; table_name: string }[];
   check(
     backups.length === TABLES.length && backups.every((row) => row.table_schema === SCHEMA),
@@ -443,7 +467,9 @@ async function exerciseReseal(url: string, superuser: string): Promise<void> {
   } finally {
     await reader.close();
   }
-  console.log(`ok   two re-seals at once serialize: one re-seals after a backup of all ${TABLES.length} tables in ${SCHEMA}, one finds nothing to do`);
+  console.log(
+    `ok   two re-seals at once serialize: one re-seals after a backup of all ${TABLES.length} tables in ${SCHEMA}, one finds nothing to do`,
+  );
 
   // The documented restore (docs/STORAGE.md, "Downgrading"), as the role that owns the tables.
   const backupOfRows = backups.find((row) => row.table_name.startsWith("user_storage_pre_reseal_"));
@@ -465,7 +491,10 @@ async function exerciseReseal(url: string, superuser: string): Promise<void> {
   }
   const restored = await storeState(superuser);
   check(JSON.stringify(restored.rows) === JSON.stringify(original.rows), "the restore did not bring the rows back");
-  check(JSON.stringify(restored.factors) === JSON.stringify(original.factors), "the restore did not bring the factors back");
+  check(
+    JSON.stringify(restored.factors) === JSON.stringify(original.factors),
+    "the restore did not bring the factors back",
+  );
   check(restored.marker.length === 0, "the restore did not clear the marker");
   const fresh = await sealingProvider(url);
   try {
@@ -476,7 +505,9 @@ async function exerciseReseal(url: string, superuser: string): Promise<void> {
   } finally {
     await fresh.close();
   }
-  console.log("ok   the documented restore SQL brings the version 1 rows back and clears the marker, and they open again");
+  console.log(
+    "ok   the documented restore SQL brings the version 1 rows back and clears the marker, and they open again",
+  );
 }
 
 async function main(): Promise<void> {

@@ -3561,6 +3561,7 @@ describe("acquireExecutionProfileProvider", () => {
       ] as const) {
         const conn = pgConn({ id, agentUser: "agent_ro", agentPassword });
 
+        // oxlint-disable-next-line no-await-in-loop -- each refusal is checked on its own.
         const error: unknown = await acquireExecutionProfileProvider(conn, "agent-read-only").catch((e: unknown) => e);
 
         expect(error).toBeInstanceOf(ExecutionProfileError);

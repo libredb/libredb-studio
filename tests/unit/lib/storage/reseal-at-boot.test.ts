@@ -45,7 +45,12 @@ describe("resealStoreAtBoot", () => {
   });
 
   /** Runs the boot step with process.exit, console.error and logger.warn recorded. */
-  async function run(): Promise<{ result: boolean; exits: Array<number | undefined>; banner: string; warned: string[] }> {
+  async function run(): Promise<{
+    result: boolean;
+    exits: Array<number | undefined>;
+    banner: string;
+    warned: string[];
+  }> {
     const originalExit = process.exit;
     const exits: Array<number | undefined> = [];
     process.exit = ((code?: number) => {
@@ -73,8 +78,16 @@ describe("resealStoreAtBoot", () => {
   function previousVersionStore(): void {
     const db = new Database(path);
     try {
-      db.exec("CREATE TABLE user_storage (user_id TEXT, collection TEXT, data TEXT, updated_at TEXT, PRIMARY KEY (user_id, collection))");
-      const record = { id: "c1", name: "c1", type: "postgres", host: "db.internal", password: sealVersionOne(randomUUID()) };
+      db.exec(
+        "CREATE TABLE user_storage (user_id TEXT, collection TEXT, data TEXT, updated_at TEXT, PRIMARY KEY (user_id, collection))",
+      );
+      const record = {
+        id: "c1",
+        name: "c1",
+        type: "postgres",
+        host: "db.internal",
+        password: sealVersionOne(randomUUID()),
+      };
       db.prepare("INSERT INTO user_storage VALUES ('alice', 'connections', ?, 't')").run(JSON.stringify([record]));
     } finally {
       db.close();
@@ -86,6 +99,7 @@ describe("resealStoreAtBoot", () => {
       if (value === undefined) delete process.env.STORAGE_ENCRYPTION_RESEAL;
       else process.env.STORAGE_ENCRYPTION_RESEAL = value;
 
+      // oxlint-disable-next-line no-await-in-loop -- each value boots on its own, one after another.
       const outcome = await run();
 
       expect({ value, ...outcome }).toEqual({ value, result: true, exits: [], banner: "", warned: [] });
@@ -96,9 +110,11 @@ describe("resealStoreAtBoot", () => {
 
   test("accepts true, 1 and on in any letter case", async () => {
     for (const value of ["true", "1", "on", "TRUE", " On "]) {
+      // oxlint-disable-next-line no-await-in-loop -- each value boots on its own, one after another.
       await closeStorageProvider();
       process.env.STORAGE_ENCRYPTION_RESEAL = value;
 
+      // oxlint-disable-next-line no-await-in-loop -- each value boots on its own, one after another.
       const { result, exits } = await run();
 
       expect({ value, result, exits }).toEqual({ value, result: true, exits: [] });
@@ -169,8 +185,12 @@ describe("resealStoreAtBoot", () => {
 
     const { warned } = await run();
 
-    expect(warned).toContain("STORAGE_ENCRYPTION_RESEAL: left 1 value(s) as they were, because they open nowhere here: carol c9 password.");
-    expect(warned).toContain("STORAGE_ENCRYPTION_RESEAL: left 1 row(s) or element(s) unread, because they are not connections: bob connections.");
+    expect(warned).toContain(
+      "STORAGE_ENCRYPTION_RESEAL: left 1 value(s) as they were, because they open nowhere here: carol c9 password.",
+    );
+    expect(warned).toContain(
+      "STORAGE_ENCRYPTION_RESEAL: left 1 row(s) or element(s) unread, because they are not connections: bob connections.",
+    );
   });
 
   test("says there was nothing to do on a retired store", async () => {

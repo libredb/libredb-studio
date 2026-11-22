@@ -377,7 +377,13 @@ describe("the binding through the decorator", () => {
       "connections",
       JSON.stringify([
         { ...connection, id: "c2", password: envelope },
-        { ...connection, id: "c3", password: sealVersionOne(randomUUID()), agentUser: "ro", agentPassword: randomUUID() },
+        {
+          ...connection,
+          id: "c3",
+          password: sealVersionOne(randomUUID()),
+          agentUser: "ro",
+          agentPassword: randomUUID(),
+        },
       ]),
     );
     const provider = await ready(store);

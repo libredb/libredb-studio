@@ -92,9 +92,9 @@ async function get(): Promise<{ connections?: Record<string, unknown>[] }> {
 function storedPassword(owner: string): string {
   const db = new Database(path);
   try {
-    const row = db.prepare("SELECT data FROM user_storage WHERE user_id = ? AND collection = 'connections'").get(
-      owner,
-    ) as { data: string };
+    const row = db
+      .prepare("SELECT data FROM user_storage WHERE user_id = ? AND collection = 'connections'")
+      .get(owner) as { data: string };
     return JSON.parse(row.data)[0].password;
   } finally {
     db.close();

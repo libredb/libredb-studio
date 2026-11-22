@@ -930,7 +930,9 @@ describe("PostgresStorageProvider", () => {
   test("initialize creates storage_meta with the other tables", async () => {
     await provider.initialize();
     const sql = (mockQuery.mock.calls as unknown[][])[0][0] as string;
-    expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS storage_meta \(\s*key\s+TEXT PRIMARY KEY,\s*value\s+TEXT NOT NULL,/);
+    expect(sql).toMatch(
+      /CREATE TABLE IF NOT EXISTS storage_meta \(\s*key\s+TEXT PRIMARY KEY,\s*value\s+TEXT NOT NULL,/,
+    );
   });
 
   test("readEnvelopeState answers v1-accepted without a row and v1-retired for v2, and refuses any other value by name", async () => {
@@ -1038,10 +1040,7 @@ describe("PostgresStorageProvider", () => {
       sql.startsWith("SELECT value FROM storage_meta") ? { rows: [{ value: "v2" }] } : {},
     );
 
-    const result = await provider.rewriteStoredCredentials(
-      { connections: () => null, factors: () => null },
-      LABEL,
-    );
+    const result = await provider.rewriteStoredCredentials({ connections: () => null, factors: () => null }, LABEL);
 
     expect(result).toEqual({ kind: "already-retired" });
     expect(client.sql()).toEqual([

@@ -33,7 +33,14 @@ describe("a sealed credential opens only where it was stored", () => {
   const secret = { c1: randomUUID(), c2: randomUUID(), tunnel: randomUUID(), c3: randomUUID(), factor: randomUUID() };
 
   const record = (id: string, overrides: Record<string, unknown> = {}) =>
-    ({ id, name: id, type: "postgres", host: `${id}.internal`, user: "app", ...overrides }) as unknown as DatabaseConnection;
+    ({
+      id,
+      name: id,
+      type: "postgres",
+      host: `${id}.internal`,
+      user: "app",
+      ...overrides,
+    }) as unknown as DatabaseConnection;
 
   beforeAll(async () => {
     for (const key of KEYS) saved[key] = process.env[key];
@@ -72,6 +79,7 @@ describe("a sealed credential opens only where it was stored", () => {
       ["ada@example.com", secret.factor],
       ["bob@example.com", null],
     ] as const) {
+      // oxlint-disable-next-line no-await-in-loop -- one account write at a time on the store.
       await provider.insertAccount({
         email,
         passwordHash: "scrypt$hash",
@@ -90,9 +98,9 @@ describe("a sealed credential opens only where it was stored", () => {
   function editRow(owner: string, edit: (list: Record<string, Record<string, unknown>>[]) => void): void {
     const db = new Database(path);
     try {
-      const row = db.prepare("SELECT data FROM user_storage WHERE user_id = ? AND collection = 'connections'").get(
-        owner,
-      ) as { data: string };
+      const row = db
+        .prepare("SELECT data FROM user_storage WHERE user_id = ? AND collection = 'connections'")
+        .get(owner) as { data: string };
       const list = JSON.parse(row.data);
       edit(list);
       db.prepare("UPDATE user_storage SET data = ? WHERE user_id = ? AND collection = 'connections'").run(
@@ -107,9 +115,9 @@ describe("a sealed credential opens only where it was stored", () => {
   function storedList(owner: string): Record<string, Record<string, string>>[] {
     const db = new Database(path);
     try {
-      const row = db.prepare("SELECT data FROM user_storage WHERE user_id = ? AND collection = 'connections'").get(
-        owner,
-      ) as { data: string };
+      const row = db
+        .prepare("SELECT data FROM user_storage WHERE user_id = ? AND collection = 'connections'")
+        .get(owner) as { data: string };
       return JSON.parse(row.data);
     } finally {
       db.close();
@@ -321,7 +329,11 @@ describe("no seal or open site bypasses the binding", () => {
   test("every seal or open it exports takes an EnvelopeBinding", () => {
     const takesBinding: Record<string, boolean> = {};
     const visit = (node: ts.Node): void => {
-      if (ts.isFunctionDeclaration(node) && node.name && ["sealSecret", "openSecret", "readStoredSecret"].includes(node.name.text)) {
+      if (
+        ts.isFunctionDeclaration(node) &&
+        node.name &&
+        ["sealSecret", "openSecret", "readStoredSecret"].includes(node.name.text)
+      ) {
         takesBinding[node.name.text] = node.parameters.some(
           (parameter) =>
             parameter.type !== undefined &&

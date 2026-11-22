@@ -456,7 +456,12 @@ function generatedConnection(overrides: Record<string, unknown> = {}): {
     privateKey: randomUUID(),
     privateKeyPassphrase: randomUUID(),
     ssl: { ...fullConnection().ssl, clientKey: randomUUID() },
-    sshTunnel: { ...fullConnection().sshTunnel!, password: randomUUID(), privateKey: randomUUID(), passphrase: randomUUID() },
+    sshTunnel: {
+      ...fullConnection().sshTunnel!,
+      password: randomUUID(),
+      privateKey: randomUUID(),
+      passphrase: randomUUID(),
+    },
   } as DatabaseConnection;
   return { connection, values: secretFieldValues(connection) };
 }
@@ -474,13 +479,6 @@ const SECRET_PATHS = [
   "sshTunnel.privateKey",
   "sshTunnel.passphrase",
 ];
-
-/** Reads one secret path of a connection, `ssl.clientKey` and `sshTunnel.password` included. */
-function at(connection: DatabaseConnection, path: string): unknown {
-  const [head, tail] = path.split(".");
-  const value = (connection as unknown as Record<string, unknown>)[head];
-  return tail === undefined ? value : (value as Record<string, unknown> | undefined)?.[tail];
-}
 
 /** A copy of `connection` with `value` written at `path`. */
 function withAt(connection: DatabaseConnection, path: string, value: unknown): DatabaseConnection {

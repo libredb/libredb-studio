@@ -14,7 +14,13 @@ export function sealVersionOne(plaintext: string): string {
   const material = process.env.STORAGE_ENCRYPTION_KEY || process.env.JWT_SECRET;
   if (!material) throw new Error("sealVersionOne needs STORAGE_ENCRYPTION_KEY or JWT_SECRET in the environment");
   const key = Buffer.from(
-    hkdfSync("sha256", new TextEncoder().encode(material), new Uint8Array(0), "libredb-studio/storage-encryption/v1", 32),
+    hkdfSync(
+      "sha256",
+      new TextEncoder().encode(material),
+      new Uint8Array(0),
+      "libredb-studio/storage-encryption/v1",
+      32,
+    ),
   );
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key, iv);
