@@ -242,6 +242,7 @@ Each row is a module beside its provider (`<family>/<id>-migration-ddl.ts`, or `
 
 How each engine's statement text is read sits in a registry of the same kind beside `QUERY_DIALECTS`: `SQL_GRAMMAR` in `src/lib/db/sql-grammar/`, a `Record<DatabaseType, SqlGrammarSpec>` the compiler holds total.
 Each row is a module beside its engine's provider that states the grammar facts the statement splitter, the row limiter and the confirmation gate read, whether the text is SQL at all (`readsSqlText`), what a redacted query event keeps, the words the update-target reader adds, and how completion quotes a name.
+The confirmation gate reads the facts that would spare a statement, `readsSqlText: false`, a `confirmExemptForms` form and a vocabulary row's `decidesAlone`, through Studio's review record of such claims, `CONFIRMATION_CLAIM_REVIEW` in `src/lib/db/confirmation-claim-review.ts`, and counts each only where the record lists it.
 `sqlGrammarFor()` answers a missing type with `NO_CONNECTION_SQL_GRAMMAR` and refuses a value outside the union with `UnknownProviderError`, so no reader of these facts names a type id or reads another engine's facts.
 
 ### 4.2. Authentication Flow
