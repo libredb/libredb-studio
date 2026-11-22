@@ -56,7 +56,7 @@ import {
   unavailable,
 } from "../../tool-contracts";
 import type { AgentArtifactReference, AgentContextSnapshot, AgentInventoryObject, AgentRunRecord } from "../../types";
-import { fenceUntrustedContent } from "../../untrusted-content";
+import { fenceUntrustedContent, nameForPrompt } from "../../untrusted-content";
 
 /** One schema's problems on one line, the rendering this layer's refusals carry elsewhere. */
 function issueText(error: z.ZodError): string {
@@ -303,10 +303,13 @@ export function mongoProfileTablePlan(
   const resolution = resolveProfileTarget(objects, schema, table, defaultContainer);
   // The candidates are this inventory's own addresses, so a model can copy one back verbatim.
   if (resolution.kind === "ambiguous") {
-    return unavailable("TABLE_SPELLING_AMBIGUOUS", resolution.candidates.map((entry) => entry.name).join(", "));
+    return unavailable(
+      "TABLE_SPELLING_AMBIGUOUS",
+      resolution.candidates.map((entry) => nameForPrompt(entry.name)).join(", "),
+    );
   }
   if (resolution.kind === "absent") {
-    const offer = objects.slice(0, 6).map((entry) => entry.name);
+    const offer = objects.slice(0, 6).map((entry) => nameForPrompt(entry.name));
     return unavailable("TABLE_NOT_INVENTORIED", offer.length === 0 ? undefined : `it lists ${offer.join(", ")}`);
   }
   const { entry, segments } = resolution.target;
@@ -388,7 +391,7 @@ export async function runMongoProfile(
     operationId: "mongo.table.profile",
     sql: plan.statement,
     argument: "command",
-    label: `profile of ${plan.target.table}`,
+    label: `profile of ${nameForPrompt(plan.target.table)}`,
   });
   if (outcome.kind !== "completed") return outcome;
   const stored = context.artifacts.get(outcome.artifact.correlationId, (context.clock ?? Date.now)());
