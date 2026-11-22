@@ -30,6 +30,7 @@
  *   one-statement-per-table contract is not something to trade silently.
  */
 import type { z } from "zod";
+import { providerTextScrub } from "@/lib/db/operations/provider-text";
 import { runReadOnlyReading } from "@/lib/db/operations/read-only-statement";
 import type { ReadOnlyCatalogReading, ReadOnlyCatalogSelector } from "@/lib/db/types";
 import type { ColumnSchema } from "@/lib/types";
@@ -141,6 +142,7 @@ export async function mongoInspectSchemaTool(
       const handed = readOnlyBudgetFor(context, budget);
       reading = await runReadOnlyReading({
         type: context.connection.type,
+        scrub: providerTextScrub(context.connection),
         statement: JSON.stringify(target),
         budget: handed,
         wait: "statement-timeout",

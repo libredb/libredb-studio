@@ -19,6 +19,7 @@ import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import type { AgentToolContext } from "@/lib/agent/tools";
 import type { AgentContextSnapshot, AgentInventory } from "@/lib/agent/types";
 import { QueryError } from "@/lib/db/errors";
+import { PROVIDER_TEXT_WITHHELD } from "@/lib/db/operations/provider-text";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
@@ -73,6 +74,8 @@ interface Stub {
   readonly objects?: (container: readonly string[], kind: string) => readonly DatabaseObject[];
   /** Declares `inventoryNeedsConfiguration`, answering this; absent leaves the method undeclared. */
   readonly needs?: { readonly reason: string | undefined };
+  /** Fields the run's connection carries beyond the fixture's, such as a password. */
+  readonly connection?: Partial<AgentToolContext["connection"]>;
 }
 
 function stub(options: Stub = {}) {
@@ -113,7 +116,7 @@ function stub(options: Stub = {}) {
     mode: "planning",
     workflowType: "investigation",
     actor: { sessionId: "session-1", role: "user" },
-    connection: { id: "conn-1", name: "Cluster", type: "mongodb", createdAt: new Date(0) },
+    connection: { id: "conn-1", name: "Cluster", type: "mongodb", createdAt: new Date(0), ...options.connection },
     capabilities: {
       ...BASE,
       objectKinds: options.kinds ?? [POD, SECRET],
@@ -607,6 +610,26 @@ describe("a scoped walk over two levels where a catalog's namespaces cannot be l
         'Not read: 2 other Namespaces. The Catalog "studio_unloaded" was not read: listing its Namespaces failed with "[CATALOG_NOT_FOUND] The catalog `studio_unloaded` cannot be loaded.". This inventory covers only what it read in ("spark_catalog.default"), so an object in any other Namespace is not listed below. Do not read its absence as an absence in the database.',
       ]);
     }
+  });
+
+  test("a parent the walk could not list is named with its reason withheld", async () => {
+    const password = crypto.randomUUID();
+    const { snapshot } = await captured({
+      ...walk(
+        {
+          spark_catalog: ["default"],
+          studio_unloaded: new QueryError(`catalog login failed with ${password}`, "spark"),
+        },
+        scoped,
+      ),
+      connection: { password },
+    });
+
+    expect(snapshot.unreadContainers?.unlistedParents).toStrictEqual([
+      { path: "studio_unloaded", label: "Catalog", reason: PROVIDER_TEXT_WITHHELD },
+    ]);
+    expect(JSON.stringify(snapshot)).not.toContain(password);
+    for (const packed of packings(snapshot)) expect(packed).not.toContain(password);
   });
 
   test("where the failed catalog is all the walk left out, the note names it alone", async () => {

@@ -6,6 +6,7 @@
 import { clusterUsageReadInput, clusterWorkloadsReadInput } from "@/lib/db/operations/descriptors";
 import type { AuditedInvocation } from "@/lib/db/operations/execution";
 import type { ExecutionBudget } from "@/lib/db/operations/budgets";
+import { providerTextScrub } from "@/lib/db/operations/provider-text";
 import { runReadOnlyReading } from "@/lib/db/operations/read-only-statement";
 import type {
   ClusterUsageInput,
@@ -73,6 +74,7 @@ async function runClusterUsage(
   const handed = readOnlyBudgetFor(context, budget);
   const reading = await runReadOnlyReading({
     type: context.connection.type,
+    scrub: providerTextScrub(context.connection),
     statement: `usage ${input.namespace} ${input.selector ?? ""}`,
     budget: handed,
     wait: "statement-timeout",
@@ -137,6 +139,7 @@ async function runWorkloadProfile(
   const handed = readOnlyBudgetFor(context, budget);
   const reading = await runReadOnlyReading({
     type: context.connection.type,
+    scrub: providerTextScrub(context.connection),
     statement: `workloads ${input.namespace}`,
     budget: handed,
     wait: "statement-timeout",

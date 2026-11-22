@@ -10,6 +10,7 @@ import { createErrorResponse } from "@/lib/api/errors";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { catalogSessionConnection } from "@/lib/db/catalog-scope";
 import { acquireExecutionProfileProvider } from "@/lib/db/factory";
+import { providerTextScrub } from "@/lib/db/operations/provider-text";
 import { runReadOnlyStatement } from "@/lib/db/operations/read-only-statement";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import { logger } from "@/lib/logger";
@@ -126,6 +127,7 @@ export async function POST(req: Request, context?: HandoverParams) {
     // it is written into the response, and stops waiting at the budget's timeout, the ceiling stated beside it.
     const result = await runReadOnlyStatement(provider, {
       type: connection.type,
+      scrub: providerTextScrub(connection),
       statement: answer.sql,
       budget: {
         ...AGENT_HANDOVER_BUDGET,

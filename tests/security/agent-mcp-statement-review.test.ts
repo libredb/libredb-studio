@@ -209,7 +209,13 @@ describe("an engine the review record does not list, though its provider impleme
 
     expectNotReviewed(
       await settled(
-        runReadOnlyStatement(provider, { type: "sqlite", statement: "SELECT 1", budget, wait: "statement-timeout" }),
+        runReadOnlyStatement(provider, {
+          type: "sqlite",
+          scrub: { type: "sqlite", forms: [] },
+          statement: "SELECT 1",
+          budget,
+          wait: "statement-timeout",
+        }),
       ),
       "sqlite",
     );
@@ -217,6 +223,7 @@ describe("an engine the review record does not list, though its provider impleme
       await settled(
         runReadOnlyReading({
           type: "sqlite",
+          scrub: { type: "sqlite", forms: [] },
           statement: "catalog",
           budget,
           wait: "statement-timeout",
@@ -232,6 +239,7 @@ describe("an engine the review record does not list, though its provider impleme
 
     const served = await runReadOnlyStatement(provider, {
       type: "postgres",
+      scrub: { type: "postgres", forms: [] },
       statement: "SELECT 1",
       budget,
       wait: "statement-timeout",

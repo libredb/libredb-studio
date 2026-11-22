@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { ExecutionProfileError, OffsetUnsupportedError } from "@/lib/db/errors";
+import { providerTextScrub } from "@/lib/db/operations/provider-text";
 import { runReadOnlyStatement } from "@/lib/db/operations/read-only-statement";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import type { DatabaseProvider, PreparedQuery } from "@/lib/db/types";
@@ -284,6 +285,7 @@ async function execute(
     () =>
       runReadOnlyStatement(provider, {
         type: connection.type,
+        scrub: providerTextScrub(connection),
         statement: query,
         budget: {
           maxResultRows: MCP_PROVIDER_ROW_CAP,

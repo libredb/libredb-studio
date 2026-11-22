@@ -73,6 +73,7 @@ import {
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
 } from "@/lib/db/providers/sql/read-only-budget";
+import { type ProviderTextScrub, scrubProviderText } from "@/lib/db/operations/provider-text";
 import { assertStatementsReviewed } from "@/lib/db/statement-review";
 import type { DatabaseProvider, ReadOnlyStatementBudget, ReadOnlyStatementMode } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
@@ -85,6 +86,8 @@ export interface ReadOnlyStatementCall {
    * connection the provider was acquired for.
    */
   readonly type: DatabaseType;
+  /** The calling connection's scrub, applied to the provider's error class name in the late-settlement log line. */
+  readonly scrub: ProviderTextScrub;
   readonly statement: string;
   readonly budget: ReadOnlyStatementBudget;
   readonly mode?: ReadOnlyStatementMode;
@@ -112,6 +115,8 @@ export interface ReadOnlyReadingCall<T> {
    * connection the read's provider was acquired for.
    */
   readonly type: DatabaseType;
+  /** As `ReadOnlyStatementCall.scrub`. */
+  readonly scrub: ProviderTextScrub;
   /** The read's own label, named in a refusal where a statement would be. */
   readonly statement: string;
   /** The budget the provider is handed; checked before `read` is made. */
@@ -143,6 +148,7 @@ export async function runReadOnlyStatement(
   const { type, statement, budget, mode } = call;
   return runReadOnlyReading({
     type,
+    scrub: call.scrub,
     statement,
     budget,
     wait: call.wait,
@@ -201,14 +207,14 @@ function sharedByteRefusal(type: DatabaseType, statement: string): (bytes: numbe
  */
 function withinStatementTimeout<T>(
   answered: Promise<T>,
-  call: Pick<ReadOnlyReadingCall<T>, "type" | "statement" | "budget">,
+  call: Pick<ReadOnlyReadingCall<T>, "type" | "scrub" | "statement" | "budget">,
 ): Promise<T> {
   const { statementTimeoutMs } = call.budget;
   const startedAt = Date.now();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timedOut = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
-      logLateSettlement(answered, call.type, startedAt);
+      logLateSettlement(answered, call.type, call.scrub, startedAt);
       reject(
         new QueryError(`${TIME_BUDGET_PREFIX}: no answer within ${statementTimeoutMs}ms`, call.type, call.statement),
       );
@@ -223,9 +229,15 @@ function withinStatementTimeout<T>(
  * reading alike: the connection type, whether it answered or failed, the failure's class and how long after the call
  * started it settled. A late failure can be the real cause the time refusal stood in for (a connection that never
  * opened, a pool with no free client), so it is recorded rather than dropped. The statement, a reading's label and the
- * error's message are never written: core has no redaction of its own, and the class names the kind of failure.
+ * error's message are never written, and the class names the kind of failure. The class name is set by whoever raised
+ * the error, a provider included, so it passes core's scrub of provider text first.
  */
-function logLateSettlement(answered: Promise<unknown>, type: DatabaseType, startedAt: number): void {
+function logLateSettlement(
+  answered: Promise<unknown>,
+  type: DatabaseType,
+  scrub: ProviderTextScrub,
+  startedAt: number,
+): void {
   const line = "A read-only call settled after Studio stopped waiting for it";
   answered.then(
     () => logger.warn(line, { provider: type, outcome: "answered", settledAfterMs: Date.now() - startedAt }),
@@ -233,7 +245,7 @@ function logLateSettlement(answered: Promise<unknown>, type: DatabaseType, start
       logger.warn(line, {
         provider: type,
         outcome: "failed",
-        errorClass: error instanceof Error ? error.name : typeof error,
+        errorClass: error instanceof Error ? scrubProviderText(scrub, error.name) : typeof error,
         settledAfterMs: Date.now() - startedAt,
       }),
   );

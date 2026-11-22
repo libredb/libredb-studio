@@ -539,6 +539,7 @@ describe("the streamed read", () => {
     const error = await rejection(
       runReadOnlyStatement(provider, {
         type: "mongodb",
+        scrub: { type: "mongodb", forms: [] },
         statement: statement(FIND as Doc),
         budget,
         wait: "statement-timeout",
