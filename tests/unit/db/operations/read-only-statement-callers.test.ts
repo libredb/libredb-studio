@@ -554,7 +554,7 @@ describe("the review record gates the protected read path", () => {
       [],
     );
     // Not vacuous: the known presence tests are found, each one a refusal of the absence.
-    expect(found.map((test) => `${test.file} in ${test.declaration}`).sort()).toEqual(KNOWN_PRESENCE_TESTS);
+    expect(found.map((test) => `${test.file} in ${test.declaration}`).sort()).toEqual([...KNOWN_PRESENCE_TESTS]);
   });
 
   test("the scan finds a choke point that reaches the provider before the record is read", () => {

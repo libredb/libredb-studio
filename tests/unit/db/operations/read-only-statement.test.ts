@@ -584,7 +584,7 @@ describe("the review record", () => {
   test("refuses a statement on an engine the review record does not list by name, even when the provider implements queryReadOnly, and never calls or holds it", async () => {
     const queryReadOnly = mock(async () => answer([{ id: 1 }]));
     const { provider, query } = providerAnswering(queryReadOnly);
-    const holdUntilSettled = mock((_call: PromiseLike<unknown>) => {});
+    const holdUntilSettled = mock(() => {});
     const error = await settled(
       runReadOnlyStatement(provider, {
         type: "snowflake",
