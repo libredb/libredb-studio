@@ -1773,4 +1773,37 @@ describe("POST /api/agent/runs on a server-level connection (#1530)", () => {
       for (const spy of logged) spy.mockRestore();
     }
   });
+
+  test("under an agent credential, a start whose editor provider echoes the connection's own password answers and logs without it, since that provider is built from it", async () => {
+    const password = `${crypto.randomUUID()}/${crypto.randomUUID().slice(0, 8)}`;
+    mockResolveConnection.mockImplementation(async () => ({
+      ...SERVER,
+      password,
+      agentUser: "agent_reader",
+      agentPassword: crypto.randomUUID(),
+    }));
+    mockForCatalog.mockImplementation(async () => {
+      throw new ConnectionError(`could not open shop as ${password}`, "postgres");
+    });
+    const logged = [spyOn(logger, "error"), spyOn(logger, "warn"), spyOn(logger, "info")].map((spy) =>
+      spy.mockImplementation(() => {}),
+    );
+    try {
+      const res = await POST(startRequest({ ...VALID_BODY, catalog: "shop" }));
+      const body = JSON.stringify(await parseResponseJSON<Record<string, unknown>>(res));
+
+      expect(body).toContain(withheldErrorMessage("ConnectionError"));
+      const calls = JSON.stringify(
+        logged.flatMap((spy) => spy.mock.calls),
+        (_key, value: unknown) => (value instanceof Error ? { message: value.message, stack: value.stack } : value),
+      );
+      for (const form of secretForms([password])) {
+        expect(body).not.toContain(form);
+        expect(calls).not.toContain(form);
+      }
+      expect(mockStart).not.toHaveBeenCalled();
+    } finally {
+      for (const spy of logged) spy.mockRestore();
+    }
+  });
 });

@@ -7716,4 +7716,22 @@ describe("provider text that carries the connection's credential", () => {
     expect(outcome.modelText).not.toContain("LIMIT 200");
     expectNoForm(outcome.modelText);
   });
+
+  test("under an agent credential, an engine error holding the connection's own password is kept as written, since the agent's provider never receives it", async () => {
+    const message = `password authentication failed: ${password}`;
+    const h = harness(
+      { connection: { ...credentialed, agentUser: "agent_reader", agentPassword: crypto.randomUUID() } },
+      async () => {
+        throw new QueryError(message, "postgres");
+      },
+    );
+
+    const outcome = await runReadQueryTool(h.context, { sql: "SELECT 1" });
+
+    if (outcome.kind !== "refused" || outcome.refusal.class !== "database-error") {
+      throw new Error(`expected a database error, got ${JSON.stringify(outcome)}`);
+    }
+    expect(outcome.refusal.message).toBe(message);
+    expect(outcome.modelText).toContain(message);
+  });
 });

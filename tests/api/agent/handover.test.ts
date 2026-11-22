@@ -530,6 +530,26 @@ describe("a replay whose provider's text carries the connection's credential", (
     },
   );
 
+  test("under an agent credential, an echo of the connection's own password is kept as written, since the hand-over's provider never receives it", async () => {
+    mockResolveConnection.mockResolvedValue({
+      ...SEED_CONNECTION,
+      password,
+      agentUser: "agent_reader",
+      agentPassword: crypto.randomUUID(),
+    } as never);
+    const message = `could not run as ${password}`;
+    mockQueryReadOnly.mockRejectedValueOnce(new QueryError(message, "postgres"));
+    try {
+      const res = await POST(request(), params());
+      const body = await parseResponseJSON<{ error: string }>(res);
+
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(body.error).toContain(message);
+    } finally {
+      mockResolveConnection.mockResolvedValue(SEED_CONNECTION);
+    }
+  });
+
   test("a connection that no longer resolves is answered before any provider is built", async () => {
     mockResolveConnection.mockRejectedValueOnce(new Error("the connection is gone"));
     const res = await POST(request(), params());

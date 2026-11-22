@@ -759,6 +759,28 @@ describe("driveAgentRun, a failure whose text carries the connection's credentia
       mockResolveConnection.mockImplementation(async () => CONNECTION);
     }
   });
+
+  test("under an agent credential, the capability read's echo of the connection's own password is withheld, since that read is built from it", async () => {
+    await openRun("arun_ownpassword");
+    mockResolveConnection.mockImplementation(
+      async () =>
+        ({ ...credentialed, agentUser: "agent_reader", agentPassword: crypto.randomUUID() }) as DatabaseConnection,
+    );
+    try {
+      mockCreateDatabaseProvider.mockImplementationOnce(async () => {
+        throw new ConnectionError(`could not connect with ${password}`, "postgres");
+      });
+      const error = await driveAgentRun("arun_ownpassword").then(
+        () => null,
+        (thrown: unknown) => thrown,
+      );
+      expect(error).toBeInstanceOf(ProviderTextWithheldError);
+      expect((error as Error).message).toBe(withheldErrorMessage("ConnectionError"));
+      for (const each of secretForms([password])) expect(String((error as Error).stack)).not.toContain(each);
+    } finally {
+      mockResolveConnection.mockImplementation(async () => CONNECTION);
+    }
+  });
 });
 
 /**
