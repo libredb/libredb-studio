@@ -251,24 +251,41 @@ On SIGTERM or SIGINT exactly one handler ends the server, and which one is decid
 - `NEXT_MANUAL_SIG_HANDLE=true`: Next.js installs no signal handler, and Studio's shutdown handler ends the process.
 - `NEXT_MANUAL_SIG_HANDLE` unset or empty: Next.js's own handler ends the process, and Studio's handler only runs the shutdown hooks beside it.
 - Any other value: the server refuses to start with exit code 1 and a banner naming the variable.
+- `NEXT_MANUAL_SIG_HANDLE=true` with the server on Bun: the server refuses to start with exit code 1 and a banner naming the variable and the runtime, since the drain sees no request there.
 
 Set the variable in the environment that starts the server, never in a `.env` file.
 Next.js reads it before it loads `.env` files and Studio reads it after, so a value in `.env` would leave both handlers ending the process.
-No image, chart or launcher sets it yet, so today Next.js's handler ends the server in every channel.
-It needs the first Studio release after 1.3.0: 1.3.0 and earlier register their handler only once a route loads the provider factory, so with `NEXT_MANUAL_SIG_HANDLE=true` they have no SIGTERM listener until then and, as PID 1 in a container, ignore the signal until the platform's SIGKILL.
+The three images set `NEXT_MANUAL_SIG_HANDLE=true` from the first release after 1.3.0, so Studio's handler ends a container started from one.
+A container started from such an image with the variable set to the empty string, `docker run -e NEXT_MANUAL_SIG_HANDLE= ...`, leaves the exit to Next.js's handler.
+The Helm chart and the OpenShift operator run that image, so they take the variable from it once their `appVersion` names such a release; the chart writes none itself yet, and writing it in that release's chart bump is GOV33 in [docs/BACKLOG.md](BACKLOG.md#governance-follow-ups).
+npx and the other launchers do not set it yet, so Next.js's handler still ends the server there.
+The variable needs the first Studio release after 1.3.0: 1.3.0 and earlier register their handler only once a route loads the provider factory, so with `NEXT_MANUAL_SIG_HANDLE=true` they have no SIGTERM listener until then and, as PID 1 in a container, ignore the signal until the platform's SIGKILL.
 Next.js 16.4.6 documents the variable only for the Pages Router, in its self-hosting guide's "Manual Graceful Shutdowns", while Studio uses the App Router.
 That `startServer` in `next/dist/server/lib/start-server.js` installs no handler while the variable is set holds for both routers, as read in Next.js 16.4.6, so the live check [`tests/live/shutdown-signal-live.ts`](../tests/live/shutdown-signal-live.ts) must pass on every Next.js upgrade.
 
 Studio's handler is installed when the server boots, by `register()` in [`src/instrumentation.ts`](../src/instrumentation.ts), right after the [uncaught-exception exit](#uncaught-errors-and-restarts); the module is [`src/lib/shutdown-handler.ts`](../src/lib/shutdown-handler.ts).
 On the first signal it logs one line naming the signal and the owner of the exit, then:
 
-1. It runs the shutdown hooks, which insert the governance query events still queued and close the governance pool, all at once and for at most 5 s.
-2. Where Studio owns the exit, it then closes every cached database provider, all at once and for at most 15 s, logs one end line and exits with the code below.
-3. Where Next.js owns the exit, it closes no provider and never exits: Next.js closes the HTTP server, waits for the connections open at the signal to end and exits, and the process takes the open connections with it.
+1. Where Studio owns the exit, it first drains the HTTP server: it closes every HTTP server that has received a request since the boot to new connections, answers the last request in flight on each connection with `Connection: close` when its headers have not gone out, and moves that header to each request that starts behind it from then on, ends each kept-alive connection as its last response ends, and waits at most 5 s for the requests in flight, those that start meanwhile on a connection already open included, so the query events they record are queued before the hooks run.
+2. It runs the shutdown hooks, which insert the governance query events still queued and close the governance pool, all at once and for at most 5 s.
+3. Where Studio owns the exit, it then closes every cached database provider, all at once and for at most 15 s, logs one end line and exits with the code below.
+4. Where Next.js owns the exit, it closes no server and no provider and never exits: Next.js closes the HTTP server, waits for the connections open at the signal to end and exits, and the process takes the open connections with it.
 
-So a shutdown Studio owns takes 20 s at most.
-Studio's handler does not close the HTTP server: until its exit the server accepts new connections and serves their requests, and a request that opens a provider after the close leaves it open until the exit.
-Requests still in flight are not drained either: a request that uses a provider fails once the providers close, and the exit ends the rest.
+So a shutdown Studio owns takes 25 s at most.
+Where Studio owns the exit, its start line counts the servers the drain closes and the requests in flight at the signal, as `servers` and `inFlight`.
+A request still in flight at the drain's 5 s keeps running through the hooks and the closes and is cut by the exit; the end line counts it as `responsesCut`, and again as `responsesInFlightAtExit` when it is still running at the exit, and a query event it records after the flush is counted in `queryEventsLost`.
+The drain cuts no busy connection before that.
+A connection whose next request had begun at the drain, part of its headers or its first byte received, or whose request had been answered before all of its body arrived, is not idle, so the drain cannot end it: that one request is served, with `Connection: close`, even after the drain has ended, and on Node.js 24 so is the first request of a connection accepted that had sent nothing yet, which Node.js 26 closes at the drain.
+Such a request runs beside the hooks or the closes: its query event is inserted by the shutdown flush when it is recorded while the flush runs, or, where no flush ran, by the query event sink's own flush before the exit, and is otherwise counted in `queryEventsLost`; a provider it opens after the closes stays open until the exit, and when it is still running at the exit the end line counts it as `responsesInFlightAtExit`.
+A request pipelined behind an answer that has gone out or ended with the drain's `Connection: close` reaches its handler, but Node.js ends the connection after that answer and never sends one for it.
+The drain does not wait for such a request, which runs beside the hooks and the closes, and the end line counts it as `requestsUnanswered`.
+It does not see a request that reached the server before `register()` subscribed, in the first fraction of a second of the boot, and does not know a server that has received no request since then, which keeps accepting connections until the exit; under Kubernetes the probes reach every server.
+
+The drain learns the servers and the requests in flight from node:diagnostics_channel's `http.server.request.start` channel ([`src/lib/shutdown-drain.ts`](../src/lib/shutdown-drain.ts)), which Node.js 24 and 26 document as Stability 1 Experimental.
+[`tests/unit/lib/shutdown-drain-runtimes.test.ts`](../tests/unit/lib/shutdown-drain-runtimes.test.ts) holds the channel on Node 24 and on the images' Node release in the required CI job, so a Node release that changes it fails there by name.
+A release whose channel delivers another shape ends the process with 70 at its first request, naming the channel; a server whose start line shows `servers=0` after it has served requests has a channel that delivers nothing.
+Bun publishes nothing on the channel, so there the drain would see no server and no request.
+`bun start` and `bunx @libredb/studio` on a host without Node.js, and `bun --bun run start` or `bunx --bun` anywhere, run the server on Bun, and with `NEXT_MANUAL_SIG_HANDLE=true` it refuses to start there.
 A second SIGTERM or SIGINT during the shutdown starts nothing, does not cut it and does not change its exit code; npx delivers every Ctrl+C twice, once from the terminal and once from the launcher.
 In a source checkout, `bun dev` and `bun start` deliver it twice too, since `scripts/next-with-seed-assets.mjs` forwards SIGINT and SIGTERM to the Next.js CLI, which the terminal's Ctrl+C has already reached.
 On Windows that forward is not a second signal: Node.js ends the Next.js CLI at once, so a Ctrl+C under `bun dev` or `bun start` cuts the shutdown part way.
@@ -276,16 +293,16 @@ Next.js's own handler ignores a repeated signal too, so under neither handler do
 
 | Code | Meaning |
 |---|---|
-| 0 | Studio's handler ended the process, every hook and every provider close completed in time, and no query event was left unsent |
-| 143 | SIGTERM, and the shutdown did not complete, as the end line names: a hook or a provider close was cut at its bound or failed, or query events were left unsent (`queryEventsLost`); or Next.js's own handler ended the process |
+| 0 | Studio's handler ended the process, every request in flight ended within the drain's 5 s, none was in flight at the exit and none went unanswered, every hook and every provider close completed in time, and no query event was left unsent |
+| 143 | SIGTERM, and the shutdown did not complete, as the end line names: requests were still in flight at the drain's bound (`responsesCut`) or at the exit (`responsesInFlightAtExit`), requests pipelined behind an answer that ended their connection went unanswered (`requestsUnanswered`), a hook or a provider close was cut at its bound or failed, or query events were left unsent (`queryEventsLost`); or Next.js's own handler ended the process |
 | 130 | SIGINT, with the same meanings as 143 |
 | 70 | An uncaught exception, which ends the process at once, during a shutdown too ([Uncaught errors and restarts](#uncaught-errors-and-restarts)) |
-| 1 | A boot check refused the configuration, an unsupported `NEXT_MANUAL_SIG_HANDLE` among them |
+| 1 | A boot check refused the configuration, an unsupported `NEXT_MANUAL_SIG_HANDLE` among them, `true` on Bun included |
 
 143 and 130 are 128 plus the signal's number, the codes Next.js's own handler exits with.
 A provider close fails when a shared provider's disconnect rejects, or when an owned provider's rollback or disconnect fails or passes its own deadline ([GOVERNANCE.md](GOVERNANCE.md#per-user-providers)); the end line's `cacheClosesFailed` counts it, and the error line before it names the providers.
 Query events are left unsent when the flush could not insert them, or when a request recorded them after the flush had ended.
-The flush runs only when the process recorded a query event before the signal; it sends the events recorded while it runs, and then closes the query event sink, which sends nothing after it.
+The flush runs only when the process recorded a query event before the shutdown hooks started, which is the signal where Next.js's handler owns the exit and the end of the drain where Studio's does; it sends the events recorded while it runs, and then closes the query event sink, which sends nothing after it.
 Under systemd (the .deb, .rpm, AUR and Snap services) an exit with 143 or 130 is recorded as a failed unit, and only 0 as a clean stop.
 
 Where Next.js ends the process, the stop has no bound of its own.
@@ -295,10 +312,10 @@ A long response, such as an agent run's timeline stream, which stays open until 
 Such a stop ends only with the platform's SIGKILL, or a `kill -9`, which the table below times.
 When the process recorded a query event before the signal, the shutdown hooks closed the query event sink once their insert ended, so a statement run after that during the wait leaves a query event that is never inserted; with `queryLog.onSinkFailure` at `refuse` Studio refuses such a statement with 503 `AUDIT_UNAVAILABLE` instead, until the exit ([GOVERNANCE.md](GOVERNANCE.md#query-events)).
 Without such an event the sink stays open and inserts the events of the wait as it does while the server runs.
-Under governance, from the signal on this instance applies no further change of grants or sessions, a revocation included, until it exits: the shutdown hooks stop the governance listener and the reloads at the signal, so it keeps authorizing requests by the snapshot it held then, during the shutdown Studio's handler owns too ([GOVERNANCE.md](GOVERNANCE.md#operating-notes)).
+Under governance, from the start of the shutdown hooks, which is the signal where Next.js's handler owns the exit and the end of the drain where Studio's does, this instance applies no further change of grants or sessions, a revocation included, until it exits: the hooks stop the governance listener and the reloads, so it keeps authorizing requests by the snapshot it held then ([GOVERNANCE.md](GOVERNANCE.md#operating-notes)).
 As the process exits, unless the platform's SIGKILL ends it, Studio's handler logs `Exiting with 143 after SIGTERM`, as a warning carrying `queryEventsLost` and `hooksRunning` when the exit leaves query events unsent or cuts a hook still running; Studio's start line, `Received SIGTERM: running the shutdown hooks; Next.js's handler ends the process`, shows that its handler ran.
 
-What each platform waits for before it kills the process, against the 20 s Studio's handler may take where it owns the exit; where Next.js owns it, the stop may last until this kill:
+What each platform waits for before it kills the process, against the 25 s Studio's handler may take where it owns the exit; where Next.js owns it, the stop may last until this kill:
 
 | Platform | Grace before SIGKILL |
 |---|---|
