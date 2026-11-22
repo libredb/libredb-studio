@@ -67,6 +67,9 @@ PRUNE_LIST=(
   e2e
   loop
   packaging
+  # The workspace packages' sources and tests (packages/README.md), which
+  # tracing would otherwise copy in like src/.
+  packages
   # The agent-failure study (paper sources, Python scripts). No compiled
   # code reads it; shipped, it made namcap demand python for the AUR (#971).
   research

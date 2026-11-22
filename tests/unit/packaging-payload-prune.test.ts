@@ -82,6 +82,8 @@ const EXTRA_DIRS = [
   "logs",
   "loop",
   "packaging",
+  // The workspace packages' sources and tests (packages/README.md), which tracing would otherwise copy in like src/.
+  "packages",
   // The agent-failure study: paper sources and Python scripts. Tracing it in made
   // namcap demand a python dependency for the AUR package (#971).
   "research",

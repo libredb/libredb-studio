@@ -124,7 +124,11 @@ describe("patched dependencies", () => {
       const lines = read(dockerfile).split("\n");
       const install = lines.indexOf("RUN bun install --frozen-lockfile");
       expect(install).toBeGreaterThan(0);
-      expect(lines.slice(install - 2, install)).toEqual(["COPY package.json bun.lock ./", "COPY patches ./patches"]);
+      // Each workspace package's manifest is copied between these two lines and the install
+      // (tests/unit/docker-workspace-install.test.ts), so those lines are set aside here.
+      const copies = lines.slice(0, install).filter((line) => line.startsWith("COPY ") && !line.startsWith("COPY packages/"));
+      expect(copies.slice(-2)).toEqual(["COPY package.json bun.lock bunfig.toml ./", "COPY patches ./patches"]);
+      expect(lines.slice(lines.indexOf("COPY patches ./patches") + 1, install).every((line) => line.startsWith("COPY packages/"))).toBe(true);
     },
   );
 });
