@@ -43,8 +43,9 @@ describe("the gates see a workspace package", () => {
       linkNodeModules: false,
     });
 
-    const install = spawnSync(process.execPath, ["install"], { cwd: made, encoding: "utf8" });
+    const install = spawnSync(process.execPath, ["install"], { cwd: made, encoding: "utf8", timeout: 25_000 });
 
+    expect(install.error).toBeUndefined();
     expect({ status: install.status, stderr: install.stderr }).toEqual({ status: 0, stderr: expect.any(String) });
     const link = path.join(made, "node_modules/@libredb/planted");
     expect({
@@ -69,7 +70,7 @@ describe("the gates see a workspace package", () => {
       linkNodeModules: true,
     });
 
-    const run = runTool(made, "@biomejs/biome/bin/biome", ["format", "."]);
+    const run = runTool(made, "@biomejs/biome/bin/biome", ["format", "."], { timeoutMs: 25_000 });
 
     expect(run.exitCode).toBe(1);
     expect(run.output).toContain(path.join("packages", "planted", "src", "fmt.ts"));
@@ -87,7 +88,7 @@ describe("the gates see a workspace package", () => {
       linkNodeModules: true,
     });
 
-    const run = runTool(made, "eslint/bin/eslint.js", ["packages", "--format", "json"]);
+    const run = runTool(made, "eslint/bin/eslint.js", ["packages", "--format", "json"], { timeoutMs: 50_000 });
 
     expect(run.exitCode).toBe(1);
     const [report] = JSON.parse(run.stdout);
@@ -109,10 +110,34 @@ describe("the gates see a workspace package", () => {
       linkNodeModules: true,
     });
 
-    const run = runTool(made, "knip/bin/knip.js", ["--include", "files", "--no-progress"]);
+    const run = runTool(made, "knip/bin/knip.js", ["--include", "files", "--no-progress"], { timeoutMs: 50_000 });
 
     expect(run.exitCode).toBe(1);
     expect(run.output).toContain("packages/planted/src/unused.ts");
     expect(run.output).not.toContain("packages/planted/src/index.ts");
   }, 60_000);
+});
+
+describe("the planted-package helper", () => {
+  test("a tool run that outlives its timeout fails naming the tool", () => {
+    // The planted tool idles 3 s and then exits 0 on its own, so without a bound the run
+    // returns after 3 s instead of hanging, and with one it ends at the limit.
+    const made = root({
+      copy: [],
+      workspaces: false,
+      files: { "node_modules/planted-idle.js": "setTimeout(() => process.exit(0), 3000);\n" },
+      linkNodeModules: false,
+    });
+
+    let thrown: unknown;
+    try {
+      runTool(made, "planted-idle.js", [], { timeoutMs: 500 });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toBe("planted-idle.js did not finish within 500 ms");
+    expect(((thrown as Error).cause as NodeJS.ErrnoException).code).toBe("ETIMEDOUT");
+  }, 10_000);
 });
