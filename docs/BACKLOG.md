@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D491, U17 · 364
+- [Drivers and connections](#drivers-and-connections) — D1-D492, U17 · 365
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -3472,6 +3472,18 @@ The slice left them as they were because the storage encryption branch reworks t
 Found 2026-11-22 while planning FND-2 slice 3.
 
 **Done when:** the storage provider and the bootstrap credentials writer both read the storage location, their tests take it again after they set the variable, and a test changes the working directory after the location is taken and finds both files where the reserved set says they are.
+
+### D492. In the VS Code extension, OPC UA's client identity and trust lists live in the extension's own folder
+
+OPC UA keeps its client key pair and trust lists under its PKI root, which the provider factory decides (`opcuaPkiRoot` in `src/lib/db/provider-files.ts`): `LIBREDB_OPCUA_PKI_ROOT` when it is set, otherwise `opcua-pki` under the data directory of Studio's storage location.
+The extension's host forks the backend child with its own environment and four keys of its own (`backendForkOptions` in `vscode-extension/src/host/fork-options.ts`), setting neither `LIBREDB_OPCUA_PKI_ROOT` nor `STORAGE_SQLITE_PATH`, and the child's working directory is the extension's folder.
+Unless the environment VS Code was started with carries one of them, the storage location is `data/libredb-storage.db` resolved against that folder, and OPC UA's PKI root is `<extension folder>/data/opcua-pki`.
+An extension update installs a new folder and removes the old one, so the client certificate a server administrator trusted and the server certificates the user accepted are gone, and the next connect generates a new client identity that the server does not know.
+`docs/VSCODE_EXTENSION.md` says nothing of the PKI root.
+
+Found 2026-11-22 while planning FND-2 slice 3 (measurement M12 of that lane); pre-existing.
+
+**Done when:** the extension hands the child a PKI root outside the extension's folder, in storage VS Code keeps across updates (`ExtensionContext.globalStorageUri`), through `LIBREDB_OPCUA_PKI_ROOT` or the storage location, `docs/VSCODE_EXTENSION.md` names where it lives, and a test forks the child with the host's options and finds the root outside the extension's folder.
 
 ### D332. The seed plaintext warning knows only `password`
 
