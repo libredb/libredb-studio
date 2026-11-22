@@ -91,10 +91,8 @@ test("the .deb, .rpm and AUR unit runs the wrapper and sets no NEXT_MANUAL_SIG_H
   expect(lines.filter((line) => line.startsWith("Environment=") && line.includes("NEXT_MANUAL_SIG_HANDLE"))).toEqual(
     [],
   );
-  // systemd applies the assignments in order, so the operator's EnvironmentFile comes after every Environment= line.
-  const environmentFile = lines.indexOf("EnvironmentFile=-/etc/libredb-studio/env");
-  expect(environmentFile).toBeGreaterThan(-1);
-  expect(lines.findLastIndex((line) => line.startsWith("Environment="))).toBeLessThan(environmentFile);
+  // systemd.exec(5): settings from an EnvironmentFile= override those made with Environment=, wherever it stands.
+  expect(lines).toContain("EnvironmentFile=-/etc/libredb-studio/env");
 });
 
 describeIf(NO_BASH, "packaging/homebrew/libredb-studio.rb.tmpl NEXT_MANUAL_SIG_HANDLE", () => {

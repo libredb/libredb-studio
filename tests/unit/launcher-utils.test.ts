@@ -1243,12 +1243,14 @@ describe("launcher NEXT_MANUAL_SIG_HANDLE", () => {
   /**
    * The launcher on Bun. No preload: the home comes from HOME and USERPROFILE, and this Bun is first asked
    * where it puts os.homedir() with that same environment, so a run never reaches the real home's cache or
-   * the network to fill it.
+   * the network to fill it. Both run in the fixture home, which holds no .env file: Bun loads the working
+   * directory's .env files into a file it runs, and the checkout's own would add the keys baseEnv leaves out.
    */
   function onBun(overrides: Record<string, string> = {}): string {
     const home = fixtureHome();
     const env = baseEnv(home, overrides);
     const probe = Bun.spawnSync([process.execPath, "-e", "console.log(require('node:os').homedir())"], {
+      cwd: home,
       env,
       stdout: "pipe",
       stderr: "pipe",
@@ -1258,6 +1260,7 @@ describe("launcher NEXT_MANUAL_SIG_HANDLE", () => {
       throw new Error(`Bun reports the home ${JSON.stringify(reported)} with HOME and USERPROFILE set to ${home}`);
     }
     const run = Bun.spawnSync([process.execPath, path.join(root, "bin/studio.js")], {
+      cwd: home,
       env,
       stdout: "pipe",
       stderr: "pipe",
