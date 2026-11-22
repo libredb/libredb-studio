@@ -23,7 +23,7 @@ import * as realDb from "@/lib/db";
 import * as realManifest from "@/lib/agent/agent-manifest";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { LLMConfigError } from "@/lib/llm/types";
-import { AgentRunStoreError } from "@/lib/agent/run-store";
+import { AgentRunStoreError, AgentRunUnavailableError } from "@/lib/agent/run-store";
 import { agentPosture } from "@/lib/agent/posture";
 import { AGENT_WORKFLOW_SENDS_STATEMENTS, type AgentRunWorkflowType } from "@/lib/agent/types";
 import { getDBConfig } from "@/lib/db-ui-config";
@@ -547,6 +547,36 @@ describe("POST /api/agent/runs", () => {
 
     expect(res.status).toBe(202);
     expect(mockStart.mock.calls.at(-1)?.[0].thread).toMatchObject({ declined: "error" });
+  });
+
+  test("a predecessor whose ledger names an id this Studio does not have is declined as an error for its owner, and the run opens", async () => {
+    mockStatus.mockImplementationOnce(async (runId: string) => {
+      throw new AgentRunUnavailableError(
+        runId,
+        { sessionId: "ada", role: "user" },
+        { field: "statementLanguage", reason: "unknown", id: "cobol", sentence: "This run was recorded in cobol." },
+      );
+    });
+
+    const res = await POST(startRequest({ ...VALID_BODY, previousRunId: "arun_1" }));
+
+    expect(res.status).toBe(202);
+    expect(mockStart.mock.calls.at(-1)?.[0].thread).toMatchObject({ declined: "error" });
+  });
+
+  test("someone else's predecessor this Studio cannot read is declined as unavailable, as a run that is not theirs", async () => {
+    mockStatus.mockImplementationOnce(async (runId: string) => {
+      throw new AgentRunUnavailableError(
+        runId,
+        { sessionId: "bob", role: "user" },
+        { field: "verifier", reason: "unknown", id: "agent-x.1", sentence: "This run is judged by agent-x.1." },
+      );
+    });
+
+    const res = await POST(startRequest({ ...VALID_BODY, previousRunId: "arun_1" }));
+
+    expect(res.status).toBe(202);
+    expect(mockStart.mock.calls.at(-1)?.[0].thread).toMatchObject({ declined: "unavailable" });
   });
 
   test("with the operator switch off, previousRunId is ignored and the run says so", async () => {

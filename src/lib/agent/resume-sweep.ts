@@ -33,13 +33,18 @@ import {
   isAgentRuntimeEnabled,
   resolveAgentLedgerDirectory,
 } from "./config";
-import { AGENT_LEDGER_STREAM_PREFIX } from "./run-store";
+import { AGENT_LEDGER_STREAM_PREFIX, AgentRunUnavailableError } from "./run-store";
 import type { AgentRunService, AgentRunStatusReport } from "./run-service";
 
 /** The outcome of one sweep pass, for the operator's log line. */
 export interface ResumeSweepOutcome {
   readonly claimed: number;
   readonly skipped: number;
+  /**
+   * Runs whose ledger names a statement language or goal rule this build does not have: left as they are and never
+   * driven, on this pass and every later one, since the ledger is what names them and nothing here changes it.
+   */
+  readonly unavailable: number;
 }
 
 /**
@@ -108,7 +113,9 @@ export async function listLocalAgentRunIds(directory = resolveAgentLedgerDirecto
  * and is skipped, not failed. The sweep holds no claim of its own: holding one
  * here would make the drive refuse itself. Each drive is tried in its own
  * `try/catch`, so one run's throw never prevents a later run id from being
- * reached.
+ * reached. A run whose ledger the store refuses as naming an id this build does
+ * not have (`AgentRunUnavailableError`) is counted as `unavailable` and left as
+ * it is. Any other refusal of a status read still ends the pass (B174).
  */
 export async function sweepStaleRuns(options: {
   readonly service: AgentRunService;
@@ -121,9 +128,17 @@ export async function sweepStaleRuns(options: {
   const staleAfterMs = options.staleAfterMs;
   let claimed = 0;
   let skipped = 0;
+  let unavailable = 0;
 
   for (const runId of options.runIds) {
-    const report = await options.service.status(runId);
+    let report: AgentRunStatusReport | null;
+    try {
+      report = await options.service.status(runId);
+    } catch (error) {
+      if (!(error instanceof AgentRunUnavailableError)) throw error;
+      unavailable += 1;
+      continue;
+    }
     if (report === null || !isStaleRun(report, now(), staleAfterMs)) continue;
 
     try {
@@ -134,7 +149,7 @@ export async function sweepStaleRuns(options: {
     }
   }
 
-  return { claimed, skipped };
+  return { claimed, skipped, unavailable };
 }
 
 /**
@@ -182,18 +197,20 @@ export async function runResumeSweepOnce(
   enabled: () => boolean = isAgentRuntimeEnabled,
   sweep: typeof sweepOnce = sweepOnce,
 ): Promise<ResumeSweepOutcome> {
-  if (!enabled()) return { claimed: 0, skipped: 0 };
+  if (!enabled()) return { claimed: 0, skipped: 0, unavailable: 0 };
   try {
     const { driveAgentRun, getAgentRunService } = await runtime();
     const service = await getAgentRunService();
     const outcome = await sweep({ service, drive: driveAgentRun });
+    // Only a claim or a skip makes the line: an unavailable run is left as it is on
+    // every pass by design, so counting it alone would log the same line forever.
     if (outcome.claimed > 0 || outcome.skipped > 0) {
       logger.info("agent resume sweep finished", { route: "agent-resume-sweep", ...outcome });
     }
     return outcome;
   } catch (error) {
     logger.error("agent resume sweep failed", error, { route: "agent-resume-sweep" });
-    return { claimed: 0, skipped: 0 };
+    return { claimed: 0, skipped: 0, unavailable: 0 };
   }
 }
 

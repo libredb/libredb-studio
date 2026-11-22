@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B173 · 84
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B174 · 85
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP27 · 24
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV35 · 33
@@ -10007,6 +10007,15 @@ It is not new with the review record: every deny code has taken this path since 
 Found 2026-11-22 while rebasing the agent statement review record (FND-7 slice 2).
 
 **Done when:** an `ExecutionProfileError` reaching the hand-over route is answered with a client-error status and its `reasonCode` in the body, logged below error level, and a route test pins that answer for a refused profile, with the deny codes that are a server fault, if any, named and kept apart.
+
+### B174. One unreadable run ledger stops the resume sweep for every run listed after it
+
+`sweepStaleRuns` in `src/lib/agent/resume-sweep.ts` reads each listed run's status outside the per-run `try` that guards its drive, so a ledger the store refuses as `MALFORMED_LEDGER` (an event kind no pack declares, a line that is not JSON, a second header) throws out of the pass: `runResumeSweepOnce` logs "agent resume sweep failed" and returns, and no run listed after that ledger is resumed, on that pass or any later one.
+Measured on 2026-11-22 over a real local world: a sweep over a malformed ledger listed before a stale running run threw `MALFORMED_LEDGER` and never reached the running run.
+A ledger that names a statement language or goal rule this Studio does not have is counted and left as it is; a malformed one is not, because skipping corruption needs a log line of its own to stay loud.
+Found 2026-11-22 while planning FND-1 slice 6.
+
+**Done when:** the pass skips a malformed ledger with an error-level line naming its run id and the store's reason, a later stale run is still driven, and a sweep test pins both; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 

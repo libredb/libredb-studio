@@ -1003,6 +1003,14 @@ two loops driving one run concurrently would still both execute across processes
 sweep resumes an interrupted run only EVENTUALLY, and keeps retrying one that dies again without a
 bound (B82).
 
+**A ledger is read in the vocabulary its header names.**
+A run's header persists two engine-bound ids, the statement language the run writes in and the goal rule it is judged by.
+A header naming one this build does not hold, or holds as retired, is refused by name before any other line of the ledger is read, so a ledger written by a newer Studio is named by its language even where its evidence also carries kinds this build cannot parse.
+This build then reads, drives, stops and replays nothing of that run: its owner is answered `409` `AGENT_RUN_UNAVAILABLE` with a sentence naming the id, anyone else the `404` of a missing run ([HTTP surface](#http-surface)), and the ledger is kept as it was, for a Studio that has the id.
+Absence keeps its meaning: a header with no language reads as `sql`, and one with no verifier as its variant's.
+A continued conversation whose predecessor is such a run opens without it, `thread.declined` `"error"` for the owner and `"unavailable"` for anyone else.
+The resume sweep counts such a run as `unavailable` and leaves it as it is, but it stops at a ledger it cannot parse at all, and no run listed after that one is resumed (B174).
+
 ### A drive that dies before the loop
 
 `runInvestigation` ends a run it entered, so every stop reason the loop owns is already on the
@@ -3302,6 +3310,7 @@ the role's own grants are the whole boundary (A3).
 - **B171**: an OPC UA operator cannot exclude one node beneath a read root, so a vendor identity or credential node that no prune table names is answered inside a declared root until the roots are moved below it.
 - **B172**: an operational reading and the plan-mode statistics read are held to the byte budget by the length of their JSON text, not its UTF-8 bytes, so a reading of text outside ASCII can pass at up to three times the budget, and a bigint cell in one fails the call instead of being measured.
 - **B173**: the hand-over route answers an execution-profile refusal at replay, an engine off the review record or a principal whose privileges are too broad among them, as a `500` `INTERNAL_ERROR` logged as an unhandled error, because `createErrorResponse` has no branch for `ExecutionProfileError`, so a refusal that is the boundary working reads as a server fault.
+- **B174**: the resume sweep stops at a run ledger it cannot parse, a malformed line or an event kind no pack declares, so no stale run listed after it is resumed, on that pass or any later one.
 - **B146**: database assessment opens on every engine with a catalog read, an engine with no table profile composition included, where its verdict can never be met: measured on OpenSearch 3.8.0, the run ends with "No table was profiled", and Elasticsearch, Oracle and Db2 open it by the same requirement.
 
 **What machine redaction leaves unmasked on Kubernetes.**

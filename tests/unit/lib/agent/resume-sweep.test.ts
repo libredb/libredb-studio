@@ -168,7 +168,7 @@ describe("sweepStaleRuns", () => {
       staleAfterMs: 60_000,
     });
 
-    expect(outcome).toEqual({ claimed: 1, skipped: 0 });
+    expect(outcome).toEqual({ claimed: 1, skipped: 0, unavailable: 0 });
     expect(driven).toEqual([runId]);
     // The drive released durably: a fresh claim succeeds after the sweep.
     await h.service.claimDrive(runId);
@@ -195,7 +195,7 @@ describe("sweepStaleRuns", () => {
       staleAfterMs: 60_000,
     });
 
-    expect(outcome).toEqual({ claimed: 0, skipped: 1 });
+    expect(outcome).toEqual({ claimed: 0, skipped: 1, unavailable: 0 });
     await h.service.releaseDrive(runId);
   });
 
@@ -220,8 +220,31 @@ describe("sweepStaleRuns", () => {
       staleAfterMs: 60_000,
     });
 
-    expect(outcome).toEqual({ claimed: 1, skipped: 1 });
+    expect(outcome).toEqual({ claimed: 1, skipped: 1, unavailable: 0 });
     expect(driven).toEqual([second]);
+  });
+
+  test("a run whose ledger names an id this build does not hold is counted unavailable, never driven, and a later run is still swept", async () => {
+    const clock = fakeClock();
+    const h = harness(clock.read);
+    const { runId: unreadable } = await h.service.start({ ...START_INPUT, statementLanguage: "cobol" as never });
+    const { runId: stale } = await h.service.start({ ...START_INPUT, objective: "another question" });
+    await h.service.markRunning(stale);
+    clock.set(clock.read() + 60_001);
+
+    const driven: string[] = [];
+    const outcome = await sweepStaleRuns({
+      service: h.service,
+      drive: async (id) => {
+        driven.push(id);
+      },
+      runIds: [unreadable, stale],
+      now: clock.read,
+      staleAfterMs: 60_000,
+    });
+
+    expect(outcome).toEqual({ claimed: 1, skipped: 0, unavailable: 1 });
+    expect(driven).toEqual([stale]);
   });
 
   test("ignores run ids it does not know", async () => {
@@ -234,7 +257,7 @@ describe("sweepStaleRuns", () => {
       staleAfterMs: 60_000,
     });
 
-    expect(outcome).toEqual({ claimed: 0, skipped: 0 });
+    expect(outcome).toEqual({ claimed: 0, skipped: 0, unavailable: 0 });
   });
 
   test("a terminal run is never swept, even with a claim still recorded", async () => {
@@ -256,7 +279,7 @@ describe("sweepStaleRuns", () => {
       staleAfterMs: 1,
     });
 
-    expect(outcome).toEqual({ claimed: 0, skipped: 0 });
+    expect(outcome).toEqual({ claimed: 0, skipped: 0, unavailable: 0 });
     expect(driven).toEqual([]);
   });
 });
@@ -280,7 +303,7 @@ describe("sweepOnce", () => {
       listRunIds: async () => [runId],
     });
 
-    expect(outcome).toEqual({ claimed: 1, skipped: 0 });
+    expect(outcome).toEqual({ claimed: 1, skipped: 0, unavailable: 0 });
     expect(driven).toEqual([runId]);
   });
 });
@@ -317,7 +340,7 @@ describe("runResumeSweepOnce", () => {
       },
     );
 
-    expect(outcome).toEqual({ claimed: 0, skipped: 0 });
+    expect(outcome).toEqual({ claimed: 0, skipped: 0, unavailable: 0 });
   });
 
   test("drives a sweep and logs when something was claimed or skipped", async () => {
@@ -327,10 +350,10 @@ describe("runResumeSweepOnce", () => {
       const outcome = await runResumeSweepOnce(
         async () => ({ driveAgentRun: async () => {}, getAgentRunService: async () => h.service }),
         () => true,
-        async () => ({ claimed: 1, skipped: 1 }),
+        async () => ({ claimed: 1, skipped: 1, unavailable: 0 }),
       );
 
-      expect(outcome).toEqual({ claimed: 1, skipped: 1 });
+      expect(outcome).toEqual({ claimed: 1, skipped: 1, unavailable: 0 });
       expect(info).toHaveBeenCalled();
     } finally {
       info.mockRestore();
@@ -344,10 +367,10 @@ describe("runResumeSweepOnce", () => {
       const outcome = await runResumeSweepOnce(
         async () => ({ driveAgentRun: async () => {}, getAgentRunService: async () => h.service }),
         () => true,
-        async () => ({ claimed: 0, skipped: 0 }),
+        async () => ({ claimed: 0, skipped: 0, unavailable: 0 }),
       );
 
-      expect(outcome).toEqual({ claimed: 0, skipped: 0 });
+      expect(outcome).toEqual({ claimed: 0, skipped: 0, unavailable: 0 });
       expect(info).not.toHaveBeenCalled();
     } finally {
       info.mockRestore();
@@ -362,10 +385,10 @@ describe("runResumeSweepOnce", () => {
           throw new Error("world unavailable");
         },
         () => true,
-        async () => ({ claimed: 0, skipped: 0 }),
+        async () => ({ claimed: 0, skipped: 0, unavailable: 0 }),
       );
 
-      expect(outcome).toEqual({ claimed: 0, skipped: 0 });
+      expect(outcome).toEqual({ claimed: 0, skipped: 0, unavailable: 0 });
       expect(error).toHaveBeenCalled();
     } finally {
       error.mockRestore();
