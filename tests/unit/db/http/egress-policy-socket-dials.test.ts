@@ -69,7 +69,7 @@ const listeners: CountingListener[] = [];
 
 afterEach(async () => {
   setEgressFlag(original);
-  for (const listener of listeners.splice(0)) await listener.close();
+  await Promise.all(listeners.splice(0).map((listener) => listener.close()));
 });
 
 function bind(server: Server, port: number, host: string): Promise<number> {
