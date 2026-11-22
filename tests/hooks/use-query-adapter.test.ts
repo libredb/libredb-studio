@@ -574,6 +574,25 @@ describe("useQueryAdapter", () => {
     expect(params.onQueryExecute).not.toHaveBeenCalled();
   });
 
+  // A row's loosening claim counts only where Studio's review record lists it (`CONFIRMATION_CLAIM_REVIEW`): the
+  // stand-in row decides alone and is not on the record, so its text is still read as SQL under Trino's grammar.
+  test("asks about a statement a row's unlisted claim would spare", async () => {
+    const remove = installStandInVocabulary({});
+    try {
+      const params = makeHookParams({ activeConnection: makeConnection({ type: STAND_IN_TYPE }) });
+      const { result } = renderHook(() => useQueryAdapter(params as never));
+
+      await act(async () => {
+        await result.current.executeQuery("DROP TABLE t");
+      });
+
+      expect(result.current.safetyCheckQuery).toBe("DROP TABLE t");
+      expect(params.onQueryExecute).not.toHaveBeenCalled();
+    } finally {
+      remove();
+    }
+  });
+
   // The confirmation is bound to the connection it was raised on (FND-1 slice 4 review). A host re-render can close or
   // replace the open connection while the dialog is open, and its Proceed used to run the statement on whatever was
   // open when it was pressed.

@@ -1,3 +1,4 @@
+import { isReviewedConfirmationClaim } from "@/lib/db/confirmation-claim-review";
 import type { DestructiveVocabulary } from "@/lib/db/destructive-vocabulary";
 import { FIRESTORE_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/document/firestore/destructive";
 import { MONGODB_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/document/mongodb/destructive";
@@ -79,14 +80,18 @@ export const NON_SQL_DESTRUCTIVE_VOCABULARY: Readonly<Partial<Record<DatabaseTyp
  * Whether this type's row is the gate's whole answer, which `isDangerousQuery` asks
  * before it reads the text as SQL at all.
  *
+ * True only where the row declares `decidesAlone: true` and Studio's review record lists that claim
+ * (`CONFIRMATION_CLAIM_REVIEW` in `./confirmation-claim-review.ts`): a claim the record does not list is read as if
+ * the row had not made it, so the gate reads the text as SQL and reads the row beside it.
+ *
  * False for every type with no row, and for no type at all: the SQL half reads those.
- * Any other value that is not a type id is refused by name (`typeIdRow`, FND-1).
+ * Any other value that is not a type id is refused by name (`typeIdRow`, FND-1), before the record is read.
  *
  * @throws {UnknownProviderError} When `databaseType` is defined and is not a type id.
  */
 export function vocabularyDecidesAlone(databaseType?: DatabaseType): boolean {
   const facts = databaseType === undefined ? undefined : typeIdRow(NON_SQL_DESTRUCTIVE_VOCABULARY, databaseType);
-  return facts?.decidesAlone === true;
+  return facts?.decidesAlone === true && isReviewedConfirmationClaim({ kind: "decides-alone", type: databaseType });
 }
 
 /**

@@ -1,5 +1,6 @@
 // The editor's confirmation gate, out of `QuerySafetyDialog.tsx` so a caller that bundles no component can ask it:
 // the VS Code extension's child answers `query/target` with its verdict.
+import { isReviewedConfirmationClaim } from "@/lib/db/confirmation-claim-review";
 import { isDestructiveNonSqlQuery, vocabularyDecidesAlone } from "@/lib/db/destructive-commands";
 import {
   confirmFormQuery,
@@ -564,7 +565,9 @@ function cteBodyOpensWithWrite(text: string, afterAs: number, grammar: SqlGramma
  * runner drifted apart in the first place.
  *
  * Exported for the grammar-level tests in `tests/components/QuerySafetyDialog.test.tsx`, which read a row's forms
- * before any shipped row declares them; `isDangerousQuery` is the gate.
+ * before any shipped row declares them; `isDangerousQuery` is the gate. It reads every form of the grammar it is
+ * handed: only the gate resolves a grammar from a connection type, and the gate hands it one whose exempt forms are
+ * the ones Studio's review record lists (`gateGrammar`).
  */
 export function writesUnderGrammar(statement: string, grammar: SqlGrammar): boolean {
   let text = statement;
@@ -639,6 +642,27 @@ export function writesUnderGrammar(statement: string, grammar: SqlGrammar): bool
 }
 
 /**
+ * The grammar the gate reads a statement under: the connection type's, with only the exempt forms Studio's review
+ * record lists (`CONFIRMATION_CLAIM_REVIEW` in `@/lib/db/confirmation-claim-review`).
+ *
+ * A form the record does not list is read as if the row had not declared it, so its shared keyword asks. The
+ * resolved grammar is returned as it is where every form it declares is listed, which keeps the shipped grammars on
+ * their own objects and on the caches keyed by them; otherwise the gate reads a copy, made per call, which is a new key
+ * for those caches. Resolution itself is left alone, because every other reader of a grammar reads the row as
+ * declared.
+ */
+function gateGrammar(databaseType: DatabaseType | undefined): SqlGrammar {
+  const grammar = resolveSqlGrammar(databaseType);
+  const declared = grammar.confirmExemptForms;
+  if (declared === undefined) return grammar;
+  const listed = declared.filter((form) =>
+    isReviewedConfirmationClaim({ kind: "exempt-form", type: databaseType, form }),
+  );
+  if (listed.length === declared.length) return grammar;
+  return { ...grammar, confirmExemptForms: listed };
+}
+
+/**
  * Whether part of this text could not be read: a run that never closes, or a line comment that holds a lone carriage
  * return (#297).
  *
@@ -709,9 +733,15 @@ export function hasUnreadableRun(text: string, databaseType?: DatabaseType): boo
  * statement's own code in PostgreSQL, and a `#` comment inside a CTE list used to
  * hide the `)` that closes it - so a `DELETE` after the list ran with no
  * confirmation at all. Omitting it keeps the dialect-less reading.
+ *
+ * A row's claim that would spare a statement, that its vocabulary is the whole answer or that a form led by a shared
+ * keyword does not ask, counts only where Studio's review record lists it (`CONFIRMATION_CLAIM_REVIEW` in
+ * `@/lib/db/confirmation-claim-review`, E21-Q1). Any other such claim is read as if the row had not made it: the
+ * statement is read as SQL, and the row's own vocabulary is read beside that reading, so the gate asks wherever
+ * either asks.
  */
 export function isDangerousQuery(query: string, databaseType?: DatabaseType): boolean {
-  const grammar = resolveSqlGrammar(databaseType);
+  const grammar = gateGrammar(databaseType);
 
   // Asked FIRST because it is the only question here whose answer does not depend
   // on reading the statement: where a run never closes, every keyword test below
@@ -731,10 +761,16 @@ export function isDangerousQuery(query: string, databaseType?: DatabaseType): bo
   // request names a topic, which can carry those names too, and can only read it (#1088,
   // section 2); an etcd command names keys, which can be spelled like any SQL keyword, and the
   // etcd provider's guard.ts reads it with the parser the provider runs (#1089, section 5.5).
-  // Which types decide alone is a fact of the same table, not a type test here.
+  // Which types decide alone is a fact of the same table, not a type test here, and the row decides
+  // alone only where Studio's review record lists that claim.
   if (vocabularyDecidesAlone(databaseType)) return isDestructiveNonSqlQuery(query, databaseType);
 
   if (writesUnderGrammar(query, grammar)) return true;
+
+  // A row that does not decide alone is read beside the SQL reading: MongoDB's and Redis's rows,
+  // and a row whose decides-alone claim the review record does not list. False for every type
+  // with no row, so for every SQL engine this is one table lookup.
+  if (isDestructiveNonSqlQuery(query, databaseType)) return true;
 
   /*
     The editor text is not always what runs. A buffer holding more than one
@@ -757,8 +793,9 @@ export function isDangerousQuery(query: string, databaseType?: DatabaseType): bo
   // `return false`, which is why a Redis `FLUSHALL` and a Mongo `deleteMany` ran with
   // no confirmation at all while a `DELETE FROM` on every SQL engine asked (S8). The
   // facts are a table in `@/lib/db/destructive-commands`, not a type test written
-  // here: this file already learned that lesson for the span rule above.
-  if (!readsSqlText(databaseType)) return isDestructiveNonSqlQuery(query, databaseType);
+  // here: this file already learned that lesson for the span rule above, and the row
+  // was read just above.
+  if (!readsSqlText(databaseType)) return false;
   // One exception to "exactly what the runner will run": a procedural body is ONE
   // statement to the runner (#1312), and its operative keyword is `BEGIN`, `DECLARE` or
   // `CREATE`, none of which asks. The writes inside it are still writes, so the gate keeps
