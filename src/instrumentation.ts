@@ -62,6 +62,12 @@ export async function register(): Promise<void> {
   const { verifyEgressDecisionAtBoot } = await import("@/lib/config/egress-preflight");
   if (!verifyEgressDecisionAtBoot()) return;
 
+  // Run confirmation preflight: LIBREDB_RUN_CONFIRMATION decides which runs the
+  // run routes refuse without a confirmation, and a value outside its spellings
+  // would refuse every such run by name, so it refuses the boot instead.
+  const { verifyRunConfirmationAtBoot } = await import("@/lib/config/run-confirmation-preflight");
+  if (!verifyRunConfirmationAtBoot()) return;
+
   // Governance preflight (docs/GOVERNANCE.md#boot-checks): with
   // GOVERNANCE_SOURCE set, refuse an environment that contradicts governance
   // mode, such as a password, a seed file or a missing governance URL, before

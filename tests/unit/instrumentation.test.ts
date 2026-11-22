@@ -47,6 +47,7 @@ const ENV_KEYS = [
   "KUBERNETES_ACCESS_REVIEW",
   "NODE_EXTRA_CA_CERTS",
   "DB_HTTP_BLOCK_PRIVATE_HOSTS",
+  "LIBREDB_RUN_CONFIRMATION",
   "NEXT_MANUAL_SIG_HANDLE",
   "STORAGE_ENCRYPTION_RESEAL",
   "STORAGE_ENCRYPTION_REQUIRE_V2",
@@ -593,6 +594,43 @@ describe("instrumentation register()", () => {
     expect(exitCalls).toEqual([1]);
     expect(banner).toContain("DB_HTTP_BLOCK_PRIVATE_HOSTS is invalid");
     expect(banner).not.toContain("credential re-seal");
+    // Neither the store nor a backup of it was created: the re-seal never ran.
+    expect(fs.readdirSync(tmpDir).filter((name) => name.startsWith("libredb-storage.db"))).toEqual([]);
+  });
+
+  test("runs the run confirmation preflight: an invalid LIBREDB_RUN_CONFIRMATION hard-exits before seeding and the banner", async () => {
+    process.env.NEXT_RUNTIME = "nodejs";
+    process.env.AUTH_BOOTSTRAP = "off";
+    process.env.LIBREDB_RUN_CONFIRMATION = "strict";
+    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = path.join(tmpDir, "sample.libredb");
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(tmpDir, "sample-employees.db");
+    delete process.env.LIBREDB_NO_BANNER;
+
+    const originalExit = process.exit;
+    const exitCalls: Array<number | undefined> = [];
+    process.exit = ((code?: number) => {
+      exitCalls.push(code);
+    }) as unknown as typeof process.exit;
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    let banner = "";
+    let output = "";
+    try {
+      await register();
+      // Read the recorded calls before mockRestore(): bun clears them on restore.
+      banner = errorSpy.mock.calls.flat().join("\n");
+      output = log.mock.calls.flat().join("\n");
+    } finally {
+      process.exit = originalExit;
+      errorSpy.mockRestore();
+      log.mockRestore();
+    }
+
+    expect(exitCalls).toEqual([1]);
+    expect(banner).toContain("LIBREDB_RUN_CONFIRMATION is invalid");
+    expect(noSampleStarted()).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "sample.libredb"))).toBe(false);
+    expect(output).not.toContain("Star the project");
     // Neither the store nor a backup of it was created: the re-seal never ran.
     expect(fs.readdirSync(tmpDir).filter((name) => name.startsWith("libredb-storage.db"))).toEqual([]);
   });
