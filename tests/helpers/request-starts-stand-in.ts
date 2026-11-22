@@ -6,7 +6,8 @@
  * through this source instead: it counts subscriptions and unsubscriptions and hands each published message to every
  * handler still subscribed, synchronously, as Node.js does. The server records each `close` and
  * `closeIdleConnections` call; the response is an EventEmitter whose `end()` emits `close` once, as a finished
- * response does, and whose `abort()` emits it too, as a response whose client went away does.
+ * response does, and whose `abort()` emits it too, as a response whose client went away does. It records each header
+ * set on it, and `sendHeaders()` marks its headers sent, after which `setHeader()` throws, as Node.js's does.
  */
 import { EventEmitter } from "node:events";
 import type { RequestStarts } from "@/lib/shutdown-drain";
@@ -73,6 +74,14 @@ export interface StandInResponse extends EventEmitter {
   end(): void;
   /** Ends the response as one whose client went away does: emits `close` once. */
   abort(): void;
+  /** Whether its headers have gone out. */
+  headersSent: boolean;
+  /** Sets a header, as long as the headers have not gone out. */
+  setHeader(name: string, value: string): void;
+  /** Sends the headers: from then on `setHeader()` throws. */
+  sendHeaders(): void;
+  /** Every header set, by name. */
+  readonly headers: Record<string, string>;
 }
 
 /** Returns a response in flight: an EventEmitter that emits `close` once, on `end()` or `abort()`. */
@@ -84,8 +93,20 @@ export function standInResponse(): StandInResponse {
     closed = true;
     response.emit("close");
   };
-  response.end = close;
-  response.abort = close;
+  const headers: Record<string, string> = {};
+  Object.assign(response, {
+    end: close,
+    abort: close,
+    headersSent: false,
+    headers,
+    setHeader(name: string, value: string) {
+      if (response.headersSent) throw new Error("Cannot set headers after they are sent to the client");
+      headers[name] = value;
+    },
+    sendHeaders() {
+      response.headersSent = true;
+    },
+  });
   return response;
 }
 

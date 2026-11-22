@@ -9,11 +9,15 @@
  *
  * Each child runs a bundle of the real drain module and starts a plain node:http server on 127.0.0.1. It records every
  * message the channel publishes with a raw subscriber of its own, and drives the real `trackRequests()` through a
- * request the client aborts and through a drain with a request in flight on a kept-alive connection.
+ * request the client aborts and through a drain with a request in flight on a kept-alive connection. On a second
+ * server it drives a drain over two raw connections whose next request has begun, which Node.js does not count as
+ * idle: one pipelines the first byte of its next request behind the answer in flight, the other has sent part of a
+ * request's headers. A write is known to have reached the server when the server's side of the connection has read
+ * it (`bytesRead`).
  *
- * No Bun child: Bun's node:http publishes nothing on the channel (measured on Bun 1.4.4, none of four requests), and
- * every way Studio's server starts runs it on Node (package.json `start` and `dev` spawn the Next.js CLI with Node, the
- * images, the payload and the launchers), so the drain has nothing to watch there.
+ * No Bun child: Bun's node:http publishes nothing on the channel (measured on Bun 1.4.4, none of four requests), so
+ * the drain has nothing to watch there, and `exitOwnerAtBoot()` in src/lib/shutdown-handler.ts refuses Studio's exit
+ * on Bun (tests/unit/lib/shutdown-handler.test.ts).
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type diagnosticsChannel from "node:diagnostics_channel";
@@ -53,7 +57,21 @@ interface Report {
     readonly outcome: { servers: number; cut: number };
     readonly afterOnKeptAlive: Answer;
     readonly serverClosed: boolean;
+    readonly messagesAfterDrain: number;
   };
+  readonly begun: {
+    readonly outcome: { servers: number; cut: number };
+    readonly pipelined: Wire;
+    readonly partial: Wire;
+    readonly servedAfterDrain: string[];
+  };
+}
+
+/** What a raw client connection received: the status lines and Connection headers of its answers, and whether it ended. */
+interface Wire {
+  readonly statuses: string[];
+  readonly connection: string[];
+  readonly ended: boolean;
 }
 
 /**
@@ -137,6 +155,7 @@ async function runCases(
   const held = get("/held", keptAlive);
   await heldArrived;
   const trackedAtDrain = drain.tracked();
+  const shapesBeforeDrain = shapes.length;
   const drained = drain.drain();
   const fresh = await get("/fast", false);
   release();
@@ -150,12 +169,111 @@ async function runCases(
   ]);
   keptAlive.destroy();
   drain.stop();
+  const messagesAfterDrain = shapes.length - shapesBeforeDrain;
   channels.unsubscribe(channel, record);
+
+  // Two kept-alive connections whose next request has begun at the drain on a fresh server: one pipelines the first
+  // byte of its next request behind an answer held in flight, the other has sent only part of a request's headers.
+  const second = track();
+  let drainedAt = false;
+  const servedAfterDrain: string[] = [];
+  let releaseSecond: () => void = () => {};
+  const secondArrived = new Map<string, () => void>();
+  const secondServer = http.createServer((request, response) => {
+    if (drainedAt) servedAfterDrain.push(request.url ?? "");
+    secondArrived.get(request.url ?? "")?.();
+    if (request.url === "/held") {
+      releaseSecond = () => response.end("held");
+      return;
+    }
+    response.end("fast");
+  });
+  const serverSockets: netModule.Socket[] = [];
+  secondServer.on("connection", (socket) => serverSockets.push(socket));
+  await new Promise<void>((resolve) => secondServer.listen(0, "127.0.0.1", () => resolve()));
+  const secondPort = (secondServer.address() as { port: number }).port;
+
+  const open = async () => {
+    const accepted = serverSockets.length;
+    const socket = net.connect(secondPort, "127.0.0.1");
+    let text = "";
+    let ended = false;
+    socket.on("data", (chunk) => {
+      text += chunk.toString("latin1");
+    });
+    const closed = new Promise<void>((resolve) =>
+      socket.on("close", () => {
+        ended = true;
+        resolve();
+      }),
+    );
+    socket.on("error", () => {});
+    await new Promise<void>((resolve) => socket.once("connect", () => resolve()));
+    while (serverSockets.length === accepted) await new Promise((resolve) => setImmediate(resolve));
+    const server = serverSockets[accepted] as netModule.Socket;
+    // Settles once the server's side of the connection has read `total` bytes: the signal that a write reached it.
+    const readBy = async (total: number) => {
+      while (server.bytesRead < total && !server.destroyed) await new Promise((resolve) => setImmediate(resolve));
+    };
+    const answers = () => text.match(/HTTP\/1\.1 \d+/g) ?? [];
+    const untilAnswers = async (count: number) => {
+      while (answers().length < count && !socket.destroyed) await new Promise((resolve) => setImmediate(resolve));
+    };
+    let sent = 0;
+    const send = async (part: string) => {
+      sent += Buffer.byteLength(part, "latin1");
+      socket.write(part);
+      await readBy(sent);
+    };
+    const wire = (): Wire => ({
+      statuses: answers(),
+      connection: (text.match(/^connection: .*$/gim) ?? []).map((line) => line.toLowerCase().trim()),
+      ended,
+    });
+    return { socket, closed, send, untilAnswers, wire };
+  };
+  const warm = "GET /warm HTTP/1.1\r\nHost: drain\r\n\r\n";
+
+  const pipelined = await open();
+  await pipelined.send(warm);
+  await pipelined.untilAnswers(1);
+  const partial = await open();
+  await partial.send(warm);
+  await partial.untilAnswers(1);
+  const heldOnSecond = new Promise<void>((resolve) => secondArrived.set("/held", resolve));
+  await pipelined.send("GET /held HTTP/1.1\r\nHost: drain\r\n\r\n");
+  await heldOnSecond;
+  await partial.send("GET /partial HTTP/1.1\r\nHost: drain\r\n");
+
+  const secondDrained = second.drain();
+  await pipelined.send("G");
+  releaseSecond();
+  const begunOutcome = await secondDrained;
+  drainedAt = true;
+  // A connection the server keeps open after its answer would carry the begun request on: complete it and see.
+  const ends = (connection: { closed: Promise<void> }) =>
+    Promise.race([connection.closed, new Promise<void>((resolve) => setTimeout(resolve, 1000))]);
+  await pipelined.untilAnswers(2);
+  await ends(pipelined);
+  if (!pipelined.wire().ended) {
+    await pipelined.send("ET /after HTTP/1.1\r\nHost: drain\r\n\r\n");
+    await pipelined.untilAnswers(3);
+  }
+  await partial.send("\r\n");
+  await partial.untilAnswers(2);
+  await ends(partial);
+  const begun = { pipelined: pipelined.wire(), partial: partial.wire(), servedAfterDrain };
+  pipelined.socket.destroy();
+  partial.socket.destroy();
+  secondServer.close();
+  second.stop();
+
   return {
     runtime: process.version,
-    shapes,
+    shapes: shapes.slice(0, shapesBeforeDrain),
     abort: { inFlightWhileOpen, inFlightAfterAbort },
-    drain: { trackedAtDrain, fresh, held: heldAnswer, outcome, afterOnKeptAlive, serverClosed },
+    drain: { trackedAtDrain, fresh, held: heldAnswer, outcome, afterOnKeptAlive, serverClosed, messagesAfterDrain },
+    begun: { outcome: begunOutcome, ...begun },
   };
 }
 
@@ -243,6 +361,32 @@ describe("the request drain on every listed Node", () => {
           outcome: { servers: 1, cut: 0 },
           afterOnKeptAlive: { ok: false },
           serverClosed: true,
+          messagesAfterDrain: 0,
+        },
+      });
+    }
+  });
+
+  test("on every listed Node a connection whose next request has begun at the drain serves at most that request, answered with Connection: close, and then ends", () => {
+    for (const { runtime, begun } of runs) {
+      expect({ runtime, begun }).toEqual({
+        runtime,
+        begun: {
+          outcome: { servers: 1, cut: 0 },
+          // The first byte of the next request was pipelined behind the answer in flight: that answer closes it.
+          pipelined: {
+            statuses: ["HTTP/1.1 200", "HTTP/1.1 200"],
+            connection: ["connection: keep-alive", "connection: close"],
+            ended: true,
+          },
+          // Only part of a request's headers had arrived, so the connection was not idle: the request is served after
+          // the drain, once, with Connection: close.
+          partial: {
+            statuses: ["HTTP/1.1 200", "HTTP/1.1 200"],
+            connection: ["connection: keep-alive", "connection: close"],
+            ended: true,
+          },
+          servedAfterDrain: ["/partial"],
         },
       });
     }

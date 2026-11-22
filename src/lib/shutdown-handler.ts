@@ -8,7 +8,8 @@
  *   installs no handler with it set holds for this App Router app too, as read in 16.4.6, and is not documented for
  *   it, so tests/live/shutdown-signal-live.ts must pass on every Next.js upgrade.
  *   So `NEXT_MANUAL_SIG_HANDLE=true` gives Studio the exit, and unset or empty leaves it to Next.js; any other value
- *   refuses the boot, so the owner is never in doubt. The variable must be set in the environment that starts the
+ *   refuses the boot, so the owner is never in doubt, and so does `true` on Bun, where the request drain sees nothing
+ *   (src/lib/shutdown-drain.ts). The variable must be set in the environment that starts the
  *   server, never in a `.env` file: Next.js reads it before it loads `.env`, and Studio reads it in `register()`
  *   after, so a `.env` value would give both handlers the exit.
  * - The drain. Where Studio owns the exit, the handler starts the request drain (src/lib/shutdown-drain.ts) at install,
@@ -16,8 +17,9 @@
  *   drains them itself where it owns the exit, so there nothing subscribes.
  * - The steps. On the first signal it logs one line naming the signal and the owner. Where Studio owns the exit the
  *   line also counts the servers the drain closes and the responses in flight, and the drain runs first: it closes
- *   every server seen to new connections, ends each kept-alive connection as its response ends, and waits at most 5 s
- *   for the requests in flight, so their query events are queued before the flush. Then it runs the shutdown hooks
+ *   every server seen to new connections, answers with `Connection: close` each request whose headers have not gone
+ *   out, ends each kept-alive connection as its response ends, and waits at most 5 s for the requests in flight, so
+ *   their query events are queued before the flush. Then it runs the shutdown hooks
  *   (`runShutdownHooks()` in src/lib/shutdown.ts, at most 5 s), which insert the queued query events and close the
  *   governance pool. Where Studio owns the exit it then runs every registered provider cache close at once
  *   (`closeProviderCaches()`, at most 15 s), logs one end line and exits, 25 s at most after the signal. Where Next.js
@@ -25,11 +27,13 @@
  *   use the providers, and its exit ends the process and the pools with it. There it attaches an `exit` listener at
  *   the signal, which Node.js runs inside `process.exit`, and logs one line as the process exits, counting the query
  *   events left unsent and naming the hooks still running.
- * - The exit code where Studio owns the exit: 0 when every request in flight ended within the drain's deadline, every
- *   hook and every close settled without failing in time and no query event is left in the sink's queue
- *   (`queuedQueryEventCount()`, read without loading the sink); otherwise 128 plus the signal's number, 143 for
- *   SIGTERM and 130 for SIGINT, the codes Next.js's own handler exits with, and the end line names what was cut or
- *   failed and counts `responsesCut` and `queryEventsLost`. A provider close fails when a provider did not close
+ * - The exit code where Studio owns the exit: 0 when every request in flight ended within the drain's deadline and
+ *   none is in flight at the exit, every hook and every close settled without failing in time and no query event is
+ *   left in the sink's queue (`queuedQueryEventCount()`, read without loading the sink); otherwise 128 plus the
+ *   signal's number, 143 for SIGTERM and 130 for SIGINT, the codes Next.js's own handler exits with, and the end line
+ *   names what was cut or failed and counts `responsesCut`, `responsesInFlightAtExit` and `queryEventsLost`. A request
+ *   in flight at the exit is one the drain's deadline cut, or one that started after the drain on a connection it
+ *   could not end (src/lib/shutdown-drain.ts, "Limits"). A provider close fails when a provider did not close
  *   completely (`closeCachesAtShutdown` in src/lib/db/factory.ts). A step that rejects is logged and counts as
  *   incomplete; the exit runs anyway.
  * - Repeated signals start nothing, do not cut the run and do not change the code; the first is logged. `npx` delivers
@@ -99,16 +103,15 @@ interface HandlerState {
 
 type RegistryHolder = { [REGISTRY_KEY]?: HandlerState };
 
-function refuse(value: string): undefined {
+function refuse(problem: string, accepted: readonly string[]): undefined {
   console.error(
     [
       "",
       "============================================================",
-      ` LibreDB Studio cannot start: ${MANUAL_SIGNAL_HANDLING_VARIABLE} is set to "${value}"`,
-      " It decides who ends the server on SIGTERM and SIGINT, and only two",
+      ` LibreDB Studio cannot start: ${MANUAL_SIGNAL_HANDLING_VARIABLE} is set to ${problem}`,
+      " It decides who ends the server on SIGTERM and SIGINT, and only these",
       " states are accepted:",
-      `   1. ${MANUAL_SIGNAL_HANDLING_VARIABLE}=true: Studio's shutdown handler ends it`,
-      `   2. ${MANUAL_SIGNAL_HANDLING_VARIABLE} unset or empty: Next.js's handler ends it`,
+      ...accepted,
       " Set it in the environment that starts the server, never in a .env file.",
       " See docs/DISTRIBUTION.md#stopping-the-server",
       "============================================================",
@@ -121,13 +124,26 @@ function refuse(value: string): undefined {
 
 /**
  * Who owns the exit, from `NEXT_MANUAL_SIG_HANDLE`: Studio for `true`, Next.js when it is unset or empty. Any other
- * value prints a banner, exits with status 1 and returns undefined.
+ * value, and `true` on Bun, whose node:http publishes nothing the request drain reads, prints a banner, exits with
+ * status 1 and returns undefined. `versions` is the runtime's `process.versions`, a test seam.
  */
-export function exitOwnerAtBoot(): ExitOwner | undefined {
+export function exitOwnerAtBoot(
+  versions: { readonly node: string; readonly bun?: string } = process.versions,
+): ExitOwner | undefined {
   const value = process.env[MANUAL_SIGNAL_HANDLING_VARIABLE];
   if (value === undefined || value === "") return "nextjs";
+  if (value === "true" && typeof versions.bun === "string") {
+    return refuse(`"true" on Bun ${versions.bun}`, [
+      `   1. ${MANUAL_SIGNAL_HANDLING_VARIABLE}=true, with the server on Node.js: Studio's shutdown`,
+      "      handler ends it; on Bun its request drain sees no request",
+      `   2. ${MANUAL_SIGNAL_HANDLING_VARIABLE} unset or empty: Next.js's handler ends it`,
+    ]);
+  }
   if (value === "true") return "studio";
-  return refuse(value);
+  return refuse(`"${value}"`, [
+    `   1. ${MANUAL_SIGNAL_HANDLING_VARIABLE}=true: Studio's shutdown handler ends it`,
+    `   2. ${MANUAL_SIGNAL_HANDLING_VARIABLE} unset or empty: Next.js's handler ends it`,
+  ]);
 }
 
 /** Runs one step, and answers the step's name when it rejected, which is then logged. */
@@ -162,11 +178,16 @@ async function shutDown(
   const closes = await step("provider cache closes", closeProviderCaches, NO_CLOSE_CUT);
 
   const stepsFailed = [drain.failed, hooks.failed, closes.failed].filter((name): name is string => name !== undefined);
-  // Events still queued now are never sent: the flush, which ran if an event was recorded before the signal, has ended.
+  // Events still queued now are never sent: the flush, which ran if an event was recorded before the hooks started,
+  // has ended.
   const queryEventsLost = queuedQueryEventCount();
+  // Responses the exit cuts: those the drain's deadline cut, and those that started after the drain on a connection it
+  // could not end, such as one whose next request had begun.
+  const responsesInFlightAtExit = requests.tracked().inFlight;
   const complete =
     stepsFailed.length === 0 &&
     drain.value.cut === 0 &&
+    responsesInFlightAtExit === 0 &&
     hooks.value.cut.length === 0 &&
     hooks.value.failed.length === 0 &&
     closes.value.cut === 0 &&
@@ -180,6 +201,7 @@ async function shutDown(
       route: "shutdown",
       signal,
       responsesCut: counted(drain.value.cut),
+      responsesInFlightAtExit: counted(responsesInFlightAtExit),
       hooksCut: named(hooks.value.cut),
       hooksFailed: named(hooks.value.failed),
       cacheClosesCut: counted(closes.value.cut),

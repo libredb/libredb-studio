@@ -220,6 +220,7 @@ describe("installShutdownHandler", () => {
       route: "shutdown",
       signal: "SIGTERM",
       responsesCut: 1,
+      responsesInFlightAtExit: 1,
       hooksCut: undefined,
       hooksFailed: undefined,
       cacheClosesCut: undefined,
@@ -329,6 +330,7 @@ describe("installShutdownHandler", () => {
       route: "shutdown",
       signal: "SIGTERM",
       responsesCut: undefined,
+      responsesInFlightAtExit: undefined,
       hooksCut: ["stuck"],
       hooksFailed: undefined,
       cacheClosesCut: undefined,
@@ -352,6 +354,7 @@ describe("installShutdownHandler", () => {
       route: "shutdown",
       signal: "SIGTERM",
       responsesCut: undefined,
+      responsesInFlightAtExit: undefined,
       hooksCut: undefined,
       hooksFailed: ["fails"],
       cacheClosesCut: undefined,
@@ -379,6 +382,7 @@ describe("installShutdownHandler", () => {
       route: "shutdown",
       signal: "SIGTERM",
       responsesCut: undefined,
+      responsesInFlightAtExit: undefined,
       hooksCut: undefined,
       hooksFailed: undefined,
       cacheClosesCut: 1,
@@ -409,6 +413,7 @@ describe("installShutdownHandler", () => {
       route: "shutdown",
       signal: "SIGTERM",
       responsesCut: undefined,
+      responsesInFlightAtExit: undefined,
       hooksCut: undefined,
       hooksFailed: undefined,
       cacheClosesCut: undefined,
@@ -433,6 +438,7 @@ describe("installShutdownHandler", () => {
       route: "shutdown",
       signal: "SIGTERM",
       responsesCut: undefined,
+      responsesInFlightAtExit: undefined,
       hooksCut: undefined,
       hooksFailed: undefined,
       cacheClosesCut: undefined,
@@ -440,6 +446,51 @@ describe("installShutdownHandler", () => {
       stepsFailed: undefined,
       queryEventsLost: 2,
     });
+  });
+
+  test("a request that starts after the drain answered and is still in flight at the exit makes the exit code 143 and the end line counts it", async () => {
+    // A connection the drain could not end, such as one whose next request had begun, carries that request on.
+    const source = requestStartsStandIn();
+    const server = standInServer();
+    const late = standInResponse();
+    onShutdown("hook", async () => {
+      source.publish(requestStart(server, late));
+    });
+    const proc = shutdownStandIn();
+    installShutdownHandler(proc, "studio", source.starts);
+
+    proc.signal("SIGTERM");
+
+    expect(await proc.exited).toBe(143);
+    expect(late.headers).toEqual({ Connection: "close" });
+    expect(logger.warn).toHaveBeenCalledWith("Shutdown incomplete, exiting with 143", {
+      route: "shutdown",
+      signal: "SIGTERM",
+      responsesCut: undefined,
+      responsesInFlightAtExit: 1,
+      hooksCut: undefined,
+      hooksFailed: undefined,
+      cacheClosesCut: undefined,
+      cacheClosesFailed: undefined,
+      stepsFailed: undefined,
+      queryEventsLost: undefined,
+    });
+  });
+
+  test("a request that starts after the drain answered and ends before the exit leaves the exit code 0", async () => {
+    const source = requestStartsStandIn();
+    const late = standInResponse();
+    onShutdown("hook", async () => {
+      source.publish(requestStart(standInServer(), late));
+      late.end();
+    });
+    const proc = shutdownStandIn();
+    installShutdownHandler(proc, "studio", source.starts);
+
+    proc.signal("SIGTERM");
+
+    expect(await proc.exited).toBe(0);
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 
   test("a cached provider whose disconnect rejects makes the exit code 143, through the factory's own close", async () => {
@@ -634,6 +685,7 @@ describe("installShutdownHandler", () => {
         route: "shutdown",
         signal: "SIGTERM",
         responsesCut: undefined,
+        responsesInFlightAtExit: undefined,
         hooksCut: undefined,
         hooksFailed: undefined,
         cacheClosesCut: undefined,
@@ -650,8 +702,17 @@ describe("installShutdownHandler", () => {
 });
 
 describe("exitOwnerAtBoot", () => {
-  /** Runs exitOwnerAtBoot with the variable set to `value`, or unset for `undefined`, recording exits and banners. */
-  function ownerWith(value: string | undefined): { owner: unknown; exits: Array<number | undefined>; banner: string } {
+  /** The runtime versions of a Node.js process, which names no `bun`. */
+  const NODE_VERSIONS = { node: "24.22.1" };
+
+  /**
+   * Runs exitOwnerAtBoot with the variable set to `value`, or unset for `undefined`, on `versions` (this process's by
+   * default), recording exits and banners.
+   */
+  function ownerWith(
+    value: string | undefined,
+    versions?: { readonly node: string; readonly bun?: string },
+  ): { owner: unknown; exits: Array<number | undefined>; banner: string } {
     const saved = process.env[MANUAL_SIGNAL_HANDLING_VARIABLE];
     if (value === undefined) delete process.env[MANUAL_SIGNAL_HANDLING_VARIABLE];
     else process.env[MANUAL_SIGNAL_HANDLING_VARIABLE] = value;
@@ -662,7 +723,7 @@ describe("exitOwnerAtBoot", () => {
     }) as unknown as typeof process.exit;
     const errorSpy = spyOn(console, "error").mockImplementation(() => {});
     try {
-      const owner = exitOwnerAtBoot();
+      const owner = versions === undefined ? exitOwnerAtBoot() : exitOwnerAtBoot(versions);
       return { owner, exits, banner: errorSpy.mock.calls.flat().join("\n") };
     } finally {
       process.exit = originalExit;
@@ -672,18 +733,30 @@ describe("exitOwnerAtBoot", () => {
     }
   }
 
-  test("NEXT_MANUAL_SIG_HANDLE true gives Studio the exit, unset or empty leaves it to Next.js, and any other value refuses the boot naming the variable", () => {
+  test("NEXT_MANUAL_SIG_HANDLE true gives Studio the exit on Node.js, unset or empty leaves it to Next.js, and any other value refuses the boot naming the variable", () => {
     expect(MANUAL_SIGNAL_HANDLING_VARIABLE).toBe("NEXT_MANUAL_SIG_HANDLE");
-    expect(ownerWith("true")).toEqual({ owner: "studio", exits: [], banner: "" });
-    expect(ownerWith(undefined)).toEqual({ owner: "nextjs", exits: [], banner: "" });
-    expect(ownerWith("")).toEqual({ owner: "nextjs", exits: [], banner: "" });
+    expect(ownerWith("true", NODE_VERSIONS)).toEqual({ owner: "studio", exits: [], banner: "" });
+    expect(ownerWith(undefined, NODE_VERSIONS)).toEqual({ owner: "nextjs", exits: [], banner: "" });
+    expect(ownerWith("", NODE_VERSIONS)).toEqual({ owner: "nextjs", exits: [], banner: "" });
     for (const value of ["1", "false", "TRUE"]) {
-      const refused = ownerWith(value);
+      const refused = ownerWith(value, NODE_VERSIONS);
       expect(refused.owner).toBeUndefined();
       expect(refused.exits).toEqual([1]);
       expect(refused.banner).toContain(`NEXT_MANUAL_SIG_HANDLE is set to "${value}"`);
       expect(refused.banner).toContain("docs/DISTRIBUTION.md#stopping-the-server");
     }
+  });
+
+  test("on Bun, NEXT_MANUAL_SIG_HANDLE true refuses the boot naming the variable and the runtime, since the drain sees no request there, and unset or empty leaves the exit to Next.js", () => {
+    // This file runs under Bun, so the default reads Bun's own process.versions.
+    expect(typeof process.versions.bun).toBe("string");
+    const refused = ownerWith("true");
+    expect(refused.owner).toBeUndefined();
+    expect(refused.exits).toEqual([1]);
+    expect(refused.banner).toContain(`NEXT_MANUAL_SIG_HANDLE is set to "true" on Bun ${process.versions.bun}`);
+    expect(refused.banner).toContain("docs/DISTRIBUTION.md#stopping-the-server");
+    expect(ownerWith(undefined)).toEqual({ owner: "nextjs", exits: [], banner: "" });
+    expect(ownerWith("")).toEqual({ owner: "nextjs", exits: [], banner: "" });
   });
 });
 

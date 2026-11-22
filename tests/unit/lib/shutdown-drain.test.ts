@@ -218,6 +218,50 @@ describe("trackRequests", () => {
     expect(server.calls).toEqual(["close", "closeIdleConnections"]);
   });
 
+  test("at the drain each response in flight whose headers have not gone out is given Connection: close, so its connection ends with it, and one whose headers went out is left as it is", async () => {
+    const { source, drain } = tracker();
+    const server = standInServer();
+    const before = standInResponse();
+    const waiting = standInResponse();
+    const streaming = standInResponse();
+    source.publish(requestStart(server, before));
+    before.end();
+    source.publish(requestStart(server, waiting));
+    source.publish(requestStart(server, streaming));
+    streaming.sendHeaders();
+    expect(waiting.headers).toEqual({});
+
+    const run = drain.drain();
+    expect(waiting.headers).toEqual({ Connection: "close" });
+    expect(streaming.headers).toEqual({});
+    expect(before.headers).toEqual({});
+    waiting.end();
+    streaming.end();
+
+    expect(await run).toEqual({ servers: 1, cut: 0 });
+  });
+
+  test("a request that starts during the drain or after it is given Connection: close at once, and one before it is not", async () => {
+    const { source, drain } = tracker();
+    const server = standInServer();
+    const early = standInResponse();
+    const during = standInResponse();
+    const after = standInResponse();
+    source.publish(requestStart(server, early));
+    early.end();
+
+    const run = drain.drain();
+    source.publish(requestStart(server, during));
+    expect(during.headers).toEqual({ Connection: "close" });
+    during.end();
+    expect(await run).toEqual({ servers: 1, cut: 0 });
+    source.publish(requestStart(server, after));
+
+    expect(after.headers).toEqual({ Connection: "close" });
+    expect(early.headers).toEqual({});
+    expect(drain.tracked()).toEqual({ servers: 1, inFlight: 1 });
+  });
+
   test("a message without the server or the response it uses throws an error naming the channel", () => {
     const { source } = tracker();
     const server = standInServer();
@@ -225,16 +269,19 @@ describe("trackRequests", () => {
 
     for (const message of [
       undefined,
+      null,
       "not a message",
       {},
       { server, response: {} },
+      { server, response: { once: response.once, headersSent: false } },
+      { server, response: { once: response.once, setHeader: response.setHeader } },
       { server: {}, response },
       { server: { close() {} }, response },
       { response },
       { server },
     ]) {
       expect(() => source.publish(message)).toThrow(
-        "A message on http.server.request.start has no server with close() and closeIdleConnections() or no response with once(): the experimental channel changed in this Node.js release (src/lib/shutdown-drain.ts)",
+        "A message on http.server.request.start has no server with close() and closeIdleConnections() or no response with once(), setHeader() and headersSent: the experimental channel changed in this Node.js release (src/lib/shutdown-drain.ts)",
       );
     }
   });

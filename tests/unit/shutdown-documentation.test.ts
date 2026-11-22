@@ -42,7 +42,9 @@ describe("docs/DISTRIBUTION.md, Stopping the server", () => {
     const text = section();
 
     expect(text).toContain(`waits at most ${DRAIN_DEADLINE_MS / 1000} s for the requests in flight`);
-    expect(text).toContain(`at most ${SHUTDOWN_HOOKS_DEADLINE_MS / 1000} s`);
+    expect(text).toContain(
+      `close the governance pool, all at once and for at most ${SHUTDOWN_HOOKS_DEADLINE_MS / 1000} s`,
+    );
     expect(text).toContain(`at most ${PROVIDER_CACHE_CLOSE_DEADLINE_MS / 1000} s`);
     expect(text).toContain(
       `${(DRAIN_DEADLINE_MS + SHUTDOWN_HOOKS_DEADLINE_MS + PROVIDER_CACHE_CLOSE_DEADLINE_MS) / 1000} s at most`,
@@ -63,6 +65,17 @@ describe("docs/DISTRIBUTION.md, Stopping the server", () => {
     expect(text).toContain(`The three images set \`${MANUAL_SIGNAL_HANDLING_VARIABLE}=true\``);
     expect(text).toContain(`\`docker run -e ${MANUAL_SIGNAL_HANDLING_VARIABLE}= ...\``);
     expect(text).toContain("npx and the other launchers do not set it yet");
+  });
+
+  test("it says the server refuses Studio's exit on Bun, and names the end line's counts", () => {
+    const text = section();
+
+    expect(text).toContain(
+      `\`${MANUAL_SIGNAL_HANDLING_VARIABLE}=true\` with the server on Bun: the server refuses to start`,
+    );
+    for (const count of ["responsesCut", "responsesInFlightAtExit", "queryEventsLost"]) {
+      expect(text).toContain(`\`${count}\``);
+    }
   });
 
   test("it names every exit code the shutdown ends with, and the uncaught exit's", () => {

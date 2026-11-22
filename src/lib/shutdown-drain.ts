@@ -17,19 +17,27 @@
  *   deliver nothing: the runtime test fails on it, and the handler's start line shows `servers=0` on a running server.
  * - What it does. `trackRequests()` subscribes at once and keeps every server it has seen and every response in
  *   flight until the response's `close`, which a finished response and one whose client went away both emit.
- *   `drain()` calls `server.close()` on every server seen, which refuses new connections and closes the idle ones;
- *   from then on each tracked response that closes calls `closeIdleConnections()` on its own server, so a kept-alive
- *   connection ends with its last answer instead of carrying new requests into the shutdown; it settles once no
- *   response is in flight, a request that started during the drain on a connection already open included, or after
- *   `DRAIN_DEADLINE_MS`, warning with the count still in flight. It runs once per tracker and never rejects.
+ *   `drain()` gives each response in flight whose headers have not gone out `Connection: close`, and so does every
+ *   request that starts from then on, so Node.js ends that connection after the answer whatever the client has begun
+ *   sending on it. It calls `server.close()` on every server seen, which refuses new connections and closes the idle
+ *   ones; from then on each tracked response that closes calls `closeIdleConnections()` on its own server, so a
+ *   kept-alive connection whose answer's headers went out before the drain ends with its last answer too. It settles
+ *   once no response is in flight, a request that started during the drain on a connection already open included,
+ *   or after `DRAIN_DEADLINE_MS`, warning with the count still in flight. It runs once per tracker and never rejects.
+ *   `tracked()` goes on counting until `stop()`, so the handler reads at the exit what is still in flight.
  * - Limits. A request that reached a server before the subscription, in the first fraction of a second of the boot,
  *   is not seen. A server that has received no request since the subscription is not known, so it keeps accepting
  *   connections until the exit. A response still running at the deadline keeps running until the exit cuts it.
- *   Busy connections are never cut: `closeAllConnections()` would only move the cut earlier. A WebSocket upgrade is
- *   not a response, and Studio serves none.
- * - Node only. Bun's node:http publishes nothing on the channel (measured on Bun 1.4.4), and every way Studio's server
- *   starts runs it on Node: package.json `start` and `dev` spawn the Next.js CLI with Node, and so do the images, the
- *   payload and the launchers.
+ *   Busy connections are never cut: `closeAllConnections()` would only move the cut earlier. A connection whose next
+ *   request has begun at the drain, part of its headers or its first byte received, is not idle by Node.js's
+ *   definition, so neither `close()` nor `closeIdleConnections()` ends it: it serves that one request, with
+ *   `Connection: close`, even after the drain has settled. On Node.js 24 so does an accepted connection that has sent
+ *   nothing yet, which Node.js 26 closes at `close()`. tests/unit/lib/shutdown-drain-runtimes.test.ts holds the begun
+ *   request on every listed Node. A WebSocket upgrade is not a response, and Studio serves none.
+ * - Node only. Bun's node:http publishes nothing on the channel (measured on Bun 1.4.4), so on Bun the drain would see
+ *   no server and no request. The server runs on Bun under `bun --bun run start` and `bunx --bun`, and under
+ *   `bun start` and `bunx` on a host without Node.js, since package.json `start` and bin/studio.js spawn
+ *   `process.execPath`; `exitOwnerAtBoot()` in src/lib/shutdown-handler.ts refuses Studio's exit there.
  * - Test seam: `trackRequests()` takes the source of request starts, so a unit test under Bun hands it a stand-in
  *   (tests/helpers/request-starts-stand-in.ts), and `stop()` unsubscribes.
  */
@@ -78,12 +86,22 @@ interface DrainServer {
 /** The part of a node:http response the drain uses. */
 interface DrainResponse {
   once(event: "close", listener: () => void): unknown;
+  readonly headersSent: boolean;
+  setHeader(name: string, value: string): unknown;
 }
 
 function malformed(): Error {
   return new Error(
-    `A message on ${REQUEST_START_CHANNEL} has no server with close() and closeIdleConnections() or no response with once(): the experimental channel changed in this Node.js release (src/lib/shutdown-drain.ts)`,
+    `A message on ${REQUEST_START_CHANNEL} has no server with close() and closeIdleConnections() or no response with once(), setHeader() and headersSent: the experimental channel changed in this Node.js release (src/lib/shutdown-drain.ts)`,
   );
+}
+
+/**
+ * Asks Node.js to end the response's connection once the response ends, whatever the client has begun sending on it
+ * since (RFC 9112 section 9.6); a response whose headers have gone out keeps them.
+ */
+function closeWithAnswer(response: DrainResponse): void {
+  if (!response.headersSent) response.setHeader("Connection", "close");
 }
 
 /** The server and the response a message names, or an Error naming the channel when either is not what it uses. */
@@ -93,7 +111,9 @@ function fieldsOf(message: unknown): { server: DrainServer; response: DrainRespo
   if (
     typeof server?.close !== "function" ||
     typeof server.closeIdleConnections !== "function" ||
-    typeof response?.once !== "function"
+    typeof response?.once !== "function" ||
+    typeof response.setHeader !== "function" ||
+    typeof response.headersSent !== "boolean"
   ) {
     throw malformed();
   }
@@ -112,6 +132,7 @@ export function trackRequests(starts: RequestStarts = nodeRequestStarts): Reques
     const { server, response } = fieldsOf(message);
     servers.add(server);
     inFlight.add(response);
+    if (draining) closeWithAnswer(response);
     response.once("close", () => {
       inFlight.delete(response);
       if (!draining) return;
@@ -123,6 +144,7 @@ export function trackRequests(starts: RequestStarts = nodeRequestStarts): Reques
   async function drainAll(): Promise<DrainOutcome> {
     draining = true;
     const closed = servers.size;
+    for (const response of inFlight) closeWithAnswer(response);
     for (const server of servers) server.close();
     if (inFlight.size > 0) {
       let deadline: ReturnType<typeof setTimeout> | undefined;

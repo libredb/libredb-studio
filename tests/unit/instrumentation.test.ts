@@ -254,7 +254,10 @@ describe("instrumentation register()", () => {
       process.env.JWT_SECRET = "x".repeat(32);
       if (value !== undefined) process.env.NEXT_MANUAL_SIG_HANDLE = value;
       const order: string[] = [];
+      const readOwner = shutdownHandler.exitOwnerAtBoot;
       const spies = [
+        // This file runs under Bun, where `true` refuses the boot: read the variable as on Node.js, where it is served.
+        spyOn(shutdownHandler, "exitOwnerAtBoot").mockImplementation(() => readOwner({ node: "24.22.1" })),
         spyOn(uncaughtException, "installUncaughtExceptionExit").mockImplementation(() => {
           order.push("uncaught-exception exit");
         }),
