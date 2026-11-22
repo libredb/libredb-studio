@@ -12,11 +12,18 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { logger } from "@/lib/logger";
 import { resetStorageEncryptionKey } from "@/lib/storage/encryption";
-import { closeStorageProvider } from "@/lib/storage/factory";
+import { VERSION_TWO_NOT_RECORDED } from "@/lib/storage/envelope-settings";
+import { closeStorageProvider, getStorageProvider } from "@/lib/storage/factory";
 import { resealStoreAtBoot, UNOPENED_ADVICE } from "@/lib/storage/reseal-at-boot";
 import { sealVersionOne } from "../../../helpers/storage-envelope-v1";
 
-const ENV_KEYS = ["STORAGE_ENCRYPTION_RESEAL", "STORAGE_PROVIDER", "STORAGE_SQLITE_PATH", "JWT_SECRET"] as const;
+const ENV_KEYS = [
+  "STORAGE_ENCRYPTION_RESEAL",
+  "STORAGE_ENCRYPTION_REQUIRE_V2",
+  "STORAGE_PROVIDER",
+  "STORAGE_SQLITE_PATH",
+  "JWT_SECRET",
+] as const;
 
 describe("resealStoreAtBoot", () => {
   const saved: Record<string, string | undefined> = {};
@@ -28,6 +35,7 @@ describe("resealStoreAtBoot", () => {
     dir = mkdtempSync(join(tmpdir(), "libredb-reseal-at-boot-"));
     path = join(dir, "store.db");
     delete process.env.STORAGE_ENCRYPTION_RESEAL;
+    delete process.env.STORAGE_ENCRYPTION_REQUIRE_V2;
     process.env.STORAGE_PROVIDER = "sqlite";
     process.env.STORAGE_SQLITE_PATH = path;
     process.env.JWT_SECRET = randomBytes(32).toString("base64url");
@@ -252,5 +260,92 @@ describe("resealStoreAtBoot", () => {
     expect(banner).toContain('credential_envelope is "v3"');
     expect(banner).toContain("refuses to open the store");
     expect(readdirSync(dir).filter((name) => name.includes("pre-reseal"))).toEqual([]);
+  });
+  /** The store's credential_envelope row, or undefined; the file is opened read-only and closed again. */
+  function markerOf(): string | undefined {
+    const db = new Database(path, { readonly: true });
+    try {
+      const row = db.prepare("SELECT value FROM storage_meta WHERE key = 'credential_envelope'").get() as
+        | { value: string }
+        | undefined;
+      return row?.value;
+    } finally {
+      db.close();
+    }
+  }
+
+  test("refuses the boot by name on a STORAGE_ENCRYPTION_REQUIRE_V2 value it cannot read, before the store is opened", async () => {
+    process.env.STORAGE_ENCRYPTION_REQUIRE_V2 = "yes";
+
+    const { result, exits, banner } = await run();
+
+    expect(result).toBe(false);
+    expect(exits).toEqual([1]);
+    expect(banner).toContain("STORAGE_ENCRYPTION_REQUIRE_V2 is invalid");
+    expect(banner).toContain('Got "yes"');
+    expect(banner).toContain("true, on or 1");
+    expect(existsSync(path)).toBe(false);
+  });
+
+  test("refuses the boot when STORAGE_ENCRYPTION_REQUIRE_V2 is set and STORAGE_PROVIDER is local", async () => {
+    process.env.STORAGE_ENCRYPTION_REQUIRE_V2 = "true";
+    delete process.env.STORAGE_PROVIDER;
+
+    const { result, exits, banner } = await run();
+
+    expect(result).toBe(false);
+    expect(exits).toEqual([1]);
+    expect(banner).toContain("STORAGE_ENCRYPTION_REQUIRE_V2 is set, but STORAGE_PROVIDER is local");
+  });
+
+  test("with STORAGE_ENCRYPTION_REQUIRE_V2 set, refuses the start by name on a store that holds no credential_envelope row, and changes nothing", async () => {
+    previousVersionStore();
+    process.env.STORAGE_ENCRYPTION_REQUIRE_V2 = "true";
+
+    const { result, exits, banner } = await run();
+
+    expect(result).toBe(false);
+    expect(exits).toEqual([1]);
+    expect(banner).toContain("the STORAGE_ENCRYPTION_REQUIRE_V2 check did not pass");
+    expect(banner).toContain(VERSION_TWO_NOT_RECORDED);
+    expect(readdirSync(dir).filter((name) => name.includes("pre-reseal"))).toEqual([]);
+    expect(markerOf()).toBeUndefined();
+  });
+
+  test("with both set, the re-seal runs first and the check follows it, so one start completes the upgrade", async () => {
+    previousVersionStore();
+    process.env.STORAGE_ENCRYPTION_RESEAL = "true";
+    process.env.STORAGE_ENCRYPTION_REQUIRE_V2 = "true";
+
+    const { result, exits, warned } = await run();
+
+    expect(result).toBe(true);
+    expect(exits).toEqual([]);
+    expect(warned.some((line) => line.includes("re-sealed 1 value(s)"))).toBe(true);
+    expect(markerOf()).toBe("v2");
+
+    // The next start keeps STORAGE_ENCRYPTION_REQUIRE_V2 and drops STORAGE_ENCRYPTION_RESEAL, and passes.
+    await closeStorageProvider();
+    delete process.env.STORAGE_ENCRYPTION_RESEAL;
+    expect(await run()).toMatchObject({ result: true, exits: [] });
+  });
+
+  test("with STORAGE_ENCRYPTION_REQUIRE_V2 set, refuses the start when the store does not read as retired at the check", async () => {
+    previousVersionStore();
+    process.env.STORAGE_ENCRYPTION_RESEAL = "true";
+    await run();
+    process.env.STORAGE_ENCRYPTION_REQUIRE_V2 = "true";
+    const provider = (await getStorageProvider())!;
+    const state = spyOn(provider, "readEnvelopeState").mockImplementation(async () => "v1-accepted");
+
+    try {
+      const { result, exits, banner } = await run();
+
+      expect(result).toBe(false);
+      expect(exits).toEqual([1]);
+      expect(banner).toContain(VERSION_TWO_NOT_RECORDED);
+    } finally {
+      state.mockRestore();
+    }
   });
 });

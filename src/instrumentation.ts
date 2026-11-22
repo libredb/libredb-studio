@@ -5,7 +5,8 @@
  * exit (docs/DISTRIBUTION.md#uncaught-errors-and-restarts), then the shutdown
  * handler (docs/DISTRIBUTION.md#stopping-the-server), then bootstrap
  * missing auth env (#109), run the boot preflights and the credential
- * re-seal when STORAGE_ENCRYPTION_RESEAL asks for it, and start copying the
+ * re-seal and check when STORAGE_ENCRYPTION_RESEAL or
+ * STORAGE_ENCRYPTION_REQUIRE_V2 asks for them, and start copying the
  * built-in samples (src/lib/seed/samples.ts), which boot never waits for: a
  * sample whose copy fails is logged once and listed unavailable.
  */
@@ -68,12 +69,13 @@ export async function register(): Promise<void> {
 
   // Credential re-seal (docs/STORAGE.md, "Re-sealing the store"): with
   // STORAGE_ENCRYPTION_RESEAL set, back the server store up, re-seal every
-  // stored credential and retire version 1 before the server serves; a
-  // STORAGE_ENCRYPTION_RESEAL value it cannot read, local mode, or a re-seal
-  // that does not complete refuses the boot. It does nothing while the
-  // variable is unset. It runs after bootstrapAuth (the storage key may come
-  // from the JWT_SECRET that fills in) and after the preflights, so a boot they
-  // refuse never touches the store.
+  // stored credential and retire version 1 before the server serves; then,
+  // with STORAGE_ENCRYPTION_REQUIRE_V2 set, check that the store records
+  // version 1 as retired. A value of either variable it cannot read, local
+  // mode, a re-seal that does not complete, or a check that does not pass
+  // refuses the boot. It does nothing while both are unset. It runs after
+  // bootstrapAuth (the storage key may come from the JWT_SECRET that fills in)
+  // and after the preflights, so a boot they refuse never touches the store.
   const { resealStoreAtBoot } = await import("@/lib/storage/reseal-at-boot");
   if (!(await resealStoreAtBoot())) return;
 

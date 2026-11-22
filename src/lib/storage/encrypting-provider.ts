@@ -2,6 +2,7 @@ import { logger } from "@/lib/logger";
 import { decryptConnections, encryptConnections, type OmittedSecret } from "./connection-secrets";
 import { readStoredSecret, sealSecret } from "./encryption";
 import { type AccountFactorField, accountBinding } from "./envelope-binding";
+import { requiresVersionTwo, resealSetting, VERSION_TWO_NOT_RECORDED } from "./envelope-settings";
 import type {
   AccountUpdateOptions,
   AccountWriteOptions,
@@ -38,10 +39,11 @@ import type { DatabaseConnection } from "@/lib/types";
  * Every value is sealed for its place (./envelope-binding.ts): a connection's for the row's owner
  * (the `userId` each method receives, which the route derived from the session), the connection's
  * id, the field and its identity fields; a factor for the account's email and the field. Whether a
- * version 1 envelope or an unsealed value still opens is the store's envelope state, read ONCE, in
+ * version 1 envelope or an unsealed value still opens is the store's envelope state, decided ONCE, in
  * initialize: the factory memoizes one provider per process, so a read never queries it, and a
  * process observes another replica's re-seal at its next restart, which the re-seal procedure
- * performs (docs/STORAGE.md, "Re-sealing the store").
+ * performs (docs/STORAGE.md, "Re-sealing the store"). With STORAGE_ENCRYPTION_REQUIRE_V2 set, the
+ * state is `v1-retired` whatever the store records.
  */
 
 const CONNECTIONS: StorageCollection = "connections";
@@ -54,7 +56,11 @@ export const UNDECRYPTABLE_WARNING_PREFIX = "Stored connection secrets could not
 
 /** Logged once per process, at initialize, while the store still opens version 1 envelopes and unsealed values. */
 export const V1_ACCEPTED_WARNING =
-  "Stored credentials still accept the version 1 envelope and unsealed values. Once every server runs this version, back up the store, set STORAGE_ENCRYPTION_RESEAL=true on every server and restart them to re-seal and retire version 1 (docs/STORAGE.md, Re-sealing the store).";
+  "Stored credentials still accept the version 1 envelope and unsealed values. Once every server runs this version, back up the store, start every server with STORAGE_ENCRYPTION_RESEAL=true and STORAGE_ENCRYPTION_REQUIRE_V2=true to re-seal and retire version 1, then remove STORAGE_ENCRYPTION_RESEAL and keep STORAGE_ENCRYPTION_REQUIRE_V2 (docs/STORAGE.md, Re-sealing the store).";
+
+/** Logged once per process, at initialize, when the store records version 1 as retired and STORAGE_ENCRYPTION_REQUIRE_V2 is not set. */
+export const RETIRED_IN_STORE_WARNING =
+  "The store records that version 1 is retired, but that is recorded only in the store: set STORAGE_ENCRYPTION_REQUIRE_V2=true to have the server refuse version 1 and unsealed values whatever the store holds (docs/STORAGE.md, Re-sealing the store).";
 
 const UNOPENABLE_ADVICE =
   "A value marked unopenable does not open for the place it is stored in with the current key: restore the previous JWT_SECRET (or STORAGE_ENCRYPTION_KEY) BEFORE the app writes again, or re-enter the affected credentials.";
@@ -154,10 +160,25 @@ class CredentialEncryptingProvider implements ServerStorageProvider {
 
   constructor(private readonly inner: ServerStorageProvider) {}
 
+  /**
+   * Opens the inner store and decides the envelope state for the life of this provider. With
+   * STORAGE_ENCRYPTION_REQUIRE_V2 set, the state is `v1-retired` whatever the store's marker says, and a store with no
+   * marker is refused by name, unless STORAGE_ENCRYPTION_RESEAL asks for a re-seal: then the boot step re-seals it and
+   * checks the marker before the server serves (./reseal-at-boot.ts). Without the setting, the marker decides.
+   */
   async initialize(): Promise<void> {
+    const required = requiresVersionTwo();
     await this.inner.initialize();
-    this.state = await this.inner.readEnvelopeState();
-    if (this.state === "v1-accepted") logger.warn(V1_ACCEPTED_WARNING, { provider: "storage-encryption" });
+    const recorded = await this.inner.readEnvelopeState();
+    if (required) {
+      if (recorded === "v1-accepted" && resealSetting() === "off") throw new Error(VERSION_TWO_NOT_RECORDED);
+      this.state = "v1-retired";
+      return;
+    }
+    this.state = recorded;
+    logger.warn(recorded === "v1-accepted" ? V1_ACCEPTED_WARNING : RETIRED_IN_STORE_WARNING, {
+      provider: "storage-encryption",
+    });
   }
 
   /** The state initialize read; a read of a credential before it is refused rather than guessed. */
