@@ -1515,9 +1515,7 @@ means the engine could not answer; an empty one means zero is a real measurement
 query log and no index object, so the count of listable rows really is zero. The Cassandra panels
 were different: its tables and secondary indexes *exist* and the schema tree lists them in the same
 frame, so `[]` there denied objects the product was showing.
-Since neither answer asks the engine, the performance, slow-query and index panels are not offered
-(see Engine facets below): `getMonitoringData` never reads them and the dashboard draws no
-Performance or Queries tab for Druid.
+`getPerformanceMetrics` answers `{}` and these two answer `[]` without asking the engine, so the performance, slow-query and index panels are not offered (see Engine facets below): `getMonitoringData` never reads them and the dashboard draws no Performance or Queries tab for Druid.
 - **`maxConnections` is `0`** because Druid publishes no connection limit anywhere in SQL — it has no
   pool. A number here would be invented.
 - **`uptime` says `"unknown"`, not `"0ms"`**, when either clock reading is missing: an uptime of zero
@@ -1575,7 +1573,7 @@ counts live in `getTableStats()`, where a denial costs one panel instead of the 
 
 Which of the seven monitoring panels `druid` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/druid/engine-facets.ts).
 `getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
-The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly, so such a method in a `No` row answers there as its Why cell says.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
 
 | Monitoring panel | Offered | Why |
 |---|---|---|
@@ -1690,9 +1688,8 @@ Three overrides:
 - `entityName` → **"Datasource"**, `entityNamePlural` → **"Datasources"**. Datasource is the Druid
   word for a table, and the sidebar is where a user meets it.
 - `slowQueriesEmptyState` → **"Druid keeps no query log: no system table and no endpoint holds
-  finished queries."** `getSlowQueries()` is empty by design, so the slow-query panel is not
-  offered and the dashboard draws no Queries tab here; before that, the panel was **always** empty,
-  and its hardcoded sentence used to tell the reader to enable `pg_stat_statements` (#463).
+  finished queries."**
+  `getSlowQueries()` is empty by design, so the slow-query panel is not offered and the dashboard draws no Queries tab here; before that, the panel was **always** empty, and its hardcoded sentence used to tell the reader to enable `pg_stat_statements` (#463).
 
 Everything else is inherited on purpose. **A Druid row is a row**, so renaming it would only make the
 grid speak a dialect the cluster does not. The maintenance labels are irrelevant here

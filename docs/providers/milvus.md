@@ -441,7 +441,7 @@ The Tables tab and Admin > Operations list the first 200 collections of the sele
 The first 200 collections of the database. Row counts are server estimates of flushed segments and do not subtract deletes; POST entities/query with outputFields ["count(*)"] is exact on a loaded collection.
 
 Index statistics carry each index's native type, `AUTOINDEX` as Milvus reports it, and cover only collections whose IndexDetail the user holds.
-Slow queries and sessions are not offered, so `getMonitoringData` never reads them and the dashboard draws no Queries or Sessions tab; the two empty-state labels a caller of the methods is given say why:
+Slow queries and sessions are not offered, so `getMonitoringData` never reads them and the dashboard draws no Queries or Sessions tab; the two empty-state labels are the labels for the `[]` that `getSlowQueries()` and `getActiveSessions()` answer, and no surface draws them while the panels are not offered:
 
 > Milvus keeps query statistics on its management port 9091, which Studio does not dial
 
@@ -453,7 +453,7 @@ For performance, storage and query-node metrics, point a Prometheus server at Mi
 
 Which of the seven monitoring panels `milvus` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/vector/milvus/engine-facets.ts).
 `getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
-The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly, so such a method in a `No` row answers there as its Why cell says.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
 
 | Monitoring panel | Offered | Why |
 |---|---|---|

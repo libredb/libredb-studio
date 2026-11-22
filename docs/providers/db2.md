@@ -495,7 +495,7 @@ The table list is what Run Statistics and Reorganize Table are run from: the obj
 Each row carries the catalog's `CARD` as its row count, which is -1 until RUNSTATS has run and reads as 0 then, and no size, which reads N/A.
 Every other read answers empty on purpose in this version, without asking the server: `getPerformanceMetrics` answers `{}`, and `getSlowQueries`, `getActiveSessions`, `getIndexStats` and `getStorageStats` answer `[]`.
 None of those five panels is offered (see Engine facets below), so `getMonitoringData` never reads them and the dashboard draws no Performance, Queries, Sessions or Storage tab for Db2.
-The empty-state labels the provider still ships say why, for a caller of the method itself:
+The empty-state labels the provider still ships are the labels for the `[]` that `getActiveSessions()` and `getSlowQueries()` answer, and no surface draws them while the panels are not offered:
 
 - Sessions: "Db2 sessions are not read in this version of the Db2 provider."
 - Slow queries: "Db2 query statistics are not read in this version of the Db2 provider."
@@ -507,7 +507,7 @@ Only the table list can fail: a refused read is reported on that panel with the 
 
 Which of the seven monitoring panels `db2` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/db2/engine-facets.ts).
 `getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
-The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly, so such a method in a `No` row answers there as its Why cell says.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
 
 | Monitoring panel | Offered | Why |
 |---|---|---|

@@ -1277,7 +1277,7 @@ their sum can be larger than the database size.
 
 Which of the seven monitoring panels `sqlite` offers is its row in `ENGINE_FACETS`, declared in [`sqlite-engine-facets.ts`](../../src/lib/db/providers/sql/sqlite-engine-facets.ts).
 `getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
-The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly, so such a method in a `No` row answers there as its Why cell says.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
 
 | Monitoring panel | Offered | Why |
 |---|---|---|
@@ -1397,10 +1397,8 @@ narrower than the statement: `VACUUM` is not per-table, which is what
 their wording from that `label` rather than from this field.
 
 One field is overridden: `slowQueriesEmptyState` → *"SQLite keeps no statistics about finished
-statements, so there is nothing to enable."* `getSlowQueries()` answers `[]` unconditionally
-([§7](#7-monitoring--health)), so the slow-query panel is not offered and the dashboard draws no
-Queries tab here; before that, the panel was always empty, and its sentence was hardcoded to
-PostgreSQL's `pg_stat_statements` advice (#463).
+statements, so there is nothing to enable."*
+`getSlowQueries()` answers `[]` unconditionally ([§7](#7-monitoring--health)), so the slow-query panel is not offered and the dashboard draws no Queries tab here; before that, the panel was always empty, and its sentence was hardcoded to PostgreSQL's `pg_stat_statements` advice (#463).
 
 Two overrides in total. The second is the Operations tab's global Reindex card, hardcoded to
 PostgreSQL's *"Reconstructs all indexes in the database."* until #464. The global card

@@ -1530,16 +1530,14 @@ The honest empties, each with its reason:
   different and false claim — and **the tabs did read them that way** until the rule #448 settled for
   the Storage tab reached them: measured 2026-08-19 on OpenSearch, which is this same code path, the
   Overview showed *Buffer Pool 0%* and *Deadlocks 0* for two fields this payload omits.
-  Since the answer asks the cluster nothing, the performance panel is not offered (see Engine facets
-  below): `getMonitoringData` never reads it, and the Overview draws neither card.
+  Since the answer asks the cluster nothing, the performance panel is not offered (see Engine facets below): `getMonitoringData` never reads it, and the Overview draws neither card.
   The numbers do exist on this product's stats endpoints, so
   this is a recorded gap rather than an impossibility: widening the seam by one call is what a future
   phase would do, and doing it here would have meant reaching around the seam.
 - **`getSlowQueries()` and `getActiveSessions()` return `[]` rather than throwing.** Nothing is broken
   and nothing is misconfigured, so a caller of either method gets a quiet answer, not a failure. Only
   `runMaintenance()` throws, because that one is a *request to act*.
-  Neither answer asks the cluster, so neither panel is offered: the dashboard draws no Queries or
-  Sessions tab for Elasticsearch.
+  Neither answer asks the cluster, so neither panel is offered: the dashboard draws no Queries or Sessions tab for Elasticsearch.
 - **`activeConnections` is absent, not 0.** The cluster counts open HTTP connections per node in its
   stats API, which is not one of this seam's five calls, and the shard and node counts that *are* here
   would be a different number wearing this field's name — so nothing is knowable, and the field is
@@ -1597,7 +1595,7 @@ the cluster stores zero bytes.
 
 Which of the seven monitoring panels `elasticsearch` offers is its row in `ENGINE_FACETS`, declared in [`elasticsearch-engine-facets.ts`](../../src/lib/db/providers/sql/search/elasticsearch-engine-facets.ts).
 `getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
-The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly, so such a method in a `No` row answers there as its Why cell says.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
 
 | Monitoring panel | Offered | Why |
 |---|---|---|

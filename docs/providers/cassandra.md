@@ -1287,7 +1287,7 @@ panel has the opposite obligation — it is the surface that must say what it co
 
 Which of the seven monitoring panels `cassandra` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/cassandra/engine-facets.ts).
 `getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
-The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly, so such a method in a `No` row answers there as its Why cell says.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
 
 | Monitoring panel | Offered | Why |
 |---|---|---|
@@ -1369,9 +1369,7 @@ SQL, and each of those three is a syntax error here.
 
 `slowQueriesEmptyState` is declared — *"Cassandra keeps no aggregate of finished statements: the
 slow-query threshold writes to the node's log file rather than to a table."* — because
-`getSlowQueries()` is empty by design ([§7](#7-monitoring--health)), so the slow-query panel is not
-offered and the dashboard draws no Queries tab here; before that, the panel was **always** empty,
-and its hardcoded sentence used to tell the reader to enable `pg_stat_statements` (#463).
+`getSlowQueries()` is empty by design ([§7](#7-monitoring--health)), so the slow-query panel is not offered and the dashboard draws no Queries tab here; before that, the panel was **always** empty, and its hardcoded sentence used to tell the reader to enable `pg_stat_statements` (#463).
 
 ### SQL writing
 

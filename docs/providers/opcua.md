@@ -938,11 +938,8 @@ They now reject with one sentence, `An OPC UA server holds an address space of n
 tables, and publishes no table, index or size statistics: there is nothing here to measure. The nodes
 themselves are in the Keys panel.`
 
-**`getSlowQueries()` and `getActiveSessions()` keep their empty arrays**, and say why through
-`getLabels()`, the member ten other providers use for exactly this. The defaults are written for a
-SQL server, and that was not a theoretical mismatch: the Queries panel told an OPC UA reader to
-install `pg_stat_statements`, a PostgreSQL extension, and the Sessions panel said "No active sessions
-found." against a server that was holding this very session.
+**`getSlowQueries()` and `getActiveSessions()` keep their empty arrays**, and say why through `getLabels()`, the member ten other providers use for exactly this.
+The defaults are written for a SQL server, and that was not a theoretical mismatch: the Queries panel told an OPC UA reader to install `pg_stat_statements`, a PostgreSQL extension, and the Sessions panel said "No active sessions found." against a server that was holding this very session.
 
 Only the overview panel is offered in OPC UA's `ENGINE_FACETS` row ([Engine facets](#engine-facets)).
 `getMonitoringData` reads none of the six other panels and lists them in `notOffered`, so the dashboard draws the Overview tab and the pool view only, and none of the refusals or labels above is drawn.
@@ -952,7 +949,7 @@ The refusals and empty arrays above are what each method answers when called dir
 
 Which of the seven monitoring panels `opcua` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/industrial/opcua/engine-facets.ts).
 `getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
-The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly, so such a method in a `No` row answers there as its Why cell says.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
 
 | Monitoring panel | Offered | Why |
 |---|---|---|
