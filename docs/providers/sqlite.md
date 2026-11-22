@@ -1088,9 +1088,9 @@ Minimal by nature — SQLite keeps almost no server-style runtime statistics.
 |--------|--------|-------|
 | `getHealth()` | `fs.statSync` / page PRAGMAs, `PRAGMA integrity_check`, `PRAGMA journal_mode` | reports integrity + journal mode as info rows; `activeConnections: 1`, cache-hit `N/A`; `databaseSize` reads `"N/A"`, never a formatted `0`, when the size read fails — [§7.3](#73-when-the-database-size-is-not-measurable) |
 | `getOverview()` | `sqlite_version()`, file size, `sqlite_master` counts | `uptime: N/A`, `maxConnections: 1`; `databaseSizeBytes` is **omitted** and `databaseSize` stays `N/A`, never a `0`, when the size read fails — [§7.3](#73-when-the-database-size-is-not-measurable) |
-| `getPerformanceMetrics()` | — | **no cache-hit ratio, no QPS, no buffer-pool usage** — all three are omitted, so both monitoring tabs show "N/A / Not measured" for them ([§7.1](#71-there-is-no-cache-hit-ratio-and-there-cannot-be)); only `deadlocks: 0` is reported, which is a fact about the engine |
-| `getSlowQueries()` | — | always `[]` (SQLite has no query stats) |
-| `getActiveSessions()` | — | the single current process session; `state` and `activity` are both `active` |
+| `getPerformanceMetrics()` | none | **no cache-hit ratio, no QPS, no buffer-pool usage**: all three are omitted ([§7.1](#71-there-is-no-cache-hit-ratio-and-there-cannot-be)); only `deadlocks: 0` is reported, which is a fact about the engine rather than a reading, so the panel is not offered: never read and not drawn |
+| `getSlowQueries()` | none | always `[]` (SQLite has no query stats), so the panel is not offered |
+| `getActiveSessions()` | none | the single current process session, carrying Studio's own process id; `state` and `activity` are both `active`. It is a constant rather than a reading, so the panel is not offered |
 | `getTableStats()` | `COUNT(*)` per table, `dbstat` for the bytes | size is **measured page bytes wherever `dbstat` is compiled in, and absent where it is not** — see [§7.2](#72-per-table-size-depends-on-the-sqlite-build-behind-the-driver) |
 | `getIndexStats()` | `PRAGMA index_list`/`index_info` | `scans` always `0` (no usage counter); `indexSize` is `N/A` and `indexSizeBytes` is **omitted** — SQLite publishes no per-index size, and a `0` was summed by the Storage tab as an empty index |
 | `getStorageStats()` | `fs.statSync` on the DB / `-wal` / `-shm` files | per-file sizes (on disk only); the main row's `size` reads `"N/A"`, never a formatted `0`, when its size read fails, see [§7.3](#73-when-the-database-size-is-not-measurable) |
@@ -1725,9 +1725,9 @@ not apply to SQLite ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
 - **No EXPLAIN plan metrics.** `EXPLAIN QUERY PLAN` returns step descriptions only — SQLite does not
   report per-node cost, row estimates, or timing data.
 - **Absent monitoring:** there is **no cache-hit ratio, no queries-per-second and no buffer-pool
-  usage** — the drivers expose no counters for them, so the panels say "Not measured"
+  usage**: the drivers expose no counters for them, so the performance panel is not offered
   ([§7.1](#71-there-is-no-cache-hit-ratio-and-there-cannot-be)); index `scans` is always `0` and
-  `getIndexStats()`'s per-index size is `N/A`; slow queries are unavailable.
+  `getIndexStats()`'s per-index size is `N/A`; slow queries and sessions are not offered either.
 - **Per-table size only under `node:sqlite`.** `dbstat` is compiled into that driver and out of
   `bun:sqlite`, so under Bun the byte fields are omitted rather than estimated
   ([§7.2](#72-per-table-size-depends-on-the-sqlite-build-behind-the-driver)). `getIndexStats()` still reports

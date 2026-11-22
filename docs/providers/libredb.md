@@ -959,8 +959,8 @@ There is no embedded stats API.
 |--------|--------|---------|
 | `getHealth()` | `fs.statSync` | `activeConnections: 1`, file size as `databaseSize` (`"N/A"` when unmeasurable — [§7.3](#73-when-the-file-size-is-not-measurable)), `cacheHitRatio: "N/A"` |
 | `getOverview()` | `fs.statSync` + schema scan | `version`, file size, namespace count as `tableCount`, `indexCount: 0`; `databaseSizeBytes` is **omitted** and `databaseSize` stays `"N/A"`, never a `0`, when the stat fails — [§7.3](#73-when-the-file-size-is-not-measurable) |
-| `getPerformanceMetrics()` | — | `{}` — nothing is measurable here |
-| `getSlowQueries()` | — | `[]`; the Queries panel renders `slowQueriesEmptyState` |
+| `getPerformanceMetrics()` | none | `{}`: nothing is measurable here, so the panel is not offered |
+| `getSlowQueries()` | none | `[]`, so the panel is not offered: never read and not drawn |
 | `getActiveSessions()` | — | **throws** `LIBREDB_ACTIVE_SESSIONS_REFUSAL` — no session registry exists |
 | `getStorageStats()` | `fs.statSync` | one entry: file path + size; `sizeBytes` is a **required** number, so it stays `0` (never absent) when the stat fails — [§7.3](#73-when-the-file-size-is-not-measurable) |
 | `getTableStats()` | the schema tree's scan | one row per namespace: lens as `schemaName`, key count as `rowCount`, no bytes |
@@ -969,9 +969,8 @@ There is no embedded stats API.
 `getOverview().tableCount` calls the object surface internally — it is a full scan, so it honors the
 10 000-key cap and may undercount for very large files.
 
-Because `getPerformanceMetrics()` returns an empty object, every card on the Overview and Performance
-tabs — *Cache Hit*, *Buffer*, *Deadlocks* — reads `N/A` beside *Not measured* rather than a
-percentage or a `0` badged healthy.
+Because `getPerformanceMetrics()` returns an empty object, the performance panel is not offered: the dashboard draws no Performance tab and no *Cache Hit* or *Performance* card on the Overview for LibreDB.
+The panels the engine offers are its row in `ENGINE_FACETS` ([Engine facets](#engine-facets)).
 
 ### 7.1 There is no cache hit ratio, and there never will be
 
@@ -982,7 +981,7 @@ reads from is this process's own memory rather than a buffer pool with hits and 
 no counter to read and nothing a ratio would be a ratio *of*. A number this provider invents is worse
 than a gap, because the panel cannot tell it apart from a measurement (the rule
 [#424](https://github.com/libredb/libredb-studio/issues/424) exists to enforce). Both sites now omit
-it, permanently: the *Cache Hit* card reads `N/A` / *Not measured*, and the agent's health tool
+it, permanently: the performance panel is not offered, so no *Cache Hit* card is drawn, and the agent's health tool
 reports the string `"N/A"`.
 
 ### 7.2 The two panels that are absent, and the one that is empty
@@ -1022,6 +1021,9 @@ separately:
   `ProviderLabels.slowQueriesEmptyState` in place of an empty list and this provider declares one
   ([§9](#getlabels)), so LibreDB's own sentence already reaches the user without an error. This is
   the one always-empty panel that is allowed to stay empty.
+
+None of the three panels with no source (performance, slow queries and sessions) nor the index panel is offered in LibreDB's `ENGINE_FACETS` row ([Engine facets](#engine-facets)): `getMonitoringData` never calls these methods and lists the panels in `notOffered`, and the dashboard draws no Performance, Queries or Sessions tab.
+The refusals and the label above are what each method and label answers when read directly.
 
 `getHealth()` keeps answering with `activeSessions: []` where the panel refuses, and that is
 deliberate: `POST /api/db/test-connection` calls it and the connection dialog's **Save** is gated on

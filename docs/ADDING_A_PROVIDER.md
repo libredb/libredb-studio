@@ -453,7 +453,7 @@ Declare neither when your engine has nothing to caution about; `POST /api/db/tes
 | Method | What it does |
 |--------|-------------|
 | `isConnected()` | Returns `this.state.connected` |
-| `getMonitoringData()` | Orchestrates `getOverview`, `getPerformanceMetrics`, etc. |
+| `getMonitoringData()` | Reads the panels the engine's `ENGINE_FACETS` row offers (`getOverview`, `getPerformanceMetrics`, etc.) and lists the others in `notOffered`, never calling them |
 | `validate()` | Checks that `config.type` and `config.id` exist |
 | `ensureConnected()` | Throws if not connected |
 | `trackQuery()` | Increments/decrements active query counter |
@@ -807,6 +807,7 @@ control that only emits invalid input. That is the defect class
 The same honesty rule governs monitoring: **a source the connected user cannot read returns empty,
 it never throws.** Monitoring catalogs are frequently permission-gated, so a denial is the normal
 case for a restricted user and must not break an otherwise working connection.
+A panel the engine cannot read at all is a different case: it is declared not offered in the engine's `ENGINE_FACETS` row rather than answered empty, a constant or a refusal, so core never calls its method and no surface draws it.
 
 ### The `createTable` grammar
 
@@ -1144,6 +1145,7 @@ The integration points, all of which need an entry. This is the list the Strateg
 - [ ] `src/lib/db/connection-fields.ts`: the type's row of `CONNECTION_FIELDS`, which the entry's `connectionFields` reads by reference, and its row of `SEED_ONLY_FIELDS`, which is `null` unless only this engine's provider reads a field
 - [ ] `src/lib/db/providers/<family>/<type-id>/connection-string.ts` (or `<type-id>-connection-string.ts` beside a flat provider file): **new:** the type's `ConnectionStringSpec`, with its scheme, `readTls`, `paste` and `validateSeed`, each `null` when the engine has none; add its row to `CONNECTION_STRING` in `src/lib/db/connection-string/index.ts`. A `paste` claims only the engine's own spellings, names the ones `detectConnectionStringType` reports, parses them, and lists in `formats` the forms the Paste URL box names for it; list its type in `CONNECTION_STRING_PASTE_ORDER` in the same file, where `tests/unit/db/connection-string/paste.test.ts` refuses a row that claims another engine's text unless the pair is declared in `CONNECTION_STRING_PASTE_OVERLAPS` beside it. Neither `src/lib/connection-string-parser.ts` nor `src/lib/connection-paste-formats.ts` is edited. Run `UPDATE_GOLDEN=1` for `tests/unit/db/connection-string/golden.test.ts` and `tests/unit/db/connection-form/golden.test.tsx`
 - [ ] `src/lib/db/providers/<family>/<type-id>/execution-ui.ts` (or `<type-id>-execution-ui.ts` beside a flat provider file): **new:** the type's `ExecutionUiSpec`, its `commitKeyword` (`SQL_COMMIT_KEYWORD` unless the engine keeps a transaction with another keyword) and `consentDeadline` (`null` unless a long read ends differently on it); add its row to `EXECUTION_UI` in `src/lib/db/execution-ui/index.ts` and run `UPDATE_GOLDEN=1` for `tests/unit/db/execution-ui/golden.test.tsx`
+- [ ] `src/lib/db/providers/<family>/<type-id>/engine-facets.ts` (or `<type-id>-engine-facets.ts` beside a flat provider file): **new:** the type's `EngineFacets`, stating each of the seven monitoring panels `"offered"` where its read asks the engine and `"not-offered"` where it would answer a stub empty, a constant or a refusal; add its row to `ENGINE_FACETS` in `src/lib/db/engine-facets/index.ts`, its expectation to `EXPECTED_OFFERED` in `tests/unit/db/engine-facets/census.test.ts`, and the `Engine facets` subsection to its provider doc
 - [ ] `src/lib/db/connection-form.ts`: **append** to `CONNECTION_PICKER_ORDER` (do not retype the array)
 - [ ] `src/components/icons/db-icons.tsx` — the engine's mark (`strokeWidth={1.5}`, no HTML size attrs)
 - [ ] `src/lib/db/compatibility.ts` — the `SHIPPED` record. It is an exhaustive

@@ -897,8 +897,8 @@ facts** — so what cannot be read is refused or named, and nothing is filled in
 | `getOverview()` | the product name with its software version, and the uptime, both read from `Server/ServerStatus` ([below](#71-what-the-overview-card-really-reads)); size `"unknown"`; `tableCount` and `indexCount` **0**, because the shape takes a number and a server has neither |
 | `getHealth()` | size and cache ratio `"unknown"`, no sessions, no slow queries |
 | `getStorageStats()` / `getTableStats()` / `getIndexStats()` | **refused**, with this provider's own sentence ([below](#72-a-panel-that-cannot-be-read-refuses-rather-than-reporting-zero)) |
-| `getSlowQueries()` | `[]`, and `getLabels().slowQueriesEmptyState` says why in the panel |
-| `getActiveSessions()` | `[]`, and `getLabels().sessionsEmptyState` says why in the panel |
+| `getSlowQueries()` | `[]`, and `getLabels().slowQueriesEmptyState` says why; the panel is not offered, so it is never read and not drawn |
+| `getActiveSessions()` | `[]`, and `getLabels().sessionsEmptyState` says why; the panel is not offered, so it is never read and not drawn |
 | `getPerformanceMetrics()` | `{}` |
 
 `CurrentSessionCount` (`i=2277`) is a number, not a session list, and it is not portable either:
@@ -945,6 +945,9 @@ providers use for exactly this. Their defaults are written for a SQL server, and
 theoretical mismatch — the Queries panel told an OPC UA reader to install `pg_stat_statements`, a
 PostgreSQL extension, and the Sessions panel said "No active sessions found." against a server that
 was holding this very session.
+
+Since the engine facets registry only the overview panel is offered in OPC UA's `ENGINE_FACETS` row ([Engine facets](#engine-facets)).
+`getMonitoringData` reads none of the six other panels and lists them in `notOffered`, so the dashboard draws the Overview tab and the pool view only; the refusals and empty arrays above are what each method answers when called directly.
 
 ### Engine facets
 

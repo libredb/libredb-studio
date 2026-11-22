@@ -1273,6 +1273,10 @@ Cassandra's own sentence into the panel — *"Cassandra keeps no aggregate of fi
 slow-query threshold writes to the node's log file rather than to a table."* Converting it would move
 the same sentence from a label the tab renders to an error entry, and buy nothing.
 
+**Four panels are not offered.** The three refused on every build and the slow-query panel are declared not offered in Cassandra's `ENGINE_FACETS` row ([Engine facets](#engine-facets)): `getMonitoringData` never reads them and lists them in `notOffered`, with no `errors` entry, and the dashboard draws no Queries, Tables or Storage tab for Cassandra.
+The sentences above are what each method answers when called directly.
+The two panels refused only where `system_views` is absent stay offered: on such a build they fail with their sentence.
+
 `getHealth()` does **not** refuse: it degrades exactly as before, because
 `POST /api/db/test-connection` calls it and the connection dialog's save is gated on that request. A
 throwing health check would lock the whole ScyllaDB family out of the product

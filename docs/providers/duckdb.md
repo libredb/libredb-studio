@@ -308,6 +308,9 @@ screen**, through the two `ProviderLabels` fields the provider declares:
   provider that declares neither label keeps the generic wording. (The `sessionsUnavailable` path
   beside it is a third fact again: it renders a reason only when the reading *failed*.)
 
+Neither panel is offered in DuckDB's `ENGINE_FACETS` row ([Engine facets](#engine-facets)), so core never reads them, and neither the monitoring dashboard nor the admin Operations page draws them.
+The two sentences above are no longer shown on either page.
+
 `sqlite.ts` answers this panel with a row describing its own handle. That row would be true here
 too, but it would be the only row the panel could ever show, and "the engine reports one session"
 is a different claim from "the engine reports nothing". The count that *is* measurable travels as
@@ -1272,8 +1275,8 @@ and one index.
 | Memory limit | `50.0 GiB` on the probe machine — 80% of host RAM, so **never asserted in a test** |
 | Temporary files | Empty, from `duckdb_temporary_files()` — a real reading, not a gap |
 | Settings | `access_mode`, `memory_limit`, `threads`, from `duckdb_settings()` |
-| Slow queries | **Empty, permanently** — `duckdb_queries()` does not exist, and the panel says so in DuckDB's own words through `slowQueriesEmptyState` (§3.7) |
-| Active sessions | **Empty, permanently** — `duckdb_connections()` does not exist, and the panel says so in DuckDB's own words through `sessionsEmptyState` (§3.7) |
+| Slow queries | **Not offered**: `duckdb_queries()` does not exist, so the panel is never read and not drawn (§3.7, [Engine facets](#engine-facets)) |
+| Active sessions | **Not offered**: `duckdb_connections()` does not exist, so the panel is never read and not drawn (§3.7, [Engine facets](#engine-facets)) |
 | Table bytes | Only via `PRAGMA storage_info('<table>')`, per column segment |
 
 Where a reading is absent it is reported as absent with the reason, never as `0`: a zero on a size

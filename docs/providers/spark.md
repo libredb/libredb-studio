@@ -495,6 +495,7 @@ No plan is requested beside an ordinary run.
 | Indexes | Empty: no Spark SQL statement lists indexes |
 | Storage | Refused: `Spark reports no storage figure Studio can read in this version.` |
 
+Only the overview is offered in Spark's `ENGINE_FACETS` row (Engine facets below), so `getMonitoringData` reads none of the six other panels and the dashboard draws the Overview tab and the pool view only; the rows above for those panels are what each method answers when called directly.
 A catalog with no current namespace, which Spark spells as an empty name, shows a table count of 0 and no "counted from" line.
 The overview's version is the server's text as the version sentences of [section 2.4](#24-test-connection) quote it: withheld whole when it holds the token, and otherwise cut to 64 characters.
 

@@ -394,9 +394,9 @@ register.
 ## 7. Monitoring and health
 
 The health read reports the session: whether it is open, and the server's `session-id` and
-capability count from the hello. There are no performance metrics, no slow queries, no table or
-index statistics and no storage statistics, and each of those answers empty rather than throwing,
-because the truthful answer is that this engine publishes none of them.
+capability count from the hello.
+There are no performance metrics, no slow queries, no session list, no table or index statistics and no storage statistics: each of those methods refuses with its reason, because this engine publishes none of them.
+None of those six panels is offered, so `getMonitoringData` never reads them and the dashboard draws only the Overview tab and the pool view for NETCONF.
 
 ### Engine facets
 

@@ -544,10 +544,10 @@ Each surface reads the Kafka protocol only, and a surface that cannot give an ho
 | `getHealth()` | a metadata read of the brokers, forced past the client's cache, then the log directories | The forced read must succeed, or the mapped error is thrown; `databaseSize` is the overview's figure, the cache hit ratio "N/A", and no active connection count, because Kafka does not report one and absence differs from zero |
 | `getOverview()` | the forced broker read, the topic listing, the configs of the lowest listed node id, and the log directories | `tableCount` is the exact topic count, internal topics excluded; `maxConnections` is that broker's `max.connections`, 0 ("no limit published") when the value is withheld or the configs are refused, and a value that is not a whole number is refused as a protocol error; `databaseSize` is the log-directory sum over every broker, labelled "on disk, all replicas, internal topics excluded", or "N/A" when that read is refused; `version` and `uptime` are "N/A", because the protocol reports neither a product version nor a start time |
 | `getStorageStats()` | the log directories | One row per broker and log directory, `broker <id>: <path>`, with the summed partition sizes of the listed topics and a usage percentage where the broker reports its totals; `[]` when the read is refused |
-| `getTableStats()` | none | `[]`: `TableStats.rowCount` is a required number, and a topic has no honest message count |
-| `getSlowQueries()`, `getActiveSessions()` | none | `[]`, with the empty states "Kafka exposes no query log" and "Kafka does not report client sessions over its protocol" |
-| `getIndexStats()` | none | `[]`: a topic has no index |
-| `getPerformanceMetrics()` | none | Every metric absent; the panel renders unavailable |
+| `getTableStats()` | none | `[]`: `TableStats.rowCount` is a required number, and a topic has no honest message count, so the panel is not offered |
+| `getSlowQueries()`, `getActiveSessions()` | none | `[]`, with the empty states "Kafka exposes no query log" and "Kafka does not report client sessions over its protocol"; neither panel is offered, so neither is read by the dashboard or drawn |
+| `getIndexStats()` | none | `[]`: a topic has no index, so the panel is not offered |
+| `getPerformanceMetrics()` | none | Every metric absent, so the panel is not offered: never read and not drawn |
 | `getPoolStats()` | not implemented | The route detects it by presence and shows its fallback |
 
 A principal without Describe on the cluster is refused the log directories, and one without DescribeConfigs on the cluster the broker configs, and each refusal degrades only its own figure; any other failure, and a refusal of any other read, still fails the panel.

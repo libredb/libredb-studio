@@ -455,6 +455,7 @@ On the no-cost Spark plan, a project that passes a product's no-cost quota has t
 ## 9. Monitoring & health
 
 Health and pulse reuse the connect probe; the overview and the monitoring panels send no request.
+The overview reports the version the server named at connect, so it is the one panel offered; the others answer empty without asking the server, so they are not offered, never read and not drawn.
 
 ### Engine facets
 

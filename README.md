@@ -318,7 +318,7 @@ Standalone application only: the embedded `@libredb/studio` package carries no a
 - **Launch sign-in**: A platform that hosts Studio can sign its users in with a short-lived signed link and open a seeded connection, once `LAUNCH_TOKEN_SECRET`, `LAUNCH_TOKEN_AUDIENCE` and `LAUNCH_TOKEN_ISSUER` are set ([guide](docs/LAUNCH.md)).
 
 ### DBA Maintenance Toolkit (Admin Only)
-- **Live Monitoring Dashboard**: 7-tab monitoring with Overview, Performance, Queries, Sessions, Tables, Storage, and Connection Pool views.
+- **Live Monitoring Dashboard**: Overview, Performance, Queries, Sessions, Tables and Storage tabs for the panels each engine offers, plus the Connection Pool view; a panel an engine cannot read is named, never drawn empty.
 - **Time-Series Trend Charts**: Real-time metric trends (connections, cache hit ratio, buffer pool, deadlocks) with auto-refreshing ring buffer history.
 - **Configurable Auto-Refresh**: Polling intervals from 5s to 60s with play/pause control.
 - **Threshold Alerting**: Color-coded health indicators (healthy/warning/critical) for cache hit ratio, connection usage, deadlocks, and buffer pool utilization.

@@ -360,7 +360,7 @@ A folder lists the first 1,000 objects; past that its count is "1,000 or more", 
 ## 7. Monitoring & health
 
 Health reads `/readyz` and `/version`; the overview counts nodes and namespaces from the same capped walk as the tree.
-Kubernetes keeps no query log, lists no client sessions and has no tables, so those panels say so.
+Kubernetes keeps no query log, lists no client sessions and has no tables, so only the overview panel is offered: the others are never read and not drawn.
 
 ### Engine facets
 
