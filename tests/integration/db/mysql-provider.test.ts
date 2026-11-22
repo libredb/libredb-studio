@@ -32,6 +32,7 @@ import { CATALOG_TYPE_RULES } from "@/lib/db/providers/sql/mysql";
 import { MYSQL_CREATE_TABLE } from "@/lib/db/providers/sql/mysql-create-table";
 import { diffSchemas } from "@/lib/schema-diff/diff-engine";
 import type { DetailedObject } from "@/lib/db/detailed-object";
+import { errorKind } from "@/lib/db/error-record";
 
 // ============================================================================
 // Mock mysql2/promise BEFORE importing the provider
@@ -8982,9 +8983,11 @@ describe("queryReadOnly() - the agent read-only execution profile (#1612)", () =
         if (sql.trim().toUpperCase().startsWith("SELECT")) return Promise.resolve([rows, [{ name: "id" }]]);
         return profileDefault(sql);
       };
-      await expect(profiled.queryReadOnly("SELECT id FROM t", budget({ maxResultRows: 10 }))).rejects.toThrow(
-        /row budget: 11 rows > 10 allowed/,
-      );
+      const refused = await profiled
+        .queryReadOnly("SELECT id FROM t", budget({ maxResultRows: 10 }))
+        .catch((caught: unknown) => caught);
+      expect((refused as Error).message).toMatch(/row budget: 11 rows > 10 allowed/);
+      expect(errorKind(refused)).toBe("row-budget-refusal");
       expect(roSessions.at(-1)!.sets[0]).toBe("SET SESSION sql_select_limit = 11");
     });
 
@@ -8998,9 +9001,11 @@ describe("queryReadOnly() - the agent read-only execution profile (#1612)", () =
         if (sql.trim().toUpperCase().startsWith("SELECT")) return Promise.resolve([rows, [{ name: "id" }]]);
         return profileDefault(sql);
       };
-      await expect(
-        profiled.queryReadOnly("SELECT id FROM t CROSS JOIN u LIMIT 100000000", budget({ maxResultRows: 10 })),
-      ).rejects.toThrow(/row budget: 11 rows > 10 allowed/);
+      const refused = await profiled
+        .queryReadOnly("SELECT id FROM t CROSS JOIN u LIMIT 100000000", budget({ maxResultRows: 10 }))
+        .catch((caught: unknown) => caught);
+      expect((refused as Error).message).toMatch(/row budget: 11 rows > 10 allowed/);
+      expect(errorKind(refused)).toBe("row-budget-refusal");
       // The server's generation is stopped from another session, and the connection
       // is destroyed rather than released: one dropped mid-result is not one this
       // profile can prove clean again.
@@ -9076,9 +9081,11 @@ describe("queryReadOnly() - the agent read-only execution profile (#1612)", () =
       expect(crossing).toBeGreaterThan(80);
       expect(crossing - measureRowBytes(served[2])).toBeLessThanOrEqual(80);
 
-      await expect(
-        profiled.queryReadOnly("SELECT customer_display_name FROM t", budget({ maxResultBytes: 80 })),
-      ).rejects.toThrow(byteBudgetSentence(crossing, 80));
+      const refused = await profiled
+        .queryReadOnly("SELECT customer_display_name FROM t", budget({ maxResultBytes: 80 }))
+        .catch((caught: unknown) => caught);
+      expect((refused as Error).message).toContain(byteBudgetSentence(crossing, 80));
+      expect(errorKind(refused)).toBe("byte-budget-refusal");
       expect(protocolCalls.some((c) => c.sql.toLowerCase().startsWith("kill query 4242"))).toBe(true);
       expect(roSessions.at(-1)!.destroyed).toBe(true);
     });
@@ -9261,6 +9268,8 @@ describe("queryReadOnly() - the agent read-only execution profile (#1612)", () =
           "The connection was closed while the read-only statement ran, so it was not killed at its deadline of 60ms and was not answered",
         );
         await expect(refusal).rejects.toBeInstanceOf(QueryError);
+        // The connection closed under it, which is no budget refusal: the other branch of the deadline's sentence.
+        expect(errorKind(await refusal.catch((caught: unknown) => caught))).toBe("query");
         expect(protocolCalls.some((c) => c.sql.toLowerCase().startsWith("kill"))).toBe(false);
         expect(warn).toHaveBeenCalledWith(
           "[MySQL] KILL QUERY 4242 for a read-only statement was not sent: the connection was closed",
@@ -9347,9 +9356,11 @@ describe("queryReadOnly() - the agent read-only execution profile (#1612)", () =
         const refusal = profiled.queryReadOnly("SELECT SLEEP(5)", budget({ statementTimeoutMs: 60 }));
         await statement.reached;
         const closing = profiled.disconnect();
-        await expect(refusal).rejects.toThrow(
+        const refused = await refusal.catch((caught: unknown) => caught);
+        expect((refused as Error).message).toContain(
           "Read-only execution exceeded the statement deadline of 60ms and was killed server-side",
         );
+        expect(errorKind(refused)).toBe("time-budget-refusal");
         releaseRoEnd();
         await closing;
         expect(protocolCalls.filter((c) => c.sql.toLowerCase().startsWith("kill")).map((c) => c.sql)).toEqual([

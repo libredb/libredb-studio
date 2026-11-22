@@ -39,6 +39,7 @@ import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { renderSegments, userPositionOf } from "@/lib/db/object-edit";
 import { POSTGRES_CREATE_TABLE } from "@/lib/db/providers/sql/postgres-create-table";
 import { logger } from "@/lib/logger";
+import { errorKind } from "@/lib/db/error-record";
 
 /** What the provider logs when a pooled client reports an `error` on its own session. */
 const SESSION_ERROR_LOG = "PostgreSQL connection error on a pooled session";
@@ -5179,9 +5180,11 @@ describe("PostgresProvider", () => {
     test("enforces the row budget result-side", async () => {
       engine.selectRows = [{ id: 1 }, { id: 2 }, { id: 3 }];
 
-      await expect(provider.queryReadOnly("SELECT id FROM t", roBudget({ maxResultRows: 2 }))).rejects.toThrow(
-        /row budget/i,
-      );
+      const refused = await provider
+        .queryReadOnly("SELECT id FROM t", roBudget({ maxResultRows: 2 }))
+        .catch((caught: unknown) => caught);
+      expect((refused as Error).message).toMatch(/row budget/i);
+      expect(errorKind(refused)).toBe("row-budget-refusal");
       expect(engine.statements.at(-1)?.text).toBe("DISCARD ALL");
       expect(releaseSpy).toHaveBeenCalledTimes(1);
     });
@@ -5190,9 +5193,13 @@ describe("PostgresProvider", () => {
       engine.selectRows = [{ blob: "x".repeat(64) }];
 
       // The whole sentence, numbers in order: [{"blob":"<64 x>"}] is 77 bytes as JSON (D367).
-      await expect(provider.queryReadOnly("SELECT blob FROM t", roBudget({ maxResultBytes: 16 }))).rejects.toThrow(
+      const refused = await provider
+        .queryReadOnly("SELECT blob FROM t", roBudget({ maxResultBytes: 16 }))
+        .catch((caught: unknown) => caught);
+      expect((refused as Error).message).toContain(
         "Read-only execution exceeded the byte budget: 77 bytes > 16 allowed",
       );
+      expect(errorKind(refused)).toBe("byte-budget-refusal");
       expect(engine.statements.at(-1)?.text).toBe("DISCARD ALL");
     });
 
@@ -5784,7 +5791,9 @@ describe("PostgresProvider result columns", () => {
 
     // The byte budget is measured on the keyed rows, which are what the agent receives.
     const tight = { statementTimeoutMs: 4500, maxResultRows: 10, maxResultBytes: 60 } as ReadOnlyStatementBudget;
-    await expect(provider.queryReadOnly(JOIN_SQL, tight)).rejects.toThrow("exceeded the byte budget");
+    const refused = await provider.queryReadOnly(JOIN_SQL, tight).catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain("exceeded the byte budget");
+    expect(errorKind(refused)).toBe("byte-budget-refusal");
     await provider.disconnect();
   });
 

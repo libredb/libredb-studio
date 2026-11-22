@@ -299,7 +299,7 @@ Which reaches the client first, the failed write or the child's exit, depends on
 On Linux and macOS the rest of that write fails first, with `EPIPE` on the worker's stdin.
 On Windows the exit can arrive first: the runtime then closes the worker's stdin, drops the rest of the write without an error and logs nothing for it.
 The client listens for `error` on the child's stdin, stdout and stderr, so such a failure is reported as `SQLiteWorkerError` instead of being thrown out of the stream's event handler.
-After the provider's own kill the request has already been rejected (`SQLite worker was terminated`, `SQLite worker timed out after <n>ms (query)` for the query timeout, or `QueryError` "Read-only execution exceeded the time budget" for the read-only deadline), and the failed write is logged at debug level as `[sqlite-worker] stdin failed after terminate(): ...`: it is the expected end of that write, not a new failure.
+After the provider's own kill the request has already been rejected (`SQLite worker was terminated`, `SQLite worker timed out after <n>ms (query)` for the query timeout, or `TimeBudgetRefusal` "Read-only execution exceeded the time budget" for the read-only deadline), and the failed write is logged at debug level as `[sqlite-worker] stdin failed after terminate(): ...`: it is the expected end of that write, not a new failure.
 That line shows by default outside production, and with `LOG_LEVEL=debug` in production.
 Any other stream failure, for example a child that died on its own before the next request was written, rejects every request with `SQLite worker <stream> failed: <reason>`, is logged as a warning, and stops the child, so the next statement starts a fresh one.
 A request still in flight when the exit arrives first is rejected with `SQLite worker exited (code <n>, signal <name>)`.
@@ -1480,7 +1480,7 @@ the result codes of a refused statement from the `sqlite` row of `DRIVER_ERROR_C
 | Write statement on a file opened read-only because it is not writable | `QueryError` ("SQLite database `<path>` is open read-only because …") |
 | Statement errors whose message matches a heuristic (e.g. *syntax error*, *no such column*) | `QueryError` |
 | Other engine errors | generic `QueryError` / `DatabaseError` with the original message |
-| A pipe to the worker child fails (a cancel, a deadline or a disconnect while a large statement is still being written, or a child that died on its own) | `SQLiteWorkerError` from the worker, surfaced as `DatabaseError` (`TimeoutError` for the query timeout, `QueryError` for the agent read-only deadline) ([§3.4](#34-no-transactions-api-no-pool-cancellation-via-the-child-process-worker)) |
+| A pipe to the worker child fails (a cancel, a deadline or a disconnect while a large statement is still being written, or a child that died on its own) | `SQLiteWorkerError` from the worker, surfaced as `DatabaseError` (`TimeoutError` for the query timeout, `TimeBudgetRefusal` for the agent read-only deadline) ([§3.4](#34-no-transactions-api-no-pool-cancellation-via-the-child-process-worker)) |
 | The worker child cannot be spawned (executable missing or not runnable, no file descriptor left) | `SQLiteWorkerError` "SQLite worker failed: ...", surfaced as `ConnectionError` from `connect()` and `DatabaseError` from a statement that restarts the worker ([§3.4](#34-no-transactions-api-no-pool-cancellation-via-the-child-process-worker)) |
 
 ---

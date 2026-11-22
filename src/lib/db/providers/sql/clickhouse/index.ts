@@ -36,6 +36,7 @@ import { randomUUID } from "node:crypto";
 import { SQLBaseProvider } from "../sql-base";
 import {
   AuthenticationError,
+  ByteBudgetRefusal,
   ConnectionError,
   DatabaseConfigError,
   ExecutionProfileError,
@@ -890,7 +891,7 @@ export class ClickHouseProvider extends SQLBaseProvider {
         return await transport.query(sql, this.agentQueryOptions(budget));
       } catch (error) {
         if (error instanceof ClickHouseBodyLimitError) {
-          throw new QueryError(byteBudgetSentence(error.bytesRead, budget.maxResultBytes), this.type, sql);
+          throw new ByteBudgetRefusal(byteBudgetSentence(error.bytesRead, budget.maxResultBytes), this.type, sql);
         }
         if (error instanceof ClickHouseTransportError && error.code === TOO_MANY_ROWS_OR_BYTES) {
           throw rowOverflowRefusal(error.message, budget, sql);

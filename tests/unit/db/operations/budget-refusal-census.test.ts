@@ -67,19 +67,6 @@ const PENDING: readonly string[] = [
   "network/snmp",
   "objectstore/s3",
   "platform/kubernetes",
-  "sql/cassandra",
-  "sql/clickhouse",
-  "sql/db2",
-  "sql/druid",
-  "sql/duckdb",
-  "sql/libsql",
-  "sql/mssql.ts",
-  "sql/mysql.ts",
-  "sql/oracle",
-  "sql/postgres.ts",
-  "sql/search",
-  "sql/sqlite.ts",
-  "sql/trino",
   "stream/kafka",
   "stream/rabbitmq",
   "timeseries/influxdb",
@@ -238,10 +225,11 @@ function scan(file: string, text: string): { constructions: BudgetConstruction[]
     return undefined;
   };
 
-  const holdingOf = (expression: ts.Node, seen: Set<ts.Node>): Holding => {
+  /** What `expression` holds; `reading` is the path of initialisers being read, so a cycle ends. */
+  const holdingOf = (expression: ts.Node, reading: ReadonlySet<ts.Node>): Holding => {
     const holding: Holding = { kinds: new Set(), mixed: false };
-    if (seen.has(expression)) return holding;
-    seen.add(expression);
+    if (reading.has(expression)) return holding;
+    const seen = new Set(reading).add(expression);
     const add = (inner: Holding) => {
       for (const kind of inner.kinds) holding.kinds.add(kind);
       if (inner.mixed) holding.mixed = true;
@@ -259,10 +247,12 @@ function scan(file: string, text: string): { constructions: BudgetConstruction[]
         ts.forEachChild(node.condition, visit);
         return;
       }
-      if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression)) {
-        const table = tableNamed(node.expression.text, node);
-        const property = table?.get(node.name.text);
+      if (ts.isPropertyAccessExpression(node)) {
+        const property = ts.isIdentifier(node.expression)
+          ? tableNamed(node.expression.text, node)?.get(node.name.text)
+          : undefined;
         if (property !== undefined) add(holdingOf(property, seen));
+        else if (!ts.isIdentifier(node.expression)) visit(node.expression);
         return;
       }
       if (ts.isIdentifier(node)) {
@@ -338,6 +328,7 @@ describe("a provider's budget refusal is constructed as its budget's class", () 
       "function mixed(cap: boolean) { throw new RowBudgetRefusal(cap ? 'a cap' : rowBudgetSentence(2, 1)); }",
       "function both(rows: boolean) { throw new QueryError(rows ? rowBudgetSentence(2, 1) : byteBudgetSentence(2, 1)); }",
       "function kept() { throw new RefusedBeforeSendError(rowBudgetSentence(2, 1)); }",
+      "function twice(c: boolean) { const w = `${TIME_BUDGET_PREFIX}: 5 ms`; throw new TimeBudgetRefusal(c ? w : `${w}; x`); }",
     ].join("\n");
     const found = scan("planted.ts", planted).constructions.map((construction) => [
       construction.where,
@@ -351,6 +342,7 @@ describe("a provider's budget refusal is constructed as its budget's class", () 
       ["planted.ts: mixed", "RowBudgetRefusal", "is a conditional with a branch that holds no rows budget sentence"],
       ["planted.ts: both", "QueryError", "references bytes and rows, more than one budget"],
       ["planted.ts: kept", "RefusedBeforeSendError", undefined],
+      ["planted.ts: twice", "TimeBudgetRefusal", undefined],
     ]);
   });
 

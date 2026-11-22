@@ -57,12 +57,15 @@ import { randomBytes } from "node:crypto";
 import { SQLBaseProvider } from "../sql-base";
 import {
   AuthenticationError,
+  ByteBudgetRefusal,
   ConnectionError,
   DatabaseConfigError,
   ExecutionProfileError,
   OffsetUnsupportedError,
   QueryError,
   RefusedBeforeSendError,
+  RowBudgetRefusal,
+  TimeBudgetRefusal,
   TimeoutError,
 } from "@/lib/db/errors";
 import {
@@ -703,7 +706,7 @@ export class CassandraProvider extends SQLBaseProvider {
             })
             .catch((error: unknown) => {
               if (error instanceof CassandraTransportError && error.category === "client-timeout") {
-                throw new QueryError(
+                throw new TimeBudgetRefusal(
                   `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`,
                   this.type,
                   sql,
@@ -752,7 +755,7 @@ export class CassandraProvider extends SQLBaseProvider {
   ): QueryResult {
     const rows = result.rows;
     if (rows.length > budget.maxResultRows) {
-      throw new QueryError(rowBudgetSentence(rows.length, budget.maxResultRows), this.type, sql);
+      throw new RowBudgetRefusal(rowBudgetSentence(rows.length, budget.maxResultRows), this.type, sql);
     }
     if (result.pageState !== null) {
       throw new QueryError(
@@ -763,7 +766,7 @@ export class CassandraProvider extends SQLBaseProvider {
     }
     const bytes = measureResultBytes(rows);
     if (bytes > budget.maxResultBytes) {
-      throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), this.type, sql);
+      throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), this.type, sql);
     }
     return {
       rows,

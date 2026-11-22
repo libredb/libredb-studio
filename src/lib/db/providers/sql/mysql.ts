@@ -60,11 +60,14 @@ import {
   type BeginTransactionResult,
 } from "../../types";
 import {
+  ByteBudgetRefusal,
   DatabaseConfigError,
   ConnectionError,
   ExecutionProfileError,
   QueryError,
   NO_TRANSACTION_OPENED,
+  RowBudgetRefusal,
+  TimeBudgetRefusal,
   TRANSACTION_STATE_UNREPORTED,
   NO_ACTIVE_TRANSACTION,
 } from "../../errors";
@@ -3731,7 +3734,7 @@ export class MySQLProvider extends SQLBaseProvider {
               ? undefined
               : `The statement ended with: ${ended instanceof Error ? ended.message : String(ended)}`,
           )
-        : new QueryError(
+        : new TimeBudgetRefusal(
             `Read-only execution exceeded the statement deadline of ${budget.statementTimeoutMs}ms and was killed server-side`,
             "mysql",
             sql,
@@ -3810,7 +3813,7 @@ export class MySQLProvider extends SQLBaseProvider {
       if (rows.length > budget.maxResultRows) {
         this.killReadOnlyStatement(killPool, conn.threadId);
         conn.destroy();
-        throw new QueryError(rowBudgetSentence(rows.length, budget.maxResultRows), "mysql", sql);
+        throw new RowBudgetRefusal(rowBudgetSentence(rows.length, budget.maxResultRows), "mysql", sql);
       }
       // Measured as the row is served, keyed by its column names (`mysqlResultSet`), which is the measure core
       // re-checks the answer with (`runReadOnlyStatement`), so the stream stops where that re-check would refuse.
@@ -3820,7 +3823,7 @@ export class MySQLProvider extends SQLBaseProvider {
       if (bytes > budget.maxResultBytes) {
         this.killReadOnlyStatement(killPool, conn.threadId);
         conn.destroy();
-        throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), "mysql", sql);
+        throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), "mysql", sql);
       }
     }
     // An OK-packet answer (no result set) never fires `fields` and streams no row, so

@@ -80,6 +80,7 @@ import {
   makeFifo,
   runInChild,
 } from "../../helpers/special-files";
+import { errorKind } from "@/lib/db/error-record";
 
 // ============================================================================
 // Helpers
@@ -3942,6 +3943,8 @@ describe("SQLiteProvider agent read-only execution profile (#328)", () => {
         (error: unknown) => error,
       );
     expect(thrown).toBeInstanceOf(QueryError);
+    expect((thrown as QueryError).message).toBe("Read-only execution exceeded the row budget: 3 rows > 2 allowed");
+    expect(errorKind(thrown)).toBe("row-budget-refusal");
   });
 
   test("the row budget refusal a grounding capture records is parsed out of THIS message (B54)", async () => {
@@ -3998,6 +4001,7 @@ describe("SQLiteProvider agent read-only execution profile (#328)", () => {
     expect(thrown).toBeInstanceOf(QueryError);
     // The whole sentence, numbers in order: [{"big":"<30 a>"}] is 42 bytes as JSON (D367).
     expect((thrown as QueryError).message).toBe("Read-only execution exceeded the byte budget: 42 bytes > 8 allowed");
+    expect(errorKind(thrown)).toBe("byte-budget-refusal");
 
     // PostgreSQL's byte call, pinned against the source like its row call above.
     const postgresSource = readFileSync(join(REPO_ROOT, "src/lib/db/providers/sql/postgres.ts"), "utf8");
@@ -4020,6 +4024,35 @@ describe("SQLiteProvider agent read-only execution profile (#328)", () => {
         (error: unknown) => error,
       );
     expect(thrown).toBeInstanceOf(QueryError);
+    expect((thrown as QueryError).message).toBe("Read-only execution exceeded the time budget: 1ms allowed");
+    expect(errorKind(thrown)).toBe("time-budget-refusal");
+  });
+
+  test("under the synchronous driver a statement past the time budget has its result refused after it ends", async () => {
+    // With the worker turned off nothing can interrupt the statement, so the deadline is checked once it has run.
+    const previousWorker = process.env.LIBREDB_SQLITE_WORKER;
+    process.env.LIBREDB_SQLITE_WORKER = "0";
+    try {
+      const dbPath = await seedDatabase();
+      const profile = await openAgent(dbPath);
+
+      const thrown = await profile
+        .queryReadOnly(
+          "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 400000) SELECT COUNT(*) AS n FROM c",
+          { ...AGENT_BUDGET, statementTimeoutMs: 1 },
+        )
+        .then(
+          () => null,
+          (error: unknown) => error,
+        );
+      expect((thrown as QueryError).message).toMatch(
+        /^Read-only execution exceeded the time budget: \d+ms > 1ms allowed$/,
+      );
+      expect(errorKind(thrown)).toBe("time-budget-refusal");
+    } finally {
+      if (previousWorker === undefined) delete process.env.LIBREDB_SQLITE_WORKER;
+      else process.env.LIBREDB_SQLITE_WORKER = previousWorker;
+    }
   });
 
   test.each([

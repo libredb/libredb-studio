@@ -22,6 +22,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ExecutionProfileError, QueryError } from "@/lib/db/errors";
+import { errorKind } from "@/lib/db/error-record";
 import {
   AGENT_PRINCIPAL_STATEMENTS,
   assertAgentColumnTypes,
@@ -693,6 +694,13 @@ describe("readAgentAnswer", () => {
     expect(() => readAgentAnswer(answer([{ V: 1 }, { V: 2 }, { V: 3 }]), budget, "SELECT V")).toThrow(
       new QueryError("Read-only execution exceeded the row budget: 3 rows > 2 allowed", "db2", "SELECT V"),
     );
+    let refused: unknown;
+    try {
+      readAgentAnswer(answer([{ V: 1 }, { V: 2 }, { V: 3 }]), budget, "SELECT V");
+    } catch (caught) {
+      refused = caught;
+    }
+    expect(errorKind(refused)).toBe("row-budget-refusal");
   });
 
   test("refuses a result past the byte budget", () => {
@@ -705,5 +713,6 @@ describe("readAgentAnswer", () => {
     })();
     expect(error).toBeInstanceOf(QueryError);
     expect(error?.message).toMatch(/^Read-only execution exceeded the byte budget: \d+ bytes > 40 allowed$/);
+    expect(errorKind(error)).toBe("byte-budget-refusal");
   });
 });

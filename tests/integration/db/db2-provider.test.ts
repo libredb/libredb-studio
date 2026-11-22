@@ -23,6 +23,7 @@ import {
   QueryError,
   TimeoutError,
 } from "@/lib/db/errors";
+import { errorKind } from "@/lib/db/error-record";
 import { createErrorResponse } from "@/lib/api/errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import {
@@ -2610,14 +2611,16 @@ describe("Db2Provider: queryReadOnly under the agent read-only profile", () => {
       [3, "Linus"],
     ]);
     const provider = await connected({}, AGENT);
-    await expect(provider.queryReadOnly(STATEMENT, budget)).rejects.toThrow(
-      "Read-only execution exceeded the row budget: 3 rows > 2 allowed",
-    );
+    const overRows = await provider.queryReadOnly(STATEMENT, budget).catch((caught: unknown) => caught);
+    expect((overRows as Error).message).toBe("Read-only execution exceeded the row budget: 3 rows > 2 allowed");
+    expect(errorKind(overRows)).toBe("row-budget-refusal");
 
     server([[1, "x".repeat(2_000)]]);
-    await expect(provider.queryReadOnly(STATEMENT, budget)).rejects.toThrow(
+    const overBytes = await provider.queryReadOnly(STATEMENT, budget).catch((caught: unknown) => caught);
+    expect((overBytes as Error).message).toMatch(
       /^Read-only execution exceeded the byte budget: \d+ bytes > 1000 allowed$/,
     );
+    expect(errorKind(overBytes)).toBe("byte-budget-refusal");
   });
 
   test("a session that cannot be opened is a connection failure, and nothing is sent", async () => {
@@ -2646,6 +2649,7 @@ describe("Db2Provider: queryReadOnly under the agent read-only profile", () => {
     expect(refused).toEqual(
       new QueryError("Read-only execution exceeded the time budget: no answer within 20ms", "db2", STATEMENT),
     );
+    expect(errorKind(refused)).toBe("time-budget-refusal");
     // Retired, not rolled back: the close ends the unit of work, and Db2 rolls it back then.
     expect(transactionCalls.map((call) => call.call)).not.toContain("ROLLBACK");
     expect(closedSessions).toEqual([1]);

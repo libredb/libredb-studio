@@ -287,6 +287,7 @@ import type { DatabaseConnection } from "@/lib/types";
 import type { DatabaseProvider, ReadOnlyStatementBudget } from "@/lib/db/types";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { errorKind } from "@/lib/db/error-record";
 
 // ---------------------------------------------------------------------------
 // Default mock query implementation
@@ -6413,7 +6414,9 @@ describe("queryReadOnly() - the agent read-only execution profile (#328)", () =>
 
     // 4 rows, and 4 only because the provider asked the SERVER to stop there: without it
     // a 20-million-row read is materialised in full and takes the process down.
-    await expect(rejection).rejects.toThrow(/exceeded the row budget: 4 rows > 3 allowed/);
+    const refused = await rejection.catch((caught: unknown) => caught);
+    expect((refused as Error).message).toMatch(/exceeded the row budget: 4 rows > 3 allowed/);
+    expect(errorKind(refused)).toBe("row-budget-refusal");
     expect(engine.batches.map((batch) => batch.sql)).toContain("SET ROWCOUNT 4");
   });
 
@@ -6435,7 +6438,9 @@ describe("queryReadOnly() - the agent read-only execution profile (#328)", () =>
 
     const rejection = profiled.queryReadOnly(READ_SELECT.sql, budget({ maxResultBytes: 1024 }));
 
-    await expect(rejection).rejects.toThrow(/exceeded the byte budget: \d+ bytes > 1024 allowed/);
+    const refused = await rejection.catch((caught: unknown) => caught);
+    expect((refused as Error).message).toMatch(/exceeded the byte budget: \d+ bytes > 1024 allowed/);
+    expect(errorKind(refused)).toBe("byte-budget-refusal");
   });
 
   test("the same rows under a byte budget that fits are served", async () => {
@@ -6484,7 +6489,9 @@ describe("queryReadOnly() - the agent read-only execution profile (#328)", () =>
 
     // 512 characters is 512 UTF-8 bytes, half the 1024-byte budget, so the byte cap cannot
     // fire: only the cut itself says what happened.
-    await expect(rejection).rejects.toThrow(/refused a value the server cut at the byte budget/);
+    const refused = await rejection.catch((caught: unknown) => caught);
+    expect((refused as Error).message).toMatch(/refused a value the server cut at the byte budget/);
+    expect(errorKind(refused)).toBe("cut-value-refusal");
   });
 
   test("a value that merely fits is served, so the refusal above is the cut and not the size", async () => {
@@ -6525,7 +6532,9 @@ describe("queryReadOnly() - the agent read-only execution profile (#328)", () =>
 
     const rejection = settlesWithin(profiled.queryReadOnly(READ_SELECT.sql, budget({ statementTimeoutMs: 15 })), 5_000);
 
-    await expect(rejection).rejects.toThrow(/exceeded its time budget/);
+    const refused = await rejection.catch((caught: unknown) => caught);
+    expect((refused as Error).message).toMatch(/exceeded its time budget/);
+    expect(errorKind(refused)).toBe("time-budget-refusal");
     // It hung on the COMPILE, so the execution was never reached.
     expect(engine.batches.map((batch) => batch.sql)).not.toContain("SET ROWCOUNT 201");
   });
@@ -6565,7 +6574,9 @@ describe("queryReadOnly() - the agent read-only execution profile (#328)", () =>
 
     const rejection = profiled.queryReadOnly(READ_SELECT.sql, budget({ maxResultBytes: 512 }), "estimate-plan");
 
-    await expect(rejection).rejects.toThrow(/could not hold this query plan/);
+    const refused = await rejection.catch((caught: unknown) => caught);
+    expect((refused as Error).message).toMatch(/could not hold this query plan/);
+    expect(errorKind(refused)).toBe("byte-budget-refusal");
   });
 
   test("a data result of the same size is still refused as a row budget, so the exemption is the MODE and not the size", async () => {
@@ -6574,7 +6585,9 @@ describe("queryReadOnly() - the agent read-only execution profile (#328)", () =>
 
     const rejection = profiled.queryReadOnly(READ_SELECT.sql, budget({ maxResultRows: 3 }));
 
-    await expect(rejection).rejects.toThrow(/exceeded the row budget/);
+    const refused = await rejection.catch((caught: unknown) => caught);
+    expect((refused as Error).message).toMatch(/exceeded the row budget/);
+    expect(errorKind(refused)).toBe("row-budget-refusal");
   });
 
   test("a statement the deadline ended says so, rather than reporting the driver's word for any cancel", async () => {
@@ -6585,7 +6598,9 @@ describe("queryReadOnly() - the agent read-only execution profile (#328)", () =>
 
     // tedious words every cancel "Canceled.", including a user pressing stop, and a model
     // handed that alone has nothing to repair.
-    await expect(rejection).rejects.toThrow(/exceeded its time budget: the statement was cancelled after 15 ms/);
+    const refused = await rejection.catch((caught: unknown) => caught);
+    expect((refused as Error).message).toMatch(/exceeded its time budget: the statement was cancelled after 15 ms/);
+    expect(errorKind(refused)).toBe("time-budget-refusal");
   });
 
   test("an admitted read that returns nothing answers no fields, and the declared types travel when the driver sends them", async () => {
@@ -6654,9 +6669,11 @@ describe("queryReadOnly() - the agent read-only execution profile (#328)", () =>
 
     const rejection = profiled.queryReadOnly(READ_SELECT.sql, budget({ maxResultBytes: 1024 }));
 
-    await expect(rejection).rejects.toThrow(
+    const refused = await rejection.catch((caught: unknown) => caught);
+    expect((refused as Error).message).toMatch(
       /^Read-only execution refused a value the server cut at the byte budget: v \(2\) came back/,
     );
+    expect(errorKind(refused)).toBe("cut-value-refusal");
   });
 
   // -------------------------------------------------------------------------
@@ -6730,7 +6747,9 @@ describe("queryReadOnly() - the agent read-only execution profile (#328)", () =>
 
     for (const serialising of [READ_JSON_SELECT, READ_XML_SELECT]) {
       const rejection = profiled.queryReadOnly(serialising.sql, budget());
-      await expect(rejection).rejects.toThrow(/cannot bound a serialised result/);
+      const refused = await rejection.catch((caught: unknown) => caught);
+      expect((refused as Error).message).toMatch(/cannot bound a serialised result/);
+      expect(errorKind(refused)).toBe("serialised-result-refusal");
       // Refused BEFORE execution: the statement travelled once, compiled by the admission.
       expect(engine.batches.filter((batch) => batch.sql === serialising.sql)).toHaveLength(1);
     }

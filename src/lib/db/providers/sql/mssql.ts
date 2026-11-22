@@ -56,11 +56,16 @@ import {
 } from "../../object-kinds";
 import { comparePaths } from "../../object-path";
 import {
+  ByteBudgetRefusal,
+  CutValueRefusal,
   DatabaseConfigError,
   ConnectionError,
   ExecutionProfileError,
   QueryError,
   NO_ACTIVE_TRANSACTION,
+  RowBudgetRefusal,
+  SerialisedResultRefusal,
+  TimeBudgetRefusal,
 } from "../../errors";
 import { mapDatabaseError } from "../../map-database-error";
 import { assertReadOnlyBudget, byteBudgetSentence, measureResultBytes, rowBudgetSentence } from "./read-only-budget";
@@ -2442,17 +2447,18 @@ export class MSSQLProvider extends SQLBaseProvider {
       // statement's own complexity and then by the byte cap below, which is exactly how
       // PostgreSQL's one-row plan is bounded.
       if (mode !== "estimate-plan" && rows.length > budget.maxResultRows) {
-        throw new QueryError(rowBudgetSentence(rows.length, budget.maxResultRows), "mssql", sql);
+        throw new RowBudgetRefusal(rowBudgetSentence(rows.length, budget.maxResultRows), "mssql", sql);
       }
       const resultBytes = measureResultBytes(rows);
-      if (resultBytes > budget.maxResultBytes) {
-        throw new QueryError(
-          mode === "estimate-plan"
-            ? `Read-only execution could not hold this query plan: ${resultBytes} bytes > ${budget.maxResultBytes} allowed. The plan is this statement's own shape, so a narrower statement is what makes it readable.`
-            : byteBudgetSentence(resultBytes, budget.maxResultBytes),
+      if (resultBytes > budget.maxResultBytes && mode === "estimate-plan") {
+        throw new ByteBudgetRefusal(
+          `Read-only execution could not hold this query plan: ${resultBytes} bytes > ${budget.maxResultBytes} allowed. The plan is this statement's own shape, so a narrower statement is what makes it readable.`,
           "mssql",
           sql,
         );
+      }
+      if (resultBytes > budget.maxResultBytes) {
+        throw new ByteBudgetRefusal(byteBudgetSentence(resultBytes, budget.maxResultBytes), "mssql", sql);
       }
 
       return {
@@ -2550,7 +2556,7 @@ export class MSSQLProvider extends SQLBaseProvider {
       for (const [column, value] of Object.entries(row)) {
         const size = typeof value === "string" ? value.length : Buffer.isBuffer(value) ? value.length : -1;
         if (size !== ceiling && size !== unicodeCut) continue;
-        throw new QueryError(
+        throw new CutValueRefusal(
           `${MSSQL_CUT_VALUE_PREFIX}: ${column} came back at exactly the ${ceiling}-byte ceiling, so what it holds cannot be told from the whole value. Project fewer or smaller columns.`,
           "mssql",
           sql,
@@ -2621,7 +2627,7 @@ export class MSSQLProvider extends SQLBaseProvider {
       return await request.batch(sql);
     } catch (error) {
       if (!deadlineFired) throw error;
-      throw new QueryError(
+      throw new TimeBudgetRefusal(
         `${MSSQL_TIME_BUDGET_PREFIX}: the statement was cancelled after ${deadlineMs} ms`,
         "mssql",
         sql,
@@ -2695,7 +2701,7 @@ export class MSSQLProvider extends SQLBaseProvider {
     const classes = roots.map((row) => String(row.Type));
     const serialising = classes.filter((type) => MSSQLProvider.AGENT_SERIALISING_STATEMENT_TYPES.has(type));
     if (serialising.length > 0) {
-      throw new QueryError(
+      throw new SerialisedResultRefusal(
         `${MSSQL_SERIALISED_PREFIX}: SQL Server compiled this as ${serialising.join(", ")}, and the row budget would silently cut the rows underneath the FOR JSON or FOR XML clause. Ask for the rows themselves instead.`,
         "mssql",
         sql,

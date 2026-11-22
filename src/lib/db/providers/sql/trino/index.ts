@@ -55,12 +55,15 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { SQLBaseProvider } from "../sql-base";
 import {
   AuthenticationError,
+  ByteBudgetRefusal,
   ConnectionError,
   DatabaseConfigError,
   ExecutionProfileError,
   QueryCancelledError,
   QueryError,
   RefusedBeforeSendError,
+  RowBudgetRefusal,
+  TimeBudgetRefusal,
   TimeoutError,
 } from "@/lib/db/errors";
 import {
@@ -1021,11 +1024,16 @@ export class TrinoProvider extends SQLBaseProvider {
     if (error instanceof ExecutionProfileError || error instanceof QueryError || error instanceof ConnectionError) {
       return error;
     }
+    if (error instanceof TrinoAnswerTooLargeError && error.limit === "rows") {
+      return new RowBudgetRefusal(
+        `${rowBudgetSentence(error.seen, error.cap)}; the answer was not read further and was cancelled on the cluster`,
+        this.type,
+        sql,
+      );
+    }
     if (error instanceof TrinoAnswerTooLargeError) {
-      const sentence =
-        error.limit === "rows" ? rowBudgetSentence(error.seen, error.cap) : byteBudgetSentence(error.seen, error.cap);
-      return new QueryError(
-        `${sentence}; the answer was not read further and was cancelled on the cluster`,
+      return new ByteBudgetRefusal(
+        `${byteBudgetSentence(error.seen, error.cap)}; the answer was not read further and was cancelled on the cluster`,
         this.type,
         sql,
       );
@@ -1035,7 +1043,7 @@ export class TrinoProvider extends SQLBaseProvider {
       const outcome = sent
         ? "; the statement Studio had sent was cancelled on the cluster"
         : " while the access control was checked; the statement was not sent";
-      return new QueryError(
+      return new TimeBudgetRefusal(
         `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms${outcome}`,
         this.type,
         sql,
@@ -1058,7 +1066,7 @@ export class TrinoProvider extends SQLBaseProvider {
     const answer = toQueryResult(result, executionTime);
     const bytes = measureResultBytes(answer.rows);
     if (bytes > budget.maxResultBytes) {
-      throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), this.type, sql);
+      throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), this.type, sql);
     }
     return answer;
   }

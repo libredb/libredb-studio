@@ -89,6 +89,7 @@ import {
 } from "../read-only-budget";
 import {
   AuthenticationError,
+  ByteBudgetRefusal,
   ConnectionError,
   DatabaseConfigError,
   ExecutionProfileError,
@@ -96,6 +97,8 @@ import {
   QueryCancelledError,
   QueryError,
   RefusedBeforeSendError,
+  RowBudgetRefusal,
+  TimeBudgetRefusal,
   TimeoutError,
 } from "@/lib/db/errors";
 import {
@@ -1424,16 +1427,20 @@ abstract class SearchProvider extends SQLBaseProvider {
           );
         } catch (error) {
           if (error instanceof SearchBoundsError) {
-            const sentence =
-              error.bound === "byte"
-                ? byteBudgetSentence(error.measured, error.allowed)
-                : cut === null
-                  ? rowBudgetSentence(error.measured, error.allowed)
-                  : `${ROW_BUDGET_PREFIX}: ${this.product.label} answers at most ${cut.rows} rows (${cut.setting}) and cuts the rest without saying so, so an answer that reaches it is refused`;
-            throw new QueryError(sentence, this.type, sql);
+            if (error.bound === "byte") {
+              throw new ByteBudgetRefusal(byteBudgetSentence(error.measured, error.allowed), this.type, sql);
+            }
+            if (cut === null) {
+              throw new RowBudgetRefusal(rowBudgetSentence(error.measured, error.allowed), this.type, sql);
+            }
+            throw new RowBudgetRefusal(
+              `${ROW_BUDGET_PREFIX}: ${this.product.label} answers at most ${cut.rows} rows (${cut.setting}) and cuts the rest without saying so, so an answer that reaches it is refused`,
+              this.type,
+              sql,
+            );
           }
           if (error instanceof SearchTransportError && error.category === "timeout") {
-            throw new QueryError(
+            throw new TimeBudgetRefusal(
               `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`,
               this.type,
               sql,

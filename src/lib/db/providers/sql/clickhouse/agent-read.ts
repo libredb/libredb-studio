@@ -9,7 +9,7 @@
  * statement change settings, so the value is pinned to 1, never 2. What `readonly` does not restrict is the
  * principal's to hold, and is proved at open (`agent-boundary.ts`).
  */
-import { QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { ByteBudgetRefusal, QueryError, RefusedBeforeSendError, RowBudgetRefusal } from "@/lib/db/errors";
 import type { QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { SqlGrammar } from "@/lib/sql/grammar";
 import { readSqlSpan } from "@/lib/sql/spans";
@@ -161,7 +161,7 @@ function overflowRows(message: string, allowed: number): number {
 
 /** The shared row refusal for an answer the server refused past `max_result_rows` (code 396). */
 export function rowOverflowRefusal(message: string, budget: ReadOnlyStatementBudget, sql: string): QueryError {
-  return new QueryError(
+  return new RowBudgetRefusal(
     rowBudgetSentence(overflowRows(message, budget.maxResultRows), budget.maxResultRows),
     "clickhouse",
     sql,
@@ -188,11 +188,11 @@ export function readAgentAnswer(
   }
   const rows = answer.rows;
   if (rows.length > budget.maxResultRows) {
-    throw new QueryError(rowBudgetSentence(rows.length, budget.maxResultRows), "clickhouse", sql);
+    throw new RowBudgetRefusal(rowBudgetSentence(rows.length, budget.maxResultRows), "clickhouse", sql);
   }
   const bytes = measureResultBytes(rows);
   if (bytes > budget.maxResultBytes) {
-    throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), "clickhouse", sql);
+    throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), "clickhouse", sql);
   }
   const reportedMs = Math.round(answer.executionTimeMs);
   return {
