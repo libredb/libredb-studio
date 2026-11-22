@@ -388,3 +388,100 @@ describe("the protected read path", () => {
     ]);
   });
 });
+
+/** The function declared as `name` in `file`, parsed from the source. */
+function declaredFunction(file: string, name: string): ts.FunctionDeclaration {
+  const source = parse(file, readFileSync(join(ROOT, file), "utf8"));
+  let found: ts.FunctionDeclaration | undefined;
+  const visit = (node: ts.Node) => {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === name) found = node;
+    else ts.forEachChild(node, visit);
+  };
+  visit(source);
+  if (found === undefined) throw new Error(`${file} declares no function ${name}`);
+  return found;
+}
+
+/**
+ * The source position of the first call in `node` whose callee is `callee`: a bare name (`f(...)`) or a member of a
+ * named object (`object.f(...)`, written `object.f`), with any transparent wrapper stepped over; `-1` when there is none.
+ */
+function firstCall(node: ts.Node, callee: string): number {
+  const [object, member] = callee.includes(".") ? callee.split(".") : [undefined, callee];
+  let first = -1;
+  const visit = (at: ts.Node) => {
+    if (first !== -1) return;
+    if (ts.isCallExpression(at)) {
+      const target = inner(at.expression);
+      const matches =
+        object === undefined
+          ? ts.isIdentifier(target) && target.text === member
+          : ts.isPropertyAccessExpression(target) &&
+            target.name.text === member &&
+            ts.isIdentifier(inner(target.expression)) &&
+            (inner(target.expression) as ts.Identifier).text === object;
+      if (matches) {
+        first = at.getStart();
+        return;
+      }
+    }
+    ts.forEachChild(at, visit);
+  };
+  visit(node);
+  return first;
+}
+
+/** Whether, in `node`, the first call of `gate` comes before the first call of every one of `reaches`, each present. */
+function gatedBefore(node: ts.Node, gate: string, reaches: readonly string[]): Record<string, string> {
+  const gateAt = firstCall(node, gate);
+  return Object.fromEntries(
+    reaches.map((reach) => {
+      const reachAt = firstCall(node, reach);
+      if (gateAt === -1) return [reach, `${gate} is never called`];
+      if (reachAt === -1) return [reach, `${reach} is never called`];
+      return [reach, gateAt < reachAt ? "gated" : `${reach} comes before ${gate}`];
+    }),
+  );
+}
+
+const REVIEW_GATE = "assertStatementsReviewed";
+const FACTORY = join("src", "lib", "db", "factory.ts");
+
+describe("the review record gates the protected read path", () => {
+  test("the scan finds a choke point that reaches the provider before the record is read", () => {
+    const file = "planted.ts";
+    const planted = parse(
+      file,
+      [
+        "async function late(c) { const p = await createDatabaseProvider(c); assertStatementsReviewed(c.type); return p; }",
+        "async function early(c) { assertStatementsReviewed(c.type); return createDatabaseProvider(c); }",
+        "async function never(c) { return createDatabaseProvider(c); }",
+        "async function read(call) { assertStatementsReviewed(call.type); return call.read(); }",
+      ].join("\n"),
+    );
+    const named = (name: string) =>
+      planted.statements.find(
+        (statement): statement is ts.FunctionDeclaration =>
+          ts.isFunctionDeclaration(statement) && statement.name?.text === name,
+      ) as ts.FunctionDeclaration;
+    expect(gatedBefore(named("late"), REVIEW_GATE, ["createDatabaseProvider"])).toEqual({
+      createDatabaseProvider: `createDatabaseProvider comes before ${REVIEW_GATE}`,
+    });
+    expect(gatedBefore(named("early"), REVIEW_GATE, ["createDatabaseProvider"])).toEqual({
+      createDatabaseProvider: "gated",
+    });
+    expect(gatedBefore(named("never"), REVIEW_GATE, ["createDatabaseProvider"])).toEqual({
+      createDatabaseProvider: `${REVIEW_GATE} is never called`,
+    });
+    expect(gatedBefore(named("read"), REVIEW_GATE, ["call.read"])).toEqual({ "call.read": "gated" });
+  });
+
+  test("acquireExecutionProfileProvider reads the review record before it builds a provider", () => {
+    const body = declaredFunction(FACTORY, "acquireExecutionProfileProvider");
+    expect(gatedBefore(body, REVIEW_GATE, ["profiledCacheKey", "createSSHTunnel", "createDatabaseProvider"])).toEqual({
+      profiledCacheKey: "gated",
+      createSSHTunnel: "gated",
+      createDatabaseProvider: "gated",
+    });
+  });
+});

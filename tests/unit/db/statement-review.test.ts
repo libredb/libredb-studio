@@ -1,9 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { AGENT_EXECUTION_ENGINES, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { ExecutionProfileError, UnknownProviderError } from "@/lib/db/errors";
+import {
+  acquireExecutionProfileProvider,
+  type ExecutionProfile,
+  executionContextFor,
+  getExecutionProfileCacheStats,
+} from "@/lib/db/factory";
 import { assertStatementsReviewed } from "@/lib/db/statement-review";
 import { unknownTypeSentence } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
+import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 
 /**
  * The one core assertion every agent and MCP statement gate reads: an engine Studio's review record
@@ -48,5 +55,59 @@ describe("the review record of agent and MCP statements", () => {
     expect(error).toBeInstanceOf(UnknownProviderError);
     expect((error as UnknownProviderError).message).toBe(unknownTypeSentence("acmefoo"));
     expect((error as UnknownProviderError).typeId).toBe("acmefoo");
+  });
+});
+
+/**
+ * Every profile, placed in a table the compiler holds total over `ExecutionProfile`, so a new profile fails the
+ * typecheck here until it is placed. Whether one sends statements is read from `executionContextFor`, never written.
+ */
+const PROFILES = Object.keys({
+  "agent-read-only": true,
+  "agent-handover": true,
+  "agent-operations": true,
+} satisfies Record<ExecutionProfile, true>) as ExecutionProfile[];
+
+/** Settles an acquisition as the deny code it was refused with, or a line naming what it answered instead. */
+async function refusalOf(call: Promise<unknown>): Promise<string> {
+  const settledAs = await call.then(
+    () => null,
+    (error: unknown) => error,
+  );
+  if (settledAs instanceof ExecutionProfileError) return settledAs.reasonCode;
+  return `not an execution-profile refusal: ${String(settledAs)}`;
+}
+
+describe("the acquisition reads the review record", () => {
+  /**
+   * The census needs no server, file or provider build. Each connection carries a connection string and an agent user,
+   * so the first refusal after the review gate is the credential check in `resolveAgentCredential`
+   * (`AGENT_CREDENTIAL_WITH_CONNECTION_STRING`), which runs before any tunnel or provider build and builds nothing. An
+   * engine the gate admits therefore answers that code, and an engine it refuses answers `PROFILE_ENGINE_NOT_REVIEWED`;
+   * the profiled cache stays empty throughout.
+   */
+  test("under each profile that sends statements the acquisition admits exactly the engines on the record, and under agent-operations the record is never asked", async () => {
+    const answers: string[] = [];
+    const expected: string[] = [];
+    for (const profile of PROFILES) {
+      const sendsStatements = executionContextFor(profile).sendsStatements;
+      for (const type of SHIPPED_DATABASE_TYPES) {
+        const connection = {
+          ...CENSUS_CONNECTION[type],
+          id: `census-${type}-${profile}`,
+          connectionString: `census://${crypto.randomUUID()}`,
+          agentUser: crypto.randomUUID(),
+        };
+        answers.push(`${profile} ${type}: ${await refusalOf(acquireExecutionProfileProvider(connection, profile))}`);
+        const refusedByRecord = sendsStatements && !AGENT_EXECUTION_ENGINES.includes(type);
+        expected.push(
+          `${profile} ${type}: ${refusedByRecord ? "PROFILE_ENGINE_NOT_REVIEWED" : "AGENT_CREDENTIAL_WITH_CONNECTION_STRING"}`,
+        );
+      }
+    }
+    expect(PROFILES.some((profile) => executionContextFor(profile).sendsStatements)).toBe(true);
+    expect(PROFILES.some((profile) => !executionContextFor(profile).sendsStatements)).toBe(true);
+    expect(answers).toEqual(expected);
+    expect(getExecutionProfileCacheStats().size).toBe(0);
   });
 });

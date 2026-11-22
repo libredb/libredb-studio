@@ -3182,6 +3182,23 @@ describe("executionContextFor", () => {
 
 // ─── acquireExecutionProfileProvider — agent read-only profile (#328) ──────
 
+/**
+ * Runs `body` with PostgreSQL's `queryReadOnly` shadowed by `undefined` on its prototype, so an engine on the review
+ * record has a provider with no read-only statement path, and restores the prototype afterwards.
+ */
+async function withoutPostgresReadOnlyPath<T>(body: () => Promise<T>): Promise<T> {
+  const { PostgresProvider } = await import("@/lib/db/providers/sql/postgres");
+  const prototype = PostgresProvider.prototype as unknown as { queryReadOnly?: unknown };
+  const own = Object.getOwnPropertyDescriptor(prototype, "queryReadOnly");
+  Object.defineProperty(prototype, "queryReadOnly", { value: undefined, configurable: true, writable: true });
+  try {
+    return await body();
+  } finally {
+    if (own === undefined) delete prototype.queryReadOnly;
+    else Object.defineProperty(prototype, "queryReadOnly", own);
+  }
+}
+
 describe("acquireExecutionProfileProvider", () => {
   const pgConn = (overrides: Partial<DatabaseConnection> = {}) =>
     makeConnection("postgres", { id: "pg-profile", ...overrides });
@@ -3264,18 +3281,19 @@ describe("acquireExecutionProfileProvider", () => {
     expect(getExecutionProfileCacheStats().size).toBe(0);
   });
 
-  test("refuses a provider type without a read-only statement path", async () => {
-    const error: unknown = await acquireExecutionProfileProvider(
-      makeConnection("spark", { id: "spark-profile" }),
-      "agent-read-only",
-    ).catch((e: unknown) => e);
+  test("refuses an engine on the review record whose provider implements no read-only statement path, and query() is never the fallback", async () => {
+    // The method is a second precondition beside the review record: an engine the record lists is still refused when
+    // its provider has no `queryReadOnly`, never served `query()`.
+    const error: unknown = await withoutPostgresReadOnlyPath(() =>
+      acquireExecutionProfileProvider(pgConn({ id: "pg-no-read-only-path" }), "agent-read-only").catch(
+        (e: unknown) => e,
+      ),
+    );
 
     expect(error).toBeInstanceOf(ExecutionProfileError);
     expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("PROFILE_UNSUPPORTED_BY_PROVIDER");
-    // The rule is the method, not the kind of boundary behind it: Kubernetes and MongoDB are granted the profile with
-    // no database read-only session.
     expect((error as Error).message).toBe(
-      'Provider type "spark" implements no read-only statement path (queryReadOnly)',
+      'Provider type "postgres" implements no read-only statement path (queryReadOnly)',
     );
     expect(getExecutionProfileCacheStats().size).toBe(0);
   });
@@ -3343,7 +3361,7 @@ describe("acquireExecutionProfileProvider", () => {
       "agent-handover",
     ).catch((e: unknown) => e);
     expect(refused).toBeInstanceOf(ExecutionProfileError);
-    expect((refused as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("PROFILE_UNSUPPORTED_BY_PROVIDER");
+    expect((refused as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("PROFILE_ENGINE_NOT_REVIEWED");
 
     const agent = await acquireExecutionProfileProvider(pgConn(), "agent-read-only");
     const handover = await acquireExecutionProfileProvider(pgConn(), "agent-handover");
@@ -3962,18 +3980,22 @@ describe("acquireExecutionProfileProvider", () => {
     }
   });
 
+  // An engine off the review record never opens a tunnel at all: "the %s profile is refused on an engine the review
+  // record does not list" below asserts that.
   test.each([
     [
       "the agent credential is refused for its form",
       pgConn({ id: "pg-tunnel-credential-form", agentUser: "agent_ro" }),
       "AGENT_CREDENTIAL_UNRESOLVABLE" as const,
+      false,
     ],
     [
       "the provider has no read-only statement path",
-      makeConnection("spark", { id: "spark-tunnel-profile" }),
+      pgConn({ id: "pg-tunnel-profile" }),
       "PROFILE_UNSUPPORTED_BY_PROVIDER" as const,
+      true,
     ],
-  ])("releases the tunnel when %s", async (_refusal, connection, reasonCode) => {
+  ])("releases the tunnel when %s", async (_refusal, connection, reasonCode, withoutReadOnlyPath) => {
     const tunnelled: DatabaseConnection = {
       ...connection,
       host: "remote-db.example.com",
@@ -3987,7 +4009,8 @@ describe("acquireExecutionProfileProvider", () => {
       },
     };
 
-    const error: unknown = await acquireExecutionProfileProvider(tunnelled, "agent-read-only").catch((e: unknown) => e);
+    const acquire = () => acquireExecutionProfileProvider(tunnelled, "agent-read-only").catch((e: unknown) => e);
+    const error: unknown = await (withoutReadOnlyPath ? withoutPostgresReadOnlyPath(acquire) : acquire());
 
     expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe(reasonCode);
     const tunnel = (await mockCreateSSHTunnel.mock.results[0]?.value) as { close: ReturnType<typeof mock> } | undefined;
@@ -5996,7 +6019,7 @@ describe("the Snowflake provider in the factory", () => {
   });
 
   test.each(["agent-read-only", "agent-handover"] as const)(
-    "the %s profile is refused, since Snowflake declares no read-only statement path, and nothing connects",
+    "the %s profile is refused, since Snowflake is not on the review record, and nothing connects",
     async (profile) => {
       const connect = stubConnect();
       try {
@@ -6004,12 +6027,46 @@ describe("the Snowflake provider in the factory", () => {
           (e: unknown) => e,
         );
         expect(error).toBeInstanceOf(ExecutionProfileError);
-        expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe(
-          "PROFILE_UNSUPPORTED_BY_PROVIDER",
-        );
+        expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("PROFILE_ENGINE_NOT_REVIEWED");
         expect(connect).not.toHaveBeenCalled();
         expect(getExecutionProfileCacheStats().size).toBe(0);
       } finally {
+        connect.mockRestore();
+      }
+    },
+  );
+  test.each(["agent-read-only", "agent-handover"] as const)(
+    "the %s profile is refused on an engine the review record does not list, by name, even when its provider implements queryReadOnly, and nothing is tunnelled, built or connected",
+    async (profile) => {
+      const connect = stubConnect();
+      const planted = mock(async () => ({ rows: [], fields: [], rowCount: 0, executionTime: 0 }));
+      const prototype = SnowflakeProvider.prototype as unknown as { queryReadOnly?: unknown };
+      prototype.queryReadOnly = planted;
+      try {
+        const tunnelled = snowflake({
+          id: `sf-planted-${profile}`,
+          port: 443,
+          sshTunnel: {
+            enabled: true,
+            host: "bastion.example.com",
+            port: 22,
+            username: "admin",
+            authMethod: "password",
+            password: crypto.randomUUID(),
+          },
+        });
+        const error: unknown = await acquireExecutionProfileProvider(tunnelled, profile).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(ExecutionProfileError);
+        expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("PROFILE_ENGINE_NOT_REVIEWED");
+        expect((error as Error).message).toBe(
+          'Provider type "snowflake" is not on the review record of engines that run agent and MCP statements (AGENT_EXECUTION_ENGINES), so no statement is sent on it, whatever its provider implements',
+        );
+        expect(connect).not.toHaveBeenCalled();
+        expect(planted).not.toHaveBeenCalled();
+        expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+        expect(getExecutionProfileCacheStats().size).toBe(0);
+      } finally {
+        delete prototype.queryReadOnly;
         connect.mockRestore();
       }
     },
