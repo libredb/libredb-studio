@@ -21,6 +21,9 @@ import {
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import type { QueryEventRow } from "@/lib/query-events/types";
 import type { QueryEventBatchWrite, QueryEventWriteFailure } from "@/lib/query-events/postgres-sink";
+import * as admission from "@/lib/query-events/admission";
+import { CONFIRMATION_FIELD_MESSAGE } from "@/lib/api/run-confirmation";
+import { forgetUsedRunConfirmations } from "@/lib/api/run-confirmation-token";
 
 // ─── Create mock objects ────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -1710,5 +1713,150 @@ describe("POST /api/db/multi-query: a body that is not a JSON object", () => {
     expect(res.status).toBe(400);
     expect(await parseResponseJSON(res)).toEqual({ error: "Invalid request body" });
     expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+  });
+});
+
+// ─── The server's confirmation of a run (FND-5) ─────────────────────────────
+describe("POST /api/db/multi-query: the server's confirmation of a run", () => {
+  const original = process.env.LIBREDB_RUN_CONFIRMATION;
+  const session = { role: "user" as const, username: "alice", iat: 1_700_000_000 };
+  const SCRIPT = "SELECT 1; DROP TABLE t";
+  let warn: ReturnType<typeof spyOn>;
+  let admit: ReturnType<typeof spyOn>;
+
+  function run(body: Record<string, unknown>) {
+    return POST(createMockRequest("/api/db/multi-query", { method: "POST", body }) as never);
+  }
+
+  function nothingRan(): void {
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockProvider.query).not.toHaveBeenCalled();
+    expect(admit).not.toHaveBeenCalled();
+  }
+
+  beforeEach(() => {
+    delete process.env.LIBREDB_RUN_CONFIRMATION;
+    clearRateLimitState();
+    forgetUsedRunConfirmations();
+    mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
+    (mockProvider.query as ReturnType<typeof mock>).mockClear();
+    mockGetSession.mockImplementation(async () => session);
+    warn = spyOn(logger, "warn").mockImplementation(() => {});
+    admit = spyOn(admission, "admitQueryExecution");
+  });
+
+  afterEach(() => {
+    warn.mockRestore();
+    admit.mockRestore();
+    if (original === undefined) delete process.env.LIBREDB_RUN_CONFIRMATION;
+    else process.env.LIBREDB_RUN_CONFIRMATION = original;
+    mockGetSession.mockImplementation(async () => ({ role: "admin", username: "admin" }));
+  });
+
+  describe("server confirmation, advisory", () => {
+    test("a script that writes, sent without the field, runs and its answer says unconfirmed", async () => {
+      const res = await run({ connection: validConnection, sql: SCRIPT });
+      expect(res.status).toBe(200);
+      const body = await parseResponseJSON<{ confirmation?: string; executedCount: number }>(res);
+      expect(body.confirmation).toBe("unconfirmed");
+      expect(body.executedCount).toBe(2);
+      expect(
+        warn.mock.calls.filter(
+          (call: unknown[]) => (call[1] as { route?: string } | undefined)?.route === "api/db/multi-query",
+        ),
+      ).toEqual([
+        [
+          "A statement that needs a confirmation ran without one",
+          { route: "api/db/multi-query", type: "postgres", user: "alice" },
+        ],
+      ]);
+    });
+
+    test("a script of reads runs with no field in its answer", async () => {
+      const res = await run({ connection: validConnection, sql: "SELECT 1; SELECT 2" });
+      expect(res.status).toBe(200);
+      expect(await parseResponseJSON<Record<string, unknown>>(res)).not.toHaveProperty("confirmation");
+    });
+  });
+
+  describe("server confirmation, ask", () => {
+    test.each(["advisory", "required"])("a script that writes and asks is answered 428 in %s mode", async (mode) => {
+      process.env.LIBREDB_RUN_CONFIRMATION = mode;
+      const res = await run({ connection: validConnection, sql: SCRIPT, confirmation: "ask" });
+      expect(res.status).toBe(428);
+      expect(await parseResponseJSON(res)).toMatchObject({ code: "CONFIRMATION_REQUIRED" });
+      nothingRan();
+    });
+
+    test("a malformed field is refused before anything is built", async () => {
+      const res = await run({ connection: validConnection, sql: SCRIPT, confirmation: ["ask"] });
+      expect(res.status).toBe(400);
+      expect(await parseResponseJSON(res)).toEqual({ error: CONFIRMATION_FIELD_MESSAGE });
+      nothingRan();
+    });
+  });
+
+  describe("server confirmation, required", () => {
+    beforeEach(() => {
+      process.env.LIBREDB_RUN_CONFIRMATION = "required";
+    });
+
+    test("the 428's token runs the script once, and a second use is refused", async () => {
+      const asked = await run({ connection: validConnection, sql: SCRIPT });
+      expect(asked.status).toBe(428);
+      const { token } = (await parseResponseJSON<{ confirmation: { token: string } }>(asked)).confirmation;
+      const confirmed = { connection: validConnection, sql: SCRIPT, confirmation: { token } };
+      const ran = await run(confirmed);
+      expect(ran.status).toBe(200);
+      expect(await parseResponseJSON<Record<string, unknown>>(ran)).not.toHaveProperty("confirmation");
+      const again = await run(confirmed);
+      expect(again.status).toBe(400);
+      expect(await parseResponseJSON(again)).toEqual({
+        error: "this confirmation has already been used",
+        code: "CONFIRMATION_INVALID",
+      });
+    });
+
+    test("a token issued for the single-statement route is refused here", async () => {
+      // The same statement, asked on POST /api/db/query's route name, through the token module itself.
+      const { mintRunConfirmation } = await import("@/lib/api/run-confirmation-token");
+      const issued = await mintRunConfirmation({
+        session,
+        connection: validConnection as never,
+        catalog: undefined,
+        route: "query",
+        statement: SCRIPT,
+        params: undefined,
+        verdict: { decision: "confirm", unreadable: false, typedConfirmation: null, classificationFailed: false },
+      });
+      const res = await run({ connection: validConnection, sql: SCRIPT, confirmation: { token: issued.token } });
+      expect(res.status).toBe(400);
+      expect((await parseResponseJSON<{ error: string }>(res)).error).toBe(
+        "this confirmation was issued for another route",
+      );
+    });
+  });
+
+  describe("server confirmation, a statement the client let through", () => {
+    test("required answers 428 for a script whose second statement is the write, and runs nothing", async () => {
+      process.env.LIBREDB_RUN_CONFIRMATION = "required";
+      const res = await run({ connection: validConnection, sql: SCRIPT });
+      expect(res.status).toBe(428);
+      nothingRan();
+    });
+  });
+
+  describe("server confirmation, order", () => {
+    test.each([
+      ["a missing statement", { connection: validConnection, confirmation: "ask" }],
+      ["bad page bounds", { connection: validConnection, sql: SCRIPT, options: { offset: -1 }, confirmation: "ask" }],
+      ["a statement that is not text", { connection: validConnection, sql: 7, confirmation: "ask" }],
+    ] as const)("%s is refused for its fields whatever the confirmation holds", async (_label, body) => {
+      process.env.LIBREDB_RUN_CONFIRMATION = "required";
+      const res = await run(body as Record<string, unknown>);
+      expect(res.status).toBe(400);
+      nothingRan();
+    });
   });
 });

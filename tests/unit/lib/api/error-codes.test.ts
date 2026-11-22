@@ -56,6 +56,7 @@ const GROUPS = {
     "TRANSACTION_CREDENTIAL_CHANGED",
   ],
   agentRun: ["AGENT_RUN_UNAVAILABLE"],
+  runConfirmation: ["CONFIRMATION_REQUIRED", "CONFIRMATION_INVALID"],
   generic: ["INTERNAL_ERROR", "NETWORK_ERROR"],
 } as const;
 
@@ -158,6 +159,11 @@ describe("ApiErrorCode", () => {
 
   test("contains the object search's refusal over the inventory pair bound", () => {
     expect(ApiErrorCode.INVENTORY_PAIR_LIMIT).toBe("INVENTORY_PAIR_LIMIT");
+  });
+
+  test("contains the run confirmation codes: a statement that needs one, and a token that does not confirm it", () => {
+    for (const code of GROUPS.runConfirmation) expect(ApiErrorCode[code]).toBe(code);
+    expect(ApiErrorCode.CONFIRMATION_REQUIRED).not.toBe(ApiErrorCode.CONFIRMATION_INVALID);
   });
 
   test("contains the application rate-limit error code", () => {

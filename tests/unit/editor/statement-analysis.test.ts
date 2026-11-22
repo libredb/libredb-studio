@@ -4,6 +4,7 @@ import { createDatabaseProvider } from "@/lib/db/factory";
 import type { ProviderCapabilities, TypedConfirmationAsk } from "@/lib/db/types";
 import {
   analyzeStatement,
+  confirmationVerdict,
   type OffsetRange,
   runsAsScript,
   type StatementAnalysis,
@@ -623,5 +624,75 @@ describe("typedConfirmationExpected", () => {
   test("a name ask with an empty name or no name expects nothing, so no field can confirm it", () => {
     expect(typedConfirmationExpected(NAME_ASK, "")).toBeUndefined();
     expect(typedConfirmationExpected(NAME_ASK, undefined)).toBeUndefined();
+  });
+});
+
+describe("confirmationVerdict", () => {
+  test("answers run for a read", () => {
+    expect(confirmationVerdict("SELECT 1", "postgres", "census")).toStrictEqual({ decision: "run" });
+  });
+
+  test("answers confirm for a write", () => {
+    expect(confirmationVerdict("DELETE FROM t", "postgres", "census")).toStrictEqual({
+      decision: "confirm",
+      unreadable: false,
+      typedConfirmation: null,
+    });
+  });
+
+  test("says an unreadable run is unreadable", () => {
+    // #297: in `E'\'` PostgreSQL reads `\'` as an escaped quote, so the literal never closes and the DELETE is inside it.
+    expect(confirmationVerdict("SELECT E'\\'; DELETE FROM t", "postgres", "census")).toStrictEqual({
+      decision: "confirm",
+      unreadable: true,
+      typedConfirmation: null,
+    });
+  });
+
+  test("carries the row's typed confirmation", () => {
+    expect(confirmationVerdict("del /App/ --prefix", "etcd", ORDERS_ETCD)).toStrictEqual({
+      decision: "confirm",
+      unreadable: false,
+      typedConfirmation: { type: "text", expected: "/App/" },
+    });
+    expect(confirmationVerdict(ETCD_EVERY_KEY, "etcd", ORDERS_ETCD)).toStrictEqual({
+      decision: "confirm",
+      unreadable: false,
+      typedConfirmation: { type: "connection-name", expected: ORDERS_ETCD, targets: ["every key"] },
+    });
+  });
+
+  test("refuses a connection-name ask on a nameless connection", () => {
+    expect(confirmationVerdict(ETCD_EVERY_KEY, "etcd", "")).toStrictEqual({
+      decision: "refuse",
+      refusal: TYPED_NAME_MISSING_REFUSAL,
+    });
+    expect(confirmationVerdict(ETCD_EVERY_KEY, "etcd", undefined)).toStrictEqual({
+      decision: "refuse",
+      refusal: TYPED_NAME_MISSING_REFUSAL,
+    });
+  });
+
+  test("analyzeStatement answers what confirmationVerdict answers for the sent statement", () => {
+    const compared = ALL_CASES.filter((c) => {
+      const analysis = analyzeStatement(inputOf(c));
+      return analysis.decision !== "nothing" && statementRefusal(analysis.statement, c.type) === undefined;
+    });
+    expect(compared.length).toBeGreaterThan(0);
+    for (const c of compared) {
+      const analysis = analyzeStatement(inputOf(c));
+      if (analysis.decision === "nothing") throw new Error(`${c.id} has nothing to run`);
+      const verdict = confirmationVerdict(analysis.statement, c.type, c.name ?? "census");
+      if (analysis.decision === "run") expect(verdict).toStrictEqual({ decision: "run" });
+      else if (analysis.decision === "refuse") {
+        expect(verdict).toStrictEqual({ decision: "refuse", refusal: analysis.refusal });
+      } else {
+        expect(verdict).toStrictEqual({
+          decision: "confirm",
+          unreadable: analysis.unreadable,
+          typedConfirmation: analysis.typedConfirmation,
+        });
+      }
+    }
   });
 });

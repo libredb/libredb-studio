@@ -18,6 +18,7 @@ import { readsSqlText, resolveSqlGrammar } from "@/lib/sql/grammar";
 import type { ExplainFormat, QueryPrepareOptions } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { admitQueryExecution } from "@/lib/query-events/admission";
+import { gateRun } from "@/lib/api/run-confirmation";
 import { queryEventStart } from "@/lib/query-events/build";
 import {
   queryEventRequest,
@@ -229,6 +230,21 @@ export async function POST(req: NextRequest) {
       connection = { ...connection, database: String(database) };
     }
 
+    // The server's confirmation gate (docs/API_DOCS.md, "Server confirmation of a run"): after every field check and
+    // after the database override, so a token binds the connection that runs, and before the admission gate and any
+    // provider, so a request it answers opens nothing, runs nothing and records no query event.
+    const gate = await gateRun({
+      route: "query",
+      session: guard.session,
+      connection,
+      catalog: requestCatalog(body),
+      sql,
+      params: bound.params,
+      confirmation: body.confirmation,
+      explain: explain.explain !== undefined,
+    });
+    if (gate.kind === "answer") return NextResponse.json(gate.body, { status: gate.status });
+
     // Before the provider: a request the gate refuses opens nothing and runs nothing.
     stage = "admission";
     admitQueryExecution();
@@ -286,7 +302,11 @@ export async function POST(req: NextRequest) {
       explain: explainMode,
       ended: { rowCount: answered.rowCount },
     });
-    return NextResponse.json({ ...answered, ...(explainFormat !== undefined && { explainFormat }) });
+    return NextResponse.json({
+      ...answered,
+      ...(explainFormat !== undefined && { explainFormat }),
+      ...(gate.unconfirmed && { confirmation: "unconfirmed" }),
+    });
   } catch (error) {
     if (stage === "execution") {
       recordExecutedUnit(events, {

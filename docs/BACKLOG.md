@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D492, U17 · 363
+- [Drivers and connections](#drivers-and-connections) — D1-D493, U17 · 364
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -4869,6 +4869,17 @@ An operator whose bundle ends in a truncated block reads there that it boots, an
 Found 2026-11-22 in review of the trust material change.
 
 **Done when:** both chart README sections, in the chart and in its operator copy, name every refusal the preflight makes, with the chart version bump that change needs.
+
+### D493. The run routes accept a statement that needs a confirmation without one by default
+
+`POST /api/db/query`, `POST /api/db/multi-query` and the `query` action of `POST /api/db/transaction` classify every run on the server and answer 428 with a confirmation token, but only when the request asks (`"confirmation": "ask"`) or `LIBREDB_RUN_CONFIRMATION` is `required` (control 3.47 in `docs/SECURITY.md`).
+The default is `advisory`, so a caller that sends no `confirmation` field runs a statement the gate asks about with no confirmation; the answer says `"confirmation": "unconfirmed"` and one warning is logged.
+The default stays advisory for one minor so that outside callers of the documented API keep working while they learn the field.
+The VS Code extension's backend does not re-check its `query/target` verdict on `query/run`, and the embedded npm workspace classifies in the browser and hands the statement to its host, so neither path meets the server's gate.
+
+Found 2026-11-22 when the run routes started to classify every run on the server.
+
+**Done when:** `required` is the default in a release whose notes name the change, the VS Code backend's `query/run` enforces a confirmation it issued under the same mode, and the embedded workspace's host contract carries the confirmation round (the VS Code and embedded workspace steps of the same work, then the default switch).
 
 ## Value interpolation
 

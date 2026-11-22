@@ -335,7 +335,7 @@ There are four:
 - `transaction`: `POST /api/db/transaction`, offered wherever a provider has the transaction methods.
 
 Schema Diff migration DDL is shown and copied, never run; plan mode drafts and never runs; and the agent and MCP open every handle read-only under their own boundary, `queryReadOnly`, which this record does not describe.
-The browser's destructive-statement confirmation is not a gate: Proceed skips it.
+The destructive-statement confirmation, in the browser and on the run routes, is not a gate: Proceed, or the confirmation token the server issues, gets past it.
 
 Each engine takes one of three values:
 

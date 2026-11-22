@@ -6420,3 +6420,253 @@ describe("the background plan opt-out and the non-SQL explain gate", () => {
     });
   });
 });
+
+// =============================================================================
+// The server's confirmation of a run (FND-5)
+// =============================================================================
+describe("the server's confirmation", () => {
+  const TOKEN = () => crypto.randomUUID();
+  const ASKED = (token: string) => ({
+    status: 428,
+    json: {
+      error: "This statement needs a confirmation before it runs.",
+      code: "CONFIRMATION_REQUIRED",
+      confirmation: { token, expiresAt: "2026-11-22T12:05:00.000Z", unreadable: false, typedConfirmation: null },
+    },
+  });
+
+  /** Every request body sent to `route`, in order. */
+  function bodiesTo(fetchMock: ReturnType<typeof mockGlobalFetch>, route: string): Record<string, unknown>[] {
+    return fetchMock.mock.calls
+      .filter((call) => typeof call[0] === "string" && call[0].includes(route))
+      .map((call) => JSON.parse(String((call[1] as RequestInit).body)) as Record<string, unknown>);
+  }
+
+  /** A server that answers the first "ask" for a run that is not an explain with a 428, and runs every other request. */
+  function askingServer(token: string, route = "/api/db/query") {
+    let asked = false;
+    return mockGlobalFetch({
+      [route]: async (req) => {
+        const body = (await req.json()) as Record<string, unknown>;
+        if (body.action !== undefined && body.action !== "query") return { ok: true, json: { status: "ok" } };
+        if (body.confirmation === "ask" && body.explain === undefined && !asked) {
+          asked = true;
+          return ASKED(token);
+        }
+        return { ok: true, json: { ...mockQueryResult, inTransaction: true } };
+      },
+    });
+  }
+
+  beforeEach(() => {
+    mockToastError.mockClear();
+    addToHistorySpy = spyOn(storage, "addToHistory").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    addToHistorySpy.mockRestore();
+    restoreGlobalFetch();
+  });
+
+  test("a run asks the server, on each of the three run routes", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/query": { ok: true, json: mockQueryResult },
+      "/api/db/multi-query": {
+        ok: true,
+        json: { ...mockQueryResult, multiStatement: true, statementCount: 2, executedCount: 2 },
+      },
+      "/api/db/transaction": { ok: true, json: { ...mockQueryResult, inTransaction: true } },
+    });
+    const { result, rerender } = renderHook((props) => useQueryExecution(props), {
+      initialProps: createDefaultParams(),
+    });
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM users");
+      await result.current.executeQuery("SELECT 1; SELECT 2");
+    });
+    rerender(createDefaultParams({ transactionActive: true }));
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM users");
+    });
+    const runs = [
+      ...bodiesTo(fetchMock, "/api/db/query").filter((body) => body.explain === undefined),
+      ...bodiesTo(fetchMock, "/api/db/multi-query"),
+      ...bodiesTo(fetchMock, "/api/db/transaction"),
+    ];
+    expect(runs).toHaveLength(3);
+    for (const body of runs) expect(body.confirmation).toBe("ask");
+  });
+
+  test("an explain and the background plan do not ask", async () => {
+    const fetchMock = mockGlobalFetch({ "/api/db/query": { ok: true, json: mockQueryResult } });
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM users");
+      await result.current.executeQuery("SELECT * FROM users", undefined, true);
+    });
+    const explains = bodiesTo(fetchMock, "/api/db/query").filter((body) => body.explain !== undefined);
+    expect(explains.map((body) => body.explain)).toEqual([{ mode: "estimate" }, { mode: "analyze" }]);
+    for (const body of explains) expect(body).not.toHaveProperty("confirmation");
+  });
+
+  test("Proceed resends a 428 once with its token and draws no second dialog", async () => {
+    const token = TOKEN();
+    const fetchMock = askingServer(token);
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+    await act(async () => {
+      await result.current.executeQuery("DELETE FROM users WHERE id = 1");
+    });
+    expect(result.current.safetyCheckQuery).toBe("DELETE FROM users WHERE id = 1");
+    expect(bodiesTo(fetchMock, "/api/db/query")).toEqual([]);
+    await act(async () => {
+      result.current.forceExecuteQuery("DELETE FROM users WHERE id = 1");
+    });
+    await waitFor(() => expect(bodiesTo(fetchMock, "/api/db/query")).toHaveLength(2));
+    expect(bodiesTo(fetchMock, "/api/db/query").map((body) => body.confirmation)).toEqual(["ask", { token }]);
+    expect(result.current.safetyCheckQuery).toBeNull();
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  test("an inline edit, a page and a SANDBOX run resend a 428 once with its token", async () => {
+    // An inline edit: Proceed's flag, which the grid's apply loop passes.
+    const editToken = TOKEN();
+    let fetchMock = askingServer(editToken);
+    let hook = renderHook(() => useQueryExecution(createDefaultParams()));
+    let ran = false;
+    await act(async () => {
+      ran = await hook.result.current.executeQuery("UPDATE users SET name = $1 WHERE id = $2", undefined, false, {
+        skipSafety: true,
+        params: ["Ada", 1],
+      });
+    });
+    expect(ran).toBe(true);
+    expect(bodiesTo(fetchMock, "/api/db/query").map((body) => body.confirmation)).toEqual([
+      "ask",
+      { token: editToken },
+    ]);
+    expect(hook.result.current.safetyCheckQuery).toBeNull();
+    hook.unmount();
+    restoreGlobalFetch();
+
+    // A page: the next rows of a statement the gate already let run.
+    const pageToken = TOKEN();
+    fetchMock = askingServer(pageToken);
+    hook = renderHook(() => useQueryExecution(createDefaultParams()));
+    await act(async () => {
+      await hook.result.current.executeQuery("DELETE FROM users RETURNING *", undefined, false, { offset: 500 });
+    });
+    expect(bodiesTo(fetchMock, "/api/db/query").map((body) => body.confirmation)).toEqual([
+      "ask",
+      { token: pageToken },
+    ]);
+    expect(hook.result.current.safetyCheckQuery).toBeNull();
+    hook.unmount();
+    restoreGlobalFetch();
+
+    // A SANDBOX run: begin, the statement asked and resent, then the rollback.
+    const sandboxToken = TOKEN();
+    fetchMock = askingServer(sandboxToken, "/api/db/transaction");
+    hook = renderHook(() => useQueryExecution(createDefaultParams({ playgroundMode: true })));
+    await act(async () => {
+      await hook.result.current.executeQuery("DELETE FROM users");
+    });
+    const sent = bodiesTo(fetchMock, "/api/db/transaction");
+    expect(sent.map((body) => [body.action, body.confirmation ?? null])).toEqual([
+      ["begin", null],
+      ["query", "ask"],
+      ["query", { token: sandboxToken }],
+      ["rollback", null],
+    ]);
+    expect(hook.result.current.safetyCheckQuery).toBeNull();
+  });
+
+  test("a 428 for a run the local gate let through opens the dialog", async () => {
+    const token = TOKEN();
+    const fetchMock = askingServer(token);
+    const onFailure = mock(() => {});
+    const { result } = renderHook(() =>
+      useQueryExecution(createDefaultParams({ activeConnection: { ...mockConnection, type: "mysql" as const } })),
+    );
+    let ran = true;
+    await act(async () => {
+      // The dialog stub of this file answers "not dangerous" for it, as a client whose gate missed it would.
+      ran = await result.current.executeQuery("REPLACE INTO users VALUES (1)", undefined, false, { onFailure });
+    });
+    expect(ran).toBe(false);
+    expect(result.current.safetyCheckQuery).toBe("REPLACE INTO users VALUES (1)");
+    expect(bodiesTo(fetchMock, "/api/db/query").filter((body) => body.explain === undefined)).toHaveLength(1);
+    expect(onFailure).not.toHaveBeenCalled();
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  test("Proceed after a server-opened dialog sends that token", async () => {
+    const token = TOKEN();
+    const fetchMock = askingServer(token);
+    const { result } = renderHook(() =>
+      useQueryExecution(createDefaultParams({ activeConnection: { ...mockConnection, type: "mysql" as const } })),
+    );
+    await act(async () => {
+      await result.current.executeQuery("REPLACE INTO users VALUES (1)");
+    });
+    await act(async () => {
+      result.current.forceExecuteQuery("REPLACE INTO users VALUES (1)");
+    });
+    await waitFor(() => expect(bodiesTo(fetchMock, "/api/db/query")).toHaveLength(2));
+    expect(bodiesTo(fetchMock, "/api/db/query").map((body) => body.confirmation)).toEqual(["ask", { token }]);
+    expect(result.current.safetyCheckQuery).toBeNull();
+  });
+
+  test("a dismissed dialog keeps no token: the next Proceed of that statement asks again", async () => {
+    const token = TOKEN();
+    const fetchMock = askingServer(token);
+    const { result } = renderHook(() =>
+      useQueryExecution(createDefaultParams({ activeConnection: { ...mockConnection, type: "mysql" as const } })),
+    );
+    await act(async () => {
+      await result.current.executeQuery("REPLACE INTO users VALUES (1)");
+    });
+    act(() => {
+      result.current.setSafetyCheckQuery(null);
+    });
+    await act(async () => {
+      result.current.forceExecuteQuery("REPLACE INTO users VALUES (1)");
+    });
+    await waitFor(() => expect(bodiesTo(fetchMock, "/api/db/query")).toHaveLength(2));
+    expect(bodiesTo(fetchMock, "/api/db/query").map((body) => body.confirmation)).toEqual(["ask", "ask"]);
+  });
+
+  test("a second 428 ends the run as a failure", async () => {
+    const fetchMock = mockGlobalFetch({ "/api/db/query": ASKED(TOKEN()) });
+    const onFailure = mock((_message: string) => {});
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+    let ran = true;
+    await act(async () => {
+      ran = await result.current.executeQuery("DELETE FROM users", undefined, false, { skipSafety: true, onFailure });
+    });
+    expect(ran).toBe(false);
+    expect(bodiesTo(fetchMock, "/api/db/query")).toHaveLength(2);
+    expect(onFailure).toHaveBeenCalledWith("This statement needs a confirmation before it runs.");
+    expect(result.current.safetyCheckQuery).toBeNull();
+  });
+
+  test("CONFIRMATION_INVALID ends the run with the server's sentence", async () => {
+    const token = TOKEN();
+    const fetchMock = mockGlobalFetch({
+      "/api/db/query": async (req) => {
+        const body = (await req.json()) as Record<string, unknown>;
+        if (body.confirmation === "ask") return ASKED(token);
+        return {
+          status: 400,
+          json: { error: "this confirmation was issued for another connection", code: "CONFIRMATION_INVALID" },
+        };
+      },
+    });
+    const onFailure = mock((_message: string) => {});
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+    await act(async () => {
+      await result.current.executeQuery("DELETE FROM users", undefined, false, { skipSafety: true, onFailure });
+    });
+    expect(bodiesTo(fetchMock, "/api/db/query").map((body) => body.confirmation)).toEqual(["ask", { token }]);
+    expect(onFailure).toHaveBeenCalledWith("this confirmation was issued for another connection");
+  });
+});

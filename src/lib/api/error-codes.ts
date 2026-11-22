@@ -57,6 +57,20 @@ export const ApiErrorCode = {
    */
   INVENTORY_PAIR_LIMIT: "INVENTORY_PAIR_LIMIT",
 
+  /**
+   * The statement needs a confirmation before it runs (428, `src/lib/api/run-confirmation.ts`): the request asked
+   * (`"confirmation": "ask"`), or the server requires one (LIBREDB_RUN_CONFIRMATION=required). Nothing was built,
+   * opened or run. The body's `confirmation` carries the token to send back and what the confirmation asks.
+   */
+  CONFIRMATION_REQUIRED: "CONFIRMATION_REQUIRED",
+
+  /**
+   * The confirmation token a request sent does not confirm it (400): not verifiable, expired, already used, or issued
+   * for another route, session, connection, statement or reading of the statement. The sentence names which, and
+   * nothing ran. Distinct from CONFIRMATION_REQUIRED: asking again with `"confirmation": "ask"` issues a new token.
+   */
+  CONFIRMATION_INVALID: "CONFIRMATION_INVALID",
+
   // LLM errors
   LLM_SAFETY: "LLM_SAFETY",
   LLM_AUTH: "LLM_AUTH",

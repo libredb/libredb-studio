@@ -31,6 +31,7 @@ import type { UserPayload } from "@/lib/auth";
 import { clientAddress } from "@/lib/api/client-address";
 import type { GovernedConnection } from "@/lib/governance/visible";
 import { admitQueryExecution } from "@/lib/query-events/admission";
+import { gateRun } from "@/lib/api/run-confirmation";
 import { queryEventStart } from "@/lib/query-events/build";
 import type { QueryEventStart } from "@/lib/query-events/types";
 import {
@@ -285,6 +286,41 @@ export async function POST(req: NextRequest) {
 
     // Each database of a server-level connection holds its own transaction (#1530), so ownership is per database.
     const catalog = requestCatalog(body);
+
+    // A query action's own fields, then the server's confirmation gate (docs/API_DOCS.md, "Server confirmation of a
+    // run"), both before any provider is built or the admission gate is asked, so a request either refuses opens
+    // nothing and runs nothing. BEGIN, COMMIT and ROLLBACK are Studio's own statements and are not classified.
+    let query:
+      | { readonly sql: string; readonly params: unknown[] | undefined; readonly unconfirmed: boolean }
+      | undefined;
+    if (action === "query") {
+      if (!sql || typeof sql !== "string") {
+        return NextResponse.json({ error: "SQL query is required for transaction query" }, { status: 400 });
+      }
+      // The values of a generated statement are bound here as well: a row edit
+      // applied while a transaction is open takes this endpoint, and it would
+      // otherwise be the one path that still carried them as text (#290).
+      const bound = readBoundParams(body.params);
+      if (!bound.valid) {
+        return NextResponse.json({ error: bound.message }, { status: 400 });
+      }
+      const optionError = pageOptionError(options);
+      if (optionError !== null) {
+        return NextResponse.json({ error: optionError }, { status: 400 });
+      }
+      const gate = await gateRun({
+        route: "transaction",
+        session: guard.session,
+        connection,
+        catalog,
+        sql,
+        params: bound.params,
+        confirmation: body.confirmation,
+        explain: false,
+      });
+      if (gate.kind === "answer") return NextResponse.json(gate.body, { status: gate.status });
+      query = { sql, params: bound.params, unconfirmed: gate.unconfirmed };
+    }
     // Under governance each user's transaction is held on that user's own provider
     // (docs/GOVERNANCE.md#per-user-providers), so ownership is per user as well: the key and the record carry the owner
     // the editor context names, the session's identity provider subject. Without governance there is none, and the key
@@ -433,22 +469,10 @@ export async function POST(req: NextRequest) {
       }
 
       case "query": {
-        if (!sql || typeof sql !== "string") {
-          return NextResponse.json({ error: "SQL query is required for transaction query" }, { status: 400 });
-        }
-
-        // The values of a generated statement are bound here as well: a row edit
-        // applied while a transaction is open takes this endpoint, and it would
-        // otherwise be the one path that still carried them as text (#290).
-        const bound = readBoundParams(body.params);
-        if (!bound.valid) {
-          return NextResponse.json({ error: bound.message }, { status: 400 });
-        }
-
-        const optionError = pageOptionError(options);
-        if (optionError !== null) {
-          return NextResponse.json({ error: optionError }, { status: 400 });
-        }
+        // Read and gated above, before the provider: `query` is set whenever the action is "query".
+        const { sql, params, unconfirmed } = query as NonNullable<typeof query>;
+        const bound = { params };
+        const confirmation = unconfirmed ? { confirmation: "unconfirmed" as const } : {};
 
         // Under governance one `open` event per query action, carrying the text the user submitted
         // (docs/GOVERNANCE.md#query-events).
@@ -480,7 +504,7 @@ export async function POST(req: NextRequest) {
             const stillOpen = provider.isInTransaction();
             if (stillOpen) touchTransaction(owned);
             else releaseTransaction(owned);
-            return NextResponse.json({ ...script, inTransaction: stillOpen });
+            return NextResponse.json({ ...script, inTransaction: stillOpen, ...confirmation });
           }
           if (units.length === 1) statementSql = units[0].sql;
         }
@@ -546,6 +570,7 @@ export async function POST(req: NextRequest) {
             totalReturned: pageRows.length,
             wasLimited: hasMore || result.pagination?.wasLimited === true,
           },
+          ...confirmation,
         });
       }
 

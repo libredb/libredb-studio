@@ -55,6 +55,12 @@ export interface QueryExecutionOptions {
    * statement the safety dialog runs is never offered a second time.
    */
   onFailure?: (message: string) => void;
+  /**
+   * The confirmation token the server issued for this statement in a 428 answer, sent as the run's
+   * `confirmation` in place of `"ask"` (docs/API_DOCS.md, "Server confirmation of a run"). Set by
+   * `forceExecuteQuery` when the safety dialog it answers was opened by the server's 428.
+   */
+  confirmationToken?: string;
 }
 
 interface UseQueryExecutionParams {
@@ -350,7 +356,17 @@ export function useQueryExecution({
     };
   }, []);
 
-  const [safetyCheckQuery, setSafetyCheckQuery] = useState<string | null>(null);
+  const [safetyCheckQuery, showSafetyCheck] = useState<string | null>(null);
+  /**
+   * The server's confirmation token for the statement the safety dialog shows, when the server opened it (a 428 for a
+   * statement the local gate let through), so Proceed sends that token. Cleared whenever the dialog's statement
+   * changes or the dialog closes, so a token never outlives the dialog it was issued for.
+   */
+  const serverConfirmationRef = useRef<{ query: string; token: string } | null>(null);
+  const setSafetyCheckQuery = useCallback((query: string | null) => {
+    serverConfirmationRef.current = null;
+    showSafetyCheck(query);
+  }, []);
   const [unlimitedWarningOpen, setUnlimitedWarningOpen] = useState(false);
   const [pendingUnlimitedQuery, setPendingUnlimitedQuery] = useState<{
     query: string;
@@ -685,29 +701,38 @@ export function useQueryExecution({
         // The two routes that hand the provider the run's queryId: one statement, and a script,
         // whose route binds it to each unit in turn.
         run.serverCancellable = queryEndpoint !== "/api/db/transaction";
-        const mainQueryPromise = appFetch(queryEndpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ...runPayload,
-            // The parameter array travels beside the SQL on whichever endpoint the
-            // statement takes, and only when the caller supplied one: a request
-            // without values must stay a request without a `params` key (#290).
-            ...(params && { params }),
-            ...(useTransaction
-              ? { action: "query", sql: queryToExecute, options: { limit, offset, unlimited } }
-              : {
-                  // The user's own statement, always: an explain run asks for a
-                  // plan of it with `explain`, and the connected provider builds
-                  // the EXPLAIN on the server (#574).
-                  sql: queryToExecute,
-                  options: isExplain ? {} : { limit, offset, unlimited },
-                  ...(isExplain && { explain: { mode: "analyze" } }),
-                  queryId,
-                }),
-          }),
-          signal: abortController.signal,
-        });
+        // The run's `confirmation` (docs/API_DOCS.md, "Server confirmation of a run"): every run that is not an explain
+        // asks the server, which answers 428 with a token where its gate asks about the statement; a token the server
+        // issued for this statement confirms it. An explain is not classified, so it carries none.
+        const sendRun = (confirmation: "ask" | { token: string } | undefined) =>
+          appFetch(queryEndpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ...runPayload,
+              // The parameter array travels beside the SQL on whichever endpoint the
+              // statement takes, and only when the caller supplied one: a request
+              // without values must stay a request without a `params` key (#290).
+              ...(params && { params }),
+              ...(useTransaction
+                ? { action: "query", sql: queryToExecute, options: { limit, offset, unlimited } }
+                : {
+                    // The user's own statement, always: an explain run asks for a
+                    // plan of it with `explain`, and the connected provider builds
+                    // the EXPLAIN on the server (#574).
+                    sql: queryToExecute,
+                    options: isExplain ? {} : { limit, offset, unlimited },
+                    ...(isExplain && { explain: { mode: "analyze" } }),
+                    queryId,
+                  }),
+              ...(confirmation !== undefined && { confirmation }),
+            }),
+            signal: abortController.signal,
+          });
+        const confirmationToken = executionOptions?.confirmationToken;
+        const mainQueryPromise = sendRun(
+          isExplain ? undefined : confirmationToken === undefined ? "ask" : { token: confirmationToken },
+        );
 
         // Run EXPLAIN in background for non-explain queries (one SELECT only, see
         // `sendsPlan`). It asks for the `estimate`, which plans without executing: the
@@ -751,7 +776,27 @@ export function useQueryExecution({
           });
         }
 
-        const response = await mainQueryPromise;
+        let response = await mainQueryPromise;
+
+        // THE SERVER ASKS (428): its gate asks about a statement this run did not confirm with a token. Where this
+        // editor's own gate did not ask about the run because the person had already confirmed it (Proceed, an inline
+        // edit), or because it skips the gate for it (a page, a SANDBOX run), the run is sent once more with the
+        // server's token. Where this editor's gate let the statement through, the safety dialog opens for it, and its
+        // Proceed sends the token. A 428 to a request that carried a token, or a second 428, is a failure below.
+        if (response.status === 428 && confirmationToken === undefined) {
+          const asked = await response.clone().json();
+          const token: unknown = asked?.confirmation?.token;
+          if (asked?.code === ApiErrorCode.CONFIRMATION_REQUIRED && typeof token === "string") {
+            if (skipSafety || isLoadMore || playgroundMode) {
+              response = await sendRun({ token });
+            } else {
+              commitToTab((t) => ({ ...t, isExecuting: false, isLoadingMore: false }));
+              setSafetyCheckQuery(queryToExecute);
+              serverConfirmationRef.current = { query: queryToExecute, token };
+              return false;
+            }
+          }
+        }
 
         const endTime = Date.now();
         const executionTime = endTime - startTime;
@@ -1122,16 +1167,21 @@ export function useQueryExecution({
       playgroundMode,
       setTabs,
       queryEditorRef,
+      setSafetyCheckQuery,
     ],
   );
 
-  // Force execute (bypass safety check) — unified via skipSafety flag
+  // Force execute (bypass safety check): unified via skipSafety flag. A dialog the server's 428 opened hands its
+  // token on, so the run is sent confirmed; one this editor's own gate opened asks the server, which may answer 428
+  // with a token that `executeQuery` then sends.
   const forceExecuteQuery = useCallback(
     (query: string) => {
+      const server = serverConfirmationRef.current;
+      const confirmationToken = server !== null && server.query === query ? server.token : undefined;
       setSafetyCheckQuery(null);
-      executeQuery(query, undefined, false, { skipSafety: true });
+      executeQuery(query, undefined, false, { skipSafety: true, confirmationToken });
     },
-    [executeQuery],
+    [executeQuery, setSafetyCheckQuery],
   );
 
   /**
