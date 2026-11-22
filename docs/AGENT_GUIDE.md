@@ -973,9 +973,10 @@ count, whether it answered and when it ended.
   deletion — a run you can still name by id is still openable.
 - **History is the index, not the record.** A reopened report reads the run's own ledger, so the
   listing can never contradict what the run actually recorded.
-- **A run recorded in a statement language, opened for a workflow, or judged by a goal rule this Studio does not have is listed, and opening it says so.**
+- **A run recorded in a statement language or judged by a goal rule this Studio does not have, or opened for a workflow it does not offer on that language, is listed, and opening it says so.**
   Instead of its report you read a sentence that names the language, the workflow or the rule, for example a run recorded by a newer Studio.
   The run is kept as it was, and a Studio that has that language, workflow or rule opens it.
+  A run opened for a workflow this Studio does not have at all is left out of the list, because its history entry reads as absent, while opening it by its id still answers with the sentence.
 
 ---
 
@@ -1046,8 +1047,9 @@ Stated plainly, because a surface that hides its edges is the one that surprises
 - **An interrupted run is picked up on its own, eventually.** A sweep finds runs a dead process left
   `running` and drives each one again, but only AFTER its claim expires, so this is eventual resume,
   not immediate.
-  A run whose ledger names a statement language, workflow or goal rule this Studio does not have is the exception: it is left as it is, for a Studio that has it. It is guaranteed on the `local` backend only; the multi-replica Postgres world is out
+  It is guaranteed on the `local` backend only; the multi-replica Postgres world is out
   of scope until B16 lands.
+  A run whose ledger names a statement language, workflow or goal rule this Studio does not have is the exception: it is left as it is, for a Studio that has it.
 - **It reads what your connection's role can read.** The declared-target allowlist, the statement
   guard and the role's own grants are the whole boundary on out-of-scope reads
   (`docs/BACKLOG.md`, "Agent M1 deferrals", A3).
