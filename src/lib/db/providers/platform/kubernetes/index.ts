@@ -433,7 +433,7 @@ export class KubernetesProvider extends BaseDatabaseProvider {
     return [];
   }
 
-  /** Kubernetes has no tables; `tableStatsCaption` says where its objects are. */
+  /** Kubernetes has no tables, and the panel is not offered (`ENGINE_FACETS`), so core never reads this and nothing draws it. */
   public async getTableStats(): Promise<TableStats[]> {
     return [];
   }

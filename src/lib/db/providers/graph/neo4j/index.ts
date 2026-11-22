@@ -279,7 +279,7 @@ export class Neo4jProvider extends GraphBaseProvider {
     return {};
   }
 
-  /** Empty: Community keeps no query log. `getLabels().slowQueriesEmptyState` says so in the panel. */
+  /** Empty: Community keeps no query log, and the panel is not offered (`ENGINE_FACETS`), so core never reads this and nothing draws it. */
   public async getSlowQueries(): Promise<SlowQueryStats[]> {
     this.ensureConnected();
     return [];

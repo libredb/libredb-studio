@@ -180,11 +180,12 @@ describe("docs/providers/kafka.md quotes the strings the provider writes", () =>
     expect(DOC).toContain(`with the hint "${connectionFieldHint(DB_UI_CONFIG.kafka, "saslMechanism")}"`);
   });
 
-  test("the labels and empty states are the provider's", () => {
+  test("the labels are the provider's, and it declares no empty state for a panel it does not offer", () => {
     expect(DOC).toContain(`\`selectAction\` "${labels.selectAction}"`);
     expect(DOC).toContain(`\`generateAction\` "${labels.generateAction}"`);
-    expect(DOC).toContain(`"${labels.slowQueriesEmptyState}"`);
-    expect(DOC).toContain(`"${labels.sessionsEmptyState}"`);
+    expect(labels.slowQueriesEmptyState).toBeUndefined();
+    expect(labels.sessionsEmptyState).toBeUndefined();
+    expect(DOC).toContain("no empty-state sentence");
   });
 
   test("the SSH tunnel refusal is core's row for Kafka, quoted whole (FND-2 slice 5)", () => {

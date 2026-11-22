@@ -40,9 +40,6 @@ export const RABBITMQ_LABELS: ProviderLabels = Object.freeze({
   generateAction: "Generate Read Request",
   searchPlaceholder: "Search streams, queues and exchanges...",
   statementLanguage: rabbitmqStatementLanguage(),
-  slowQueriesEmptyState: "RabbitMQ has no query log",
-  // True for every account, an administrator included: Studio never lists broker connections.
-  sessionsEmptyState: "Studio does not list broker connections, because they name other users and client addresses.",
   // Never rendered: maintenanceControl() gates every placement on supportsMaintenance first (src/lib/db/types.ts).
   analyzeAction: "Analyze Stream",
   vacuumAction: "Compact Stream",

@@ -38,19 +38,6 @@ export const OPCUA_LABELS: ProviderLabels = Object.freeze({
     "Maintenance would be a write, and this provider has no code that can write to a server: its " +
     "client exposes GetEndpoints, CreateSession, ActivateSession, Browse, BrowseNext, Read, " +
     "HistoryRead and CloseSession, and nothing else.",
-  /*
-   * WHY THE TWO MONITORING PANELS ARE EMPTY, in this engine's own terms (#518). Both default to a
-   * sentence written for a SQL server, and a browser pass found what that means here: the Queries
-   * panel told an OPC UA reader to install `pg_stat_statements`, a PostgreSQL extension, and the
-   * Sessions panel said "No active sessions found." against a server that was holding this very
-   * session. Ten other providers set these two keys; this one had skipped them.
-   */
-  slowQueriesEmptyState:
-    "An OPC UA server answers services rather than queries, so it keeps no query log and has no slow " +
-    "queries to report.",
-  sessionsEmptyState:
-    "An OPC UA server publishes a session COUNT (`CurrentSessionCount`) rather than a session list, and " +
-    "not every server answers even that, so no session table can be read from it.",
 });
 
 /**

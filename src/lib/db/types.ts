@@ -1912,18 +1912,16 @@ export interface ProviderLabels {
   slowQueriesEmptyState?: string;
 
   /**
-   * Why the monitoring Sessions panel and the admin Operations session list are
-   * empty on this engine, in that engine's own terms.
+   * What an empty answer of an offered session panel means on this engine, where "No active
+   * sessions found." would mislead: for example a list of running statements rather than of
+   * sessions.
    *
-   * The counterpart of `slowQueriesEmptyState` for the other half of the same
-   * absence (#518). Both panels default to "No active sessions found.", which a
-   * reader takes as "nothing is running right now" - true on PostgreSQL, and false
-   * on an engine that publishes no session list at all and can never show a row.
+   * Read by the monitoring Sessions tab and the admin Operations session list. A failed read
+   * renders its own reason instead (`activeSessions` absent from the payload, the reason under
+   * `errors`), because a refusal is not an empty answer.
    *
-   * A provider sets this when its `getActiveSessions()` can only ever answer `[]`.
-   * The failure branch beside it is a different fact: it renders a reason only when
-   * the READ failed (`activeSessions` absent from the payload, the reason under
-   * `errors`), and an absence is not an error.
+   * An engine whose `ENGINE_FACETS` row does not offer `activeSessions` declares none, because
+   * nothing draws the panel there; the monitoring panels census holds that.
    */
   sessionsEmptyState?: string;
 
@@ -1943,8 +1941,10 @@ export interface ProviderLabels {
    * frames the list as the top N).
    *
    * Every engine whose list is whole leaves this absent, and both lists then render as they always
-   * have. Optional, like every field added to this published interface after the fact, so an
-   * external implementer keeps compiling.
+   * have. An engine whose `ENGINE_FACETS` row does not offer `tables` declares none, because neither
+   * list nor the agent's table reading exists for it; the monitoring panels census holds that.
+   * Optional, like every field added to this published interface after the fact, so an external
+   * implementer keeps compiling.
    */
   tableStatsCaption?: string;
 }

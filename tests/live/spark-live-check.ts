@@ -630,9 +630,8 @@ await item(9, "the monitoring panels", async () => {
     check((await p.getIndexStats()).length === 0, "index stats are not empty");
     const labels = p.getLabels();
     check(
-      labels.slowQueriesEmptyState === SPARK_MONITORING_LABELS.slowQueriesEmptyState &&
-        labels.sessionsEmptyState === SPARK_MONITORING_LABELS.sessionsEmptyState,
-      "the empty-state labels are not the provider's",
+      labels.slowQueriesEmptyState === undefined && labels.sessionsEmptyState === undefined,
+      "the provider declares an empty-state label for a panel it does not offer",
     );
     refusedWith(
       await rejection(p.getTableStats(), "the tables panel"),

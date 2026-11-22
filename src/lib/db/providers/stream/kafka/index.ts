@@ -290,8 +290,6 @@ export class KafkaProvider extends BaseDatabaseProvider {
       // carries the schema and says that the inventory's columns are not keys (spec 6.3). The
       // integration test parses each example in it with that parser.
       statementLanguage: `the JSON read request this editor executes - one object, {"topic": "<topic name>", "partition": <n>, "from": "earliest" | "latest" | {"offset": <n>} | {"timestamp": "<ISO-8601 with a zone>"}, "limit": <1 to ${DEFAULT_QUERY_LIMIT}>}, of which only "topic" is required: "from" defaults to "latest", "limit" to 50, and "partition" is required with an offset; for example {"topic": "orders", "from": "latest", "limit": 50} or {"topic": "orders", "partition": 0, "from": {"offset": "120"}} - and no other key: "offset" and "timestamp" go inside "from", never at the top level, the inventory's other columns (key, value, headers and their encodings) are fields each message comes back with, not keys of the request, and a read request reads one topic's messages, never a consumer group's lag`,
-      slowQueriesEmptyState: "Kafka exposes no query log",
-      sessionsEmptyState: "Kafka does not report client sessions over its protocol",
       // Never rendered: maintenanceControl() gates every placement on supportsMaintenance first
       // (src/lib/db/types.ts). Worded true for Kafka anyway.
       analyzeAction: "Analyze Topic",
@@ -531,7 +529,7 @@ export class KafkaProvider extends BaseDatabaseProvider {
     return {};
   }
 
-  /** Empty: Kafka keeps no query log. `getLabels().slowQueriesEmptyState` says so in the panel. */
+  /** Empty: Kafka keeps no query log, and the panel is not offered (`ENGINE_FACETS`), so core never reads this and nothing draws it. */
   public async getSlowQueries(): Promise<SlowQueryStats[]> {
     // On an agent-mode handle an empty answer would read as the broker's own; the reason is answered instead.
     if (this.agentProfile) this.agentWithheld(KAFKA_AGENT_WITHHELD.slowQueries);
@@ -539,7 +537,7 @@ export class KafkaProvider extends BaseDatabaseProvider {
     return [];
   }
 
-  /** Empty: the protocol reports no client sessions. `getLabels().sessionsEmptyState` says so in the panel. */
+  /** Empty: the protocol reports no client sessions, and the panel is not offered (`ENGINE_FACETS`), so core never reads this and nothing draws it. */
   public async getActiveSessions(): Promise<ActiveSessionDetails[]> {
     // On an agent-mode handle an empty answer would read as the broker's own; the reason is answered instead.
     if (this.agentProfile) this.agentWithheld(KAFKA_AGENT_WITHHELD.sessions);

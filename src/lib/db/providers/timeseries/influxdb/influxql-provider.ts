@@ -725,13 +725,13 @@ export class InfluxDBProvider extends BaseDatabaseProvider {
     return {};
   }
 
-  /** Empty: `getLabels().slowQueriesEmptyState` says why. */
+  /** Empty: the panel is not offered (`ENGINE_FACETS`), so core never reads this and nothing draws it. */
   public async getSlowQueries(): Promise<SlowQueryStats[]> {
     this.ensureConnected();
     return [];
   }
 
-  /** Empty: every request stands alone; `getLabels().sessionsEmptyState` says so. */
+  /** Empty: every request stands alone, and the panel is not offered (`ENGINE_FACETS`), so core never reads this and nothing draws it. */
   public async getActiveSessions(): Promise<ActiveSessionDetails[]> {
     this.ensureConnected();
     return [];

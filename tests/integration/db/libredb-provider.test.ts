@@ -329,11 +329,10 @@ describe("LibreDBProvider — lifecycle & metadata", () => {
   // The monitoring Queries panel is ALWAYS empty here - `getSlowQueries()` answers
   // `[]` unconditionally - and until #U12 it told the reader to enable a PostgreSQL
   // extension on the embedded engine.
-  test("getLabels() says the embedded engine keeps no statement statistics", () => {
+  test("getLabels() declares no slow-query sentence, because LibreDB offers no Queries panel to draw it", () => {
     const { slowQueriesEmptyState } = new LibreDBProvider(makeConn(tmpFile)).getLabels();
 
-    expect(slowQueriesEmptyState).toContain("LibreDB keeps no statistics");
-    expect(slowQueriesEmptyState).not.toContain("pg_stat_statements");
+    expect(slowQueriesEmptyState).toBeUndefined();
   });
 
   // `statementLanguage` is the sentence the agent's plan contract states verbatim
@@ -678,14 +677,11 @@ describe("LibreDBProvider — monitoring", () => {
     await provider.disconnect();
   });
 
-  test("getSlowQueries stays empty - the label, not an error, carries LibreDB's sentence", async () => {
+  test("getSlowQueries stays empty, and the Queries panel is not offered, so nothing draws it", async () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     await provider.connect();
-    // The one panel that is legitimately empty: `QueriesTab` renders
-    // `ProviderLabels.slowQueriesEmptyState` in place of an empty list, and this provider
-    // declares one, so LibreDB's own sentence already reaches the user here.
     expect(await provider.getSlowQueries()).toEqual([]);
-    expect(provider.getLabels().slowQueriesEmptyState).toMatch(/keeps no statistics/i);
+    expect(provider.getLabels().slowQueriesEmptyState).toBeUndefined();
     await provider.disconnect();
   });
 

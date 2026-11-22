@@ -160,11 +160,6 @@ const rowOf = (text: string, cell: string): string | undefined =>
   text.split("\n").find((line) => line.startsWith(`| ${cell} |`));
 
 /** A label the provider declares; an undeclared one fails the case rather than matching an empty string. */
-function declaredLabel(value: string | undefined): string {
-  if (value === undefined) throw new Error("the provider declares no such label");
-  return value;
-}
-
 /** A code span as a Markdown table cell writes it: a pipe inside it escaped. */
 const tableCode = (text: string): string => `\`${text.replaceAll("|", "\\|")}\``;
 
@@ -705,9 +700,10 @@ describe("docs/providers/oxia.md quotes what the provider's modules say", () => 
     expect(monitoring).toContain(placeholder(silent, { "7 s": "<n> s" }));
     const notServing = await healthFailure(undefined, "NOT_SERVING");
     expect(monitoring).toContain(placeholder(notServing, { NOT_SERVING: "<STATUS>" }));
-    expect(monitoring).toContain(declaredLabel(OXIA_LABELS.slowQueriesEmptyState));
-    expect(monitoring).toContain(declaredLabel(OXIA_LABELS.sessionsEmptyState));
-    expect(monitoring).toContain(declaredLabel(OXIA_LABELS.tableStatsCaption));
+    expect(OXIA_LABELS.slowQueriesEmptyState).toBeUndefined();
+    expect(OXIA_LABELS.sessionsEmptyState).toBeUndefined();
+    expect(OXIA_LABELS.tableStatsCaption).toBeUndefined();
+    expect(monitoring).toContain("declares no empty-state sentence and no table caption");
     expect(monitoring).not.toMatch(/restart/i);
   });
 

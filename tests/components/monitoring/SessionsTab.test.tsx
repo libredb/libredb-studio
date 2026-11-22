@@ -12,6 +12,7 @@ import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
 import { RedisProvider } from "@/lib/db/providers/keyvalue/redis";
 import { CassandraProvider } from "@/lib/db/providers/sql/cassandra/index";
 import { DruidProvider } from "@/lib/db/providers/sql/druid/index";
+import { SNOWFLAKE_MONITORING_LABELS } from "@/lib/db/providers/sql/snowflake/monitoring";
 
 mock.module("@/components/ui/tooltip", () => ({
   TooltipProvider: ({ children }: { children: React.ReactNode }) => React.createElement("div", {}, children),
@@ -341,11 +342,11 @@ describe("a refused activeSessions read", () => {
   });
 });
 
-// #D48. "No active sessions found." reads as "nothing is running right now", which is
-// false on an engine that publishes no session list and can never show a row. Both
-// branches are pinned so the fallback cannot quietly become the only path again.
-describe("an engine that publishes no session list says so in its own words", () => {
-  const DUCKDB = "DuckDB publishes no session list - there is no duckdb_connections() table function.";
+// #D48. "No active sessions found." reads as "no session is open right now", which
+// misleads on an engine whose offered list is something else: Snowflake lists running
+// statements. Both branches are pinned so the fallback cannot quietly become the only path again.
+describe("an engine whose session list is something else says so in its own words", () => {
+  const SNOWFLAKE = SNOWFLAKE_MONITORING_LABELS.sessionsEmptyState;
 
   afterEach(() => {
     cleanup();
@@ -358,11 +359,11 @@ describe("an engine that publishes no session list says so in its own words", ()
         data={data}
         loading={false}
         onKillSession={mock(async () => true)}
-        labels={{ sessionsEmptyState: DUCKDB } as ProviderLabels}
+        labels={{ sessionsEmptyState: SNOWFLAKE } as ProviderLabels}
       />,
     );
 
-    expect(queryByText(DUCKDB)).not.toBeNull();
+    expect(queryByText(SNOWFLAKE)).not.toBeNull();
     expect(queryByText("No active sessions found.")).toBeNull();
   });
 
@@ -389,12 +390,12 @@ describe("an engine that publishes no session list says so in its own words", ()
         }
         loading={false}
         onKillSession={mock(async () => true)}
-        labels={{ sessionsEmptyState: DUCKDB } as ProviderLabels}
+        labels={{ sessionsEmptyState: SNOWFLAKE } as ProviderLabels}
       />,
     );
 
     expect(getByTestId("panel-unavailable-message").textContent).toBe("permission denied");
-    expect(queryByText(DUCKDB)).toBeNull();
+    expect(queryByText(SNOWFLAKE)).toBeNull();
   });
 });
 

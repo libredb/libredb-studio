@@ -313,11 +313,6 @@ export class PrometheusProvider extends BaseDatabaseProvider {
       searchPlaceholder: "Search metrics or labels...",
       // Read by the agent's planning contract, which then asks for a statement "in PromQL".
       statementLanguage: "PromQL",
-      // Both panels can only ever be empty here (#1085 6.2), and their default sentence would read
-      // as "nothing is running right now".
-      slowQueriesEmptyState: "Prometheus exposes no query log over its HTTP API, so there are no slow queries to read.",
-      sessionsEmptyState:
-        "Prometheus exposes no session list over its HTTP API: every request is a separate, stateless call.",
       // The Tables list is the top of the TSDB status's ranking, not every metric (#1085 6.2). "At most",
       // because a head that holds fewer metrics lists fewer.
       tableStatsCaption: `The metrics with the most head series, at most ${TSDB_TOP_METRICS}`,
@@ -590,13 +585,13 @@ export class PrometheusProvider extends BaseDatabaseProvider {
     return Promise.resolve({});
   }
 
-  /** Empty: the HTTP API returns no query log. `getLabels().slowQueriesEmptyState` says so in the panel. */
+  /** Empty: the HTTP API returns no query log, and the panel is not offered (`ENGINE_FACETS`), so core never reads this and nothing draws it. */
   public getSlowQueries(): Promise<SlowQueryStats[]> {
     if (this.agentProfile) return this.agentWithheld(PROMETHEUS_AGENT_WITHHELD.slowQueries);
     return Promise.resolve([]);
   }
 
-  /** Empty: the HTTP API publishes no session list. `getLabels().sessionsEmptyState` says so in the panel. */
+  /** Empty: the HTTP API publishes no session list, and the panel is not offered (`ENGINE_FACETS`), so core never reads this and nothing draws it. */
   public getActiveSessions(): Promise<ActiveSessionDetails[]> {
     if (this.agentProfile) return this.agentWithheld(PROMETHEUS_AGENT_WITHHELD.sessions);
     return Promise.resolve([]);

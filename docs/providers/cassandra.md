@@ -1277,8 +1277,7 @@ to three different places. See [§3.6](#36-a-monitoring-surface-degrades-on-a-de
 **One method stays EMPTY on purpose.** Slow queries: there is no aggregate of finished statements
 anywhere CQL can read (`system_views.system_logs` is a tail of the node's log file, 0 rows on this
 image), **no statement is sent**, and `getSlowQueries()` answers `[]`.
-`ProviderLabels.slowQueriesEmptyState` carries Cassandra's own sentence for that answer: *"Cassandra keeps no aggregate of finished statements: the slow-query threshold writes to the node's log file rather than to a table."*
-Converting the answer to a refusal would move the same sentence from a label to an error entry, and buy nothing.
+The slow-query panel is not offered (below), so core never reads the method and nothing draws the panel.
 
 **Four panels are not offered.**
 The three refused on every build and the slow-query panel are declared not offered in Cassandra's `ENGINE_FACETS` row ([Engine facets](#engine-facets)): `getMonitoringData` never reads them and lists them in `notOffered`, with no `errors` entry, and the dashboard draws no Queries, Tables or Storage tab for Cassandra.
@@ -1381,9 +1380,7 @@ because there are no table statistics to list at all.)
 OFFSET"* — because a model asked for "a statement" against a connection called Cassandra will write
 SQL, and each of those three is a syntax error here.
 
-`slowQueriesEmptyState` is declared — *"Cassandra keeps no aggregate of finished statements: the
-slow-query threshold writes to the node's log file rather than to a table."* — because
-`getSlowQueries()` is empty by design ([§7](#7-monitoring--health)), so the slow-query panel is not offered and the dashboard draws no Queries tab here; before that, the panel was **always** empty, and its hardcoded sentence used to tell the reader to enable `pg_stat_statements` (#463).
+No `slowQueriesEmptyState` is declared: `getSlowQueries()` is empty by design ([§7](#7-monitoring--health)), so the slow-query panel is not offered, the dashboard draws no Queries tab here, and nothing would draw a sentence for it.
 
 ### SQL writing
 

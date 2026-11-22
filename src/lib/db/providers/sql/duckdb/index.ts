@@ -615,24 +615,15 @@ export class DuckDBProvider extends SQLBaseProvider {
   }
 
   /**
-   * The two empty states and the wording for `optimize`, which on this engine is
-   * a checkpoint rather than anything an operator would call optimization.
+   * The global vacuum description: DuckDB reclaims space at checkpoint time, so the card
+   * says when a bare VACUUM does nothing.
    *
-   * `getSlowQueries()` answers `[]` unconditionally, so the monitoring Queries panel is
-   * ALWAYS empty here - and the default sentence tells the reader to install a
-   * PostgreSQL extension (#463). `getActiveSessions()` is the same shape for the same
-   * reason: measured on DuckDB v1.5.5, `duckdb_connections()` answers
-   * `Catalog Error: Table Function with name duckdb_connections does not exist!`, so the
-   * default "No active sessions found." would read as "nothing is running right now" on a
-   * panel that can never show a row (#518).
+   * No empty-state sentence: DuckDB offers neither the monitoring Queries panel nor the
+   * Sessions panel, so nothing would draw one.
    */
   public override getLabels(): ProviderLabels {
     return {
       ...super.getLabels(),
-      slowQueriesEmptyState:
-        "DuckDB keeps no store of finished statements - it publishes no duckdb_queries() table function - so there is nothing to enable.",
-      sessionsEmptyState:
-        "DuckDB publishes no session list - there is no duckdb_connections() table function - so this panel can never show a row.",
       vacuumGlobalDesc:
         "Runs bare VACUUM over the whole database. DuckDB reclaims space at checkpoint time, so this is a no-op on a database that has just been checkpointed.",
     };

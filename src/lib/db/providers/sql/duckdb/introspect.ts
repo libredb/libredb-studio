@@ -458,14 +458,13 @@ export async function readHealth(client: DuckDBClient, files?: DuckDBFileSizes):
 }
 
 /**
- * Always empty, and the reason travels as a label rather than as a fabricated row.
+ * Always empty rather than a fabricated row, and the Queries panel is not offered
+ * (`ENGINE_FACETS`), so core never reads this and nothing draws it.
  *
  * DuckDB keeps no finished-statement store: `duckdb_queries()` does not exist
  * ("Catalog Error: Table Function with name duckdb_queries does not exist!"), there is
  * no `pg_stat_statements` equivalent to install, and the profiler writes to a file the
- * user configures per session rather than to a catalog. `ProviderLabels
- * .slowQueriesEmptyState` carries that sentence to the Queries panel, which otherwise
- * tells the reader to install a PostgreSQL extension (#463).
+ * user configures per session rather than to a catalog.
  */
 export async function readSlowQueries(): Promise<SlowQueryStats[]> {
   return [];

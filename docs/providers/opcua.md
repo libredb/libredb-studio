@@ -893,8 +893,8 @@ facts** — so what cannot be read is refused or named, and nothing is filled in
 | `getOverview()` | the product name with its software version, and the uptime, both read from `Server/ServerStatus` ([below](#71-what-the-overview-card-really-reads)); size `"unknown"`; `tableCount` and `indexCount` **0**, because the shape takes a number and a server has neither |
 | `getHealth()` | size and cache ratio `"unknown"`, no sessions, no slow queries |
 | `getStorageStats()` / `getTableStats()` / `getIndexStats()` | **refused**, with this provider's own sentence ([below](#72-a-panel-that-cannot-be-read-refuses-rather-than-reporting-zero)) |
-| `getSlowQueries()` | `[]`, and `getLabels().slowQueriesEmptyState` says why; the panel is not offered, so it is never read and not drawn |
-| `getActiveSessions()` | `[]`, and `getLabels().sessionsEmptyState` says why; the panel is not offered, so it is never read and not drawn |
+| `getSlowQueries()` | `[]`: a server answers services rather than queries and keeps no query log; the panel is not offered, so it is never read and not drawn, and no label explains it |
+| `getActiveSessions()` | `[]`: a server publishes a session count rather than a session list; the panel is not offered, so it is never read and not drawn, and no label explains it |
 | `getPerformanceMetrics()` | `{}` |
 
 `CurrentSessionCount` (`i=2277`) is a number, not a session list, and it is not portable either:

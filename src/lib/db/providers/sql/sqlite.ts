@@ -1264,17 +1264,14 @@ export class SQLiteProvider extends SQLBaseProvider {
   }
 
   /**
-   * The slow-query empty state and the global reindex wording; every other label is
-   * the SQL default and right.
+   * The global reindex wording; every other label is the SQL default and right.
    *
-   * `getSlowQueries()` answers `[]` unconditionally, so the monitoring Queries panel
-   * is ALWAYS empty here - and it used to tell the reader to install a PostgreSQL
-   * extension (#463).
+   * No slow-query sentence: SQLite does not offer the monitoring Queries panel, so
+   * nothing would draw one.
    */
   public override getLabels(): ProviderLabels {
     return {
       ...super.getLabels(),
-      slowQueriesEmptyState: "SQLite keeps no statistics about finished statements, so there is nothing to enable.",
       reindexGlobalLabel: "Run Reindex",
       reindexGlobalTitle: "Rebuild Indexes",
       reindexGlobalDesc: "Runs bare REINDEX, rebuilding every index in the database file.",

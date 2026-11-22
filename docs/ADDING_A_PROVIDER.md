@@ -995,8 +995,8 @@ comment. Three surfaces read labels today, plus the agent's prompt layer:
 | `statementLanguage` (optional) | The agent's plan contract (`src/lib/agent/investigation.ts`), stated verbatim to the model. No UI surface reads it. Declared only where the engine's own name misleads a model about what a "statement" is here |
 | `slowQueriesEmptyState` (optional) | Monitoring **Queries** tab, the sentence under *"No query statistics available."* when an offered "Slowest Queries" list is empty. Absent = that line alone. PostgreSQL declares its *"Enable pg_stat_statements extension to see query stats."* here. Declare it only where the engine offers `slowQueries`: nothing draws the panel elsewhere, and the monitoring panels census fails on a sentence for a panel the engine does not offer |
 | `vacuumActionOperation` (optional) | Specifies which maintenance operation the `vacuumAction` label refers to. Absent = `vacuum`. |
-| `sessionsEmptyState` (optional) | Monitoring Sessions tab and admin Operations session list empty-state message. Absent = "No active sessions found." |
-| `tableStatsCaption` (optional) | Caption explaining when the table statistics list represents a subset of the database's tables. Absent = no caption. |
+| `sessionsEmptyState` (optional) | Monitoring Sessions tab and admin Operations session list empty-state message, for an offered list whose empty answer "No active sessions found." would misdescribe (Snowflake lists running statements). Absent = that sentence. Declare it only where the engine offers `activeSessions`: the monitoring panels census fails on a sentence for a panel the engine does not offer |
+| `tableStatsCaption` (optional) | Caption explaining when the table statistics list represents a subset of the database's tables. Absent = no caption. Declare it only where the engine offers `tables`, as the monitoring panels census holds |
 
 The `*Global*` triads reach only the card, never the per-table button, and only where the card
 renders: the analyze card is gated on `analyze`, the vacuum card on the **literal** `vacuum`, the

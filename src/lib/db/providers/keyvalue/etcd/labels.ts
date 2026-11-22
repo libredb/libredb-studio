@@ -60,8 +60,6 @@ export const ETCD_LABELS: ProviderLabels = {
   generateAction: "Generate Command",
   searchPlaceholder: "Search key prefixes...",
   statementLanguage: `the etcdctl command this editor runs: exactly one command per run, written as etcdctl writes it, with no pipe, no redirect, no second command and no connection flag such as --endpoints or --cacert, because the connection decides where a command runs and as whom; plan mode drafts only a read, one of ${DRAFTED_USAGES}, with --limit at most ${DEFAULT_QUERY_LIMIT}; a key-prefix row such as /app/config/* is read with get /app/config/ --prefix, never with a * in the key; for example ${ETCD_STATEMENT_EXAMPLES[0]} or ${ETCD_STATEMENT_EXAMPLES[1]}; a txn and every write (put, del, lease grant, lease revoke, lease keep-alive) is typed by the user in the editor and never drafted`,
-  slowQueriesEmptyState: "etcd keeps no query log",
-  sessionsEmptyState: "etcd does not report client sessions",
   // What the rows of getTableStats are (spec 6.3, 7.1): some keys belong to no group (spec 4.1) and a capped
   // walk lists fewer groups than exist (spec 4.3), so the Tables tab lists the groups rather than summing them.
   tableStatsCaption: "The key-prefix groups; a key in no group is counted in the Overview and not here",

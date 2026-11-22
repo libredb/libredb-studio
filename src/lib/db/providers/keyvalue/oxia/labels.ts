@@ -53,10 +53,6 @@ export const OXIA_LABELS: ProviderLabels = Object.freeze({
   vacuumGlobalTitle: "Not available",
   vacuumGlobalDesc: "Oxia compacts its own storage, and Studio sends it no maintenance.",
   statementLanguage: oxiaStatementLanguage(),
-  slowQueriesEmptyState: "Oxia keeps no query log",
-  sessionsEmptyState: "Oxia does not list client sessions",
-  tableStatsCaption:
-    "Oxia has no tables: its shards are listed under Shards, and its keys in the Keys panel and with list in the console.",
 });
 
 /**

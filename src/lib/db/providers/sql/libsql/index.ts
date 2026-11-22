@@ -285,13 +285,13 @@ export class LibSQLProvider extends SQLBaseProvider {
   }
 
   /**
-   * The two labels the engine's own gaps require, and no others: `tables` and
-   * `rows` are the right words for SQLite.
+   * The global reindex wording, and no other label: `tables` and `rows` are the right
+   * words for SQLite, and libSQL offers no monitoring Queries panel a sentence could
+   * explain.
    */
   public override getLabels(): ProviderLabels {
     return {
       ...super.getLabels(),
-      slowQueriesEmptyState: "libSQL keeps no statistics about finished statements, so there is nothing to enable.",
       reindexGlobalLabel: "Run Reindex",
       reindexGlobalTitle: "Rebuild Indexes",
       reindexGlobalDesc: "Runs bare REINDEX, rebuilding every index in the database.",

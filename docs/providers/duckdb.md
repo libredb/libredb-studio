@@ -294,21 +294,10 @@ SELECT * FROM duckdb_connections();  -- Catalog Error: Table Function with name 
 ```
 
 Both therefore answer `[]` without asking the engine, and neither fabricates a zero.
-The two `ProviderLabels` fields the provider declares say why each answer is empty:
-
-- `getSlowQueries()` returns `[]` and the provider declares `slowQueriesEmptyState`: *"DuckDB keeps no store of finished statements - it publishes no duckdb_queries() table function - so there is nothing to enable."*
-  Without it the Queries panel told every engine to install `pg_stat_statements`, which for DuckDB is nonsense (#463).
-- `getActiveSessions()` returns `[]` and the provider declares `sessionsEmptyState`: *"DuckDB publishes no session list - there is no duckdb_connections() table function - so this panel can never show a row."*
-  It replaced the generic **"No active sessions found."** that `SessionsTab` and
-  `OperationsTab` used for every provider until D48. That generic sentence reads as "nothing
-  is running right now", which is a different claim from "this panel can never show a row". A
-  provider that declares neither label keeps the generic wording. (The `sessionsUnavailable` path
-  beside it is a third fact again: it renders a reason only when the reading *failed*.)
-
 Neither panel is offered in DuckDB's `ENGINE_FACETS` row ([Engine facets](#engine-facets)), so `getMonitoringData` never reads them, and neither the monitoring dashboard nor the admin Operations page draws them.
-The two sentences above are no longer shown on either page.
+The provider therefore declares no `slowQueriesEmptyState` and no `sessionsEmptyState`: a sentence explaining an empty panel would have no reader.
 
-`sqlite.ts` answers this panel with a row describing its own handle. That row would be true here
+`sqlite.ts` answers the sessions read with a row describing its own handle. That row would be true here
 too, but it would be the only row the panel could ever show, and "the engine reports one session"
 is a different claim from "the engine reports nothing". The count that *is* measurable travels as
 `activeConnections` on the overview, where it is a number rather than a fabricated session record.
@@ -1391,13 +1380,10 @@ See §8 for the statements and placement rules.
 
 | Label | UI effect |
 |---|---|
-| `slowQueriesEmptyState` | Explains that DuckDB publishes no `duckdb_queries()` table function, so the Queries panel has no finished-statement store to show. |
-| `sessionsEmptyState` | Explains that DuckDB publishes no `duckdb_connections()` table function, so the Sessions panel cannot show rows. |
 | `vacuumGlobalDesc` | Describes the global `VACUUM` control and its checkpoint behaviour. |
 
-The first two replace generic empty-state copy with the engine-specific absence already measured
-in §3.7. The maintenance label does not add another operation; it only describes the global
-`vacuum` control declared above.
+The label does not add another operation; it only describes the global `vacuum` control declared above.
+No empty-state sentence is declared: neither the Queries nor the Sessions panel is offered (§3.7).
 
 ### 9.3 Agent language pack
 

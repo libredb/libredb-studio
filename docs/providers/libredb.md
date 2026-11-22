@@ -1018,9 +1018,9 @@ separately:
   database has no indexes yet*, which invites creating one; this engine can never have one.
   `getOverview().indexCount: 0` is not the same claim and stays — there genuinely are zero index
   objects, and that is a measurement.
-- **`getSlowQueries()` stays empty, deliberately.** This provider declares
-  `ProviderLabels.slowQueriesEmptyState` ([§9](#getlabels)), which says why the answer is empty.
-  It is the one always-empty answer that is allowed to stay empty; since it asks the engine nothing, the panel is not offered and `QueriesTab` is not drawn for LibreDB.
+- **`getSlowQueries()` stays empty, deliberately.** LibreDB keeps no statistics about finished
+  statements in this version, the answer asks the engine nothing, and the panel is not offered, so
+  `QueriesTab` is not drawn for LibreDB and no label explains an empty one.
 
 None of the three panels with no source (performance, slow queries and sessions) nor the index panel is offered in LibreDB's `ENGINE_FACETS` row ([Engine facets](#engine-facets)): `getMonitoringData` never calls these methods and lists the panels in `notOffered`, and the dashboard draws no Performance, Queries or Sessions tab.
 The refusals and the label above are what each method and label answers when read directly.
@@ -1151,10 +1151,8 @@ with no wildcard, repeating in words what `tablesAreDerivedGroupings` says in a 
 is this engine's grouping, so every entry under it is reached with `prefix users:` — the form
 `generateTableQuery` already emits when a person clicks the same row.
 
-One label is about the monitoring tab instead: `slowQueriesEmptyState` -> *"LibreDB keeps no
-statistics about finished statements in this version."*
-`getSlowQueries()` answers `[]` unconditionally ([§7.2](#72-the-two-panels-that-are-absent-and-the-one-that-is-empty)), so the slow-query panel is not offered and the dashboard draws no Queries tab here; this label is why that empty answer is allowed to stand where `getActiveSessions()` and `getIndexStats()` refuse instead.
-Its sentence was hardcoded to PostgreSQL's `pg_stat_statements` advice (#463).
+No label is about the monitoring tabs.
+`getSlowQueries()` answers `[]` unconditionally ([§7.2](#72-the-two-panels-that-are-absent-and-the-one-that-is-empty)), so the slow-query panel is not offered, the dashboard draws no Queries tab here, and nothing would draw a sentence for it.
 
 ### SQL writing
 

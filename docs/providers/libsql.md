@@ -1155,10 +1155,11 @@ A row that reads like the old shared list is the engine agreeing with it.
 
 | Label Key | Value | Purpose |
 |---|---|---|
-| `slowQueriesEmptyState` | *"libSQL keeps no statistics about finished statements, so there is nothing to enable."* | Queries panel empty state; libSQL tracks no slow query statistics |
 | `reindexGlobalLabel` | *"Run Reindex"* | Global maintenance action button |
 | `reindexGlobalTitle` | *"Rebuild Indexes"* | Operations tab card heading |
 | `reindexGlobalDesc` | *"Runs bare REINDEX, rebuilding every index in the database."* | Operations tab card description |
+
+No slow-query sentence is declared: the Queries panel is not offered, so nothing would draw one.
 
 ### SQL writing
 

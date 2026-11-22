@@ -67,10 +67,6 @@ export const QDRANT_LABELS: ProviderLabels = {
   generateAction: "Generate Command",
   searchPlaceholder: "Search collections...",
   statementLanguage: qdrantStatementLanguage(QDRANT_CONSOLE, QDRANT_ROUTES, QDRANT_REFUSED_CLASSES),
-  slowQueriesEmptyState:
-    "Qdrant keeps slow requests behind a manage-only route that returns other clients' request bodies, which Studio does not read.",
-  sessionsEmptyState:
-    "Qdrant does not report client sessions over the routes Studio reads. For sessions, performance and storage, connect Studio to a Prometheus server that scrapes Qdrant's /metrics.",
   // What the rows of getTableStats are (spec 6.6, 6.7): the first 200 collections, each with Qdrant's estimate.
   tableStatsCaption:
     'The first 200 collections. Point counts are Qdrant\'s approximate points_count; POST /collections/{collection_name}/points/count with "exact": true is exact.',

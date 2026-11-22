@@ -544,7 +544,7 @@ Each surface reads the Kafka protocol only, and a surface that cannot give an ho
 | `getOverview()` | the forced broker read, the topic listing, the configs of the lowest listed node id, and the log directories | `tableCount` is the exact topic count, internal topics excluded; `maxConnections` is that broker's `max.connections`, 0 ("no limit published") when the value is withheld or the configs are refused, and a value that is not a whole number is refused as a protocol error; `databaseSize` is the log-directory sum over every broker, labelled "on disk, all replicas, internal topics excluded", or "N/A" when that read is refused; `version` and `uptime` are "N/A", because the protocol reports neither a product version nor a start time |
 | `getStorageStats()` | the log directories | One row per broker and log directory, `broker <id>: <path>`, with the summed partition sizes of the listed topics and a usage percentage where the broker reports its totals; `[]` when the read is refused |
 | `getTableStats()` | none | `[]`: `TableStats.rowCount` is a required number, and a topic has no honest message count, so the panel is not offered |
-| `getSlowQueries()`, `getActiveSessions()` | none | `[]`, with the empty states "Kafka exposes no query log" and "Kafka does not report client sessions over its protocol"; neither panel is offered, so neither is read by the dashboard or drawn |
+| `getSlowQueries()`, `getActiveSessions()` | none | `[]`: Kafka exposes no query log and does not report client sessions over its protocol; neither panel is offered, so neither is read by the dashboard or drawn |
 | `getIndexStats()` | none | `[]`: a topic has no index, so the panel is not offered |
 | `getPerformanceMetrics()` | none | Every metric absent, so the panel is not offered: never read and not drawn |
 | `getPoolStats()` | not implemented | The route detects it by presence and shows its fallback |
@@ -610,7 +610,7 @@ A direct call of `runMaintenance` is refused with a `QueryError`.
 
 ### `getLabels()` ([`index.ts`](../../src/lib/db/providers/stream/kafka/index.ts))
 
-`entityName` "Topic" and "Topics", `rowName` "Message" and "Messages", `selectAction` "Read Latest 50", `generateAction` "Generate Read Request", and the two empty-state sentences of [§7](#7-monitoring--health).
+`entityName` "Topic" and "Topics", `rowName` "Message" and "Messages", `selectAction` "Read Latest 50" and `generateAction` "Generate Read Request"; no empty-state sentence, because neither the Queries nor the Sessions panel is offered ([§7](#7-monitoring--health)).
 `statementLanguage` carries the read request's schema, because plan mode states it verbatim and it is the only fact about how a statement is written that plan mode's prompt carries per engine: the four keys, the `from` forms, the defaults, two examples, and that no other key is taken, that `offset` and `timestamp` go inside `from`, that the inventory's other columns are fields each message comes back with and not keys of the request, and that a read request reads one topic's messages, never a group's lag.
 The integration test parses each example in it with the provider's own parser.
 

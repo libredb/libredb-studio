@@ -47,8 +47,4 @@ export const KUBERNETES_LABELS: ProviderLabels = Object.freeze({
   vacuumGlobalTitle: "Not available",
   vacuumGlobalDesc: "Studio sends a Kubernetes cluster no maintenance and no write.",
   statementLanguage: kubectlStatementLanguage(),
-  slowQueriesEmptyState: "Kubernetes keeps no query log",
-  sessionsEmptyState: "Kubernetes does not list client sessions",
-  tableStatsCaption:
-    "Kubernetes has no tables: the tree lists objects per kind and namespace, and the console reads them with get.",
 });

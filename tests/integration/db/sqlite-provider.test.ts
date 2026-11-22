@@ -2083,11 +2083,10 @@ describe("SQLiteProvider", () => {
     // The monitoring Queries panel is ALWAYS empty here - `getSlowQueries()` answers
     // `[]` unconditionally - and until #U12 it told the reader to enable a PostgreSQL
     // extension. What it says now must not name one.
-    test("says SQLite keeps no statement statistics rather than naming a Postgres extension", () => {
+    test("declares no slow-query sentence, because SQLite offers no Queries panel to draw it", () => {
       const { slowQueriesEmptyState } = new SQLiteProvider(makeSQLiteConfig()).getLabels();
 
-      expect(slowQueriesEmptyState).toContain("SQLite keeps no statistics");
-      expect(slowQueriesEmptyState).not.toContain("pg_stat_statements");
+      expect(slowQueriesEmptyState).toBeUndefined();
     });
 
     // SQLite declares the `reindex` maintenance operation and `runMaintenance()`

@@ -399,13 +399,10 @@ Generate Command writes, without running it, a query over the collection's first
 Health is `GET /`, reachability only.
 The overview gives the version, the number of collections visible to this credential and the number of payload and vector indexes; the Tables tab carries this caption:
 The first 200 collections. Point counts are Qdrant's approximate points_count; POST /collections/{collection_name}/points/count with "exact": true is exact.
-Slow queries are not read:
-
-> Qdrant keeps slow requests behind a manage-only route that returns other clients' request bodies, which Studio does not read.
-
-Sessions, performance and storage are not read either:
-
-> Qdrant does not report client sessions over the routes Studio reads. For sessions, performance and storage, connect Studio to a Prometheus server that scrapes Qdrant's /metrics.
+Slow queries are not read: Qdrant keeps slow requests behind a manage-only route that returns other clients' request bodies, which Studio does not read.
+Sessions, performance and storage are not read either: Qdrant does not report client sessions over the routes Studio reads.
+For sessions, performance and storage, connect Studio to a Prometheus server that scrapes Qdrant's /metrics.
+None of those panels is offered, so the dashboard draws none of them, and the labels declare no empty-state sentence for the Queries or Sessions panel.
 
 Studio never reads `/telemetry`, `/metrics`, `/profiler`, `/debugger`, `/stacktrace`, `/logger`, `/issues`, `/audit/logs` or a snapshot download.
 

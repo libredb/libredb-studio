@@ -590,7 +590,7 @@ export class OxiaProvider extends BaseDatabaseProvider {
     return [];
   }
 
-  /** Oxia has no tables; `tableStatsCaption` says where its shards and keys are. */
+  /** Oxia has no tables, and the panel is not offered (`ENGINE_FACETS`), so core never reads this and nothing draws it. */
   public async getTableStats(): Promise<TableStats[]> {
     return [];
   }

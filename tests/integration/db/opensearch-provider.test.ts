@@ -1199,11 +1199,8 @@ describe("OpenSearchProvider shares the Elasticsearch implementation", () => {
 
     expect(opensearch).toEqual(elasticsearch);
     expect(opensearch.entityNamePlural).toBe("Indices");
-    // The engine #U12 was measured on: this panel told an OpenSearch cluster to enable
-    // a PostgreSQL extension. Shared with upstream because the fact is shared - the
-    // slow log is a node log file on both.
-    expect(opensearch.slowQueriesEmptyState).toContain("slow log");
-    expect(opensearch.slowQueriesEmptyState).not.toContain("pg_stat_statements");
+    // Neither product offers the Queries panel, so neither declares a sentence for it.
+    expect(opensearch.slowQueriesEmptyState).toBeUndefined();
     // Each names its own endpoint, and rules out its own product's alternatives.
     expect(osLanguage).toContain("OpenSearch SQL");
     expect(osLanguage).toContain("NOT PPL");

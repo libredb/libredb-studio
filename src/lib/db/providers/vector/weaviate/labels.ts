@@ -63,9 +63,6 @@ export const WEAVIATE_LABELS: ProviderLabels = {
   generateAction: "Generate Request",
   searchPlaceholder: "Search collections...",
   statementLanguage: weaviateStatementLanguage(WEAVIATE_CONSOLE, WEAVIATE_ROUTES, WEAVIATE_REFUSED_CLASSES),
-  slowQueriesEmptyState: "Weaviate reports no slow-query log over the routes Studio reads.",
-  sessionsEmptyState:
-    "Weaviate does not report client sessions over the routes Studio reads. For performance and storage, connect Studio to a Prometheus server that scrapes Weaviate's metrics.",
   tableStatsCaption:
     "The first 200 single-tenant collections, each with its exact object count (aggregate meta.count). A multi-tenant collection is counted per tenant: POST /v1/aggregate/{collection} with a tenant.",
   // Never rendered: Weaviate has no maintenance operation in this version (supportsMaintenance is false). Worded true anyway.

@@ -1505,20 +1505,16 @@ describe("ElasticsearchProvider metadata", () => {
     expect(labels.vacuumAction).toBe("Merge Segments");
   });
 
-  test("the empty slow-query panel says the slow log is a node file, not a missing extension", () => {
-    // Measured 2026-08-19 in Chrome on an OpenSearch connection: the monitoring Queries
-    // tab told a search cluster to enable `pg_stat_statements` (#463). `getSlowQueries()`
-    // is empty by design on both products, so this panel is ALWAYS empty here, and the
-    // sentence is the one §7 of the provider doc already used.
+  test("declares no slow-query sentence, because the search engines offer no Queries panel to draw it", () => {
+    // The slow log is a node log file no API returns, so neither product's `ENGINE_FACETS`
+    // row offers the panel, and nothing would render a sentence explaining why it is empty.
     const { slowQueriesEmptyState } = new ElasticsearchProvider(
       makeConnection(),
       {},
       { egress: ALLOWS_PRIVATE_HOSTS },
     ).getLabels();
 
-    expect(slowQueriesEmptyState).toContain("slow log");
-    expect(slowQueriesEmptyState).toContain("log file");
-    expect(slowQueriesEmptyState).not.toContain("pg_stat_statements");
+    expect(slowQueriesEmptyState).toBeUndefined();
   });
 });
 
