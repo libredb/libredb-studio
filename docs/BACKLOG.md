@@ -4827,7 +4827,8 @@ The setting is opt-in for this release so that operators have a release to re-se
 
 Filed 2026-11-22 with the setting.
 
-**Done when:** a later release refuses version 1 and unsealed credentials by default, with the setting kept only as an explicit statement or removed, the upgrade notes say so, and tests pin the default.
+**Done when:** a later release refuses version 1 and unsealed credentials by default, the upgrade notes say so, and tests pin the default.
+That release keeps an explicit off value of the setting, because the re-seal runs only while the requirement is off, so the re-sealing start of an upgrade or a recovery sets it off.
 
 ## Value interpolation
 
