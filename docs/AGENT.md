@@ -1029,6 +1029,7 @@ reason**:
 | `model-unauthorized` | The provider rejected the credentials | Fix the key; retrying will not help |
 | `engine-unsupported` | The connection's engine has no read-only statement path under a declared boundary | Investigate a different connection |
 | `connection-unresolvable` | The run's persisted connection no longer resolves server-side | Restore the seed, or start on another connection |
+| `provider-unknown` | The run's connection resolves, but its type names no provider this Studio has (`PROVIDER_UNKNOWN`), such as a seed entry written for a newer Studio | Correct the seed entry's `type`, or open the run in a Studio that has that provider |
 | `internal` | Anything else | Read the server log |
 
 The split is finer than it first was, and the correction is worth recording: the model failures were

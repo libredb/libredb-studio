@@ -35,7 +35,7 @@ import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
 import { LLMAuthError, LLMError, LLMRateLimitError } from "@/lib/llm/types";
-import { type ExecutionProfileDenyCode, ExecutionProfileError } from "@/lib/db/errors";
+import { type ExecutionProfileDenyCode, ExecutionProfileError, UnknownProviderError } from "@/lib/db/errors";
 import { logger } from "@/lib/logger";
 import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import type { QueryResult } from "@/lib/types";
@@ -300,6 +300,10 @@ function classifyDriveFailure(error: unknown): AgentRunFailureReason {
   // these are this repository's own classes, so there is one copy of each in the
   // bundle. The SDK's errors are the ones that arrive in duplicate.
   if (error instanceof SeedConnectionError) return "connection-unresolvable";
+
+  // A connection whose type names no provider (FND-1) is the seed entry's fault, not the
+  // server's, so it is named rather than left to the `internal` branch below.
+  if (error instanceof UnknownProviderError) return "provider-unknown";
 
   // An engine with no read-only profile is not a server fault, and calling it
   // `internal` sent a user to a log that could only tell them what their own

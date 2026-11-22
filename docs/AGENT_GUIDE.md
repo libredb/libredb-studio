@@ -772,7 +772,7 @@ And when the run failed for a reason that is not about the answer at all, that s
 both, and also appears next to the Start button so you can fix it before starting another
 (`FAILURE_SENTENCES`, `timeline.ts`; rendered at `AgentRail` in `AgentRail.tsx`): the model
 provider not being configured or reachable, limiting this key's requests, rejecting the credentials,
-an engine with no read-only execution profile, a connection that no longer resolves, or an internal
+an engine with no read-only execution profile, a connection that no longer resolves, a connection whose type no provider in this Studio serves, or an internal
 failure whose reason is in the server log.
 
 ---

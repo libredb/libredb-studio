@@ -442,6 +442,12 @@ export type AgentRunFailureReason =
   | "server-authorization-off"
   /** The run's persisted connection no longer resolves on the server. */
   | "connection-unresolvable"
+  /**
+   * The run's connection resolves, but its type names no provider this Studio has (`UnknownProviderError`, FND-1):
+   * a seed entry written for a newer Studio, or a type misspelt in it. Named after the API code it mirrors,
+   * `PROVIDER_UNKNOWN`. The repair is the seed entry's `type`, or a Studio that has that provider.
+   */
+  | "provider-unknown"
   /** Anything else. Deliberately unspecific; the log carries the detail. */
   | "internal";
 
