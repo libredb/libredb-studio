@@ -344,10 +344,12 @@ On standalone boot it then:
    4. the governance preflight (`src/lib/governance/preflight.ts`, [GOVERNANCE.md](GOVERNANCE.md#boot-checks)), which with `GOVERNANCE_SOURCE` set refuses an environment that contradicts governance mode, and checks nothing while governance is off;
    5. the Kubernetes access review preflight (`src/lib/kubernetes-access/preflight.ts`, [SEED_CONNECTIONS.md](SEED_CONNECTIONS.md#kubernetes-access-review)), which with `KUBERNETES_ACCESS_REVIEW` on refuses an environment that contradicts the review, and checks nothing while it is off.
 
-3. **Re-seals the stored credentials when asked** (`src/lib/storage/reseal-at-boot.ts`, [STORAGE.md](STORAGE.md#re-sealing-the-store)).
-   With `STORAGE_ENCRYPTION_RESEAL` set, it backs the server store up, re-seals every stored credential and retires version 1 envelopes, and serving waits for it; unset, it does nothing and opens no store.
+3. **Re-seals and checks the stored credentials when asked** (`src/lib/storage/reseal-at-boot.ts`, [STORAGE.md](STORAGE.md#re-sealing-the-store)).
+   With `STORAGE_ENCRYPTION_RESEAL` set, it backs the server store up, re-seals every stored credential and retires version 1 envelopes, and serving waits for it.
+   Then, with `STORAGE_ENCRYPTION_REQUIRE_V2` set, it checks that the store records version 1 as retired.
+   With both unset, it does nothing and opens no store.
    It runs after the bootstrap, because the storage key may derive from the `JWT_SECRET` the bootstrap fills in, and after the preflights, so a boot they refuse never touches the store.
-   A value of the variable it cannot read, `STORAGE_PROVIDER=local`, or a re-seal that does not complete prints a banner and exits with code 1.
+   A value of either variable it cannot read, `STORAGE_PROVIDER=local`, a re-seal that does not complete, or a check that does not pass prints a banner and exits with code 1.
 
    Steps 2 and 3, and the `NEXT_MANUAL_SIG_HANDLE` refusal above, are the ones that intentionally stop boot: `GET /api/db/health` is the Kubernetes livenessProbe and the Docker/PaaS health check, so signalling such a failure there would restart the pod forever and hide the actionable error behind a green check; refusing to start costs nothing because a server with such a setting cannot work as configured, a too-short secret, for one, can sign no session at all.
 4. **Starts copying the built-in samples, asynchronously** (`src/lib/seed/samples.ts`, `src/lib/seed/sample-copy.ts`).
