@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D481, U17 · 354
+- [Drivers and connections](#drivers-and-connections) — D1-D482, U17 · 355
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U220 · 205
@@ -3415,6 +3415,19 @@ The fix direction is to read a leading `#!` line as the runtimes do before `scan
 Found 2026-11-22 while checking which inputs the egress reader scan's import walk accepts.
 
 **Done when:** `valueImportsOf` and `valueImportClosure` read a module that starts with a shebang as they read the same module without it, an error from `scanImports` names the module it was reading, and a test holds both with a scratch module.
+
+### D482. The RabbitMQ routes' Node child case fails on the second binary when `NODE_TRANSPORT_NODES` lists two
+
+"The three routes' full JSON bodies on Node" in `tests/integration/db/rabbitmq-provider.test.ts` runs one Node child per binary that `NODE_TRANSPORT_NODES` lists, against fake peers the outer `beforeAll` starts once.
+Each child dials the "530 at open" peer once, and its `dials` counter (`startFakePeer` in `tests/helpers/rabbitmq-fake-peer.ts`) counts every dial the peer accepted since it started.
+So "every case reached its seam, and no body holds the account, the broker's text or a parser's quote" asserts `dials` is 1 per binary, and on the second binary it reads 2.
+
+Reproduced 2026-11-22 with `bun tests/run-tests.ts tests/integration/db/rabbitmq-provider.test.ts` on bun 1.4.4: 47 pass with `NODE_TRANSPORT_NODES` unset, and 49 pass and 1 fail ("Expected: 1, Received: 2", in the second binary's describe) with Node 26.13.1 and Node 24.22.1 listed, and the same with Node 24.22.1 listed twice.
+CI lists one Node in every step that sets the variable, so the required checks do not reach it; a local run that lists two does.
+
+Found 2026-11-22 while running the shutdown tests under two Node binaries.
+
+**Done when:** each binary's describe starts its own peers or reads the dial count its own child added, and the file passes with `NODE_TRANSPORT_NODES` listing two binaries.
 
 ### D332. The seed plaintext warning knows only `password`
 
