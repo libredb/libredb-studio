@@ -20,14 +20,7 @@ import { type HttpOrigin, httpOrigin, isLoopbackHost, validateHost, validatePort
 import { type NodeTlsMaterial, nodeTlsMaterial } from "@/lib/db/http/node-transport";
 import type { EgressDecision } from "@/lib/db/types";
 import { secretForms } from "@/lib/db/utils/server-text";
-import {
-  type DatabaseConnection,
-  type SSHTunnelConfig,
-  type SSLConfig,
-  TUNNEL_FAR_END,
-  type TunnelFarEnd,
-  type WithTunnelFarEnd,
-} from "@/lib/types";
+import { type DatabaseConnection, type SSLConfig, TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
 import {
   KUBERNETES_DEFAULT_PORT,
   KUBERNETES_MAX_IN_FLIGHT,
@@ -125,8 +118,6 @@ export const KUBERNETES_CONNECTION_SENTENCES = Object.freeze({
     "Plain HTTP to this machine (kubectl proxy) is off on this server: the operator turns it on with KUBERNETES_ALLOW_LOOPBACK_PLAINTEXT=true, which the npx and desktop launchers set when Studio listens on this machine only. Nothing was sent.",
   insecureTlsOff:
     "SSL mode require, or a certificate check turned off, would send the token to a server whose certificate is not checked, which this server refuses unless the operator sets KUBERNETES_ALLOW_INSECURE_TLS=true. Choose verify-full with the cluster's CA, or verify-system. Nothing was sent.",
-  tunnelNotOpened:
-    "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so the API server was not dialled directly. Nothing was sent.",
   tunnelLinkLocal:
     "The SSH tunnel's far end is a link-local or instance metadata address, which Studio never reaches. Nothing was sent.",
   queryTimeout: "Query timeout must be a whole number between 1 and 2147483647 milliseconds.",
@@ -182,7 +173,7 @@ export function readClusterEndpoint(
   config: DatabaseConnection & WithTunnelFarEnd,
   context: ClusterEndpointContext,
 ): ClusterEndpoint {
-  const farEnd = tunnelFarEnd(config);
+  const farEnd = config[TUNNEL_FAR_END];
   const dialled = shared(() => httpOrigin("http", config.host, config.port ?? KUBERNETES_DEFAULT_PORT, context.egress));
   const endpoint =
     farEnd === undefined
@@ -221,14 +212,6 @@ export function readClusterEndpoint(
     callTimeoutMs: callTimeout(context.queryTimeout),
     secretForms: secretForms(token === undefined ? [] : [token]),
   };
-}
-
-function tunnelFarEnd(config: DatabaseConnection & WithTunnelFarEnd): TunnelFarEnd | undefined {
-  const tunnel = optionalObject<keyof SSHTunnelConfig>(config.sshTunnel, "sshTunnel");
-  const enabled = optionalBoolean(tunnel?.enabled, "sshTunnel.enabled") === true;
-  const farEnd = config[TUNNEL_FAR_END];
-  if (enabled && farEnd === undefined) throw configError(S.tunnelNotOpened);
-  return farEnd;
 }
 
 function tokenOf(config: DatabaseConnection): string | undefined {
@@ -309,21 +292,9 @@ function shared<T>(validate: () => T): T {
   }
 }
 
-function optionalObject<Key extends string>(value: unknown, field: string): Partial<Record<Key, unknown>> | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "object" || Array.isArray(value)) throw wrongType(field, "an object");
-  return value as Partial<Record<Key, unknown>>;
-}
-
 function optionalText(value: unknown, field: string): string | undefined {
   if (value === undefined || value === null || value === "") return undefined;
   if (typeof value !== "string") throw wrongType(field, "a string");
-  return value;
-}
-
-function optionalBoolean(value: unknown, field: string): boolean | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "boolean") throw wrongType(field, "true or false");
   return value;
 }
 

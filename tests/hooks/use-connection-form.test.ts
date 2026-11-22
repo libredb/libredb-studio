@@ -173,8 +173,8 @@ mock.module("@/lib/db-ui-config", () => ({
   takesConnectionField: (type: string, field: string) => mockFields(type).includes(field),
   connectionFieldRefusal: mockFieldRefusal,
   connectionFieldShown: mockFieldShown,
-  // Mirrors the real table: `kafka` is the one entry that declares `showSshTunnel: false`.
-  offersSshTunnel: (type: string) => type !== "kafka" && type !== "bigquery" && type !== "firestore",
+  // The real rule: core's SSH_TUNNEL_REFUSAL row (FND-2 slice 5).
+  offersSshTunnel: (type: string) => SSH_TUNNEL_REFUSAL[type as DatabaseType] === null,
   offersSslPanel: (type: string) => type !== "bigquery" && type !== "firestore",
 }));
 
@@ -188,7 +188,7 @@ import {
   DATABEND_SSLMODE_NOTICES,
   databendNotAppliedNotice,
 } from "@/lib/connection-string-parser";
-import { SHIPPED_DATABASE_TYPES, WRITE_REACH } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES, SSH_TUNNEL_REFUSAL, WRITE_REACH } from "@/lib/db/compatibility";
 import { providerCacheKey } from "@/lib/db/provider-cache-key";
 import { CONNECTION_FORM, CONNECTION_PICKER_ORDER } from "@/lib/db/connection-form";
 import { BODY_CONNECTION_FIELDS, initialFieldValues } from "@/lib/db/connection-fields";
@@ -2266,6 +2266,41 @@ describe("useConnectionForm", () => {
     expect(body.sshTunnel.username).toBe("tunnel");
     expect(body.sshTunnel.password).toBe("tunnelpass");
   });
+
+  test.each(["cassandra", "couchbase", "sqlite"] as const)(
+    "a tunnel left switched on in the dialog is not saved on a %s connection (FND-2 slice 5)",
+    async (type) => {
+      const fetchMock = mockGlobalFetch({
+        "/api/db/test-connection": { ok: true, json: { success: true, latency: 30 } },
+      });
+      const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+      act(() => {
+        result.current.setSSHEnabled(true);
+        result.current.setSSHHost("bastion.test.com");
+        result.current.setSSHPort("2222");
+        result.current.setSSHUsername("tunnel");
+        result.current.setSSHAuthMethod("password");
+        result.current.setSSHPassword(crypto.randomUUID());
+      });
+      act(() => {
+        result.current.setType(type);
+        result.current.setDatabase("app.db");
+      });
+      expect(result.current.sshEnabled).toBe(true);
+
+      await act(async () => {
+        await result.current.handleTestConnection();
+      });
+
+      const testCall = fetchMock.mock.calls.find(
+        (call) => typeof call[0] === "string" && call[0].includes("/api/db/test-connection"),
+      );
+      const body = JSON.parse(testCall![1]!.body as string) as Record<string, unknown>;
+      expect(body.type).toBe(type);
+      expect("sshTunnel" in body).toBe(false);
+    },
+  );
 
   // ── buildConnection with privateKey SSH auth ───────────────────────────
 

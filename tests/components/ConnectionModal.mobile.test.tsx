@@ -5,6 +5,8 @@ import "../helpers/mock-navigation";
 import { mock } from "bun:test";
 import { withFieldAccess } from "../helpers/mock-connection-form-fields";
 import React from "react";
+import { SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
+import type { DatabaseType } from "@/lib/types";
 
 // ── Mock framer-motion before component imports ─────────────────────────────
 mock.module("framer-motion", () => {
@@ -230,7 +232,6 @@ const MOCK_KAFKA_DECLARATIONS = {
       { value: "SCRAM-SHA-512", label: "SCRAM-SHA-512" },
     ],
   },
-  showSshTunnel: false,
 } as const;
 
 mock.module("@/lib/db-ui-config", () => ({
@@ -244,8 +245,8 @@ mock.module("@/lib/db-ui-config", () => ({
     ...(type === "kafka" ? MOCK_KAFKA_DECLARATIONS : {}),
   }),
   takesConnectionField: (type: string, field: string) => mockFields(type).includes(field),
-  // The real rule: false only where an entry declares `showSshTunnel: false`, which Kafka's does.
-  offersSshTunnel: (type: string) => type !== "kafka",
+  // The real rule: core's SSH_TUNNEL_REFUSAL row, which refuses Kafka's tunnel.
+  offersSshTunnel: (type: string) => SSH_TUNNEL_REFUSAL[type as DatabaseType] === null,
   offersSslPanel: () => true,
   // The modal reads its field copy through these; this table declares copy for Kafka alone, so
   // every other engine reads the modal's own words. See the same pair in ConnectionModal.test.tsx.

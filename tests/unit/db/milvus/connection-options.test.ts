@@ -108,8 +108,13 @@ describe("E1: the endpoint is exactly what it claims", () => {
     expect(options.endpoint).toEqual({ host: "milvus.internal", port: 19530 });
   });
 
-  test("a tunnel that is on but arrived with no far end is refused, so Milvus is never dialled past it", () => {
-    expect(refusal({ sshTunnel: { enabled: true } }).message).toContain("SSH tunnel is on");
+  // Core decides the tunnel before any provider is built and refuses one that is on and was not opened
+  // (tests/security/provider-tunnel-decisions.test.ts), so the far end alone says a tunnel carries the connection.
+  test("reads no sshTunnel: the far end alone says a tunnel was opened (FND-2 slice 5)", () => {
+    for (const sshTunnel of [{ enabled: true }, { enabled: "yes" }, { enabled: false }, null, "on", [], 1]) {
+      expect(build({ sshTunnel }).target).toBe("dns:milvus.test:19530");
+      expect(build({ sshTunnel }).endpoint).toEqual({ host: "milvus.test", port: 19530 });
+    }
   });
 });
 

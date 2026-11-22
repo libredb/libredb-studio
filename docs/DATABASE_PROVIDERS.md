@@ -488,8 +488,11 @@ await provider.disconnect();
 
 `createDatabaseProvider` opens no SSH tunnel.
 To reach a database through one, build, connect, use and disconnect the provider inside the callback of `withOneShotTunnel`, which closes its tunnel when the callback returns, or use `getOrCreateProvider`, which opens one for the provider it caches.
-Both open a tunnel only for a connection whose `sshTunnel` is enabled and which names a `host` and a `port`; a connection-string record passes through without a tunnel, and its driver dials the string's host directly.
-Without either, a provider whose `sshTunnel.enabled` is true connects, on most engines, to the record's own `host` and `port` with no error.
+Both open a tunnel exactly when Studio's decision about the connection's `sshTunnel` says so ([SSH tunnels](./providers/README.md#ssh-tunnels-bastion-host-key-verification)): its `enabled` is `true` and the connection names a `host` and a `port`.
+A tunnel that is on is refused with a `DatabaseConfigError` before anything is dialled when it is malformed, when the engine takes no tunnel (its `SSH_TUNNEL_REFUSAL` row), or when the connection names no `host` and `port` to forward to, such as a connection-string record.
+Without either, `createDatabaseProvider` refuses a connection whose `sshTunnel` is on and was not opened, with a `DatabaseConfigError` that says to build the provider inside `withOneShotTunnel` or get it from `getOrCreateProvider`, and builds nothing, so no provider connects to the record's own `host` and `port` past the tunnel the connection asked for.
+It also refuses a tunnel's far end (`TUNNEL_FAR_END`) handed over on a connection whose tunnel is not on.
+Before this rule, most engines connected to the record's own address with no error; an embedder that built a tunnelled connection's provider directly now gets the refusal instead.
 The provider `createDatabaseProvider` returns is built from a copy of the connection whose `sshTunnel` holds no `password`, `privateKey` or `passphrase`; those stay in the record the caller passed, so `provider.config` is not that record whenever it carries an `sshTunnel` object.
 A copy loses a field defined on the prototype or as not enumerable, and reads an own getter once, so a connection with an `sshTunnel`, and the tunnel itself, must be plain data, as parsed JSON is.
 A non-object `sshTunnel`, a class instance, a getter or a field that is not enumerable is refused with a `DatabaseConfigError` and nothing is built, by `createDatabaseProvider` and by `getOrCreateProvider`, `acquireExecutionProfileProvider` and `withOneShotTunnel` before they dial the tunnel.

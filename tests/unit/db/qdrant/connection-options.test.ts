@@ -124,17 +124,13 @@ describe("QE1: the endpoint is exactly what it claims", () => {
     expect(() => tunnelled({}, { host: "qdrant.internal", port: 0 })).toThrow("Invalid port");
   });
 
-  test("a tunnel that is on but arrived with no far end is refused, so Qdrant is never dialled past it", () => {
-    expect(refusal({ sshTunnel: { enabled: true } }).message).toContain("SSH tunnel is on");
-    expect(build({ sshTunnel: { enabled: false } }).origin.host).toBe("qdrant.test");
-    expect(build({ sshTunnel: null }).origin.host).toBe("qdrant.test");
-    expect(refusal({ sshTunnel: "on" }).message).toBe(
-      "The connection's sshTunnel must be an object; nothing was sent.",
-    );
-    expect(refusal({ sshTunnel: [] }).message).toBe("The connection's sshTunnel must be an object; nothing was sent.");
-    expect(refusal({ sshTunnel: { enabled: "yes" } }).message).toBe(
-      "The connection's sshTunnel.enabled must be true or false; nothing was sent.",
-    );
+  // Core decides the tunnel before any provider is built and refuses one that is on and was not opened
+  // (tests/security/provider-tunnel-decisions.test.ts), so the far end alone says a tunnel carries the connection.
+  test("reads no sshTunnel: the far end alone says a tunnel was opened (FND-2 slice 5)", () => {
+    for (const sshTunnel of [{ enabled: true }, { enabled: "yes" }, { enabled: false }, null, "on", [], 1]) {
+      expect(build({ sshTunnel }).origin.host).toBe("qdrant.test");
+      expect(build({ sshTunnel }).endpoint.host).toBe("qdrant.test");
+    }
   });
 });
 

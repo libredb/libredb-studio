@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { INVALID_REQUEST_BODY, isJsonObject, readJsonObject } from "@/lib/api/json-object-body";
-import { createDatabaseProvider } from "@/lib/db";
+import { readProviderDeclarations } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
@@ -67,8 +67,9 @@ function readAnalysisFields(body: Record<string, unknown>): AnalysisFields {
  * route it takes. The answer is `analyzeStatement`'s, whole, so the web editor and a client outside the browser read
  * one implementation of every decision; this route only reads the request and resolves the connection.
  *
- * IT RUNS NOTHING. The provider is built to read its capabilities, as `POST /api/db/provider-meta` builds it, and its
- * `connect()` is never called, so no socket, file or pool opens; resolving the connection may still read Vault for a
+ * IT RUNS NOTHING. The capabilities are read through `readProviderDeclarations`, as `POST /api/db/provider-meta`
+ * reads them: it builds the provider without connecting it, opens no SSH tunnel and hands back data, so no socket, file
+ * or pool opens; resolving the connection may still read Vault for a
  * `${vault:...}` seed and ask the Kubernetes API under the access review, as on every connection route. It records no
  * query event and asks no admission gate, because nothing runs. It logs no part of the text, of the statement or of
  * the refusal, which may quote a word of the text.
@@ -110,8 +111,12 @@ export async function POST(req: NextRequest) {
     }
 
     // The execution context, as every route that builds a provider passes it, although this one opens no handle: the
-    // factory refuses with it a connection the caller's posture could never open (SQLite under a denied one).
-    const provider = await createDatabaseProvider(connection, {}, editorExecutionContext(guard.session, connection));
+    // factory refuses with it a connection the caller's posture could never open (SQLite under a denied one). The
+    // declarations are read without connecting and without opening the connection's tunnel (FND-2 slice 5).
+    const { capabilities } = await readProviderDeclarations(
+      connection,
+      editorExecutionContext(guard.session, connection),
+    );
 
     let analysis: StatementAnalysis;
     try {
@@ -120,7 +125,7 @@ export async function POST(req: NextRequest) {
         selection: fields.selection,
         cursor: fields.cursor,
         databaseType: connection.type,
-        capabilities: provider.getCapabilities(),
+        capabilities,
         connectionName: connection.name,
       });
     } catch (error) {

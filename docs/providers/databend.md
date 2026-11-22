@@ -327,9 +327,7 @@ A field of the wrong type from a seed file or the API is refused naming the fiel
 
 > The connection's [field] must be [type]; nothing was sent.
 
-A connection with its SSH tunnel on that arrives without the tunnel is never dialled directly:
-
-> This connection's SSH tunnel is on, but the connection arrived without its tunnel, so Databend was not dialled directly: the tunnel opens only when both Host and Port are set.
+A connection with its SSH tunnel on is refused by Studio before the provider is built when the tunnel was not opened, so Databend is never dialled past it ([SSH tunnels](./README.md#ssh-tunnels-bastion-host-key-verification)).
 
 ### 4.2 Sign-in
 

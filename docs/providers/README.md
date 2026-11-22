@@ -217,18 +217,31 @@ PlanetScale, Azure Cosmos DB and Amazon DocumentDB. Their status is tracked in
 
 ## SSH tunnels: bastion host key verification
 
-Any connection but a Kafka, BigQuery, Firestore or Snowflake one may reach its database through an SSH tunnel (`sshTunnel` on the connection,
-[`src/lib/ssh/tunnel.ts`](../../src/lib/ssh/tunnel.ts)). This is the only layer that can verify who
-terminated the SSH hop: past it the database driver is handed `127.0.0.1` and a local port, so the
-connection's own SSL settings say nothing about the bastion.
-A Kafka connection refuses a tunnel: a Kafka client reaches every broker at the address that broker advertises, which a tunnel forwarding one address does not carry, so the dialog offers no SSH panel for it and the provider refuses a tunnelled connection ([kafka.md §4.5](./kafka.md#45-no-ssh-tunnel)).
-BigQuery, Firestore and Snowflake offer no SSH panel either: each reaches its vendor's own API hosts over TLS, and its provider doc says why a tunnel is not offered.
+A connection may reach its database through an SSH tunnel (`sshTunnel` on the connection, [`src/lib/ssh/tunnel.ts`](../../src/lib/ssh/tunnel.ts)).
+This is the only layer that can verify who terminated the SSH hop: past it the database driver is handed `127.0.0.1` and a local port, so the connection's own SSL settings say nothing about the bastion.
 
-**What a provider receives of the tunnel.**
-Studio, not the provider, dials the tunnel.
-On the paths that connect through one, `getOrCreateProvider`, `acquireExecutionProfileProvider` and `withOneShotTunnel` in [`src/lib/db/factory.ts`](../../src/lib/db/factory.ts), core opens it before it builds the provider, for a connection whose `sshTunnel` is enabled and which names a `host` and a `port`.
+**Which engines take a tunnel.**
+Studio refuses a connection whose SSH tunnel is on, before it dials anything, for each engine below; the reason is the engine's row of `SSH_TUNNEL_REFUSAL` in [`src/lib/db/compatibility.ts`](../../src/lib/db/compatibility.ts), and the refusal says it:
+- `kafka`: a Kafka client reaches every broker at the address that broker advertises, which a tunnel forwarding one address does not carry ([kafka.md §4.5](./kafka.md#45-no-ssh-tunnel)).
+- `cassandra`: the driver reaches every other node of the ring at the address that node advertises ([cassandra.md §4.4](./cassandra.md#44-no-ssh-tunnel)).
+- `couchbase`: queries go to the query service, on another port, at the address the cluster's node map advertises ([couchbase.md §4.6](./couchbase.md#46-no-ssh-tunnel)).
+- `rabbitmq`: the management API and AMQP use two ports, and one tunnel carries one ([rabbitmq.md](./rabbitmq.md)).
+- `bigquery`, `firestore`, `snowflake`: each reaches its vendor's own API hosts over TLS, several addresses where a tunnel forwards one.
+- `snmp`: SNMP reads travel as UDP datagrams, and the tunnel forwards TCP.
+- `sqlite`, `duckdb`, `libredb`: the engine opens a file on the Studio server, so there is no address to forward to; a stored connection that still carries a tunnel switched on is cleared by editing it and saving it again.
+
+The connection dialog reads the same row through `offersSshTunnel`: it offers the SSH panel, and writes `sshTunnel`, exactly where the row takes a tunnel, so a tunnel left switched on in the dialog's state is never saved on a connection of these engines.
+A route per node, which Apache Cassandra and Couchbase would need, is a later change; until then neither dials around the tunnel.
+
+**Who decides, and what a provider receives of the tunnel.**
+Studio, not the provider, decides and dials the tunnel: `decideTunnel` in [`src/lib/db/tunnel-decision.ts`](../../src/lib/db/tunnel-decision.ts) runs on every entry point of [`src/lib/db/factory.ts`](../../src/lib/db/factory.ts) before any cache lookup, bastion dial or provider build.
+It refuses, by name and never quoting a value, an `sshTunnel` that is not plain data, an `enabled` that is not true, false or absent, a `host` or `username` that is not text, and, on a tunnel that is on, an empty bastion host, a bastion port that is not a whole number from 1 to 65535, an `authMethod` other than `password` or `privateKey`, an engine the row above refuses, and a connection that names no `host` and `port` to forward to.
+A tunnel that is switched off is never refused for its engine or for a missing host and port.
+On the paths that connect through one, `getOrCreateProvider`, `acquireExecutionProfileProvider` and `withOneShotTunnel`, core opens a tunnel that is on before it builds the provider.
 A provider built on those paths receives the tunnel's outcome: the local endpoint in `host` and `port`, the far end under `TUNNEL_FAR_END`, and the tunnel's readable fields in `sshTunnel` (`enabled`, `host`, `port`, `username`, `authMethod`, `hostKeyFingerprint`).
-A provider built by `createDatabaseProvider` directly, as Studio does for a provider it never connects and as an embedder may, has no tunnel opened for it: it can see `sshTunnel.enabled: true` with no `TUNNEL_FAR_END`, which means no tunnel was opened and `host` and `port` are the database's own, so a provider that dials should refuse that connection rather than connect; most shipped providers do not yet, and connect to the record's own address ([Direct Provider Creation](../DATABASE_PROVIDERS.md#direct-provider-creation)).
+`createDatabaseProvider`, the function an embedder of the package calls, builds no provider from a connection whose tunnel is on unless core opened that tunnel (`TUNNEL_FAR_END` present), so no provider can reach the database's own address past a tunnel the connection asked for ([Direct Provider Creation](../DATABASE_PROVIDERS.md#direct-provider-creation)).
+Studio's own reads of a provider's capabilities and labels, which never connect, go through `readProviderDeclarations`, which builds the provider from such a connection without opening its tunnel and hands back data, never the provider.
+No provider refuses a tunnel or reads `sshTunnel.enabled` to decide one.
 On every path the provider never receives the tunnel's password, private key or passphrase: `createDatabaseProvider` builds every provider from `providerConnection` in [`src/lib/db/provider-connection.ts`](../../src/lib/db/provider-connection.ts), which leaves them out ([SECURITY.md control 3.41](../SECURITY.md)).
 A provider that reads a tunnel credential therefore reads `undefined`.
 

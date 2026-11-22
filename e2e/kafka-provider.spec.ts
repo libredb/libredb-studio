@@ -12,7 +12,7 @@ import { openConnectionDialog } from "./helpers/connection-dialog";
  *
  * The assertions specific to this engine are the absent Database box and SSH Tunnel panel, and the
  * SASL mechanism select: Kafka is the first engine whose dialog renders a select from
- * `DatabaseUIConfig.fieldOptions` and hides the tunnel through `showSshTunnel: false`. The refusal a
+ * `DatabaseUIConfig.fieldOptions` and hides the tunnel through Kafka's row of `SSH_TUNNEL_REFUSAL`. The refusal a
  * mechanism without TLS gets is checked through Test Connection, which the server answers before any
  * socket opens, so no broker is needed; it is asserted by its own text, because the refusal of a user
  * with no mechanism would also appear if the select's value never reached the connection.

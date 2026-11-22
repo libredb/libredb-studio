@@ -24,13 +24,7 @@ import { type HttpOrigin, httpOrigin, isLoopbackHost, validateHost, validatePort
 import { type NodeTlsMaterial, nodeTlsMaterial } from "@/lib/db/http/node-transport";
 import type { EgressDecision } from "@/lib/db/types";
 import { secretForms } from "@/lib/db/utils/server-text";
-import {
-  type DatabaseConnection,
-  type SSHTunnelConfig,
-  TUNNEL_FAR_END,
-  type TunnelFarEnd,
-  type WithTunnelFarEnd,
-} from "@/lib/types";
+import { type DatabaseConnection, TUNNEL_FAR_END, type TunnelFarEnd, type WithTunnelFarEnd } from "@/lib/types";
 import {
   S3_ACCESS_KEY_ID_MAX_CHARS,
   S3_ACCESS_KEY_ID_MIN_CHARS,
@@ -81,8 +75,6 @@ const MAX_QUERY_TIMEOUT_MS = 2_147_483_647;
 export const S3_CONNECTION_SENTENCES = Object.freeze({
   wrongType: (field: string, expected: string): string =>
     `The connection's ${field} must be ${expected}; nothing was sent.`,
-  tunnelNotOpened:
-    "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so the S3 server was not dialled directly: the tunnel opens only when both Host and Port are set.",
   keyPair:
     "Access key ID and Secret access key go together: fill in both to sign requests, or clear both to send unsigned requests. Nothing was sent.",
   accessKeyIdCharacters:
@@ -117,11 +109,8 @@ export function buildS3ConnectionOptions(
   const regionField = optionalText(config.region, "region");
   const allowInsecureAuth = optionalBoolean(config.allowInsecureAuth, "allowInsecureAuth") === true;
   const seedId = optionalText(config.seedId, "seedId");
-  const tunnel = optionalObject<keyof SSHTunnelConfig>(config.sshTunnel, "sshTunnel");
-  const tunnelEnabled = optionalBoolean(tunnel?.enabled, "sshTunnel.enabled") === true;
-  // A tunnel that is on but did not open.
+  // The tunnel's far end, set only when core opened the connection's tunnel (core refuses one that is on and was not).
   const farEnd: TunnelFarEnd | undefined = config[TUNNEL_FAR_END];
-  if (tunnelEnabled && farEnd === undefined) throw refuse(S3_CONNECTION_SENTENCES.tunnelNotOpened);
   // The dialled host and port, then the far end's.
   const dialled = shared(() => httpOrigin("http", config.host, config.port ?? S3_DEFAULT_PORT, context.egress));
   const host = farEnd === undefined ? dialled.host : shared(() => validateHost(farEnd.host));
@@ -214,13 +203,6 @@ function callTimeout(queryTimeout: number): number {
   if (!Number.isInteger(queryTimeout) || queryTimeout < 1 || queryTimeout > MAX_QUERY_TIMEOUT_MS)
     throw refuse(S3_CONNECTION_SENTENCES.queryTimeout);
   return queryTimeout;
-}
-
-function optionalObject<Key extends string>(value: unknown, field: string): Partial<Record<Key, unknown>> | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "object" || Array.isArray(value))
-    throw refuse(S3_CONNECTION_SENTENCES.wrongType(field, "an object"));
-  return value as Partial<Record<Key, unknown>>;
 }
 
 function optionalText(value: unknown, field: string): string | undefined {

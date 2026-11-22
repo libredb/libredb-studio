@@ -232,7 +232,7 @@ written refuses the connection in its own words rather than blaming the endpoint
 | `securityPolicyUri` | — (seed file only) | Optional. An endpoint is a **mode and a policy**, so the policy of the endpoint chosen for the mode is what the session dials with; naming one here narrows the choice to that pair and is refused when the server offers no such pair. |
 | `serverCertificateThumbprint` | Server certificate | SHA-256, 64 hex characters; colons and spaces ignored. Refused together with `securityMode: None`, because a pin cannot be enforced there ([4.5](#45-the-certificate-pin)). |
 | `clientCertificatePath` / `clientPrivateKeyPath` | — (seed file only) | Supplied together or not at all. |
-| `sshTunnel` | SSH Tunnel | Standard Studio tunnel. The address is rebuilt rather than replaced: the tunnel rewrites `host` to the local end, which for this engine is the whole URL, so the dialled URL keeps the scheme and path the reader typed and takes the local authority. A tunnel the factory has not opened is refused rather than dialled. |
+| `sshTunnel` | SSH Tunnel | Standard Studio tunnel. The address is rebuilt rather than replaced: the tunnel rewrites `host` to the local end, which for this engine is the whole URL, so the dialled URL keeps the scheme and path the reader typed and takes the local authority. Studio refuses a tunnel that is on and was not opened before the provider is built, so the endpoint is never dialled past it. |
 
 **The three rows with no label are seed-file fields, and that is deliberate.** A policy URI is a
 string nobody types correctly from memory, and a certificate and a key are files on the host Studio
@@ -415,7 +415,9 @@ far end's `host` IS the endpoint URL, since the factory opens the forward with
 far end and dialled at the local pair: `opc.tcp://plc.example.net:4840/milo` through a forward on
 57321 is dialled as `opc.tcp://127.0.0.1:57321/milo`. Read the other way round, it dialled the local
 address at the REMOTE port, and the unit test agreed with it because its fixture inverted the pair
-too. A tunnel the factory has not opened is refused rather than dialled.
+too. The provider reads whether a tunnel carries the connection from `TUNNEL_FAR_END` alone: Studio
+refuses a tunnel that is on and was not opened before the provider is built
+([SSH tunnels](./README.md#ssh-tunnels-bastion-host-key-verification)), so the endpoint is never dialled past it.
 
 ### Connection string
 

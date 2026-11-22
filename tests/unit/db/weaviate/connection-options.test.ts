@@ -135,22 +135,13 @@ describe("the SSH tunnel: the local forward is dialled, the far end is what sent
     }
   });
 
-  test("a tunnel that is on but arrived with no far end is refused, so Weaviate is never dialled past it", () => {
-    expect(refusal({ sshTunnel: { enabled: true } }).message).toBe(
-      "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so Weaviate was not dialled directly: the tunnel opens only when both Host and Port are set.",
-    );
-    expect(build({ sshTunnel: { enabled: false } }).origin.host).toBe("weaviate.test");
-    expect(build({ sshTunnel: { enabled: null } }).origin.host).toBe("weaviate.test");
-    expect(build({ sshTunnel: null }).origin.host).toBe("weaviate.test");
-  });
-
-  test("a tunnel field of the wrong type is refused naming the field", () => {
-    for (const sshTunnel of ["on", [], 1]) {
-      expect(refusal({ sshTunnel }).message).toBe("The connection's sshTunnel must be an object; nothing was sent.");
+  // Core decides the tunnel before any provider is built and refuses one that is on and was not opened
+  // (tests/security/provider-tunnel-decisions.test.ts), so the far end alone says a tunnel carries the connection.
+  test("reads no sshTunnel: the far end alone says a tunnel was opened (FND-2 slice 5)", () => {
+    for (const sshTunnel of [{ enabled: true }, { enabled: "yes" }, { enabled: false }, null, "on", [], 1]) {
+      expect(build({ sshTunnel }).origin.host).toBe("weaviate.test");
+      expect(build({ sshTunnel }).endpoint.host).toBe("weaviate.test");
     }
-    expect(refusal({ sshTunnel: { enabled: "yes" } }).message).toBe(
-      "The connection's sshTunnel.enabled must be true or false; nothing was sent.",
-    );
   });
 });
 

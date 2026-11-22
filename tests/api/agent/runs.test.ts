@@ -1719,6 +1719,19 @@ describe("POST /api/agent/runs on a server-level connection (#1530)", () => {
     expect(mockStart.mock.calls.at(-1)?.[0].connectionIdentity).not.toBe(shop?.connectionIdentity);
   });
 
+  test("a tunnelled server-level connection reaches its whole server, read without opening its tunnel (FND-2 slice 5)", async () => {
+    mockResolveConnection.mockImplementation(async () => ({
+      ...SERVER,
+      port: 5432,
+      sshTunnel: { enabled: true, host: "bastion", port: 22, username: "jump", authMethod: "password" },
+    }));
+
+    const res = await POST(startRequest({ ...VALID_BODY, catalog: "shop" }));
+
+    expect(res.status).toBe(202);
+    expect(mockStart.mock.calls.at(-1)?.[0].catalog).toBe("shop");
+  });
+
   test("no database, one the role cannot open, a malformed one, or one on a pinned connection is refused", async () => {
     expect((await POST(startRequest(VALID_BODY))).status).toBe(400);
     expect((await POST(startRequest({ ...VALID_BODY, catalog: 5 }))).status).toBe(400);

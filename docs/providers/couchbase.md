@@ -561,6 +561,13 @@ A `101 Switching Protocols` answer fails as a `ConnectionError` reading `Couchba
 On the plaintext path the runtime's `fetch` fails it as a closed connection, ending in `(UND_ERR_SOCKET)`.
 With `DB_HTTP_BLOCK_PRIVATE_HOSTS` set, the guarded adapter fails a 101 that announces an upgrade at once and closes its socket, reading `Couchbase request failed: The server switched the connection to another protocol instead of answering, so no answer was read`.
 
+### 4.6 No SSH tunnel
+
+Studio refuses a Couchbase connection whose SSH tunnel is on, before it dials the bastion or builds the provider, and the dialog offers no SSH panel for it ([SSH tunnels](./README.md#ssh-tunnels-bastion-host-key-verification)).
+A tunnel forwards one port, and the provider sends its queries to the query service, on another port (8093, or 18093 with TLS), at the address the cluster's node map advertises ([§3.3](#33-ports-are-discovered-not-configured)), which the forward does not carry.
+The refusal reads "Couchbase does not run through an SSH tunnel: the tunnel forwards one port, and queries go to the query service, on another port, at the address the cluster's node map advertises. Turn the tunnel off."
+A route per node is a later change.
+
 ### Connection string
 
 The scheme shown for Couchbase is `couchbase://`, and the parser also accepts `couchbases://`.

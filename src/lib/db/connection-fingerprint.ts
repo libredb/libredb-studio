@@ -15,8 +15,9 @@ import type { DatabaseConnection, SSHTunnelConfig, WithTunnelFarEnd } from "@/li
  * `hostKeyFingerprint`, which records what this connection TRUSTS rather than where it goes.
  *
  * `enabled` is in because the tunnel branch in `getOrCreateProvider`
- * (`src/lib/db/factory.ts`) tests exactly that flag: a switched-off tunnel is not a route at
- * all, and an absent `sshTunnel` frames to the empty string, which no present tunnel can produce.
+ * (`src/lib/db/factory.ts`) opens a tunnel only when core's `decideTunnel` reads that flag as true: a switched-off
+ * tunnel is not a route at all, and an absent `sshTunnel` frames to the empty string, which no present tunnel can
+ * produce.
  *
  * EXPORTED FOR THE TUNNEL POOL, which keys a forward on this exact string (`poolKey` in
  * `src/lib/ssh/tunnel.ts`). Taken rather than re-derived, and for the reason this function already

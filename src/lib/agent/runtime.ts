@@ -26,7 +26,7 @@
  *    drive of that run sees.
  */
 
-import { createDatabaseProvider } from "@/lib/db";
+import { readProviderDeclarations } from "@/lib/db";
 import { acquireExecutionProfileProvider, executionContextFor } from "@/lib/db/factory";
 import { catalogSessionConnection } from "@/lib/db/catalog-scope";
 import { editorExecutionContext } from "@/lib/api/execution-context";
@@ -188,7 +188,8 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
     // One provider for both, so a run's declared behaviour and its declared
     // vocabulary can never come from two different readings.
     //
-    // So no `withOneShotTunnel` wrapper here (#457): this provider is never connected.
+    // So no `withOneShotTunnel` wrapper here (#457): `readProviderDeclarations` builds the provider
+    // without connecting it or opening its tunnel, and hands back data (FND-2 slice 5).
     // The one that runs statements comes from `acquireExecutionProfileProvider`, which
     // opens the connection's pooled tunnel itself.
     //
@@ -198,13 +199,10 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
     // sends no statement, so no provider proves a statement boundary for a provider that is never connected. It carries
     // the editor posture of the run's persisted actor, as the acquirer below does, so a connection that posture denies
     // file access is refused here, before Studio reads the path it names, and one it grants is built.
-    const provider = await createDatabaseProvider(
+    const { capabilities, labels } = await readProviderDeclarations(
       connection,
-      {},
       executionContextFor("agent-operations", editorExecutionContext(actor, connection)),
     );
-    const capabilities = provider.getCapabilities();
-    const labels = provider.getLabels();
 
     // The ceilings a drive begins with are folded from the run's ledger, so a
     // resumed drive inherits the spend its earlier drives recorded rather than

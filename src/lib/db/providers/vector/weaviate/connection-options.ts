@@ -29,14 +29,7 @@ import {
 import { type NodeTlsMaterial, nodeTlsMaterial } from "@/lib/db/http/node-transport";
 import type { EgressDecision } from "@/lib/db/types";
 import { secretForms } from "@/lib/db/utils/server-text";
-import {
-  type DatabaseConnection,
-  type DatabaseType,
-  type SSHTunnelConfig,
-  TUNNEL_FAR_END,
-  type TunnelFarEnd,
-  type WithTunnelFarEnd,
-} from "@/lib/types";
+import { type DatabaseConnection, type DatabaseType, TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
 
 /** Where a read-only mode was set; the provider words its refusal by it. */
 export type WeaviateReadOnlySource = "connection" | "seed" | "execution-profile";
@@ -80,8 +73,6 @@ const USER_NOT_TAKEN =
   "Weaviate takes no user name: clear the connection's user, and put the API key or OIDC access token in the password. Nothing was sent.";
 const SECRET_NOT_PRINTABLE =
   "The connection's password (the API key or token) holds a space, a line break, a NUL or another character outside printable ASCII; remove it. Nothing was sent.";
-const TUNNEL_NOT_OPENED =
-  "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so Weaviate was not dialled directly: the tunnel opens only when both Host and Port are set.";
 const SEED_REFUSED =
   "This read-only seed connection is refused with this credential, because the mode would promise a boundary the server does not keep; nothing was sent.";
 const READ_ONLY_NOT_BOOLEAN = "readOnly must be true or false.";
@@ -95,7 +86,7 @@ export function buildWeaviateConnectionOptions(
   config: DatabaseConnection & WithTunnelFarEnd,
   context: { readonly executionReadOnly: boolean; readonly queryTimeout: number; readonly egress: EgressDecision },
 ): WeaviateConnectionOptions {
-  const farEnd = tunnelFarEnd(config);
+  const farEnd = config[TUNNEL_FAR_END];
   const dialled = shared(() => httpOrigin("http", config.host, config.port ?? WEAVIATE_DEFAULT_PORT, context.egress));
   const endpoint =
     farEnd === undefined
@@ -125,14 +116,6 @@ export function buildWeaviateConnectionOptions(
     callTimeoutMs: callTimeout(context.queryTimeout),
     secretForms: secretForms(secret === undefined ? [] : [secret]),
   };
-}
-
-function tunnelFarEnd(config: DatabaseConnection & WithTunnelFarEnd): TunnelFarEnd | undefined {
-  const tunnel = optionalObject<keyof SSHTunnelConfig>(config.sshTunnel, "sshTunnel");
-  const enabled = optionalBoolean(tunnel?.enabled, "sshTunnel.enabled") === true;
-  const farEnd = config[TUNNEL_FAR_END];
-  if (enabled && farEnd === undefined) throw configError(TUNNEL_NOT_OPENED);
-  return farEnd;
 }
 
 function unbracketed(host: string): string {
@@ -180,21 +163,9 @@ function callTimeout(queryTimeout: number): number {
   return queryTimeout;
 }
 
-function optionalObject<Key extends string>(value: unknown, field: string): Partial<Record<Key, unknown>> | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "object" || Array.isArray(value)) throw wrongType(field, "an object");
-  return value as Partial<Record<Key, unknown>>;
-}
-
 function optionalText(value: unknown, field: string): string | undefined {
   if (value === undefined || value === null || value === "") return undefined;
   if (typeof value !== "string") throw wrongType(field, "a string");
-  return value;
-}
-
-function optionalBoolean(value: unknown, field: string): boolean | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "boolean") throw wrongType(field, "true or false");
   return value;
 }
 

@@ -290,11 +290,10 @@ An advertised address Studio cannot reach after the bootstrap succeeded is the m
 ### 4.5 No SSH tunnel
 
 A tunnel forwards one address, and the client reaches every broker at the address that broker advertises, which the tunnel does not carry, so the tunnel would carry the bootstrap connection only and every read would go to the advertised addresses directly.
-The dialog hides the SSH panel for Kafka through `showSshTunnel: false`, while it keeps the TLS panel, and `buildConnection` writes `sshTunnel` only for a type that offers the panel (`offersSshTunnel`), so a tunnel left in the dialog's state by another connection is dropped.
-A tunnelled connection that arrives another way, from a seed or the API, is refused before any broker request with a `DatabaseConfigError`: "Kafka does not run through an SSH tunnel: the tunnel forwards one address, and a Kafka client reads from every broker the cluster advertises, at the address the broker advertises. Connect to the brokers directly".
-There the server opens the tunnel before the provider runs, so an unreachable bastion answers with its SSH error first.
-The server opens a tunnel for any `sshTunnel.enabled` that JavaScript reads as true, such as the string `"true"`, so an `enabled` that is not a boolean is refused too, naming the field, rather than read as no tunnel.
-An `sshTunnel` that is not an object, such as `true`, is refused the same way, as an `ssl` that is not one is, though the server opens no tunnel for it.
+Studio refuses a Kafka connection whose tunnel is on before it dials the bastion or builds the provider: Kafka's row of `SSH_TUNNEL_REFUSAL` in `src/lib/db/compatibility.ts` names the reason, and core refuses with it on every entry point ([SSH tunnels](./README.md#ssh-tunnels-bastion-host-key-verification)).
+The dialog reads the same row through `offersSshTunnel`: it hides the SSH panel for Kafka, while it keeps the TLS panel, and `buildConnection` writes `sshTunnel` only for a type that offers the panel, so a tunnel left in the dialog's state by another connection is dropped.
+A tunnelled connection that arrives another way, from a seed or the API, is refused with a `DatabaseConfigError`, and no bastion is dialled: "Kafka does not run through an SSH tunnel: the tunnel forwards one address, and a Kafka client reads from every broker the cluster advertises, at the address the broker advertises. Connect to the brokers directly."
+An `enabled` that is not true, false or absent, such as the string `"true"`, is refused by name before the engine is read, and so is an `sshTunnel` that is not plain data.
 
 ### Connection string
 

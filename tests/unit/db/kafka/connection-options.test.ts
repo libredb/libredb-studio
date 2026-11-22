@@ -113,14 +113,19 @@ describe("kafkaConnectionOptions", () => {
     }
   });
 
-  test("an SSH tunnel is refused, because the brokers are reached at the addresses they advertise", () => {
-    const tunnelled = {
-      ...base,
-      sshTunnel: { enabled: true, host: "bastion", port: 22, username: "u", authMethod: "password", password: "p" },
-    } as DatabaseConnection;
-    expect(() => kafkaConnectionOptions(tunnelled, 1)).toThrow(/SSH tunnel/);
-    const off = { ...tunnelled, sshTunnel: { ...tunnelled.sshTunnel!, enabled: false } } as DatabaseConnection;
-    expect(kafkaConnectionOptions(off, 1).broker.host).toBe("broker-1");
+  // Core refuses a Kafka connection whose tunnel is on before any provider is built (Kafka's row of SSH_TUNNEL_REFUSAL,
+  // tests/unit/lib/db/tunnel-decision.test.ts), so the options read no tunnel at all.
+  test("reads no sshTunnel: core refuses a Kafka tunnel before the provider exists (FND-2 slice 5)", () => {
+    for (const sshTunnel of [
+      { enabled: true, host: "bastion", port: 22, username: "u" },
+      { enabled: "true" },
+      "yes",
+      null,
+    ]) {
+      expect(kafkaConnectionOptions({ ...base, sshTunnel } as unknown as DatabaseConnection, 1).broker.host).toBe(
+        "broker-1",
+      );
+    }
   });
 
   test("SASL over TLS is built from user, password and mechanism", () => {
@@ -440,64 +445,5 @@ describe("kafkaConnectionOptions, each field as a caller may write it: another t
     expect(refusalOf({ ...base, ssl: { mode: "disable", rejectUnauthorized: "no" } })).toBe(
       "The connection's ssl.rejectUnauthorized must be true or false; nothing was sent",
     );
-  });
-
-  test.each([
-    ["a string", "true"],
-    ["a number", 1],
-    ["an object", {}],
-  ])(
-    "an sshTunnel.enabled that is %s is refused, because the server opens a tunnel for any value JavaScript reads as true",
-    (_label, enabled) => {
-      expect(refusalOf({ ...base, sshTunnel: { enabled, host: "bastion", port: 22, username: "u" } })).toBe(
-        "The connection's sshTunnel.enabled must be true or false; nothing was sent",
-      );
-    },
-  );
-
-  test.each([
-    ["an empty string", ""],
-    ["zero", 0],
-  ])(
-    "an sshTunnel.enabled that is %s is refused for its type too, though the server opens no tunnel for it",
-    (_label, enabled) => {
-      expect(refusalOf({ ...base, sshTunnel: { enabled, host: "bastion", port: 22, username: "u" } })).toBe(
-        "The connection's sshTunnel.enabled must be true or false; nothing was sent",
-      );
-    },
-  );
-
-  test("an sshTunnel.enabled that is null reads as absent, as a tunnel switched off", () => {
-    expect(mapped({ ...base, sshTunnel: { enabled: null, host: "bastion", port: 22, username: "u" } }).broker).toEqual({
-      host: "broker-1",
-      port: 9092,
-    });
-  });
-
-  test("an sshTunnel that is null reads as absent, as no tunnel", () => {
-    expect(mapped({ ...base, sshTunnel: null }).broker).toEqual({ host: "broker-1", port: 9092 });
-  });
-
-  test.each([
-    ["true", true],
-    ["a string", "yes"],
-    ["an array", [{ enabled: true }]],
-  ])(
-    "an sshTunnel that is %s is refused, as an ssl that is not an object is, never read as no tunnel",
-    (_label, sshTunnel) => {
-      expect(refusalOf({ ...base, sshTunnel })).toBe("The connection's sshTunnel must be an object; nothing was sent");
-    },
-  );
-
-  test("an enabled tunnel is refused first, before the address or anything else is read", () => {
-    expect(
-      refusalOf({
-        ...base,
-        host: "a:1",
-        ssl: "on",
-        saslMechanism: null,
-        sshTunnel: { enabled: true, host: "bastion", port: 22, username: "u" },
-      }),
-    ).toStartWith("Kafka does not run through an SSH tunnel");
   });
 });

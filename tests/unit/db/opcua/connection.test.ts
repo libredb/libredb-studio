@@ -219,6 +219,16 @@ describe("the tunnel", () => {
     expect(readConnection(connection({ sshTunnel: { enabled: false } }), PKI_ROOT).tunnelled).toBe(false);
     expect(readConnection(connection({}), PKI_ROOT).tunnelled).toBe(false);
   });
+
+  // Core decides the tunnel before any provider is built and refuses one that is on and was not opened
+  // (tests/security/provider-tunnel-decisions.test.ts), so the far end alone says a tunnel carries the connection.
+  test("reads tunnelled from the far end alone, never from sshTunnel (FND-2 slice 5)", () => {
+    for (const sshTunnel of [{ enabled: true }, { enabled: "yes" }, null, "on"]) {
+      const read = readConnection(connection({ sshTunnel }), PKI_ROOT);
+      expect(read.tunnelled).toBe(false);
+      expect(read.endpointUrl).toBe(readConnection(connection({}), PKI_ROOT).endpointUrl);
+    }
+  });
 });
 
 /**
@@ -261,12 +271,6 @@ describe("the endpoint URL through a tunnel", () => {
   test("a URL with no path keeps none, so the dialled address is the bare authority", () => {
     const read = readConnection(tunnelled("opc.tcp://plc.example.net:4840") as never, PKI_ROOT);
     expect(read.endpointUrl).toBe("opc.tcp://127.0.0.1:57321");
-  });
-
-  test("a tunnel the factory has not opened is refused, not dialled at the local port of nothing", () => {
-    expect(() => readConnection(connection({ sshTunnel: { enabled: true } }), PKI_ROOT)).toThrow(
-      /tunnel that is not open yet/,
-    );
   });
 
   test("the reader's own URL is still validated, so a wrong scheme says so", () => {

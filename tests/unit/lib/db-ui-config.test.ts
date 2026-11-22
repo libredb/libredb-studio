@@ -34,7 +34,7 @@ import {
   type ConnectionField,
   type DatabaseUIConfig,
 } from "@/lib/db-ui-config";
-import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES, SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
 import { UnknownProviderError } from "@/lib/db/errors";
 import { SHOWCASE_DATABASE_ORDER, SHOWCASE_RANK, listShowcaseDatabases } from "@/lib/db-showcase";
 import { readAmqpPort, readPathPrefix } from "@/lib/db/providers/stream/rabbitmq/connection-options";
@@ -340,7 +340,6 @@ describe("db-ui-config", () => {
       expect(kafka.label).toBe("Apache Kafka");
       expect(kafka.defaultPort).toBe("9092");
       expect(kafka.showConnectionStringToggle).toBe(false);
-      expect(kafka.showSshTunnel).toBe(false);
       expect(kafka.connectionFields).toEqual(["host", "port", "saslMechanism", "user", "password"]);
       expect(kafka.fieldOptions?.saslMechanism?.map((option) => option.value)).toEqual([
         "PLAIN",
@@ -355,29 +354,37 @@ describe("db-ui-config", () => {
       ]);
       expect(kafka.fieldLabels?.saslMechanism).toBe("SASL mechanism");
       expect(kafka.fieldHints?.saslMechanism).toBe("PLAIN and SCRAM require TLS");
-      // The one rule the modal and buildConnection read: false only where an entry declares it.
+      // The one rule the modal and buildConnection read: core's SSH_TUNNEL_REFUSAL row.
       expect(offersSshTunnel("kafka")).toBe(false);
       expect(offersSshTunnel("postgres")).toBe(true);
     });
 
-    test("only kafka's, bigquery's, snowflake's, firestore's, rabbitmq's and snmp's connections refuse an SSH tunnel, and only because their entries declare it", () => {
-      // Derived from the declaration rather than typed out: a tunnel forwards one address, and a
-      // Kafka client reaches every broker at the address the broker advertises (docs/providers/kafka.md).
-      // SNMP refuses it for a different reason, and the difference is worth keeping: something WOULD read it,
-      // because `factory.ts` opens a tunnel for any connection that carries one with no test on the engine.
-      // MEASURED: the shared tunnel is a local TCP listener (`src/lib/ssh/tunnel.ts`, `net.createServer` plus
-      // `forwardOut`, and `dgram` appears zero times in it), and this provider sends datagrams. The factory
-      // would rewrite host and port to that TCP endpoint and the reads would go nowhere (#1721).
+    test("offersSshTunnel answers the core row for every engine, so the dialog offers a tunnel exactly where core takes one", () => {
+      // One fact, two readers (FND-2 slice 5): core refuses a connection whose tunnel is on for an engine whose
+      // SSH_TUNNEL_REFUSAL row names a reason, and the dialog offers the panel, and writes `sshTunnel`, exactly where
+      // that row is null. The refused set is written out by hand, so a change to either reader fails here by name.
       for (const type of ALL_TYPES) {
-        expect({ type, offered: offersSshTunnel(type) }).toEqual({
-          type,
-          offered: getDBConfig(type).showSshTunnel !== false,
-        });
+        expect({ type, offered: offersSshTunnel(type) }).toEqual({ type, offered: SSH_TUNNEL_REFUSAL[type] === null });
       }
       const refusing = ALL_TYPES.filter((type) => !offersSshTunnel(type));
-      expect(refusing.sort()).toEqual(["bigquery", "firestore", "kafka", "rabbitmq", "snmp", "snowflake"]);
-      // A file-based engine still answers true: its panel is hidden by isFileBased instead.
-      expect(offersSshTunnel("sqlite")).toBe(true);
+      expect(refusing.sort()).toEqual([
+        "bigquery",
+        "cassandra",
+        "couchbase",
+        "duckdb",
+        "firestore",
+        "kafka",
+        "libredb",
+        "rabbitmq",
+        "snmp",
+        "snowflake",
+        "sqlite",
+      ]);
+      // A file engine answers false now: there is no address to forward to, and a tunnel left on in the dialog's state
+      // is no longer written onto it.
+      expect(offersSshTunnel("sqlite")).toBe(false);
+      expect(offersSshTunnel("cassandra")).toBe(false);
+      expect(offersSshTunnel("couchbase")).toBe(false);
     });
 
     test("only bigquery's, snowflake's, firestore's, opcua's, netconf's and snmp's connections withhold the SSL panel, and only because their entries declare it", () => {
@@ -702,7 +709,7 @@ describe("db-ui-config", () => {
       showConnectionStringToggle: false,
       connectionFields: ["host", "port", "user", "password"],
     });
-    expect(etcd.showSshTunnel).toBeUndefined();
+    expect(offersSshTunnel("etcd")).toBe(true);
     expect(etcd.fieldHints).toEqual({
       host: "A name or address only. For etcdctl's --endpoints=https://10.0.0.5:2379, type 10.0.0.5 here, 2379 in Port, and choose an SSL mode under SSL / TLS.",
       user: "Leave User and Password empty to sign in with the client certificate under SSL / TLS (shown in verify-ca and verify-full): etcd uses its Common Name as the user when the server runs with --client-cert-auth. When both are set, etcd uses the password.",
@@ -722,7 +729,6 @@ describe("db-ui-config", () => {
       connectionFields: ["host", "port", "user", "password", "database"],
     });
     // The SSL panel and the SSH tunnel are both offered: a bolt:// URI dials the one server it names.
-    expect(neo4j.showSshTunnel).toBeUndefined();
     expect(offersSshTunnel("neo4j")).toBe(true);
     expect(neo4j.fieldHints).toEqual({ database: "Leave empty to use the server's home database." });
     expect(neo4j.fieldLabels).toBeUndefined();
@@ -814,7 +820,6 @@ describe("declared connection-field copy (#1085)", () => {
       connectionFields: ["host", "port", "password"],
     });
     // The SSL panel and the SSH tunnel are both offered, the tunnel's far end being the TLS identity (vector-family spec 4.4).
-    expect(qdrant.showSshTunnel).toBeUndefined();
     expect(offersSshTunnel("qdrant")).toBe(true);
     expect(takesConnectionField("qdrant", "user")).toBe(false);
     expect(takesConnectionField("qdrant", "database")).toBe(false);
@@ -837,7 +842,6 @@ describe("declared connection-field copy (#1085)", () => {
       showConnectionStringToggle: false,
       connectionFields: ["host", "port", "password"],
     });
-    expect(weaviate.showSshTunnel).toBeUndefined();
     expect(offersSshTunnel("weaviate")).toBe(true);
     expect(takesConnectionField("weaviate", "user")).toBe(false);
     expect(takesConnectionField("weaviate", "database")).toBe(false);
@@ -877,7 +881,6 @@ describe("declared connection-field copy (#1085)", () => {
     expect(takesConnectionField("oxia", "user")).toBe(false);
     expect(oxia.hostAcceptsUri).toBeUndefined();
     expect(oxia.fieldOptions).toBeUndefined();
-    expect(oxia.showSshTunnel).toBeUndefined();
     expect(offersSshTunnel("oxia")).toBe(true);
     expect(hostUriSchemes("oxia")).toEqual([]);
     expect(oxia.credentialWarnings).toBe(CREDENTIAL_WARNINGS.oxia);
@@ -895,7 +898,6 @@ describe("declared connection-field copy (#1085)", () => {
     });
     expect(databend.icon).toBe(DatabendIcon);
     // The SSL panel and the SSH tunnel are both offered.
-    expect(databend.showSshTunnel).toBeUndefined();
     expect(offersSshTunnel("databend")).toBe(true);
     expect(takesConnectionField("databend", "warehouse")).toBe(true);
     expect(takesConnectionField("postgres", "warehouse")).toBe(false);
@@ -931,7 +933,6 @@ describe("declared connection-field copy (#1085)", () => {
     });
     expect(s3.icon).toBe(S3Icon);
     // The SSL panel and the SSH tunnel are both offered: path style addresses one origin, which one forward carries.
-    expect(s3.showSshTunnel).toBeUndefined();
     expect(offersSshTunnel("s3")).toBe(true);
     expect(takesConnectionField("s3", "region")).toBe(true);
     expect(takesConnectionField("databend", "region")).toBe(false);
@@ -976,7 +977,6 @@ describe("declared connection-field copy (#1085)", () => {
       connectionFields: ["host", "port", "user", "password", "database"],
     });
     // The SSL panel and the SSH tunnel are both offered (vector-family spec 5.2).
-    expect(milvus.showSshTunnel).toBeUndefined();
     expect(offersSshTunnel("milvus")).toBe(true);
     expect(milvus.fieldLabels).toEqual({ password: "Password or token" });
     expect(milvus.fieldHints).toEqual({
@@ -1007,7 +1007,6 @@ describe("declared connection-field copy (#1085)", () => {
     });
     expect(influxdb.icon).toBe(InfluxDBIcon);
     // The SSL panel and the SSH tunnel are both offered.
-    expect(influxdb.showSshTunnel).toBeUndefined();
     expect(offersSshTunnel("influxdb")).toBe(true);
     expect(influxdb.fieldLabels).toEqual({ password: "Password or token" });
     expect(influxdb.fieldHints).toEqual({
@@ -1032,7 +1031,6 @@ describe("declared connection-field copy (#1085)", () => {
     });
     // The same generic mark as the InfluxQL type: one product, two query languages.
     expect(influxdb3.icon).toBe(InfluxDBIcon);
-    expect(influxdb3.showSshTunnel).toBeUndefined();
     expect(offersSshTunnel("influxdb3")).toBe(true);
     expect(takesConnectionField("influxdb3", "user")).toBe(false);
     expect(influxdb3.fieldLabels).toEqual({ password: "Token" });
@@ -1227,7 +1225,6 @@ describe("declared field rules (Databend design 6.3)", () => {
       label: "RabbitMQ",
       defaultPort: "15672",
       color: "text-hue-lime-alt",
-      showSshTunnel: false,
       showConnectionStringToggle: false,
       hostAcceptsUri: ["http", "https"],
     });
@@ -1749,7 +1746,6 @@ describe("the Snowflake entry", () => {
       defaultPort: "",
       defaultHost: "",
       showConnectionStringToggle: false,
-      showSshTunnel: false,
       showSslPanel: false,
     });
     expect(snowflake.connectionFields).toEqual([
@@ -1929,8 +1925,8 @@ describe("the Apache Spark entry", () => {
       defaultPort: "15002",
       showConnectionStringToggle: false,
     });
-    // No `showSshTunnel` and no `showSslPanel` key: the SSH tunnel and the SSL / TLS panel are both offered.
-    expect(spark.showSshTunnel).toBeUndefined();
+    // No `showSslPanel` key, and a null SSH_TUNNEL_REFUSAL row: the SSH tunnel and the SSL / TLS panel are both offered.
+    expect(offersSshTunnel("spark")).toBe(true);
     expect(spark.showSslPanel).toBeUndefined();
     // No User box: every request uses one fixed Spark Connect user id, and Token is the credential.
     expect(spark.connectionFields).toEqual(["host", "port", "password", "database", "schema"]);

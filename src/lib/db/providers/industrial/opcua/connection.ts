@@ -7,13 +7,7 @@
  * the server who is asking.
  */
 import { DatabaseConfigError } from "@/lib/db/errors";
-import {
-  TUNNEL_FAR_END,
-  type DatabaseConnection,
-  type SSHTunnelConfig,
-  type TunnelFarEnd,
-  type WithTunnelFarEnd,
-} from "@/lib/types";
+import { TUNNEL_FAR_END, type DatabaseConnection, type TunnelFarEnd, type WithTunnelFarEnd } from "@/lib/types";
 import { OPCUA_SCHEME, OPCUA_TYPE } from "./constants";
 import { clientIdentitySource } from "./pki";
 import { normaliseThumbprint, readEndpointUrl, type OpcuaIdentityKind, type OpcuaSecurityMode } from "./security";
@@ -91,18 +85,17 @@ export function readConnection(
   // The endpoint is the whole address: host and port are read FROM it rather than beside it, so
   // there is one place a reader can be wrong and one place to correct.
   const typed = typeof config.host === "string" && config.host.trim() !== "" ? config.host.trim() : "";
-  const tunnel = config.sshTunnel as SSHTunnelConfig | undefined;
-  const tunnelled = tunnel?.enabled === true;
+  // Whether a tunnel carries the connection is its far end alone, which core sets only when it opened the tunnel; core
+  // refuses a tunnel that is on and was not opened before any provider is built (FND-2 slice 5).
   const farEnd = (config as WithTunnelFarEnd)[TUNNEL_FAR_END];
+  const tunnelled = farEnd !== undefined;
   /**
-   * The URL a tunnelled connection dials, and the refusal when the tunnel is not open yet.
+   * The URL a tunnelled connection dials.
    *
    * The far end holds the address the READER typed, because the rewrite already happened; the URL's
-   * own path and scheme are kept, and only the authority moves to the local end. A tunnel declared
-   * and not opened is a refusal rather than a silent dial of `127.0.0.1`, which is the rule S3's
-   * connection reader states and every tunnelled provider follows.
+   * own path and scheme are kept, and only the authority moves to the local end.
    */
-  const endpointUrl = tunnelled ? tunnelledEndpointUrl(config, farEnd) : typed;
+  const endpointUrl = farEnd === undefined ? typed : tunnelledEndpointUrl(config, farEnd);
   const endpoint = readEndpointUrl(endpointUrl);
 
   /**
@@ -202,21 +195,11 @@ export function readConnection(
  * So the URL is parsed from the FAR END, which is where the reader's text now lives, and dialled at
  * the local pair. Parsing the rewritten `host` instead reads a bare `127.0.0.1` as a URL and
  * refuses every tunnelled connection, which is exactly what the first attempt at this did.
- *
- * The far end is required: a tunnel the dialog declared and the factory has not opened would
- * otherwise dial the local port of nothing.
  */
 function tunnelledEndpointUrl(
   config: DatabaseConnection & { readonly [key: string]: unknown },
-  farEnd: TunnelFarEnd | undefined,
+  farEnd: TunnelFarEnd,
 ): string {
-  if (farEnd === undefined) {
-    throw new DatabaseConfigError(
-      "This connection goes through an SSH tunnel that is not open yet, so there is no local address to " +
-        "dial. Open the tunnel, or clear it to connect to the endpoint directly.",
-      OPCUA_TYPE,
-    );
-  }
   // The reader's own URL, validated as theirs: a mistyped scheme is heard as that rather than as a
   // sentence about the tunnel. The path is theirs too - OPC PLC answers on `/`, a Milo demo on `/milo`.
   const endpoint = readEndpointUrl(farEnd.host);

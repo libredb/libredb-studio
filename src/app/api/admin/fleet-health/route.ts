@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createDatabaseProvider, getOrCreateProvider } from "@/lib/db";
+import { getOrCreateProvider, readProviderDeclarations } from "@/lib/db";
 import { engineFacetsFor } from "@/lib/db/engine-facets";
 import type { DatabaseConnection } from "@/lib/types";
 import { createErrorResponse } from "@/lib/api/errors";
@@ -87,7 +87,8 @@ export async function POST(request: Request) {
           const resolved = await resolveConnection(buildConnectionPayload(conn), guard.session);
           const execution = editorExecutionContext(guard.session, resolved);
           /*
-           * The capability is read off an unconnected provider, the provider-meta pattern: a
+           * The capability is read through `readProviderDeclarations`, the provider-meta pattern, which
+           * builds the provider without connecting it or opening its tunnel and hands back data: a
            * connection that resumes billed compute (a suspended Databend Cloud warehouse wakes on
            * any statement) is answered without a cached provider or a statement, since a check on
            * every dashboard refresh would keep it awake and billed. The factory logs its
@@ -95,8 +96,8 @@ export async function POST(request: Request) {
            * as provider-meta does; the declaration is read each time because an edit of the
            * connection can change it.
            */
-          const unconnected = await createDatabaseProvider(resolved, {}, execution);
-          if (unconnected.getCapabilities().resumesBilledCompute) {
+          const declarations = await readProviderDeclarations(resolved, execution);
+          if (declarations.capabilities.resumesBilledCompute) {
             return {
               connectionId: conn.id,
               connectionName: conn.name,

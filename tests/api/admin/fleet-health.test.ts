@@ -23,10 +23,16 @@ import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 // ─── Mock provider ──────────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
 const mockGetOrCreateProvider = mock(async () => mockProvider);
-// The unconnected provider the route reads capabilities from, the provider-meta pattern.
-const mockCreateDatabaseProvider = mock<(conn: { id: string }) => Promise<typeof mockProvider>>(
-  async () => mockProvider,
+// The declarations the route reads capabilities from, the provider-meta pattern: data read off a provider.
+const declarationsOf = (provider: ReturnType<typeof createMockProvider>) => ({
+  capabilities: provider.getCapabilities(),
+  labels: provider.getLabels(),
+  supportsQueryCancel: false,
+});
+const mockReadProviderDeclarations = mock<(conn: { id: string }) => Promise<ReturnType<typeof declarationsOf>>>(
+  async () => declarationsOf(mockProvider),
 );
+const { readProviderDeclarations: realReadProviderDeclarations } = await import("@/lib/db/factory");
 const mockGetSession = mock(
   async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
 );
@@ -47,7 +53,7 @@ mock.module("@/lib/auth", () => ({
 // ─── Mock @/lib/db BEFORE importing the route ───────────────────────────────
 mock.module("@/lib/db", () => ({
   getOrCreateProvider: mockGetOrCreateProvider,
-  createDatabaseProvider: mockCreateDatabaseProvider,
+  readProviderDeclarations: mockReadProviderDeclarations,
   removeProvider: mock(),
   clearProviderCache: mock(),
   getProviderCacheStats: mock(),
@@ -103,8 +109,8 @@ describe("POST /api/admin/fleet-health", () => {
       async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
     );
     mockGetOrCreateProvider.mockImplementation(async () => mockProvider);
-    mockCreateDatabaseProvider.mockClear();
-    mockCreateDatabaseProvider.mockImplementation(async () => mockProvider);
+    mockReadProviderDeclarations.mockClear();
+    mockReadProviderDeclarations.mockImplementation(async () => declarationsOf(mockProvider));
     (mockProvider.getHealth as ReturnType<typeof mock>).mockClear();
   });
 
@@ -393,7 +399,7 @@ describe("POST /api/admin/fleet-health billed compute", () => {
   beforeEach(() => {
     clearRateLimitState();
     mockGetOrCreateProvider.mockClear();
-    mockCreateDatabaseProvider.mockClear();
+    mockReadProviderDeclarations.mockClear();
     mockGetSession.mockImplementation(
       async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
     );
@@ -403,8 +409,8 @@ describe("POST /api/admin/fleet-health billed compute", () => {
   test("a resumesBilledCompute connection is answered not-checked, with no cached provider and no statement", async () => {
     const billedProvider = createMockProvider({ capabilities: { resumesBilledCompute: true } });
     const controlProvider = createMockProvider();
-    mockCreateDatabaseProvider.mockImplementation(async (conn) =>
-      conn.id === billed.id ? billedProvider : createMockProvider(),
+    mockReadProviderDeclarations.mockImplementation(async (conn) =>
+      declarationsOf(conn.id === billed.id ? billedProvider : createMockProvider()),
     );
     mockGetOrCreateProvider.mockImplementation(async () => controlProvider);
 
@@ -441,6 +447,25 @@ describe("POST /api/admin/fleet-health billed compute", () => {
     expect(controlProvider.getHealth).toHaveBeenCalledTimes(1);
   });
 
+  test("a tunnelled connection's declarations are read without opening its tunnel (FND-2 slice 5)", async () => {
+    mockReadProviderDeclarations.mockImplementationOnce(realReadProviderDeclarations as never);
+    const tunnelled = {
+      ...connections[0],
+      id: "conn-tunnelled",
+      sshTunnel: { enabled: true, host: "bastion", port: 22, username: "jump", authMethod: "password" },
+    };
+
+    const res = await POST(
+      createMockRequest("/api/admin/fleet-health", { method: "POST", body: { connections: [tunnelled] } }),
+    );
+    const data = await parseResponseJSON<{ results: { connectionId: string; status: string }[] }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.results).toMatchObject([{ connectionId: "conn-tunnelled", status: "healthy" }]);
+    expect(mockReadProviderDeclarations).toHaveBeenCalledTimes(1);
+    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
+  });
+
   test("other connections are checked as before", async () => {
     const req = createMockRequest("/api/admin/fleet-health", {
       method: "POST",
@@ -452,7 +477,7 @@ describe("POST /api/admin/fleet-health billed compute", () => {
 
     expect(res.status).toBe(200);
     expect(data.results.map((r) => r.status)).toEqual(["healthy", "healthy"]);
-    expect(mockCreateDatabaseProvider).toHaveBeenCalledTimes(2);
+    expect(mockReadProviderDeclarations).toHaveBeenCalledTimes(2);
     expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(2);
   });
 });

@@ -140,12 +140,6 @@ describe("credentials", () => {
     expect(refusal(kubernetesConnection({ password: 5 as never })).message).toBe(
       "The connection's password must be a string; nothing was sent.",
     );
-    expect(refusal(kubernetesConnection({ sshTunnel: "on" as never })).message).toBe(
-      "The connection's sshTunnel must be an object; nothing was sent.",
-    );
-    expect(refusal(kubernetesConnection({ sshTunnel: { enabled: "yes" } as never })).message).toBe(
-      "The connection's sshTunnel.enabled must be true or false; nothing was sent.",
-    );
   });
 });
 
@@ -267,11 +261,13 @@ describe("TLS and plain HTTP", () => {
 });
 
 describe("the tunnel and the timeout", () => {
-  test("a tunnel that is on but did not open is refused", () => {
-    const connection = kubernetesConnection({
-      sshTunnel: { enabled: true, host: "bastion", port: 22, username: "u", authMethod: "password" },
-    });
-    expect(refusal(connection).message).toBe(S.tunnelNotOpened);
+  // Core decides the tunnel before any provider is built and refuses one that is on and was not opened
+  // (tests/security/provider-tunnel-decisions.test.ts), so the far end alone says a tunnel carries the connection.
+  test("reads no sshTunnel: the far end alone says a tunnel was opened (FND-2 slice 5)", () => {
+    for (const sshTunnel of [{ enabled: true }, { enabled: "yes" }, { enabled: false }, null, "on", []]) {
+      const endpoint = readClusterEndpoint(kubernetesConnection({ sshTunnel: sshTunnel as never }), CONTEXT);
+      expect(endpoint).toEqual(readClusterEndpoint(kubernetesConnection(), CONTEXT));
+    }
   });
 
   test("a link-local literal far end is refused", () => {

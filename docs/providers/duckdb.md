@@ -637,6 +637,9 @@ Pass `{ allowExternalFileAccess: true }` as the third argument for the full reac
 
 `defaultPort` is `null`, so the connection dialog offers no port for DuckDB.
 
+DuckDB takes no SSH tunnel: it opens a file on the Studio server, so there is no address to forward to, and the dialog offers no SSH panel for it.
+A stored connection that still carries a tunnel switched on is refused before anything is opened; edit the connection and save it again to clear it ([SSH tunnels](./README.md#ssh-tunnels-bastion-host-key-verification)).
+
 `:memory:` opens a database that exists for the life of the connection and is discarded on
 disconnect. It is the zero-configuration way to try the editor, and it is what most of the
 integration tests use.

@@ -126,9 +126,6 @@ export function endpointText(host: string, port: number): string {
 // Connection: fields, TLS and what is refused before any socket
 // =====================================================================================================================
 
-export const TUNNEL_REFUSED =
-  "RabbitMQ connections cannot use an SSH tunnel: one tunnel carries one port, and the management API and AMQP use two.";
-
 const FIELD_LABELS = { database: "Database", namespaces: "Namespaces", tlsServerName: "TLS server name" } as const;
 
 /** The refusal of a field RabbitMQ does not offer, set from a seed or the API, naming the field and never its value. */

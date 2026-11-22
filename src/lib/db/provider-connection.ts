@@ -40,9 +40,9 @@ function isPlainData(value: unknown): value is object {
  * on the prototype or as not enumerable is lost, so a `readOnly` or an `ssl` would reach the provider as undefined), so
  * such a record is refused rather than built from a different connection with no error.
  *
- * WHERE IT RUNS. In `providerConnection`, so every build checks it, and at each of those three entry points beside
- * `assertReadOnlyHonoured`, ahead of the cache key and of `createSSHTunnel`, because their copy is made before
- * `providerConnection` runs and would hand it plain data.
+ * WHERE IT RUNS. In `providerConnection`, so every build checks it, and first in core's decision about the tunnel
+ * (`decideTunnel` in `./tunnel-decision`), which those three entry points take ahead of the cache key and of
+ * `createSSHTunnel`, because their copy is made before `providerConnection` runs and would hand it plain data.
  */
 export function assertTunnelRecordIsPlainData(connection: DatabaseConnection): void {
   const tunnel: unknown = connection.sshTunnel;
@@ -86,14 +86,14 @@ export function assertExecutionContextIsPlainData(execution: ProviderExecutionCo
  * `withOneShotTunnel` in `./factory`), it dials with the tunnel's password, private key and passphrase itself, and hands
  * the provider the outcome: the local endpoint in `host` and `port` and the far end under `TUNNEL_FAR_END`. A provider
  * therefore needs no tunnel credential, and `createDatabaseProvider` builds every provider from this function's answer,
- * so none holds one, whichever path built it. A caller that builds a provider without one of those three opens no
- * tunnel: its provider sees the record's own `sshTunnel.enabled` and no `TUNNEL_FAR_END`.
+ * so none holds one, whichever path built it. A connection whose tunnel is on and was not opened by one of those three
+ * is refused before it reaches this function (`assertProviderTunnel` in `./tunnel-decision`).
  *
- * WHAT STAYS. Every readable tunnel field the record holds, each value as the record holds it: several providers read
- * `sshTunnel.enabled` to refuse a tunnel they cannot use or one that was asked for and not opened, Databend frames the
+ * WHAT STAYS. Every readable tunnel field the record holds, each value as the record holds it: Databend frames the
  * route into its sign-in latch key, and the edit-plan seal (`connectionFingerprint`) frames the route from the
- * provider's own config, so the route must be the record's or every tunnelled edit plan is refused. A malformed value
- * inside the tunnel object passes through unchanged, so a provider's own check of that field still speaks. A key the
+ * provider's own config, so the route must be the record's or every tunnelled edit plan is refused. Each value passes
+ * through unchanged; no provider decides a tunnel from them, since core decides it before any build (`decideTunnel` in
+ * `./tunnel-decision`). A key the
  * classification does not name is left out. The symbol-keyed markers `TUNNEL_FAR_END` and `LITERAL_SEED_FILE` are
  * carried by the object spread.
  *
@@ -104,8 +104,8 @@ export function assertExecutionContextIsPlainData(execution: ProviderExecutionCo
  * array, a class instance or a getter is refused with a `DatabaseConfigError` that names the field and never
  * its value. It never writes to its argument.
  *
- * The provider keeps `sshTunnel` only until core owns the tunnel decisions those providers make from it; then the
- * field leaves the provider's view altogether.
+ * Core now owns every tunnel decision (FND-2 slice 5); the provider keeps the readable fields only for the route the
+ * seal and Databend's latch frame, until core hands that route on by itself and the field leaves the provider's view.
  */
 export function providerConnection<T extends DatabaseConnection>(connection: T): T {
   const tunnel: unknown = connection.sshTunnel;

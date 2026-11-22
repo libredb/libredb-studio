@@ -202,6 +202,19 @@ class MockPgPool {
   }
 }
 
+/** Run `body` while the mocked pg pool refuses every connect, restoring it after. */
+async function withRefusingPgPool(body: () => Promise<void>): Promise<void> {
+  const originalConnect = mockPgPool.connect;
+  mockPgPool.connect = async () => {
+    throw new Error("connection refused");
+  };
+  try {
+    await body();
+  } finally {
+    mockPgPool.connect = originalConnect;
+  }
+}
+
 mock.module("pg", () => ({
   default: { Pool: MockPgPool },
   Pool: MockPgPool,
@@ -436,6 +449,7 @@ const {
   assertReadOnlyHonoured,
   editorCacheKey,
   findCachedProvider,
+  readProviderDeclarations,
 } = await import("@/lib/db/factory");
 // Existing SQLite cache tests exercise trusted callers. Explicitly grant their file posture;
 // denied callers are tested separately against the unwrapped factory below.
@@ -1690,7 +1704,8 @@ describe("getOrCreateProvider", () => {
   });
 
   test("creates SSH tunnel when sshTunnel is configured", async () => {
-    const conn = makeConnection("sqlite", {
+    // PostgreSQL, an engine that takes a tunnel: a file engine's tunnel is refused before any dial (FND-2 slice 5).
+    const conn = makeConnection("postgres", {
       id: "ssh-conn",
       host: "remote-db.example.com",
       port: 5432,
@@ -1711,7 +1726,7 @@ describe("getOrCreateProvider", () => {
   test("reports the provider that opened through the tunnel to the pool, and releases nothing", async () => {
     // A provider that opened leaves its forward to the connection's teardown, so a concurrent connect of the same
     // forward that fails cannot close it under this provider.
-    const conn = makeConnection("sqlite", {
+    const conn = makeConnection("postgres", {
       id: "ssh-tunnel-opened",
       host: "remote-db.example.com",
       port: 5432,
@@ -1737,11 +1752,10 @@ describe("getOrCreateProvider", () => {
     // pooled tunnel could be forwarding somewhere else entirely, so a plan verified against
     // a machine the statement never reached. The far end now comes off the tunnel.
     const forwardedTo = { host: "forwarded-db.internal", port: 15432 };
-    const conn = makeConnection("sqlite", {
+    const conn = makeConnection("postgres", {
       id: "ssh-seal-far-end",
       host: "record-db.example.com",
       port: 5432,
-      database: ":memory:",
       sshTunnel: {
         enabled: true,
         host: "bastion.example.com",
@@ -1769,10 +1783,9 @@ describe("getOrCreateProvider", () => {
   });
 
   test("closes SSH tunnel when provider connect fails", async () => {
-    // NUL byte in the path makes SQLiteProvider.connect() throw after the tunnel is created
-    const conn = makeConnection("sqlite", {
+    // The mocked pool refuses, so PostgresProvider.connect() throws after the tunnel is created.
+    const conn = makeConnection("postgres", {
       id: "ssh-connect-fail",
-      database: "bad\u0000path.db",
       sshTunnel: {
         enabled: true,
         host: "bastion.example.com",
@@ -1783,7 +1796,9 @@ describe("getOrCreateProvider", () => {
       },
     } as Partial<DatabaseConnection>);
 
-    await expect(getOrCreateProvider(conn)).rejects.toThrow(/NUL bytes/);
+    await withRefusingPgPool(async () => {
+      await expect(getOrCreateProvider(conn)).rejects.toThrow(/connection refused|Failed to connect/);
+    });
 
     expect(mockCreateSSHTunnel).toHaveBeenCalledTimes(1);
     const tunnel = (await mockCreateSSHTunnel.mock.results[0]?.value) as { close: ReturnType<typeof mock> } | undefined;
@@ -1797,9 +1812,8 @@ describe("getOrCreateProvider", () => {
     // createSSHTunnel hands every caller of one forward the same forward, so a failed connect
     // releases it to the pool and does not close it itself: another provider (e.g. an
     // execution-profile one) may be connecting or serving through it.
-    const conn = makeConnection("sqlite", {
+    const conn = makeConnection("postgres", {
       id: "ssh-connect-fail-shared",
-      database: "bad\u0000path.db",
       sshTunnel: {
         enabled: true,
         host: "bastion.example.com",
@@ -1811,7 +1825,9 @@ describe("getOrCreateProvider", () => {
     } as Partial<DatabaseConnection>);
     mockReleaseUnopenedTunnel.mockImplementationOnce(async () => {});
 
-    await expect(getOrCreateProvider(conn)).rejects.toThrow(/NUL bytes/);
+    await withRefusingPgPool(async () => {
+      await expect(getOrCreateProvider(conn)).rejects.toThrow(/connection refused|Failed to connect/);
+    });
 
     const tunnel = (await mockCreateSSHTunnel.mock.results[0]?.value) as { close: ReturnType<typeof mock> } | undefined;
     expect(mockReleaseUnopenedTunnel.mock.calls).toEqual([[tunnel]]);
@@ -4996,15 +5012,206 @@ describe("withOneShotTunnel", () => {
     expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
   });
 
-  test("opens no tunnel for a connection with no host and port to forward to", async () => {
-    // A connection-string connection (MongoDB, Couchbase, ClickHouse) and SQLite carry
-    // neither, so there is no endpoint to rewrite - the same rule the pooled paths apply.
+  test("refuses a tunnel that is on for a connection with no host and port to forward to, and runs nothing", async () => {
+    // A connection-string connection carries neither, so no tunnel can be opened, and a provider built anyway would
+    // reach its server past the tunnel the connection asked for (FND-2 slice 5).
     const stringOnly = tunnelled();
     delete stringOnly.host;
     delete stringOnly.port;
+    const run = mock(async () => undefined);
 
-    await withOneShotTunnel(stringOnly, async () => undefined);
+    const error = await withOneShotTunnel(stringOnly, run).catch((e: unknown) => e);
 
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect((error as Error).message).toBe(UNOPENABLE_TUNNEL);
+    expect(run).not.toHaveBeenCalled();
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+  });
+});
+
+// ─── Core decides the SSH tunnel before it dials (FND-2 slice 5) ──
+
+const UNOPENABLE_TUNNEL =
+  "This connection's SSH tunnel is on, but the connection names no Host and Port for the tunnel to forward to, so no tunnel was opened and nothing was sent. Fill in Host and Port, or turn the tunnel off.";
+
+describe("core decides the SSH tunnel before it dials (FND-2 slice 5)", () => {
+  const bastion = (): SSHTunnelConfig => ({
+    enabled: true,
+    host: "bastion.example.com",
+    port: 22,
+    username: "jump",
+    authMethod: "password",
+    password: crypto.randomUUID(),
+  });
+
+  const refusedEngines = [
+    {
+      type: "kafka",
+      port: 9092,
+      sentence:
+        "Kafka does not run through an SSH tunnel: the tunnel forwards one address, and a Kafka client reads from every broker the cluster advertises, at the address the broker advertises. Connect to the brokers directly.",
+    },
+    {
+      type: "couchbase",
+      port: 8091,
+      sentence:
+        "Couchbase does not run through an SSH tunnel: the tunnel forwards one port, and queries go to the query service, on another port, at the address the cluster's node map advertises. Turn the tunnel off.",
+    },
+    {
+      type: "sqlite",
+      port: 1,
+      sentence:
+        "SQLite opens a file on the Studio server, so there is no address for an SSH tunnel to forward to. Turn the tunnel off: edit the connection and save it again.",
+    },
+  ];
+
+  const entryPoints = {
+    getOrCreateProvider: (connection: DatabaseConnection) => getOrCreateProvider(connection),
+    acquireExecutionProfileProvider: (connection: DatabaseConnection) =>
+      acquireExecutionProfileProvider(connection, "agent-operations"),
+    withOneShotTunnel: (connection: DatabaseConnection) => withOneShotTunnel(connection, async () => undefined),
+  };
+
+  const refusal = async (run: () => Promise<unknown>): Promise<Error> => {
+    const error = await run().then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    return error as Error;
+  };
+
+  for (const [name, enter] of Object.entries(entryPoints)) {
+    for (const { type, port, sentence } of refusedEngines) {
+      test(`${name} refuses a tunnel on ${type}, an engine that takes none, and never dials the bastion`, async () => {
+        const connection = makeConnection(type, { id: `refused-${type}`, port, sshTunnel: bastion() });
+
+        expect((await refusal(() => enter(connection))).message).toBe(sentence);
+        expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+      });
+    }
+
+    test(`${name} refuses an enabled that is not a boolean, and never dials the bastion`, async () => {
+      const connection = makeConnection("postgres", {
+        id: "enabled-yes",
+        sshTunnel: { ...bastion(), enabled: "yes" as unknown as boolean },
+      });
+
+      expect((await refusal(() => enter(connection))).message).toBe(
+        "The connection's sshTunnel.enabled must be true or false; nothing was sent.",
+      );
+      expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+    });
+
+    test(`${name} refuses a partial tunnel by name, not with a TypeError`, async () => {
+      for (const sshTunnel of [{ enabled: false }, {}]) {
+        const connection = makeConnection("postgres", {
+          id: "partial-tunnel",
+          sshTunnel: sshTunnel as unknown as SSHTunnelConfig,
+        });
+        expect((await refusal(() => enter(connection))).message).toBe(
+          "The connection's sshTunnel.host must be text; nothing was sent.",
+        );
+      }
+      expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+    });
+
+    test(`${name} refuses a tunnel that is on with no port before the cache key`, async () => {
+      const connection = makeConnection("postgres", { id: "no-port", port: undefined, sshTunnel: bastion() });
+
+      expect((await refusal(() => enter(connection))).message).toBe(UNOPENABLE_TUNNEL);
+      expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+      expect(getProviderCacheStats().size).toBe(0);
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+    });
+  }
+
+  test("the engine's refusal comes before the statement review on a profile that sends statements", async () => {
+    const connection = makeConnection("kafka", { id: "kafka-read-only", port: 9092, sshTunnel: bastion() });
+
+    const error = await refusal(() => acquireExecutionProfileProvider(connection, "agent-read-only"));
+
+    expect(error.message).toBe(refusedEngines[0].sentence);
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+  });
+
+  test("createDatabaseProvider refuses a tunnel that is on and was not opened", async () => {
+    const connection = makeConnection("postgres", { id: "not-opened", sshTunnel: bastion() });
+
+    expect((await refusal(() => createDatabaseProvider(connection))).message).toBe(
+      "This connection's SSH tunnel is on and no tunnel was opened for it, so no provider was built and nothing was sent: build the provider inside withOneShotTunnel, or get it from getOrCreateProvider, which open the tunnel first.",
+    );
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+  });
+
+  test("readProviderDeclarations reads a tunnelled record's declarations without dialling", async () => {
+    const connection = makeConnection("postgres", { id: "declarations-tunnelled", sshTunnel: bastion() });
+    const unconnected = await createDatabaseProvider(makeConnection("postgres", { id: "declarations-plain" }));
+
+    const declarations = await readProviderDeclarations(connection);
+
+    expect(declarations).toEqual({
+      capabilities: unconnected.getCapabilities(),
+      labels: unconnected.getLabels(),
+      supportsQueryCancel: true,
+    });
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+  });
+
+  test("readProviderDeclarations refuses what the decision refuses", async () => {
+    const kafka = makeConnection("kafka", { id: "declarations-kafka", port: 9092, sshTunnel: bastion() });
+    const noPort = makeConnection("postgres", { id: "declarations-no-port", port: undefined, sshTunnel: bastion() });
+
+    expect((await refusal(() => readProviderDeclarations(kafka))).message).toBe(refusedEngines[0].sentence);
+    expect((await refusal(() => readProviderDeclarations(noPort))).message).toBe(UNOPENABLE_TUNNEL);
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+  });
+
+  test("readProviderDeclarations hands back data, never the provider", async () => {
+    const declarations = await readProviderDeclarations(
+      makeConnection("postgres", { id: "declarations-data", sshTunnel: bastion() }),
+      { allowExternalFileAccess: false },
+    );
+
+    expect(Object.keys(declarations).sort()).toEqual(["capabilities", "labels", "supportsQueryCancel"]);
+    const functions = (value: unknown): number =>
+      typeof value === "function"
+        ? 1
+        : value !== null && typeof value === "object"
+          ? Object.values(value).reduce((sum: number, inner) => sum + functions(inner), 0)
+          : 0;
+    expect(functions(declarations)).toBe(0);
+  });
+
+  test("an MQTT record whose tunnel is on and names no port is refused before any socket on every builder", async () => {
+    const mqtt = makeConnection("mqtt", {
+      id: "mqtt-no-port",
+      host: "broker.example.com",
+      port: undefined,
+      password: crypto.randomUUID(),
+      sshTunnel: bastion(),
+    });
+    const builders: Array<() => Promise<unknown>> = [
+      () => getOrCreateProvider(mqtt),
+      () => acquireExecutionProfileProvider(mqtt, "agent-operations"),
+      () => withOneShotTunnel(mqtt, async () => undefined),
+      () => createDatabaseProvider(mqtt),
+      () => readProviderDeclarations(mqtt),
+    ];
+    for (const build of builders) expect((await refusal(build)).message).toBe(UNOPENABLE_TUNNEL);
+    // The same record with its port, built without the tunnel core would open, is refused at build on the published
+    // createDatabaseProvider too.
+    expect((await refusal(() => createDatabaseProvider({ ...mqtt, port: 1883 }))).message).toContain(
+      "no tunnel was opened for it",
+    );
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+  });
+
+  test("the same records with the tunnel off are not refused for the tunnel", async () => {
+    const off = makeConnection("postgres", { id: "tunnel-off", sshTunnel: { ...bastion(), enabled: false } });
+    const seen = await withOneShotTunnel(off, async (effective) => effective);
+
+    expect(seen).toBe(off);
     expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
   });
 });
@@ -5405,17 +5612,13 @@ describe("a tunnelled connection its provider refuses to build", () => {
     password: "pw",
   };
 
+  // MySQL alone: Apache Cassandra without a local data centre was the second record until core refused Cassandra's
+  // tunnel before any dial (FND-2 slice 5), and one constructor refusal drives every release path below.
   const refusedRecords = [
     {
       label: "MySQL without a database",
       connection: makeConnection("mysql", { id: "refused-mysql", port: 3306, database: undefined, sshTunnel: bastion }),
       sentence: "Database name is required for MySQL",
-    },
-    {
-      label: "Apache Cassandra without a local data centre",
-      connection: makeConnection("cassandra", { id: "refused-cassandra", port: 9042, sshTunnel: bastion }),
-      sentence:
-        "Apache Cassandra requires a local data centre (localDataCenter): the driver refuses to connect without one. A stock single-node install reports datacenter1.",
     },
   ];
 
@@ -6086,26 +6289,16 @@ describe("the Snowflake provider in the factory", () => {
     },
   );
   test.each(["agent-read-only", "agent-handover"] as const)(
-    "the %s profile is refused on an engine the review record does not list, by name, even when its provider implements queryReadOnly, and nothing is tunnelled, built or connected",
+    "the %s profile is refused on an engine the review record does not list, by name, even when its provider implements queryReadOnly, and nothing is built or connected",
     async (profile) => {
       const connect = stubConnect();
       const planted = mock(async () => ({ rows: [], fields: [], rowCount: 0, executionTime: 0 }));
       const prototype = SnowflakeProvider.prototype as unknown as { queryReadOnly?: unknown };
       prototype.queryReadOnly = planted;
       try {
-        const tunnelled = snowflake({
-          id: `sf-planted-${profile}`,
-          port: 443,
-          sshTunnel: {
-            enabled: true,
-            host: "bastion.example.com",
-            port: 22,
-            username: "admin",
-            authMethod: "password",
-            password: crypto.randomUUID(),
-          },
-        });
-        const error: unknown = await acquireExecutionProfileProvider(tunnelled, profile).catch((e: unknown) => e);
+        // No tunnel: Snowflake takes none, and core refuses one before the review (FND-2 slice 5).
+        const record = snowflake({ id: `sf-planted-${profile}`, port: 443 });
+        const error: unknown = await acquireExecutionProfileProvider(record, profile).catch((e: unknown) => e);
         expect(error).toBeInstanceOf(ExecutionProfileError);
         expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("PROFILE_ENGINE_NOT_REVIEWED");
         expect((error as Error).message).toBe(

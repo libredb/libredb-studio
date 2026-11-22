@@ -49,6 +49,10 @@ mock.module("@/lib/seed/resolve-connection", () => {
 mock.module("@/lib/db/factory", () => ({
   getOrCreateProvider: mockGetOrCreateProvider,
   createDatabaseProvider: mock(async () => mockProvider),
+  // The barrel `@/lib/db` re-exports it from this module, and the route loads the barrel; never called here.
+  readProviderDeclarations: mock(async () => {
+    throw new Error("readProviderDeclarations is not read by this route");
+  }),
   // src/lib/api/editor-provider.ts imports it, and the route loads that module.
   findCachedProvider: mock(() => null),
 }));

@@ -34,14 +34,7 @@ import {
 } from "@/lib/db/grpc/tls";
 import { plaintextSecretRefusal, validatePort } from "@/lib/db/http/endpoint";
 import { secretForms } from "@/lib/db/utils/server-text";
-import {
-  type DatabaseConnection,
-  type DatabaseType,
-  type SSHTunnelConfig,
-  TUNNEL_FAR_END,
-  type TunnelFarEnd,
-  type WithTunnelFarEnd,
-} from "@/lib/types";
+import { type DatabaseConnection, type DatabaseType, TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
 import type { X509Certificate } from "node:crypto";
 import type { MilvusErrorConnection } from "./errors";
 
@@ -102,8 +95,6 @@ const CLIENT_AUTH = "1.3.6.1.5.5.7.3.2";
 const ANY_EXTENDED_KEY_USAGE = "2.5.29.37.0";
 const NOT_FOR_CLIENT_AUTH =
   "The client certificate is not issued for client authentication: its extended key usage lacks clientAuth, so Milvus would refuse it. Paste a certificate issued for client use under SSL / TLS.";
-const TUNNEL_NOT_OPENED =
-  "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so Milvus was not dialled directly: the tunnel opens only when both Host and Port are set.";
 const SEED_REFUSED =
   "This read-only seed connection is refused with this credential, because the mode would promise a boundary the server does not keep; nothing was sent.";
 const READ_ONLY_NOT_BOOLEAN = "readOnly must be true or false.";
@@ -114,7 +105,7 @@ export function buildMilvusConnectionOptions(
   config: DatabaseConnection & WithTunnelFarEnd,
   context: { readonly executionReadOnly: boolean; readonly queryTimeout: number },
 ): MilvusConnectionOptions {
-  const farEnd = tunnelFarEnd(config);
+  const farEnd = config[TUNNEL_FAR_END];
   const targetHost = grpcEndpointHost(config.host, WORDS);
   const targetPort = shared(() => validatePort(config.port ?? MILVUS_DEFAULT_PORT));
   const endpoint =
@@ -160,14 +151,6 @@ export function milvusErrorConnection(options: MilvusConnectionOptions): MilvusE
     receiveCapBytes: options.receiveCapBytes,
     timeoutMs: options.callTimeoutMs,
   };
-}
-
-function tunnelFarEnd(config: DatabaseConnection & WithTunnelFarEnd): TunnelFarEnd | undefined {
-  const tunnel = optionalObject<keyof SSHTunnelConfig>(config.sshTunnel, "sshTunnel");
-  const enabled = optionalBoolean(tunnel?.enabled, "sshTunnel.enabled") === true;
-  const farEnd = config[TUNNEL_FAR_END];
-  if (enabled && farEnd === undefined) throw configError(TUNNEL_NOT_OPENED);
-  return farEnd;
 }
 
 /** The shared validators refuse with a DatabaseConfigError that names no provider; re-raised as Milvus's. */
@@ -255,21 +238,9 @@ function callTimeout(queryTimeout: number): number {
   return queryTimeout;
 }
 
-function optionalObject<Key extends string>(value: unknown, field: string): Partial<Record<Key, unknown>> | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "object" || Array.isArray(value)) throw wrongType(field, "an object");
-  return value as Partial<Record<Key, unknown>>;
-}
-
 function optionalText(value: unknown, field: string): string | undefined {
   if (value === undefined || value === null || value === "") return undefined;
   if (typeof value !== "string") throw wrongType(field, "a string");
-  return value;
-}
-
-function optionalBoolean(value: unknown, field: string): boolean | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "boolean") throw wrongType(field, "true or false");
   return value;
 }
 

@@ -1474,6 +1474,87 @@ export const OPENS_LOCAL_FILE: Readonly<Record<DatabaseType, boolean>> = Object.
 });
 
 /**
+ * Which shipped engines take no SSH tunnel, and why (FND-2 slice 5): `null` where a connection of the engine may reach
+ * its server through one, otherwise the whole sentence Studio refuses a connection whose tunnel is on with.
+ *
+ * The one source for that fact. Core reads it in `decideTunnel` (`./tunnel-decision`), on every entry point before any
+ * cache lookup, bastion dial or provider build, so no provider refuses a tunnel itself; the connection dialog reads it
+ * through `offersSshTunnel` in `src/lib/db-ui-config.ts`, which offers the SSH panel, and writes `sshTunnel`, exactly
+ * where this answers `null`, so the dialog and core cannot disagree. Kept here, UI-free, for the reason
+ * `OPENS_LOCAL_FILE` is.
+ *
+ * The refused groups:
+ *
+ * - An engine whose client reaches addresses the server advertises, which a tunnel forwarding one address does not
+ *   carry: Kafka (every broker), Apache Cassandra (every node of the ring) and Couchbase (the query service, on another
+ *   port, at the address the node map names). A route per node is a later contract minor, with no direct dial meanwhile.
+ * - An engine that needs two ports of one server: RabbitMQ (the management API and AMQP).
+ * - A vendor API reached over TLS at several hosts: BigQuery, Firestore and Snowflake.
+ * - A datagram protocol: SNMP, since a tunnel forwards TCP.
+ * - A file engine, which opens a file on Studio's own host and has no address to forward to: SQLite, DuckDB and
+ *   LibreDB. A stored record carrying a tunnel switched on, left by the dialog's state before the dialog stopped
+ *   writing one, is refused with the way to clear it: the dialog's save writes no tunnel for such an engine.
+ *
+ * No sentence quotes a value of the connection. An exhaustive Record for the reason `EXTERNAL` gives, frozen like the
+ * records above it.
+ */
+export const SSH_TUNNEL_REFUSAL: Readonly<Record<DatabaseType, string | null>> = Object.freeze({
+  postgres: null,
+  bigquery:
+    "BigQuery does not run through an SSH tunnel: every request goes over HTTPS to Google's API hosts, and a tunnel forwards one address of the several the provider reaches. Turn the tunnel off.",
+  snowflake:
+    "Snowflake does not run through an SSH tunnel: the driver reaches the account's Snowflake hosts over HTTPS, and a tunnel forwards one address. Turn the tunnel off.",
+  spark: null,
+  mysql: null,
+  sqlite:
+    "SQLite opens a file on the Studio server, so there is no address for an SSH tunnel to forward to. Turn the tunnel off: edit the connection and save it again.",
+  libsql: null,
+  duckdb:
+    "DuckDB opens a file on the Studio server, so there is no address for an SSH tunnel to forward to. Turn the tunnel off: edit the connection and save it again.",
+  oracle: null,
+  db2: null,
+  mssql: null,
+  clickhouse: null,
+  druid: null,
+  trino: null,
+  cassandra:
+    "Apache Cassandra does not run through an SSH tunnel: the tunnel forwards one address, and the driver reaches every other node of the ring at the address that node advertises. Connect to the cluster directly, or turn the tunnel off.",
+  elasticsearch: null,
+  opensearch: null,
+  mongodb: null,
+  couchbase:
+    "Couchbase does not run through an SSH tunnel: the tunnel forwards one port, and queries go to the query service, on another port, at the address the cluster's node map advertises. Turn the tunnel off.",
+  redis: null,
+  prometheus: null,
+  kafka:
+    "Kafka does not run through an SSH tunnel: the tunnel forwards one address, and a Kafka client reads from every broker the cluster advertises, at the address the broker advertises. Connect to the brokers directly.",
+  etcd: null,
+  neo4j: null,
+  milvus: null,
+  qdrant: null,
+  weaviate: null,
+  influxdb: null,
+  influxdb3: null,
+  oxia: null,
+  databend: null,
+  s3: null,
+  kubernetes: null,
+  mqtt: null,
+  firestore:
+    "Firestore does not run through an SSH tunnel: every request goes over TLS to Google's API hosts, and a tunnel forwards one address of the several the provider reaches. Turn the tunnel off.",
+  rabbitmq:
+    "RabbitMQ connections cannot use an SSH tunnel: one tunnel carries one port, and the management API and AMQP use two.",
+  opcua: null,
+  mtconnect: null,
+  modbus: null,
+  netconf: null,
+  snmp: "SNMP does not run through an SSH tunnel: the tunnel forwards TCP, and SNMP reads travel as UDP datagrams. Turn the tunnel off.",
+  sparkplug: null,
+  libredb:
+    "LibreDB opens a file on the Studio server, so there is no address for an SSH tunnel to forward to. Turn the tunnel off: edit the connection and save it again.",
+});
+
+/**
  * Which shipped engines reach the whole server when a connection names no database (#1530): the provider then
  * declares `catalogSessions` and opens a session of its own to each database the caller picks, so one credential
  * reaches every database it can sign in to. A governance source grants one database per connection, so row admission

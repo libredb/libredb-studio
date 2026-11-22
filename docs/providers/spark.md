@@ -85,7 +85,7 @@ A seed or an API call that sets `user` is refused with `Apache Spark connections
 There is no Read-only toggle: Spark has no engine-side read-only mode, so a `readOnly: true` connection is refused before anything is dialled ([section 10](#10-security)).
 
 The SSH tunnel and the SSL / TLS panel are both offered.
-An enabled tunnel that did not open is refused with `This connection's SSH tunnel is on, but the connection arrived without its tunnel, so Apache Spark was not dialled directly: the tunnel opens only when both Host and Port are set.`
+An enabled tunnel that was not opened is refused by Studio before the provider is built, so Apache Spark is never dialled past it ([SSH tunnels](./README.md#ssh-tunnels-bastion-host-key-verification)).
 The query timeout defaults to 60,000 ms, and a value outside its range is refused with `Query timeout must be a whole number between 1 and 2147483647 milliseconds.`
 
 ### 2.2 Token and TLS
