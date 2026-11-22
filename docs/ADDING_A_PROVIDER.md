@@ -526,6 +526,11 @@ A provider built on `createNodeTransport` or `createNodeByteTransport` (`src/lib
 A provider that hands the decision to its guard also joins the engines of `tests/security/provider-egress-decision.test.ts`, which holds that the factory hands it the decision.
 A provider never reads `DB_HTTP_BLOCK_PRIVATE_HOSTS` and never imports `src/lib/db/egress-decision.ts`; `tests/unit/lib/db/provider-environment-scan.test.ts` holds it.
 
+The build context also carries `trust`, the trust material core read once from the file `NODE_EXTRA_CA_CERTS` names (`TrustMaterial` in `src/lib/db/types.ts`: the certificate blocks in the file's order), for an engine whose `READS_TRUST_MATERIAL` row in `src/lib/db/compatibility.ts` is true, and `undefined` for every other.
+Set that row only for a provider whose TLS library does not read Node.js's trust store, such as a native addon with a TLS stack of its own: Node.js adds the `NODE_EXTRA_CA_CERTS` certificates to every TLS connection it opens without a `ca`, so a provider on `node:tls`, `node:https`, `fetch` or a driver built on them needs nothing.
+Such a provider hands `requireTrustMaterial(context.trust)` from `src/lib/db/utils/require-trust-material.ts` to its TLS wherever a connection verifies against the system trust store, so built without it the provider refuses by name and dials nothing; `tests/security/provider-trust-material.test.ts` holds its row against what it holds.
+A provider never reads `NODE_EXTRA_CA_CERTS` or the file it names, and never imports `src/lib/db/trust-material.ts`; `tests/unit/lib/db/provider-environment-scan.test.ts` holds it.
+
 ## Step 4: Add UI Configuration
 
 **Files:** `src/lib/db/connection-form.ts` and `src/lib/db-ui-config.ts`
@@ -1147,6 +1152,7 @@ The integration points, all of which need an entry. This is the list the Strateg
       and `docs/BRAND_MESSAGING.md` is derived from it and has to move in the same PR
 - [ ] `src/lib/db/compatibility.ts`: the new id's `WRITE_REACH` entry, `none`, `guarded` or `open`, which `READ_ONLY_ENFORCED` is derived from.
       A provider whose reach is not `open` declares `writeReach` on all four write paths, naming its gate or proof by an exported symbol, and its doc carries the `| **Write reach** |` header row with the same value; `tests/unit/db/write-reach-capability.test.ts`, `tests/unit/db/write-reach-proofs.test.ts` and `tests/unit/db/write-reach-docs.test.ts` hold the three equal
+- [ ] `src/lib/db/compatibility.ts`: the new id's `READS_TRUST_MATERIAL` entry, `true` only when its TLS library does not read Node.js's trust store (Step 3).
 - [ ] `package.json` — the driver, **if** it needs one. A driver-free provider leaves it untouched, and
       twenty-one shipped ids do: `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`,
       `libsql`, `sqlite`, `prometheus`, `qdrant`, `weaviate`, `milvus`, `influxdb`, `influxdb3`, `oxia`, `databend`, `kubernetes`, `bigquery`, `firestore`, `rabbitmq` and `snowflake`
