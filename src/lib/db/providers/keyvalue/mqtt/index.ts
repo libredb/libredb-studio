@@ -85,14 +85,6 @@ const MQTT_WRITE_REACH = noWritePath({
 
 const PROFILE_REQUIRED = "Read-only execution requires a provider opened under the agent read-only profile";
 const NO_ESTIMATE = "MQTT composes no estimating plan for the agent";
-/**
- * A tunnel that is on and arrived without its far end. The factory opens a tunnel only when `sshTunnel.enabled`, Host
- * and Port are all set, and otherwise hands the record on untouched, so dialling it would reach the broker
- * directly, past the tunnel the record asks for. The sentence is the one the other tunnelled providers use.
- */
-const TUNNEL_NOT_OPENED =
-  "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so the MQTT broker was not " +
-  "dialled directly: the tunnel opens only when both Host and Port are set.";
 
 export class MqttProvider extends BaseDatabaseProvider {
   /** The last read. The panel's tree and its rows both come from it, and a refresh replaces it. */
@@ -224,18 +216,10 @@ export class MqttProvider extends BaseDatabaseProvider {
     // `ssl.mode` is the connection's own SSL / TLS panel; "disable" is the only value that means plain TCP.
     const mode = config.ssl?.mode;
     const tls = mode !== undefined && mode !== "disable";
-    // WHETHER A TUNNEL CARRIES THE CONNECTION IS READ FROM THE FAR END the factory hands on when it opened one, as
-    // every other provider reads it, and not from the record's request for one.
-    // The switch is a boolean or absent: the factory opens a tunnel on any truthy value, so a switch of another
-    // type would be on for the factory and off here, and it is refused by name, as the other tunnelled providers do.
-    const tunnelSwitch: unknown = config.sshTunnel?.enabled;
-    if (tunnelSwitch !== undefined && tunnelSwitch !== null && typeof tunnelSwitch !== "boolean")
-      throw new DatabaseConfigError(
-        "The connection's sshTunnel.enabled must be true or false; nothing was sent.",
-        MQTT_TYPE,
-      );
+    // WHETHER A TUNNEL CARRIES THE CONNECTION IS READ FROM THE FAR END core hands on when it opened one, as every other
+    // provider reads it, and never from the record's request for one: core decides the tunnel before any provider is
+    // built, and refuses one that is on and was not opened, or whose switch is not a boolean (FND-2 slice 5).
     const farEnd = config[TUNNEL_FAR_END];
-    if (tunnelSwitch === true && farEnd === undefined) throw new DatabaseConfigError(TUNNEL_NOT_OPENED, MQTT_TYPE);
     const user = config.user === undefined || config.user === "" ? undefined : config.user;
     const password = config.password === undefined || config.password === "" ? undefined : config.password;
 

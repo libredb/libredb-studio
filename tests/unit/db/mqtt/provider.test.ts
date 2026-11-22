@@ -650,16 +650,14 @@ describe("a password without TLS", () => {
 });
 
 /**
- * The tunnel a record asks for and the tunnel the factory opened are two facts, and the provider reads the second.
+ * The tunnel a record asks for and the tunnel core opened are two facts, and the provider reads the second.
  *
- * The factory opens a tunnel only when `sshTunnel.enabled`, Host and Port are all set, and then hands the far end on
- * under `TUNNEL_FAR_END`; otherwise the record arrives untouched. MQTT reads whether a tunnel was opened from
- * that far end, as the other providers do, and a tunnel that is on without one is refused before any socket, in the
- * sentence those providers use.
+ * Core decides the tunnel before any provider is built: it opens one that is on, hands the far end on under
+ * `TUNNEL_FAR_END`, and refuses a tunnel that is on and was not opened, or whose switch is not a boolean
+ * (tests/security/provider-tunnel-decisions.test.ts, tests/isolated/factory.test.ts). MQTT reads whether a tunnel was
+ * opened from that far end alone, as the other providers do.
  */
 describe("an SSH tunnel", () => {
-  const TUNNEL_NOT_OPENED =
-    "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so the MQTT broker was not dialled directly: the tunnel opens only when both Host and Port are set.";
   const BASTION = { enabled: true, host: "bastion.example.net", port: 22, username: "jump", authMethod: "password" };
 
   const counted = (
@@ -677,33 +675,12 @@ describe("an SSH tunnel", () => {
     };
   };
 
-  test("that is on but was not opened is refused before any socket", async () => {
-    // No Port, so the factory opened no tunnel: the record arrives with the tunnel on and no far end.
-    const { provider, dials } = counted({
-      host: "broker.example.net",
-      port: undefined,
-      user: "sensor",
-      password: CANARY,
-      ssl: { mode: "disable" },
-      sshTunnel: BASTION,
-    });
-    const error = await provider.connect().then(
-      () => undefined,
-      (caught: unknown) => caught,
-    );
-    expect(error).toBeInstanceOf(DatabaseConfigError);
-    expect((error as Error).message).toBe(TUNNEL_NOT_OPENED);
-    expect(dials()).toBe(0);
-  });
-
-  test("that is on but was not opened is refused with no credential and to this machine too", async () => {
-    const { provider, dials } = counted({ host: "127.0.0.1", sshTunnel: BASTION });
-    const error = await provider.connect().then(
-      () => undefined,
-      (caught: unknown) => caught,
-    );
-    expect((error as Error).message).toBe(TUNNEL_NOT_OPENED);
-    expect(dials()).toBe(0);
+  test("reads no sshTunnel: the far end alone says a tunnel was opened (FND-2 slice 5)", async () => {
+    for (const sshTunnel of [BASTION, { ...BASTION, enabled: "true" }, { ...BASTION, enabled: 1 }, null]) {
+      const { provider, dials } = counted({ host: "broker.example.net", sshTunnel });
+      await expect(provider.connect()).rejects.toThrow(/the dial is refused once it has been reached/);
+      expect(dials()).toBe(1);
+    }
   });
 
   test("that is off is dialled directly, and a password without TLS is refused as for any remote broker", async () => {
@@ -740,32 +717,6 @@ describe("an SSH tunnel", () => {
     await expect(provider.connect()).rejects.toThrow(/the dial is refused once it has been reached/);
     expect(dialled()).toHaveLength(1);
     expect(dialled()[0]).toMatchObject({ host: "127.0.0.1", port: 40_001, tlsIdentity: "broker.example.net" });
-  });
-
-  test.each([
-    ["text", "true"],
-    ["a number", 1],
-  ])("whose switch is %s is refused naming the field before any socket", async (_label, enabled) => {
-    const { provider, dials } = counted({
-      host: "broker.example.net",
-      sshTunnel: { ...BASTION, enabled },
-      [TUNNEL_FAR_END]: { host: "broker.example.net", port: 1883 },
-    });
-    const error = await provider.connect().then(
-      () => undefined,
-      (caught: unknown) => caught,
-    );
-    expect(error).toBeInstanceOf(DatabaseConfigError);
-    expect((error as Error).message).toBe(
-      "The connection's sshTunnel.enabled must be true or false; nothing was sent.",
-    );
-    expect(dials()).toBe(0);
-  });
-
-  test("whose switch is null reads as off and is dialled directly", async () => {
-    const { provider, dials } = counted({ host: "broker.example.net", sshTunnel: { ...BASTION, enabled: null } });
-    await expect(provider.connect()).rejects.toThrow(/the dial is refused once it has been reached/);
-    expect(dials()).toBe(1);
   });
 });
 

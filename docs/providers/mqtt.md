@@ -273,15 +273,16 @@ encrypts the credential the broker cannot.
 With TLS on as well, the certificate is checked against the tunnel's far end rather than against the local
 forward, which is the second bullet in 4.5.
 
-Studio opens the tunnel only when Host and Port are both set, and it reads the connection before the provider fills in the default port, so a connection with the tunnel on and Port empty arrives without a tunnel.
-The provider reads whether a tunnel was opened from the far end Studio hands on with an opened one, and refuses a connection whose tunnel is on and arrived without it before any socket, rather than dial the broker directly:
+Studio decides the tunnel before it builds the provider ([SSH tunnels](./README.md#ssh-tunnels-bastion-host-key-verification)).
+It reads the connection before the provider fills in the default port, so a connection with the tunnel on and Port empty has nothing for a tunnel to forward to, and Studio refuses it before any socket:
 
-> This connection's SSH tunnel is on, but the connection arrived without its tunnel, so the MQTT broker was not dialled directly: the tunnel opens only when both Host and Port are set.
+> This connection's SSH tunnel is on, but the connection names no Host and Port for the tunnel to forward to, so no tunnel was opened and nothing was sent. Fill in Host and Port, or turn the tunnel off.
 
-The switch is true, false or absent.
-Studio opens a tunnel on any truthy switch, so a switch of another type, such as the text `"true"`, is refused by name before any socket rather than read one way by Studio and another by the provider:
+The switch is true, false or absent, and Studio refuses one of another type, such as the text `"true"`, by name before any socket:
 
 > The connection's sshTunnel.enabled must be true or false; nothing was sent.
+
+The provider reads whether a tunnel was opened from the far end Studio hands on with an opened one, never from the switch.
 
 With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, a tunnelled connection is refused, for the reason in 4.8.
 
