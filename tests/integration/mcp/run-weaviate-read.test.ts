@@ -24,7 +24,8 @@ import { WEAVIATE_AGENT_UNREADABLE, WEAVIATE_PROOF_SENTENCES } from "@/lib/db/pr
 import { WeaviateProvider } from "@/lib/db/providers/vector/weaviate/index";
 import { createRestWeaviateClient } from "@/lib/db/providers/vector/weaviate/rest-client";
 import { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_UNTRUSTED_NOTICE, providerTextNotice } from "@/lib/mcp/output";
+import { databaseContentNotice, providerTextNotice } from "@/lib/mcp/output";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
@@ -39,6 +40,9 @@ import {
 } from "../../helpers/weaviate-agent";
 import { type RecordedAnswer, okAnswer, recordingWeaviateTransport } from "../../helpers/weaviate-wire";
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
+
+/** The notice an answer carrying database content opens with on this file's weaviate connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("weaviate"));
 
 pinMcpTestEnvironment();
 
@@ -162,7 +166,7 @@ describe("a read", () => {
   test("the schema answers names, counts and flags behind the notice, after the key is proved again", async () => {
     const result = await weaviate("GET /v1/schema");
     expect(result.isError ?? false).toBe(false);
-    expect(result.content[0]).toEqual({ type: "text", text: MCP_UNTRUSTED_NOTICE });
+    expect(result.content[0]).toEqual({ type: "text", text: DATABASE_CONTENT_NOTICE });
     expect(result.content[1].text).toBe(JSON.stringify(result.structuredContent));
     expect(result.structuredContent).toMatchObject({
       connection_id: "seed:vectors",

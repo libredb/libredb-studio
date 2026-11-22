@@ -23,7 +23,8 @@ import { createGrpcMilvusClient } from "@/lib/db/providers/vector/milvus/grpc-cl
 import { MilvusProvider } from "@/lib/db/providers/vector/milvus/index";
 import { MILVUS_AGENT_SCOPE_SENTENCES } from "@/lib/db/providers/vector/milvus/metadata-read";
 import { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { databaseContentNotice } from "@/lib/mcp/output";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
@@ -31,6 +32,9 @@ import { scopeMilvusWire } from "../../helpers/milvus-agent";
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
 import type { RecordedMilvusAnswer, RecordedMilvusWire } from "../../helpers/milvus-wire";
+
+/** The notice an answer carrying database content opens with on this file's milvus connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("milvus"));
 
 pinMcpTestEnvironment();
 
@@ -166,7 +170,7 @@ describe("a read", () => {
   test("the collection listing is the user's own, behind the notice, after the read-only proof", async () => {
     const result = await milvus(request("collections/list"));
     expect(result.isError ?? false).toBe(false);
-    expect(result.content[0]).toEqual({ type: "text", text: MCP_UNTRUSTED_NOTICE });
+    expect(result.content[0]).toEqual({ type: "text", text: DATABASE_CONTENT_NOTICE });
     expect(result.content[1].text).toBe(JSON.stringify(result.structuredContent));
     expect(result.structuredContent).toMatchObject({
       connection_id: "seed:vectors",

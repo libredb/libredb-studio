@@ -325,6 +325,7 @@ function schemaNamesOf(listed: readonly Container[]): Pick<PageResult, "schema_n
   return { schema_names: names, schema_names_omitted: listed.length - names.length };
 }
 
+/** One page of tables, behind the notice naming `author`, the provider that relayed them. */
 function pageResult(
   args: InspectSchemaInput,
   container: Container | null,
@@ -332,20 +333,24 @@ function pageResult(
   total: number,
   tables: readonly InspectedTable[],
   cutByCap: boolean,
+  author: string,
 ): ToolResult {
   const hasMore = cutByCap || args.offset + tables.length < total;
-  return untrustedResult({
-    connection_id: args.connection_id,
-    ...(args.database === undefined ? {} : { database: args.database }),
-    schema: container?.name ?? "default",
-    ...names,
-    total_tables: total,
-    offset: args.offset,
-    limit: args.limit,
-    has_more: hasMore,
-    next_offset: hasMore ? args.offset + tables.length : null,
-    tables: [...tables],
-  });
+  return untrustedResult(
+    {
+      connection_id: args.connection_id,
+      ...(args.database === undefined ? {} : { database: args.database }),
+      schema: container?.name ?? "default",
+      ...names,
+      total_tables: total,
+      offset: args.offset,
+      limit: args.limit,
+      has_more: hasMore,
+      next_offset: hasMore ? args.offset + tables.length : null,
+      tables: [...tables],
+    },
+    author,
+  );
 }
 
 /**
@@ -365,6 +370,7 @@ async function readPage(
   signal: AbortSignal,
   step: Step,
   scrub: ProviderTextScrub,
+  author: string,
 ): Promise<{ readonly result: ToolResult; readonly failure?: McpToolAuditReason }> {
   const choice = await chooseContainer(provider, args.schema, step);
   if (choice.kind === "not-found")
@@ -383,9 +389,11 @@ async function readPage(
     if (signal.aborted) return { result: ownWordsError(MCP_CANCELLED_TEXT), failure: "mcp_cancelled" };
     const table = await inspectTable(provider, object, args, step, scrub);
     if (
-      resultBytes(pageResult(args, container, names, filtered.length, [...tables, table], false)) > MCP_RESULT_CAP_BYTES
+      resultBytes(pageResult(args, container, names, filtered.length, [...tables, table], false, author)) >
+      MCP_RESULT_CAP_BYTES
     ) {
-      if (tables.length > 0) return { result: pageResult(args, container, names, filtered.length, tables, true) };
+      if (tables.length > 0)
+        return { result: pageResult(args, container, names, filtered.length, tables, true, author) };
       const bare =
         !args.include_columns && !args.include_indexes && !args.include_foreign_keys && !args.include_schema_names;
       return {
@@ -395,7 +403,7 @@ async function readPage(
     }
     tables.push(table);
   }
-  return { result: pageResult(args, container, names, filtered.length, tables, false) };
+  return { result: pageResult(args, container, names, filtered.length, tables, false, author) };
 }
 
 export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall): Promise<ToolResult> {
@@ -451,7 +459,7 @@ export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall)
       );
     }
     if (call.signal.aborted) return finish(ownWordsError(MCP_CANCELLED_TEXT), "mcp_cancelled");
-    const { result, failure } = await readPage(choice.provider, args, call.signal, step, scrub);
+    const { result, failure } = await readPage(choice.provider, args, call.signal, step, scrub, author);
     return finish(result, failure);
   } catch (error) {
     if (error instanceof InspectStopped) {
@@ -472,7 +480,7 @@ export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall)
     if (error instanceof ExecutionProfileError || error instanceof McpDatabaseChoiceError) {
       return finish(ownWordsError(scrubProviderText(scrub, error.message)), "mcp_execution_failed");
     }
-    return finish(engineError(MCP_ENGINE_ERROR_PREFIX, error, scrub), "mcp_execution_failed");
+    return finish(engineError(MCP_ENGINE_ERROR_PREFIX, error, scrub, author), "mcp_execution_failed");
   }
 }
 

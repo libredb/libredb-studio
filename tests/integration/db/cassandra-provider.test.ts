@@ -101,7 +101,7 @@ import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import type { DatabaseConnection } from "@/lib/types";
 import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
 import type { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE, providerTextNotice } from "@/lib/mcp/output";
+import { databaseContentNotice, MCP_ENGINE_ERROR_PREFIX, providerTextNotice } from "@/lib/mcp/output";
 import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import type { ManagedConnection } from "@/lib/seed";
 import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
@@ -114,6 +114,9 @@ import {
 } from "../../helpers/cassandra-fake-peer";
 import { fakeTextScrub } from "../../helpers/mcp-fixtures";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
+
+/** The notice an answer carrying database content opens with on this file's cassandra connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("cassandra"));
 
 const KEYSPACE = "probe";
 
@@ -4360,7 +4363,7 @@ describe("the agent read-only profile", () => {
         pagination: { offset: 0, limit: 1, hasMore: true, nextOffset: null, wasLimited: true },
         hint: `More rows exist than this result holds, and this query cannot be paged with offset. Page it in SQL: ${PAGING}.`,
       });
-      expect(textOf(answer)[0]).toBe(MCP_UNTRUSTED_NOTICE);
+      expect(textOf(answer)[0]).toBe(DATABASE_CONTENT_NOTICE);
       expect(sessions).toHaveLength(1);
       expect(sessions[0].asked.slice(0, 5)).toEqual([
         "SELECT release_version FROM system.local",
@@ -4474,7 +4477,7 @@ describe("the agent read-only profile", () => {
 
       expect(answer.isError).toBe(true);
       expect(textOf(answer)).toEqual([
-        MCP_UNTRUSTED_NOTICE,
+        DATABASE_CONTENT_NOTICE,
         `${MCP_ENGINE_ERROR_PREFIX}User agent_ro has no EXECUTE permission on <function probe.plus_one(int)> or any of its parents`,
       ]);
       expect(sent().at(-1)).toBe(statement);

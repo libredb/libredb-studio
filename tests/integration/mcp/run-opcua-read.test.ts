@@ -29,12 +29,16 @@ import { OpcuaProvider } from "@/lib/db/providers/industrial/opcua/index";
 import { openLibrarySession } from "@/lib/db/providers/industrial/opcua/library";
 import { OPCUA_PKI_ROOT_ENV } from "@/lib/db/provider-files";
 import { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { databaseContentNotice } from "@/lib/mcp/output";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
+
+/** The notice an answer carrying database content opens with on this file's opcua connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("opcua"));
 
 pinMcpTestEnvironment();
 
@@ -220,7 +224,7 @@ describe("a read", () => {
   test("a value read answers a member with its engineering units behind the notice, with no notes", async () => {
     const result = await opcua({ read: [ids.temperature, ids.speed] });
     expect(result.isError ?? false).toBe(false);
-    expect(result.content[0]).toEqual({ type: "text", text: MCP_UNTRUSTED_NOTICE });
+    expect(result.content[0]).toEqual({ type: "text", text: DATABASE_CONTENT_NOTICE });
     expect(result.structuredContent).toMatchObject({
       connection_id: "seed:plant",
       rows: [

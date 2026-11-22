@@ -32,13 +32,16 @@ import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
 import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
 import type { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE, providerTextNotice } from "@/lib/mcp/output";
+import { databaseContentNotice, MCP_ENGINE_ERROR_PREFIX, providerTextNotice } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 import { fakeTextScrub } from "../../helpers/mcp-fixtures";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
+
+/** The notice an answer carrying database content opens with on this file's oracle connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("oracle"));
 
 // ---------------------------------------------------------------------------
 // Mock oracledb BEFORE loading the provider
@@ -6961,7 +6964,7 @@ describe("MCP run_read_query on an Oracle connection", () => {
       pagination: { offset: 0, limit: 2, hasMore: true, nextOffset: 2, wasLimited: true },
       hint: "Call again with offset 2 for the next page.",
     });
-    expect((result.content as { text: string }[])[0]?.text).toBe(MCP_UNTRUSTED_NOTICE);
+    expect((result.content as { text: string }[])[0]?.text).toBe(DATABASE_CONTENT_NOTICE);
   });
 
   test("the check runs before every statement, never once at the open", async () => {
@@ -7047,7 +7050,7 @@ describe("MCP run_read_query on an Oracle connection", () => {
     expect(acquired).toEqual(["agent-read-only"]);
     expect(executed().at(-1)).toBe("DELETE FROM app_owner.orders");
     expect(result.isError).toBe(true);
-    expect(result.content[0]).toEqual({ type: "text", text: MCP_UNTRUSTED_NOTICE });
+    expect(result.content[0]).toEqual({ type: "text", text: DATABASE_CONTENT_NOTICE });
     expect((result.content[1] as { text: string }).text).toStartWith(
       `${MCP_ENGINE_ERROR_PREFIX}ORA-28194: Can perform read operations only`,
     );

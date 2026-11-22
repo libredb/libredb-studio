@@ -19,7 +19,8 @@ import { getServerAuditBuffer } from "@/lib/audit";
 import { SnmpProvider } from "@/lib/db/providers/network/snmp";
 import { SNMP_WITHHELD_SUBTREES, withheldReason } from "@/lib/db/providers/network/snmp/agent-statement";
 import { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { databaseContentNotice } from "@/lib/mcp/output";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
@@ -27,6 +28,9 @@ import { type FakeAgent, integer, startFakeAgent, text, ticks } from "../../help
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
+
+/** The notice an answer carrying database content opens with on this file's snmp connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("snmp"));
 
 pinMcpTestEnvironment();
 
@@ -179,7 +183,7 @@ describe("a read", () => {
   test("a get answers the device's values behind the notice, with no notes where nothing was withheld", async () => {
     const result = await snmp("get sysDescr.0 sysName.0");
     expect(result.isError ?? false).toBe(false);
-    expect(result.content[0]).toEqual({ type: "text", text: MCP_UNTRUSTED_NOTICE });
+    expect(result.content[0]).toEqual({ type: "text", text: DATABASE_CONTENT_NOTICE });
     expect(result.content[1].text).toBe(JSON.stringify(result.structuredContent));
     expect(result.structuredContent).toMatchObject({
       connection_id: "seed:router",

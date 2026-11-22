@@ -16,7 +16,8 @@ import { languageServer } from "@/lib/agent/languages/server";
 import { getServerAuditBuffer } from "@/lib/audit";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_UNTRUSTED_NOTICE, providerTextNotice } from "@/lib/mcp/output";
+import { databaseContentNotice, providerTextNotice } from "@/lib/mcp/output";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
@@ -26,6 +27,9 @@ import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-har
 import { listedMcpToolNames } from "../../helpers/mcp-tool-names";
 import { mongoDriver, mongoDriverModule, resetMongoDriver } from "../../helpers/mongodb-driver";
 import readWriteStatus from "../../unit/db/mongodb/fixtures/connection-status-read-plus-insert-one-collection-9.0.4.json";
+
+/** The notice an answer carrying database content opens with on this file's mongodb connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("mongodb"));
 
 // Before the provider is loaded, so the MongoDB provider the factory opens in this file opens the stand-in's client.
 mock.module("mongodb", () => mongoDriverModule());
@@ -157,7 +161,7 @@ describe("a read", () => {
       command: { collection: "notes", operation: "find", filter: {} },
     });
     expect(result.isError ?? false).toBe(false);
-    expect(result.content[0]).toEqual({ type: "text", text: MCP_UNTRUSTED_NOTICE });
+    expect(result.content[0]).toEqual({ type: "text", text: DATABASE_CONTENT_NOTICE });
     expect(result.content[1].text).toBe(JSON.stringify(result.structuredContent));
     expect(result.structuredContent).toMatchObject({
       connection_id: "seed:mongo",

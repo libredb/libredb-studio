@@ -40,7 +40,7 @@ import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
 import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
 import type { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE, providerTextNotice } from "@/lib/mcp/output";
+import { databaseContentNotice, MCP_ENGINE_ERROR_PREFIX, providerTextNotice } from "@/lib/mcp/output";
 import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import type { ManagedConnection } from "@/lib/seed";
 import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
@@ -48,6 +48,9 @@ import { loadTlsFixtures } from "../../helpers/tls-fixtures";
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 import { fakeTextScrub } from "../../helpers/mcp-fixtures";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
+
+/** The notice an answer carrying database content opens with on this file's couchbase connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("couchbase"));
 
 // ============================================================================
 // Connection
@@ -3147,7 +3150,7 @@ describe("CouchbaseProvider agent read-only profile", () => {
         pagination: { offset: 0, limit: 2, hasMore: true, nextOffset: 2, wasLimited: true },
         hint: "Call again with offset 2 for the next page.",
       });
-      expect(textOf(result)[0]).toBe(MCP_UNTRUSTED_NOTICE);
+      expect(textOf(result)[0]).toBe(DATABASE_CONTENT_NOTICE);
       const statement = "SELECT d.n FROM `_default` AS d ORDER BY d.n LIMIT 3";
       expect(paths(cluster.sent)).toEqual([
         "GET /whoami",
@@ -3250,7 +3253,7 @@ describe("CouchbaseProvider agent read-only profile", () => {
 
       expect(result.isError).toBe(true);
       expect(textOf(result)).toEqual([
-        MCP_UNTRUSTED_NOTICE,
+        DATABASE_CONTENT_NOTICE,
         `${MCP_ENGINE_ERROR_PREFIX}User does not have credentials to run queries accessing user information. Add role admin to allow the statement to run.`,
       ]);
     });

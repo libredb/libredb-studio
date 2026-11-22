@@ -23,7 +23,8 @@ import { QdrantProvider } from "@/lib/db/providers/vector/qdrant/index";
 import { QDRANT_PROOF_SENTENCES } from "@/lib/db/providers/vector/qdrant/metadata-read";
 import { createRestQdrantClient } from "@/lib/db/providers/vector/qdrant/rest-client";
 import { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_UNTRUSTED_NOTICE, providerTextNotice } from "@/lib/mcp/output";
+import { databaseContentNotice, providerTextNotice } from "@/lib/mcp/output";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
@@ -32,6 +33,9 @@ import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-har
 import { agentAnswer, agentServer } from "../../helpers/qdrant-agent";
 import { type RecordedAnswer, okAnswer, recordingQdrantTransport } from "../../helpers/qdrant-transport";
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
+
+/** The notice an answer carrying database content opens with on this file's qdrant connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("qdrant"));
 
 pinMcpTestEnvironment();
 
@@ -170,7 +174,7 @@ describe("a read", () => {
   test("the collection list answers names behind the notice, after the proof, recorded under run_qdrant_read", async () => {
     const result = await qdrant("GET /collections");
     expect(result.isError ?? false).toBe(false);
-    expect(result.content[0]).toEqual({ type: "text", text: MCP_UNTRUSTED_NOTICE });
+    expect(result.content[0]).toEqual({ type: "text", text: DATABASE_CONTENT_NOTICE });
     expect(result.content[1].text).toBe(JSON.stringify(result.structuredContent));
     expect(result.structuredContent).toMatchObject({
       connection_id: "seed:vectors",

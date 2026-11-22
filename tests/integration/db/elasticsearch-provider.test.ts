@@ -76,7 +76,7 @@ import {
   unresolvedRefusal,
 } from "@/lib/db/providers/sql/search/elasticsearch-agent-index-fence";
 import type { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE, providerTextNotice } from "@/lib/mcp/output";
+import { databaseContentNotice, MCP_ENGINE_ERROR_PREFIX, providerTextNotice } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
@@ -84,6 +84,9 @@ import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from ".
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 import { fakeTextScrub } from "../../helpers/mcp-fixtures";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
+
+/** The notice an answer carrying database content opens with on this file's elasticsearch connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("elasticsearch"));
 
 // ============================================================================
 // Connection
@@ -5325,7 +5328,7 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
       pagination: { offset: 0, limit: 2, hasMore: true, nextOffset: null, wasLimited: true },
       hint: `More rows exist than this result holds, and this query cannot be paged with offset. ${KEYSET}`,
     });
-    expect((result.content as { text: string }[])[0]?.text).toBe(MCP_UNTRUSTED_NOTICE);
+    expect((result.content as { text: string }[])[0]?.text).toBe(DATABASE_CONTENT_NOTICE);
   });
 
   test("a whole answer names no hint", async () => {
@@ -5416,7 +5419,7 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
       const reason = (JSON.parse(entry.body) as { error: { reason: string } }).error.reason;
       const text = (result.content as { text: string }[]).map((part) => part.text);
       expect(result.isError).toBe(true);
-      expect(text[0]).toBe(MCP_UNTRUSTED_NOTICE);
+      expect(text[0]).toBe(DATABASE_CONTENT_NOTICE);
       expect(text[1]).toStartWith(MCP_ENGINE_ERROR_PREFIX);
       expect(text[1]).toContain(reason);
     },

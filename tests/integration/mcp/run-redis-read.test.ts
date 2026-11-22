@@ -20,7 +20,8 @@ import { REDIS_AGENT_FAILURE_SENTENCES } from "@/lib/db/providers/keyvalue/redis
 import { REDIS_PROOF_SENTENCES } from "@/lib/db/providers/keyvalue/redis-read-only-proof";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
 import type { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_CANCELLED_TEXT, MCP_UNTRUSTED_NOTICE, providerTextNotice } from "@/lib/mcp/output";
+import { databaseContentNotice, MCP_CANCELLED_TEXT, providerTextNotice } from "@/lib/mcp/output";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { type McpStatementInput, runStatement } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
@@ -28,6 +29,9 @@ import { fakeTextScrub, pinMcpTestEnvironment, resetMcpTestState, writeSeedFile 
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
 import { listedMcpToolNames } from "../../helpers/mcp-tool-names";
 import { asReply, type CapturedStep, principalCapture, probeLabel, stepFor } from "../../helpers/redis-agent";
+
+/** The notice an answer carrying database content opens with on this file's redis connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("redis"));
 
 pinMcpTestEnvironment();
 
@@ -223,7 +227,7 @@ describe("a read", () => {
   test("TYPE answers the key's type behind the notice, never its name, recorded under run_redis_read", async () => {
     const result = await redis("TYPE agent:hash");
     expect(result.isError ?? false).toBe(false);
-    expect(result.content[0]).toEqual({ type: "text", text: MCP_UNTRUSTED_NOTICE });
+    expect(result.content[0]).toEqual({ type: "text", text: DATABASE_CONTENT_NOTICE });
     expect(result.content[1].text).toBe(JSON.stringify(result.structuredContent));
     expect(result.structuredContent).toMatchObject({
       connection_id: "seed:cache",
