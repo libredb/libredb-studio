@@ -16,6 +16,8 @@ import {
   extractArchive,
   extractionCommand,
   LauncherUsageError,
+  MANUAL_SIGNAL_HANDLING_VARIABLE,
+  manualSignalHandlingEnv,
   mcpUrlFor,
   parseLauncherArgs,
   parseSha256Sums,
@@ -31,6 +33,7 @@ import {
   URL_PATH_VARIABLES,
   OTHER_PROGRAM_PATH_VARIABLES,
 } from "../../bin/lib/launcher-utils.mjs";
+import { MANUAL_SIGNAL_HANDLING_VARIABLE as SERVER_MANUAL_SIGNAL_HANDLING_VARIABLE } from "@/lib/shutdown-handler";
 import { describeIf, missingUnixTool, resolveUnixTool, testIf } from "../helpers/posix-tools";
 import { howItFailed } from "../helpers/spawn-outcome";
 
@@ -751,6 +754,28 @@ describe("seedAssetsEnv", () => {
   });
 });
 
+describe("manualSignalHandlingEnv", () => {
+  const onNode = { node: "24.11.0" };
+  const onBun = { node: "26.3.0", bun: "1.4.4" };
+
+  test("names the variable the server's shutdown handler reads", () => {
+    expect(MANUAL_SIGNAL_HANDLING_VARIABLE).toBe(SERVER_MANUAL_SIGNAL_HANDLING_VARIABLE);
+  });
+
+  test("hands NEXT_MANUAL_SIG_HANDLE=true to a server on Node.js when the operator set none", () => {
+    expect(manualSignalHandlingEnv(onNode, undefined)).toEqual({ NEXT_MANUAL_SIG_HANDLE: "true" });
+  });
+
+  test("adds nothing on Bun, where the server refuses true at boot", () => {
+    expect(manualSignalHandlingEnv(onBun, undefined)).toEqual({});
+  });
+
+  test.each(["", "true", "1"])("keeps an operator's value %p on Node.js and on Bun", (current) => {
+    expect(manualSignalHandlingEnv(onNode, current)).toEqual({});
+    expect(manualSignalHandlingEnv(onBun, current)).toEqual({});
+  });
+});
+
 describe("resolveBindAddress (issue #813)", () => {
   /*
     Named rather than numbered, because the rows move: the pair carrying the issue
@@ -1153,6 +1178,129 @@ describe("launcher seed assets directory", () => {
     () => {
       const own = path.join(tempDir, "operator-seed-assets-lowercase");
       expect(launch({ seed_assets_dir: own }).output).toContain(`SEED_ASSETS=${own}\n`);
+    },
+  );
+});
+
+/**
+ * The exit owner the launcher hands the server (docs/DISTRIBUTION.md, "Stopping the server"), read back from a
+ * real launcher process: the stub payload prints the variable it was given and the runtime it runs on. The
+ * launcher spawns process.execPath, so the server runs on the launcher's own runtime.
+ */
+describe("launcher NEXT_MANUAL_SIG_HANDLE", () => {
+  const root = path.resolve(import.meta.dir, "../..");
+  const version = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
+
+  function fixtureHome(): string {
+    const home = fs.mkdtempSync(path.join(tempDir, "manual-signal-"));
+    const payload = path.join(home, ".libredb-studio", version, "payload");
+    fs.mkdirSync(payload, { recursive: true });
+    fs.writeFileSync(
+      path.join(payload, "server.js"),
+      'console.log("MANUAL=" + (process.env.NEXT_MANUAL_SIG_HANDLE ?? "<unset>")); ' +
+        'console.log("RUNTIME=" + (typeof process.versions.bun === "string" ? "bun" : "node"));',
+    );
+    return home;
+  }
+
+  function baseEnv(home: string, overrides: Record<string, string>): Record<string, string | undefined> {
+    const env: Record<string, string | undefined> = { ...process.env };
+    for (const name of Object.keys(env)) {
+      if (name.toUpperCase() === "NEXT_MANUAL_SIG_HANDLE") delete env[name];
+    }
+    for (const name of ["PORT", "LIBREDB_STUDIO_ARCHIVE", "LIBREDB_BIND", "HOSTNAME", "SEED_ASSETS_DIR"])
+      delete env[name];
+    Object.assign(env, { HOME: home, USERPROFILE: home }, overrides);
+    return env;
+  }
+
+  function finish(run: ReturnType<typeof Bun.spawnSync>): string {
+    expect(run.exitCode, `launcher stderr: ${run.stderr?.toString()}`).toBe(0);
+    return run.stdout!.toString();
+  }
+
+  /** The launcher on Node.js, with os.homedir() pointed at the fixture home by an --import preload. */
+  function onNode(overrides: Record<string, string> = {}): string {
+    const node = Bun.which("node");
+    expect(node).not.toBeNull();
+    const ambient = Bun.spawnSync([node!, "-p", "process.versions.node"]).stdout.toString().trim();
+    expect(assessNodeRuntime(ambient).message).toBeNull();
+    const home = fixtureHome();
+    const preload = path.join(home, "home-fixture.mjs");
+    fs.writeFileSync(
+      preload,
+      'import os from "node:os"; import { syncBuiltinESMExports } from "node:module"; ' +
+        `os.homedir = () => ${JSON.stringify(home)}; syncBuiltinESMExports();`,
+    );
+    const run = Bun.spawnSync([node!, "--import", pathToFileURL(preload).href, path.join(root, "bin/studio.js")], {
+      env: baseEnv(home, overrides),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return finish(run);
+  }
+
+  /**
+   * The launcher on Bun. No preload: the home comes from HOME and USERPROFILE, and this Bun is first asked
+   * where it puts os.homedir() with that same environment, so a run never reaches the real home's cache or
+   * the network to fill it. Both run in the fixture home, which holds no .env file: Bun loads the working
+   * directory's .env files into a file it runs, and the checkout's own would add the keys baseEnv leaves out.
+   */
+  function onBun(overrides: Record<string, string> = {}): string {
+    const home = fixtureHome();
+    const env = baseEnv(home, overrides);
+    const probe = Bun.spawnSync([process.execPath, "-e", "console.log(require('node:os').homedir())"], {
+      cwd: home,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const reported = probe.stdout.toString().trim();
+    if (reported !== home) {
+      throw new Error(`Bun reports the home ${JSON.stringify(reported)} with HOME and USERPROFILE set to ${home}`);
+    }
+    const run = Bun.spawnSync([process.execPath, path.join(root, "bin/studio.js")], {
+      cwd: home,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return finish(run);
+  }
+
+  test("on Node.js hands the server NEXT_MANUAL_SIG_HANDLE=true when the operator set none", () => {
+    const output = onNode();
+    expect(output).toContain("RUNTIME=node\n");
+    expect(output).toContain("MANUAL=true\n");
+  });
+
+  test("on Node.js keeps an operator's empty NEXT_MANUAL_SIG_HANDLE, which leaves the exit to Next.js's handler", () => {
+    expect(onNode({ NEXT_MANUAL_SIG_HANDLE: "" })).toContain("MANUAL=\n");
+  });
+
+  test("on Node.js passes an operator's other value on, for the server to refuse by name", () => {
+    expect(onNode({ NEXT_MANUAL_SIG_HANDLE: "1" })).toContain("MANUAL=1\n");
+  });
+
+  test("on Bun starts the server on Bun without NEXT_MANUAL_SIG_HANDLE", () => {
+    const output = onBun();
+    expect(output).toContain("RUNTIME=bun\n");
+    expect(output).toContain("MANUAL=<unset>\n");
+  });
+
+  test("on Bun passes an operator's NEXT_MANUAL_SIG_HANDLE=true on, so the server's refusal names it", () => {
+    const output = onBun({ NEXT_MANUAL_SIG_HANDLE: "true" });
+    expect(output).toContain("RUNTIME=bun\n");
+    expect(output).toContain("MANUAL=true\n");
+  });
+
+  // Only Windows reads environment names without letter case: a plain-object read of NEXT_MANUAL_SIG_HANDLE
+  // would miss this value, and the launcher's true would be added beside it.
+  testIf(
+    process.platform === "win32" ? null : "letter case in environment names: only Windows ignores it",
+    "keeps an operator's next_manual_sig_handle in another letter case",
+    () => {
+      expect(onNode({ next_manual_sig_handle: "" })).toContain("MANUAL=\n");
     },
   );
 });

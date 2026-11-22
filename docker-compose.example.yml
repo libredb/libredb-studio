@@ -22,6 +22,8 @@ services:
     image: ghcr.io/libredb/libredb-studio:latest
     container_name: libredb-studio
     restart: unless-stopped
+    # Studio's shutdown takes up to 25 s (docs/DISTRIBUTION.md, "Stopping the server"); Compose's default is 10 s.
+    stop_grace_period: 30s
     ports:
       - "3000:3000"
     # Uncomment if you enable the bundled PostgreSQL service below:

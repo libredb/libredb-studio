@@ -24,8 +24,8 @@ const tempDir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "ne
 afterAll(() => fs.rmSync(tempDir, { recursive: true, force: true }));
 
 /**
- * The stub Next.js CLI. With no mode it prints `{ seedAssets, argv, cwd, keys }`, where keys are its environment's
- * names. `exit <code>` exits with that code;
+ * The stub Next.js CLI. With no mode it prints `{ seedAssets, manualSignalHandling, runtime, argv, cwd, keys }`, where
+ * runtime is `bun` or `node` and keys are its environment's names. `exit <code>` exits with that code;
  * `die <signal>` ends itself with that signal; `wait` prints `ready` once its SIGINT and SIGTERM handlers are
  * installed and exits 130 or 143 on them. Each mode that waits exits 99 by itself after five seconds.
  */
@@ -42,7 +42,7 @@ if (mode === "exit") {
   setTimeout(() => process.exit(99), 5000);
   console.log("ready");
 } else {
-  console.log(JSON.stringify({ seedAssets: process.env.SEED_ASSETS_DIR ?? null, argv: process.argv.slice(2), cwd: process.cwd(), keys: Object.keys(process.env) }));
+  console.log(JSON.stringify({ seedAssets: process.env.SEED_ASSETS_DIR ?? null, manualSignalHandling: process.env.NEXT_MANUAL_SIG_HANDLE ?? null, runtime: typeof process.versions.bun === "string" ? "bun" : "node", argv: process.argv.slice(2), cwd: process.cwd(), keys: Object.keys(process.env) }));
 }
 `;
 
@@ -100,11 +100,11 @@ function checkout({
 }
 
 /**
- * The test's environment, plus the case's own values. Three keys are left out: SEED_ASSETS_DIR, which the cases set
- * themselves; NODE_PATH, a further place Node.js looks for packages; and NODE_ENV, which bun test sets to test and
- * which picks the .env files Next.js reads.
+ * The test's environment, plus the case's own values. Four keys are left out: SEED_ASSETS_DIR and
+ * NEXT_MANUAL_SIG_HANDLE, which the cases set themselves; NODE_PATH, a further place Node.js looks for packages; and
+ * NODE_ENV, which bun test sets to test and which picks the .env files Next.js reads.
  */
-const LEFT_OUT = new Set(["SEED_ASSETS_DIR", "NODE_PATH", "NODE_ENV"]);
+const LEFT_OUT = new Set(["SEED_ASSETS_DIR", "NEXT_MANUAL_SIG_HANDLE", "NODE_PATH", "NODE_ENV"]);
 function envWith(overrides: Record<string, string> = {}): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
@@ -148,8 +148,8 @@ function node(): string {
   return found;
 }
 
-function run(root: string, args: string[], overrides: Record<string, string> = {}, cwd = tempDir) {
-  const proc = Bun.spawnSync([node(), path.join(root, LAUNCHER), ...args], {
+function run(root: string, args: string[], overrides: Record<string, string> = {}, cwd = tempDir, runtime = node()) {
+  const proc = Bun.spawnSync([runtime, path.join(root, LAUNCHER), ...args], {
     cwd,
     env: envWith(overrides),
     stdout: "pipe",
@@ -166,6 +166,8 @@ function run(root: string, args: string[], overrides: Record<string, string> = {
 /** What the stub reported, from a run that printed its report. */
 function report(result: ReturnType<typeof run>): {
   seedAssets: string | null;
+  manualSignalHandling: string | null;
+  runtime: "bun" | "node";
   argv: string[];
   cwd: string;
   keys: string[];
@@ -323,7 +325,8 @@ describe("scripts/next-with-seed-assets.mjs on a checkout fixture with a stub Ne
       const cwd = withEnvFile(name, "OTHER_SETTING=1\nSEED_ASSETS_DIR=/from/the/file\n");
       const reported = report(run(checkout(), [command], overrides, cwd));
       expect(reported.seedAssets).toBeNull();
-      expect(added(reported.keys, envWith(overrides))).toEqual([]);
+      // Under start on Node.js the launcher adds the one key of its own (docs/DISTRIBUTION.md, "Stopping the server").
+      expect(added(reported.keys, envWith(overrides))).toEqual(command === "start" ? ["NEXT_MANUAL_SIG_HANDLE"] : []);
     },
   );
 
@@ -512,5 +515,129 @@ describe("scripts/next-with-seed-assets.mjs on a checkout fixture with a stub Ne
       const result = run(checkout(), ["die", signal]);
       expect([signal, result.exitCode, result.signalCode]).toEqual([signal, null, signal]);
     }
+  });
+});
+
+/**
+ * The exit owner `bun start` hands the server (docs/DISTRIBUTION.md, "Stopping the server"): the launcher runs the
+ * Next.js CLI with process.execPath, so the server runs on the launcher's own runtime, and `true` is added only on
+ * Node.js, where Studio's shutdown handler accepts it.
+ */
+describe("bun start and NEXT_MANUAL_SIG_HANDLE", () => {
+  /** A working directory holding one .env file with `content`. */
+  function withEnvFile(name: string, content: string): string {
+    const cwd = fs.mkdtempSync(path.join(tempDir, "env-"));
+    fs.writeFileSync(path.join(cwd, name), content);
+    return cwd;
+  }
+
+  test("start on Node.js hands the Next.js CLI NEXT_MANUAL_SIG_HANDLE=true when the caller set none", () => {
+    const reported = report(run(checkout(), ["start"]));
+    expect(reported.runtime).toBe("node");
+    expect(reported.manualSignalHandling).toBe("true");
+  });
+
+  test.each(["", "true", "1"])(
+    "start keeps the caller's NEXT_MANUAL_SIG_HANDLE %p, the empty one included",
+    (value) => {
+      expect(report(run(checkout(), ["start"], { NEXT_MANUAL_SIG_HANDLE: value })).manualSignalHandling).toBe(value);
+    },
+  );
+
+  test.each(["dev", "build"])("%s hands the Next.js CLI no NEXT_MANUAL_SIG_HANDLE", (command) => {
+    expect(report(run(checkout(), [command])).manualSignalHandling).toBeNull();
+  });
+
+  test("start on Bun runs the Next.js CLI on Bun without NEXT_MANUAL_SIG_HANDLE", () => {
+    const reported = report(run(checkout(), ["start"], {}, tempDir, process.execPath));
+    expect(reported.runtime).toBe("bun");
+    expect(reported.manualSignalHandling).toBeNull();
+  });
+
+  const START_FILES = [".env.production.local", ".env.local", ".env.production", ".env"];
+  test.each(START_FILES.flatMap((name) => ["true", ""].map((value) => [name, value] as const)))(
+    "start stops with exit code 1 and runs nothing when only %s sets NEXT_MANUAL_SIG_HANDLE to %p",
+    (name, value) => {
+      const result = run(checkout(), ["start"], {}, withEnvFile(name, `NEXT_MANUAL_SIG_HANDLE=${value}\n`));
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("NEXT_MANUAL_SIG_HANDLE");
+      expect(result.stderr).toContain(`a .env file Next.js loads for start (${name})`);
+      expect(result.stderr).toContain("docs/DISTRIBUTION.md#stopping-the-server");
+    },
+  );
+
+  test("start names every .env file that sets NEXT_MANUAL_SIG_HANDLE in its refusal, and only those", () => {
+    const cwd = withEnvFile(".env.local", "NEXT_MANUAL_SIG_HANDLE=true\n");
+    fs.writeFileSync(path.join(cwd, ".env.production"), "OTHER_SETTING=1\n");
+    fs.writeFileSync(path.join(cwd, ".env"), "NEXT_MANUAL_SIG_HANDLE=\n");
+    const result = run(checkout(), ["start"], {}, cwd);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("a .env file Next.js loads for start (.env.local, .env),");
+  });
+
+  // Only Windows reads environment names without letter case: there the loader's process.env takes a lower-case key
+  // as NEXT_MANUAL_SIG_HANDLE, so the refusal fires, and it has to find the file by the same rule to name it.
+  testIf(
+    process.platform === "win32" ? null : "letter case in environment names: only Windows ignores it",
+    "start names a .env file that sets NEXT_MANUAL_SIG_HANDLE in another letter case in its refusal",
+    () => {
+      const result = run(checkout(), ["start"], {}, withEnvFile(".env.local", "next_manual_sig_handle=true\n"));
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("a .env file Next.js loads for start (.env.local),");
+    },
+  );
+
+  /**
+   * `bun --bun run start` in the fixture `root`, which holds package.json's own start script and is the working
+   * directory, as in a checkout: Bun runs the script's `node` as Bun, so the launcher and the Next.js CLI run on Bun.
+   */
+  function bunRunStart(root: string) {
+    const { scripts } = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")) as {
+      scripts: Record<string, string>;
+    };
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { start: scripts.start } }));
+    const proc = Bun.spawnSync([process.execPath, "--bun", "run", "start"], {
+      cwd: root,
+      env: envWith(),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return { exitCode: proc.exitCode, stdout: proc.stdout.toString(), stderr: proc.stderr.toString() };
+  }
+
+  test("bun --bun run start runs the launcher and the Next.js CLI on Bun without NEXT_MANUAL_SIG_HANDLE", () => {
+    const result = bunRunStart(checkout());
+    expect(result.exitCode).toBe(0);
+    const reported = JSON.parse(result.stdout.trim()) as { runtime: string; manualSignalHandling: string | null };
+    expect(reported.runtime).toBe("bun");
+    expect(reported.manualSignalHandling).toBeNull();
+  });
+
+  // Bun loads no .env file into the environment of a package.json script it runs, so the launcher refuses a value
+  // that only a .env file sets on Bun as on Node.js.
+  test.each(["true", ""])(
+    "bun --bun run start stops with exit code 1 and runs nothing when only .env.local sets NEXT_MANUAL_SIG_HANDLE to %p",
+    (value) => {
+      const root = checkout();
+      fs.writeFileSync(path.join(root, ".env.local"), `NEXT_MANUAL_SIG_HANDLE=${value}\n`);
+      const result = bunRunStart(root);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(
+        "NEXT_MANUAL_SIG_HANDLE is set in a .env file Next.js loads for start (.env.local)",
+      );
+      expect(result.stderr).toContain("docs/DISTRIBUTION.md#stopping-the-server");
+    },
+  );
+
+  test("start keeps a NEXT_MANUAL_SIG_HANDLE the caller exported over one in a .env file, as Next.js does", () => {
+    const cwd = withEnvFile(".env.local", "NEXT_MANUAL_SIG_HANDLE=true\n");
+    expect(report(run(checkout(), ["start"], { NEXT_MANUAL_SIG_HANDLE: "" }, cwd)).manualSignalHandling).toBe("");
+  });
+
+  test("dev leaves a NEXT_MANUAL_SIG_HANDLE in a .env file to Next.js and adds none", () => {
+    const cwd = withEnvFile(".env.local", "NEXT_MANUAL_SIG_HANDLE=true\n");
+    expect(report(run(checkout(), ["dev"], {}, cwd)).manualSignalHandling).toBeNull();
   });
 });

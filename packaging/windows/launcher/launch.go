@@ -81,6 +81,14 @@ func resolveLocalAppData(environ []string) string {
 //     directory, so the server finds the built-in samples' assets without
 //     depending on its working directory (src/lib/seed/samples.ts).
 //   - NODE_ENV defaults to production (parity with the npx launcher).
+//   - NEXT_MANUAL_SIG_HANDLE is set to true when the key is absent in any
+//     letter case, so Studio's shutdown handler ends the bundled Node.js
+//     server (docs/DISTRIBUTION.md, "Stopping the server"). Presence, not
+//     emptiness: an operator's value is kept as given, and an empty one
+//     leaves the exit to Next.js's handler. cmd.exe and PowerShell before
+//     7.5 remove a variable set to the empty string, so an empty one
+//     arrives only from a parent that keeps it, such as PowerShell 7.5 or
+//     later.
 func launcherEnv(environ []string, seedAssets string) []string {
 	env := append([]string(nil), environ...)
 
@@ -105,6 +113,10 @@ func launcherEnv(environ []string, seedAssets string) []string {
 
 	if value, ok := envValue(environ, "NODE_ENV"); !ok || value == "" {
 		env = append(env, "NODE_ENV=production")
+	}
+
+	if _, ok := envValue(environ, "NEXT_MANUAL_SIG_HANDLE"); !ok {
+		env = append(env, "NEXT_MANUAL_SIG_HANDLE=true")
 	}
 	return env
 }

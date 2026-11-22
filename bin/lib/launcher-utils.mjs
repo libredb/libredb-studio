@@ -236,6 +236,27 @@ export function seedAssetsEnv(payloadDir, current) {
   return { SEED_ASSETS_DIR: path.resolve(payloadDir, "seed-assets") };
 }
 
+/** The variable that, set to `true`, gives Studio's shutdown handler the exit (src/lib/shutdown-handler.ts reads it). */
+export const MANUAL_SIGNAL_HANDLING_VARIABLE = "NEXT_MANUAL_SIG_HANDLE";
+
+/**
+ * The environment a launcher adds so that Studio's shutdown handler ends the server it starts
+ * (docs/DISTRIBUTION.md, "Stopping the server"): `true` when the server runs on Node.js and the
+ * operator set no value, nothing otherwise. The server runs on the launcher's own runtime, since
+ * both launchers spawn process.execPath, so `versions` is the launcher's process.versions: on Bun
+ * the server refuses `true` at boot, because its request drain sees nothing there. Presence decides,
+ * not content: an empty value is the operator's choice of Next.js's handler, and any other value is
+ * passed on for the server to accept or refuse by name. Pure.
+ *
+ * @param {{ readonly node: string, readonly bun?: string }} versions
+ * @param {string | undefined} current the variable in the launcher's environment, read from process.env
+ * @returns {Record<string, string>}
+ */
+export function manualSignalHandlingEnv(versions, current) {
+  if (current !== undefined || typeof versions.bun === "string") return {};
+  return { [MANUAL_SIGNAL_HANDLING_VARIABLE]: "true" };
+}
+
 /**
  * Platform/arch pairs the release workflow builds standalone payloads for
  * (must mirror the build jobs in .github/workflows/release-artifacts.yml).

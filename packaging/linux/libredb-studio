@@ -54,4 +54,12 @@ if [ -z "${SEED_ASSETS_DIR:-}" ]; then
   export SEED_ASSETS_DIR
 fi
 
+# Studio's shutdown handler ends the server on SIGTERM and SIGINT (docs/DISTRIBUTION.md,
+# "Stopping the server"), since the runtime below is Node.js. Presence, not emptiness: an
+# operator's empty value, in /etc/libredb-studio/env or the shell, leaves the exit to Next.js.
+if [ -z "${NEXT_MANUAL_SIG_HANDLE+set}" ]; then
+  NEXT_MANUAL_SIG_HANDLE=true
+  export NEXT_MANUAL_SIG_HANDLE
+fi
+
 exec "$LIBREDB_STUDIO_HOME/node/bin/node" "$LIBREDB_STUDIO_HOME/server.js" "$@"

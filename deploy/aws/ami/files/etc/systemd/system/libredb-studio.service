@@ -16,6 +16,7 @@ ExecStartPre=-/usr/bin/docker rm -f libredb-studio
 ExecStart=/usr/bin/docker run \
   --name libredb-studio \
   --init \
+  --stop-timeout 30 \
   -p 3000:3000 \
   --env-file /etc/libredb-studio.env \
   -v /opt/libredb/data:/app/data \

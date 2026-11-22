@@ -26,7 +26,10 @@
  * `better-sqlite3`, the STORAGE_PROVIDER=sqlite backend, was a NAN addon
  * (oven-sh/bun#4290); since v13 it is a Node-API addon, and the standalone
  * server signs in and stores to SQLite under Bun 1.4.2. Only `bunx --bun`
- * reaches that path, and that is the caller asking.
+ * reaches that path, and that is the caller asking. The server then runs
+ * on Bun, so this launcher hands it no NEXT_MANUAL_SIG_HANDLE, which a
+ * server on Bun refuses as `true` (docs/DISTRIBUTION.md, "Stopping the
+ * server").
  */
 import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -44,6 +47,8 @@ import {
   LauncherUsageError,
   LOOPBACK_PLAINTEXT_FLAG,
   loopbackPlaintextEnv,
+  MANUAL_SIGNAL_HANDLING_VARIABLE,
+  manualSignalHandlingEnv,
   mcpUrlFor,
   parseLauncherArgs,
   parseSha256Sums,
@@ -345,6 +350,9 @@ function startServer(payloadDir, port, host) {
   // that keeps each key's own case, so a seed_assets_dir there would miss env.SEED_ASSETS_DIR, and
   // spawn on Windows keeps only the first of two keys differing in case, which would be the default.
   Object.assign(env, seedAssetsEnv(payloadDir, process.env.SEED_ASSETS_DIR));
+  // Studio's shutdown handler ends the server on SIGTERM and SIGINT where it runs on Node.js, this launcher's
+  // own runtime (docs/DISTRIBUTION.md, "Stopping the server"); presence is read from process.env, as above.
+  Object.assign(env, manualSignalHandlingEnv(process.versions, process.env[MANUAL_SIGNAL_HANDLING_VARIABLE]));
   // The MCP endpoint's canonical address (#246), which every token is bound to: derived from the
   // address and port this server is about to take, unless the operator set one, such as a public
   // address behind a reverse proxy.

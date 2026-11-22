@@ -1,5 +1,7 @@
 services:
   app:
+    # Studio's shutdown takes up to 25 s (docs/DISTRIBUTION.md, "Stopping the server"); Compose's default is 10 s.
+    stop_grace_period: 30s
     build:
       context: .
       dockerfile: Dockerfile

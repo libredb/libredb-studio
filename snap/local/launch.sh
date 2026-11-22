@@ -13,7 +13,9 @@
 # a key set there can never be overridden by the systemd drop-in the docs
 # recommend. A default here applies only when the operator set nothing.
 # SEED_ASSETS_DIR names the payload's built-in sample assets for the server
-# (docs/DISTRIBUTION.md, "Built-in sample assets").
+# (docs/DISTRIBUTION.md, "Built-in sample assets"). NEXT_MANUAL_SIG_HANDLE=true
+# gives Studio's shutdown handler the exit, since the runtime is the bundled
+# Node.js (docs/DISTRIBUTION.md, "Stopping the server").
 # ==============================================================================
 set -eu
 
@@ -23,6 +25,9 @@ set -eu
 : "${STORAGE_SQLITE_PATH:=$SNAP_DATA/libredb-storage.db}"
 : "${PORT:=3000}"
 : "${SEED_ASSETS_DIR:=$SNAP/seed-assets}"
+# No colon, on purpose: an empty value from the drop-in is the operator's choice
+# of Next.js's handler and is kept; only an absent one becomes true.
+: "${NEXT_MANUAL_SIG_HANDLE=true}"
 
 # Local-first bind, as in the .deb/.rpm wrapper (issue #134): under systemd
 # (INVOCATION_ID set) HOSTNAME is the operator's drop-in value or loopback. A
@@ -34,6 +39,6 @@ else
   HOSTNAME="${LIBREDB_BIND:-127.0.0.1}"
 fi
 
-export NODE_ENV NEXT_TELEMETRY_DISABLED STORAGE_PROVIDER STORAGE_SQLITE_PATH PORT HOSTNAME SEED_ASSETS_DIR
+export NODE_ENV NEXT_TELEMETRY_DISABLED STORAGE_PROVIDER STORAGE_SQLITE_PATH PORT HOSTNAME SEED_ASSETS_DIR NEXT_MANUAL_SIG_HANDLE
 
 exec "$SNAP/node/bin/node" "$SNAP/server.js"
