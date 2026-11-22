@@ -251,11 +251,6 @@ describe("a kind whose names are withheld", () => {
   });
 });
 
-/**
- * U189: a provider whose inventory cannot be listed without configuration the connection lacks says so, and the walk
- * asks it nothing more. Every kind carries the provider's sentence as `unavailable`, the note a refused kind already
- * has, and the packings say that nothing was listed instead of "This database reported no tables".
- */
 describe("a provider's sentence that carries the connection's credential", () => {
   const DEFAULT_ONLY: readonly Container[] = [{ path: ["default"], name: "default", level: 0, isSessionDefault: true }];
 
@@ -350,6 +345,11 @@ describe("a provider's sentence that carries the connection's credential", () =>
   });
 });
 
+/**
+ * U189: a provider whose inventory cannot be listed without configuration the connection lacks says so, and the walk
+ * asks it nothing more. Every kind carries the provider's sentence as `unavailable`, the note a refused kind already
+ * has, and the packings say that nothing was listed instead of "This database reported no tables".
+ */
 describe("an inventory its provider cannot list without configuration", () => {
   const reason = "this connection keeps no map, so none of its objects can be listed";
 
