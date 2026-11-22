@@ -345,8 +345,8 @@ On standalone boot it then:
    5. the Kubernetes access review preflight (`src/lib/kubernetes-access/preflight.ts`, [SEED_CONNECTIONS.md](SEED_CONNECTIONS.md#kubernetes-access-review)), which with `KUBERNETES_ACCESS_REVIEW` on refuses an environment that contradicts the review, and checks nothing while it is off.
 
 3. **Re-seals and checks the stored credentials when asked** (`src/lib/storage/reseal-at-boot.ts`, [STORAGE.md](STORAGE.md#re-sealing-the-store)).
-   With `STORAGE_ENCRYPTION_RESEAL` set, it backs the server store up, re-seals every stored credential and retires version 1 envelopes, and serving waits for it.
-   Then, with `STORAGE_ENCRYPTION_REQUIRE_V2` set, it checks that the store records version 1 as retired.
+   With `STORAGE_ENCRYPTION_REQUIRE_V2` set, it first checks that the store records version 1 as retired, and runs no re-seal: while that is set, the re-seal runs only on a store that records it.
+   Without it, with `STORAGE_ENCRYPTION_RESEAL` set, it backs the server store up, re-seals every stored credential and retires version 1 envelopes, and serving waits for it.
    With both unset, it does nothing and opens no store.
    It runs after the bootstrap, because the storage key may derive from the `JWT_SECRET` the bootstrap fills in, and after the preflights, so a boot they refuse never touches the store.
    A value of either variable it cannot read, `STORAGE_PROVIDER=local`, a re-seal that does not complete, or a check that does not pass prints a banner and exits with code 1.

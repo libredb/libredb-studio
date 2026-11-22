@@ -695,7 +695,8 @@ Older servers must not share a store this version created: stop them before new 
 
 ### Re-sealing the store
 
-Set `STORAGE_ENCRYPTION_RESEAL=true` (also `1` or `on`, in any letter case) on every server once every server runs this version, and restart them.
+Set `STORAGE_ENCRYPTION_RESEAL=true` (also `1` or `on`, in any letter case) on every server once every server runs this version, without `STORAGE_ENCRYPTION_REQUIRE_V2`, and restart them.
+While `STORAGE_ENCRYPTION_REQUIRE_V2` is set, the re-seal runs only on a store that records it ([Requiring version 2](#requiring-version-2-storage_encryption_require_v2)), so the re-sealing start is made without it.
 The re-seal binds each version 1 value to the record and field that hold it when it runs, so run it soon after every server runs this version.
 At its start, before it serves, the first server:
 
@@ -708,9 +709,8 @@ At its start, before it serves, the first server:
 From then on a version 1 or unsealed value is refused by name, as `retired`, and omitted like any value that does not open.
 
 Every other server that starts while the first holds the lock waits for it, finds the store retired, and logs that nothing was read, written or backed up.
-Remove `STORAGE_ENCRYPTION_RESEAL` afterwards.
-A store that is already retired is never read, written or backed up again, but while the variable is set, every start that finds no `credential_envelope` row re-seals the store as it is then.
-Keep `STORAGE_ENCRYPTION_REQUIRE_V2` set instead ([Requiring version 2](#requiring-version-2-storage_encryption_require_v2)).
+Then remove `STORAGE_ENCRYPTION_RESEAL`, set `STORAGE_ENCRYPTION_REQUIRE_V2=true`, and start again ([Requiring version 2](#requiring-version-2-storage_encryption_require_v2)).
+A store that is already retired is never read, written or backed up again, but while the variable is set without `STORAGE_ENCRYPTION_REQUIRE_V2`, every start that finds no `credential_envelope` row re-seals the store as it is then.
 
 The re-seal opens each value with the key the server runs with.
 It derives that key before it reads anything, so a server with no usable key material refuses the start by name and changes nothing.
@@ -724,10 +724,11 @@ The re-seal then leaves those values exactly as they are, names them on a line o
 They stay unreadable: a version 1 value among them is refused as `retired` from then on, even once the key that sealed it is back, and a second re-seal finds nothing to do, because the store is already retired.
 Such a value comes back only in one of two ways:
 
-- Stop every server, restore the key that sealed it, delete the `credential_envelope` row of `storage_meta` (schema-qualified when `STORAGE_POSTGRES_SCHEMA` is set), and start again with `STORAGE_ENCRYPTION_RESEAL` set.
+- Stop every server, restore the key that sealed it, delete the `credential_envelope` row of `storage_meta` (schema-qualified when `STORAGE_POSTGRES_SCHEMA` is set), and start once with `STORAGE_ENCRYPTION_RESEAL` set and `STORAGE_ENCRYPTION_REQUIRE_V2` not set.
   The re-seal then opens it and loses nothing, except values the servers sealed under the other key in between.
-  Without `STORAGE_ENCRYPTION_REQUIRE_V2`, deleting the row accepts every version 1 value in the store again, so re-seal at once; with it, the start is refused until the re-seal runs again with `STORAGE_ENCRYPTION_RESEAL` set.
-- Or restore the re-seal's backup ([Downgrading](#downgrading) gives the steps) and start again with that key and `STORAGE_ENCRYPTION_RESEAL` set; every change made since the backup is lost.
+  Then remove `STORAGE_ENCRYPTION_RESEAL`, set `STORAGE_ENCRYPTION_REQUIRE_V2` again, and start again.
+  Deleting the row accepts every version 1 value in the store again on a server without `STORAGE_ENCRYPTION_REQUIRE_V2`, so make the re-sealing start the next one; a server with it refuses to start until the store records the re-seal again.
+- Or restore the re-seal's backup ([Downgrading](#downgrading) gives the steps), start once with that key, `STORAGE_ENCRYPTION_RESEAL` set and `STORAGE_ENCRYPTION_REQUIRE_V2` not set, then set `STORAGE_ENCRYPTION_REQUIRE_V2` again; every change made since the backup is lost.
 
 A malformed value and a `v2` value that opens nowhere are not changed by retirement, so they never stop the run: they are always left as they are and named.
 
@@ -742,6 +743,7 @@ The start refuses, with a banner and exit status 1, when:
 
 - the value is anything other than `true`, `1`, `on`, `leave-unopened`, `false`, `0`, `off` or empty, because a requested re-seal that cannot be read must not be skipped;
 - `STORAGE_PROVIDER` is `local`, which has no server store;
+- `STORAGE_ENCRYPTION_REQUIRE_V2` is set and the store holds no `credential_envelope` row: the re-seal does not run, and nothing is read, written or backed up ([Requiring version 2](#requiring-version-2-storage_encryption_require_v2));
 - the store cannot be opened, or its `credential_envelope` row holds a value this version does not know;
 - the server has no usable key material;
 - the backup cannot be written (a target that already exists, a directory the process cannot write, or an in-memory SQLite store);
@@ -761,10 +763,11 @@ STORAGE_ENCRYPTION_RESEAL: left N value(s) as they were, because they open nowhe
 STORAGE_ENCRYPTION_RESEAL: left N version 1 value(s) as they were, because they do not open under the key in use and STORAGE_ENCRYPTION_RESEAL is leave-unopened: <entry>, ... <what to do>
 STORAGE_ENCRYPTION_RESEAL: left N value(s) as they were, because they are not text or sit beside a value sealed as v2: <entry> (<reason>), ...
 STORAGE_ENCRYPTION_RESEAL: left N row(s) or element(s) unread, because they are not connections or nest too deep to bind: <entry>, ...
-STORAGE_ENCRYPTION_RESEAL: remove it now; while it is set, every start that finds no credential_envelope row re-seals the store as it is then.
+STORAGE_ENCRYPTION_RESEAL: remove it now, and start with STORAGE_ENCRYPTION_REQUIRE_V2=true from now on; while STORAGE_ENCRYPTION_RESEAL is set without STORAGE_ENCRYPTION_REQUIRE_V2, every start that finds no credential_envelope row re-seals the store as it is then.
 ```
 
 The second to fifth lines appear only when they have something to name, and the third only with `leave-unopened`.
+On a store that records the re-seal already, `STORAGE_ENCRYPTION_RESEAL: this store retired version 1 already, so nothing was read, written or backed up.` takes the place of the first five, and the last line follows it.
 On the second and third lines an entry is `<owner> <connection id> <field>` for a connection value, or `<email> <field>` for an account's second factor (`totpSecret` or `totpPending`).
 On the fourth an entry is always a connection value, `<owner> <connection id> <field>`, and its reason is `not-text` or `mixed`.
 On the fifth an entry is `<owner> connections` for a row whose data is not a JSON list, or `<owner> connections[<index>]` for one element of the list.
@@ -800,16 +803,18 @@ With `STORAGE_ENCRYPTION_REQUIRE_V2=true` (also `1` or `on`, in any letter case)
 Such a value is refused as `retired` and omitted, as after the re-seal.
 The re-seal is the one step that converts such values: it seals each one as `v2` for the record and field that hold it when it runs.
 
-At its start, before it serves, a server with the setting opens the store and refuses the start by name unless the store holds the `credential_envelope = v2` row.
+At its start, before it serves and before any re-seal step, a server with the setting opens the store and refuses the start by name unless the store holds the `credential_envelope = v2` row.
+While the setting is set, the re-seal runs only on a store that records it, where it has nothing to do.
+So with `STORAGE_ENCRYPTION_RESEAL` set too, a store with the row starts and logs that nothing was read, written or backed up, and a store without it is refused before anything is read, written or backed up.
 A store this version created or re-sealed holds that row.
 It is missing from a store that was never re-sealed, from one restored from a copy taken before its re-seal, and from one whose row was deleted, as the recovery steps in [Re-sealing the store](#re-sealing-the-store) and [Downgrading](#downgrading) do.
-So re-seal only a store whose contents you know, such as one you restored on purpose, by starting once with `STORAGE_ENCRYPTION_RESEAL` set as well; otherwise restore the store from a backup taken after its re-seal.
-With `STORAGE_ENCRYPTION_RESEAL` set too, the re-seal runs first and the check follows it, so one start with both set completes the upgrade.
-`STORAGE_ENCRYPTION_RESEAL` must not stay set: while it is set, every start that finds no row re-seals the store as it is then, and no start is refused.
-A process that opens the store without that start step refuses a store with no row by name as well, unless `STORAGE_ENCRYPTION_RESEAL` is set too; then it opens the store and still refuses every version 1 and unsealed value as `retired`.
+If the store was re-sealed before, restore it from a backup taken after that re-seal.
+To re-seal a store whose contents you know, such as one you restored on purpose, start once with `STORAGE_ENCRYPTION_RESEAL` set and `STORAGE_ENCRYPTION_REQUIRE_V2` not set, then remove `STORAGE_ENCRYPTION_RESEAL`, set `STORAGE_ENCRYPTION_REQUIRE_V2` again, and start again.
+`STORAGE_ENCRYPTION_RESEAL` must not stay set: while it is set without `STORAGE_ENCRYPTION_REQUIRE_V2`, every start that finds no row re-seals the store as it is then.
+A process that opens the store without that start step refuses a store with no row by name as well, whatever `STORAGE_ENCRYPTION_RESEAL` says.
 
 Unset, empty, `false`, `0` and `off` leave it unset, and then the store's row decides, as before.
-A server that finds the row but not the setting logs one warning at its first use of the store: the retirement is recorded only in the store, so set `STORAGE_ENCRYPTION_REQUIRE_V2=true`.
+A server that finds the row but not the setting logs one warning at its first use of the store: the retirement is recorded only in the store, so remove `STORAGE_ENCRYPTION_RESEAL` if it is set, set `STORAGE_ENCRYPTION_REQUIRE_V2=true`, and start again.
 Any other value refuses the start by name, and so does setting it with `STORAGE_PROVIDER=local`, which has no server store.
 It is set on each channel the way `STORAGE_ENCRYPTION_RESEAL` is, above.
 
@@ -821,10 +826,11 @@ In this order:
    This version writes `v2` from its first save, which an older version cannot read, so this backup is the only one an older version reads in full.
    For SQLite, stop the server and copy the store file together with its `-wal` file, or take a consistent copy while it runs with `sqlite3 <store file> ".backup <copy>"`: the `-wal` file holds committed changes that are not yet in the store file.
 2. Upgrade every server, stopping the old servers before new ones start (see below).
-3. Once no older server runs, start every server with `STORAGE_ENCRYPTION_RESEAL=true` and `STORAGE_ENCRYPTION_REQUIRE_V2=true`.
-   The first start backs up, re-seals and retires version 1; the others wait on the lock and find nothing to do; every start then checks that the store records version 1 as retired.
-4. Remove `STORAGE_ENCRYPTION_RESEAL`, and keep `STORAGE_ENCRYPTION_REQUIRE_V2`.
-   `STORAGE_ENCRYPTION_RESEAL` must not stay set: while it is set, every start that finds no `credential_envelope` row re-seals the store as it is then.
+3. Once no older server runs, start every server with `STORAGE_ENCRYPTION_RESEAL=true`, without `STORAGE_ENCRYPTION_REQUIRE_V2`.
+   The first start backs up, re-seals and retires version 1; the others wait on the lock and find nothing to do.
+4. Remove `STORAGE_ENCRYPTION_RESEAL`, set `STORAGE_ENCRYPTION_REQUIRE_V2=true`, and start every server again.
+   Every start then checks that the store records version 1 as retired, and refuses the start if it does not.
+   `STORAGE_ENCRYPTION_RESEAL` must not stay set: while it is set without `STORAGE_ENCRYPTION_REQUIRE_V2`, every start that finds no `credential_envelope` row re-seals the store as it is then.
 5. Keep the re-seal's backup until a downgrade is out of the question, and as protected as the store until then: it holds every credential of the store, version 1 values among them.
    Once a downgrade is ruled out, drop the PostgreSQL backup tables (`DROP TABLE` each `*_pre_reseal_*` table), or move the SQLite backup file off the server's volume.
 
@@ -839,7 +845,7 @@ PostgreSQL deployments with several replicas roll pods one by one, so for a whil
 So stop the old servers before new ones start, for example `kubectl scale deployment <name> --replicas=0`, upgrade, then scale back.
 
 A process reads the store's envelope state once, at its first use of the store.
-A server that started before another one re-sealed keeps accepting version 1 until it restarts, which is why step 3 restarts every server.
+A server that started before another one re-sealed keeps accepting version 1 until it restarts, which is why steps 3 and 4 restart every server.
 
 #### Downgrading
 
@@ -852,13 +858,13 @@ To downgrade, stop every server, then choose:
 
 - Restore the step 1 backup: every change made since the upgrade is lost, and the older version reads everything the backup holds.
   On PostgreSQL, unless the database is recreated, delete the `credential_envelope` row before the older version serves, with the command under "Restore nothing": a dump taken before the upgrade has no `storage_meta`, and restoring it into the existing database keeps the row, `pg_restore --clean` included, which drops only the objects the dump holds.
-  The restored store holds no row, so under `STORAGE_ENCRYPTION_REQUIRE_V2` a later start of this version is refused until the re-seal runs again with `STORAGE_ENCRYPTION_RESEAL` set.
+  The restored store holds no row, so under `STORAGE_ENCRYPTION_REQUIRE_V2` a later start of this version is refused until the store is re-sealed again: one start with `STORAGE_ENCRYPTION_RESEAL` set and `STORAGE_ENCRYPTION_REQUIRE_V2` not set, then `STORAGE_ENCRYPTION_REQUIRE_V2` again.
 - Restore the re-seal's backup: every change made since the re-seal is lost, and the older version omits what this version wrote as `v2` before the re-seal.
-  The backup holds no `credential_envelope` row, so under `STORAGE_ENCRYPTION_REQUIRE_V2` a later start of this version is refused until the re-seal runs again with `STORAGE_ENCRYPTION_RESEAL` set.
+  The backup holds no `credential_envelope` row, so under `STORAGE_ENCRYPTION_REQUIRE_V2` a later start of this version is refused until the store is re-sealed again: one start with `STORAGE_ENCRYPTION_RESEAL` set and `STORAGE_ENCRYPTION_REQUIRE_V2` not set, then `STORAGE_ENCRYPTION_REQUIRE_V2` again.
 - Restore nothing: the older version omits every `v2` value.
   The store's `storage_meta` still records that version 1 is retired, and the older version does not read that table, so delete the row before it serves: `DELETE FROM storage_meta WHERE key = 'credential_envelope'`, schema-qualified when `STORAGE_POSTGRES_SCHEMA` is set, or `sqlite3 <store file> "DELETE FROM storage_meta WHERE key = 'credential_envelope'"`.
   Left in place, it makes the next upgrade refuse as `retired` every version 1 value the older version writes, and that upgrade's re-seal finds nothing to do.
-  Deleted, under `STORAGE_ENCRYPTION_REQUIRE_V2` the next start of this version is refused until the re-seal runs again with `STORAGE_ENCRYPTION_RESEAL` set.
+  Deleted, under `STORAGE_ENCRYPTION_REQUIRE_V2` the next start of this version is refused until the store is re-sealed again: one start with `STORAGE_ENCRYPTION_RESEAL` set and `STORAGE_ENCRYPTION_REQUIRE_V2` not set, then `STORAGE_ENCRYPTION_REQUIRE_V2` again.
 
 Then start the older version.
 
@@ -888,7 +894,7 @@ COMMIT;
 ```
 
 Every table then holds exactly what the backup holds: an account deleted since the re-seal comes back with its rows, and one created since is gone with its passkeys.
-The backup's `storage_meta` has no `credential_envelope` row, so version 1 is accepted again; under `STORAGE_ENCRYPTION_REQUIRE_V2` a start of this version is refused until the re-seal runs again with `STORAGE_ENCRYPTION_RESEAL` set.
+The backup's `storage_meta` has no `credential_envelope` row, so version 1 is accepted again; under `STORAGE_ENCRYPTION_REQUIRE_V2` a start of this version is refused until the store is re-sealed again: one start with `STORAGE_ENCRYPTION_RESEAL` set and `STORAGE_ENCRYPTION_REQUIRE_V2` not set, then `STORAGE_ENCRYPTION_REQUIRE_V2` again.
 
 Restoring a full snapshot taken before the re-seal also restores "version 1 accepted", so run the re-seal again after upgrading.
 
@@ -954,8 +960,8 @@ On PostgreSQL the re-seal blocks writes, not reads, for its duration; a start pr
 | `STORAGE_SQLITE_PATH` | No | `./data/libredb-storage.db` | Path to SQLite file. Directory and file are auto-created. |
 | `STORAGE_POSTGRES_URL` | **Yes** (postgres mode) | — | PostgreSQL connection string. **No default — app will error without it.** |
 | `STORAGE_POSTGRES_SCHEMA` | No | unset | Schema that holds the storage tables, such as `studio`. The schema must exist. Unset keeps the tables unqualified. See [A Named Schema](#a-named-schema-storage_postgres_schema). |
-| `STORAGE_ENCRYPTION_RESEAL` | No | unset | `true`, `1` or `on` re-seals every stored credential at start, after a complete backup, and retires version 1 envelopes, refusing over a version 1 value the key in use does not open; `leave-unopened` retires version 1 over such values. Set it once, restart, remove it. See [Re-sealing the store](#re-sealing-the-store). |
-| `STORAGE_ENCRYPTION_REQUIRE_V2` | No | unset | `true`, `1` or `on` reads no version 1 or unsealed value whatever the store records, and refuses the start unless the store records version 1 as retired; the re-seal stays the one step that converts such values. Keep it set after the re-seal. See [Requiring version 2](#requiring-version-2-storage_encryption_require_v2). |
+| `STORAGE_ENCRYPTION_RESEAL` | No | unset | `true`, `1` or `on` re-seals every stored credential at start, after a complete backup, and retires version 1 envelopes, refusing over a version 1 value the key in use does not open; `leave-unopened` retires version 1 over such values. Set it for one start without `STORAGE_ENCRYPTION_REQUIRE_V2`, then remove it. See [Re-sealing the store](#re-sealing-the-store). |
+| `STORAGE_ENCRYPTION_REQUIRE_V2` | No | unset | `true`, `1` or `on` reads no version 1 or unsealed value whatever the store records, and refuses the start unless the store records version 1 as retired, checked before any re-seal step, so the re-seal runs only on a store that records it; the re-seal stays the one step that converts such values. Set it for every start after the re-sealing one. See [Requiring version 2](#requiring-version-2-storage_encryption_require_v2). |
 
 > These are **server-side only** variables (no `NEXT_PUBLIC_` prefix). The client discovers the mode at runtime via `GET /api/storage/config`. This means one Docker image works for all modes. See [Why Not `NEXT_PUBLIC_*`?](#why-not-next_public_) for the rationale.
 
@@ -1068,7 +1074,7 @@ It is one of these:
 - A value an older server wrote after a downgrade that kept the store's `credential_envelope` row ([Downgrading](#downgrading)).
 - A value written after the re-seal by a server of an older version during a mixed rollout, or by an edit outside Studio.
 
-For the first two, the value still opens under the key that sealed it: stop every server, make sure that key is in use, delete the `credential_envelope` row of `storage_meta`, and start again with `STORAGE_ENCRYPTION_RESEAL` set, as [Re-sealing the store](#re-sealing-the-store) describes; under `STORAGE_ENCRYPTION_REQUIRE_V2` the start is refused until that re-seal runs.
+For the first two, the value still opens under the key that sealed it: stop every server, make sure that key is in use, delete the `credential_envelope` row of `storage_meta`, start once with `STORAGE_ENCRYPTION_RESEAL` set and `STORAGE_ENCRYPTION_REQUIRE_V2` not set, then set `STORAGE_ENCRYPTION_REQUIRE_V2` again, as [Re-sealing the store](#re-sealing-the-store) describes; under `STORAGE_ENCRYPTION_REQUIRE_V2` every start is refused until that re-seal runs.
 Restoring a dump of `user_storage` taken before the re-seal, without that step, meets the same refusal.
 For the third, stop every older server, then re-enter the affected credentials; an admin clears an affected second factor.
 

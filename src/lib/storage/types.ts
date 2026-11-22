@@ -152,8 +152,8 @@ export const RETIRED_ENVELOPE_MARKER = "v2";
  * The state a `credential_envelope` row records: none is `v1-accepted`, `v2` is `v1-retired`, and
  * any other value throws by name, because a store written by a newer format must not be read as one
  * this version understands. The state is read when the store is first opened, at the first request
- * that needs it (or at boot when STORAGE_ENCRYPTION_RESEAL is set), so the throw fails those
- * requests; the health and readiness routes do not open the store.
+ * that needs it (or at boot when STORAGE_ENCRYPTION_RESEAL or STORAGE_ENCRYPTION_REQUIRE_V2 is
+ * set), so the throw fails those requests; the health and readiness routes do not open the store.
  */
 export function envelopeStateOf(marker: string | undefined): CredentialEnvelopeState {
   if (marker === undefined) return "v1-accepted";
