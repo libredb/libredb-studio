@@ -14,9 +14,14 @@
  * `public`. It prints one line per table and exits non-zero on the first failure, and it drops the
  * database and the role again either way. A schema that does not exist must fail initialize() with
  * the CREATE SCHEMA hint, which the script checks first.
- * Last, it holds an account row as the superuser so a storage transaction waits on it, ends that
+ * Then it holds an account row as the superuser so a storage transaction waits on it, ends that
  * transaction's backend with pg_terminate_backend, as a PostgreSQL restart or failover does, and checks
  * that the transaction rejects with 57P01 and the provider keeps serving.
+ * Last, the credential re-seal (docs/STORAGE.md, "Re-sealing the store") as the same role: rows the
+ * previous version wrote are re-sealed as version 2 after a backup of every store table in `studio`;
+ * a rewrite that throws part way and a run terminated while it waits for the lock leave the store as
+ * it was; two runs at once serialize, one re-sealing and one finding nothing to do; and the documented
+ * restore SQL brings the version 1 rows back, which a fresh provider opens again.
  *
  * It is NOT in `bun run test`: the runner excludes `tests/live/` by name (`EXCLUDED` in
  * `tests/runner/discover.ts`). CI runs it in the "Functional Smoke (PostgreSQL, RabbitMQ)" job of
@@ -27,12 +32,24 @@
  *
  * Point it at a DISPOSABLE server, as a superuser: it creates and drops a database and a role.
  */
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { Client } from "pg";
+import { withCredentialEncryption } from "../../src/lib/storage/encrypting-provider";
+import { resetStorageEncryptionKey } from "../../src/lib/storage/encryption";
 import { PostgresStorageProvider } from "../../src/lib/storage/providers/postgres";
+import { resealStore } from "../../src/lib/storage/reseal";
+import type { ServerStorageProvider } from "../../src/lib/storage/types";
+import { sealVersionOne } from "../helpers/storage-envelope-v1";
 
 const SCHEMA = "studio";
-const TABLES = ["user_storage", "accounts", "passkey_users", "passkey_credentials", "passkey_spent_challenges"];
+const TABLES = [
+  "storage_meta",
+  "user_storage",
+  "accounts",
+  "passkey_users",
+  "passkey_credentials",
+  "passkey_spent_challenges",
+];
 
 function superuserUrl(): string {
   const raw = process.env.LIBREDB_LIVE_POSTGRES_URL;
@@ -130,6 +147,7 @@ async function exerciseTables(url: string, superuser: string): Promise<void> {
     });
 
     const reads: Record<string, boolean> = {
+      storage_meta: (await provider.readEnvelopeState()) === "v1-accepted",
       user_storage: Array.isArray(await provider.getCollection(email, "connections")),
       accounts: (await provider.getAccount(email))?.email === email,
       passkey_users: (await provider.getPasskeyUserHandle(email)) === "schema-check-handle",
@@ -265,6 +283,202 @@ async function terminateOpenTransaction(
   );
 }
 
+/** The store as `superuser` reads it: the connections rows, the factors, the marker and the backup tables by schema. */
+async function storeState(superuser: string) {
+  return asSuperuser(superuser, async (client) => {
+    const rows = await client.query(`SELECT user_id, data FROM ${SCHEMA}.user_storage ORDER BY user_id, collection`);
+    const factors = await client.query(`SELECT email, totp_secret, totp_pending FROM ${SCHEMA}.accounts ORDER BY email`);
+    const marker = await client.query(`SELECT key, value FROM ${SCHEMA}.storage_meta`);
+    const backups = await client.query(
+      "SELECT table_schema, table_name FROM information_schema.tables WHERE table_name LIKE '%\\_pre\\_reseal\\_%' ORDER BY table_schema, table_name",
+    );
+    return { rows: rows.rows, factors: factors.rows, marker: marker.rows, backups: backups.rows };
+  });
+}
+
+/** A Studio storage provider as the factory hands it out, initialized. */
+async function sealingProvider(url: string): Promise<ServerStorageProvider> {
+  const provider = withCredentialEncryption(new PostgresStorageProvider(url));
+  await provider.initialize();
+  return provider;
+}
+
+/** The re-seal as the role that owns only schema `studio`, from a store the previous version wrote to its restore. */
+async function exerciseReseal(url: string, superuser: string): Promise<void> {
+  process.env.STORAGE_POSTGRES_SCHEMA = SCHEMA;
+  process.env.JWT_SECRET = randomBytes(32).toString("base64url");
+  delete process.env.STORAGE_ENCRYPTION_KEY;
+  resetStorageEncryptionKey();
+  const secrets = { alice: randomUUID(), bob: randomUUID(), factor: randomUUID() };
+  const email = "reseal-check@example.com";
+
+  // The previous version's rows: version 1 envelopes, written straight through the provider.
+  const raw = new PostgresStorageProvider(url);
+  await raw.initialize();
+  try {
+    for (const [owner, secret] of [
+      ["alice", secrets.alice],
+      ["bob", secrets.bob],
+    ] as const) {
+      await raw.setCollection(owner, "connections", [
+        { id: `${owner}-c1`, name: owner, type: "postgres", host: `${owner}.internal`, password: sealVersionOne(secret) },
+      ] as never);
+    }
+    await raw.insertAccount({
+      email,
+      passwordHash: "scrypt$check",
+      role: "user",
+      totpSecret: sealVersionOne(secrets.factor),
+      totpPending: null,
+      disabled: false,
+      sessionVersion: 0,
+      createdAt: "t",
+      updatedAt: "t",
+    });
+  } finally {
+    await raw.close();
+  }
+  const original = await storeState(superuser);
+  check(original.backups.length === 0 && original.marker.length === 0, "the store should start with no marker and no backup");
+
+  // A rewrite that throws on a later row rolls everything back, its backup tables included.
+  const failing = new PostgresStorageProvider(url);
+  await failing.initialize();
+  try {
+    let calls = 0;
+    const failure = await failing
+      .rewriteStoredCredentials(
+        {
+          connections: (_owner, data) => {
+            calls += 1;
+            if (calls === 2) throw new Error("rewrite failed on a later row");
+            return data.replace('"v1:', '"changed:');
+          },
+          factors: () => null,
+        },
+        "pre-reseal-20261122T050000Z",
+      )
+      .then(
+        () => null,
+        (error: unknown) => error as Error,
+      );
+    check(failure?.message === "rewrite failed on a later row", `the failing rewrite should reject, got: ${failure?.message}`);
+  } finally {
+    await failing.close();
+  }
+  check(JSON.stringify(await storeState(superuser)) === JSON.stringify(original), "a failed re-seal changed the store");
+  console.log("ok   a re-seal whose rewrite throws on a later row leaves rows, marker and backups as they were");
+
+  // A run terminated while it waits for the lock leaves the store as it was.
+  const role = decodeURIComponent(new URL(url).username);
+  const holder = new Client({ connectionString: superuser });
+  await holder.connect();
+  const waiting = new PostgresStorageProvider(url);
+  await waiting.initialize();
+  try {
+    await holder.query("BEGIN");
+    await holder.query(`LOCK TABLE ${SCHEMA}.storage_meta IN EXCLUSIVE MODE`);
+    const pending = waiting
+      .rewriteStoredCredentials({ connections: () => null, factors: () => null }, "pre-reseal-20261122T051000Z")
+      .then(
+        () => null,
+        (error: unknown) => error as { code?: string },
+      );
+    let pid: number | undefined;
+    for (let attempt = 0; attempt < 100 && pid === undefined; attempt++) {
+      // oxlint-disable-next-line no-await-in-loop -- polls until the re-seal waits on the lock.
+      const { rows } = await holder.query(
+        "SELECT pid FROM pg_stat_activity WHERE usename = $1 AND wait_event_type = 'Lock'",
+        [role],
+      );
+      pid = (rows as { pid: number }[])[0]?.pid;
+      // oxlint-disable-next-line no-await-in-loop -- the next poll waits a moment.
+      if (pid === undefined) await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    check(pid !== undefined, "the re-seal never waited on the held lock");
+    await holder.query("SELECT pg_terminate_backend($1)", [pid]);
+    const failure = await pending;
+    check(failure?.code === "57P01", `the terminated re-seal should reject with 57P01, got: ${failure?.code}`);
+    await holder.query("ROLLBACK");
+  } finally {
+    await holder.end();
+    await waiting.close();
+  }
+  check(JSON.stringify(await storeState(superuser)) === JSON.stringify(original), "a terminated re-seal changed the store");
+  console.log("ok   a re-seal terminated while it waits for the lock leaves the store as it was");
+
+  // Two runs at once: one re-seals after the backup, the other waits on the lock and finds nothing to do.
+  const first = await sealingProvider(url);
+  const second = await sealingProvider(url);
+  try {
+    const reports = await Promise.all([
+      resealStore(first, new Date("2026-11-22T05:20:00.000Z")),
+      resealStore(second, new Date("2026-11-22T05:20:01.000Z")),
+    ]);
+    const kinds = reports.map((report) => report.kind).sort();
+    check(JSON.stringify(kinds) === '["already-retired","rewritten"]', `two runs should serialize, got: ${kinds.join(", ")}`);
+  } finally {
+    await first.close();
+    await second.close();
+  }
+  const resealed = await storeState(superuser);
+  check(!JSON.stringify(resealed.rows).includes('"v1:'), "a version 1 value survived the re-seal");
+  check(
+    (resealed.factors as { totp_secret: string | null }[]).every(
+      (row) => row.totp_secret === null || row.totp_secret.startsWith("v2:"),
+    ),
+    "a factor was not re-sealed",
+  );
+  check(JSON.stringify(resealed.marker) === '[{"key":"credential_envelope","value":"v2"}]', "the marker was not written");
+  const backups = resealed.backups as { table_schema: string; table_name: string }[];
+  check(
+    backups.length === TABLES.length && backups.every((row) => row.table_schema === SCHEMA),
+    `every store table should be backed up in ${SCHEMA} and none in public, got: ${JSON.stringify(backups)}`,
+  );
+  const reader = await sealingProvider(url);
+  try {
+    const alice = (await reader.getCollection("alice", "connections")) ?? [];
+    check(alice[0]?.password === secrets.alice, "a re-sealed value did not open");
+    check((await reader.getAccount(email))?.totpSecret === secrets.factor, "a re-sealed factor did not open");
+  } finally {
+    await reader.close();
+  }
+  console.log(`ok   two re-seals at once serialize: one re-seals after a backup of all ${TABLES.length} tables in ${SCHEMA}, one finds nothing to do`);
+
+  // The documented restore (docs/STORAGE.md, "Downgrading"), as the role that owns the tables.
+  const backupOfRows = backups.find((row) => row.table_name.startsWith("user_storage_pre_reseal_"));
+  check(backupOfRows !== undefined, "no backup of user_storage was written");
+  const stamp = backupOfRows!.table_name.slice("user_storage_".length);
+  const restorer = new Client({ connectionString: url });
+  await restorer.connect();
+  try {
+    await restorer.query("BEGIN");
+    await restorer.query(`DELETE FROM ${SCHEMA}.user_storage`);
+    await restorer.query(`INSERT INTO ${SCHEMA}.user_storage SELECT * FROM ${SCHEMA}.user_storage_${stamp}`);
+    await restorer.query(
+      `UPDATE ${SCHEMA}.accounts AS a SET totp_secret = b.totp_secret, totp_pending = b.totp_pending FROM ${SCHEMA}.accounts_${stamp} AS b WHERE a.email = b.email`,
+    );
+    await restorer.query(`DELETE FROM ${SCHEMA}.storage_meta WHERE key = 'credential_envelope'`);
+    await restorer.query("COMMIT");
+  } finally {
+    await restorer.end();
+  }
+  const restored = await storeState(superuser);
+  check(JSON.stringify(restored.rows) === JSON.stringify(original.rows), "the restore did not bring the rows back");
+  check(JSON.stringify(restored.factors) === JSON.stringify(original.factors), "the restore did not bring the factors back");
+  check(restored.marker.length === 0, "the restore did not clear the marker");
+  const fresh = await sealingProvider(url);
+  try {
+    check(
+      ((await fresh.getCollection("bob", "connections")) ?? [])[0]?.password === secrets.bob,
+      "a restored version 1 value did not open",
+    );
+  } finally {
+    await fresh.close();
+  }
+  console.log("ok   the documented restore SQL brings the version 1 rows back and clears the marker, and they open again");
+}
+
 async function main(): Promise<void> {
   const admin = superuserUrl();
   const suffix = randomBytes(4).toString("hex");
@@ -284,6 +498,7 @@ async function main(): Promise<void> {
       check((rows as { can: boolean }[])[0].can === false, `${role.name} must not hold CREATE on schema public`);
     });
     await exerciseTables(urlFor(admin, database, role), urlFor(admin, database));
+    await exerciseReseal(urlFor(admin, database, role), urlFor(admin, database));
   } catch (error) {
     console.error("FAIL storage tables in a named schema");
     console.error(error);
