@@ -4,14 +4,26 @@ import os from "node:os";
 import path from "node:path";
 import { createLocalWorld } from "@workflow/world-local";
 import { persistedRunFacts, workflowAvailability } from "@/lib/agent/agent-manifest";
-import { fingerprintInventory, forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
+import {
+  connectionIdentity,
+  fingerprintInventory,
+  forgetHeldSnapshots,
+  holdSnapshotForConnection,
+} from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_RUN_READ_ALLOWANCE, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { runInvestigation } from "@/lib/agent/investigation";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import { AgentRunService } from "@/lib/agent/run-service";
 import { AgentRunStore } from "@/lib/agent/run-store";
-import type { AgentInventory, AgentRunEvent, AgentToolRefusal } from "@/lib/agent/types";
+import type {
+  AgentContextSnapshot,
+  AgentInventory,
+  AgentRunEvent,
+  AgentRunMode,
+  AgentRunWorkflowType,
+  AgentToolRefusal,
+} from "@/lib/agent/types";
 import { UNTRUSTED_PROVIDER_TEXT_BEGIN, UNTRUSTED_PROVIDER_TEXT_END } from "@/lib/agent/untrusted-content";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
@@ -123,17 +135,54 @@ function freshDataDir(): string {
   return dataDir;
 }
 
-async function startRun(service: AgentRunService) {
-  const availability = workflowAvailability("agent", "investigation", connection.type);
-  if (!availability.open) throw new Error("an investigation does not open on postgres");
+async function startRun(
+  service: AgentRunService,
+  mode: AgentRunMode = "agent",
+  workflowType: AgentRunWorkflowType = "investigation",
+) {
+  const availability = workflowAvailability(mode, workflowType, connection.type);
+  if (!availability.open) throw new Error(`a ${mode} ${workflowType} run does not open on postgres`);
   return service.start({
-    mode: "agent",
-    workflowType: "investigation",
-    ...persistedRunFacts("agent", "investigation", availability),
+    mode,
+    workflowType,
+    ...persistedRunFacts(mode, workflowType, availability),
     actor: { sessionId: "sess_1", role: "user" },
     connectionId: connection.id,
     objective: "How many orders are there?",
   });
+}
+
+/**
+ * An inventory snapshot as a drive recorded it before the walk scrubbed its provider sentences: every sentence on it
+ * carries `password` raw.
+ */
+function rawSnapshot(password: string): AgentContextSnapshot {
+  const inventory = {
+    objects: [
+      {
+        path: ["public", "orders"],
+        name: "orders",
+        kind: "table",
+        columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+        indexes: { unavailable: `index read refused for ${password}` },
+        foreignKeys: [],
+      },
+    ],
+    kinds: [
+      { id: "table", role: "relation", label: "Table", labelPlural: "Tables", sampledFrom: `a walk as ${password}` },
+      { id: "view", role: "relation", label: "View", labelPlural: "Views", unavailable: `denied for ${password}` },
+    ],
+    truncated: { limit: 1, reason: `bounded for ${password}` },
+    unreadContainers: {
+      count: 1,
+      label: "Schema",
+      labelPlural: "Schemas",
+      read: ["public"],
+      unlistedParents: [{ path: "archive", label: "Schema", reason: `could not list as ${password}` }],
+    },
+  } as AgentInventory;
+  const fingerprint = fingerprintInventory(inventory);
+  return { ...inventory, connectionId: connection.id, fingerprint, capturedAtMs: 1 };
 }
 
 async function eventsOf(store: AgentRunStore, runId: string): Promise<readonly AgentRunEvent[]> {
@@ -353,38 +402,13 @@ describe("the run read allowance", () => {
     forgetHeldSnapshots();
     const { store, service, resources } = boot(freshDataDir(), provider);
     const run = await startRun(service);
-    // As a drive before the walk scrubbed these sentences recorded them.
-    const inventory = {
-      objects: [
-        {
-          path: ["public", "orders"],
-          name: "orders",
-          kind: "table",
-          columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
-          indexes: { unavailable: `index read refused for ${password}` },
-          foreignKeys: [],
-        },
-      ],
-      kinds: [
-        { id: "table", role: "relation", label: "Table", labelPlural: "Tables", sampledFrom: `a walk as ${password}` },
-        { id: "view", role: "relation", label: "View", labelPlural: "Views", unavailable: `denied for ${password}` },
-      ],
-      truncated: { limit: 1, reason: `bounded for ${password}` },
-      unreadContainers: {
-        count: 1,
-        label: "Schema",
-        labelPlural: "Schemas",
-        read: ["public"],
-        unlistedParents: [{ path: "archive", label: "Schema", reason: `could not list as ${password}` }],
-      },
-    } as AgentInventory;
-    const fingerprint = fingerprintInventory(inventory);
+    const snapshot = rawSnapshot(password);
     await store.appendEvent(run.runId, {
       kind: "context-captured",
       atMs: 1,
-      fingerprint,
+      fingerprint: snapshot.fingerprint,
       tableCount: 1,
-      snapshot: { ...inventory, connectionId: connection.id, fingerprint, capturedAtMs: 1 },
+      snapshot,
     });
     const script = scriptedModel(answersProse("No report."), answersProse("No report."));
     await runInvestigation(run.runId, {
@@ -400,6 +424,45 @@ describe("the run read allowance", () => {
     expect(text).toContain(PROVIDER_TEXT_WITHHELD);
     for (const form of secretForms([password])) expect(text).not.toContain(form);
   });
+
+  for (const workflowType of ["investigation", "operations"] as const) {
+    for (const source of ["recorded", "held"] as const) {
+      test(`a plan run of the ${workflowType} workflow grounded on a ${source} snapshot withholds a credential its provider sentences carry raw`, async () => {
+        const password = crypto.randomUUID();
+        const credentialed: DatabaseConnection = { ...connection, password };
+        const { provider } = billingProvider(() => 0);
+        forgetHeldSnapshots();
+        const { store, service, resources } = boot(freshDataDir(), provider);
+        const run = await startRun(service, "planning", workflowType);
+        const snapshot = rawSnapshot(password);
+        if (source === "recorded") {
+          await store.appendEvent(run.runId, {
+            kind: "context-captured",
+            atMs: 1,
+            fingerprint: snapshot.fingerprint,
+            tableCount: 1,
+            snapshot,
+          });
+        } else {
+          holdSnapshotForConnection(snapshot, connectionIdentity(credentialed));
+        }
+        const script = scriptedModel(answersProse("No plan."), answersProse("No plan."));
+        await runInvestigation(run.runId, {
+          service,
+          model: await modelOver(script.fetch),
+          resources: { ...resources, connection: credentialed },
+        }).catch(() => undefined);
+        const first = script.turns[0];
+        if (first === undefined) throw new Error(`the plan run over a ${source} snapshot never asked the model`);
+        const text = promptText(first);
+
+        expect(text).toContain("orders");
+        expect(text).toContain(PROVIDER_TEXT_WITHHELD);
+        for (const form of secretForms([password])) expect(text).not.toContain(form);
+        forgetHeldSnapshots();
+      });
+    }
+  }
 
   test("is the run's, not the drive's: a resumed drive starts from what the ledger says the run spent", async () => {
     const { provider, reads } = billingProvider(() => 5);
