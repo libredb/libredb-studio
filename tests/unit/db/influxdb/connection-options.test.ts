@@ -159,21 +159,14 @@ describe("the endpoint is exactly what it claims", () => {
     ).toStartWith("Invalid port");
   });
 
-  test("a tunnel that is on but arrived with no far end is refused, so InfluxDB is never dialled past it", () => {
+  // Core decides the tunnel before any provider is built and refuses one that is on and was not opened
+  // (tests/security/provider-tunnel-decisions.test.ts), so the far end alone says a tunnel carries the connection.
+  test("reads no sshTunnel: the far end alone says a tunnel was opened (FND-2 slice 5)", () => {
     for (const type of TYPES) {
-      expect(refusal(type, { sshTunnel: { enabled: true } }).message).toBe(
-        "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so InfluxDB was not dialled directly: the tunnel opens only when both Host and Port are set.",
-      );
+      for (const sshTunnel of [{ enabled: true }, { enabled: "yes" }, { enabled: false }, null, {}, "on", []]) {
+        expect(build(type, { sshTunnel }).origin.host).toBe("influx.test");
+      }
     }
-    expect(build("influxdb", { sshTunnel: { enabled: false } }).origin.host).toBe("influx.test");
-    expect(build("influxdb", { sshTunnel: null }).origin.host).toBe("influx.test");
-    expect(build("influxdb", { sshTunnel: {} }).origin.host).toBe("influx.test");
-    const notAnObject = "The connection's sshTunnel must be an object; nothing was sent.";
-    expect(refusal("influxdb", { sshTunnel: "on" }).message).toBe(notAnObject);
-    expect(refusal("influxdb", { sshTunnel: [] }).message).toBe(notAnObject);
-    expect(refusal("influxdb", { sshTunnel: { enabled: "yes" } }).message).toBe(
-      "The connection's sshTunnel.enabled must be true or false; nothing was sent.",
-    );
   });
 });
 

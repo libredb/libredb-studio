@@ -36,14 +36,7 @@ import {
 import { type NodeTlsMaterial, nodeTlsMaterial } from "@/lib/db/http/node-transport";
 import type { EgressDecision } from "@/lib/db/types";
 import { secretForms } from "@/lib/db/utils/server-text";
-import {
-  type DatabaseConnection,
-  type QueryWarning,
-  type SSHTunnelConfig,
-  TUNNEL_FAR_END,
-  type TunnelFarEnd,
-  type WithTunnelFarEnd,
-} from "@/lib/types";
+import { type DatabaseConnection, type QueryWarning, TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
 
 /** The two connection types this directory serves. */
 export type InfluxType = "influxdb" | "influxdb3";
@@ -149,8 +142,6 @@ const C0_CONTROL = new RegExp(`[${String.fromCharCode(0)}-${String.fromCharCode(
 const MAX_DATABASE_LENGTH = 255;
 const MAX_QUERY_TIMEOUT_MS = 2_147_483_647;
 
-const TUNNEL_NOT_OPENED =
-  "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so InfluxDB was not dialled directly: the tunnel opens only when both Host and Port are set.";
 const DATABASE_TOO_LONG = "The connection's database is longer than 255 characters.";
 const SEED_REFUSED =
   "This read-only seed connection is refused with this credential, because the mode would promise a boundary the server does not keep; nothing was sent.";
@@ -204,7 +195,7 @@ export function buildInfluxConnectionOptions(
   context: { readonly type: InfluxType; readonly queryTimeout: number; readonly egress: EgressDecision },
 ): InfluxConnectionOptions {
   const { type } = context;
-  const farEnd = tunnelFarEnd(config, type);
+  const farEnd = config[TUNNEL_FAR_END];
   // validateHost, validatePort and the egress policy's literal-address guard, on the host that is dialled.
   const dialled = shared(type, () =>
     httpOrigin("http", config.host, config.port ?? DEFAULT_PORT_BY_TYPE[type], context.egress),
@@ -263,14 +254,6 @@ function credentialSecrets(user: string | undefined, password: string | undefine
   return user === undefined ? [password] : [password, `${user}:${password}`];
 }
 
-function tunnelFarEnd(config: DatabaseConnection & WithTunnelFarEnd, type: InfluxType): TunnelFarEnd | undefined {
-  const tunnel = optionalObject<keyof SSHTunnelConfig>(config.sshTunnel, "sshTunnel", type);
-  const enabled = optionalBoolean(tunnel?.enabled, "sshTunnel.enabled", type) === true;
-  const farEnd = config[TUNNEL_FAR_END];
-  if (enabled && farEnd === undefined) throw new DatabaseConfigError(TUNNEL_NOT_OPENED, type);
-  return farEnd;
-}
-
 function unbracketed(host: string): string {
   return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
 }
@@ -315,25 +298,9 @@ function callTimeout(queryTimeout: number, type: InfluxType): number {
   return queryTimeout;
 }
 
-function optionalObject<Key extends string>(
-  value: unknown,
-  field: string,
-  type: InfluxType,
-): Partial<Record<Key, unknown>> | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "object" || Array.isArray(value)) throw wrongType(field, "an object", type);
-  return value as Partial<Record<Key, unknown>>;
-}
-
 function optionalText(value: unknown, field: string, type: InfluxType): string | undefined {
   if (value === undefined || value === null || value === "") return undefined;
   if (typeof value !== "string") throw wrongType(field, "a string", type);
-  return value;
-}
-
-function optionalBoolean(value: unknown, field: string, type: InfluxType): boolean | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "boolean") throw wrongType(field, "true or false", type);
   return value;
 }
 
