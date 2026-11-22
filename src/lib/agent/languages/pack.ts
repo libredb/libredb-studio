@@ -240,8 +240,9 @@ export interface AgentFamilyVerifierIds {
    * already reaches its documents through an index needs no change. Under `.3` such a run was held until it
    * recommended something, and a live run on 2026-10-17 recommended the index its plan was already using.
    *
-   * Its own id, as the kubectl rule has one: `.3` judged MongoDB runs before this existed, and a ledger opened under
-   * it keeps that rule, while this one judges the runs opened since.
+   * Its own id, as the kubectl rule has one: `.3` judged MongoDB runs before this existed. Such a run's header carries
+   * no verifier, because `.3` is the SQL one and is never persisted, so it is read as the variant's verifier of the day
+   * and judged by this rule as well.
    */
   readonly mongo: "agent-query-optimization-mongo.1";
   /** None: its workflows are judged by the core's own rules. */
