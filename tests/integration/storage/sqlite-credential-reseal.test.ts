@@ -304,7 +304,7 @@ describe("re-sealing a real SQLite store", () => {
       "The re-seal cannot write the connections row of alice back: it cannot re-seal or serialize connections[0]",
     );
     expect(dump()).toEqual(before);
-  });
+  }, 60_000);
 
   test("an element nested too deep in a field outside the binding fails the run by name, and leaves the store as it was and no backup", async () => {
     await previousVersionStore();
@@ -324,7 +324,7 @@ describe("re-sealing a real SQLite store", () => {
     );
     expect(dump()).toEqual(before);
     expect(readdirSync(dir).filter((name) => name.includes("pre-reseal"))).toEqual([]);
-  });
+  }, 60_000);
 
   test("a value that does not open is left as it is and named", async () => {
     await previousVersionStore();

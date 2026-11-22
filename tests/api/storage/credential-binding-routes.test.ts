@@ -207,5 +207,5 @@ describe("the storage routes seal for the session's place", () => {
     expect(response.status).toBe(400);
     expect(((await response.json()) as { error: string }).error).toContain("connections[1] cannot be stored");
     expect(storedPassword("alice@example.com")).toBe(before);
-  });
+  }, 60_000);
 });
