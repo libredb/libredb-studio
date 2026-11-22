@@ -889,12 +889,20 @@ export type AgentToolRefusal =
        */
       readonly answered?: boolean;
       /**
-       * `false` when this server refused the statement before sending it (`RefusedBeforeSendError`: a provider's own
-       * fence, or the run's read allowance), so `message` is this server's sentence and the database never saw the
-       * statement. It is still a statement the run spent and a repair attempt, because the rewrite is the model's to
-       * author. Absent for a failure the database raised, and on every refusal recorded before this field existed.
+       * `false` when the statement was refused before it was sent (`RefusedBeforeSendError`: a provider's own fence,
+       * or the run's read allowance), so the database never saw the statement and `message` is not the database's:
+       * `refusedBy` says whose sentence it is. It is still a statement the run spent and a repair attempt, because the
+       * rewrite is the model's to author. Absent for a failure the database raised, and on every refusal recorded
+       * before this field existed.
        */
       readonly sent?: false;
+      /**
+       * Who refused a statement before it was sent, present exactly when `sent` is: `"studio"` for this server's own
+       * refusal (the run's read allowance), said in this server's voice, and `"provider"` for the provider's, which a
+       * prompt carries fenced as the provider's text naming it. A refusal recorded before this field existed carries
+       * none and is read as the provider's, the conservative reading.
+       */
+      readonly refusedBy?: "studio" | "provider";
     }
   | { readonly class: "reading-refused"; readonly reasonCode: AgentReadingDenyCode; readonly elapsedMs?: number }
   /**

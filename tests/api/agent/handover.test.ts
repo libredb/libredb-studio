@@ -27,6 +27,15 @@ import { AGENT_ENABLED_ENV } from "@/lib/agent/config";
 import { AGENT_HANDOVER_BUDGET, AGENT_HANDOVER_READ_ALLOWANCE } from "@/lib/agent/execution-policy";
 import { rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
+import {
+  AuthenticationError,
+  ConnectionError,
+  ExecutionProfileError,
+  QueryError,
+  RefusedBeforeSendError,
+} from "@/lib/db/errors";
+import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
+import { secretForms } from "@/lib/db/utils/server-text";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { logger } from "@/lib/logger";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
@@ -464,5 +473,102 @@ describe("POST /api/agent/runs/[runId]/handover", () => {
 
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(body.error).toContain("read-only transaction");
+  });
+});
+
+describe("a replay whose provider's text carries the connection's credential", () => {
+  const password = `${crypto.randomUUID()}/${crypto.randomUUID().slice(0, 8)}`;
+  const forms = secretForms([password]);
+  const failures: [string, (text: string) => unknown, "acquire" | "statement"][] = [
+    ["a QueryError's message", (text) => new QueryError(text, "postgres"), "statement"],
+    ["a QueryError's detail", (text) => new QueryError("failed", "postgres", undefined, undefined, text), "statement"],
+    ["a ConnectionError", (text) => new ConnectionError(text, "postgres"), "acquire"],
+    [
+      "a provider's ExecutionProfileError",
+      (text) => new ExecutionProfileError(text, "PROFILE_PRIVILEGES_TOO_BROAD"),
+      "acquire",
+    ],
+    ["a RefusedBeforeSendError", (text) => new RefusedBeforeSendError(text, "postgres"), "statement"],
+    [
+      "an AuthenticationError's fixStatement",
+      (text) => new AuthenticationError("denied", "postgres", { fixStatement: text }),
+      "acquire",
+    ],
+    ["a string the provider rejects with", (text) => text, "statement"],
+    ["a string the acquisition rejects with", (text) => text, "acquire"],
+  ];
+
+  test.each(failures.flatMap(([label, make, phase]) => forms.map((form) => [label, form, make, phase] as const)))(
+    "%s holding %s reaches neither the body nor the log",
+    async (_label, form, make, phase) => {
+      mockResolveConnection.mockResolvedValue({ ...SEED_CONNECTION, password } as never);
+      const failure = make(`could not run as ${form}`);
+      if (phase === "acquire") mockAcquire.mockRejectedValueOnce(failure);
+      else mockQueryReadOnly.mockRejectedValueOnce(failure);
+      const logged = [spyOn(logger, "error"), spyOn(logger, "warn"), spyOn(logger, "info")].map((spy) =>
+        spy.mockImplementation(() => {}),
+      );
+      try {
+        const res = await POST(request(), params());
+        const body = await parseResponseJSON<{ error: string }>(res);
+
+        expect(body.error).toBe(
+          withheldErrorMessage(failure instanceof Error ? failure.name : `thrown ${typeof failure}`),
+        );
+        const calls = JSON.stringify(
+          logged.flatMap((spy) => spy.mock.calls),
+          (_key, value: unknown) => (value instanceof Error ? { message: value.message, stack: value.stack } : value),
+        );
+        for (const each of forms) {
+          expect(JSON.stringify(body)).not.toContain(each);
+          expect(calls).not.toContain(each);
+        }
+      } finally {
+        for (const spy of logged) spy.mockRestore();
+        mockResolveConnection.mockResolvedValue(SEED_CONNECTION);
+      }
+    },
+  );
+
+  test("under an agent credential, an echo of the connection's own password is kept as written, since the hand-over's provider never receives it", async () => {
+    mockResolveConnection.mockResolvedValue({
+      ...SEED_CONNECTION,
+      password,
+      agentUser: "agent_reader",
+      agentPassword: crypto.randomUUID(),
+    } as never);
+    const message = `could not run as ${password}`;
+    mockQueryReadOnly.mockRejectedValueOnce(new QueryError(message, "postgres"));
+    try {
+      const res = await POST(request(), params());
+      const body = await parseResponseJSON<{ error: string }>(res);
+
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(body.error).toContain(message);
+    } finally {
+      mockResolveConnection.mockResolvedValue(SEED_CONNECTION);
+    }
+  });
+
+  test("a connection that no longer resolves is answered before any provider is built", async () => {
+    mockResolveConnection.mockRejectedValueOnce(new Error("the connection is gone"));
+    const res = await POST(request(), params());
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(mockAcquire).not.toHaveBeenCalled();
+  });
+
+  test("a success's warnings are withheld in the body", async () => {
+    mockResolveConnection.mockResolvedValue({ ...SEED_CONNECTION, password } as never);
+    mockQueryReadOnly.mockResolvedValueOnce({ ...RESULT, warnings: [{ message: `notice ${password}` }] } as never);
+    try {
+      const res = await POST(request(), params());
+      const body = await parseResponseJSON<{ result: { warnings?: unknown } }>(res);
+
+      expect(res.status).toBe(200);
+      expect(body.result.warnings).toEqual([{ message: PROVIDER_TEXT_WITHHELD }]);
+      for (const each of forms) expect(JSON.stringify(body)).not.toContain(each);
+    } finally {
+      mockResolveConnection.mockResolvedValue(SEED_CONNECTION);
+    }
   });
 });

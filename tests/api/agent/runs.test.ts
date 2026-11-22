@@ -21,7 +21,9 @@ import * as realSeed from "@/lib/seed/resolve-connection";
 import * as realGate from "@/lib/agent/capability-gate";
 import * as realDb from "@/lib/db";
 import * as realManifest from "@/lib/agent/agent-manifest";
-import { DatabaseConfigError } from "@/lib/db/errors";
+import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
+import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
+import { secretForms } from "@/lib/db/utils/server-text";
 import { LLMConfigError } from "@/lib/llm/types";
 import { AgentRunStoreError, AgentRunUnavailableError } from "@/lib/agent/run-store";
 import { agentPosture } from "@/lib/agent/posture";
@@ -1727,5 +1729,81 @@ describe("POST /api/agent/runs on a server-level connection (#1530)", () => {
     mockResolveConnection.mockImplementation(async () => ({ ...SERVER, database: "sales" }));
     expect((await POST(startRequest({ ...VALID_BODY, catalog: "shop" }))).status).toBe(400);
     expect(mockStart).not.toHaveBeenCalled();
+  });
+
+  test("a configuration error of Studio's own keeps its answer when the credential occurs only in a frame line of its stack", async () => {
+    const password = `${crypto.randomUUID()}/${crypto.randomUUID().slice(0, 8)}`;
+    mockResolveConnection.mockImplementation(async () => ({ ...SERVER, password }));
+    const message = "No API key is configured for the model";
+    mockAdmitAgentModel.mockImplementation(async () => {
+      const error = new LLMConfigError(message, "openai");
+      error.stack = `LLMConfigError: ${message}\n    at admit (/srv/${password}/.next/server/chunk.js:1:2)`;
+      throw error;
+    });
+    const res = await POST(startRequest({ ...VALID_BODY, catalog: "shop" }));
+    const body = await parseResponseJSON<{ error: string; code: string }>(res);
+    expect(res.status).toBe(503);
+    expect(body.error).toBe(message);
+  });
+
+  test("a start whose editor provider fails with the connection's credential in its text answers without it, and logs without it", async () => {
+    const password = `${crypto.randomUUID()}/${crypto.randomUUID().slice(0, 8)}`;
+    mockResolveConnection.mockImplementation(async () => ({ ...SERVER, password }));
+    mockForCatalog.mockImplementation(async () => {
+      throw new ConnectionError(`could not open shop as ${password}`, "postgres");
+    });
+    const logged = [spyOn(logger, "error"), spyOn(logger, "warn"), spyOn(logger, "info")].map((spy) =>
+      spy.mockImplementation(() => {}),
+    );
+    try {
+      const res = await POST(startRequest({ ...VALID_BODY, catalog: "shop" }));
+      const body = JSON.stringify(await parseResponseJSON<Record<string, unknown>>(res));
+
+      expect(body).toContain(withheldErrorMessage("ConnectionError"));
+      const calls = JSON.stringify(
+        logged.flatMap((spy) => spy.mock.calls),
+        (_key, value: unknown) => (value instanceof Error ? { message: value.message, stack: value.stack } : value),
+      );
+      for (const form of secretForms([password])) {
+        expect(body).not.toContain(form);
+        expect(calls).not.toContain(form);
+      }
+      expect(mockStart).not.toHaveBeenCalled();
+    } finally {
+      for (const spy of logged) spy.mockRestore();
+    }
+  });
+
+  test("under an agent credential, a start whose editor provider echoes the connection's own password answers and logs without it, since that provider is built from it", async () => {
+    const password = `${crypto.randomUUID()}/${crypto.randomUUID().slice(0, 8)}`;
+    mockResolveConnection.mockImplementation(async () => ({
+      ...SERVER,
+      password,
+      agentUser: "agent_reader",
+      agentPassword: crypto.randomUUID(),
+    }));
+    mockForCatalog.mockImplementation(async () => {
+      throw new ConnectionError(`could not open shop as ${password}`, "postgres");
+    });
+    const logged = [spyOn(logger, "error"), spyOn(logger, "warn"), spyOn(logger, "info")].map((spy) =>
+      spy.mockImplementation(() => {}),
+    );
+    try {
+      const res = await POST(startRequest({ ...VALID_BODY, catalog: "shop" }));
+      const body = JSON.stringify(await parseResponseJSON<Record<string, unknown>>(res));
+
+      expect(body).toContain(withheldErrorMessage("ConnectionError"));
+      const calls = JSON.stringify(
+        logged.flatMap((spy) => spy.mock.calls),
+        (_key, value: unknown) => (value instanceof Error ? { message: value.message, stack: value.stack } : value),
+      );
+      for (const form of secretForms([password])) {
+        expect(body).not.toContain(form);
+        expect(calls).not.toContain(form);
+      }
+      expect(mockStart).not.toHaveBeenCalled();
+    } finally {
+      for (const spy of logged) spy.mockRestore();
+    }
   });
 });

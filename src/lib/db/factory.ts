@@ -12,7 +12,7 @@ import {
   type ProviderOptions,
   type ProviderExecutionContext,
 } from "./types";
-import { connectPhase, DatabaseConfigError, ExecutionProfileError } from "./errors";
+import { connectPhase, DatabaseConfigError, StudioProfileRefusal } from "./errors";
 import { createSSHTunnel, closeSSHTunnel, releaseUnopenedTunnel, tunnelProviderOpened } from "@/lib/ssh/tunnel";
 import type { TunnelInfo } from "@/lib/ssh/tunnel";
 import { isEnvelopeClaim } from "@/lib/storage/envelope-claim";
@@ -1502,7 +1502,7 @@ export function executionContextFor(
   requester: EditorExecutionContext = {},
 ): ProviderExecutionContext {
   if (!EXECUTION_PROFILES.has(profile)) {
-    throw new ExecutionProfileError(`Unknown execution profile: ${String(profile)}`, "UNSUPPORTED_PROFILE");
+    throw new StudioProfileRefusal(`Unknown execution profile: ${String(profile)}`, "UNSUPPORTED_PROFILE");
   }
   const acquisition = PROFILE_ACQUISITION[profile];
   return {
@@ -1542,14 +1542,14 @@ function resolveAgentCredential(connection: DatabaseConnection): { user?: string
   const { agentUser, agentPassword } = connection;
   if (agentUser === undefined && agentPassword === undefined) return null;
   if (connection.connectionString) {
-    throw new ExecutionProfileError(
+    throw new StudioProfileRefusal(
       `Connection "${connection.id}" configures an agent credential alongside a connection string; the credential cannot be applied, so acquisition is refused`,
       "AGENT_CREDENTIAL_WITH_CONNECTION_STRING",
     );
   }
   if (!agentPassword) return { user: agentUser };
   if (isEnvelopeClaim(agentPassword)) {
-    throw new ExecutionProfileError(
+    throw new StudioProfileRefusal(
       `Connection "${connection.id}" configures an agent credential that cannot be resolved`,
       "AGENT_CREDENTIAL_UNRESOLVABLE",
     );
@@ -1572,7 +1572,7 @@ function assertAgentCredentialForm(
   const { agentUser, agentPassword } = connection;
   const form = provider.getCapabilities().agentCredential;
   if (form === "none") {
-    throw new ExecutionProfileError(
+    throw new StudioProfileRefusal(
       `Connection "${connection.id}" configures an agent credential, and this engine takes none: it has no user for the agent to sign in as, so clear the agent user and password`,
       "AGENT_CREDENTIAL_UNRESOLVABLE",
     );
@@ -1581,31 +1581,31 @@ function assertAgentCredentialForm(
   if (secretOnly) {
     const secret = form === "token" ? "token" : "service-account key";
     if (agentUser !== undefined) {
-      throw new ExecutionProfileError(
+      throw new StudioProfileRefusal(
         `Connection "${connection.id}" configures an agent user, and this engine takes the agent's ${secret} alone: clear the agent user`,
         "AGENT_CREDENTIAL_UNRESOLVABLE",
       );
     }
     if (!agentPassword) {
-      throw new ExecutionProfileError(
+      throw new StudioProfileRefusal(
         `Connection "${connection.id}" configures an incomplete agent credential: this engine takes the agent's ${secret} alone, and it is empty`,
         "AGENT_CREDENTIAL_UNRESOLVABLE",
       );
     }
   } else if (!agentPassword || !agentUser) {
-    throw new ExecutionProfileError(
+    throw new StudioProfileRefusal(
       `Connection "${connection.id}" configures an incomplete agent credential (user and password are both required)`,
       "AGENT_CREDENTIAL_UNRESOLVABLE",
     );
   }
   if (form === "service-account-key" && !isServiceAccountKey(password)) {
-    throw new ExecutionProfileError(
+    throw new StudioProfileRefusal(
       `Connection "${connection.id}" configures an agent password that is not a service-account key, and this engine takes only a service-account key, whose access scope Studio requests itself`,
       "AGENT_CREDENTIAL_UNRESOLVABLE",
     );
   }
   if (form === "dedicated-user" && sameUser(agentUser, connection.user)) {
-    throw new ExecutionProfileError(
+    throw new StudioProfileRefusal(
       `Connection "${connection.id}" configures the connection's own user as the agent user, and this engine takes only an agent user of its own: name a dedicated agent user`,
       "AGENT_CREDENTIAL_UNRESOLVABLE",
     );
@@ -1786,7 +1786,7 @@ export async function acquireExecutionProfileProvider(
   }
   if (acquisition.requiresReadOnlyStatements && typeof provider.queryReadOnly !== "function") {
     await releaseTunnel();
-    throw new ExecutionProfileError(
+    throw new StudioProfileRefusal(
       `Provider type "${connection.type}" implements no read-only statement path (queryReadOnly)`,
       "PROFILE_UNSUPPORTED_BY_PROVIDER",
     );

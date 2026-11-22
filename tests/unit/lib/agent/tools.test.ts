@@ -29,7 +29,12 @@ import {
   selectAgentTools,
 } from "@/lib/agent/tools";
 import { AGENT_ANSWER_CONTRACT } from "@/lib/agent/tool-contracts";
-import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
+import {
+  UNTRUSTED_CONTENT_BEGIN,
+  UNTRUSTED_CONTENT_END,
+  UNTRUSTED_PROVIDER_TEXT_BEGIN,
+  UNTRUSTED_PROVIDER_TEXT_END,
+} from "@/lib/agent/untrusted-content";
 import {
   AGENT_WORKFLOW_PRESENTS_ANSWER,
   AGENT_WORKFLOW_SENDS_STATEMENTS,
@@ -63,9 +68,12 @@ import {
   ExecutionProfileError,
   PoolExhaustedError,
   QueryError,
+  ReadAllowanceExceededError,
   RefusedBeforeSendError,
   TimeoutError,
 } from "@/lib/db/errors";
+import { PROVIDER_TEXT_WITHHELD } from "@/lib/db/operations/provider-text";
+import { secretForms } from "@/lib/db/utils/server-text";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import {
   byteBudgetSentence,
@@ -3294,7 +3302,7 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
     expect(outcome.modelText.split(UNTRUSTED_CONTENT_END)).toHaveLength(2);
   });
 
-  test("a refusal the provider raised before sending is settled as not sent, in this server's voice", async () => {
+  test("a refusal the provider raised before sending is fenced as the provider's text, naming the provider bundled with Studio", async () => {
     const sentence = "Read-only execution refused the statement before sending it: not-a-real-fence";
     const h = harness({}, async () => {
       throw new RefusedBeforeSendError(sentence, "postgres", "SELECT * FROM fenced()");
@@ -3306,16 +3314,46 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
       throw new Error(`expected a database error, got ${JSON.stringify(outcome)}`);
     }
     // Still a statement the run spent and a repair attempt, since the rewrite is the model's to author, but recorded
-    // as never sent, so the rail and a resumed run do not attribute the provider's sentence to the database.
+    // as never sent and as the provider's, so the rail and a resumed run do not attribute the sentence to the database
+    // or to this server.
     expect(outcome.refusal.sent).toBe(false);
+    expect(outcome.refusal.refusedBy).toBe("provider");
     expect(outcome.refusal.message).toBe(sentence);
     expect(h.repairs.attemptsUsed).toBe(1);
     expect(outcome.modelText).not.toContain(UNTRUSTED_CONTENT_BEGIN);
-    expect(outcome.modelText).toContain(sentence);
-    expect(outcome.modelText).toContain("refused by this server before it was sent; the database was not asked");
+    expect(outcome.modelText).toContain(
+      "[UNTRUSTED PROVIDER TEXT: refusal before sending; written by the PostgreSQL provider, bundled with Studio;",
+    );
+    const fence = outcome.modelText.slice(
+      outcome.modelText.indexOf(UNTRUSTED_PROVIDER_TEXT_BEGIN),
+      outcome.modelText.indexOf(UNTRUSTED_PROVIDER_TEXT_END),
+    );
+    expect(fence).toContain(sentence);
+    // Studio's advice follows outside the fence.
+    const after = outcome.modelText.slice(outcome.modelText.indexOf(UNTRUSTED_PROVIDER_TEXT_END));
+    expect(after).toContain("refused by the provider above before it was sent; the database was not asked");
     // The fence's own advice, not the read allowance's: the repair is a different statement, not a smaller read.
-    expect(outcome.modelText).toContain("Draft a statement that does not do what the refusal names");
+    expect(after).toContain("Draft a statement that does not do what the refusal names");
     expect(outcome.modelText).not.toContain("cannot pay for a read that large");
+  });
+
+  test("the read allowance's refusal stays Studio's sentence, unfenced, and is recorded as Studio's", async () => {
+    const sentence = "This run's read allowance cannot pay for that read.";
+    const h = harness({}, async () => {
+      throw new ReadAllowanceExceededError(sentence, "postgres");
+    });
+
+    const outcome = await runReadQueryTool(h.context, { sql: "SELECT * FROM orders" });
+
+    if (outcome.kind !== "refused" || outcome.refusal.class !== "database-error") {
+      throw new Error(`expected a database error, got ${JSON.stringify(outcome)}`);
+    }
+    expect(outcome.refusal.sent).toBe(false);
+    expect(outcome.refusal.refusedBy).toBe("studio");
+    expect(outcome.modelText).not.toContain(UNTRUSTED_PROVIDER_TEXT_BEGIN);
+    expect(outcome.modelText).not.toContain(UNTRUSTED_CONTENT_BEGIN);
+    expect(outcome.modelText).toContain(sentence);
+    expect(outcome.modelText).toContain("cannot pay for a read that large");
   });
 
   test("an error the database raised is not marked as never sent", async () => {
@@ -3329,6 +3367,7 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
       throw new Error(`expected a database error, got ${JSON.stringify(outcome)}`);
     }
     expect(outcome.refusal.sent).toBeUndefined();
+    expect(outcome.refusal.refusedBy).toBeUndefined();
   });
 
   test("a statement timeout is repairable in the same way", async () => {
@@ -3583,6 +3622,9 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
       DatabaseConfigError: "propagates",
       // A DatabaseConfigError: the connection's type names no provider, which no statement can change (FND-1).
       UnknownProviderError: "propagates",
+      // Core's stand-in for a provider error whose text held a credential, built only where an error leaves a path for a
+      // renderer without the connection, never inside a statement's call, so the funnel never sees one: the default.
+      ProviderTextWithheldError: "repairable",
     };
 
     type ErrorConstructor = new (message: string, provider?: string) => Error;
@@ -7577,5 +7619,119 @@ describe("an engine the review record does not list", () => {
     expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_ENGINE_NOT_REVIEWED");
     expect(h.queryReadOnly).not.toHaveBeenCalled();
     expect(h.repairs.attemptsUsed).toBe(0);
+  });
+});
+
+describe("provider text that carries the connection's credential", () => {
+  const password = `${crypto.randomUUID()}/${crypto.randomUUID().slice(0, 8)}`;
+  const credentialed: DatabaseConnection = { ...connection, password };
+  const forms = secretForms([password]);
+  const expectNoForm = (text: string) => {
+    for (const form of forms) expect(text).not.toContain(form);
+  };
+
+  test.each(forms.map((form) => [form]))(
+    "an engine error's message is withheld in the refusal and the model text: %s",
+    async (form) => {
+      const h = harness({ connection: credentialed }, async () => {
+        throw new QueryError(`password authentication failed: ${form}`, "postgres");
+      });
+
+      const outcome = await runReadQueryTool(h.context, { sql: "SELECT 1" });
+
+      if (outcome.kind !== "refused" || outcome.refusal.class !== "database-error") {
+        throw new Error(`expected a database error, got ${JSON.stringify(outcome)}`);
+      }
+      expect(outcome.refusal.message).toBe(PROVIDER_TEXT_WITHHELD);
+      expect(outcome.modelText).toContain(PROVIDER_TEXT_WITHHELD);
+      expect(outcome.modelText).toContain(UNTRUSTED_CONTENT_BEGIN);
+      expectNoForm(JSON.stringify(outcome));
+    },
+  );
+
+  test("a provider's refusal before sending is withheld inside its fence", async () => {
+    const h = harness({ connection: credentialed }, async () => {
+      throw new RefusedBeforeSendError(`refused for ${password}`, "postgres");
+    });
+
+    const outcome = await runReadQueryTool(h.context, { sql: "SELECT 1" });
+
+    if (outcome.kind !== "refused" || outcome.refusal.class !== "database-error") {
+      throw new Error(`expected a database error, got ${JSON.stringify(outcome)}`);
+    }
+    expect(outcome.refusal.message).toBe(PROVIDER_TEXT_WITHHELD);
+    const fence = outcome.modelText.slice(
+      outcome.modelText.indexOf(UNTRUSTED_PROVIDER_TEXT_BEGIN),
+      outcome.modelText.indexOf(UNTRUSTED_PROVIDER_TEXT_END),
+    );
+    expect(fence).toContain(PROVIDER_TEXT_WITHHELD);
+    expectNoForm(JSON.stringify(outcome));
+  });
+
+  test.each(forms.map((form) => [form]))(
+    "the read allowance's sentence is withheld when its label carries the credential, and stays Studio's: %s",
+    async (form) => {
+      const h = harness({ connection: credentialed }, async () => {
+        throw new ReadAllowanceExceededError(`This run cannot pay for ${form} reads.`, "postgres");
+      });
+
+      const outcome = await runReadQueryTool(h.context, { sql: "SELECT 1" });
+
+      if (outcome.kind !== "refused" || outcome.refusal.class !== "database-error") {
+        throw new Error(`expected a database error, got ${JSON.stringify(outcome)}`);
+      }
+      expect(outcome.refusal.refusedBy).toBe("studio");
+      expect(outcome.modelText).toContain(PROVIDER_TEXT_WITHHELD);
+      expect(outcome.modelText).not.toContain(UNTRUSTED_PROVIDER_TEXT_BEGIN);
+      expectNoForm(JSON.stringify(outcome));
+    },
+  );
+
+  test("a result's warnings are withheld in the model text and in the stored artifact", async () => {
+    const h = harness({ connection: credentialed }, async () =>
+      queryResult({ warnings: [{ message: `notice ${password}`, code: `C-${password}`, severity: "WARNING" }] }),
+    );
+
+    const outcome = await runReadQueryTool(h.context, { sql: "SELECT 1" });
+
+    if (outcome.kind !== "completed") throw new Error(`expected completed, got ${outcome.kind}`);
+    expect(outcome.modelText).toContain(PROVIDER_TEXT_WITHHELD);
+    expectNoForm(outcome.modelText);
+    const stored = h.artifacts.get(outcome.artifact.correlationId, 1_000)?.value;
+    expect(stored?.warnings).toEqual([
+      { message: PROVIDER_TEXT_WITHHELD, code: PROVIDER_TEXT_WITHHELD, severity: "WARNING" },
+    ]);
+  });
+
+  test("a refusal whose text is withheld gives no advice it could only have read from that text", async () => {
+    const h = harness({ connection: credentialed }, async () => {
+      throw new QueryError(
+        `Read-only execution exceeded the row budget: 1000 rows > 200 allowed (session ${password})`,
+        "postgres",
+      );
+    });
+
+    const outcome = await runReadQueryTool(h.context, { sql: "SELECT * FROM orders" });
+
+    expect(outcome.modelText).not.toContain("LIMIT 200");
+    expectNoForm(outcome.modelText);
+  });
+
+  test("under an agent credential, an engine error holding the connection's own password is kept as written, since the agent's provider never receives it", async () => {
+    const message = `password authentication failed: ${password}`;
+    const h = harness(
+      { connection: { ...credentialed, agentUser: "agent_reader", agentPassword: crypto.randomUUID() } },
+      async () => {
+        throw new QueryError(message, "postgres");
+      },
+    );
+
+    const outcome = await runReadQueryTool(h.context, { sql: "SELECT 1" });
+
+    if (outcome.kind !== "refused" || outcome.refusal.class !== "database-error") {
+      throw new Error(`expected a database error, got ${JSON.stringify(outcome)}`);
+    }
+    expect(outcome.refusal.message).toBe(message);
+    expect(outcome.modelText).toContain(message);
   });
 });

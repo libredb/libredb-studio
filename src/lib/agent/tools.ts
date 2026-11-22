@@ -73,11 +73,18 @@ import {
   DatabaseError,
   PoolExhaustedError,
   QueryError,
-  ReadAllowanceExceededError,
   RefusedBeforeSendError,
   TimeoutError,
 } from "@/lib/db/errors";
 import type { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
+import {
+  isStudioRefusal,
+  providerAuthor,
+  type ProviderTextScrub,
+  providerTextScrub,
+  scrubProviderText,
+  withScrubbedWarnings,
+} from "@/lib/db/operations/provider-text";
 import type { ExecutionBudget, ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import {
   type AgentCuratedReadInput,
@@ -127,6 +134,7 @@ import {
   enumerableKinds,
   isCountSampled,
   isCountUnavailable,
+  isIndexesUnavailable,
   kindCountIsListing,
   kindNamesWithheld,
 } from "@/lib/db/object-kinds";
@@ -234,7 +242,7 @@ import type {
   AgentRunWorkflowType,
   AgentToolRefusal,
 } from "./types";
-import { fenceUntrustedContent } from "./untrusted-content";
+import { fenceProviderText, fenceUntrustedContent } from "./untrusted-content";
 
 /** The tools an agent-mode run may be offered. Nothing else is a tool. */
 export type AgentToolName =
@@ -1450,6 +1458,7 @@ async function runStatement(
   // call keeps this execution counted until it settles, also when the time refusal answered the run first.
   return runReadOnlyStatement(provider, {
     type: context.connection.type,
+    scrub: providerTextScrub(context.connection, "profiled"),
     statement: sql,
     budget: readOnlyBudgetFor(context, budget),
     mode,
@@ -1694,7 +1703,7 @@ const READ_ALLOWANCE_ADVICE =
   "That read was refused by this server before it was sent; the database was not asked. This run cannot pay for a read that large: ask for a smaller one that fits what is left, or answer from what you have already read.";
 
 const REFUSED_BEFORE_SEND_ADVICE =
-  "That statement was refused by this server before it was sent; the database was not asked, so this is not a database error. Draft a statement that does not do what the refusal names, or answer from what you have already read.";
+  "That statement was refused by the provider above before it was sent; the database was not asked, so this is not a database error. Draft a statement that does not do what the refusal names, or answer from what you have already read.";
 
 function otherStatementAdvice(
   message: string,
@@ -1842,6 +1851,9 @@ export async function runAuditedAgentCall(
     capabilities: context.capabilities,
   };
 
+  // Every provider text this call can carry to the ledger or the prompt passes core's scrub of the connection's
+  // credential first (src/lib/db/operations/provider-text.ts).
+  const scrub = providerTextScrub(context.connection, "profiled");
   let outcome: Awaited<ReturnType<typeof executeAuditedOperation<QueryResult>>>;
   try {
     outcome = guardRefuses(call.guardedStatement)
@@ -1854,8 +1866,10 @@ export async function runAuditedAgentCall(
             artifacts: context.artifacts,
             clock: context.clock,
           },
-          ({ validatedInput, budget, holdUntilSettled }) =>
-            call.invoke(validatedInput, budget, phase, holdUntilSettled),
+          // Scrubbed here, before the pipeline stores the result: the artifact store, the artifact route and the model
+          // text all read the scrubbed warnings from this one place.
+          async ({ validatedInput, budget, holdUntilSettled }) =>
+            withScrubbedWarnings(scrub, await call.invoke(validatedInput, budget, phase, holdUntilSettled)),
         );
   } catch (error) {
     // A curated reading the run chose not to keep. First, because it is a decision
@@ -1918,19 +1932,24 @@ export async function runAuditedAgentCall(
       So `columns` decides the cost, and the advice the model reads is still whichever of the three
       applies. `columnsThatExist` is computed once and used for both rather than called twice.
     */
-    // This server refused the statement before it was sent (a provider's own fence, or the run's read allowance), so
-    // the sentence is this server's and the database never saw the statement: it is not fenced as the database's
-    // words, the refusal records it as not sent, and its advice is the server's. It still costs a repair attempt,
-    // because the repair is a statement the model has to author.
-    const ownRefusal = error instanceof RefusedBeforeSendError;
-    const columns = ownRefusal ? undefined : columnsThatExist(error.message, context.connection);
-    const advice = ownRefusal
-      ? error instanceof ReadAllowanceExceededError
+    // The failure's text, scrubbed once: every later reader (the ledger, the advice, the prompt) reads this, never
+    // `error.message`, so a credential the provider's text carried reaches none of them.
+    const message = scrubProviderText(scrub, error.message);
+    // Refused before it was sent (a provider's own fence, or the run's read allowance), so the database never saw the
+    // statement: it is not fenced as the database's words, and the refusal records it as not sent and who refused it.
+    // The read allowance is this server's own sentence, said in its voice; a provider's refusal is the provider's
+    // text, fenced naming the provider. It still costs a repair attempt, because the repair is a statement the model
+    // has to author.
+    const notSent = error instanceof RefusedBeforeSendError;
+    const studioRefused = notSent && isStudioRefusal(error);
+    const columns = notSent ? undefined : columnsThatExist(message, context.connection);
+    const advice = notSent
+      ? studioRefused
         ? READ_ALLOWANCE_ADVICE
         : REFUSED_BEFORE_SEND_ADVICE
       : (columns ??
         otherStatementAdvice(
-          error.message,
+          message,
           context.connection.type,
           call.fingerprintSource,
           call.fingerprintLanguage ?? CURATED_CALL_LANGUAGE,
@@ -1946,13 +1965,15 @@ export async function runAuditedAgentCall(
       refusal: {
         class: "database-error",
         statementFingerprint: fingerprint,
-        message: error.message,
+        message,
         elapsedMs: context.tracker.usage(context.runId).totalElapsedMs - chargedBeforeMs,
         // Recorded rather than left to be inferred: whether the inventory was in hand decides what
         // this failure cost, and it depends on a process-wide cache a run cannot see. See the
         // field's own note in `types.ts`.
         answered,
-        ...(ownRefusal ? { sent: false as const } : {}),
+        ...(notSent
+          ? { sent: false as const, refusedBy: studioRefused ? ("studio" as const) : ("provider" as const) }
+          : {}),
       },
       // The engine's own words: untrusted, so fenced. The fingerprint stands in for
       // a correlation id, which a failed execution never produced.
@@ -1960,13 +1981,20 @@ export async function runAuditedAgentCall(
       // The advice follows OUTSIDE the fence, because it is this server's sentence and not the
       // engine's: putting it inside would attribute our instruction to the database.
       modelText: [
-        ownRefusal
-          ? error.message
-          : fenceUntrustedContent(error.message, {
-              label: "database error",
-              operationId: call.operationId,
-              reference: fingerprint,
-            }),
+        studioRefused
+          ? message
+          : notSent
+            ? fenceProviderText(message, {
+                label: "refusal before sending",
+                operationId: call.operationId,
+                reference: fingerprint,
+                author: providerAuthor(context.connection.type),
+              })
+            : fenceUntrustedContent(message, {
+                label: "database error",
+                operationId: call.operationId,
+                reference: fingerprint,
+              }),
         // EVERY model, unlike the worked examples three tools below. Those are a whole call built
         // from the run's own ledger and long enough to crowd a small model's turn, so they stay
         // behind a lever a measurement opened. This is one sentence naming columns the operator's
@@ -2665,7 +2693,13 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
         // no bound at all, which is the only worse answer.
         try {
           const walked = await withinGrantedTime(
-            walkObjectInventory(provider, context.capabilities, declared, objectReadArguments(context)),
+            walkObjectInventory(
+              provider,
+              context.capabilities,
+              declared,
+              objectReadArguments(context),
+              providerTextScrub(context.connection, "profiled"),
+            ),
             budget.statementTimeoutMs,
             () => new AgentSchemaReadTimeout(budget.statementTimeoutMs),
             holdUntilSettled,
@@ -2733,6 +2767,7 @@ async function walkObjectInventory(
   capabilities: ProviderCapabilities,
   declared: readonly ObjectKindSpec[],
   readArguments: readonly [ObjectReadOptions] | readonly [],
+  scrub: ProviderTextScrub,
 ): Promise<{ readonly inventory: AgentInventory; readonly defaultContainer?: readonly string[] }> {
   const listObjects = provider.listObjects.bind(provider);
   const describeObjects = provider.describeObjects.bind(provider);
@@ -2745,7 +2780,9 @@ async function walkObjectInventory(
     return {
       inventory: {
         objects: [],
-        kinds: declared.map((spec) => inventoryKind(spec, capabilities, { unavailable: needs })),
+        kinds: declared.map((spec) =>
+          inventoryKind(spec, capabilities, { unavailable: scrubProviderText(scrub, needs) }),
+        ),
       },
     };
   }
@@ -2753,7 +2790,7 @@ async function walkObjectInventory(
   // A provider that declares a walk scope is read in its session-default container and the ones it names; the
   // rest are counted, and a parent the scope reads nothing below whose listing failed is named, so the inventory
   // can say what it did not read.
-  const grounding = await enumerateGroundingContainers(provider, capabilities);
+  const grounding = await enumerateGroundingContainers(provider, capabilities, scrub);
   const { unlistedParents, unlistedParentsNotNamed } = grounding;
   const scoped = scopeGroundingContainers(grounding.enumeration, capabilities.agentWalkScope, grounding.parentDefault);
   const enumeration = scoped.enumeration;
@@ -2780,20 +2817,22 @@ async function walkObjectInventory(
       // A kind whose names are withheld is counted and never listed, so no name of it reaches a model.
       if (kindNamesWithheld(spec)) {
         if (count === undefined) withheldUncounted.add(spec.id);
-        else if (isCountUnavailable(count)) unavailable.set(spec.id, count.unavailable);
+        else if (isCountUnavailable(count)) unavailable.set(spec.id, scrubProviderText(scrub, count.unavailable));
         else {
           withheld.set(spec.id, (withheld.get(spec.id) ?? 0) + count.count);
-          if (isCountSampled(count)) sampledFrom.set(spec.id, count.sampledFrom);
+          if (isCountSampled(count)) sampledFrom.set(spec.id, scrubProviderText(scrub, count.sampledFrom));
         }
         continue;
       }
       // The exception the docblock names: the refusal this count met is the refusal the listing
       // would meet, so no listing is sent and the sentence travels on the kind (#1089 4.7).
       if (count !== undefined && isCountUnavailable(count) && kindCountIsListing(capabilities, spec.id)) {
-        unavailable.set(spec.id, count.unavailable);
+        unavailable.set(spec.id, scrubProviderText(scrub, count.unavailable));
         continue;
       }
-      if (count !== undefined && isCountSampled(count)) sampledFrom.set(spec.id, count.sampledFrom);
+      if (count !== undefined && isCountSampled(count)) {
+        sampledFrom.set(spec.id, scrubProviderText(scrub, count.sampledFrom));
+      }
       if (pairs >= INVENTORY_PAIR_LIMIT) {
         truncated = { limit: INVENTORY_PAIR_LIMIT, reason: PAIR_TRUNCATION_REASON };
         break;
@@ -2820,7 +2859,9 @@ async function walkObjectInventory(
         // The provider's own bound in the provider's own words. Reported even when the listing
         // fitted, because a complete list of objects whose columns were cut is still an
         // incomplete reading, and a model told otherwise reads a missing column as an absent one.
-        if (batch.truncated !== undefined) truncated = batch.truncated;
+        if (batch.truncated !== undefined) {
+          truncated = { limit: batch.truncated.limit, reason: scrubProviderText(scrub, batch.truncated.reason) };
+        }
       }
       const byPath = new Map(details.map((detail) => [pathKey(detail.path), detail]));
       for (const object of listed) {
@@ -2837,7 +2878,10 @@ async function walkObjectInventory(
           // A column the engine only inferred from sampled data is named by the data, so it never enters the
           // inventory a model is grounded on.
           columns: machineColumns(detail?.columns ?? []),
-          indexes: detail?.indexes ?? [],
+          // A refused index read carries the provider's sentence, scrubbed like every other provider text here.
+          indexes: isIndexesUnavailable(detail?.indexes)
+            ? { unavailable: scrubProviderText(scrub, detail.indexes.unavailable) }
+            : (detail?.indexes ?? []),
           foreignKeys: detail?.foreignKeys ?? [],
           // `rowCount` and `sizeBytes` are deliberately NOT carried, and the reason is the
           // fingerprint: a snapshot's identity is over the schema, so a row estimate on it
@@ -2935,6 +2979,7 @@ function inventoryKind(
 async function enumerateGroundingContainers(
   provider: DatabaseProvider,
   capabilities: ProviderCapabilities,
+  scrub: ProviderTextScrub,
 ): Promise<{
   readonly enumeration: ContainerEnumeration;
   readonly parentDefault?: readonly string[];
@@ -2960,7 +3005,11 @@ async function enumerateGroundingContainers(
       } catch (error) {
         if (!(error instanceof DatabaseError) || scopeReadsUnder(capabilities.agentWalkScope, parent)) throw error;
         if (unlistedParents.length < UNLISTED_PARENTS_NAMED_MAX) {
-          unlistedParents.push({ path: parent.path.join("."), label, reason: unlistedReason(error.message) });
+          unlistedParents.push({
+            path: parent.path.join("."),
+            label,
+            reason: unlistedReason(scrubProviderText(scrub, error.message)),
+          });
         } else {
           unlistedParentsNotNamed = { count: (unlistedParentsNotNamed?.count ?? 0) + 1, label, labelPlural };
         }

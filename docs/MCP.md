@@ -255,7 +255,10 @@ In the rest of this guide, `agent-read-only` is Studio's least-privilege read pr
   - S3-compatible object storage: by the provider's read client, which holds six metadata reads alone over a transport that sends GET and HEAD only, so no object read, key listing, write, delete or presigned URL can be sent, with every answer projected to names, counts and flags; the grants of the seed's separate read key, which MCP requires, decide which buckets it reads ([s3.md](./providers/s3.md#157-mcp-read)).
   A statement check runs first as defence in depth.
 - A result that carries database content starts with a text block telling the model to treat what follows as untrusted data.
-- A profile refusal raised by the statement call itself, where the provider checks its principal before every statement, as Oracle's does, names objects and roles any user of the database may have named (functions, views, policies, roles), so it is answered in the tool's sentence behind that notice; a profile refusal at the open carries no notice.
+- A refusal a provider wrote comes after a notice naming the provider that wrote it, for example "PostgreSQL provider, bundled with Studio", and is untrusted text too: a profile refusal the provider raises at the open or by the statement call (where the provider checks its principal before every statement, as Oracle's does, and may name objects and roles any user of the database chose), a statement it refused before sending, and an offset or a database it would not open.
+  Studio's own refusals carry no notice and read in Studio's words.
+- Every provider text in an answer and in the server log, an engine error, a note, a refusal, is withheld whole when it holds a credential the seed's provider receives, or any form of one, before it is redacted and cut.
+  That is the seed's read credential of its own, `agentPassword`, in place of its password where the seed sets one, a Vault-resolved one included, and never the SSH tunnel's secrets, which no provider receives.
 
 ## Enabling it
 
@@ -659,7 +662,7 @@ OpenAI's [plugin guide](https://developers.openai.com/plugins/build/plugins) sai
 - `run_read_query` reads at most 1000 rows and 1 MiB from the database, and answers at most `max_rows` rows (default 100, at most 500) and 32 KiB; `truncated`, `truncated_by`, `pagination.hasMore` and `pagination.nextOffset` say what was cut and where the next page starts.
   The provider refuses a result past 1000 rows or 1 MiB, and Studio checks every statement tool's answer against both again, each row's UTF-8 JSON bytes summed, before it is cut to `max_rows` and 32 KiB, so a result past either is refused as too large rather than cut.
 - On an engine that bills every read, one statement call may spend at most 2000 billed reads (`MCP_CALL_READ_ALLOWANCE`), and each call gets its own allowance; a read past it is refused before it is sent. No engine served by MCP bills its reads yet.
-- A statement a provider's own read-only fence refuses before sending it is answered "The statement was refused before it reached the database:" with the provider's sentence, never as the database's error.
+- A statement a provider's own read-only fence refuses before sending it is answered "The statement was refused before it reached the database:" with the provider's sentence, after a notice naming the provider that wrote it, never as the database's error.
 - A NaN, Infinity or -Infinity cell in a `run_read_query` answer is the string `"NaN"`, `"Infinity"` or `"-Infinity"`; it used to be `null`, which a client could not tell from SQL NULL. A text cell holding one of those words looks the same.
 - A query with its own `LIMIT` or `TOP`, and `VALUES`, `TABLE` or `EXPLAIN`, cannot be paged with `offset`; the answer says how to page it in that engine's SQL.
 - `inspect_schema` and `list_connections` fit each page to 32 KiB, and `has_more` and `next_offset` say where the next page starts.

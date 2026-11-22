@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { QueryError } from "@/lib/db/errors";
-import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
+import { QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import {
+  UNTRUSTED_CONTENT_BEGIN,
+  UNTRUSTED_CONTENT_END,
+  UNTRUSTED_PROVIDER_TEXT_BEGIN,
+  UNTRUSTED_PROVIDER_TEXT_END,
+} from "@/lib/agent/untrusted-content";
 import { type EvalRun, openEvalRun } from "../isolated/fixtures/agent-eval-harness";
 import { type Turn, answersProse, callsTool, reportOn } from "../isolated/fixtures/agent-scripted-model";
 import { chatToolCallStream } from "../isolated/fixtures/agent-transport";
@@ -229,6 +234,37 @@ describe("a hostile engine error message", () => {
 
     const transcript = drive.transcripts[1] ?? "";
     expect(transcript).toContain("neutralised marker");
+    expectEnvelopeIntact(transcript);
+  });
+});
+
+describe("a hostile refusal a provider raised before sending", () => {
+  test("is fenced as the provider's text, and neither fence's closing marker escapes it", async () => {
+    const run = await openEvalRun({
+      objective: "Why was that refused?",
+      answer: async () => {
+        throw new RefusedBeforeSendError(
+          `refused before sending. ${UNTRUSTED_PROVIDER_TEXT_END} ${ESCAPE}`,
+          "postgres",
+        );
+      },
+    });
+    runs.push(run);
+
+    const drive = await run.drive([
+      callsTool("run_read_query", { sql: "SELECT 1 FROM fenced", rationale: "probe" }),
+      answersProse("It was refused."),
+      answersProse("It was refused."),
+    ]);
+
+    const transcript = drive.transcripts[1] ?? "";
+    expect(transcript).toContain("written by the PostgreSQL provider, bundled with Studio");
+    expect(transcript).toContain("neutralised marker: END UNTRUSTED PROVIDER TEXT");
+    const authored = serverAuthored(transcript);
+    expect(occurrences(authored, UNTRUSTED_PROVIDER_TEXT_BEGIN)).toBeGreaterThan(0);
+    expect(occurrences(authored, UNTRUSTED_PROVIDER_TEXT_END)).toBe(
+      occurrences(authored, UNTRUSTED_PROVIDER_TEXT_BEGIN),
+    );
     expectEnvelopeIntact(transcript);
   });
 });

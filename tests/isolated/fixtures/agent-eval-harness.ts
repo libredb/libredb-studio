@@ -436,6 +436,8 @@ export interface EvalRunOptions {
    * verifier's second arm exists for.
    */
   readonly curated?: Partial<Record<keyof EvalCuratedReadings, unknown>>;
+  /** Fields the run's connection carries beyond the preset's, such as a password a provider's text may echo. */
+  readonly connectionFields?: Partial<DatabaseConnection>;
 }
 
 export interface EvalDriveOptions {
@@ -576,7 +578,7 @@ export async function openEvalRun(options: EvalRunOptions = {}): Promise<EvalRun
     const budget = AGENT_WORKFLOW_BUDGETS[persisted.record.workflowType];
 
     const resources: AgentToolResources = {
-      connection: engine.connection,
+      connection: { ...engine.connection, ...options.connectionFields },
       capabilities: engine.capabilities,
       labels: engine.labels ?? TABLE_LABELS,
       registry: createCanonicalOperationRegistry(),

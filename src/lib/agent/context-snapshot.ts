@@ -97,6 +97,7 @@ import type {
 import { fenceUntrustedContent, quoteIdentifierForPrompt } from "./untrusted-content";
 import { DatabaseError, ExecutionProfileError, type ExecutionProfileDenyCode } from "@/lib/db/errors";
 import { declaredKinds, isIndexesUnavailable } from "@/lib/db/object-kinds";
+import { type ProviderTextScrub, scrubProviderText } from "@/lib/db/operations/provider-text";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { quoteObjectPath } from "@/lib/query-generators";
 import type { ColumnSchema, DatabaseConnection, DatabaseType } from "@/lib/types";
@@ -480,6 +481,49 @@ export function reusableSnapshot(events: readonly AgentRunEvent[], connectionId:
     return snapshot;
   }
   return null;
+}
+
+/**
+ * A snapshot as a prompt carries it: every provider sentence on it (a kind's refused or sampled count, a parent the
+ * walk could not list, a refused index read, a bounded description's reason) passed through core's scrub once more,
+ * because a ledger recorded before the walk scrubbed them holds them raw, and a reused or held snapshot reaches a
+ * prompt from that ledger. Packing only: the snapshot itself, which the ledger and the hold keep, is not changed, so
+ * its fingerprint stays the identity of the reading it records. A capture taken since already carries scrubbed
+ * sentences, which this answers unchanged.
+ */
+export function scrubSnapshotSentences(snapshot: AgentContextSnapshot, scrub: ProviderTextScrub): AgentContextSnapshot {
+  const { kinds, truncated, unreadContainers } = snapshot;
+  return {
+    ...snapshot,
+    objects: snapshot.objects.map((object) =>
+      isIndexesUnavailable(object.indexes)
+        ? { ...object, indexes: { unavailable: scrubProviderText(scrub, object.indexes.unavailable) } }
+        : object,
+    ),
+    ...(kinds === undefined
+      ? {}
+      : {
+          kinds: kinds.map((kind) => ({
+            ...kind,
+            ...(kind.sampledFrom === undefined ? {} : { sampledFrom: scrubProviderText(scrub, kind.sampledFrom) }),
+            ...(kind.unavailable === undefined ? {} : { unavailable: scrubProviderText(scrub, kind.unavailable) }),
+          })),
+        }),
+    ...(truncated === undefined
+      ? {}
+      : { truncated: { ...truncated, reason: scrubProviderText(scrub, truncated.reason) } }),
+    ...(unreadContainers?.unlistedParents === undefined
+      ? {}
+      : {
+          unreadContainers: {
+            ...unreadContainers,
+            unlistedParents: unreadContainers.unlistedParents.map((parent) => ({
+              ...parent,
+              reason: scrubProviderText(scrub, parent.reason),
+            })),
+          },
+        }),
+  };
 }
 
 /**

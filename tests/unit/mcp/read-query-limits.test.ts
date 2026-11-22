@@ -348,18 +348,11 @@ describe("the provider refusal mapper", () => {
     });
   });
 
-  test("answers a refusal the provider raised before sending in this server's words", () => {
+  test("answers a pre-send refusal with the error itself, for the caller to render", () => {
     const error = new RefusedBeforeSendError(
       "Read-only execution refused the statement before sending it: not-a-real-fence",
     );
-    expect(classifyReadQueryFailure(error, 1_000, deadline)).toEqual({
-      kind: "not-sent",
-      text: "The statement was refused before it reached the database: Read-only execution refused the statement before sending it: not-a-real-fence.",
-    });
-    expect(classifyReadQueryFailure(new RefusedBeforeSendError("Refused already."), 1_000, deadline)).toEqual({
-      kind: "not-sent",
-      text: "The statement was refused before it reached the database: Refused already.",
-    });
+    expect(classifyReadQueryFailure(error, 1_000, deadline)).toEqual({ kind: "not-sent", error });
   });
 
   test("keeps the read allowance's refusal as too large, though it too is refused before sending", () => {

@@ -58,6 +58,7 @@ import {
   TestAmqpConnection,
   TestPublisher,
 } from "../helpers/rabbitmq-test-amqp091";
+import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
 import { egressDecision } from "@/lib/db/egress-decision";
 
 function env(name: string): string {
@@ -184,7 +185,10 @@ async function liarProvider(connection: ManagedConnection): Promise<RabbitMQProv
 interface Recorded {
   readonly acquired: readonly ExecutionProfile[];
   readonly isError: boolean;
-  /** The answer's text blocks after the untrusted-content notice, or its one refusal. */
+  /**
+   * The answer's text blocks after the untrusted-content notice, or its refusal: Studio's one block, or the
+   * sentence a provider wrote, recorded without the notice naming the provider that comes before it.
+   */
   readonly text: string;
   readonly rows?: unknown;
   readonly truncated?: unknown;
@@ -197,7 +201,7 @@ function recorded(result: ToolResult, acquired: readonly ExecutionProfile[]): Re
   return {
     acquired,
     isError: result.isError === true,
-    text: structured === undefined ? texts.join(" ") : "<structured>",
+    text: structured === undefined ? providerRefusalText(result, "rabbitmq") || texts.join(" ") : "<structured>",
     ...(structured === undefined
       ? {}
       : { rows: structured.rows, truncated: structured.truncated_by ?? null, hint: structured.hint }),
@@ -219,6 +223,7 @@ async function mcp(
     caller: { username: "live", role: "admin" },
     visibleConnections: async () => [connection],
     resolve: async () => connection,
+    textScrub: fakeTextScrub,
     acquire: (seeded: ManagedConnection, profile: ExecutionProfile) => {
       acquired.push(profile);
       return options.acquire === undefined ? acquireExecutionProfileProvider(seeded, profile) : options.acquire(seeded);

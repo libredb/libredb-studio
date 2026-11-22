@@ -20,13 +20,20 @@ import { join } from "node:path";
 import { languageServer } from "@/lib/agent/languages/server";
 import { getServerAuditBuffer } from "@/lib/audit";
 import { S3_AGENT_FAILURE_SENTENCES } from "@/lib/db/providers/objectstore/s3/agent-metadata-read";
+import { PROVIDER_TEXT_WITHHELD } from "@/lib/db/operations/provider-text";
 import { McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_CANCELLED_TEXT, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import { timeoutText } from "@/lib/mcp/tools/read-query-limits";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
-import { pinMcpTestEnvironment, resetMcpTestState, waitFor, writeSeedFile } from "../../helpers/mcp-fixtures";
+import {
+  fakeTextScrub,
+  pinMcpTestEnvironment,
+  resetMcpTestState,
+  waitFor,
+  writeSeedFile,
+} from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
 import { bucketsXml, errorXml, objectsXml } from "../../helpers/s3-fake-transport";
 
@@ -508,5 +515,47 @@ describe("the connection's own key", () => {
     expect(slowClosedAt).toBeNull();
     await waitFor(() => slowClosedAt !== null);
     expect((slowClosedAt ?? 0) - cancelledAt).toBeGreaterThan(200);
+  });
+});
+
+describe("notes a provider writes", () => {
+  test("notes holding the credential are withheld", async () => {
+    const agentPassword = crypto.randomUUID();
+    const connection = {
+      ...STORE(),
+      agentPassword,
+      id: "seed:store",
+      name: "store",
+      seedId: "store",
+      managed: true,
+      mcp: true,
+      roles: ["admin"],
+      createdAt: new Date(),
+    } as unknown as ManagedConnection;
+    const provider = {
+      getCapabilities: () => ({}),
+      queryReadOnly: async () => ({
+        rows: [{ bucket: "sales" }],
+        fields: ["bucket"],
+        rowCount: 1,
+        executionTime: 1,
+        warnings: [{ message: `signed with ${agentPassword}` }, { message: "a note of its own" }],
+      }),
+    };
+    const context = {
+      caller: { username: "alice", role: "admin" },
+      resolve: async () => connection,
+      textScrub: fakeTextScrub,
+      acquire: async () => provider,
+    } as unknown as McpConnectionContext;
+    const input = RUN_S3_READ_ARM.inputSchema.parse({
+      connection_id: connection.id,
+      statement: "aws s3api list-buckets",
+    }) as McpStatementInput;
+
+    const result = await runStatement(RUN_S3_READ_ARM, input, { context, signal: new AbortController().signal });
+
+    expect(result.structuredContent?.notes).toEqual([PROVIDER_TEXT_WITHHELD, "a note of its own"]);
+    expect(JSON.stringify(result)).not.toContain(agentPassword);
   });
 });

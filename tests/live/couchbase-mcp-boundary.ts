@@ -55,6 +55,7 @@ import type { ToolResult } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
+import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
 
 const PREFIX = "libredb_lm_";
 /** One password for every seeded user, made for the run, never printed. */
@@ -180,6 +181,7 @@ async function mcp(
     caller: { username: "live", role: "admin" },
     visibleConnections: async () => [connection],
     resolve: async () => connection,
+    textScrub: fakeTextScrub,
     acquire: (target: ManagedConnection, profile: ExecutionProfile) => {
       acquired.push(profile);
       return acquireExecutionProfileProvider(target, profile);
@@ -397,7 +399,7 @@ async function opens(): Promise<void> {
   ];
   for (const { connection, label, says } of refusedOpens) {
     const { result, acquired } = await mcp(connection, { sql: "SELECT RAW 1" }, RUN_READ_QUERY);
-    const text = textOf(result);
+    const text = providerRefusalText(result, "couchbase");
     check(
       result.isError === true &&
         acquired.join() === "agent-read-only" &&
@@ -406,7 +408,7 @@ async function opens(): Promise<void> {
         ) &&
         text.endsWith(ENGINES) &&
         text.includes(` also holds ${says}`),
-      `open: ${label} is refused through MCP, naming ${says} -> ${text}`,
+      `open: ${label} is refused through MCP, after the notice naming the Couchbase provider, naming ${says} -> ${textOf(result)}`,
     );
   }
   // A user holding no role cannot read /pools/default, so the open fails before the check, as unauthenticated.
@@ -433,7 +435,9 @@ async function boundary(): Promise<void> {
     );
     const { result } = await mcp(agent, { sql: statement });
     check(
-      textOf(result).startsWith(`${NOT_SENT}${FENCE}; this statement does not begin with SELECT or WITH`),
+      providerRefusalText(result, "couchbase").startsWith(
+        `${NOT_SENT}${FENCE}; this statement does not begin with SELECT or WITH`,
+      ),
       `boundary: bypassed, the provider's fence refuses it before it is sent: ${statement}`,
     );
     const behind = await raw(AGENT, PASSWORD, statement);
@@ -447,7 +451,7 @@ async function boundary(): Promise<void> {
   for (const statement of FENCED_FORMS) {
     const { result } = await mcp(agent, { sql: statement });
     check(
-      textOf(result).startsWith(`${NOT_SENT}${FENCE}; `),
+      providerRefusalText(result, "couchbase").startsWith(`${NOT_SENT}${FENCE}; `),
       `boundary: bypassed, the provider's fence refuses ${JSON.stringify(statement)} before it is sent -> ${textOf(result)}`,
     );
   }
@@ -591,8 +595,9 @@ async function formsAndLimits(): Promise<void> {
   for (const statement of ["EXPLAIN SELECT x FROM ARRAY_RANGE(0, 3) AS x", "VALUES (1)", "TABLE `_default`"]) {
     const passed = await mcp(agent, { sql: statement }, RUN_READ_QUERY);
     check(
-      textOf(passed.result).startsWith(`${NOT_SENT}${FENCE}; this statement does not begin with SELECT or WITH`) &&
-        passed.acquired.join() === "agent-read-only",
+      providerRefusalText(passed.result, "couchbase").startsWith(
+        `${NOT_SENT}${FENCE}; this statement does not begin with SELECT or WITH`,
+      ) && passed.acquired.join() === "agent-read-only",
       `forms: ${JSON.stringify(statement)} passes the MCP fence and the provider refuses it before it is sent -> ${textOf(passed.result)}`,
     );
   }

@@ -50,6 +50,7 @@ import { timeoutText } from "@/lib/mcp/tools/read-query-limits";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
+import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
 
 function env(name: string): string {
   const value = process.env[name];
@@ -339,6 +340,7 @@ async function mcp(
     caller: { username: "live", role: "admin" },
     visibleConnections: async () => [connection],
     resolve: async () => connection,
+    textScrub: fakeTextScrub,
     acquire: async (target: ManagedConnection, profile: ExecutionProfile) => {
       acquired.push(profile);
       const provider: DatabaseProvider = await acquireExecutionProfileProvider(target, profile);
@@ -536,7 +538,7 @@ try {
     );
     const bypassed = await mcp(reader, { statement }, UNFENCED);
     check(
-      bypassed.result.isError === true && textOf(bypassed.result).startsWith(NOT_SENT),
+      bypassed.result.isError === true && providerRefusalText(bypassed.result, "etcd").startsWith(NOT_SENT),
       `boundary: ${what}, the fence removed, is refused by the provider's reader before it is sent`,
     );
   }
@@ -596,8 +598,10 @@ try {
     const { result } = await mcp(connection, { statement: "member list" });
     const sent = delta(counted, await handled());
     check(
-      result.isError === true && textOf(result) === openRefusal(sentence) && sent.MemberList === undefined,
-      `open: ${what} is refused in the tool's sentence, and no command is sent (${JSON.stringify(sent)})`,
+      result.isError === true &&
+        providerRefusalText(result, "etcd") === openRefusal(sentence) &&
+        sent.MemberList === undefined,
+      `open: ${what} is refused in the tool's sentence, after the notice naming the etcd provider, and no command is sent (${JSON.stringify(sent)})`,
     );
   }
   {

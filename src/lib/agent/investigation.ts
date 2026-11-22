@@ -74,6 +74,7 @@ import {
   packContextForTask,
   packOperationsInventory,
   reusableSnapshot,
+  scrubSnapshotSentences,
 } from "./context-snapshot";
 import { agentModelTurnTimeoutMs } from "./config";
 import { tuningProvenance } from "./model-tuning";
@@ -179,15 +180,17 @@ import {
 import {
   UNTRUSTED_CONTENT_BEGIN,
   UNTRUSTED_CONTENT_END,
+  fenceProviderText,
   fenceUntrustedContent,
   neutraliseToolInput,
   neutraliseUntrustedMarkers,
 } from "./untrusted-content";
 import { isStatementReadOperation } from "@/lib/db/operations/descriptors";
+import { providerAuthor, providerTextScrub, scrubProviderText } from "@/lib/db/operations/provider-text";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { editorLanguageForTabType, resolveTabType } from "@/lib/editor/tab-language";
-import type { DatabaseType } from "@/lib/types";
+import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 
 /** Everything a tool call needs EXCEPT what the run's own record decides. */
 export type AgentToolResources = Omit<
@@ -1913,8 +1916,12 @@ function toolsByStep(events: readonly AgentRunEvent[]): ReadonlyMap<string, stri
   return tools;
 }
 
-/** How an outcome the ledger already holds is stated back to the model. */
-function describeSettled(event: AgentSettledStepEvent, toolName: string): string {
+/**
+ * How an outcome the ledger already holds is stated back to the model. `connection` is the drive's own: a recorded
+ * message passes core's scrub of its credential again, because a ledger written before that scrub existed holds the
+ * raw text, and a provider's refusal names the provider that wrote it.
+ */
+function describeSettled(event: AgentSettledStepEvent, toolName: string, connection: DatabaseConnection): string {
   if (event.kind === "tool-completed") {
     const { correlationId, operationId, summary } = event.artifact;
     // The citation form, not merely the id (#350): a resumed run is told about work
@@ -1941,15 +1948,28 @@ function describeSettled(event: AgentSettledStepEvent, toolName: string): string
     // run-loop outcome instead of a refusal.
     return `Step ${event.stepId} (${toolName}) reached the database and its reading was not delivered: ${refusal.reasonCode}. Ask for a different reading rather than repeating this one.`;
   }
-  if (refusal.sent === false) {
+  const message = scrubProviderText(providerTextScrub(connection, "profiled"), refusal.message);
+  if (refusal.sent === false && refusal.refusedBy === "studio") {
     // This server's own sentence, so said in its voice rather than fenced as the database's.
-    const reason = /[.!?]$/.test(refusal.message) ? refusal.message : `${refusal.message}.`;
+    const reason = /[.!?]$/.test(message) ? message : `${message}.`;
     return `Step ${event.stepId} (${toolName}) was refused before it was sent, so the database never saw it: ${reason} Draft a statement that does not do what the refusal names.`;
+  }
+  if (refusal.sent === false) {
+    // The provider's own sentence, or one recorded before the ledger said who refused, which is read the conservative
+    // way: fenced as the provider's text, naming it, with this server's advice after the fence.
+    const author = providerAuthor(connection.type);
+    const fenced = fenceProviderText(message, {
+      label: "refusal before sending",
+      operationId: toolName,
+      reference: refusal.statementFingerprint,
+      author,
+    });
+    return `Step ${event.stepId} (${toolName}) was refused before it was sent, by the ${author}, so the database never saw it:\n${fenced}\nDraft a statement that does not do what the refusal names.`;
   }
   // The engine's own words: untrusted, so fenced rather than quoted into the
   // server's voice. The fingerprint stands in for a correlation id, which a
   // statement that failed never produced.
-  const fenced = fenceUntrustedContent(refusal.message, {
+  const fenced = fenceUntrustedContent(message, {
     label: "database error",
     operationId: toolName,
     reference: refusal.statementFingerprint,
@@ -1980,7 +2000,7 @@ function describePriorRecommendation(event: Extract<AgentRunEvent, { kind: "reco
  * for a run nobody has driven yet — a fresh run is told nothing about a past it
  * does not have.
  */
-function describePriorProgress(record: AgentRunRecord): string | null {
+function describePriorProgress(record: AgentRunRecord, connection: DatabaseConnection): string | null {
   const tools = toolsByStep(record.events);
   const lines: string[] = [];
 
@@ -1992,7 +2012,7 @@ function describePriorProgress(record: AgentRunRecord): string | null {
     } else if (event.kind === "statement-drafted") {
       lines.push(`Step ${event.stepId}: you drafted ${event.sql} (${event.rationale}).`);
     } else if (event.kind === "tool-completed" || event.kind === "tool-refused") {
-      lines.push(describeSettled(event, tools.get(event.stepId) ?? "a tool"));
+      lines.push(describeSettled(event, tools.get(event.stepId) ?? "a tool", connection));
     } else if (event.kind === "report-composed") {
       lines.push(`A report of ${event.claims.length} claim(s) was composed.`);
     } else if (event.kind === "plan-comparison") {
@@ -3009,7 +3029,7 @@ export async function runInvestigation(
     let modelOutputLimitAsked = delivered["model-output-limit"];
     /** The call written into the text channel; see `stoppedWithAToolCall`. */
     let toolCallAsTextAnswers = delivered["tool-call-as-text"];
-    const priorProgress = describePriorProgress(record);
+    const priorProgress = describePriorProgress(record, context.connection);
     if (priorProgress !== null) messages.push({ role: "user", content: priorProgress });
 
     // Step ids the ledger already knows, so a draft is recorded once per step and a
@@ -3183,6 +3203,8 @@ export async function runInvestigation(
       // own history. Re-holding a reading that came from the hold is not a no-op either
       // — it moves the connection back to the newest end of the eviction order.
       holdSnapshotForConnection(snapshot, connectionIdentity(context.connection));
+      // What the prompt is shown: a recorded or held snapshot may predate the walk's scrub of its provider sentences.
+      const packed = scrubSnapshotSentences(snapshot, providerTextScrub(context.connection, "profiled"));
       if (operations) {
         // Names and indexes, and NO relations block: the graph is the most expensive
         // part of the packing and the least useful part of it here (#411). The note
@@ -3190,8 +3212,8 @@ export async function runInvestigation(
         messages.push({ role: "user", content: planningOperationsContextNote(engine.noun) });
         messages.push({
           role: "user",
-          content: packOperationsInventory(snapshot, {
-            preface: planningSnapshotPreface(snapshot, readBy, engine.noun),
+          content: packOperationsInventory(packed, {
+            preface: planningSnapshotPreface(packed, readBy, engine.noun),
             noun: engine.noun,
           }),
         });
@@ -3199,7 +3221,7 @@ export async function runInvestigation(
         messages.push({
           role: "user",
           content: packPlanningSnapshotMessage(
-            snapshot,
+            packed,
             record.objective,
             readBy,
             engine.noun,
@@ -3208,7 +3230,7 @@ export async function runInvestigation(
         });
         messages.push({
           role: "user",
-          content: packRelations(snapshot, record.workflowType, record.mode, context.capabilities, engine.noun),
+          content: packRelations(packed, record.workflowType, record.mode, context.capabilities, engine.noun),
         });
       }
 
@@ -3223,7 +3245,7 @@ export async function runInvestigation(
       // #411.
       messages.push({
         role: "user",
-        content: packSchemaStatistics(snapshot, statistics, operations ? { detail: "rows" } : {}),
+        content: packSchemaStatistics(packed, statistics, operations ? { detail: "rows" } : {}),
       });
       grounding = {
         schemaKnown: true,
@@ -3295,7 +3317,9 @@ export async function runInvestigation(
        * capture — the note says what the fenced block under it is for, so the two belong
        * in one place and cannot come apart.
        */
-      const show = (snapshot: AgentContextSnapshot): void => {
+      const show = (held: AgentContextSnapshot): void => {
+        // A recorded snapshot may predate the walk's scrub of its provider sentences, so every packing passes it again.
+        const snapshot = scrubSnapshotSentences(held, providerTextScrub(context.connection, "profiled"));
         if (operations) {
           messages.push({ role: "user", content: operationsContextNote(engine.noun) });
           messages.push({
@@ -4533,7 +4557,7 @@ async function handleCall(input: {
   if (result.kind === "replayed") {
     return {
       kind: "answered",
-      text: `This exact call was already made in this run. ${describeSettled(result.event, name)}`,
+      text: `This exact call was already made in this run. ${describeSettled(result.event, name, context.connection)}`,
     };
   }
   return { kind: "answered", text: indeterminateText(result.stepId, name) };
@@ -4607,7 +4631,7 @@ export async function profileTable(
     // a statement to learn what the run already knows.
     return {
       kind: "answered",
-      text: `That exact profile was already taken in this run. ${describeSettled(result.event, "profile_table")}`,
+      text: `That exact profile was already taken in this run. ${describeSettled(result.event, "profile_table", context.connection)}`,
     };
   }
   return { kind: "answered", text: indeterminateText(result.stepId, "profile_table") };
@@ -4665,7 +4689,7 @@ async function readEvidence(
   if (result.kind === "replayed") {
     return {
       kind: "answered",
-      text: `This exact call was already made in this run. ${describeSettled(result.event, tool)}`,
+      text: `This exact call was already made in this run. ${describeSettled(result.event, tool, context.connection)}`,
     };
   }
   return { kind: "answered", text: indeterminateText(result.stepId, tool) };

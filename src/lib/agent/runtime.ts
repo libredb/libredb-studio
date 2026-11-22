@@ -34,11 +34,12 @@ import { type ExecutionArtifact, ExecutionArtifactStore } from "@/lib/db/operati
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
+import { providerTextScrub, withholdProviderError } from "@/lib/db/operations/provider-text";
 import { LLMAuthError, LLMError, LLMRateLimitError } from "@/lib/llm/types";
 import { type ExecutionProfileDenyCode, ExecutionProfileError, UnknownProviderError } from "@/lib/db/errors";
 import { logger } from "@/lib/logger";
 import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
-import type { QueryResult } from "@/lib/types";
+import type { DatabaseConnection, QueryResult } from "@/lib/types";
 import { AgentRunDeadline } from "./deadline";
 import { deriveDriveCeilings } from "./drive-budget";
 import { AGENT_WORKFLOW_BUDGETS } from "./execution-policy";
@@ -160,15 +161,27 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
     throw new AgentRunServiceError("RUN_NOT_FOUND", `agent run "${runId}" does not exist`);
   }
 
+  const { actor, connectionId, catalog } = report.record;
+  let connection: DatabaseConnection;
   try {
-    const { actor, connectionId, catalog } = report.record;
     // The persisted actor is the sole authority: the role that decides which managed
     // connections are visible is the one recorded when the run was opened.
     const resolved = await resolveConnection({ connectionId }, { role: actor.role, username: actor.sessionId });
     // On a server-level connection the run reads the one database it opened on (#1530). A session
     // in that database IS the connection naming it, so from here on this is a single-database run.
-    const connection = catalog === undefined ? resolved : catalogSessionConnection(resolved, catalog);
+    connection = catalog === undefined ? resolved : catalogSessionConnection(resolved, catalog);
+  } catch (error) {
+    await recordUnlessDrivenElsewhere(service, runId, error);
+    throw error;
+  }
 
+  // From here a provider may be built, so a failure that leaves the drive passes core's scrub of the run's connection
+  // on its way to the callers' log lines and error responses, which do not hold the connection. The ledger still
+  // records the failure from the original error, by its class and code. The scrub covers every provider of the
+  // connection ("any"): the capability read below is built from the connection's own credential, the statement
+  // providers from the agent's.
+  const scrub = providerTextScrub(connection, "any");
+  try {
     // Capabilities and labels are type-driven and read without connecting, the way
     // /api/db/provider-meta reads them. The live, read-only provider a statement
     // actually runs on is acquired per call through the execution-profile seam.
@@ -221,14 +234,20 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
       },
     });
   } catch (error) {
-    // A drive refused because another already owns the run is not a failure OF the
-    // run: it is healthy and in flight. Recording `failed` here would end the very
-    // run the first drive is still carrying, so the refusal is left to the caller
-    // (the drive route answers 409) and nothing is written to the ledger.
-    if (!(error instanceof AgentRunServiceError && error.reasonCode === "RUN_ALREADY_DRIVEN")) {
-      await recordDriveFailure(service, runId, error);
-    }
-    throw error;
+    await recordUnlessDrivenElsewhere(service, runId, error);
+    throw withholdProviderError(scrub, error);
+  }
+}
+
+/**
+ * Records a drive's failure on the run, unless the drive was refused because another already owns the run. That is
+ * not a failure OF the run: it is healthy and in flight. Recording `failed` here would end the very run the first
+ * drive is still carrying, so the refusal is left to the caller (the drive route answers 409) and nothing is written
+ * to the ledger.
+ */
+async function recordUnlessDrivenElsewhere(service: AgentRunService, runId: string, error: unknown): Promise<void> {
+  if (!(error instanceof AgentRunServiceError && error.reasonCode === "RUN_ALREADY_DRIVEN")) {
+    await recordDriveFailure(service, runId, error);
   }
 }
 

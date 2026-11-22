@@ -23,7 +23,7 @@ function serverLevel(names: string[], forCatalog = mock(async (_catalog: string)
 describe("providerInDatabase", () => {
   test("a connection naming its own database is read as it is, and refuses another", async () => {
     const own = pinned();
-    expect(await providerInDatabase(own, undefined)).toBe(own);
+    expect(await providerInDatabase(own, undefined)).toEqual({ kind: "chosen", provider: own });
     await expect(providerInDatabase(own, "shop")).rejects.toThrow(McpDatabaseChoiceError);
   });
 
@@ -40,20 +40,39 @@ describe("providerInDatabase", () => {
   test("a named database is the session opened there", async () => {
     const session = pinned();
     const forCatalog = mock(async () => session);
-    expect(await providerInDatabase(serverLevel(["shop"], forCatalog), "shop")).toBe(session);
+    expect(await providerInDatabase(serverLevel(["shop"], forCatalog), "shop")).toEqual({
+      kind: "chosen",
+      provider: session,
+    });
     expect(forCatalog).toHaveBeenCalledWith("shop");
   });
 
-  test("a database the role cannot open is refused in Studio's words, and any other failure passes through", async () => {
+  test("a database the provider refuses to open is answered as the provider's refusal, and any other failure passes through", async () => {
+    const refusal = new DatabaseConfigError(
+      '"payroll" is not a database this PostgreSQL connection can open',
+      "postgres",
+    );
     const refused = mock(async () => {
-      throw new DatabaseConfigError('"payroll" is not a database this PostgreSQL connection can open', "postgres");
+      throw refusal;
     });
-    await expect(providerInDatabase(serverLevel(["shop"], refused), "payroll")).rejects.toThrow(McpDatabaseChoiceError);
+    expect(await providerInDatabase(serverLevel(["shop"], refused), "payroll")).toEqual({
+      kind: "provider-refused",
+      error: refusal,
+    });
     const broken = mock(async () => {
       throw new Error("connection reset");
     });
     const failure = await providerInDatabase(serverLevel(["shop"], broken), "shop").catch((error: unknown) => error);
     expect(failure).not.toBeInstanceOf(McpDatabaseChoiceError);
     expect((failure as Error).message).toBe("connection reset");
+  });
+
+  test("a provider that reaches a whole server and opens no database by name is refused in Studio's words, before it is asked", async () => {
+    const provider = {
+      type: "postgres",
+      getCapabilities: () => ({ catalogSessions: true }),
+      listContainers: async () => [],
+    } as unknown as DatabaseProvider;
+    await expect(providerInDatabase(provider, "shop")).rejects.toThrow(McpDatabaseChoiceError);
   });
 });

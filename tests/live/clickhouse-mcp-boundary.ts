@@ -41,6 +41,7 @@ import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statem
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import { egressDecision } from "@/lib/db/egress-decision";
+import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
 
 const PREFIX = "libredb_lm_";
 const DB = `${PREFIX}data`;
@@ -122,6 +123,7 @@ async function mcp(
     caller: { username: "live", role: "admin" },
     visibleConnections: async () => [connection],
     resolve: async () => connection,
+    textScrub: fakeTextScrub,
     acquire: (target: ManagedConnection, profile: ExecutionProfile) => {
       acquired.push(profile);
       return acquireExecutionProfileProvider(target, profile);
@@ -255,13 +257,13 @@ async function main(): Promise<void> {
   ];
   for (const { connection, says } of refusedOpens) {
     const { result } = await mcp(connection, { sql: `SELECT k FROM ${DB}.t` }, RUN_READ_QUERY);
-    const text = textOf(result);
+    const text = providerRefusalText(result, "clickhouse");
     check(
       result.isError === true &&
         text.startsWith("run_read_query cannot run on this connection: ClickHouse user ") &&
         text.endsWith(`It runs on ${RUN_READ_QUERY.engines}.`) &&
         text.includes(says),
-      `open: ${connection.name === ADMIN.user ? "the writable admin" : connection.name} is refused through MCP -> ${text}`,
+      `open: ${connection.name === ADMIN.user ? "the writable admin" : connection.name} is refused through MCP -> ${textOf(result)}`,
     );
   }
 
@@ -291,7 +293,7 @@ async function main(): Promise<void> {
     const { result } = await mcp(agent, { sql });
     const serverCode = await codeOf(agent.user!, SEEDED_PASSWORD, sql, readonly);
     check(
-      textOf(result).startsWith(
+      providerRefusalText(result, "clickhouse").startsWith(
         "The statement was refused before it reached the database: Read-only execution refused the table function",
       ) &&
         (serverCode === 164 || serverCode === 497),

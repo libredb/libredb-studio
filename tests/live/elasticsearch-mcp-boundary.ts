@@ -80,6 +80,7 @@ import type { ToolResult } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
+import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
 
 function env(name: string): string {
   const value = process.env[name];
@@ -249,6 +250,7 @@ async function mcp(
     caller: { username: "live", role: "admin" },
     visibleConnections: async () => [connection],
     resolve: async () => connection,
+    textScrub: fakeTextScrub,
     acquire: (target: ManagedConnection, profile: ExecutionProfile) => {
       acquired.push(profile);
       return acquireExecutionProfileProvider(target, profile);
@@ -261,6 +263,9 @@ async function mcp(
 
 const textOf = (result: ToolResult): string =>
   result.content.map((part) => ("text" in part ? part.text : "")).join(" ");
+
+/** A refusal the Elasticsearch provider wrote, read after the notice naming it; "" when the answer is not one. */
+const refusalOf = (result: ToolResult): string => providerRefusalText(result, "elasticsearch");
 
 /** The engine's answer in an MCP result that is the database's own refusal, or null when it is not one. */
 function engineTextOf(result: ToolResult): string | null {
@@ -280,7 +285,7 @@ async function checkOpen(agent: ManagedConnection, admin: ManagedConnection): Pr
   );
   const superuser = await mcp(admin, { sql: "SELECT COUNT(*) AS n FROM probe_buckets" }, RUN_READ_QUERY);
   check(
-    textOf(superuser.result) ===
+    refusalOf(superuser.result) ===
       `run_read_query cannot run on this connection: The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; the user ${ADMIN_USER} holds the cluster privilege all and read on every index, the restricted system indices included, so the connection is refused. ${GRANT_INSTEAD}. It runs on ${ENGINES}.` &&
       superuser.acquired.join() === "agent-read-only",
     `open: with security on, a seed signed in as the superuser is refused at open -> ${textOf(superuser.result).slice(0, 220)}`,
@@ -306,7 +311,7 @@ async function checkUnreadVersion(): Promise<void> {
   const refused = await mcp(seed("unversioned", SECURED, { user: SCRATCH, password: USER_PASSWORD }), {
     sql: "SELECT COUNT(*) AS n FROM probe_buckets",
   });
-  const text = textOf(refused.result);
+  const text = refusalOf(refused.result);
   check(
     text.startsWith(
       "run_read_query cannot run on this connection: The agent read-only profile is checked on Elasticsearch 9.1, and this server's version could not be read, so it is refused (a user needs the cluster privilege cluster:monitor/main to read it): ",
@@ -343,7 +348,7 @@ async function checkLogins(): Promise<{ seedRole: ManagedConnection; wide: Manag
   });
   const refused = await mcp(restricted, { sql: "SELECT COUNT(*) AS n FROM probe_buckets" }, RUN_READ_QUERY);
   check(
-    textOf(refused.result) ===
+    refusalOf(refused.result) ===
       `run_read_query cannot run on this connection: The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; the user ${SCRATCH}_restricted holds read on the restricted system index names and patterns .security*, .security-7, .security-tokens-7, .security-profile-8, so the connection is refused. ${GRANT_INSTEAD}. It runs on ${ENGINES}.`,
     `login: a role reading .security* with allow_restricted_indices is refused at open -> ${textOf(refused.result).slice(0, 220)}`,
   );
@@ -356,7 +361,7 @@ async function checkLogins(): Promise<{ seedRole: ManagedConnection; wide: Manag
   });
   const kibanaRefused = await mcp(kibana, { sql: "SELECT COUNT(*) AS n FROM probe_buckets" }, RUN_READ_QUERY);
   check(
-    textOf(kibanaRefused.result) ===
+    refusalOf(kibanaRefused.result) ===
       `run_read_query cannot run on this connection: ${"The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; "}the user ${SCRATCH}_kibana holds an index privilege granted with allow_restricted_indices on .kibana_8.18.0_001, .kibana_9.1.0_001, so the connection is refused. ${GRANT_INSTEAD}. It runs on ${ENGINES}.`,
     `login: a role granted two Kibana indices of other releases by name with allow_restricted_indices is refused at open -> ${textOf(kibanaRefused.result).slice(0, 220)}`,
   );
@@ -367,7 +372,7 @@ async function checkLogins(): Promise<{ seedRole: ManagedConnection; wide: Manag
   });
   const remoteRefused = await mcp(remote, { sql: "SELECT COUNT(*) AS n FROM probe_buckets" }, RUN_READ_QUERY);
   check(
-    textOf(remoteRefused.result) ===
+    refusalOf(remoteRefused.result) ===
       `run_read_query cannot run on this connection: ${"The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; "}the user ${SCRATCH}_remote holds a remote index privilege granted with allow_restricted_indices on *:.security*, so the connection is refused. ${GRANT_INSTEAD}. It runs on ${ENGINES}.`,
     `login: a role granted the security indices of every remote cluster with allow_restricted_indices is refused at open -> ${textOf(remoteRefused.result).slice(0, 220)}`,
   );
@@ -447,7 +452,7 @@ async function checkHiddenTargets(agent: ManagedConnection): Promise<void> {
       check(
         raw.status === 200 &&
           raw.text.includes('"rows":[[') &&
-          textOf(result) === refusal &&
+          refusalOf(result) === refusal &&
           acquired.join() === "agent-read-only",
         `hidden: ${JSON.stringify(sql)} answers raw, and MCP refuses it before it is sent -> ${textOf(result).slice(0, 110)}`,
       );
@@ -485,7 +490,7 @@ async function checkBoundary(origin: URL, connection: ManagedConnection, label: 
         : STATEMENT_REFUSAL;
     if (refusedUnsent !== null) {
       check(
-        acquired.join() === "agent-read-only" && textOf(result) === unsent(refusedUnsent),
+        acquired.join() === "agent-read-only" && refusalOf(result) === unsent(refusedUnsent),
         `${label}: bypassed, the provider's statement check refuses ${query} unsent -> ${textOf(result).slice(0, 90)}`,
       );
     } else {
@@ -557,7 +562,7 @@ async function checkHidden(wide: ManagedConnection): Promise<void> {
     const { result } = await mcp(wide, { sql });
     const raw = await send(SECURED, "POST", "/_sql?format=json", { query: sql });
     check(
-      textOf(result) === refusal && raw.status === 400 && !raw.text.includes('"rows"'),
+      refusalOf(result) === refusal && raw.status === 400 && !raw.text.includes('"rows"'),
       `security index: as a role reading every unrestricted index, ${sql} is refused by the provider unsent; sent raw as the superuser the engine refuses it -> ${raw.status}`,
     );
   }
@@ -565,7 +570,7 @@ async function checkHidden(wide: ManagedConnection): Promise<void> {
     const { result, acquired } = await mcp(wide, { sql });
     const raw = await send(SECURED, "POST", "/_sql?format=json", { query: sql });
     check(
-      textOf(result) === refusal &&
+      refusalOf(result) === refusal &&
         acquired.join() === "agent-read-only" &&
         raw.status === 200 &&
         raw.text.includes('"rows":[[') &&
@@ -640,7 +645,7 @@ async function checkForms(agent: ManagedConnection): Promise<void> {
     const { result } = await mcp(agent, { sql }, RUN_READ_QUERY);
     const raw = await send(ORIGIN, "POST", "/_sql?format=json", { query: sql });
     check(
-      textOf(result) === COMMAND_REFUSAL && raw.status === 400 && raw.text.includes(says),
+      refusalOf(result) === COMMAND_REFUSAL && raw.status === 400 && raw.text.includes(says),
       `forms: ${sql} passes the MCP fence and the provider refuses it unsent; sent raw the engine refuses it -> ${textOf(result).slice(0, 70)}`,
     );
   }

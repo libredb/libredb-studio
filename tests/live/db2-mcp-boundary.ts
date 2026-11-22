@@ -52,11 +52,12 @@ import { createHash } from "node:crypto";
 import { Client } from "db2-node";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
 import type { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_CANCELLED_TEXT, MCP_UNTRUSTED_NOTICE, type ToolResult } from "@/lib/mcp/output";
+import { MCP_CANCELLED_TEXT, type ToolResult } from "@/lib/mcp/output";
 import { inspectSchema, InspectSchemaInputSchema } from "@/lib/mcp/tools/inspect-schema";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
+import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
 
 function env(name: string): string {
   const value = process.env[name];
@@ -164,6 +165,7 @@ async function mcp(
     caller: { username: "live", role: "admin" },
     visibleConnections: async () => [connection],
     resolve: async () => connection,
+    textScrub: fakeTextScrub,
     acquire: (target: ManagedConnection, profile: ExecutionProfile) => {
       acquired.push(profile);
       return acquireExecutionProfileProvider(target, profile);
@@ -196,17 +198,16 @@ const CHECK_REFUSAL = "The agent read-only execution profile refuses the Db2 use
 
 /**
  * A refusal of the agent user by the check, naming `names`. The check runs inside the statement call, and the tool
- * answers a profile refusal there in its own sentence, behind the untrusted-data notice, since the refusal quotes
- * names a user of the database chose: two blocks, the notice and the sentence, never another error.
+ * answers the Db2 provider's profile refusal there in its own sentence, after the notice naming the provider that
+ * wrote it, since the refusal quotes names a user of the database chose: two blocks, the notice and the sentence,
+ * never another error.
  */
 function refusedByCheck(result: ToolResult, names: string): boolean {
-  const blocks = result.content.map((part) => ("text" in part ? part.text : ""));
+  const sentence = providerRefusalText(result, "db2");
   return (
     result.isError === true &&
-    blocks.length === 2 &&
-    blocks[0] === MCP_UNTRUSTED_NOTICE &&
-    blocks[1].startsWith(`run_read_query cannot run on this connection: ${CHECK_REFUSAL}`) &&
-    blocks[1].includes(names)
+    sentence.startsWith(`run_read_query cannot run on this connection: ${CHECK_REFUSAL}`) &&
+    sentence.includes(names)
   );
 }
 
@@ -566,6 +567,7 @@ try {
       caller: { username: "live", role: "admin" },
       visibleConnections: async () => [AGENT],
       resolve: async () => AGENT,
+      textScrub: fakeTextScrub,
       acquire: (target: ManagedConnection, profile: ExecutionProfile) =>
         acquireExecutionProfileProvider(target, profile),
     } as unknown as McpConnectionContext;

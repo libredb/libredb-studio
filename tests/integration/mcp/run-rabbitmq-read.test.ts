@@ -30,7 +30,7 @@ import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statem
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
-import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
+import { fakeTextScrub, pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
 import { RABBITMQ_TEST_PASSWORD } from "../../helpers/rabbitmq-connection";
 import {
@@ -425,6 +425,7 @@ describe("the wait", () => {
       caller: { username: "mcp-test", role: "admin" },
       visibleConnections: async () => [connection],
       resolve: async () => connection,
+      textScrub: fakeTextScrub,
       acquire,
     } as unknown as McpConnectionContext;
     const input = RUN_RABBITMQ_READ_ARM.inputSchema.parse({

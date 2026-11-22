@@ -11,9 +11,10 @@ import {
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
 } from "@/lib/db/providers/sql/read-only-budget";
+import { PROVIDER_TEXT_WITHHELD, type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
 import { runReadOnlyReading, runReadOnlyStatement } from "@/lib/db/operations/read-only-statement";
 import type { DatabaseProvider, ReadOnlyStatementBudget } from "@/lib/db/types";
-import type { QueryResult } from "@/lib/types";
+import type { DatabaseType, QueryResult } from "@/lib/types";
 
 /**
  * The one core call of a provider's read-only statement path: core holds the provider's answer to the row, byte and
@@ -26,6 +27,9 @@ const ROOT = path.resolve(import.meta.dir, "../../../..");
 const MODULE = path.join(ROOT, "src/lib/db/operations/read-only-statement.ts");
 
 const budget: ReadOnlyStatementBudget = { statementTimeoutMs: 5_000, maxResultRows: 10, maxResultBytes: 10_000 };
+
+/** The scrub of a connection with no secret, for a case that is not about scrubbing. */
+const noForms = (type: DatabaseType): ProviderTextScrub => ({ type, forms: [] });
 
 function answer(rows: Record<string, unknown>[]): QueryResult {
   return { rows, fields: Object.keys(rows[0] ?? {}), rowCount: rows.length, executionTime: 1 };
@@ -51,6 +55,7 @@ describe("runReadOnlyStatement", () => {
     const { provider } = providerAnswering(queryReadOnly);
     const result = await runReadOnlyStatement(provider, {
       type: "postgres",
+      scrub: noForms("postgres"),
       statement: "SELECT 1",
       budget,
       mode: "estimate-plan",
@@ -63,7 +68,13 @@ describe("runReadOnlyStatement", () => {
   test("hands an absent mode to the provider as the third argument, so every caller makes the one call form", async () => {
     const queryReadOnly = mock(async () => answer([]));
     const { provider } = providerAnswering(queryReadOnly);
-    await runReadOnlyStatement(provider, { type: "postgres", statement: "SELECT 1", budget, wait: "caller-deadline" });
+    await runReadOnlyStatement(provider, {
+      type: "postgres",
+      scrub: noForms("postgres"),
+      statement: "SELECT 1",
+      budget,
+      wait: "caller-deadline",
+    });
     expect(queryReadOnly).toHaveBeenCalledWith("SELECT 1", budget, undefined);
   });
 
@@ -72,6 +83,7 @@ describe("runReadOnlyStatement", () => {
     const error = await settled(
       runReadOnlyStatement(provider, {
         type: "postgres",
+        scrub: noForms("postgres"),
         statement: "SELECT id FROM t",
         budget: { ...budget, maxResultRows: 2 },
         wait: "statement-timeout",
@@ -89,6 +101,7 @@ describe("runReadOnlyStatement", () => {
     const error = await settled(
       runReadOnlyStatement(provider, {
         type: "mysql",
+        scrub: noForms("mysql"),
         statement: "SELECT text FROM t",
         budget: { ...budget, maxResultBytes: first + 10 },
         wait: "statement-timeout",
@@ -104,6 +117,7 @@ describe("runReadOnlyStatement", () => {
     const { provider } = providerAnswering(async () => served);
     const result = await runReadOnlyStatement(provider, {
       type: "mssql",
+      scrub: noForms("mssql"),
       statement: "SELECT TOP 10 * FROM v",
       budget: { ...budget, maxResultRows: 2 },
       mode: "estimate-plan",
@@ -114,6 +128,7 @@ describe("runReadOnlyStatement", () => {
     const error = await settled(
       runReadOnlyStatement(provider, {
         type: "mssql",
+        scrub: noForms("mssql"),
         statement: "SELECT TOP 10 * FROM v",
         budget: { ...budget, maxResultRows: 2, maxResultBytes: first },
         mode: "estimate-plan",
@@ -128,6 +143,7 @@ describe("runReadOnlyStatement", () => {
     const error = await settled(
       runReadOnlyStatement(provider, {
         type: "mssql",
+        scrub: noForms("mssql"),
         statement: "SELECT id FROM t",
         budget: { ...budget, maxResultRows: 2 },
         mode: "execute",
@@ -147,6 +163,7 @@ describe("runReadOnlyStatement", () => {
     const error = await settled(
       runReadOnlyStatement(provider, {
         type: "postgres",
+        scrub: noForms("postgres"),
         statement: "SELECT text FROM t",
         budget: { ...budget, maxResultBytes: first + 10 },
         wait: "statement-timeout",
@@ -165,6 +182,7 @@ describe("runReadOnlyStatement", () => {
     const error = await settled(
       runReadOnlyStatement(provider, {
         type: "sqlite",
+        scrub: noForms("sqlite"),
         statement: "SELECT text FROM t",
         budget: { ...budget, maxResultBytes: utf16 },
         wait: "statement-timeout",
@@ -179,6 +197,7 @@ describe("runReadOnlyStatement", () => {
     const { provider } = providerAnswering(async () => answer([row]));
     const admitted = await runReadOnlyStatement(provider, {
       type: "sqlite",
+      scrub: noForms("sqlite"),
       statement: "SELECT n FROM t",
       budget: { ...budget, maxResultBytes: bytes },
       wait: "statement-timeout",
@@ -187,6 +206,7 @@ describe("runReadOnlyStatement", () => {
     const error = await settled(
       runReadOnlyStatement(provider, {
         type: "sqlite",
+        scrub: noForms("sqlite"),
         statement: "SELECT n FROM t",
         budget: { ...budget, maxResultBytes: bytes - 1 },
         wait: "statement-timeout",
@@ -202,6 +222,7 @@ describe("runReadOnlyStatement", () => {
     const { provider } = providerAnswering(async () => served);
     const result = await runReadOnlyStatement(provider, {
       type: "postgres",
+      scrub: noForms("postgres"),
       statement: "SELECT id FROM t",
       budget: { ...budget, maxResultRows: 2, maxResultBytes: bytes },
       wait: "statement-timeout",
@@ -215,6 +236,7 @@ describe("runReadOnlyStatement", () => {
     const { provider } = providerAnswering(async () => served);
     const result = await runReadOnlyStatement(provider, {
       type: "postgres",
+      scrub: noForms("postgres"),
       statement: "SELECT id FROM t",
       budget: { ...budget, maxResultBytes: measureResultBytes(rows) },
       wait: "statement-timeout",
@@ -227,6 +249,7 @@ describe("runReadOnlyStatement", () => {
     const error = await settled(
       runReadOnlyStatement(provider, {
         type: "duckdb",
+        scrub: noForms("duckdb"),
         statement: "SELECT 1",
         budget: { ...budget, statementTimeoutMs: 5 },
         wait: "statement-timeout",
@@ -245,6 +268,7 @@ describe("runReadOnlyStatement", () => {
     const error = await settled(
       runReadOnlyStatement(provider, {
         type: "duckdb",
+        scrub: noForms("duckdb"),
         statement: "SELECT 1",
         budget: { ...budget, statementTimeoutMs: 5 },
         wait: "statement-timeout",
@@ -270,6 +294,7 @@ describe("runReadOnlyStatement", () => {
       const error = await settled(
         runReadOnlyStatement(provider, {
           type: "duckdb",
+          scrub: noForms("duckdb"),
           statement: "SELECT 1",
           budget: { ...budget, statementTimeoutMs: 1 },
           wait: "statement-timeout",
@@ -297,6 +322,7 @@ describe("runReadOnlyStatement", () => {
       await settled(
         runReadOnlyStatement(provider, {
           type: "postgres",
+          scrub: noForms("postgres"),
           statement,
           budget: { ...budget, statementTimeoutMs: 1 },
           wait: "statement-timeout",
@@ -321,6 +347,41 @@ describe("runReadOnlyStatement", () => {
     }
   });
 
+  test("a call it stopped waiting for is logged with its class name scrubbed", async () => {
+    let reject: (error: Error) => void = () => {};
+    const late = new Promise<QueryResult>((_resolve, rejectLate) => {
+      reject = rejectLate;
+    });
+    const { provider } = providerAnswering(() => late);
+    const warned = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const password = crypto.randomUUID();
+      const scrub = providerTextScrub(
+        { id: "c1", name: "c", type: "postgres", password, createdAt: new Date(0) },
+        "profiled",
+      );
+      await settled(
+        runReadOnlyStatement(provider, {
+          type: "postgres",
+          scrub,
+          statement: "SELECT 1",
+          budget: { ...budget, statementTimeoutMs: 1 },
+          wait: "statement-timeout",
+        }),
+      );
+      const failure = new Error("failed");
+      failure.name = `Error ${password}`;
+      reject(failure);
+      await late.catch(() => {});
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(warned).toHaveBeenCalledTimes(1);
+      expect(warned.mock.calls[0][1]).toMatchObject({ outcome: "failed", errorClass: PROVIDER_TEXT_WITHHELD });
+      expect(JSON.stringify(warned.mock.calls)).not.toContain(password);
+    } finally {
+      warned.mockRestore();
+    }
+  });
+
   test("logs a call it stopped waiting for that answered later as answered, with no error class", async () => {
     let resolve: (result: QueryResult) => void = () => {};
     const late = new Promise<QueryResult>((resolveLate) => {
@@ -332,6 +393,7 @@ describe("runReadOnlyStatement", () => {
       await settled(
         runReadOnlyStatement(provider, {
           type: "duckdb",
+          scrub: noForms("duckdb"),
           statement: "SELECT 1",
           budget: { ...budget, statementTimeoutMs: 1 },
           wait: "statement-timeout",
@@ -355,6 +417,7 @@ describe("runReadOnlyStatement", () => {
     try {
       await runReadOnlyStatement(provider, {
         type: "postgres",
+        scrub: noForms("postgres"),
         statement: "SELECT 1",
         budget,
         wait: "statement-timeout",
@@ -372,7 +435,7 @@ describe("runReadOnlyStatement", () => {
       const { runReadOnlyStatement } = await import(${JSON.stringify(MODULE)});
       const provider = { queryReadOnly: async () => ({ rows: [{ id: 1 }], fields: ["id"], rowCount: 1, executionTime: 1 }) };
       await runReadOnlyStatement(provider, {
-        type: "postgres",
+        type: "postgres", scrub: { type: "postgres", forms: [] },
         statement: "SELECT 1",
         budget: { statementTimeoutMs: ${MAX_STATEMENT_TIMEOUT_MS}, maxResultRows: 10, maxResultBytes: 10000 },
         wait: "statement-timeout",
@@ -399,6 +462,7 @@ describe("runReadOnlyStatement", () => {
     );
     const result = await runReadOnlyStatement(provider, {
       type: "postgres",
+      scrub: noForms("postgres"),
       statement: "SELECT 1",
       budget: { ...budget, statementTimeoutMs: 1 },
       wait: "caller-deadline",
@@ -412,7 +476,13 @@ describe("runReadOnlyStatement", () => {
       throw own;
     });
     const error = await settled(
-      runReadOnlyStatement(provider, { type: "postgres", statement: "SELECT 1", budget, wait: "statement-timeout" }),
+      runReadOnlyStatement(provider, {
+        type: "postgres",
+        scrub: noForms("postgres"),
+        statement: "SELECT 1",
+        budget,
+        wait: "statement-timeout",
+      }),
     );
     expect(error).toBe(own);
   });
@@ -420,7 +490,13 @@ describe("runReadOnlyStatement", () => {
   test("refuses a provider with no read-only statement path by name, and never calls query()", async () => {
     const { provider, query } = providerAnswering(undefined);
     const error = await settled(
-      runReadOnlyStatement(provider, { type: "redis", statement: "GET k", budget, wait: "statement-timeout" }),
+      runReadOnlyStatement(provider, {
+        type: "redis",
+        scrub: noForms("redis"),
+        statement: "GET k",
+        budget,
+        wait: "statement-timeout",
+      }),
     );
     expect(error).toBeInstanceOf(ExecutionProfileError);
     expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_UNSUPPORTED_BY_PROVIDER");
@@ -436,6 +512,7 @@ describe("runReadOnlyStatement", () => {
     const error = await settled(
       runReadOnlyStatement(provider, {
         type: "postgres",
+        scrub: noForms("postgres"),
         statement: "SELECT 1",
         budget: { ...budget, maxResultRows: 0 },
         wait: "statement-timeout",
@@ -464,6 +541,7 @@ describe("runReadOnlyReading", () => {
 
   const call = (read: () => Promise<Reading>, overrides: Record<string, unknown> = {}) => ({
     type: "mongodb" as const,
+    scrub: noForms("mongodb"),
     statement: '{"object":"orders"}',
     budget,
     wait: "statement-timeout" as const,
@@ -552,7 +630,12 @@ describe("runReadOnlyReading", () => {
     try {
       await settled(
         runReadOnlyReading(
-          call(() => late, { type: "kubernetes", statement, budget: { ...budget, statementTimeoutMs: 1 } }),
+          call(() => late, {
+            type: "kubernetes",
+            scrub: noForms("kubernetes"),
+            statement,
+            budget: { ...budget, statementTimeoutMs: 1 },
+          }),
         ),
       );
       resolve(reading(1));
@@ -590,6 +673,7 @@ describe("the review record", () => {
       const error = await settled(
         runReadOnlyStatement(provider, {
           type: "snowflake",
+          scrub: noForms("snowflake"),
           statement: "SELECT 1",
           budget,
           wait,
@@ -612,6 +696,7 @@ describe("the review record", () => {
       const error = await settled(
         runReadOnlyReading({
           type: "spark",
+          scrub: noForms("spark"),
           statement: "catalog",
           budget,
           wait,
@@ -632,7 +717,13 @@ describe("the review record", () => {
     const { provider } = providerAnswering(async () => served);
     const answers = await Promise.all(
       AGENT_EXECUTION_ENGINES.map((type) =>
-        runReadOnlyStatement(provider, { type, statement: "SELECT 1", budget, wait: "caller-deadline" }),
+        runReadOnlyStatement(provider, {
+          type,
+          scrub: noForms(type),
+          statement: "SELECT 1",
+          budget,
+          wait: "caller-deadline",
+        }),
       ),
     );
     expect(answers.every((answered) => answered === served)).toBe(true);

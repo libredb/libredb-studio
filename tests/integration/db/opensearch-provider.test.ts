@@ -83,13 +83,15 @@ import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
 import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
 import type { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { MCP_UNTRUSTED_NOTICE, providerTextNotice } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
+import { fakeTextScrub } from "../../helpers/mcp-fixtures";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 
 // ============================================================================
 // Connection
@@ -3285,6 +3287,7 @@ describe("MCP run_read_query on an OpenSearch connection", () => {
     caller: { username: "alice", role: "admin" },
     visibleConnections: async () => [SEED],
     resolve: async () => SEED,
+    textScrub: fakeTextScrub,
     acquire: async (_connection: ManagedConnection, profile: ExecutionProfile) => {
       acquired.push(profile);
       const provider = new OpenSearchProvider(
@@ -3338,6 +3341,7 @@ describe("MCP run_read_query on an OpenSearch connection", () => {
     `The statement was refused before it reached the database (${code}). On this engine run_read_query runs one read-only statement: ${STATEMENTS}.`;
   const refusedUnsent = (sentence: string) => ({
     content: [
+      { type: "text" as const, text: providerTextNotice(providerAuthor("opensearch")) },
       { type: "text" as const, text: `The statement was refused before it reached the database: ${sentence}.` },
     ],
     isError: true as const,
@@ -3480,6 +3484,7 @@ describe("MCP run_read_query on an OpenSearch connection", () => {
 
     expect(result).toEqual({
       content: [
+        { type: "text", text: providerTextNotice(providerAuthor("opensearch")) },
         {
           type: "text",
           text: `run_read_query cannot run on this connection: The agent read-only profile refuses an OpenSearch login that the security plugin lets call its REST API, or whose delete by query or index close on a fresh index name passes the plugin's permission check; these probes narrow the login and do not show that it cannot write, since the statement check and the SQL plugin refuse every write whatever the login. The user admin may call the security plugin's REST API, and passed the delete by query on a fresh index name, and passed the index close on a fresh index name, so the connection is refused. Give the agent a user whose role holds the cluster actions cluster:monitor/main and cluster:monitor/state and only reads on the indices it reads, such as the libredb_agent_read role, or libredb_seed_read for a seed that MCP reads. It runs on ${RUN_READ_QUERY_ENGINES}.`,

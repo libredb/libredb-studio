@@ -60,12 +60,14 @@ import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
 import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
 import type { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE, providerTextNotice } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
+import { fakeTextScrub } from "../../helpers/mcp-fixtures";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 
 // ============================================================================
 // Harness
@@ -3639,6 +3641,7 @@ describe("MCP run_read_query on a libSQL connection", () => {
       caller: { username: "alice", role: "admin" },
       visibleConnections: async () => [target],
       resolve: async () => target,
+      textScrub: fakeTextScrub,
       acquire: (connection: ManagedConnection, profile: ExecutionProfile) => {
         acquired.push(profile);
         return acquireExecutionProfileProvider(connection, profile);
@@ -3815,8 +3818,21 @@ describe("MCP run_read_query on a libSQL connection", () => {
     });
   });
 
+  // Studio's own refusal at the open, in its own words with no notice.
+  const studioRefusedAtOpen = (sentence: string) => ({
+    content: [
+      {
+        type: "text" as const,
+        text: `run_read_query cannot run on this connection: ${sentence}. It runs on ${ENGINES}.`,
+      },
+    ],
+    isError: true as const,
+  });
+
+  // The provider's refusal at the open, behind a notice naming it.
   const refusedAtOpen = (sentence: string) => ({
     content: [
+      { type: "text" as const, text: providerTextNotice(providerAuthor("libsql")) },
       {
         type: "text" as const,
         text: `run_read_query cannot run on this connection: ${sentence}. It runs on ${ENGINES}.`,
@@ -3874,7 +3890,7 @@ describe("MCP run_read_query on a libSQL connection", () => {
 
     expect(acquired).toEqual(["agent-read-only"]);
     expect(sentStatements().some((sent) => sent.startsWith("SELECT id FROM probe_orders"))).toBe(false);
-    const text = (result.content as { text: string }[])[0]?.text ?? "";
+    const text = (result.content as { text: string }[])[1]?.text ?? "";
     expect(result.isError).toBe(true);
     expect(text).toMatch(
       new RegExp(
@@ -3896,7 +3912,7 @@ describe("MCP run_read_query on a libSQL connection", () => {
     const result = await call({ sql: "SELECT 1" }, target);
 
     expect(result).toEqual(
-      refusedAtOpen(
+      studioRefusedAtOpen(
         'Connection "seed:edge" configures an agent credential alongside a connection string; the credential cannot be applied, so acquisition is refused',
       ),
     );

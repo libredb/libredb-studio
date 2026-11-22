@@ -76,12 +76,14 @@ import {
   unresolvedRefusal,
 } from "@/lib/db/providers/sql/search/elasticsearch-agent-index-fence";
 import type { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE, providerTextNotice } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
+import { fakeTextScrub } from "../../helpers/mcp-fixtures";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 
 // ============================================================================
 // Connection
@@ -5242,6 +5244,7 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
     caller: { username: "alice", role: "admin" },
     visibleConnections: async () => [SEED],
     resolve: async () => SEED,
+    textScrub: fakeTextScrub,
     acquire: async (_connection: ManagedConnection, profile: ExecutionProfile) => {
       acquired.push(profile);
       const provider = new ElasticsearchProvider(
@@ -5356,6 +5359,7 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
   /** The tool's answer when the provider refused the statement before it was sent. */
   const refusedUnsent = (sentence: string) => ({
     content: [
+      { type: "text" as const, text: providerTextNotice(providerAuthor("elasticsearch")) },
       { type: "text" as const, text: `The statement was refused before it reached the database: ${sentence}.` },
     ],
     isError: true as const,
@@ -5546,6 +5550,7 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
 
   const refusedAtOpen = (sentence: string) => ({
     content: [
+      { type: "text" as const, text: providerTextNotice(providerAuthor("elasticsearch")) },
       {
         type: "text" as const,
         text: `run_read_query cannot run on this connection: ${sentence}. It runs on ${RUN_READ_QUERY_ENGINES}.`,
@@ -5601,7 +5606,7 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
 
     const result = await call({ sql: "SELECT k FROM probe_buckets" });
 
-    const text = (result.content as { text: string }[])[0]?.text ?? "";
+    const text = (result.content as { text: string }[])[1]?.text ?? "";
     expect(result.isError).toBe(true);
     expect(text).toStartWith(
       "run_read_query cannot run on this connection: The agent read-only profile is checked on Elasticsearch 9.1, and this server's version could not be read, so it is refused (a user needs the cluster privilege cluster:monitor/main to read it): ",

@@ -390,7 +390,7 @@ and says why, which the engine's sentence does not, and it costs nothing to run 
 the three bypasses that proved a text guard cannot be the boundary here.
 Its refusals, an unterminated literal or comment included, are `RefusedBeforeSendError`, since the engine is never asked.
 Before the denylist this path makes the Unicode-space refusal of §5 as well, also a `RefusedBeforeSendError`, so the statement the denylist reads is the one the engine parses.
-The agent rail shows them as refused before the database and MCP answers them in Studio's words, never as DuckDB's error.
+The agent rail shows them as refused before the database, and MCP answers them as "The statement was refused before it reached the database:" with the provider's sentence, after a notice naming the provider that wrote it, "DuckDB provider, bundled with Studio", never as DuckDB's error.
 
 ### 3.11 A multi-statement string runs the first statement only
 

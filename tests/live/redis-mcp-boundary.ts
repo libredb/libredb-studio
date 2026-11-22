@@ -48,6 +48,7 @@ import { InspectSchemaInputSchema, inspectSchema } from "@/lib/mcp/tools/inspect
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
+import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
 
 const PREFIX = "libredb_lm_";
 
@@ -274,13 +275,13 @@ async function main(): Promise<void> {
   ];
   for (const [what, connection, says] of refusedOpens) {
     const { result } = await mcp(connection, { statement: "DBSIZE" });
-    const text = textOf(result);
+    const text = providerRefusalText(result, "redis");
     check(
       result.isError === true &&
         text.startsWith("run_redis_read cannot run on this connection: ") &&
         text.endsWith("It runs on Redis.") &&
         text.includes(says),
-      `open: ${what} is refused through MCP -> ${text}`,
+      `open: ${what} is refused through MCP, after the notice naming the Redis provider -> ${textOf(result)}`,
     );
   }
 
@@ -322,7 +323,9 @@ async function main(): Promise<void> {
     check(
       textOf(fenced.result).startsWith("The command was refused before it reached the server (") &&
         fenced.acquired.length === 0 &&
-        textOf(bypassed.result).startsWith("The statement was refused before it reached the database: ") &&
+        providerRefusalText(bypassed.result, "redis").startsWith(
+          "The statement was refused before it reached the database: ",
+        ) &&
         !textOf(bypassed.result).includes("app:") &&
         !textOf(fenced.result).includes("app:"),
       `boundary: the MCP fence refuses ${shown}; bypassed, the provider refuses it before it is sent`,
@@ -463,6 +466,7 @@ async function inspectSchemaOf(connection: ManagedConnection): Promise<string> {
     caller: { username: "live", role: "admin" },
     visibleConnections: async () => [connection],
     resolve: async () => connection,
+    textScrub: fakeTextScrub,
     acquire: (target: ManagedConnection, profile: ExecutionProfile) => acquireExecutionProfileProvider(target, profile),
   } as unknown as McpConnectionContext;
   const args = InspectSchemaInputSchema.parse({ connection_id: connection.id });
@@ -486,7 +490,7 @@ async function relative(): Promise<void> {
   const { result, acquired } = await mcp(userSeed("reader"), { statement: "DBSIZE" });
   check(
     result.isError === true &&
-      textOf(result).startsWith("run_redis_read cannot run on this connection: ") &&
+      providerRefusalText(result, "redis").startsWith("run_redis_read cannot run on this connection: ") &&
       acquired.join() === "agent-read-only",
     `relative: a +@read user is refused at the open through MCP -> ${textOf(result)}`,
   );

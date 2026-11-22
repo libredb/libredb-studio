@@ -204,8 +204,8 @@ export class QueryError extends DatabaseError {
 /**
  * What `prepareQuery()` raises for a positive offset on an engine whose SQL cannot page a result: Cassandra's CQL and
  * Elasticsearch SQL have no OFFSET clause. A `QueryError`, so the query route answers it as before; its own class, so
- * MCP `run_read_query` answers exactly this refusal as `mcp_offset_unsupported`, in the provider's own sentence, and
- * every other failure of `prepareQuery()` as the engine's.
+ * MCP `run_read_query` answers exactly this refusal as `mcp_offset_unsupported`, in the provider's own sentence behind a
+ * notice naming the provider, and every other failure of `prepareQuery()` as the engine's.
  */
 export class OffsetUnsupportedError extends QueryError {
   constructor(message: string, provider?: DatabaseType, query?: string) {
@@ -219,8 +219,9 @@ export class OffsetUnsupportedError extends QueryError {
  * A statement this repository refused before sending it, so the database never saw it: a provider's own fence on what
  * the read-only profile may run, or a charge the run's read allowance cannot pay. A QueryError, so every caller that
  * settles a statement failure still settles this one, and a statement that avoids what the sentence names is the
- * repair; its own class, so the agent and MCP say the statement was refused before it was sent, in this server's
- * voice, rather than presenting the sentence as the database's error.
+ * repair; its own class, so the agent and MCP say the statement was refused before it was sent rather than presenting
+ * the sentence as the database's error: a provider's sentence as its own text, fenced or behind a notice naming the
+ * provider, and the read allowance's (`ReadAllowanceExceededError`, which only core constructs) in Studio's words.
  */
 export class RefusedBeforeSendError extends QueryError {
   constructor(message: string, provider?: DatabaseType, query?: string) {
@@ -385,6 +386,36 @@ export class ExecutionProfileError extends Error {
     super(message);
     this.name = "ExecutionProfileError";
     Object.setPrototypeOf(this, ExecutionProfileError.prototype);
+  }
+}
+
+/**
+ * An execution profile refusal Studio's own code wrote: the factory's acquisition checks, MCP's open, the statement
+ * review and the core read path. It exists only to mark Studio's sentence apart from a provider's, which raises the
+ * parent class, so the agent and MCP say this one in Studio's voice and fence a provider's as the provider's text.
+ * Its `name` stays `ExecutionProfileError`, so a log line and a reader of the name see no difference. No provider
+ * constructs it; tests/unit/db/operations/provider-text-census.test.ts holds that.
+ */
+export class StudioProfileRefusal extends ExecutionProfileError {
+  constructor(message: string, reasonCode: ExecutionProfileDenyCode) {
+    super(message, reasonCode);
+    this.name = "ExecutionProfileError";
+    Object.setPrototypeOf(this, StudioProfileRefusal.prototype);
+  }
+}
+
+/**
+ * What core answers in place of a provider's error whose text held a credential of the calling connection, when the
+ * error leaves core for a renderer that does not hold the connection (an error response, a route's log line). Its
+ * message is the withheld sentence and it carries none of the original's text or stack; the original is never
+ * changed, because providers throw shared error instances. Constructed only by `withholdProviderError`
+ * (src/lib/db/operations/provider-text.ts).
+ */
+export class ProviderTextWithheldError extends DatabaseError {
+  constructor(message: string, provider: DatabaseType) {
+    super(message, provider);
+    this.name = "ProviderTextWithheldError";
+    Object.setPrototypeOf(this, ProviderTextWithheldError.prototype);
   }
 }
 

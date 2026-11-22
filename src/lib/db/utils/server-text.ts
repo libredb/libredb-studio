@@ -41,7 +41,16 @@ export function secretForms(secrets: readonly string[]): readonly string[] {
   return [...forms];
 }
 
+/**
+ * Whether any non-empty form occurs in a text, matched case-sensitively. The one predicate `serverText` applies, and
+ * the one core's scrub of provider text (src/lib/db/operations/provider-text.ts) applies, so the two never match
+ * differently.
+ */
+export function holdsSecretForm(raw: string, forms: readonly string[]): boolean {
+  return forms.some((form) => form !== "" && raw.includes(form));
+}
+
 /** The raw text unchanged, or the withheld sentence when any form occurs in it, matched case-sensitively. */
 export function serverText(raw: string, forms: readonly string[]): string {
-  return forms.some((form) => form !== "" && raw.includes(form)) ? WITHHELD : raw;
+  return holdsSecretForm(raw, forms) ? WITHHELD : raw;
 }

@@ -50,6 +50,7 @@ import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement
 import type { ManagedConnection } from "@/lib/seed";
 import { loadWriteRefusalCaptures } from "../helpers/influxdb-fixtures";
 import { readFixtureCredentials } from "./influxdb-evidence-checks";
+import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
 const TOKEN = readFixtureCredentials(
@@ -151,6 +152,7 @@ async function mcp(
     caller: { username: "live", role: "admin" },
     visibleConnections: async () => [connection],
     resolve: async () => connection,
+    textScrub: fakeTextScrub,
     acquire: (target: ManagedConnection, profile: ExecutionProfile) => {
       acquired.push(profile);
       return acquireExecutionProfileProvider(target, profile);
@@ -163,6 +165,9 @@ async function mcp(
 
 const textOf = (result: ToolResult): string =>
   result.content.map((part) => ("text" in part ? part.text : "")).join(" ");
+
+/** A refusal the InfluxDB 3 provider wrote, read after the notice naming it; "" when the answer is not one. */
+const refusalOf = (result: ToolResult): string => providerRefusalText(result, "influxdb3");
 
 /** The engine's answer in an MCP result that is the database's own refusal, or null when it is not one. */
 function engineTextOf(result: ToolResult): string | null {
@@ -230,7 +235,7 @@ async function main(): Promise<void> {
   const unchecked = await mcp(seed("core-3-11", UNCHECKED_PORT), { sql: "SELECT 1" }, RUN_READ_QUERY);
   check(
     unchecked.result.isError === true &&
-      textOf(unchecked.result) ===
+      refusalOf(unchecked.result) ===
         `run_read_query cannot run on this connection: The agent read-only profile is checked on InfluxDB 3 Core 3.12, and this server is InfluxDB 3 Core 3.11.0: its write refusals have not been captured, so it is refused. It runs on ${ENGINES}.`,
     `open: a 3.11.0 Core server is refused through MCP -> ${textOf(unchecked.result)}`,
   );
@@ -247,7 +252,7 @@ async function main(): Promise<void> {
     const { result } = await mcp(agent, { sql });
     const policy = policyRefusal(sql);
     check(
-      policy !== null && textOf(result) === policy,
+      policy !== null && refusalOf(result) === policy,
       `boundary: bypassed, the read policy refuses ${sql} unsent -> ${textOf(result).slice(0, 110)}`,
     );
     const answer = await raw(sql);
@@ -260,7 +265,7 @@ async function main(): Promise<void> {
     const { result, acquired } = await mcp(agent, { sql }, RUN_READ_QUERY);
     const answer = await raw(sql);
     check(
-      textOf(result) === SYSTEM_REFUSAL && acquired.join() === "agent-read-only" && answer.status === 200,
+      refusalOf(result) === SYSTEM_REFUSAL && acquired.join() === "agent-read-only" && answer.status === 200,
       `system: ${sql} passes the MCP fence and is refused by the provider's system fence; sent raw the server answers it -> ${answer.status}`,
     );
   }
@@ -268,7 +273,7 @@ async function main(): Promise<void> {
     const { result, acquired } = await mcp(agent, { sql }, RUN_READ_QUERY);
     const answer = await raw(sql);
     check(
-      textOf(result) === STRING_QUALIFIER_REFUSAL &&
+      refusalOf(result) === STRING_QUALIFIER_REFUSAL &&
         acquired.join() === "agent-read-only" &&
         answer.status === 200 &&
         answer.text.includes('"query_text"'),
@@ -309,7 +314,7 @@ async function main(): Promise<void> {
   const table = await mcp(agent, { sql: "TABLE home" }, RUN_READ_QUERY);
   const tableRaw = await raw("TABLE home");
   check(
-    textOf(table.result) === policyRefusal("TABLE home") &&
+    refusalOf(table.result) === policyRefusal("TABLE home") &&
       tableRaw.status === 400 &&
       tableRaw.text.startsWith('SQL error: ParserError("Expected: an SQL statement, found: TABLE'),
     `forms: TABLE passes the MCP fence, is refused by the read policy, and is a parser error on the server -> ${tableRaw.text.slice(0, 80)}`,

@@ -223,9 +223,9 @@ describe("the shared vector and console modules (spec 3.2)", () => {
     expect(sharedFiles().flatMap((file) => exportFindings(file, read(file)))).toEqual([]);
   });
 
-  test("server-text.ts names no engine and exports exactly secretForms and serverText", () => {
+  test("server-text.ts names no engine and exports exactly secretForms, holdsSecretForm and serverText", () => {
     expect(contentFindings(SERVER_TEXT, read(SERVER_TEXT), true)).toEqual([]);
-    expect(exportedNames(SERVER_TEXT, read(SERVER_TEXT))).toEqual(["secretForms", "serverText"]);
+    expect(exportedNames(SERVER_TEXT, read(SERVER_TEXT))).toEqual(["holdsSecretForm", "secretForms", "serverText"]);
   });
 });
 
