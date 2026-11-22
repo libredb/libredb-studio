@@ -16,6 +16,17 @@
  * loader loaded, so Next.js loads the same files itself and reports one it cannot read. Each of those files is thus
  * read twice, first by this launcher, so a .env that is a named pipe has to serve every read.
  *
+ * Under `start`, and only there, the Next.js CLI also gets NEXT_MANUAL_SIG_HANDLE=true when this process runs on Node.js
+ * and its caller set none, so Studio's shutdown handler ends the server (docs/DISTRIBUTION.md, "Stopping the server").
+ * The CLI runs with this process's own runtime, so on Bun, where the server refuses `true` at boot, nothing is added;
+ * a value the caller set, the empty one included, is passed on as given. `next dev` supports no manual signal
+ * handling, and no other command starts a server. The variable is read from the caller's environment before the .env
+ * files are loaded, and a value that only a .env file Next.js loads for `start` sets stops this launcher with exit
+ * code 1 before the CLI runs: the documented rule is never to set it in a .env file, and this launcher's own `true` in
+ * the process environment would otherwise replace the file's value unseen. Bun loads the working directory's .env
+ * files into its own environment before this file runs, so on Bun the value of a file Bun loaded arrives as the
+ * caller's and is passed on as given, for the server to accept or refuse by name; nothing is added there to hide it.
+ *
  * Every argument is passed to the Next.js CLI unchanged. The CLI is the `next` binary named by the `bin` field of the
  * checkout's own node_modules/next/package.json, run with this Node.js, so no shell, no PATH lookup and no package
  * lookup is involved on any OS. @next/env is loaded by path from the first place that holds it, in the order next's
@@ -42,7 +53,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { seedAssetsEnv } from "../bin/lib/launcher-utils.mjs";
+import { MANUAL_SIGNAL_HANDLING_VARIABLE, manualSignalHandlingEnv, seedAssetsEnv } from "../bin/lib/launcher-utils.mjs";
 
 const CHECKOUT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const NODE_MODULES = path.join(CHECKOUT, "node_modules");
@@ -91,9 +102,25 @@ try {
 }
 
 const callerEnv = { ...process.env };
+// Read from process.env, which is case-insensitive on Windows, before the loader below writes the .env files into it.
+const callerManualSignalHandling = process.env[MANUAL_SIGNAL_HANDLING_VARIABLE];
+const command = process.argv[2];
 const silent = { info() {}, error() {} };
-const { combinedEnv } = loadEnvConfig(process.cwd(), process.argv[2] === "dev", silent);
-const env = { ...callerEnv, ...seedAssetsEnv(CHECKOUT, combinedEnv.SEED_ASSETS_DIR) };
+const { combinedEnv } = loadEnvConfig(process.cwd(), command === "dev", silent);
+const start = command === "start";
+if (start && callerManualSignalHandling === undefined && combinedEnv[MANUAL_SIGNAL_HANDLING_VARIABLE] !== undefined) {
+  console.error(
+    `${MANUAL_SIGNAL_HANDLING_VARIABLE} is set in a .env file Next.js loads for start, where it is not honoured: set it ` +
+      "in the environment bun start runs in, or remove it from the .env file " +
+      "(docs/DISTRIBUTION.md#stopping-the-server).",
+  );
+  process.exit(1);
+}
+const env = {
+  ...callerEnv,
+  ...seedAssetsEnv(CHECKOUT, combinedEnv.SEED_ASSETS_DIR),
+  ...(start ? manualSignalHandlingEnv(process.versions, callerManualSignalHandling) : {}),
+};
 const child = spawn(process.execPath, [cli, ...process.argv.slice(2)], { env, stdio: "inherit" });
 const forward = (signal) => child.kill(signal);
 for (const signal of FORWARDED_SIGNALS) process.on(signal, forward);
