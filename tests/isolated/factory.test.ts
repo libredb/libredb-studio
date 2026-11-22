@@ -6016,14 +6016,14 @@ describe("the Snowflake provider in the factory", () => {
     });
   }
 
-  test("builds SnowflakeProvider with two arguments only, so no deps reach it from a connection", async () => {
+  test("builds SnowflakeProvider with three arguments, the third the build context, so no deps reach it from a connection", async () => {
     const source = readFileSync(join(import.meta.dir, "../../src/lib/db/factory.ts"), "utf8");
     const start = source.indexOf('case "snowflake": {');
     expect(start).toBeGreaterThan(-1);
     // The case block ends at its own closing brace, the first one at the case's indentation.
     const block = source.slice(start, source.indexOf("\n    }", start));
-    expect(block).toContain("new SnowflakeProvider(connection, options)");
-    expect(block).not.toMatch(/new SnowflakeProvider\([^)]*,[^)]*,/);
+    expect(block).toContain("new SnowflakeProvider(connection, options, context)");
+    expect(block).not.toMatch(/new SnowflakeProvider\([^)]*,[^)]*,[^)]*,/);
 
     const provider = await createDatabaseProvider(snowflake());
     expect(provider).toBeInstanceOf(SnowflakeProvider);

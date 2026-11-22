@@ -23,6 +23,7 @@ import {
 } from "@/lib/db/providers/sql/databend/connection-options";
 import { secretForms } from "@/lib/db/utils/server-text";
 import { type DatabaseConnection, type SSHTunnelConfig, TUNNEL_FAR_END } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { setEgressFlag } from "../../../helpers/egress-flag";
 
 // Named placeholders, never realistic values: a credential in a test fixture is a stand-in.
@@ -63,12 +64,16 @@ function connection(overrides: Record<string, unknown> = {}): DatabaseConnection
 }
 
 const build = (overrides: Record<string, unknown> = {}, queryTimeout = QUERY_TIMEOUT) =>
-  buildDatabendConnectionOptions(connection(overrides), { queryTimeout, appVersion: VERSION });
+  buildDatabendConnectionOptions(connection(overrides), {
+    queryTimeout,
+    appVersion: VERSION,
+    egress: ALLOWS_PRIVATE_HOSTS,
+  });
 
 function tunnelled(overrides: Record<string, unknown>, farEnd: { host: string; port: number }) {
   return buildDatabendConnectionOptions(
     Object.assign(connection({ sshTunnel: BASTION, ...overrides }), { [TUNNEL_FAR_END]: farEnd }),
-    { queryTimeout: QUERY_TIMEOUT, appVersion: VERSION },
+    { queryTimeout: QUERY_TIMEOUT, appVersion: VERSION, egress: ALLOWS_PRIVATE_HOSTS },
   );
 }
 
@@ -273,21 +278,30 @@ describe("the connection headers (design 3.2, I10, I15)", () => {
 
   test("the user-agent carries no browser word, with or without a version", () => {
     for (const appVersion of [VERSION, null]) {
-      const agent = buildDatabendConnectionOptions(connection(), { queryTimeout: QUERY_TIMEOUT, appVersion }).headers[
-        "user-agent"
-      ];
+      const agent = buildDatabendConnectionOptions(connection(), {
+        queryTimeout: QUERY_TIMEOUT,
+        appVersion,
+        egress: ALLOWS_PRIVATE_HOSTS,
+      }).headers["user-agent"];
       for (const word of BROWSER_WORDS) expect(agent.toLowerCase()).not.toContain(word.toLowerCase());
     }
   });
 
   test("the user-agent is the bare product when no version is known", () => {
-    const options = buildDatabendConnectionOptions(connection(), { queryTimeout: QUERY_TIMEOUT, appVersion: null });
+    const options = buildDatabendConnectionOptions(connection(), {
+      queryTimeout: QUERY_TIMEOUT,
+      appVersion: null,
+      egress: ALLOWS_PRIVATE_HOSTS,
+    });
     expect(options.headers["user-agent"]).toBe("libredb-studio");
   });
 
   test("the version defaults to getAppVersion()", () => {
     const version = getAppVersion();
-    const options = buildDatabendConnectionOptions(connection(), { queryTimeout: QUERY_TIMEOUT });
+    const options = buildDatabendConnectionOptions(connection(), {
+      queryTimeout: QUERY_TIMEOUT,
+      egress: ALLOWS_PRIVATE_HOSTS,
+    });
     expect(options.headers["user-agent"]).toBe(version === null ? "libredb-studio" : `libredb-studio/${version}`);
   });
 

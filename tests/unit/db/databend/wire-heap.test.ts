@@ -153,7 +153,12 @@ async function runCase(deps: ChildDeps, shape: string): Promise<ChildReport> {
     password: "stand-in-1",
     createdAt: new Date(0),
   } as unknown as Parameters<typeof deps.buildDatabendConnectionOptions>[0];
-  const options = deps.buildDatabendConnectionOptions(connection, { queryTimeout: 60_000, appVersion: "1.2.3" });
+  // The allowing decision written out: this function runs in a bundled child that cannot import the test helpers.
+  const options = deps.buildDatabendConnectionOptions(connection, {
+    queryTimeout: 60_000,
+    appVersion: "1.2.3",
+    egress: { blocksPrivateHosts: false, source: "set" },
+  });
   const transport = deps.createDatabendHttpTransport(options, { latch: deps.createAuthLatch({ now: Date.now }) });
   const collect = (globalThis as { gc?: () => void }).gc as () => void;
   collect();

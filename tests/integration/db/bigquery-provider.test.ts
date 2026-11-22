@@ -13,6 +13,7 @@ import { AuthenticationError, DatabaseConfigError, QueryError, TimeoutError } fr
 import type { NodeRequest, NodeResponse, NodeTransportOptions } from "@/lib/db/http/node-transport";
 import { BIGQUERY_DRY_RUN_MARKER } from "@/lib/explain/bigquery-dryrun";
 import { type DatabaseConnection, LITERAL_SEED_FILE } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 
 const realNode = { ...(await import("@/lib/db/http/node-transport")) };
@@ -212,9 +213,12 @@ const connection = (over: Partial<DatabaseConnection> = {}): DatabaseConnection 
     ...over,
   }) as DatabaseConnection;
 
+/** The build context of every provider here: an allowing decision, so no origin refuses. */
+const BUILT_WITH = { egress: ALLOWS_PRIVATE_HOSTS };
+
 const opened: InstanceType<typeof BigQueryProvider>[] = [];
 async function open(over: Partial<DatabaseConnection> = {}) {
-  const provider = new BigQueryProvider(connection(over));
+  const provider = new BigQueryProvider(connection(over), {}, BUILT_WITH);
   opened.push(provider);
   await provider.connect();
   return provider;
@@ -266,7 +270,7 @@ describe("connect", () => {
   });
 
   test("a keyless connection that is not operator-seeded is refused before anything is sent", async () => {
-    const provider = new BigQueryProvider(connection({ password: "" }));
+    const provider = new BigQueryProvider(connection({ password: "" }), {}, BUILT_WITH);
     await expect(provider.connect()).rejects.toThrow(/only for operator-seeded connections/);
     expect(google.requests).toHaveLength(0);
     expect(google.tokensIssued).toBe(0);
@@ -274,7 +278,7 @@ describe("connect", () => {
 
   test("a rejected token request is an AuthenticationError and leaves the provider disconnected", async () => {
     google.tokenReply = captured("token-rejected");
-    const provider = new BigQueryProvider(connection());
+    const provider = new BigQueryProvider(connection(), {}, BUILT_WITH);
     opened.push(provider);
     const failure = await provider.connect().catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(AuthenticationError);
@@ -286,7 +290,9 @@ describe("connect", () => {
 
 describe("sign-in through the shared Google auth", () => {
   const refusedBeforeSending = async (password: string) => {
-    const failure = await new BigQueryProvider(connection({ password })).connect().catch((error: unknown) => error);
+    const failure = await new BigQueryProvider(connection({ password }), {}, BUILT_WITH)
+      .connect()
+      .catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(DatabaseConfigError);
     expect(google.built).toHaveLength(0);
     expect(google.tokensIssued).toBe(0);
@@ -359,7 +365,7 @@ describe("the server's own identity on a seed-file row read in literal mode", ()
 
   test("a managed row carrying the marker with an empty password is refused at connect, with no request", async () => {
     const marked = { ...connection({ password: "", managed: true }), [LITERAL_SEED_FILE]: true as const };
-    const failure = await new BigQueryProvider(marked).connect().catch((error: unknown) => error);
+    const failure = await new BigQueryProvider(marked, {}, BUILT_WITH).connect().catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(DatabaseConfigError);
     expect((failure as Error).message).toBe(BIGQUERY_CREDENTIAL_SENTENCES.literalSeedFile);
     expect(google.built).toHaveLength(0);

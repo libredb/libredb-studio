@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { DatabaseConfigError } from "@/lib/db/errors";
-import { httpOrigin, httpOriginWithCoreDecision } from "@/lib/db/http/endpoint";
+import { httpOrigin } from "@/lib/db/http/endpoint";
 import { createNodeTransport } from "@/lib/db/http/node-transport";
 import { forgetEgressDecision, INVALID_EGRESS_SETTING } from "@/lib/db/egress-decision";
 import {
@@ -67,11 +67,13 @@ describe("opt-in HTTP database destination policy", () => {
     expect(httpOrigin("http", "[::1]", 8080, ALLOWS_PRIVATE_HOSTS).host).toBe("[::1]");
   });
 
-  test("an invalid setting cannot silently disable the guard of the interim reader httpOriginWithCoreDecision", () => {
+  test("an invalid setting cannot silently disable the guard of the interim reader createNodeTransport", () => {
+    // An allowing decision, so the origin never refuses and the transport's own read of the setting is the subject.
+    const origin = httpOrigin("http", "8.8.8.8", 8080, ALLOWS_PRIVATE_HOSTS);
     setEgressFlag("tru");
     let failure: unknown;
     try {
-      httpOriginWithCoreDecision("http", "8.8.8.8", 8080);
+      createNodeTransport({ origin, tls: null, maxSockets: 1, headers: {} });
     } catch (error) {
       failure = error;
     }
@@ -162,22 +164,18 @@ describe("LOOPBACK_NETWORKS", () => {
   });
 });
 
-describe("the decision the interim readers read (FND-2 slice 2a)", () => {
-  test("the interim readers keep the decision the process took: a value written after the first guarded call moves nothing until the decision is forgotten", () => {
+describe("the decision the interim reader reads (FND-2 slice 2a)", () => {
+  test("the interim reader keeps the decision the process took: a value written after the first guarded call moves nothing until the decision is forgotten", () => {
     // An allowing decision, so the origin never refuses and the transport's own check is the subject.
     const origin = httpOrigin("http", "127.0.0.1", 8080, ALLOWS_PRIVATE_HOSTS);
+    // The node transport, the last interim reader, until slice 2b-4 hands it the decision too.
     const build = () => createNodeTransport({ origin, tls: null, maxSockets: 1, headers: {} });
     setEgressFlag("true");
-    // The interim reader of the origins slice 2b-3b converts.
-    expect(() => httpOriginWithCoreDecision("http", "127.0.0.1", 8080)).toThrow(BLOCKED_HOST);
     expect(build).toThrow(BLOCKED_HOST);
     // A direct write, not the helper, on purpose: the process decided at its first read, so the write moves nothing.
     process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = "false";
-    expect(() => httpOriginWithCoreDecision("http", "127.0.0.1", 8080)).toThrow(BLOCKED_HOST);
-    // The other interim reader, the node transport, until slice 2b-4 hands it the decision too.
     expect(build).toThrow(BLOCKED_HOST);
     forgetEgressDecision();
-    expect(httpOriginWithCoreDecision("http", "127.0.0.1", 8080).host).toBe("127.0.0.1");
     build().close();
   });
 });

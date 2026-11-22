@@ -34,6 +34,7 @@ import { DATABEND_DEFAULT_SESSION_LIMIT, databendSessionsSql } from "@/lib/db/pr
 import type { DatabaseProvider } from "@/lib/db/types";
 import { DATABEND_ERROR_SENTENCES } from "@/lib/db/providers/sql/databend/errors";
 import { TEMP_TABLES_DROPPED, TRANSACTION_ENDED } from "@/lib/db/providers/sql/databend/session";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import {
   capturedSql,
@@ -369,6 +370,7 @@ function replay(
   const provider = new DatabendProvider(
     testConnection(overrides),
     { queryTimeout: 60_000 },
+    { egress: ALLOWS_PRIVATE_HOSTS },
     { ...time.deps, createNodeTransport: server.factory },
   );
   opened.push(provider);

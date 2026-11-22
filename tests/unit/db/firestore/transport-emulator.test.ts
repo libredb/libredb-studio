@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { DatabaseConfigError } from "@/lib/db/errors";
+import { BLOCKED_HOST } from "@/lib/db/http/egress-policy";
 import { DEFAULT_DATABASE_ID } from "@/lib/db/providers/document/firestore/constants";
 import {
   FIRESTORE_CREDENTIAL_SENTENCES,
@@ -9,8 +10,9 @@ import { type ErrorContext, mapGoogleError, readGoogleError } from "@/lib/db/pro
 import type { FirestoreTarget } from "@/lib/db/providers/document/firestore/names";
 import type { FirestoreRequest } from "@/lib/db/providers/document/firestore/requests";
 import { createFirestoreClient } from "@/lib/db/providers/document/firestore/transport";
-import { FIXED_NOW, fakeSeams, jsonAnswer } from "../../../helpers/firestore-seams";
+import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { setEgressFlag } from "../../../helpers/egress-flag";
+import { FIXED_NOW, fakeSeams, jsonAnswer } from "../../../helpers/firestore-seams";
 
 const target: FirestoreTarget = { projectId: "demo-p", databaseId: DEFAULT_DATABASE_ID };
 const signal = new AbortController().signal;
@@ -26,7 +28,8 @@ const keyFile = JSON.stringify({
   client_email: "reader@demo-p.iam.gserviceaccount.com",
   private_key: "-----BEGIN PRIVATE KEY-----\nMIIEvQ\n-----END PRIVATE KEY-----\n",
 });
-// The shared egress guard reads this flag from process.env itself, as tests/unit/db/http/egress-policy-transport.test.ts sets it.
+// The client checks its origin against the decision it is handed; the case that hands a blocking one leaves this flag
+// unset, to show the flag is not read there, and the flag is restored after each case.
 const BLOCK_FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const originalBlockFlag = process.env[BLOCK_FLAG];
 
@@ -46,7 +49,9 @@ describe("firestore emulator lane", () => {
       files: { "/srv/key.json": keyFile },
       answer: () => jsonAnswer({ collectionIds: ["users"] }),
     });
-    const client = createFirestoreClient(target, resolveFirestoreAuth({ password: "", managed: true }, seams), seams);
+    const client = createFirestoreClient(target, resolveFirestoreAuth({ password: "", managed: true }, seams), seams, {
+      egress: ALLOWS_PRIVATE_HOSTS,
+    });
     expect(client.mode).toBe("emulator");
     await client.send(listing, { signal, context });
     seams.setClock(FIXED_NOW + 2 * 3_600_000);
@@ -70,7 +75,9 @@ describe("firestore emulator lane", () => {
 
   test("an IPv6 emulator address is dialled in brackets", async () => {
     const seams = fakeSeams({ env: { FIRESTORE_EMULATOR_HOST: "[::1]:9000" }, answer: () => jsonAnswer({}) });
-    const client = createFirestoreClient(target, resolveFirestoreAuth({ password: "" }, seams), seams);
+    const client = createFirestoreClient(target, resolveFirestoreAuth({ password: "" }, seams), seams, {
+      egress: ALLOWS_PRIVATE_HOSTS,
+    });
     await client.send(listing, { signal, context });
     expect(seams.lanes[0].options.origin).toEqual({ scheme: "http", host: "[::1]", port: 9000 });
     expect(seams.lanes[0].requests[0].url).toStartWith("http://[::1]:9000/v1/projects/demo-p/");
@@ -92,31 +99,35 @@ describe("firestore emulator lane", () => {
       env: { FIRESTORE_EMULATOR_HOST: "127.0.0.1:8080" },
       answer: () => ({ status: 400, contentType: "application/json", retryAfter: null, text }),
     });
-    const client = createFirestoreClient(target, resolveFirestoreAuth({ password: "" }, seams), seams);
+    const client = createFirestoreClient(target, resolveFirestoreAuth({ password: "" }, seams), seams, {
+      egress: ALLOWS_PRIVATE_HOSTS,
+    });
     const error = (await client.send(listing, { signal, context }).catch((caught: unknown) => caught)) as Error;
     const expected = mapGoogleError(readGoogleError(400, text), context);
     expect(error.constructor).toBe(expected.constructor);
     expect(error.message).toBe(expected.message);
   });
 
-  test("DB_HTTP_BLOCK_PRIVATE_HOSTS=true refuses a loopback emulator when the client is built, before any lane", () => {
-    setEgressFlag("true");
+  test("a blocking egress decision refuses a loopback emulator when the client is built, before any lane, while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset", () => {
+    setEgressFlag(undefined);
     const seams = fakeSeams({ env: { FIRESTORE_EMULATOR_HOST: "127.0.0.1:8080" }, answer: () => jsonAnswer({}) });
     const auth = resolveFirestoreAuth({ password: "" }, seams);
     let caught: unknown;
     try {
-      createFirestoreClient(target, auth, seams);
+      createFirestoreClient(target, auth, seams, { egress: BLOCKS_PRIVATE_HOSTS });
     } catch (error) {
       caught = error;
     }
     expect(caught).toBeInstanceOf(DatabaseConfigError);
-    expect((caught as Error).message).toContain("DB_HTTP_BLOCK_PRIVATE_HOSTS");
+    expect((caught as Error).message).toBe(BLOCKED_HOST);
     expect(seams.lanes).toEqual([]);
   });
 
   test("close closes the one emulator lane", async () => {
     const seams = fakeSeams({ env: { FIRESTORE_EMULATOR_HOST: "127.0.0.1:8080" }, answer: () => jsonAnswer({}) });
-    const client = createFirestoreClient(target, resolveFirestoreAuth({ password: "" }, seams), seams);
+    const client = createFirestoreClient(target, resolveFirestoreAuth({ password: "" }, seams), seams, {
+      egress: ALLOWS_PRIVATE_HOSTS,
+    });
     await client.send(listing, { signal, context });
     client.close();
     expect(seams.lanes.map((lane) => [lane.lane, lane.closed])).toEqual([["emulator", 1]]);

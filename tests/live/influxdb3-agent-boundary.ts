@@ -33,6 +33,7 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { egressDecision } from "@/lib/db/egress-decision";
 import { createDatabaseProvider, executionContextFor } from "@/lib/db/factory";
 import { createInfluxClient } from "@/lib/db/providers/timeseries/influxdb/client";
 import { buildInfluxConnectionOptions } from "@/lib/db/providers/timeseries/influxdb/connection-options";
@@ -106,7 +107,11 @@ async function open(profile: "agent-read-only" | "agent-operations", port = 8181
   return provider;
 }
 
-const options = buildInfluxConnectionOptions(connection(8181), { type: "influxdb3", queryTimeout: 30_000 });
+const options = buildInfluxConnectionOptions(connection(8181), {
+  type: "influxdb3",
+  queryTimeout: 30_000,
+  egress: egressDecision(),
+});
 const client = createInfluxClient(options, SQL_ROUTES);
 
 /** A statement sent raw through the route-table client, past every check of Studio's. */

@@ -30,6 +30,7 @@
 import { googleCredentialSecrets } from "@/lib/db/auth/google/credentials";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError, QueryCancelledError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
 import type {
   ActiveSessionDetails,
@@ -48,9 +49,9 @@ import type {
   ObjectSourceDocument,
   PerformanceMetrics,
   PreparedQuery,
+  ProviderBuildContext,
   ProviderCapabilities,
   ProviderLabels,
-  ProviderExecutionContext,
   ProviderOptions,
   QueryResult,
   ReadOnlyStatementBudget,
@@ -212,7 +213,7 @@ export class FirestoreProvider extends BaseDatabaseProvider {
   constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    private readonly execution: ProviderExecutionContext = {},
+    private readonly execution: ProviderBuildContext = {},
     seams: Partial<FirestoreSeams> = {},
   ) {
     super(config, options);
@@ -328,7 +329,10 @@ export class FirestoreProvider extends BaseDatabaseProvider {
     this.validate();
     const auth = resolveFirestoreAuth(this.config, this.seams);
     const base = sessionBase(auth);
-    const client = createFirestoreClient(this.target(), auth, this.seams, { queryTimeoutMs: this.queryTimeout });
+    const client = createFirestoreClient(this.target(), auth, this.seams, {
+      queryTimeoutMs: this.queryTimeout,
+      egress: requireEgressDecision(this.execution.egress),
+    });
     const lifetime = new AbortController();
     let probed: Probed;
     try {

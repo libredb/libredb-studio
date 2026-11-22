@@ -28,12 +28,13 @@ import { readOnlySeedRefusal } from "@/lib/db/credential-warnings";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import {
   type HttpOrigin,
-  httpOriginWithCoreDecision,
+  httpOrigin,
   plaintextSecretRefusal,
   validateHost,
   validatePort,
 } from "@/lib/db/http/endpoint";
 import { type NodeTlsMaterial, nodeTlsMaterial } from "@/lib/db/http/node-transport";
+import type { EgressDecision } from "@/lib/db/types";
 import { secretForms } from "@/lib/db/utils/server-text";
 import {
   type DatabaseConnection,
@@ -198,13 +199,13 @@ function headerText(value: string | undefined, field: CredentialField, type: Inf
 /** Throws DatabaseConfigError for every refusal of spec 6.2, steps 1 to 9; never echoes a value. */
 export function buildInfluxConnectionOptions(
   config: DatabaseConnection & WithTunnelFarEnd,
-  context: { readonly type: InfluxType; readonly queryTimeout: number },
+  context: { readonly type: InfluxType; readonly queryTimeout: number; readonly egress: EgressDecision },
 ): InfluxConnectionOptions {
   const { type } = context;
   const farEnd = tunnelFarEnd(config, type);
   // validateHost, validatePort and the egress policy's literal-address guard, on the host that is dialled.
   const dialled = shared(type, () =>
-    httpOriginWithCoreDecision("http", config.host, config.port ?? DEFAULT_PORT_BY_TYPE[type]),
+    httpOrigin("http", config.host, config.port ?? DEFAULT_PORT_BY_TYPE[type], context.egress),
   );
   const endpoint =
     farEnd === undefined

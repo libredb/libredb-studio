@@ -45,6 +45,7 @@ import { RUN_DATABASE_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/r
 import type { DatabaseConnection, ProviderOptions } from "@/lib/db/types";
 import { DuplicateRunError } from "@/lib/db/utils/bounded-limiter";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { type InfluxCapture, type InfluxFixtureVersion, loadInfluxCapture } from "../../../helpers/influxdb-fixtures";
 import {
   type RecordedInfluxRequest,
@@ -138,7 +139,7 @@ function harness(
   };
   const factory: InfluxClientFactory = (clientOptions, routes) => createInfluxClient(clientOptions, routes, transport);
   return {
-    provider: new InfluxDBProvider({ ...CONNECTION, ...config }, options, {}, factory),
+    provider: new InfluxDBProvider({ ...CONNECTION, ...config }, options, { egress: ALLOWS_PRIVATE_HOSTS }, factory),
     requests: wire.requests,
     closed: () => closed,
   };

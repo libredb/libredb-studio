@@ -19,6 +19,7 @@ import { FirestoreProvider } from "@/lib/db/providers/document/firestore";
 import { FIRESTORE_AGENT_WITHHELD } from "@/lib/db/providers/document/firestore/agent-surface";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import type { ProviderExecutionContext, QueryResult } from "@/lib/db/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { fakeSeams, jsonAnswer } from "../../../helpers/firestore-seams";
 import { firestoreConnection, googleServer, requestsOf, wire } from "../../../helpers/firestore-provider";
 
@@ -63,7 +64,12 @@ const SERVER = googleServer(undefined, (request) =>
 
 async function opened(execution: ProviderExecutionContext) {
   const seams = fakeSeams({ answer: wire(SERVER) });
-  const provider = new FirestoreProvider(firestoreConnection(), { queryTimeout: 30_000 }, execution, seams);
+  const provider = new FirestoreProvider(
+    firestoreConnection(),
+    { queryTimeout: 30_000 },
+    { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
+    seams,
+  );
   await provider.connect();
   const probes = requestsOf(seams).length;
   return { provider, sent: () => requestsOf(seams).slice(probes) };

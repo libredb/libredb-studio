@@ -24,6 +24,7 @@ import {
 } from "@/lib/db/auth/google/credentials";
 import type { GoogleTokenSourceDeps } from "@/lib/db/auth/google/token-source";
 import { createNodeTransport } from "@/lib/db/http/node-transport";
+import type { EgressDecision } from "@/lib/db/types";
 import type { DatabaseConnection, WithLiteralSeedFile } from "@/lib/types";
 
 const PROVIDER = "bigquery" as const;
@@ -87,8 +88,11 @@ export function resolveBigQueryCredential(
   return resolveGoogleCredential(connection, BIGQUERY_CREDENTIAL_RULES, io);
 }
 
-/** The token source's deps: BigQuery's scope and label, the wall clock, and createNodeTransport itself. */
-export function bigQueryTokenSourceDeps(): GoogleTokenSourceDeps {
+/**
+ * The token source's deps: BigQuery's scope and label, the wall clock, createNodeTransport itself, and `egress`, the
+ * egress decision the provider was built with, which the token endpoint's origin is checked against.
+ */
+export function bigQueryTokenSourceDeps(egress: EgressDecision): GoogleTokenSourceDeps {
   return {
     scope: BIGQUERY_SCOPE,
     provider: PROVIDER,
@@ -96,5 +100,6 @@ export function bigQueryTokenSourceDeps(): GoogleTokenSourceDeps {
     now: () => Date.now(),
     timeoutSignal: (ms) => AbortSignal.timeout(ms),
     createTransport: createNodeTransport,
+    egress,
   };
 }

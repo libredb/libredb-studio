@@ -36,6 +36,7 @@ import {
 } from "@/lib/db/providers/sql/databend/http-transport";
 import type { DatabendTransport, StatementOrigin, StatementRequest } from "@/lib/db/providers/sql/databend/transport";
 import { type DatabaseConnection, TUNNEL_FAR_END, type TunnelFarEnd } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "./egress-decisions";
 
 const CAPTURES = join(import.meta.dir, "..", "fixtures", "databend", "local-2026-10-08-v1.2.951-nightly");
 
@@ -353,7 +354,7 @@ export function testOptions(
   const connection = testConnection(overrides);
   return buildDatabendConnectionOptions(
     farEnd === undefined ? connection : Object.assign(connection, { [TUNNEL_FAR_END]: farEnd }),
-    { queryTimeout, appVersion: TEST_VERSION },
+    { queryTimeout, appVersion: TEST_VERSION, egress: ALLOWS_PRIVATE_HOSTS },
   );
 }
 

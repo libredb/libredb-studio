@@ -18,6 +18,7 @@ import {
 import { kubectlRefusal } from "@/lib/db/providers/platform/kubernetes/console/guard";
 import { PAGING_CLAUSE_SENTENCE } from "@/lib/db/providers/platform/kubernetes/console/paging";
 import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes/index";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../../helpers/egress-decisions";
 import { fakeCluster } from "../../../../helpers/kubernetes-cluster";
 import { kubernetesConnection } from "../../../../helpers/kubernetes-connection";
 import { recordingKubernetesTransport, testSeams } from "../../../../helpers/kubernetes-transport";
@@ -27,6 +28,7 @@ const provider = new KubernetesProvider(
   kubernetesConnection({ database: "shop" }),
   { queryTimeout: 30_000 },
   testSeams(transport),
+  { egress: ALLOWS_PRIVATE_HOSTS },
 );
 
 beforeAll(async () => {

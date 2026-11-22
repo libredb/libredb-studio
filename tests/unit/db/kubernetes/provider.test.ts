@@ -15,6 +15,7 @@ import { KUBERNETES_LABELS } from "@/lib/db/providers/platform/kubernetes/labels
 import { MACHINE_PROFILE_SENTENCE } from "@/lib/db/providers/platform/kubernetes/machine-read";
 import { MACHINE_REDACTED } from "@/lib/db/providers/platform/kubernetes/redaction";
 import type { DatabaseConnection } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { fakeCluster, type FakeClusterOptions, manyRows } from "../../../helpers/kubernetes-cluster";
 import { kubernetesConnection } from "../../../helpers/kubernetes-connection";
 import { KUBERNETES_SAMPLE_MARKERS as M } from "../../../helpers/kubernetes-markers";
@@ -33,6 +34,7 @@ function providerWith(answer: KubernetesAnswerFn, overrides?: Partial<DatabaseCo
     kubernetesConnection(overrides),
     { queryTimeout: 30_000 },
     testSeams(transport),
+    { egress: ALLOWS_PRIVATE_HOSTS },
   );
   return { provider, transport };
 }
@@ -408,14 +410,16 @@ describe("queryReadOnly", () => {
       kubernetesConnection(overrides),
       { queryTimeout: 30_000 },
       { ...testSeams(transport), sleep: () => new Promise<void>(() => {}) },
-      { readOnly: true },
+      { readOnly: true, egress: ALLOWS_PRIVATE_HOSTS },
     );
     return { provider, transport };
   }
 
   test("refuses on a provider not opened under the read-only profile", async () => {
     const transport = recordingKubernetesTransport(fakeCluster(SHOP));
-    const provider = new KubernetesProvider(kubernetesConnection(), {}, testSeams(transport));
+    const provider = new KubernetesProvider(kubernetesConnection(), {}, testSeams(transport), {
+      egress: ALLOWS_PRIVATE_HOSTS,
+    });
     await provider.connect();
     const before = transport.calls.length;
     await expect(provider.queryReadOnly("get pods", BUDGET)).rejects.toThrow(MACHINE_PROFILE_SENTENCE);

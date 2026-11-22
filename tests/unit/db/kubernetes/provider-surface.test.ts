@@ -6,6 +6,7 @@
 import { describe, test } from "bun:test";
 import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes/index";
 import { KUBERNETES_KIND_TABLE } from "@/lib/db/providers/platform/kubernetes/kinds";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { assertObjectSurface } from "../../../helpers/object-surface-conformance";
 import { fakeCluster, type FakeRow } from "../../../helpers/kubernetes-cluster";
 import { kubernetesConnection } from "../../../helpers/kubernetes-connection";
@@ -39,6 +40,7 @@ describe("the Kubernetes object surface", () => {
       kubernetesConnection({ database: "shop" }),
       { queryTimeout: 30_000 },
       testSeams(transport),
+      { egress: ALLOWS_PRIVATE_HOSTS },
     );
     await provider.connect();
     await assertObjectSurface(provider, {

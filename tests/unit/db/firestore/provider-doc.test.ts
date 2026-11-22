@@ -27,6 +27,7 @@ import { FIRESTORE_PROVIDER_SENTENCES, FirestoreProvider } from "@/lib/db/provid
 import { FIRESTORE_KEY_SCAN_SENTENCES } from "@/lib/db/providers/document/firestore/key-scan";
 import { resolveSeams } from "@/lib/db/providers/document/firestore/seams";
 import { LITERAL_SEED_FILE } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { jsonAnswer, scriptedTransport, UNRECORDED_ANSWER } from "../../../helpers/firestore-replay";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
@@ -69,7 +70,7 @@ async function emulatorProvider(): Promise<FirestoreProvider> {
   const provider = new FirestoreProvider(
     { id: "doc", name: "doc", type: "firestore", database: "demo-libredb", createdAt: new Date(0) },
     { queryTimeout: 30_000 },
-    {},
+    { egress: ALLOWS_PRIVATE_HOSTS },
     { createTransport: script.createTransport, env: { [ENV.emulatorHost]: EMULATOR } },
   );
   await provider.connect();

@@ -26,6 +26,7 @@ import {
   QueryError,
   RefusedBeforeSendError,
 } from "@/lib/db/errors";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { TransportError } from "@/lib/db/http/node-transport";
 import { callerBoundTruncationReason, findKind } from "@/lib/db/object-kinds";
 import { SQLBaseProvider } from "@/lib/db/providers/sql/sql-base";
@@ -43,8 +44,8 @@ import type {
   ObjectDetailBatch,
   PerformanceMetrics,
   PreviewTimeWindow,
+  ProviderBuildContext,
   ProviderCapabilities,
-  ProviderExecutionContext,
   ProviderLabels,
   ProviderOptions,
   QueryResult,
@@ -240,16 +241,19 @@ export class InfluxDB3Provider extends SQLBaseProvider {
    * statement, so they open unchecked, as an editor connection does.
    */
   private readonly readOnlyProfile: boolean;
+  /** The egress decision the factory built this provider with, handed to the origin `connect()` builds. */
+  private readonly egress: ProviderBuildContext["egress"];
 
   /** Validates nothing and opens nothing: the connection's rules run in `connect()`, before the factory. */
   constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    execution: ProviderExecutionContext = {},
+    execution: ProviderBuildContext = {},
     private readonly createClient: InfluxClientFactory = createInfluxClient,
   ) {
     super(config, options);
     this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
+    this.egress = execution.egress;
   }
 
   // ==========================================================================
@@ -315,7 +319,11 @@ export class InfluxDB3Provider extends SQLBaseProvider {
     let generation: InfluxGeneration = "unknown";
     try {
       this.validate();
-      options = buildInfluxConnectionOptions(this.config, { type: INFLUXDB3, queryTimeout: this.queryTimeout });
+      options = buildInfluxConnectionOptions(this.config, {
+        type: INFLUXDB3,
+        queryTimeout: this.queryTimeout,
+        egress: requireEgressDecision(this.egress),
+      });
       const opened = this.createClient(options, SQL_ROUTES);
       client = opened;
       const signal = AbortSignal.timeout(options.surfaceTimeoutMs);

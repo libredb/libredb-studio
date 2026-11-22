@@ -13,6 +13,7 @@ import type {
   BigQueryTransport,
 } from "@/lib/db/providers/sql/bigquery/transport";
 import type { DatabaseConnection } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const realTransport = { ...(await import("@/lib/db/providers/sql/bigquery/transport")) };
 const realPolicy = { ...(await import("@/lib/db/providers/sql/bigquery/credential-policy")) };
@@ -126,8 +127,11 @@ const base: DatabaseConnection = {
   createdAt: new Date(),
 } as DatabaseConnection;
 
+/** The build context of every provider here that connects: an allowing decision, so no origin refuses. */
+const BUILT_WITH = { egress: ALLOWS_PRIVATE_HOSTS };
+
 async function connected(over: Partial<DatabaseConnection> = {}) {
-  const provider = new BigQueryProvider({ ...base, ...over });
+  const provider = new BigQueryProvider({ ...base, ...over }, {}, BUILT_WITH);
   await provider.connect();
   return provider;
 }
@@ -199,7 +203,7 @@ describe("construction and metadata", () => {
 describe("connect / disconnect", () => {
   test("detects the location and probes with it", async () => {
     const provider = await connected({ password: "{}" });
-    expect(createCalls[0]).toEqual(["my-proj", { kind: "fake", password: "{}" }]);
+    expect(createCalls[0]).toEqual(["my-proj", { kind: "fake", password: "{}" }, ALLOWS_PRIVATE_HOSTS]);
     expect(fake.calls[0].sql).toBe("SELECT 1");
     expect(fake.calls[0].options.location).toBe("EU");
     expect(provider.isConnected()).toBe(true);
@@ -215,13 +219,17 @@ describe("connect / disconnect", () => {
   });
 
   test("a keyless connection a user created is refused; an operator-seeded one uses the server's credentials", async () => {
-    const error = await new BigQueryProvider({ ...base, password: " " }).connect().catch((e) => e);
+    const error = await new BigQueryProvider({ ...base, password: " " }, {}, BUILT_WITH).connect().catch((e) => e);
     expect(error).toBeInstanceOf(DatabaseConfigError);
     expect(error.message).toContain("only for operator-seeded connections");
     expect(createCalls).toHaveLength(0);
     const seeded = await connected({ password: undefined, managed: true });
     expect(seeded.isConnected()).toBe(true);
-    expect(createCalls[0]).toEqual(["my-proj", { type: "metadata", host: "metadata.google.internal" }]);
+    expect(createCalls[0]).toEqual([
+      "my-proj",
+      { type: "metadata", host: "metadata.google.internal" },
+      ALLOWS_PRIVATE_HOSTS,
+    ]);
   });
 
   test("a datasets listing the principal may not read leaves the location to BigQuery", async () => {
@@ -233,13 +241,13 @@ describe("connect / disconnect", () => {
 
   test("an authentication failure from the token source still fails the connect", async () => {
     fake.datasetsError = new AuthenticationError("token refused", "bigquery");
-    await expect(new BigQueryProvider(base).connect()).rejects.toBeInstanceOf(AuthenticationError);
+    await expect(new BigQueryProvider(base, {}, BUILT_WITH).connect()).rejects.toBeInstanceOf(AuthenticationError);
     expect(fake.calls).toHaveLength(0);
   });
 
   test("401 maps to AuthenticationError and closes the transport", async () => {
     fake.datasetsError = new BigQueryApiError(401, null, "bad token");
-    const provider = new BigQueryProvider(base);
+    const provider = new BigQueryProvider(base, {}, BUILT_WITH);
     await expect(provider.connect()).rejects.toBeInstanceOf(AuthenticationError);
     expect(fake.closed).toBe(true);
   });
@@ -248,7 +256,7 @@ describe("connect / disconnect", () => {
     fake.onQuery = async () => {
       throw new BigQueryApiError(403, "accessDenied", "nope");
     };
-    const error = await new BigQueryProvider(base).connect().catch((e) => e);
+    const error = await new BigQueryProvider(base, {}, BUILT_WITH).connect().catch((e) => e);
     expect(error).toBeInstanceOf(QueryError);
     expect(error).not.toBeInstanceOf(AuthenticationError);
   });
@@ -257,21 +265,21 @@ describe("connect / disconnect", () => {
     fake.onQuery = async () => {
       throw new BigQueryApiError(400, "invalid", "bad");
     };
-    await expect(new BigQueryProvider(base).connect()).rejects.toBeInstanceOf(QueryError);
+    await expect(new BigQueryProvider(base, {}, BUILT_WITH).connect()).rejects.toBeInstanceOf(QueryError);
   });
 
   test("a transport timeout maps to TimeoutError", async () => {
     fake.onQuery = async () => {
       throw new TransportError("timeout", "timed out");
     };
-    await expect(new BigQueryProvider(base).connect()).rejects.toBeInstanceOf(TimeoutError);
+    await expect(new BigQueryProvider(base, {}, BUILT_WITH).connect()).rejects.toBeInstanceOf(TimeoutError);
   });
 
   test("a plain error goes through the generic mapper", async () => {
     fake.onQuery = async () => {
       throw new Error("boom");
     };
-    await expect(new BigQueryProvider(base).connect()).rejects.toThrow("boom");
+    await expect(new BigQueryProvider(base, {}, BUILT_WITH).connect()).rejects.toThrow("boom");
   });
 
   test("disconnect without connect is safe", async () => {

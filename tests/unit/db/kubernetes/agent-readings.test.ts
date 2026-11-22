@@ -15,6 +15,7 @@ import {
 } from "@/lib/db/providers/platform/kubernetes/agent-readings";
 import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes/index";
 import { MACHINE_PROFILE_SENTENCE } from "@/lib/db/providers/platform/kubernetes/machine-read";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { fakeCluster } from "../../../helpers/kubernetes-cluster";
 import { kubernetesConnection } from "../../../helpers/kubernetes-connection";
 import { consoleContext, listAnswer, type RouteAnswer, routes, sentLines } from "../../../helpers/kubernetes-console";
@@ -733,7 +734,7 @@ describe("the provider's readClusterUsage", () => {
       kubernetesConnection({ database: "shop" }),
       { queryTimeout: 30_000 },
       { ...testSeams(transport), sleep: () => new Promise<void>(() => {}) },
-      { readOnly },
+      { readOnly, egress: ALLOWS_PRIVATE_HOSTS },
     );
     return { provider, transport };
   }

@@ -22,6 +22,7 @@
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError, ExecutionProfileError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { TransportError } from "@/lib/db/http/node-transport";
 import {
   assertContainerPathShape,
@@ -46,8 +47,8 @@ import type {
   ObjectKindSpec,
   PerformanceMetrics,
   PreparedQuery,
+  ProviderBuildContext,
   ProviderCapabilities,
-  ProviderExecutionContext,
   ProviderLabels,
   ProviderOptions,
   QueryResult,
@@ -223,6 +224,8 @@ export class InfluxDBProvider extends BaseDatabaseProvider {
    * does, and plan mode keeps grounding on a connection whose principal can write.
    */
   private readonly readOnlyProfile: boolean;
+  /** The egress decision the factory built this provider with, handed to the origin `connect()` builds. */
+  private readonly egress: ProviderBuildContext["egress"];
 
   /**
    * Validates nothing and opens nothing: the connection's rules run in `connect()`, before the factory. `createClient`
@@ -232,11 +235,12 @@ export class InfluxDBProvider extends BaseDatabaseProvider {
   constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    execution: ProviderExecutionContext = {},
+    execution: ProviderBuildContext = {},
     private readonly createClient: InfluxClientFactory = createInfluxClient,
   ) {
     super(config, options);
     this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
+    this.egress = execution.egress;
   }
 
   // ==========================================================================
@@ -308,7 +312,11 @@ export class InfluxDBProvider extends BaseDatabaseProvider {
     let generation: InfluxGeneration = "unknown";
     try {
       this.validate();
-      options = buildInfluxConnectionOptions(this.config, { type: INFLUXDB, queryTimeout: this.queryTimeout });
+      options = buildInfluxConnectionOptions(this.config, {
+        type: INFLUXDB,
+        queryTimeout: this.queryTimeout,
+        egress: requireEgressDecision(this.egress),
+      });
       const opened = this.createClient(options, INFLUXQL_ROUTES);
       client = opened;
       const signal = AbortSignal.timeout(options.surfaceTimeoutMs);

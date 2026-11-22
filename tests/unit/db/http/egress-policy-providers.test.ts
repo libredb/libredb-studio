@@ -43,8 +43,9 @@ const handedDecision = [
 ] as const;
 
 /**
- * The providers that still read the process's decision through a node transport, until slices 2b-3b and 2b-4: at the
- * name localhost the refusal comes from the node transport's checked lookup.
+ * The providers that build their origin with the decision they were handed (slice 2b-3b) and still read the process's
+ * decision through a node transport, until slice 2b-4: at the name localhost the refusal comes from the node
+ * transport's checked lookup, so each is handed a blocking decision and the variable is true too.
  */
 const providers = [
   // A user and no password (Databend design 3.14): the plaintext refusal needs a password, so the guard is reached.
@@ -197,10 +198,10 @@ for (const [name, type, Provider] of providers) {
           ...(secure ? { ssl: { mode: "require" as const } } : {}),
         };
         const failure = await Promise.resolve()
-          .then(() => new Provider(connection).connect())
+          .then(() => new Provider(connection, {}, { egress: BLOCKS_PRIVATE_HOSTS }).connect())
           .catch((error: unknown) => error);
         expect(failure).toBeInstanceOf(DatabaseConfigError);
-        expect((failure as Error).message).toContain("blocked by DB_HTTP_BLOCK_PRIVATE_HOSTS");
+        expect((failure as Error).message).toBe(BLOCKED_HOST);
         expect(hits).toBe(0);
       } finally {
         await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));

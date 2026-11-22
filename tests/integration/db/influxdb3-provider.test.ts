@@ -38,6 +38,7 @@ import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statem
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import { generateTableQuery } from "@/lib/query-generators";
 import type { ManagedConnection } from "@/lib/seed";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 import {
   type InfluxCapture,
   loadInfluxCapture,
@@ -124,7 +125,10 @@ function recordedServer(
     };
   };
   const factory: InfluxClientFactory = (options, routes) => createInfluxClient(options, routes, held);
-  return { provider: new InfluxDB3Provider(CONNECTION, {}, execution, factory), wire };
+  return {
+    provider: new InfluxDB3Provider(CONNECTION, {}, { ...execution, egress: ALLOWS_PRIVATE_HOSTS }, factory),
+    wire,
+  };
 }
 
 const body = (request: RecordedInfluxRequest): { db: string; q: string; format: string } =>
@@ -327,7 +331,11 @@ describe("InfluxDB 3.12.0 Core's write refusals, replayed", () => {
     async (_name, entry) => {
       // The client sends what the capture sent: the policy is the provider's, not the client's.
       const wire = recordingInfluxTransport([entry]);
-      const options = buildInfluxConnectionOptions(CONNECTION, { type: "influxdb3", queryTimeout: 30_000 });
+      const options = buildInfluxConnectionOptions(CONNECTION, {
+        type: "influxdb3",
+        queryTimeout: 30_000,
+        egress: ALLOWS_PRIVATE_HOSTS,
+      });
       const client = createInfluxClient(options, SQL_ROUTES, wire.factory);
       const answer = await client.send(
         { route: "query", values: { db: "home", q: textOf(entry) } },

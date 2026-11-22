@@ -29,7 +29,7 @@ import { ALLOWS_PRIVATE_HOSTS } from "../helpers/egress-decisions";
 import { setEgressFlag } from "../helpers/egress-flag";
 import { pathsToObject } from "../helpers/reachable-markers";
 
-/** The engines whose guard calls take the decision as an argument since slices 2b-1, 2b-2 and 2b-3a. */
+/** The engines whose guard calls take the decision as an argument since slices 2b-1, 2b-2, 2b-3a and 2b-3b. */
 const GUARDED_ENGINES: readonly DatabaseType[] = [
   "clickhouse",
   "druid",
@@ -49,12 +49,22 @@ const GUARDED_ENGINES: readonly DatabaseType[] = [
   "qdrant",
   "weaviate",
   "s3",
+  "databend",
+  "bigquery",
+  "snowflake",
+  "influxdb",
+  "influxdb3",
+  "kubernetes",
+  "firestore",
 ];
 
 const original = process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
+const originalEmulator = process.env.FIRESTORE_EMULATOR_HOST;
 
 afterEach(() => {
   setEgressFlag(original);
+  if (originalEmulator === undefined) delete process.env.FIRESTORE_EMULATOR_HOST;
+  else process.env.FIRESTORE_EMULATOR_HOST = originalEmulator;
 });
 
 describe("a guarded provider is built with the egress decision core took (FND-2 slice 2b)", () => {
@@ -284,6 +294,9 @@ async function factoryConnect(type: DatabaseType, host: string, port: number): P
     // Kubernetes over TLS, so its own refusal of plain HTTP to a loopback host never comes first and no
     // KUBERNETES_ALLOW_LOOPBACK_PLAINTEXT is written; MTConnect over TLS too, so each engine has one connection shape.
     ...(type === "kubernetes" || type === "mtconnect" ? { ssl: { mode: "verify-full" as const } } : {}),
+    // Databend with a user and Firestore with a valid project id, so the guard is the first refusal on both.
+    ...(type === "databend" ? { user: "tester" } : {}),
+    ...(type === "firestore" ? { database: "demo-project" } : {}),
   };
   return createDatabaseProvider(connection)
     .then((provider) => provider.connect())
@@ -328,6 +341,30 @@ describe("what the provider docs of MTConnect, InfluxDB, InfluxDB 3, Kubernetes 
       const failure = await factoryConnect(type, host, 6443);
       expect(failure).toBeInstanceOf(DatabaseConfigError);
       expect((failure as Error).message).toBe(sentence);
+    },
+  );
+});
+
+/** The engines whose provider docs say how DB_HTTP_BLOCK_PRIVATE_HOSTS=true refuses a loopback destination. */
+const LOOPBACK_DOC_ENGINES: readonly DatabaseType[] = ["databend", "firestore"];
+
+describe("what the provider docs of Databend and Firestore say about egress (FND-2 slice 2b-3b)", () => {
+  // Firestore reaches its emulator through FIRESTORE_EMULATOR_HOST, which the factory-built provider reads when it is
+  // built, so the case writes it first and afterEach restores it; Databend dials the connection's host.
+  test.each(LOOPBACK_DOC_ENGINES.flatMap((type) => ["127.0.0.1", "localhost"].map((host) => [type, host] as const)))(
+    "%s built by createDatabaseProvider with DB_HTTP_BLOCK_PRIVATE_HOSTS true refuses the loopback address %s before any request",
+    async (type, host) => {
+      setEgressFlag("true");
+      const server = await countingServer();
+      try {
+        if (type === "firestore") process.env.FIRESTORE_EMULATOR_HOST = `${host}:${server.port}`;
+        const failure = await factoryConnect(type, host, server.port);
+        expect(failure).toBeInstanceOf(DatabaseConfigError);
+        expect((failure as Error).message).toBe(BLOCKED_HOST);
+        expect(server.hits()).toBe(0);
+      } finally {
+        await server.close();
+      }
     },
   );
 });

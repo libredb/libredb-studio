@@ -25,6 +25,7 @@ import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
 import { listedMcpToolNames } from "../../helpers/mcp-tool-names";
@@ -85,7 +86,7 @@ beforeEach(() => {
         connection as DatabaseConnection,
         { queryTimeout: 30_000 },
         { ...testSeams(transport), sleep: () => new Promise<void>(() => {}) },
-        { readOnly: honourProfile && profile === "agent-read-only" },
+        { readOnly: honourProfile && profile === "agent-read-only", egress: ALLOWS_PRIVATE_HOSTS },
       );
       await provider.connect();
       return provider;

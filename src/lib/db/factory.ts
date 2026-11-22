@@ -360,19 +360,20 @@ export async function createDatabaseProvider(
       // The explicit /index specifier keeps this dynamic import statically analysable. The constructor validates
       // nothing and opens nothing; the connection's rules run in connect(), before any socket.
       const { DatabendProvider } = await import("./providers/sql/databend/index");
-      return new DatabendProvider(connection, options);
+      return new DatabendProvider(connection, options, context);
     }
 
     case "bigquery": {
       const { BigQueryProvider } = await import("./providers/sql/bigquery/index");
-      return new BigQueryProvider(connection, options);
+      return new BigQueryProvider(connection, options, context);
     }
 
     case "snowflake": {
-      // The explicit /index specifier keeps this dynamic import statically analysable. Two arguments only: the
-      // transport deps are a test's seam, and the origin comes from the Account field alone.
+      // The explicit /index specifier keeps this dynamic import statically analysable. The build context is third;
+      // the transport deps are a fourth argument, a test's seam the factory never passes, and the origin comes from
+      // the Account field alone.
       const { SnowflakeProvider } = await import("./providers/sql/snowflake/index");
-      return new SnowflakeProvider(connection, options);
+      return new SnowflakeProvider(connection, options, context);
     }
 
     case "spark": {

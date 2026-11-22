@@ -22,6 +22,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { egressDecision } from "@/lib/db/egress-decision";
 import { createNodeTransport } from "@/lib/db/http/node-transport";
 import { FirestoreProvider } from "@/lib/db/providers/document/firestore/index";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
@@ -118,10 +119,15 @@ function connection(): DatabaseConnection {
 }
 
 async function opened(execution: ProviderExecutionContext, sink: CaptureSink): Promise<FirestoreProvider> {
-  const provider = new FirestoreProvider(connection(), { queryTimeout: 30_000 }, execution, {
-    createTransport: recordingTransport(createNodeTransport, sink),
-    env: { FIRESTORE_EMULATOR_HOST: HOST },
-  });
+  const provider = new FirestoreProvider(
+    connection(),
+    { queryTimeout: 30_000 },
+    { ...execution, egress: egressDecision() },
+    {
+      createTransport: recordingTransport(createNodeTransport, sink),
+      env: { FIRESTORE_EMULATOR_HOST: HOST },
+    },
+  );
   await provider.connect();
   return provider;
 }

@@ -22,6 +22,7 @@ import { buildRequest } from "@/lib/db/providers/document/firestore/requests";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { secretForms } from "@/lib/db/utils/server-text";
 import type { DatabaseConnection } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { type FakeFirestoreSeams, fakeSeams, jsonAnswer } from "../../../helpers/firestore-seams";
 import {
   DATABASE,
@@ -44,7 +45,12 @@ function seamsOf(handler: WireHandler, env: Record<string, string> = {}): FakeFi
 }
 
 function provider(seams: FakeFirestoreSeams, overrides: Partial<DatabaseConnection> = {}): FirestoreProvider {
-  return new FirestoreProvider(firestoreConnection(overrides), { queryTimeout: 1000 }, {}, seams);
+  return new FirestoreProvider(
+    firestoreConnection(overrides),
+    { queryTimeout: 1000 },
+    { egress: ALLOWS_PRIVATE_HOSTS },
+    seams,
+  );
 }
 
 describe("declarations", () => {

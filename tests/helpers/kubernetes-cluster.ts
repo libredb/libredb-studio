@@ -9,6 +9,7 @@ import { readClusterEndpoint } from "@/lib/db/providers/platform/kubernetes/conn
 import { DiscoveryCache, readDiscovery } from "@/lib/db/providers/platform/kubernetes/discovery";
 import type { KubernetesSurface } from "@/lib/db/providers/platform/kubernetes/objects";
 import type { DatabaseConnection } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "./egress-decisions";
 import { kubernetesConnection } from "./kubernetes-connection";
 import { CORE_DISCOVERY, GROUPS_DISCOVERY } from "./kubernetes-discovery";
 import {
@@ -124,6 +125,7 @@ export function testSurface(
   const endpoint = readClusterEndpoint(kubernetesConnection(overrides), {
     queryTimeout: options.queryTimeout ?? 30_000,
     appVersion: null,
+    egress: ALLOWS_PRIVATE_HOSTS,
   });
   const client = createKubernetesClient(endpoint, seams);
   const call = (): KubernetesCall => ({ signal: new AbortController().signal, timeoutMs: endpoint.callTimeoutMs });

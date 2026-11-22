@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { NodeRequest, NodeTransportOptions } from "@/lib/db/http/node-transport";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 type Answer = { status: number; text: string } | Promise<{ status: number; text: string }>;
 type Built = { opts: NodeTransportOptions; requests: NodeRequest[]; closed: number; fail: ((e: Error) => void)[] };
@@ -74,13 +75,13 @@ describe("bigquery transport wiring", () => {
   const tokenLanes = () => built.filter((b) => b.opts.origin.host !== "bigquery.googleapis.com");
 
   test("14: no auth lane is built before the first token is needed", () => {
-    createBigQueryTransport("p", creds);
+    createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS);
     expect(built).toHaveLength(0);
   });
 
   test("14: the token lane is built on the first refresh, refusing link-local addresses and upgrades", async () => {
     api = () => json({ datasets: [] });
-    const bq = createBigQueryTransport("p", creds);
+    const bq = createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS);
     await bq.listDatasets(signal);
     await bq.listDatasets(signal);
     expect(tokenLanes().map((b) => b.opts)).toEqual([
@@ -97,7 +98,7 @@ describe("bigquery transport wiring", () => {
 
   test("14: the metadata lane is http with the flavor header, refusing upgrades", async () => {
     api = () => json({ datasets: [] });
-    await createBigQueryTransport("p", { type: "metadata", host: "meta" }).listDatasets(signal);
+    await createBigQueryTransport("p", { type: "metadata", host: "meta" }, ALLOWS_PRIVATE_HOSTS).listDatasets(signal);
     expect(tokenLanes().map((b) => b.opts)).toEqual([
       {
         origin: { scheme: "http", host: "meta", port: 80 },
@@ -111,9 +112,12 @@ describe("bigquery transport wiring", () => {
 
   test("14: a pasted access token builds no auth lane and is sent as is", async () => {
     api = () => json({ datasets: [] });
-    await createBigQueryTransport("p", { type: "access_token", token: "ya29.pasted" }).listDatasets(signal);
+    const pasted = crypto.randomUUID();
+    await createBigQueryTransport("p", { type: "access_token", token: pasted }, ALLOWS_PRIVATE_HOSTS).listDatasets(
+      signal,
+    );
     expect(tokenLanes()).toHaveLength(0);
-    expect(built.map((b) => b.opts.headers)).toEqual([{ authorization: "Bearer ya29.pasted" }]);
+    expect(built.map((b) => b.opts.headers)).toEqual([{ authorization: `Bearer ${pasted}` }]);
   });
 });
 
@@ -127,7 +131,7 @@ describe("bigquery quota project", () => {
         : req.url.includes("/queries/")
           ? json({ error: { message: "boom" } }, 500)
           : json({ jobComplete: false, jobReference: { jobId: "j1" } });
-    await createBigQueryTransport("p", quota)
+    await createBigQueryTransport("p", quota, ALLOWS_PRIVATE_HOSTS)
       .query("SELECT 1", opts)
       .catch(() => {});
     const apiLanes = built.filter((b) => b.opts.origin.host === "bigquery.googleapis.com");
@@ -140,8 +144,10 @@ describe("bigquery quota project", () => {
 
   test("no quota project, no header; and none to the emulator", async () => {
     api = () => json({ datasets: [] });
-    await createBigQueryTransport("p", creds).listDatasets(signal);
-    await createBigQueryTransport("p", quota, { BIGQUERY_EMULATOR_HOST: "127.0.0.1:9050" }).listDatasets(signal);
+    await createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS).listDatasets(signal);
+    await createBigQueryTransport("p", quota, ALLOWS_PRIVATE_HOSTS, {
+      BIGQUERY_EMULATOR_HOST: "127.0.0.1:9050",
+    }).listDatasets(signal);
     for (const lane of built) expect(lane.opts.headers).not.toHaveProperty("x-goog-user-project");
   });
 });
@@ -151,7 +157,7 @@ describe("bigquery token answers", () => {
   const failure = async (reply: Answer) => {
     token = () => reply;
     api = () => json({ datasets: [] });
-    return createBigQueryTransport("p", creds)
+    return createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS)
       .listDatasets(signal)
       .catch((e) => e);
   };
@@ -162,7 +168,7 @@ describe("bigquery token answers", () => {
       tokenCount = 0;
       tokenTtl = ttl;
       api = () => json({ datasets: [] });
-      const bq = createBigQueryTransport("p", creds);
+      const bq = createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS);
       await bq.listDatasets(signal);
       await bq.listDatasets(signal);
       expect(tokenCount).toBe(1);
@@ -227,11 +233,9 @@ describe("BIGQUERY_EMULATOR_HOST", () => {
 
   test("routes every API request to the emulator without TLS", async () => {
     api = () => json({ datasets: [] });
-    const bq = createBigQueryTransport(
-      "p",
-      { type: "access_token", token: "t" },
-      { BIGQUERY_EMULATOR_HOST: "127.0.0.1:9050" },
-    );
+    const bq = createBigQueryTransport("p", { type: "access_token", token: "t" }, ALLOWS_PRIVATE_HOSTS, {
+      BIGQUERY_EMULATOR_HOST: "127.0.0.1:9050",
+    });
     await bq.listDatasets(signal);
     const lane = built.find((b) => b.opts.origin.port === 9050);
     expect(lane?.opts).toMatchObject({ origin: { scheme: "http", host: "127.0.0.1", port: 9050 }, tls: null });
@@ -245,7 +249,7 @@ describe("BIGQUERY_EMULATOR_HOST", () => {
       clientEmail: "sa@p.iam.gserviceaccount.com",
       privateKey: "not a key",
     } as const;
-    const bq = createBigQueryTransport("p", key, { BIGQUERY_EMULATOR_HOST: "127.0.0.1:9050" });
+    const bq = createBigQueryTransport("p", key, ALLOWS_PRIVATE_HOSTS, { BIGQUERY_EMULATOR_HOST: "127.0.0.1:9050" });
     await bq.listDatasets(signal);
     await bq.query("SELECT 1", opts);
     expect(built.some((b) => b.opts.origin.host === "oauth2.googleapis.com")).toBe(false);
@@ -274,7 +278,7 @@ describe("bigquery query", () => {
         cacheHit: true,
         numDmlAffectedRows: "3",
       });
-    const bq = createBigQueryTransport("my-proj", creds);
+    const bq = createBigQueryTransport("my-proj", creds, ALLOWS_PRIVATE_HOSTS);
     const result = await bq.query("SELECT 1", { ...opts, location: "EU", defaultDataset: "ds", dryRun: true });
     expect(result).toMatchObject({
       fields: [{ name: "n" }, { name: "f" }],
@@ -304,7 +308,7 @@ describe("bigquery query", () => {
 
   test("a bare answer has no rows, no schema and null totals", async () => {
     api = () => json({ rows: "nope", totalBytesProcessed: "x" });
-    const result = await createBigQueryTransport("p", creds).query("SELECT 1", opts);
+    const result = await createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS).query("SELECT 1", opts);
     expect(result).toMatchObject({
       fields: [],
       rows: [],
@@ -334,7 +338,10 @@ describe("bigquery query", () => {
       }),
     ];
     api = () => pages.shift() ?? json({});
-    const result = await createBigQueryTransport("p", creds).query("SELECT n", { ...opts, maxRows: 3 });
+    const result = await createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS).query("SELECT n", {
+      ...opts,
+      maxRows: 3,
+    });
     expect(result.rows).toEqual([{ n: "1" }, { n: "2" }, { n: "3" }]);
     expect(result.totalBytesProcessed).toBe(9);
     const urls = apiCalls().map((r) => new URL(r.url));
@@ -352,13 +359,13 @@ describe("bigquery query", () => {
 
   test("a pageToken without a job reference is not followed", async () => {
     api = () => json({ pageToken: "p2", jobReference: {}, rows: [] });
-    await createBigQueryTransport("p", creds).query("SELECT 1", opts);
+    await createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS).query("SELECT 1", opts);
     expect(apiCalls()).toHaveLength(1);
   });
 
   test("an error envelope becomes BigQueryApiError with status, reason and message", async () => {
     api = () => json({ error: { message: "Not found: Table x", errors: [{ reason: "notFound" }] } }, 404);
-    const err = await createBigQueryTransport("p", creds)
+    const err = await createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS)
       .query("SELECT 1", opts)
       .catch((e) => e);
     expect(err).toBeInstanceOf(BigQueryApiError);
@@ -372,7 +379,7 @@ describe("bigquery query", () => {
 
   test("a non-JSON error is reported by status", async () => {
     api = () => ({ status: 502, text: "<html>bad gateway</html>" });
-    const err = await createBigQueryTransport("p", creds)
+    const err = await createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS)
       .query("SELECT 1", opts)
       .catch((e) => e);
     expect(err).toMatchObject({ status: 502, reason: null, message: "BigQuery answered HTTP 502" });
@@ -380,7 +387,7 @@ describe("bigquery query", () => {
 
   test("a non-JSON success reads as an empty answer", async () => {
     api = () => ({ status: 200, text: "ok" });
-    expect((await createBigQueryTransport("p", creds).query("SELECT 1", opts)).rows).toEqual([]);
+    expect((await createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS).query("SELECT 1", opts)).rows).toEqual([]);
   });
 });
 
@@ -397,7 +404,7 @@ describe("bigquery job cancel", () => {
 
   test("a failure while polling cancels the job with its location, swallowing a failed cancel, and rethrows", async () => {
     failing("EU");
-    const err = await createBigQueryTransport("p", creds)
+    const err = await createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS)
       .query("SELECT 1", opts)
       .catch((e) => e);
     expect(err).toMatchObject({ message: "boom" });
@@ -414,7 +421,7 @@ describe("bigquery job cancel", () => {
         : req.url.includes("/queries/")
           ? json({ error: { message: "boom" } }, 500)
           : json({ jobComplete: false, jobReference: { jobId: "j/1" } });
-    const err = await createBigQueryTransport("p", creds)
+    const err = await createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS)
       .query("SELECT 1", opts)
       .catch((e) => e);
     expect(err).toBeInstanceOf(BigQueryApiError);
@@ -424,7 +431,7 @@ describe("bigquery job cancel", () => {
 
   test("a job without a location cancels without the parameter", async () => {
     failing();
-    await createBigQueryTransport("p", creds)
+    await createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS)
       .query("SELECT 1", opts)
       .catch(() => {});
     expect(cancels()[0].url).toEndWith("/jobs/j%2F1/cancel");
@@ -432,9 +439,9 @@ describe("bigquery job cancel", () => {
 
   test("success and a failed first response cancel nothing", async () => {
     api = () => json({ jobComplete: true, jobReference: { jobId: "j" } });
-    await createBigQueryTransport("p", creds).query("SELECT 1", opts);
+    await createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS).query("SELECT 1", opts);
     api = () => json({ error: { message: "bad" } }, 400);
-    await createBigQueryTransport("p", creds)
+    await createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS)
       .query("SELECT 1", opts)
       .catch(() => {});
     expect(cancels()).toHaveLength(0);
@@ -443,11 +450,11 @@ describe("bigquery job cancel", () => {
 
 describe("bigquery project id", () => {
   test.each(["..", ".", "a/b", "", "1abc", "a b", "a?b"])("rejects %p", (project) => {
-    expect(() => createBigQueryTransport(project, creds)).toThrow("not a valid project id");
+    expect(() => createBigQueryTransport(project, creds, ALLOWS_PRIVATE_HOSTS)).toThrow("not a valid project id");
   });
 
   test.each(["my-proj-123", "example.com:my-proj"])("accepts %p", (project) => {
-    expect(() => createBigQueryTransport(project, creds)).not.toThrow();
+    expect(() => createBigQueryTransport(project, creds, ALLOWS_PRIVATE_HOSTS)).not.toThrow();
   });
 });
 
@@ -466,7 +473,7 @@ describe("bigquery token lanes", () => {
       }
       return json({ datasets: [] });
     };
-    const bq = createBigQueryTransport("p", creds);
+    const bq = createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS);
     const slow = bq.listDatasets(signal);
     await Bun.sleep(0);
     await bq.listDatasets(signal);
@@ -485,7 +492,7 @@ describe("bigquery token lanes", () => {
 
   test("the same token reuses its lane, and close() closes every lane and the oauth transport", async () => {
     api = () => json({ datasets: [] });
-    const bq = createBigQueryTransport("p", creds);
+    const bq = createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS);
     await bq.listDatasets(signal);
     await bq.listDatasets(signal);
     const lanes = built.filter((b) => b.opts.origin.host === "bigquery.googleapis.com");
@@ -503,7 +510,7 @@ describe("bigquery catalog", () => {
       json({ datasets: [{ datasetReference: { datasetId: "b" }, location: "EU" }] }),
     ];
     api = () => pages.shift() ?? json({});
-    expect(await createBigQueryTransport("p", creds).listDatasets(signal)).toEqual([
+    expect(await createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS).listDatasets(signal)).toEqual([
       { id: "a", location: "US" },
       { id: "b", location: "EU" },
     ]);
@@ -518,7 +525,9 @@ describe("bigquery catalog", () => {
       json({}),
     ];
     api = () => pages.shift() ?? json({});
-    expect(await createBigQueryTransport("p", creds).listTables("d s", signal)).toEqual([{ id: "t1", type: "TABLE" }]);
+    expect(await createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS).listTables("d s", signal)).toEqual([
+      { id: "t1", type: "TABLE" },
+    ]);
     const urls = apiCalls().map((r) => new URL(r.url));
     expect(urls[0].pathname).toBe("/bigquery/v2/projects/p/datasets/d%20s/tables");
     expect(urls[1].searchParams.get("pageToken")).toBe("n2");
@@ -526,7 +535,7 @@ describe("bigquery catalog", () => {
 
   test("getTable returns the schema, empty when absent", async () => {
     api = () => json({ schema: { fields: [{ name: "a", type: "STRING" }] } });
-    const bq = createBigQueryTransport("p", creds);
+    const bq = createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS);
     expect(await bq.getTable("d", "t/1", signal)).toEqual({
       fields: [{ name: "a", type: "STRING" }],
     });
@@ -541,7 +550,7 @@ describe("bigquery close and abort", () => {
 
   test("a request after close() is refused without opening a lane", async () => {
     api = () => json({ datasets: [] });
-    const bq = createBigQueryTransport("p", creds);
+    const bq = createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS);
     bq.close();
     const err = await bq.listDatasets(signal).catch((e) => e);
     expect(err).toBeInstanceOf(TransportError);
@@ -556,7 +565,7 @@ describe("bigquery close and abort", () => {
         : req.method === "POST"
           ? json({ jobComplete: false, jobReference: { jobId: "j1" } })
           : never();
-    const bq = createBigQueryTransport("p", creds);
+    const bq = createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS);
     const run = bq.query("SELECT 1", opts).catch((e) => e);
     while (!apiCalls().some((r) => r.method === "GET")) await Bun.sleep(0);
     bq.close();
@@ -569,7 +578,7 @@ describe("bigquery close and abort", () => {
   test("an abort while the first POST is in flight has no job id to cancel", async () => {
     api = never;
     const controller = new AbortController();
-    const run = createBigQueryTransport("p", creds)
+    const run = createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS)
       .query("SELECT 1", { ...opts, signal: controller.signal })
       .catch((e) => e);
     while (apiCalls().length === 0) await Bun.sleep(0);
@@ -589,7 +598,7 @@ describe("bigquery close and abort", () => {
             rows: [{ f: [] }],
           });
     expect(
-      await createBigQueryTransport("p", creds)
+      await createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS)
         .query("SELECT 1", opts)
         .catch((e) => e),
     ).toBeInstanceOf(TypeError);
@@ -604,7 +613,7 @@ describe("bigquery close: the token source", () => {
 
   test("15: a call after close() keeps the BigQuery sentence and asks for no token", async () => {
     api = () => json({ datasets: [] });
-    const bq = createBigQueryTransport("p", creds);
+    const bq = createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS);
     bq.close();
     const err = await bq.listDatasets(signal).catch((e) => e);
     expect(err).toMatchObject({ kind: "aborted", message: "The BigQuery connection is closed" });
@@ -615,7 +624,7 @@ describe("bigquery close: the token source", () => {
   test("15: close() aborts a token refresh in flight", async () => {
     token = () => new Promise<{ status: number; text: string }>(() => {});
     api = () => json({ datasets: [] });
-    const bq = createBigQueryTransport("p", creds);
+    const bq = createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS);
     const run = bq.listDatasets(signal).catch((e) => e);
     while (built.length === 0 || built[0].requests.length === 0) await Bun.sleep(0);
     const refresh = built[0].requests[0];
@@ -634,7 +643,7 @@ describe("bigquery close: the token source", () => {
         : req.method === "POST"
           ? json({ jobComplete: false, jobReference: { jobId: "j1" } })
           : json({ error: { message: "boom" } }, 500);
-    const err = await createBigQueryTransport("p", creds)
+    const err = await createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS)
       .query("SELECT 1", opts)
       .catch((e) => e);
     expect(err).toMatchObject({ message: "boom" });
@@ -651,7 +660,7 @@ describe("bigquery close: the token source", () => {
         : req.method === "POST"
           ? json({ jobComplete: false, jobReference: { jobId: "j1" } })
           : never();
-    const bq = createBigQueryTransport("p", { ...creds, quotaProjectId: "quota-proj" });
+    const bq = createBigQueryTransport("p", { ...creds, quotaProjectId: "quota-proj" }, ALLOWS_PRIVATE_HOSTS);
     const run = bq.query("SELECT 1", opts).catch((e) => e);
     while (!apiCalls().some((r) => r.method === "GET")) await Bun.sleep(0);
     bq.close();
@@ -681,7 +690,7 @@ describe("bigquery malformed wire answers", () => {
     const fields = [{ name: "a", type: "STRING" }];
     api = () =>
       json({ jobComplete: true, jobReference: { jobId: "j" }, schema: { fields }, rows: [null, {}], pageToken: 5 });
-    const bq = createBigQueryTransport("p", creds);
+    const bq = createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS);
     expect((await bq.query("SELECT 1", opts)).rows).toEqual([{ a: null }, { a: null }]);
     expect(apiCalls()).toHaveLength(1);
     api = () => json({ jobComplete: true, schema: { fields: "x" }, rows: [{ f: [{ v: "1" }] }] });
@@ -691,7 +700,7 @@ describe("bigquery malformed wire answers", () => {
   });
 
   test("an error envelope with odd shapes still reports by status", async () => {
-    const bq = createBigQueryTransport("p", creds);
+    const bq = createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS);
     api = () => json({ error: { message: 5, errors: "x" } }, 400);
     expect(await bq.query("SELECT 1", opts).catch((e) => e)).toMatchObject({
       reason: null,
@@ -715,7 +724,7 @@ describe("bigquery malformed wire answers", () => {
         ],
         nextPageToken: 7,
       });
-    const bq = createBigQueryTransport("p", creds);
+    const bq = createBigQueryTransport("p", creds, ALLOWS_PRIVATE_HOSTS);
     expect(await bq.listDatasets(signal)).toEqual([{ id: "x" }, { id: "a", location: "US" }]);
     api = () =>
       json({

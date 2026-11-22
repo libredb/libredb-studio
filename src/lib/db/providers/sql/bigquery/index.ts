@@ -9,6 +9,7 @@
 
 import { BIGQUERY_DRY_RUN_MARKER } from "@/lib/explain/bigquery-dryrun";
 import { AuthenticationError, DatabaseConfigError, QueryError, TimeoutError } from "@/lib/db/errors";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { TransportError } from "@/lib/db/http/node-transport";
 import {
   assertContainerPathShape,
@@ -37,6 +38,7 @@ import type {
   ObjectDetailBatch,
   ObjectKindSpec,
   PerformanceMetrics,
+  ProviderBuildContext,
   ProviderCapabilities,
   ProviderOptions,
   QueryResult,
@@ -190,8 +192,12 @@ export class BigQueryProvider extends SQLBaseProvider {
   private readonly tableLists = new Map<string, { at: number; tables: Promise<BigQueryTableRef[]> }>();
   private catalogCache: { at: number; ttl: number; catalog: Promise<Catalog | null> } | null = null;
 
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
+  /** The egress decision the factory built this provider with, handed to the transport `connect()` builds. */
+  private readonly egress: ProviderBuildContext["egress"];
+
+  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderBuildContext = {}) {
     super(config, options);
+    this.egress = execution.egress;
     this.validate();
   }
 
@@ -240,7 +246,11 @@ export class BigQueryProvider extends SQLBaseProvider {
 
   public async connect(): Promise<void> {
     // An empty password on a connection that is not operator-seeded is refused here, by the policy's gate.
-    const transport = createBigQueryTransport(this.project(), resolveBigQueryCredential(this.config));
+    const transport = createBigQueryTransport(
+      this.project(),
+      resolveBigQueryCredential(this.config),
+      requireEgressDecision(this.egress),
+    );
     try {
       // Without datasets.list the job location is left to BigQuery to infer; bad credentials still fail here.
       this.location =

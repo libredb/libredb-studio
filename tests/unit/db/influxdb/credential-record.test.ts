@@ -12,6 +12,7 @@ import {
   type InfluxType,
 } from "@/lib/db/providers/timeseries/influxdb/connection-options";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const TEST_PASSWORD = "password";
 const TYPES: InfluxType[] = ["influxdb", "influxdb3"];
@@ -70,6 +71,7 @@ describe.each(TYPES)("the %s record", (type) => {
       buildInfluxConnectionOptions({ ...seed, ...overrides } as unknown as DatabaseConnection, {
         type,
         queryTimeout: 30_000,
+        egress: ALLOWS_PRIVATE_HOSTS,
       });
     for (const overrides of [{}, { password: "" }]) {
       expect(() => options(overrides)).toThrow(DatabaseConfigError);

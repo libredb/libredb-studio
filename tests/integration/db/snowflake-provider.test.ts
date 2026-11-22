@@ -72,6 +72,7 @@ import { MAX_UNLIMITED_ROWS } from "@/lib/db/utils/query-limiter";
 import { historyMaskOf, maskStatementForHistory } from "@/lib/history-mask";
 import { logger } from "@/lib/logger";
 import type { DatabaseConnection } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 import { handleAnswer, resultAnswer } from "../../helpers/snowflake-answers";
 import { KEY_TEST_PASSPHRASE, pbes2Pbkdf2Pem, pkcs8Pem, rsaKey } from "../../helpers/snowflake-keys";
 import {
@@ -313,7 +314,13 @@ function build(connection: DatabaseConnection): Built {
   const transports = scriptedTransports();
   const clock = fakeClock();
   const deps = testDeps(transports, clock);
-  const entry = { provider: new SnowflakeProvider(connection, {}, deps), transports, deps, clock, connection };
+  const entry = {
+    provider: new SnowflakeProvider(connection, {}, { egress: ALLOWS_PRIVATE_HOSTS }, deps),
+    transports,
+    deps,
+    clock,
+    connection,
+  };
   built.push(entry);
   return entry;
 }

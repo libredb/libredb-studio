@@ -14,6 +14,7 @@
  * them.
  */
 import { readFileSync } from "node:fs";
+import { egressDecision } from "@/lib/db/egress-decision";
 import { snowflakeEndpoint } from "@/lib/db/providers/sql/snowflake/account";
 import type { SnowflakeEvidenceSecrets } from "./snowflake-evidence-scrub";
 
@@ -106,7 +107,7 @@ export function readLiveArguments(
     const account = required(env, "SNOWFLAKE_ACCOUNT");
     let host = "";
     try {
-      host = snowflakeEndpoint(account).host;
+      host = snowflakeEndpoint(account, egressDecision()).host;
     } catch {
       refuse("SNOWFLAKE_ACCOUNT", "is not a Snowflake account identifier or account URL");
     }

@@ -16,14 +16,9 @@
 import { getAppVersion } from "@/lib/app-version";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { assertNotLinkLocalLiteral } from "@/lib/db/http/egress-policy";
-import {
-  type HttpOrigin,
-  httpOriginWithCoreDecision,
-  isLoopbackHost,
-  validateHost,
-  validatePort,
-} from "@/lib/db/http/endpoint";
+import { type HttpOrigin, httpOrigin, isLoopbackHost, validateHost, validatePort } from "@/lib/db/http/endpoint";
 import { type NodeTlsMaterial, nodeTlsMaterial } from "@/lib/db/http/node-transport";
+import type { EgressDecision } from "@/lib/db/types";
 import { secretForms } from "@/lib/db/utils/server-text";
 import {
   type DatabaseConnection,
@@ -71,6 +66,8 @@ export interface ClusterEndpoint {
 
 export interface ClusterEndpointContext {
   readonly queryTimeout: number;
+  /** The egress decision the provider was built with, which the dialled origin's address literal is checked against. */
+  readonly egress: EgressDecision;
   /** The build's version for the user-agent; undefined reads `getAppVersion()`, null writes no version. */
   readonly appVersion?: string | null;
 }
@@ -184,7 +181,7 @@ export function readClusterEndpoint(
   context: ClusterEndpointContext,
 ): ClusterEndpoint {
   const farEnd = tunnelFarEnd(config);
-  const dialled = shared(() => httpOriginWithCoreDecision("http", config.host, config.port ?? KUBERNETES_DEFAULT_PORT));
+  const dialled = shared(() => httpOrigin("http", config.host, config.port ?? KUBERNETES_DEFAULT_PORT, context.egress));
   const endpoint =
     farEnd === undefined
       ? { host: unbracketed(dialled.host), port: dialled.port }

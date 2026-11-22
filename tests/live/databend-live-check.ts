@@ -53,6 +53,7 @@ import {
   QueryError,
   TimeoutError,
 } from "@/lib/db/errors";
+import { egressDecision } from "@/lib/db/egress-decision";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { createNodeTransport, type NodeTransport, type NodeTransportOptions } from "@/lib/db/http/node-transport";
 import { DATABEND_STATEMENT_BYTES } from "@/lib/db/providers/sql/databend/connection-options";
@@ -268,6 +269,7 @@ function recordedProvider(
   return new DatabendProvider(
     connection(overrides),
     { queryTimeout },
+    { egress: egressDecision() },
     { createNodeTransport: record.createNodeTransport },
   );
 }

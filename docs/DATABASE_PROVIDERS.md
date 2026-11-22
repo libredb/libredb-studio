@@ -498,7 +498,7 @@ A non-object `sshTunnel`, a class instance, a getter or a field that is not enum
 The first call reads `DB_HTTP_BLOCK_PRIVATE_HOSTS`, logs which way it decided and whether that is the default in one info line, which a `LOG_LEVEL` of `warn` or `error` hides, and keeps the decision for the life of the process, so set the variable before the first call: a later change takes effect when the process restarts.
 A value other than `true`, `on`, `1`, `false`, `off`, `0` or empty (trimmed, any case) is refused with a `DatabaseConfigError` naming the variable, on that call and every later one, and nothing is built.
 A standalone Studio takes the decision at boot instead, and refuses to start on such a value.
-Each provider that takes a context, every one but Databend, BigQuery, Snowflake and Spark, is built with that decision; for Databend, BigQuery and Snowflake core's guard reads the same decision on the provider's behalf, and Spark passes no guard, so no provider reads the variable itself.
+Every provider but Spark is built with that decision, and Spark passes no guard, so no provider reads the variable itself.
 
 A Db2 provider is built with the CA certificates of the file `NODE_EXTRA_CA_CERTS` names, since its TLS library, unlike Node.js's, does not read that variable.
 The first Db2 build of a process reads the file and keeps its certificates for the life of the process, logging how many in one info line, which a `LOG_LEVEL` of `warn` or `error` hides, so set the variable before the first call: a later change takes effect when the process restarts, as it does for Node.js itself.

@@ -28,6 +28,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getHeapStatistics } from "node:v8";
+import { egressDecision } from "@/lib/db/egress-decision";
 import { endpointUrl } from "@/lib/db/http/endpoint";
 import { createNodeTransport, type NodeTransportOptions } from "@/lib/db/http/node-transport";
 import {
@@ -180,7 +181,11 @@ async function main(): Promise<void> {
     password,
     createdAt: new Date(0),
   } as unknown as DatabaseConnection;
-  const options = buildDatabendConnectionOptions(connection, { queryTimeout: QUERY_TIMEOUT_MS, appVersion: null });
+  const options = buildDatabendConnectionOptions(connection, {
+    queryTimeout: QUERY_TIMEOUT_MS,
+    appVersion: null,
+    egress: egressDecision(),
+  });
   const answers: number[] = [];
   const transport = createDatabendHttpTransport(options, { createNodeTransport: recordingTransport(answers) });
   const heap = heapSampler();

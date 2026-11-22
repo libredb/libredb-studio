@@ -6,6 +6,7 @@ import { quotaProjectHeaders } from "@/lib/db/auth/google/credentials";
 import { createGoogleTokenSource } from "@/lib/db/auth/google/token-source";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { createNodeTransport, type NodeTransport, TransportError } from "@/lib/db/http/node-transport";
+import type { EgressDecision } from "@/lib/db/types";
 import { type BigQueryCredentials, bigQueryTokenSourceDeps, projectIdRefusal } from "./credential-policy";
 
 const API_HOST = "bigquery.googleapis.com";
@@ -155,9 +156,14 @@ export function apiOrigin(env: Readonly<Record<string, string | undefined>> = pr
   return { scheme, host: url.hostname, port: url.port ? Number(url.port) : scheme === "https" ? 443 : 80 };
 }
 
+/**
+ * BigQuery's transport for one connection. `egress` is the egress decision the provider was built with, handed to the
+ * token source for its token endpoint's origin; `env` is a test's seam for `BIGQUERY_EMULATOR_HOST`.
+ */
 export function createBigQueryTransport(
   project: string,
   creds: BigQueryCredentials,
+  egress: EgressDecision,
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): BigQueryTransport {
   if (projectIdRefusal(project) !== null) {
@@ -167,7 +173,7 @@ export function createBigQueryTransport(
   const api = apiOrigin(env);
   // The emulator checks no credential, so none is minted and none leaves the process. The token source builds its
   // auth lane on the first refresh, and a pasted access token builds none.
-  const tokens = emulatorHost(env) ? null : createGoogleTokenSource(creds, bigQueryTokenSourceDeps());
+  const tokens = emulatorHost(env) ? null : createGoogleTokenSource(creds, bigQueryTokenSourceDeps(egress));
   // An authorized user's quota project bills the API calls; the token requests never carry it.
   const quota = quotaProjectHeaders(creds);
   const base = `${new URL(`${api.scheme}://${api.host}:${api.port}`).origin}/bigquery/v2/projects/${encodeURIComponent(project)}`;
