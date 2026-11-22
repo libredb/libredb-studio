@@ -8017,3 +8017,56 @@ describe("database content names the provider that relayed it", () => {
     );
   });
 });
+
+describe("Studio's own refusal of a sent statement's answer", () => {
+  /** Settles a refused outcome as a database error, or throws naming what it was instead. */
+  const databaseError = (outcome: Awaited<ReturnType<typeof runReadQueryTool>>) => {
+    if (outcome.kind !== "refused" || outcome.refusal.class !== "database-error") {
+      throw new Error(`expected a database error, got ${JSON.stringify(outcome)}`);
+    }
+    return { outcome, refusal: outcome.refusal };
+  };
+  const rowsBudget = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxResultRows;
+
+  test("a result past the run's row budget that the provider served is refused in Studio's voice, unfenced, and recorded refusedBy studio", async () => {
+    const rows = Array.from({ length: rowsBudget + 1 }, (_, id) => ({ id }));
+    const h = harness({}, async () => queryResult({ rows, fields: ["id"], rowCount: rows.length }));
+
+    const { outcome, refusal } = databaseError(await runReadQueryTool(h.context, { sql: "SELECT id FROM orders" }));
+
+    expect(refusal.message).toBe(rowBudgetSentence(rowsBudget + 1, rowsBudget));
+    expect(refusal.refusedBy).toBe("studio");
+    expect(refusal.sent).toBeUndefined();
+    expect(outcome.modelText).not.toContain(UNTRUSTED_CONTENT_BEGIN);
+    expect(outcome.modelText).not.toContain(UNTRUSTED_PROVIDER_TEXT_BEGIN);
+    expect(outcome.modelText.startsWith(rowBudgetSentence(rowsBudget + 1, rowsBudget))).toBe(true);
+    // The row budget's advice still follows: the repair is a narrower statement.
+    expect(outcome.modelText).toContain(`LIMIT ${rowsBudget}`);
+    expect(h.repairs.attemptsUsed).toBe(1);
+  });
+
+  test("a result past the byte budget likewise", async () => {
+    const bytesBudget = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxResultBytes;
+    const rows = [{ text: "x".repeat(bytesBudget) }];
+    const h = harness({}, async () => queryResult({ rows, fields: ["text"], rowCount: 1 }));
+
+    const { outcome, refusal } = databaseError(await runReadQueryTool(h.context, { sql: "SELECT text FROM notes" }));
+
+    expect(refusal.message).toBe(byteBudgetSentence(measureRowBytes(rows[0]), bytesBudget));
+    expect(refusal.refusedBy).toBe("studio");
+    expect(outcome.modelText).not.toContain(UNTRUSTED_CONTENT_BEGIN);
+    expect(outcome.modelText).toContain(refusal.message);
+  });
+
+  test("a statement the core stopped waiting for is refused in Studio's voice", async () => {
+    // A run with 300ms left grants the statement 300ms; the double never answers, so core's own time refusal settles it.
+    const h = harness({ deadline: new AgentRunDeadline(300, frozenClock) }, () => new Promise<QueryResult>(() => {}));
+
+    const { outcome, refusal } = databaseError(await runReadQueryTool(h.context, { sql: "SELECT 1" }));
+
+    expect(refusal.message).toBe(`${TIME_BUDGET_PREFIX}: no answer within 300ms`);
+    expect(refusal.refusedBy).toBe("studio");
+    expect(outcome.modelText).not.toContain(UNTRUSTED_CONTENT_BEGIN);
+    expect(outcome.modelText).toContain(refusal.message);
+  });
+});

@@ -32,6 +32,7 @@ import { RefusedBeforeSendError } from "@/lib/db/errors";
 import { createTargetScope } from "@/lib/db/operations/policy";
 import { PROVIDER_TEXT_WITHHELD } from "@/lib/db/operations/provider-text";
 import { secretForms } from "@/lib/db/utils/server-text";
+import { rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
 import { READ_ALLOWANCE_PREFIX, type RunReadAllowance } from "@/lib/db/read-allowance";
 import type { DatabaseProvider, ProviderCapabilities, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
@@ -464,6 +465,60 @@ describe("the run read allowance", () => {
     expect(promptText(first)).toContain(
       "[UNTRUSTED DATABASE CONTENT: earlier steps; operation agent/thread; reference thread_1]",
     );
+  });
+
+  test("a sent statement whose answer Studio refused is restated in Studio's voice on a resume", async () => {
+    const sentence = rowBudgetSentence(201, 200);
+    const text = await resumedOver({
+      class: "database-error",
+      statementFingerprint: "fp_old",
+      message: sentence,
+      refusedBy: "studio",
+    });
+
+    expect(text).toContain(
+      `Step step_old (run_read_query) was sent, and this server refused its answer by its own budget: ${sentence}. Narrow the statement, or answer from what you have already read.`,
+    );
+    expect(text).not.toContain("[UNTRUSTED DATABASE CONTENT: database error");
+  });
+
+  test("a sent statement whose answer Studio refused is restated in Studio's voice when it is asked again", async () => {
+    const { provider } = billingProvider(() => 1);
+    const read = provider.queryReadOnly?.bind(provider);
+    if (read === undefined) throw new Error("the double reads nothing");
+    const rowsBudget = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxResultRows;
+    const overBudget = {
+      ...provider,
+      queryReadOnly: async (sql: string, budget: ReadOnlyStatementBudget): Promise<QueryResult> => {
+        if (sql !== MODEL_SQL) return read(sql, budget);
+        const rows = Array.from({ length: rowsBudget + 1 }, (_, n) => ({ n }));
+        return { rows, fields: ["n"], rowCount: rows.length, executionTime: 1 };
+      },
+    } as DatabaseProvider;
+
+    const { turns, events } = await drive(overBudget, [countOrders("call_1"), countOrders("call_2")]);
+
+    expect(events.filter((event) => event.kind === "tool-refused")).toMatchObject([
+      { refusal: { class: "database-error", refusedBy: "studio" } },
+    ]);
+    const replay = turns[2];
+    if (replay === undefined) throw new Error("the run ended before the repeated call was answered");
+    expect(promptText(replay)).toContain(
+      `(run_read_query) was sent, and this server refused its answer by its own budget: ${rowBudgetSentence(rowsBudget + 1, rowsBudget)}.`,
+    );
+    expect(promptText(replay)).not.toContain("[UNTRUSTED DATABASE CONTENT: database error");
+  });
+
+  test("a database error recorded without refusedBy is restated fenced as the database's", async () => {
+    // The same sentence a provider raises, recorded without saying who refused: read the conservative way.
+    const sentence = rowBudgetSentence(201, 200);
+    const text = await resumedOver({ class: "database-error", statementFingerprint: "fp_old", message: sentence });
+
+    expect(text).toContain("Step step_old (run_read_query) failed at the database.");
+    expect(text).toContain(
+      "[UNTRUSTED DATABASE CONTENT: database error; relayed by the PostgreSQL provider, bundled with Studio; operation run_read_query; reference fp_old]",
+    );
+    expect(text).not.toContain("refused its answer by its own budget");
   });
 
   test("a resumed run withholds a credential an older ledger recorded", async () => {

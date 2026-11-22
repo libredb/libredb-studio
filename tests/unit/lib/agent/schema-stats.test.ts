@@ -679,6 +679,23 @@ describe("readStatisticsForGrounding", () => {
   });
 });
 
+describe("the statistics read's own time limit", () => {
+  test("the statistics read that outlasts its time is recorded as Studio's refusal", async () => {
+    const h = harness("mssql", () => new Promise<QueryResult>(() => {}));
+    // A run with 300ms left grants the read 300ms; the double never answers.
+    const context = { ...h.context, deadline: new AgentRunDeadline(300, frozenClock) };
+
+    const outcome = await readStatisticsForGrounding(context, "estimates");
+
+    if (outcome.kind !== "refused" || outcome.refusal.class !== "database-error") {
+      throw new Error(`expected a database error, got ${JSON.stringify(outcome)}`);
+    }
+    expect(outcome.refusal.message).toBe("the statistics read did not answer in time");
+    expect(outcome.refusal.refusedBy).toBe("studio");
+    expect(outcome.modelText).not.toContain(UNTRUSTED_CONTENT_BEGIN);
+  });
+});
+
 describe("readSchemaStatistics — what it will not do", () => {
   test("an engine with no verified statistics composition is refused, and no statement is sent", async () => {
     const h = harness("mysql", async () => result([]));

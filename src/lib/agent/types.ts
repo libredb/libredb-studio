@@ -897,10 +897,12 @@ export type AgentToolRefusal =
        */
       readonly sent?: false;
       /**
-       * Who refused a statement before it was sent, present exactly when `sent` is: `"studio"` for this server's own
-       * refusal (the run's read allowance), said in this server's voice, and `"provider"` for the provider's, which a
-       * prompt carries fenced as the provider's text naming it. A refusal recorded before this field existed carries
-       * none and is read as the provider's, the conservative reading.
+       * Whose sentence `message` is, where it is not the database's. `"studio"` for this server's own refusal, said in
+       * this server's voice: before sending (the run's read allowance, with `sent: false`) or after (core's row, byte or
+       * time refusal of the statement's answer, with `sent` absent). `"provider"` only before sending, for the
+       * provider's own refusal, which a prompt carries fenced as the provider's text naming it. Absent on a sent
+       * statement: the database's text, relayed by the provider and fenced naming it. Absent with `sent: false`: a
+       * refusal recorded before this field existed, read as the provider's, the conservative reading.
        */
       readonly refusedBy?: "studio" | "provider";
     }

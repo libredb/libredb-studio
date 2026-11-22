@@ -1938,10 +1938,12 @@ export async function runAuditedAgentCall(
     // Refused before it was sent (a provider's own fence, or the run's read allowance), so the database never saw the
     // statement: it is not fenced as the database's words, and the refusal records it as not sent and who refused it.
     // The read allowance is this server's own sentence, said in its voice; a provider's refusal is the provider's
-    // text, fenced naming the provider. It still costs a repair attempt, because the repair is a statement the model
-    // has to author.
+    // text, fenced naming the provider. A sent statement whose answer this server refused by its own row, byte or time
+    // budget is this server's sentence too, said in its voice and recorded as Studio's; any other failure of a sent
+    // statement is the database's text, fenced naming the provider that relayed it. Every one of them still costs a
+    // repair attempt, because the repair is a statement the model has to author.
     const notSent = error instanceof RefusedBeforeSendError;
-    const studioRefused = notSent && isStudioRefusal(error);
+    const studioRefused = isStudioRefusal(error);
     const columns = notSent ? undefined : columnsThatExist(message, context.connection);
     const advice = notSent
       ? studioRefused
@@ -1973,7 +1975,9 @@ export async function runAuditedAgentCall(
         answered,
         ...(notSent
           ? { sent: false as const, refusedBy: studioRefused ? ("studio" as const) : ("provider" as const) }
-          : {}),
+          : studioRefused
+            ? { refusedBy: "studio" as const }
+            : {}),
       },
       // The engine's own words: untrusted, so fenced. The fingerprint stands in for
       // a correlation id, which a failed execution never produced.

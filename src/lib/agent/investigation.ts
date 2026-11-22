@@ -1976,6 +1976,13 @@ function describeSettled(event: AgentSettledStepEvent, toolName: string, connect
     });
     return `Step ${event.stepId} (${toolName}) was refused before it was sent, by the ${author}, so the database never saw it:\n${fenced}\nDraft a statement that does not do what the refusal names.`;
   }
+  if (refusal.refusedBy === "studio") {
+    // Sent, and this server refused its answer by its own row, byte or time budget: this server's sentence, said in its
+    // voice as one inert line rather than fenced as the database's.
+    const detail = oneLineForPrompt(message);
+    const reason = /[.!?]$/.test(detail) ? detail : `${detail}.`;
+    return `Step ${event.stepId} (${toolName}) was sent, and this server refused its answer by its own budget: ${reason} Narrow the statement, or answer from what you have already read.`;
+  }
   // The engine's own words: untrusted, so fenced rather than quoted into the
   // server's voice. The fingerprint stands in for a correlation id, which a
   // statement that failed never produced.
