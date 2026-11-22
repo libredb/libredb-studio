@@ -1913,7 +1913,7 @@ describe("POST /api/db/transaction: a body that is not a JSON object", () => {
 // ─── The server's confirmation of a run (FND-5) ─────────────────────────────
 describe("POST /api/db/transaction: the server's confirmation of a run", () => {
   const original = process.env.LIBREDB_RUN_CONFIRMATION;
-  const session = { role: "user", username: "alice", iat: 1_700_000_000 };
+  const session = { role: "user" as const, username: "alice", iat: 1_700_000_000 };
   let warn: ReturnType<typeof spyOn>;
 
   function run(body: Record<string, unknown>) {
@@ -1942,8 +1942,8 @@ describe("POST /api/db/transaction: the server's confirmation of a run", () => {
     mockTxProvider.rollbackTransaction.mockClear();
     mockTxProvider.rollbackTransaction.mockImplementation(async () => {});
     mockTxProvider.queryInTransaction.mockImplementation(async () => ({
-      rows: [{ id: 1 }],
-      fields: ["id"],
+      rows: [{ id: 1, name: "Alice" }],
+      fields: ["id", "name"],
       rowCount: 1,
       executionTime: 1,
     }));
@@ -1971,7 +1971,11 @@ describe("POST /api/db/transaction: the server's confirmation of a run", () => {
       expect(res.status).toBe(200);
       expect((await parseResponseJSON<{ confirmation?: string }>(res)).confirmation).toBe("unconfirmed");
       expect(mockTxProvider.queryInTransaction).toHaveBeenCalledTimes(1);
-      expect(warn.mock.calls.filter((call) => call[1]?.route === "api/db/transaction")).toEqual([
+      expect(
+        warn.mock.calls.filter(
+          (call: unknown[]) => (call[1] as { route?: string } | undefined)?.route === "api/db/transaction",
+        ),
+      ).toEqual([
         [
           "A statement that needs a confirmation ran without one",
           { route: "api/db/transaction", type: "postgres", user: "alice" },
@@ -1993,13 +1997,21 @@ describe("POST /api/db/transaction: the server's confirmation of a run", () => {
   });
 
   describe("server confirmation, ask", () => {
-    test.each(["advisory", "required"])("a write that asks is answered 428 in %s mode, before any provider", async (mode) => {
-      process.env.LIBREDB_RUN_CONFIRMATION = mode;
-      const res = await run({ connection: validConnection, action: "query", sql: "DELETE FROM t", confirmation: "ask" });
-      expect(res.status).toBe(428);
-      expect(await parseResponseJSON(res)).toMatchObject({ code: "CONFIRMATION_REQUIRED" });
-      nothingRan();
-    });
+    test.each(["advisory", "required"])(
+      "a write that asks is answered 428 in %s mode, before any provider",
+      async (mode) => {
+        process.env.LIBREDB_RUN_CONFIRMATION = mode;
+        const res = await run({
+          connection: validConnection,
+          action: "query",
+          sql: "DELETE FROM t",
+          confirmation: "ask",
+        });
+        expect(res.status).toBe(428);
+        expect(await parseResponseJSON(res)).toMatchObject({ code: "CONFIRMATION_REQUIRED" });
+        nothingRan();
+      },
+    );
 
     test("a malformed field is refused before any provider", async () => {
       const res = await run({ connection: validConnection, action: "query", sql: "SELECT 1", confirmation: 0 });
@@ -2048,7 +2060,9 @@ describe("POST /api/db/transaction: the server's confirmation of a run", () => {
         confirmation: { token: issued.token },
       });
       expect(res.status).toBe(400);
-      expect((await parseResponseJSON<{ error: string }>(res)).error).toBe("this confirmation was issued for another route");
+      expect((await parseResponseJSON<{ error: string }>(res)).error).toBe(
+        "this confirmation was issued for another route",
+      );
     });
 
     test("begin, commit and rollback are not classified", async () => {
@@ -2057,7 +2071,9 @@ describe("POST /api/db/transaction: the server's confirmation of a run", () => {
       expect(begun.status).toBe(200);
       mockTxProvider.isInTransaction.mockImplementation(() => true);
       expect((await run({ connection: validConnection, action: "commit", sql: "DROP TABLE t" })).status).toBe(200);
-      expect((await run({ connection: validConnection, action: "rollback", confirmation: "nonsense" })).status).toBe(200);
+      expect((await run({ connection: validConnection, action: "rollback", confirmation: "nonsense" })).status).toBe(
+        200,
+      );
     });
   });
 
@@ -2071,7 +2087,13 @@ describe("POST /api/db/transaction: the server's confirmation of a run", () => {
       ],
       [
         "bad page bounds",
-        { connection: validConnection, action: "query", sql: "DELETE FROM t", options: { offset: -1 }, confirmation: "ask" },
+        {
+          connection: validConnection,
+          action: "query",
+          sql: "DELETE FROM t",
+          options: { offset: -1 },
+          confirmation: "ask",
+        },
       ],
       ["a missing action", { connection: validConnection, sql: "DELETE FROM t", confirmation: "ask" }],
     ] as const)("%s is refused for its fields whatever the confirmation holds", async (_label, body) => {

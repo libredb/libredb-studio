@@ -23,7 +23,6 @@ import { mapDatabaseError } from "@/lib/db/map-database-error";
 import type { QueryEventRow } from "@/lib/query-events/types";
 import type { QueryEventBatchWrite, QueryEventWriteFailure } from "@/lib/query-events/postgres-sink";
 import * as admission from "@/lib/query-events/admission";
-import { logger } from "@/lib/logger";
 import { CONFIRMATION_FIELD_MESSAGE } from "@/lib/api/run-confirmation";
 import { forgetUsedRunConfirmations } from "@/lib/api/run-confirmation-token";
 
@@ -1722,7 +1721,7 @@ describe("POST /api/db/multi-query: a body that is not a JSON object", () => {
 // ─── The server's confirmation of a run (FND-5) ─────────────────────────────
 describe("POST /api/db/multi-query: the server's confirmation of a run", () => {
   const original = process.env.LIBREDB_RUN_CONFIRMATION;
-  const session = { role: "user", username: "alice", iat: 1_700_000_000 };
+  const session = { role: "user" as const, username: "alice", iat: 1_700_000_000 };
   const SCRIPT = "SELECT 1; DROP TABLE t";
   let warn: ReturnType<typeof spyOn>;
   let admit: ReturnType<typeof spyOn>;
@@ -1764,7 +1763,11 @@ describe("POST /api/db/multi-query: the server's confirmation of a run", () => {
       const body = await parseResponseJSON<{ confirmation?: string; executedCount: number }>(res);
       expect(body.confirmation).toBe("unconfirmed");
       expect(body.executedCount).toBe(2);
-      expect(warn.mock.calls.filter((call) => call[1]?.route === "api/db/multi-query")).toEqual([
+      expect(
+        warn.mock.calls.filter(
+          (call: unknown[]) => (call[1] as { route?: string } | undefined)?.route === "api/db/multi-query",
+        ),
+      ).toEqual([
         [
           "A statement that needs a confirmation ran without one",
           { route: "api/db/multi-query", type: "postgres", user: "alice" },
@@ -1831,7 +1834,9 @@ describe("POST /api/db/multi-query: the server's confirmation of a run", () => {
       });
       const res = await run({ connection: validConnection, sql: SCRIPT, confirmation: { token: issued.token } });
       expect(res.status).toBe(400);
-      expect((await parseResponseJSON<{ error: string }>(res)).error).toBe("this confirmation was issued for another route");
+      expect((await parseResponseJSON<{ error: string }>(res)).error).toBe(
+        "this confirmation was issued for another route",
+      );
     });
   });
 

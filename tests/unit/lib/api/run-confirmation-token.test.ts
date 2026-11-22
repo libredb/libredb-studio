@@ -91,7 +91,10 @@ describe("the run confirmation token (FND-5)", () => {
     ["database", { database: "billing" }],
     ["user", { user: "admin" }],
     ["connectionString", { connectionString: "postgres://app@db.internal/orders" }],
-    ["tunnel route", { sshTunnel: { enabled: true, host: "bastion", port: 22, username: "ops", authMethod: "password" } }],
+    [
+      "tunnel route",
+      { sshTunnel: { enabled: true, host: "bastion", port: 22, username: "ops", authMethod: "password" } },
+    ],
   ] as const)("refused for another connection: %s alone", async (_field, change) => {
     const token = await minted();
     const offered = { ...binding(), connection: { ...connection(), ...change } as DatabaseConnection };
@@ -234,7 +237,10 @@ describe("the run confirmation token (FND-5)", () => {
       await crypto.subtle.sign("HMAC", base, new TextEncoder().encode("libredb.run-confirmation.v1")),
     );
     const issued = await minted();
-    const claims = JSON.parse(Buffer.from(issued.split(".")[1], "base64url").toString("utf8")) as Record<string, unknown>;
+    const claims = JSON.parse(Buffer.from(issued.split(".")[1], "base64url").toString("utf8")) as Record<
+      string,
+      unknown
+    >;
     const resigned = (version: number) =>
       new SignJWT({ ...claims, v: version }).setProtectedHeader({ alg: "HS256" }).sign(key);
     expect(await refusal(await resigned(2), binding())).toBe("this confirmation could not be verified");

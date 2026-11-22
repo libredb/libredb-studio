@@ -205,13 +205,10 @@ function verdictText(verdict: RunVerdict): string {
       ? frame("typed:none")
       : frame(`typed:${typed.type}`) +
         frame(typed.expected) +
-        (typed.type === "connection-name" ? frame(String(typed.targets.length)) + typed.targets.map(frame).join("") : "");
-  return (
-    frame("confirm") +
-    frame(String(verdict.unreadable)) +
-    frame(String(verdict.classificationFailed)) +
-    typedText
-  );
+        (typed.type === "connection-name"
+          ? frame(String(typed.targets.length)) + typed.targets.map(frame).join("")
+          : "");
+  return frame("confirm") + frame(String(verdict.unreadable)) + frame(String(verdict.classificationFailed)) + typedText;
 }
 
 /**

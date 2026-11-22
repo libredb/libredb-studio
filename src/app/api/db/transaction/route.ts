@@ -290,7 +290,9 @@ export async function POST(req: NextRequest) {
     // A query action's own fields, then the server's confirmation gate (docs/API_DOCS.md, "Server confirmation of a
     // run"), both before any provider is built or the admission gate is asked, so a request either refuses opens
     // nothing and runs nothing. BEGIN, COMMIT and ROLLBACK are Studio's own statements and are not classified.
-    let query: { readonly sql: string; readonly params: unknown[] | undefined; readonly unconfirmed: boolean } | undefined;
+    let query:
+      | { readonly sql: string; readonly params: unknown[] | undefined; readonly unconfirmed: boolean }
+      | undefined;
     if (action === "query") {
       if (!sql || typeof sql !== "string") {
         return NextResponse.json({ error: "SQL query is required for transaction query" }, { status: 400 });

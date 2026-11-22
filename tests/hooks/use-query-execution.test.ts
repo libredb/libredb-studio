@@ -6471,7 +6471,10 @@ describe("the server's confirmation", () => {
   test("a run asks the server, on each of the three run routes", async () => {
     const fetchMock = mockGlobalFetch({
       "/api/db/query": { ok: true, json: mockQueryResult },
-      "/api/db/multi-query": { ok: true, json: { ...mockQueryResult, multiStatement: true, statementCount: 2, executedCount: 2 } },
+      "/api/db/multi-query": {
+        ok: true,
+        json: { ...mockQueryResult, multiStatement: true, statementCount: 2, executedCount: 2 },
+      },
       "/api/db/transaction": { ok: true, json: { ...mockQueryResult, inTransaction: true } },
     });
     const { result, rerender } = renderHook((props) => useQueryExecution(props), {
@@ -6537,7 +6540,10 @@ describe("the server's confirmation", () => {
       });
     });
     expect(ran).toBe(true);
-    expect(bodiesTo(fetchMock, "/api/db/query").map((body) => body.confirmation)).toEqual(["ask", { token: editToken }]);
+    expect(bodiesTo(fetchMock, "/api/db/query").map((body) => body.confirmation)).toEqual([
+      "ask",
+      { token: editToken },
+    ]);
     expect(hook.result.current.safetyCheckQuery).toBeNull();
     hook.unmount();
     restoreGlobalFetch();
@@ -6549,7 +6555,10 @@ describe("the server's confirmation", () => {
     await act(async () => {
       await hook.result.current.executeQuery("DELETE FROM users RETURNING *", undefined, false, { offset: 500 });
     });
-    expect(bodiesTo(fetchMock, "/api/db/query").map((body) => body.confirmation)).toEqual(["ask", { token: pageToken }]);
+    expect(bodiesTo(fetchMock, "/api/db/query").map((body) => body.confirmation)).toEqual([
+      "ask",
+      { token: pageToken },
+    ]);
     expect(hook.result.current.safetyCheckQuery).toBeNull();
     hook.unmount();
     restoreGlobalFetch();

@@ -146,13 +146,11 @@ describe("the run confirmation gate (FND-5)", () => {
   test("a present token is verified in both modes, even for a statement that needs none", async () => {
     for (const mode of ["advisory", "required"]) {
       process.env.LIBREDB_RUN_CONFIRMATION = mode;
-      expect(await gateRun(request({ sql: "SELECT 1", confirmation: { token: crypto.randomUUID() } }), clock)).toEqual(
-        {
-          kind: "answer",
-          status: 400,
-          body: { error: "this confirmation could not be verified", code: ApiErrorCode.CONFIRMATION_INVALID },
-        },
-      );
+      expect(await gateRun(request({ sql: "SELECT 1", confirmation: { token: crypto.randomUUID() } }), clock)).toEqual({
+        kind: "answer",
+        status: 400,
+        body: { error: "this confirmation could not be verified", code: ApiErrorCode.CONFIRMATION_INVALID },
+      });
     }
   });
 
@@ -163,7 +161,7 @@ describe("the run confirmation gate (FND-5)", () => {
     });
     try {
       const nameless = { ...postgres, type: STAND_IN_TYPE, name: "" };
-      const refused = { kind: "answer", status: 400, body: { error: TYPED_NAME_MISSING_REFUSAL } };
+      const refused = { kind: "answer" as const, status: 400, body: { error: TYPED_NAME_MISSING_REFUSAL } };
       expect(await gateRun(request({ connection: nameless, sql: "wipe" }), clock)).toEqual({
         kind: "run",
         unconfirmed: true,
@@ -194,7 +192,9 @@ describe("the run confirmation gate (FND-5)", () => {
       );
       expect(decision).toMatchObject({
         status: 428,
-        body: { confirmation: { typedConfirmation: { type: "connection-name", expected: "Orders", targets: ["every key"] } } },
+        body: {
+          confirmation: { typedConfirmation: { type: "connection-name", expected: "Orders", targets: ["every key"] } },
+        },
       });
     } finally {
       remove();
@@ -244,24 +244,16 @@ describe("the run confirmation gate (FND-5)", () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
-  test.each([
-    "Ask",
-    "",
-    true,
-    null,
-    1,
-    [],
-    {},
-    { token: 1 },
-    { token: "" },
-    { token: "a", typed: "b" },
-  ])("a malformed confirmation field is refused (%p)", async (confirmation) => {
-    expect(await gateRun(request({ confirmation }), clock)).toEqual({
-      kind: "answer",
-      status: 400,
-      body: { error: CONFIRMATION_FIELD_MESSAGE },
-    });
-  });
+  test.each(["Ask", "", true, null, 1, [], {}, { token: 1 }, { token: "" }, { token: "a", typed: "b" }])(
+    "a malformed confirmation field is refused (%p)",
+    async (confirmation) => {
+      expect(await gateRun(request({ confirmation }), clock)).toEqual({
+        kind: "answer",
+        status: 400,
+        body: { error: CONFIRMATION_FIELD_MESSAGE },
+      });
+    },
+  );
 
   test("a malformed field is refused on an explain request too", async () => {
     expect(await gateRun(request({ explain: true, confirmation: 1 }), clock)).toMatchObject({ status: 400 });

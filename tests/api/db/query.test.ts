@@ -34,7 +34,6 @@ import type { DatabaseConnection } from "@/lib/types";
 import type { QueryEventRow } from "@/lib/query-events/types";
 import type { QueryEventBatchWrite, QueryEventWriteFailure } from "@/lib/query-events/postgres-sink";
 import * as admission from "@/lib/query-events/admission";
-import { logger } from "@/lib/logger";
 import { CONFIRMATION_FIELD_MESSAGE, CONFIRMATION_REQUIRED_MESSAGE } from "@/lib/api/run-confirmation";
 import { forgetUsedRunConfirmations, mintRunConfirmation } from "@/lib/api/run-confirmation-token";
 import { INVALID_RUN_CONFIRMATION_SETTING } from "@/lib/config/run-confirmation";
@@ -2284,7 +2283,7 @@ describe("POST /api/db/query: a body that is not a JSON object", () => {
 // ─── The server's confirmation of a run (FND-5) ─────────────────────────────
 describe("POST /api/db/query: the server's confirmation of a run", () => {
   const original = process.env.LIBREDB_RUN_CONFIRMATION;
-  const session = { role: "user", username: "alice", iat: 1_700_000_000 };
+  const session = { role: "user" as const, username: "alice", iat: 1_700_000_000 };
   let warn: ReturnType<typeof spyOn>;
   let admit: ReturnType<typeof spyOn>;
 
@@ -2332,9 +2331,14 @@ describe("POST /api/db/query: the server's confirmation of a run", () => {
       expect(res.status).toBe(200);
       expect((await parseResponseJSON<{ confirmation?: string }>(res)).confirmation).toBe("unconfirmed");
       expect(mockProvider.query).toHaveBeenCalledTimes(1);
-      const lines = warn.mock.calls.filter((call) => call[1]?.route === "api/db/query");
+      const lines = warn.mock.calls.filter(
+        (call: unknown[]) => (call[1] as { route?: string } | undefined)?.route === "api/db/query",
+      );
       expect(lines).toEqual([
-        ["A statement that needs a confirmation ran without one", { route: "api/db/query", type: "postgres", user: "alice" }],
+        [
+          "A statement that needs a confirmation ran without one",
+          { route: "api/db/query", type: "postgres", user: "alice" },
+        ],
       ]);
       expect(JSON.stringify(lines)).not.toContain("DELETE");
     });
@@ -2343,29 +2347,36 @@ describe("POST /api/db/query: the server's confirmation of a run", () => {
       const res = await run({ connection: validConnection, sql: "SELECT 1" });
       expect(res.status).toBe(200);
       expect(await parseResponseJSON<Record<string, unknown>>(res)).not.toHaveProperty("confirmation");
-      expect(warn.mock.calls.filter((call) => call[1]?.route === "api/db/query")).toEqual([]);
+      expect(
+        warn.mock.calls.filter(
+          (call: unknown[]) => (call[1] as { route?: string } | undefined)?.route === "api/db/query",
+        ),
+      ).toEqual([]);
     });
   });
 
   describe("server confirmation, ask", () => {
-    test.each(["advisory", "required"])("a write that asks is answered 428 in %s mode, and nothing is built or run", async (mode) => {
-      process.env.LIBREDB_RUN_CONFIRMATION = mode;
-      const res = await run({ connection: validConnection, sql: "DELETE FROM t", confirmation: "ask" });
-      expect(res.status).toBe(428);
-      const body = await parseResponseJSON<Record<string, unknown>>(res);
-      expect(body).toEqual({
-        error: CONFIRMATION_REQUIRED_MESSAGE,
-        code: "CONFIRMATION_REQUIRED",
-        confirmation: {
-          token: expect.any(String),
-          expiresAt: expect.any(String),
-          unreadable: false,
-          typedConfirmation: null,
-          classificationFailed: false,
-        },
-      });
-      nothingRan();
-    });
+    test.each(["advisory", "required"])(
+      "a write that asks is answered 428 in %s mode, and nothing is built or run",
+      async (mode) => {
+        process.env.LIBREDB_RUN_CONFIRMATION = mode;
+        const res = await run({ connection: validConnection, sql: "DELETE FROM t", confirmation: "ask" });
+        expect(res.status).toBe(428);
+        const body = await parseResponseJSON<Record<string, unknown>>(res);
+        expect(body).toEqual({
+          error: CONFIRMATION_REQUIRED_MESSAGE,
+          code: "CONFIRMATION_REQUIRED",
+          confirmation: {
+            token: expect.any(String),
+            expiresAt: expect.any(String),
+            unreadable: false,
+            typedConfirmation: null,
+            classificationFailed: false,
+          },
+        });
+        nothingRan();
+      },
+    );
 
     test("the token of the 428 runs the request it was issued for", async () => {
       const token = await askedToken({ connection: validConnection, sql: "DELETE FROM t" });
@@ -2444,7 +2455,11 @@ describe("POST /api/db/query: the server's confirmation of a run", () => {
         params: undefined,
         verdict: { decision: "confirm", unreadable: false, typedConfirmation: null, classificationFailed: false },
       });
-      const res = await run({ connection: validConnection, sql: "DELETE FROM t", confirmation: { token: issued.token } });
+      const res = await run({
+        connection: validConnection,
+        sql: "DELETE FROM t",
+        confirmation: { token: issued.token },
+      });
       expect(res.status).toBe(400);
       expect(await parseResponseJSON(res)).toEqual({
         error: "this confirmation was issued for another route",
@@ -2466,7 +2481,10 @@ describe("POST /api/db/query: the server's confirmation of a run", () => {
       process.env.LIBREDB_RUN_CONFIRMATION = "strict";
       const res = await run({ connection: validConnection, sql: "DELETE FROM t" });
       expect(res.status).toBe(400);
-      expect(await parseResponseJSON(res)).toMatchObject({ error: INVALID_RUN_CONFIRMATION_SETTING, code: "CONFIG_ERROR" });
+      expect(await parseResponseJSON(res)).toMatchObject({
+        error: INVALID_RUN_CONFIRMATION_SETTING,
+        code: "CONFIG_ERROR",
+      });
       nothingRan();
     });
   });
@@ -2499,9 +2517,17 @@ describe("POST /api/db/query: the server's confirmation of a run", () => {
       ["a missing statement", { connection: validConnection, confirmation: "ask" }, 400],
       ["a statement that is not text", { connection: validConnection, sql: 1, confirmation: "ask" }, 400],
       ["a missing connection", { sql: "DELETE FROM t", confirmation: "ask" }, 400],
-      ["bad page bounds", { connection: validConnection, sql: "DELETE FROM t", options: { limit: -1 }, confirmation: "ask" }, 400],
+      [
+        "bad page bounds",
+        { connection: validConnection, sql: "DELETE FROM t", options: { limit: -1 }, confirmation: "ask" },
+        400,
+      ],
       ["bad bound values", { connection: validConnection, sql: "DELETE FROM t", params: {}, confirmation: "ask" }, 400],
-      ["a bad explain field", { connection: validConnection, sql: "DELETE FROM t", explain: 1, confirmation: "ask" }, 400],
+      [
+        "a bad explain field",
+        { connection: validConnection, sql: "DELETE FROM t", explain: 1, confirmation: "ask" },
+        400,
+      ],
     ] as const)("%s is refused for its fields whatever the confirmation holds", async (_label, body, status) => {
       process.env.LIBREDB_RUN_CONFIRMATION = "required";
       const res = await run(body as Record<string, unknown>);
@@ -2520,7 +2546,12 @@ describe("POST /api/db/query: the server's confirmation of a run", () => {
       declaresDatabases();
       const token = await askedToken({ connectionId: "seed:test-redis", sql: "FLUSHDB", database: 3 });
       declaresDatabases();
-      const other = await run({ connectionId: "seed:test-redis", sql: "FLUSHDB", database: 4, confirmation: { token } });
+      const other = await run({
+        connectionId: "seed:test-redis",
+        sql: "FLUSHDB",
+        database: 4,
+        confirmation: { token },
+      });
       expect(other.status).toBe(400);
       expect((await parseResponseJSON<{ error: string }>(other)).error).toBe(
         "this confirmation was issued for another connection",

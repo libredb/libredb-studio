@@ -67,7 +67,10 @@ export type RunGateDecision =
   | { readonly kind: "run"; readonly unconfirmed: boolean }
   | { readonly kind: "answer"; readonly status: number; readonly body: Record<string, unknown> };
 
-type ConfirmationField = { readonly kind: "absent" } | { readonly kind: "ask" } | { readonly kind: "token"; readonly token: string };
+type ConfirmationField =
+  | { readonly kind: "absent" }
+  | { readonly kind: "ask" }
+  | { readonly kind: "token"; readonly token: string };
 
 /** The field's shape, or null for any other value. */
 function readConfirmationField(value: unknown): ConfirmationField | null {
