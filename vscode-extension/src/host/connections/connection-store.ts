@@ -244,7 +244,7 @@ export class ConnectionStore implements vscode.Disposable {
     const entries = new Map<string, ProfileEntry>();
     items.forEach((item, index) => {
       if (item.kind === "valid") entries.set(item.entry.id, item.entry);
-      // A reason from rule 5 on names no entry, so the warning names an entry that has an id itself.
+      // Rule 5's type-id refusal and rule 9's reason name no entry, so the warning names every entry that has an id (rules 4 to 10).
       else if (item.id === undefined) this.deps.log.warn(`Ignoring a libredb.connections entry: ${item.reason}`);
       else this.deps.log.warn(`Ignoring the libredb.connections entry ${item.id}: ${item.reason}`);
       const id = item.kind === "valid" ? item.entry.id : item.id;
