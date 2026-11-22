@@ -15,7 +15,7 @@ import {
   readPathPrefix,
 } from "@/lib/db/providers/stream/rabbitmq/connection-options";
 import * as E from "@/lib/db/providers/stream/rabbitmq/errors";
-import { type DatabaseConnection, TUNNEL_FAR_END } from "@/lib/types";
+import type { DatabaseConnection } from "@/lib/types";
 import {
   closeAll,
   httpsListener,
@@ -120,15 +120,16 @@ describe("the endpoints of a valid record", () => {
 });
 
 describe("refused before any socket", () => {
-  test("a tunnelled record, by the panel or by a forwarded far end", () => {
+  // Core refuses a RabbitMQ connection whose tunnel is on, and a far end on any connection whose tunnel is not on,
+  // before any provider is built (RabbitMQ's row of SSH_TUNNEL_REFUSAL, tests/security/provider-tunnel-decisions.test.ts),
+  // so the options read no tunnel at all.
+  test("reads no sshTunnel: core refuses a RabbitMQ tunnel before the provider exists (FND-2 slice 5)", () => {
     const tunnel = { enabled: true, host: "bastion", port: 22, username: "u", authMethod: "password" as const };
-    expect(refuse({ sshTunnel: tunnel })).toBe(E.TUNNEL_REFUSED);
-    const forwarded = { ...rabbitmqConnection(), [TUNNEL_FAR_END]: { host: "mq", port: 15672 } };
-    expect(refusal(() => readConnectionOptions(forwarded, ALLOWS_PRIVATE_HOSTS))).toBe(E.TUNNEL_REFUSED);
-    expect(
-      readConnectionOptions(rabbitmqConnection({ sshTunnel: { ...tunnel, enabled: false } }), ALLOWS_PRIVATE_HOSTS)
-        .amqp,
-    ).not.toBeNull();
+    for (const sshTunnel of [tunnel, { ...tunnel, enabled: false }, undefined]) {
+      expect(readConnectionOptions(rabbitmqConnection({ sshTunnel }), ALLOWS_PRIVATE_HOSTS).management.display).toBe(
+        readConnectionOptions(rabbitmqConnection(), ALLOWS_PRIVATE_HOSTS).management.display,
+      );
+    }
   });
 
   test("Database, Namespaces and TLS server name, named and never quoted", () => {
@@ -166,9 +167,6 @@ describe("refused before any socket", () => {
     expect(refuse({ amqpPort: 5672 as unknown as string })).toBe(E.fieldWrongType("amqpPort", "a string"));
     expect(refuse({ allowInsecureAuth: "yes" as unknown as boolean })).toBe(
       E.fieldWrongType("allowInsecureAuth", "true or false"),
-    );
-    expect(refuse({ sshTunnel: "on" as unknown as DatabaseConnection["sshTunnel"] })).toBe(
-      E.fieldWrongType("sshTunnel", "an object"),
     );
   });
 

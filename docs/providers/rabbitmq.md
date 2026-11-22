@@ -14,7 +14,7 @@
 | **Query language** | `json` with `queryDialect: "rabbitmq"`: a JSON read request of this product's own schema ([§5.1](#51-the-read-request)) |
 | **Default port** | `15672`, the Management port; the AMQP port, `5672`, is a field of its own and may stay empty to browse only |
 | **Connection string** | Not supported; an `https://` management address pasted into Host is taken ([§4.1](#41-fields)) |
-| **SSH tunnel** | Refused: one tunnel carries one port, and the management API and AMQP use two |
+| **SSH tunnel** | Refused by Studio before the bastion is dialled ([SSH tunnels](./README.md#ssh-tunnels-bastion-host-key-verification)): one tunnel carries one port, and the management API and AMQP use two |
 | **Write reach** | none: the AMQP codec's outbound check, `isAllowedOutbound`, admits no publish, get, reject or queue or exchange method, and the management client's routes are `GET` only ([§3.1](#31-read-only-by-construction)); there is no object edit, maintenance or transaction route |
 | **Maintenance** | None |
 | **Query cancellation** | Supported: Stop ends a read, and a read stopped after it started returns the rows read so far with a warning ([§5.5](#55-stop-reasons-and-warnings)) |

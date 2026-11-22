@@ -74,9 +74,6 @@ describe("names in sentences", () => {
 
 describe("connection sentences", () => {
   test("the fixed sentences, word for word", () => {
-    expect(E.TUNNEL_REFUSED).toBe(
-      "RabbitMQ connections cannot use an SSH tunnel: one tunnel carries one port, and the management API and AMQP use two.",
-    );
     expect(E.PATH_PREFIX_NO_SLASH).toBe("Path prefix starts with /, for example /rabbitmq.");
     expect(E.PATH_PREFIX_DOT_SEGMENT).toBe("Path prefix may not contain an empty, . or .. segment.");
     expect(E.PATH_PREFIX_NOT_PLAIN).toBe("Path prefix takes a plain path: no %, ? or #.");

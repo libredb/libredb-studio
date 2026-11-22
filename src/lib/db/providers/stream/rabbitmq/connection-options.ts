@@ -13,7 +13,7 @@
  */
 import { type HttpOrigin, httpOrigin, plaintextSecretRefusal } from "@/lib/db/http/endpoint";
 import { type NodeTlsMaterial, nodeTlsMaterial } from "@/lib/db/http/node-transport";
-import { type DatabaseConnection, type SSHTunnelConfig, TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
+import type { DatabaseConnection } from "@/lib/types";
 import type { EgressDecision } from "@/lib/db/types";
 import {
   AMQP_PORT_SHAPE,
@@ -28,7 +28,6 @@ import {
   PATH_PREFIX_NO_SLASH,
   PATH_PREFIX_NOT_PLAIN,
   PLAINTEXT_REFUSAL,
-  TUNNEL_REFUSED,
   USER_COLON,
   USER_REQUIRED,
 } from "./errors";
@@ -105,7 +104,6 @@ export function readAmqpPort(value: unknown): number | null {
  * the provider was built with, which the management origin's address literal is checked against.
  */
 export function readConnectionOptions(config: DatabaseConnection, egress: EgressDecision): RabbitMQEndpoints {
-  refuseTunnel(config as DatabaseConnection & WithTunnelFarEnd);
   if (optionalText(config.database, "database") !== undefined) throw configError(fieldNotOffered("database"));
   if (optionalText(config.namespaces, "namespaces") !== undefined) throw configError(fieldNotOffered("namespaces"));
   if (optionalText(config.tlsServerName, "tlsServerName") !== undefined)
@@ -140,13 +138,6 @@ export function readConnectionOptions(config: DatabaseConnection, egress: Egress
   return { management, amqp };
 }
 
-/** A tunnelled record is refused: one tunnel carries one port, and the two endpoints use two. */
-function refuseTunnel(config: DatabaseConnection & WithTunnelFarEnd): void {
-  const tunnel = optionalObject<keyof SSHTunnelConfig>(config.sshTunnel, "sshTunnel");
-  const enabled = optionalBoolean(tunnel?.enabled, "sshTunnel.enabled") === true;
-  if (enabled || config[TUNNEL_FAR_END] !== undefined) throw configError(TUNNEL_REFUSED);
-}
-
 function usernameOf(config: DatabaseConnection): string {
   const user = optionalText(config.user, "user");
   if (user === undefined) throw configError(USER_REQUIRED);
@@ -173,12 +164,6 @@ function shared<T>(validate: () => T): T {
   } catch (error) {
     throw configError((error as Error).message);
   }
-}
-
-function optionalObject<Key extends string>(value: unknown, field: string): Partial<Record<Key, unknown>> | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "object" || Array.isArray(value)) throw configError(fieldWrongType(field, "an object"));
-  return value as Partial<Record<Key, unknown>>;
 }
 
 function optionalText(value: unknown, field: string): string | undefined {
