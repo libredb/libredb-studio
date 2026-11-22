@@ -41,17 +41,26 @@ describe("control 0.6 names the egress decision", () => {
     "tests/unit/instrumentation.test.ts",
     "tests/isolated/factory.test.ts",
     "tests/unit/lib/db/egress-decision-security-row.test.ts",
+    "tests/unit/lib/db/provider-environment-scan.test.ts",
+    "tests/security/provider-egress-decision.test.ts",
   ])("verified by %s", (file) => {
     expect(verifiedBy).toContain(`[\`${file}\`](../${file})`);
   });
 
   test("the control says the setting is read once and an invalid value stops the boot by name", () => {
-    expect(control).toContain("`DB_HTTP_BLOCK_PRIVATE_HOSTS` is read once per process by one core module");
-    expect(control).toContain("SNMP's name lookup included");
+    expect(control).toContain(
+      "`DB_HTTP_BLOCK_PRIVATE_HOSTS` is read once per process by one core module, and by no provider's own code:",
+    );
     expect(control).toContain("a standalone server refuses to boot on a value other than");
     expect(control).toContain("the provider factory takes the decision before any cache, tunnel or provider");
     expect(control).toContain("(trimmed, any case)");
     expect(control).toContain("logs the decision once, at info level,");
+  });
+
+  test("the control says the factory hands the decision to every provider that takes a context, and which requests are checked against it", () => {
+    expect(control).toContain(
+      "refuses such a value by name, and the factory hands the decision to every provider that takes a context, all but Databend, BigQuery, Snowflake and Spark, so the HTTP requests of ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, libSQL and Prometheus, Couchbase's own fetch and TLS paths and SNMP's name lookup are checked against the decision their provider was handed, and every other guarded path against the same decision, which core's guard reads on the provider's behalf",
+    );
   });
 
   test("Known limits says the decision is logged once, at info level, and a change waits for a restart", () => {

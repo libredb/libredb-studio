@@ -16,6 +16,7 @@ import {
 } from "@/lib/db/providers/sql/druid/transport";
 import { ConnectionError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/db/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 interface FetchCall {
   url: string;
@@ -33,15 +34,18 @@ function respond(body: string | ReadableStream<Uint8Array> | null, status = 200)
 }
 
 function makeTransport(overrides: Partial<DatabaseConnection> = {}): DruidHttpTransport {
-  return new DruidHttpTransport({
-    id: "druid-1",
-    name: "Druid",
-    type: "druid",
-    host: "127.0.0.1",
-    port: 8888,
-    createdAt: new Date(),
-    ...overrides,
-  });
+  return new DruidHttpTransport(
+    {
+      id: "druid-1",
+      name: "Druid",
+      type: "druid",
+      host: "127.0.0.1",
+      port: 8888,
+      createdAt: new Date(),
+      ...overrides,
+    },
+    ALLOWS_PRIVATE_HOSTS,
+  );
 }
 
 function options(overrides: Partial<{ queryId: string; timeoutMs: number; maxResponseBytes: number }> = {}) {

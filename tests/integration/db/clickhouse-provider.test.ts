@@ -55,6 +55,7 @@ import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output"
 import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import type { ManagedConnection } from "@/lib/seed";
 import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 
 // ============================================================================
 // Connection
@@ -404,7 +405,7 @@ function urlWith(match: string): string {
 }
 
 async function connectProvider(overrides: Partial<DatabaseConnection> = {}): Promise<ClickHouseProvider> {
-  const provider = new ClickHouseProvider(makeConnection(overrides));
+  const provider = new ClickHouseProvider(makeConnection(overrides), {}, { egress: ALLOWS_PRIVATE_HOSTS });
   await provider.connect();
   return provider;
 }
@@ -436,7 +437,7 @@ describe("ClickHouseProvider metadata", () => {
   // global card stays withheld even so, because OPTIMIZE names one table - the
   // redirection is what stops the surface sending a `vacuum` this provider rejects.
   test("the vacuum label names OPTIMIZE, whose global form is still withheld", () => {
-    const provider = new ClickHouseProvider(makeConnection());
+    const provider = new ClickHouseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     const labels = provider.getLabels();
 
     expect(labels.vacuumAction).toBe("Optimize Table");
@@ -445,7 +446,11 @@ describe("ClickHouseProvider metadata", () => {
     expect(provider.getCapabilities().maintenanceOperationSpecs?.optimize?.global).toBe(false);
   });
   test("declares the capabilities the design spec settled on", () => {
-    const capabilities = new ClickHouseProvider(makeConnection()).getCapabilities();
+    const capabilities = new ClickHouseProvider(
+      makeConnection(),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    ).getCapabilities();
 
     expect(capabilities).toEqual({
       queryLanguage: "sql",
@@ -486,24 +491,32 @@ describe("ClickHouseProvider metadata", () => {
     // PRIMARY KEY`, code 50, unknown data type family; #648 made that spelling
     // per-engine and added no ClickHouse row) and its UNIQUE checkbox emits `UNIQUE`
     // (code 62, syntax error).
-    expect(new ClickHouseProvider(makeConnection()).getCapabilities().createTable).toBeUndefined();
+    expect(
+      new ClickHouseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities().createTable,
+    ).toBeUndefined();
   });
 
   test("keeps supportsInlineRowEdit false because a bare UPDATE ... SET is not implemented here", () => {
     // ClickHouse spells a row mutation `ALTER TABLE t UPDATE c = v WHERE ...`; the
     // bare `UPDATE ... SET` the inline row editor builds answers code 48
     // NOT_IMPLEMENTED (documented in docs/providers/clickhouse.md §13).
-    expect(new ClickHouseProvider(makeConnection()).getCapabilities().supportsInlineRowEdit).toBe(false);
+    expect(
+      new ClickHouseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities()
+        .supportsInlineRowEdit,
+    ).toBe(false);
   });
 
   test("declares declaresForeignKeys false because no constraint catalog exists here", () => {
     // ClickHouse parses REFERENCES in a column definition and enforces nothing by it,
     // and `system.*` holds no constraint table to read one back from (#414).
-    expect(new ClickHouseProvider(makeConnection()).getCapabilities().declaresForeignKeys).toBe(false);
+    expect(
+      new ClickHouseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities()
+        .declaresForeignKeys,
+    ).toBe(false);
   });
 
   test("labels the maintenance actions ClickHouse actually has", () => {
-    const labels = new ClickHouseProvider(makeConnection()).getLabels();
+    const labels = new ClickHouseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getLabels();
 
     expect(labels.entityName).toBe("Table");
     expect(labels.rowName).toBe("row");
@@ -520,7 +533,7 @@ describe("ClickHouseProvider metadata", () => {
   // future spec change makes `optimize` global, this test says the words are live again
   // and must be checked against what the card would then run.
   test("the global vacuum card cannot render, so its wording is unreachable by design", () => {
-    const provider = new ClickHouseProvider(makeConnection());
+    const provider = new ClickHouseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     const capabilities = provider.getCapabilities();
     const vacuumOperation = provider.getLabels().vacuumActionOperation ?? "vacuum";
 
@@ -534,7 +547,11 @@ describe("ClickHouseProvider metadata", () => {
   // PostgreSQL extension. `getSlowQueries()` reads system.query_log, which records
   // nothing while `log_queries` is off, so that is the setting the sentence must name.
   test("names system.query_log, not a Postgres extension, as where query stats come from", () => {
-    const { slowQueriesEmptyState } = new ClickHouseProvider(makeConnection()).getLabels();
+    const { slowQueriesEmptyState } = new ClickHouseProvider(
+      makeConnection(),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    ).getLabels();
 
     expect(slowQueriesEmptyState).toContain("system.query_log");
     expect(slowQueriesEmptyState).toContain("log_queries");
@@ -548,7 +565,9 @@ describe("ClickHouseProvider metadata", () => {
 
 describe("ClickHouseProvider validation", () => {
   test("requires a host or a connection string", () => {
-    expect(() => new ClickHouseProvider(makeConnection({ host: undefined }))).toThrow(DatabaseConfigError);
+    expect(
+      () => new ClickHouseProvider(makeConnection({ host: undefined }), {}, { egress: ALLOWS_PRIVATE_HOSTS }),
+    ).toThrow(DatabaseConfigError);
   });
 
   test("does not require a database, because the server always has `default`", async () => {
@@ -663,7 +682,7 @@ describe("ClickHouseProvider lifecycle", () => {
     // connection is made - it fails 404 / code 81 on the first statement - so
     // without the probe the user would see it much later and somewhere else.
     replyFor = () => exceptionReply(UNKNOWN_DATABASE, "UNKNOWN_DATABASE", "Database nope does not exist", 404);
-    const provider = new ClickHouseProvider(makeConnection({ database: "nope" }));
+    const provider = new ClickHouseProvider(makeConnection({ database: "nope" }), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     await expect(provider.connect()).rejects.toBeInstanceOf(ConnectionError);
     expect(provider.isConnected()).toBe(false);
@@ -671,7 +690,7 @@ describe("ClickHouseProvider lifecycle", () => {
 
   test("connect maps rejected credentials to an AuthenticationError", async () => {
     replyFor = () => exceptionReply(AUTHENTICATION_FAILED, "AUTHENTICATION_FAILED", "Authentication failed", 403);
-    const provider = new ClickHouseProvider(makeConnection());
+    const provider = new ClickHouseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     await expect(provider.connect()).rejects.toBeInstanceOf(AuthenticationError);
     expect(provider.isConnected()).toBe(false);
@@ -679,7 +698,7 @@ describe("ClickHouseProvider lifecycle", () => {
 
   test("connect maps an unreachable server to a ConnectionError", async () => {
     networkFailure = new Error("connect ECONNREFUSED 127.0.0.1:8123");
-    const provider = new ClickHouseProvider(makeConnection());
+    const provider = new ClickHouseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     await expect(provider.connect()).rejects.toBeInstanceOf(ConnectionError);
   });
@@ -694,7 +713,7 @@ describe("ClickHouseProvider lifecycle", () => {
   });
 
   test("query before connect is refused", async () => {
-    const provider = new ClickHouseProvider(makeConnection());
+    const provider = new ClickHouseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     await expect(provider.query("SELECT 1")).rejects.toBeInstanceOf(DatabaseConfigError);
   });
@@ -1151,7 +1170,7 @@ describe("ClickHouseProvider error mapping", () => {
 
   test("connect reports a connection that never opened without query advice (#1431)", async () => {
     networkFailure = connectTimeout();
-    const provider = new ClickHouseProvider(makeConnection());
+    const provider = new ClickHouseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     const failure = provider.connect();
 
@@ -1184,7 +1203,7 @@ function connectTimeout(): Error {
 // ============================================================================
 
 describe("ClickHouseProvider query preparation", () => {
-  const provider = () => new ClickHouseProvider(makeConnection());
+  const provider = () => new ClickHouseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
   test("applies the external row limit to a plain SELECT", () => {
     const prepared = provider().prepareQuery("SELECT * FROM users", { limit: 25 });
@@ -1825,7 +1844,7 @@ describe("ClickHouseProvider maintenance", () => {
   // swallow its own closing quote and the rest of the statement was reparsed around it. The
   // override escapes the backslash first, the order `literal()` in objects.ts uses.
   test("escapeIdentifier doubles a backslash as well as the quote", () => {
-    const provider = new ClickHouseProvider(makeConnection());
+    const provider = new ClickHouseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     const escape = (identifier: string) =>
       (provider as unknown as { escapeIdentifier(identifier: string): string }).escapeIdentifier(identifier);
@@ -3147,7 +3166,11 @@ describe("object surface internals", () => {
   });
 
   test("every object-surface method needs a connection", async () => {
-    const provider = new ClickHouseProvider(makeConnection({ database: OBJECT_DATABASE }));
+    const provider = new ClickHouseProvider(
+      makeConnection({ database: OBJECT_DATABASE }),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
 
     await expect(provider.listContainers()).rejects.toBeInstanceOf(DatabaseConfigError);
     await expect(provider.countObjects([OBJECT_DATABASE])).rejects.toBeInstanceOf(DatabaseConfigError);
@@ -4151,7 +4174,11 @@ describe("object source", () => {
   });
 
   test("the source read needs a connection", async () => {
-    const provider = new ClickHouseProvider(makeConnection({ database: OBJECT_DATABASE }));
+    const provider = new ClickHouseProvider(
+      makeConnection({ database: OBJECT_DATABASE }),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
 
     await expect(provider.readObjectSource([OBJECT_DATABASE, "events"], "table")).rejects.toBeInstanceOf(
       DatabaseConfigError,
@@ -4202,7 +4229,7 @@ describe("endOpenQueryTransaction()", () => {
   ] as const;
 
   test("is not implemented, and the doc names WHICH absence that is", () => {
-    const provider: DatabaseProvider = new ClickHouseProvider(makeConnection());
+    const provider: DatabaseProvider = new ClickHouseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     expect(provider.endOpenQueryTransaction).toBeUndefined();
 
@@ -4277,7 +4304,11 @@ async function agentProvider(
   execution: { readOnly?: boolean; sendsStatements?: boolean } = AGENT_PROFILE,
 ): Promise<ClickHouseProvider> {
   replyFor = agentReply(answer);
-  const provider = new ClickHouseProvider(makeConnection({ user: "agent_ro" }), {}, execution);
+  const provider = new ClickHouseProvider(
+    makeConnection({ user: "agent_ro" }),
+    {},
+    { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
+  );
   await provider.connect();
   return provider;
 }
@@ -4297,7 +4328,11 @@ describe("ClickHouseProvider agent read-only profile", () => {
       sql === "SELECT 1 FROM system.user_query_log LIMIT 0"
         ? jsonReply([], [{ name: "1", type: "UInt8" }])
         : agentReply(() => jsonReply([]), "26.9.23.15")(sql);
-    const provider = new ClickHouseProvider(makeConnection({ user: "agent_ro" }), {}, AGENT_PROFILE);
+    const provider = new ClickHouseProvider(
+      makeConnection({ user: "agent_ro" }),
+      {},
+      { ...AGENT_PROFILE, egress: ALLOWS_PRIVATE_HOSTS },
+    );
 
     const error = await readOnlyRefusal(provider.connect());
 
@@ -4310,7 +4345,11 @@ describe("ClickHouseProvider agent read-only profile", () => {
 
   test("a checked 26.9 server admits the profile and executes a bounded read", async () => {
     replyFor = agentReply(() => jsonReply([{ id: "1" }], [{ name: "id", type: "UInt64" }]), "26.9.23.15");
-    const provider = new ClickHouseProvider(makeConnection({ user: "agent_ro" }), {}, AGENT_PROFILE);
+    const provider = new ClickHouseProvider(
+      makeConnection({ user: "agent_ro" }),
+      {},
+      { ...AGENT_PROFILE, egress: ALLOWS_PRIVATE_HOSTS },
+    );
     await provider.connect();
 
     const result = await provider.queryReadOnly("SELECT id FROM demo.orders", AGENT_BUDGET);
@@ -4364,7 +4403,11 @@ describe("ClickHouseProvider agent read-only profile", () => {
       sql === "SHOW GRANTS FINAL"
         ? jsonReply([{ "GRANTS FINAL": "GRANT SELECT ON demo.orders, BACKUP ON demo.* TO agent_ro" }])
         : agentReply(() => jsonReply([]))(sql);
-    const provider = new ClickHouseProvider(makeConnection({ user: "agent_ro" }), {}, AGENT_PROFILE);
+    const provider = new ClickHouseProvider(
+      makeConnection({ user: "agent_ro" }),
+      {},
+      { ...AGENT_PROFILE, egress: ALLOWS_PRIVATE_HOSTS },
+    );
 
     const error = await readOnlyRefusal(provider.connect());
 
@@ -4378,7 +4421,11 @@ describe("ClickHouseProvider agent read-only profile", () => {
       sql.startsWith("SELECT name, origin FROM system.functions")
         ? jsonReply([{ name: "libredb_lb_udf_echo", origin: "ExecutableUserDefined" }])
         : agentReply(() => jsonReply([]))(sql);
-    const provider = new ClickHouseProvider(makeConnection({ user: "agent_ro" }), {}, AGENT_PROFILE);
+    const provider = new ClickHouseProvider(
+      makeConnection({ user: "agent_ro" }),
+      {},
+      { ...AGENT_PROFILE, egress: ALLOWS_PRIVATE_HOSTS },
+    );
 
     const error = await readOnlyRefusal(provider.connect());
 
@@ -4393,7 +4440,11 @@ describe("ClickHouseProvider agent read-only profile", () => {
       if (sql === "SHOW GRANTS FINAL") networkFailure = new Error("connect ECONNREFUSED 127.0.0.1:8123");
       return agentReply(() => jsonReply([]))(sql);
     };
-    const provider = new ClickHouseProvider(makeConnection({ user: "agent_ro" }), {}, AGENT_PROFILE);
+    const provider = new ClickHouseProvider(
+      makeConnection({ user: "agent_ro" }),
+      {},
+      { ...AGENT_PROFILE, egress: ALLOWS_PRIVATE_HOSTS },
+    );
 
     await expect(provider.connect()).rejects.toBeInstanceOf(ConnectionError);
     expect(provider.isConnected()).toBe(false);
@@ -4526,7 +4577,7 @@ describe("ClickHouseProvider agent read-only profile", () => {
   });
 
   test("queryReadOnly before connect is refused", async () => {
-    const provider = new ClickHouseProvider(makeConnection(), {}, AGENT_PROFILE);
+    const provider = new ClickHouseProvider(makeConnection(), {}, { ...AGENT_PROFILE, egress: ALLOWS_PRIVATE_HOSTS });
 
     await expect(provider.queryReadOnly("SELECT 1", AGENT_BUDGET)).rejects.toBeInstanceOf(DatabaseConfigError);
   });
@@ -4567,7 +4618,11 @@ describe("MCP run_read_query on a ClickHouse connection", () => {
     resolve: async () => SEED,
     acquire: async (_connection: ManagedConnection, profile: ExecutionProfile) => {
       acquired.push(profile);
-      const provider = new ClickHouseProvider(makeConnection({ user: "agent_ro" }), {}, executionContextFor(profile));
+      const provider = new ClickHouseProvider(
+        makeConnection({ user: "agent_ro" }),
+        {},
+        { ...executionContextFor(profile), egress: ALLOWS_PRIVATE_HOSTS },
+      );
       await provider.connect();
       return provider;
     },

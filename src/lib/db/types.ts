@@ -2720,6 +2720,9 @@ export interface ProviderOptions {
  * For an embedder of `@libredb/studio/providers` the posture is a behaviour change: a
  * factory called without a context opens a DuckDB handle with file access denied, see
  * `allowExternalFileAccess`.
+ *
+ * The factory hands a provider a copy of this context with core's egress decision added, as `ProviderBuildContext`,
+ * so `createDatabaseProvider` refuses a context that is not plain data with a `DatabaseConfigError`.
  */
 export interface ProviderExecutionContext {
   /**
@@ -2824,6 +2827,29 @@ export type EditorExecutionContext = Pick<
   ProviderExecutionContext,
   "allowExternalFileAccess" | "owner" | "ownerPoolMax"
 >;
+
+/**
+ * The egress decision: which way the process decided `DB_HTTP_BLOCK_PRIVATE_HOSTS`, and whether that is the
+ * documented default (an unset, empty or blank variable). Core takes it once per process (`./egress-decision`); it
+ * lives here, beside `ProviderBuildContext`, so a provider names the type without importing the module that reads the
+ * variable.
+ */
+export interface EgressDecision {
+  readonly blocksPrivateHosts: boolean;
+  readonly source: "default" | "set";
+}
+
+/**
+ * What `createDatabaseProvider` hands a provider it builds as its context argument: the caller's execution context
+ * and `egress`, the egress decision core took (FND-2, the provider plugins design section 0.1). The factory builds it;
+ * `egress` is always core's decision, never a caller's. A provider whose connections pass the shared egress guard
+ * keeps it and, when it builds its transport or dial, hands `requireEgressDecision(context.egress)` from
+ * `./http/egress-policy` to the guard, so a provider built without a decision refuses by name and dials nothing.
+ * Internal: the package exports `ProviderExecutionContext`, not this type.
+ */
+export interface ProviderBuildContext extends ProviderExecutionContext {
+  readonly egress?: EgressDecision;
+}
 
 // ============================================================================
 // Internal Types

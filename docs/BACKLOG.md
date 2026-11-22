@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D479, U17 · 352
+- [Drivers and connections](#drivers-and-connections) — D1-D481, U17 · 354
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U220 · 205
@@ -1446,12 +1446,12 @@ A Couchbase node addressed by an IPv6 literal is therefore unreachable over TLS,
 Found 2026-09-23 while designing the Prometheus transport (#1085, section 3.4), whose `request.ts` passes IPv6 literals through `url.urlToHttpOptions` for this reason.
 Not fixed there: the maintainer's decision for that PR is that it touches no other provider.
 
-Reproduced on node v24.14.0 and bun 1.4.2, from the repository root, with nothing listening on port 59999:
+Reproduced on node v24.22.1 and bun 1.4.4, from the repository root, with nothing listening on port 59999:
 
-    bun -e 'import { nodeRequestJson } from "./src/lib/db/providers/document/couchbase/http-transport.ts"; for (const url of ["https://[::1]:59999/pools", "https://127.0.0.1:59999/pools"]) await nodeRequestJson(url, { method: "GET", headers: {} }, { rejectUnauthorized: false }).then((r) => console.log(url, r.httpCode), (e) => console.log(url, e.message));'
+    bun -e 'import { nodeRequestJson } from "./src/lib/db/providers/document/couchbase/http-transport.ts"; for (const url of ["https://[::1]:59999/pools", "https://127.0.0.1:59999/pools"]) await nodeRequestJson(url, { method: "GET", headers: {} }, { rejectUnauthorized: false }, { blocksPrivateHosts: false, source: "default" }).then((r) => console.log(url, r.httpCode), (e) => console.log(url, e.message));'
 
-The IPv6 URL answers `Couchbase request failed: getaddrinfo ENOTFOUND [::1]`.
-The IPv4 URL is the control: `connect ECONNREFUSED 127.0.0.1:59999`, so the request reached the network and only the name failed.
+The IPv6 URL answers `Couchbase request failed: host [::1] not found (ENOTFOUND)`.
+The IPv4 URL is the control: `Couchbase request failed: connection refused at 127.0.0.1:59999`, so the request reached the network and only the name failed.
 The engine fact underneath is the same on both runtimes: `https.request({ hostname: "[::1]", port: 59999 })` answers `ENOTFOUND` and `https.request({ hostname: "::1", port: 59999 })` answers `ECONNREFUSED`.
 
 D37's consolidation removes this if the shared TLS path is built on the Prometheus shape, which already handles it; until then it is a defect of its own.
@@ -1530,7 +1530,7 @@ Reproduced 2026-09-23 through the provider's own `countObjects`, with `fetch` re
           ? answer(302, {}, { location: "https://sso.example.test/login?next=%2F_ingest" })
           : answer(403, { error: { type: "security_exception", reason: "no permissions" }, status: 403 });
       };
-      const provider = new ElasticsearchProvider({ id: "es", name: "es", type: "elasticsearch", host: "127.0.0.1", port: 9200 });
+      const provider = new ElasticsearchProvider({ id: "es", name: "es", type: "elasticsearch", host: "127.0.0.1", port: 9200 }, {}, { egress: { blocksPrivateHosts: false, source: "default" } });
       await provider.connect();
       await provider.countObjects([]).then((counts) => console.log(pass, JSON.stringify(counts)), (e) => console.log(pass, e.name, e.message));
     }
@@ -1567,7 +1567,7 @@ From the repository root, one request per case:
         socket.write(head, () => (mode === "302 whole" ? socket.end("{}") : socket.destroy()));
       }));
       await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-      const transport = new CouchbaseHttpTransport({ id: "c", name: "c", type: "couchbase", host: "127.0.0.1", port: server.address().port, user: "u", password: "p" });
+      const transport = new CouchbaseHttpTransport({ id: "c", name: "c", type: "couchbase", host: "127.0.0.1", port: server.address().port, user: "u", password: "p" }, {}, { blocksPrivateHosts: false, source: "default" });
       await transport.manage("/pools").then(() => console.log(mode, "answered"), (e) => console.log(`${mode}: ${e.constructor.name}: ${e.message}`));
       server.close();
     }
@@ -2137,7 +2137,7 @@ Not fixed there: the path serves seven providers.
 
 ### D163. The Prometheus TLS path uses the global https agent while the egress guard is off
 
-`sendOverTls` (`src/lib/db/providers/timeseries/prometheus/request.ts`) builds its `node:https` request from `...tls` and `...guardedNodeOptions(hostname)`, and with `DB_HTTP_BLOCK_PRIVATE_HOSTS` off `guardedNodeOptions` (`src/lib/db/http/egress-policy.ts`) returns `{}`, so no `agent` is set and the process-wide global agent carries the request.
+`sendOverTls` (`src/lib/db/providers/timeseries/prometheus/request.ts`) builds its `node:https` request from `...tls` and `...guardedNodeOptions(hostname, egress)`, and with `DB_HTTP_BLOCK_PRIVATE_HOSTS` off `guardedNodeOptions` (`src/lib/db/http/egress-policy.ts`) returns `{}`, so no `agent` is set and the process-wide global agent carries the request.
 Measured 2026-10-03 for `http:` only, on Node 24.14.0, Node 26.10.0 and Bun 1.4.2: with `NODE_USE_ENV_PROXY=1` the global agent sends through `HTTP_PROXY`, while `agent: false` and an explicit agent never do.
 Whether an `https:` request through the global agent goes through a proxy under `NODE_USE_ENV_PROXY=1` was not measured.
 
@@ -3374,6 +3374,47 @@ Measured 2026-11-21 on MySQL 8.4.13, where `@@event_scheduler` was `ON` by defau
 Found 2026-11-21 in the review of the MySQL confirmation forms; it predates them.
 
 **Done when:** a `CREATE EVENT` whose `DO` body would ask on its own asks on a `mysql` connection, through a fact of the mysql grammar row, with a test per body in `tests/components/QuerySafetyDialog.test.tsx`, and `docs/providers/mysql.md` 5.7 states it.
+
+### D480. The sign-in mode reader scan parses a `.ts` file as TSX, so a read after a generic arrow or an angle-bracket assertion is not seen
+
+`readsTheMode` in `tests/unit/lib/config/auth-provider-single-reader.test.ts` parses every source file with `ts.ScriptKind.TSX`, whatever its extension.
+In a TSX parse, a generic arrow written `<T>(v: T): T => v` or an angle-bracket assertion such as `<number>(x)` opens a JSX element, and the rest of the file is read as JSX text, so a read of `NEXT_PUBLIC_AUTH_PROVIDER` after it is never visited.
+The test then passes with a second reader of the sign-in mode under `src/`, which is the case it exists to refuse.
+The egress reader scan in `tests/unit/lib/db/provider-environment-scan.test.ts` had the same blind spot and now takes the script kind from the extension, with self-tests for both shapes.
+
+Reproduced 2026-11-22 on bun 1.4.4 with the repository's TypeScript: copy `VARIABLE` and `readsTheMode` from the test into a scratch module, and call `readsTheMode(source, "probe.ts")` on four sources, each ending in `export const a = process.env.NEXT_PUBLIC_AUTH_PROVIDER;`.
+
+- That line alone answers `true`.
+- After `export const id = <T,>(v: T): T => v;` it answers `true`, because the trailing comma keeps the TSX parse out of JSX.
+- After `export const id = <T>(v: T): T => v;` it answers `false`.
+- After `const n = <number>(1 as unknown);` it answers `false`.
+
+Expected: `true` for all four, since each source reads the variable.
+No file under `src/` is missed today: of the 20 files whose text names the variable, the TSX parse and a parse by extension agree on every one.
+The fix is the one the egress reader scan took: `.tsx` parses as TSX and every other extension as TS.
+
+Found 2026-11-22 while reviewing the same fix in the egress reader scan.
+
+**Done when:** `readsTheMode` takes the script kind from the file's extension, and the detector self-test holds a read after a generic arrow and after an angle-bracket assertion in a `.ts` source, and a read after JSX text in a `.tsx` source that a TS parse reads as a comment opener, each case failing when the kind is forced to the other.
+
+### D481. `valueImportClosure` throws on a module that starts with a shebang
+
+`valueSpecifiersOf` in `tests/helpers/value-import-closure.ts` hands each module's text to `Bun.Transpiler.scanImports`, which throws on a source whose first line is a shebang.
+So `valueImportsOf` and `valueImportClosure` throw for any walk that enters such a module, and the error names the shebang but not the module.
+No module under `src/` starts with a shebang today, so no closure a test walks reaches one; three `.ts` files elsewhere do: `tests/run-tests.ts`, `scripts/generate-governance-manifest.ts` and `scripts/generate-governance-vectors.ts`.
+
+Reproduced 2026-11-22 on bun 1.4.4, with three scratch modules in one directory: `b.ts` holds `export const b = 1;`, `c.ts` holds `import { b } from "./b";` and `export const a = b;`, and `a.ts` holds the same two lines after `#!/usr/bin/env bun`.
+Called with each module's path relative to the repository root:
+
+- For `c.ts`, `scanImports` answers `[{"kind":"import-statement","path":"./b"}]`, `valueImportsOf` one module and `valueImportClosure` two.
+- For `a.ts`, all three throw `Unexpected #!/usr/bin/env bun`.
+
+Expected: `a.ts` answers as `c.ts` does, since a runtime skips a leading shebang line.
+The fix direction is to read a leading `#!` line as the runtimes do before `scanImports`, replacing it with an empty line so positions keep their line, and to name the module in any error `scanImports` raises.
+
+Found 2026-11-22 while checking which inputs the egress reader scan's import walk accepts.
+
+**Done when:** `valueImportsOf` and `valueImportClosure` read a module that starts with a shebang as they read the same module without it, an error from `scanImports` names the module it was reading, and a test holds both with a scratch module.
 
 ### D332. The seed plaintext warning knows only `password`
 

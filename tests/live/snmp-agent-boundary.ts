@@ -33,6 +33,7 @@ import { PDU_GET, PDU_GET_NEXT } from "@/lib/db/providers/network/snmp/valve";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { FIXTURE_COMMUNITY } from "../fixtures/snmp/identity";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 function env(name: string): string {
   const value = process.env[name];
@@ -51,7 +52,7 @@ const SUFFIX = [...new TextEncoder().encode(FIXTURE_COMMUNITY)].join(".");
 const IN_PKTS = [1, 3, 6, 1, 2, 1, 11, 1, 0];
 const IN_SETS = [1, 3, 6, 1, 2, 1, 11, 17, 0];
 
-const target = await resolveTarget("127.0.0.1", PORT);
+const target = await resolveTarget("127.0.0.1", PORT, egressDecision());
 const raw = await openExchange({ target, community: FIXTURE_COMMUNITY, deadlineMs: 3_000 });
 const requestId = () => randomInt(1, 0x7fffffff);
 
@@ -97,7 +98,7 @@ const connection = {
   createdAt: new Date(),
 } as unknown as DatabaseConnection;
 
-const provider = new SnmpProvider(connection, { queryTimeout: 5_000 }, READ_ONLY);
+const provider = new SnmpProvider(connection, { queryTimeout: 5_000 }, { ...READ_ONLY, egress: egressDecision() });
 await provider.connect();
 
 /** One agent statement through `queryReadOnly`: its rows, or its refusal's class and sentence. */

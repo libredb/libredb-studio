@@ -19,6 +19,7 @@
  */
 
 import { BlockList, isIP, isIPv6 } from "node:net";
+import { egressDecision } from "@/lib/db/egress-decision";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
 import { assertPublicLiteralHost, LOOPBACK_NETWORKS } from "./egress-policy";
 
@@ -157,7 +158,9 @@ export function plaintextSecretRefusal(connection: {
 /** Validate a connection's host and port for one scheme. */
 export function httpOrigin(scheme: HttpScheme, host: unknown, port: unknown): HttpOrigin {
   const validatedHost = validateHost(host);
-  assertPublicLiteralHost(validatedHost);
+  // An interim reader: it reads core's decision on the calling provider's behalf until FND-2 slice 2b-3 hands it the
+  // decision as an argument (tests/unit/lib/db/provider-environment-scan.test.ts lists it until then).
+  assertPublicLiteralHost(validatedHost, egressDecision());
   return { scheme, host: validatedHost, port: validatePort(port) };
 }
 

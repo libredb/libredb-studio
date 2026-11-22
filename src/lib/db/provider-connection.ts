@@ -1,3 +1,4 @@
+import type { ProviderExecutionContext } from "@/lib/db/types";
 import type { DatabaseConnection, SSHTunnelConfig } from "@/lib/types";
 import { SSH_TUNNEL_FIELDS } from "@/lib/storage/secret-fields";
 import { DatabaseConfigError } from "./errors";
@@ -53,6 +54,25 @@ export function assertTunnelRecordIsPlainData(connection: DatabaseConnection): v
   if (!isPlainData(connection)) {
     throw new DatabaseConfigError(
       "A connection with an sshTunnel must be a plain object of data fields; no provider was built.",
+    );
+  }
+}
+
+/**
+ * Refuse an execution context that is not plain data (`isPlainData`), with a `DatabaseConfigError` that names the
+ * context and never a value.
+ *
+ * WHY. `createDatabaseProvider` hands a provider a copy of the caller's execution context with core's egress decision
+ * added (`ProviderBuildContext` in `./types`), while core reads the caller's own object for the owner's pool. A copy of
+ * anything but plain data can answer differently from the object core read: a `readOnly` or an
+ * `allowExternalFileAccess` defined on the prototype or as not enumerable would reach the provider as undefined, and
+ * the provider would take its default with no error. So such a context is refused rather than built from a different
+ * one, as `assertTunnelRecordIsPlainData` refuses such a tunnelled record.
+ */
+export function assertExecutionContextIsPlainData(execution: ProviderExecutionContext): void {
+  if (!isPlainData(execution)) {
+    throw new DatabaseConfigError(
+      "The execution context must be a plain object of data fields; no provider was built.",
     );
   }
 }

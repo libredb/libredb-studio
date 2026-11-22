@@ -42,7 +42,7 @@ import type {
   ObjectDetail,
   ObjectDetailBatch,
   PerformanceMetrics,
-  ProviderExecutionContext,
+  ProviderBuildContext,
   ProviderLabels,
   ProviderOptions,
   QueryResult,
@@ -57,6 +57,7 @@ import { SNMP_LABELS, SNMP_NO_COUNT } from "./labels";
 import { isWithinSubtree, SNMP_KINDS, type SnmpKind } from "./objects";
 import { catalogObjects, describeCatalogObject } from "./mib-tree";
 import { checkConnection, type SnmpConnectionInput } from "./connection-options";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { openExchange, resolveTarget, type Exchange, type ResolvedTarget } from "./client";
 import { describeEnd, firstRequest, resolveName, startWalk, stepWalk, type WalkState } from "./read";
 import { renderValue } from "./values";
@@ -163,7 +164,7 @@ export class SnmpProvider extends BaseDatabaseProvider {
   public constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    private readonly execution: ProviderExecutionContext = {},
+    private readonly execution: ProviderBuildContext = {},
   ) {
     super(config, options);
   }
@@ -297,7 +298,7 @@ export class SnmpProvider extends BaseDatabaseProvider {
     // Kept on the provider only once the probe below has answered, with the exchange: a provider
     // whose connect failed holds no target, so a later statement is refused as not open rather
     // than dialled again.
-    const target = await resolveTarget(input.host, input.port);
+    const target = await resolveTarget(input.host, input.port, requireEgressDecision(this.execution.egress));
     const exchange = await openExchange({
       target,
       community: input.community ?? "",

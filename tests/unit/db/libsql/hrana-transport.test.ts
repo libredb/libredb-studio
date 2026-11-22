@@ -26,6 +26,7 @@ import {
 } from "@/lib/db/providers/sql/libsql/transport";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
 import type { DatabaseConnection, DatabaseType } from "@/lib/db/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 // ============================================================================
 // Harness
@@ -95,7 +96,7 @@ function connection(overrides: Partial<DatabaseConnection> = {}): DatabaseConnec
 }
 
 function transport(overrides: Partial<DatabaseConnection> = {}): LibSQLHranaTransport {
-  return new LibSQLHranaTransport(connection(overrides));
+  return new LibSQLHranaTransport(connection(overrides), ALLOWS_PRIVATE_HOSTS);
 }
 
 /** The parsed request body of the nth fetch call. */

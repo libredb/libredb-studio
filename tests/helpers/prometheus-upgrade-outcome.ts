@@ -11,6 +11,7 @@ import { createServer } from "node:https";
 import type { AddressInfo, Socket } from "node:net";
 import { createSendRequest, RequestFailure } from "@/lib/db/providers/timeseries/prometheus/request";
 import { answerWithUpgrade } from "./upgrade-answer";
+import { ALLOWS_PRIVATE_HOSTS } from "./egress-decisions";
 
 export interface UpgradeMaterial {
   /** The CA that signed `cert`. */
@@ -38,7 +39,7 @@ export async function prometheusUpgradeOutcome(material: UpgradeMaterial): Promi
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
-  const send = createSendRequest({ rejectUnauthorized: true, ca: material.ca });
+  const send = createSendRequest({ rejectUnauthorized: true, ca: material.ca }, ALLOWS_PRIVATE_HOSTS);
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const failure = await send({

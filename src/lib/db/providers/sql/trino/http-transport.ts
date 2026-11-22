@@ -46,7 +46,7 @@ import { endpointUrl, type HttpOrigin, httpOrigin, rejectForeignLink, rejectRedi
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { BodyLimitExceededError, readBoundedText } from "@/lib/db/http/bounded-body";
 import { httpTransportFetch } from "@/lib/db/http/egress-policy";
-import type { DatabaseConnection } from "@/lib/db/types";
+import type { DatabaseConnection, EgressDecision } from "@/lib/db/types";
 // A `bigint` column arrives as an UNQUOTED JSON number and this protocol has no
 // setting that would quote it, so the raw body is rewritten before it is parsed.
 // Shared with the Druid transport, which is in the same position; ClickHouse escapes
@@ -755,9 +755,12 @@ export class TrinoHttpTransport implements TrinoTransport {
   private readonly catalog: string | undefined;
   private readonly schema: string | undefined;
   private readonly authorization: string | undefined;
+  /** The egress decision the provider was built with, handed to the guarded fetch on every request. */
+  private readonly egress: EgressDecision;
 
-  constructor(dialect: TrinoDialect, config: DatabaseConnection) {
+  constructor(dialect: TrinoDialect, config: DatabaseConnection, egress: EgressDecision) {
     this.dialect = dialect;
+    this.egress = egress;
     // `ssl` is a first-class connection field and independent of the form's
     // `connectionFields`, and an explicit `disable` has to turn TLS OFF as well as
     // an explicit mode turns it on (the #264 lesson).
@@ -1075,7 +1078,11 @@ export class TrinoHttpTransport implements TrinoTransport {
       let text: string;
       try {
         // A followed redirect would carry the credential to wherever it points.
-        response = await httpTransportFetch(url, { ...init, redirect: "manual", ...(signal ? { signal } : {}) });
+        response = await httpTransportFetch(
+          url,
+          { ...init, redirect: "manual", ...(signal ? { signal } : {}) },
+          this.egress,
+        );
         text = await (budget === undefined
           ? response.text()
           : readBoundedText(response, budget.cap - budget.accepted + TRINO_PAGE_ENVELOPE_BYTES));

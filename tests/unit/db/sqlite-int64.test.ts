@@ -47,6 +47,7 @@ import { normalizeSQLiteBigInt, toSQLiteBindValue } from "@/lib/db/providers/sql
 import { fitsJavaScriptNumber, isSQLiteInt64Digits } from "@/lib/db/providers/sql/sqlite-int64";
 import type { DatabaseConnection, DatabaseType } from "@/lib/db/types";
 import { platformTimeoutMs } from "../../helpers/platform-timeout";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 
 // ============================================================================
 // The shapes, once
@@ -195,7 +196,9 @@ async function boundThroughHrana(value: string): Promise<Record<string, unknown>
     port: 18081,
     createdAt: new Date("2026-09-19T00:00:00.000Z"),
   };
-  await new LibSQLHranaTransport(connection).execute("UPDATE t SET a = 1 WHERE id = ?", { params: [value] });
+  await new LibSQLHranaTransport(connection, ALLOWS_PRIVATE_HOSTS).execute("UPDATE t SET a = 1 WHERE id = ?", {
+    params: [value],
+  });
   return sentArgs(sent.length - 1)[0];
 }
 

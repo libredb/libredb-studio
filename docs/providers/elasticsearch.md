@@ -140,7 +140,7 @@ The factory wires the type-id in via a dynamic import inside `createDatabaseProv
 ```ts
 case "elasticsearch": {
   const { ElasticsearchProvider } = await import("./providers/sql/search/index");
-  return new ElasticsearchProvider(connection, options);
+  return new ElasticsearchProvider(connection, options, context);
 }
 ```
 

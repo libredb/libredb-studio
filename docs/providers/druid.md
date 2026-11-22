@@ -145,7 +145,7 @@ case "druid": {
   // analysable: a bare directory resolves only at runtime, which the bundler
   // cannot trace into a chunk.
   const { DruidProvider } = await import("./providers/sql/druid/index");
-  return new DruidProvider(connection, options);
+  return new DruidProvider(connection, options, context);
 }
 ```
 

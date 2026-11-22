@@ -135,11 +135,11 @@ The driver is imported lazily via `loadSQLiteDriver()`
 // factory.ts
 case "sqlite": {
   const { SQLiteProvider } = await import("./providers/sql/sqlite");
-  return new SQLiteProvider(connection, options, execution);
+  return new SQLiteProvider(connection, options, context);
 }
 ```
 
-`execution` is the server-injected [`ProviderExecutionContext`](../../src/lib/db/types.ts).
+`context` is the build context (`ProviderBuildContext` in [`types.ts`](../../src/lib/db/types.ts)): the server-injected `ProviderExecutionContext` plus the egress decision core took, which SQLite does not read.
 Every cached path passes the server-derived `allowExternalFileAccess` posture, and SQLite refuses to open when it is `false` (the last section of this page).
 `acquireExecutionProfileProvider` adds the read-only flag when it builds an agent provider ([§12](#12-agent-read-only-execution-profile-328)).
 

@@ -29,6 +29,7 @@ import { PrometheusProvider } from "@/lib/db/providers/timeseries/prometheus/ind
 import type { InboundResponse, OutboundRequest } from "@/lib/db/providers/timeseries/prometheus/request";
 import type { DatabaseConnection } from "@/lib/types";
 import { capture } from "../../../helpers/prometheus-fixtures";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 /**
  * A capture of the compose `prometheus` service (`tests/fixtures/prometheus/v3.13.3/`), replayed as
@@ -158,7 +159,12 @@ async function expectRefusedWithoutEcho(
  * and only whether its request arrived is read.
  */
 async function expectConcatenationReachesThisServer(config: DatabaseConnection): Promise<void> {
-  const naive = new PrometheusProvider(config, {}, {}, { endpoint: concatenatingEndpoint });
+  const naive = new PrometheusProvider(
+    config,
+    {},
+    { egress: ALLOWS_PRIVATE_HOSTS },
+    { endpoint: concatenatingEndpoint },
+  );
   await naive.connect().catch(() => undefined);
   expect(hits.length).toBeGreaterThan(0);
   expect(hits.every((hit) => hit.host === `127.0.0.1:${port}`)).toBe(true);
@@ -181,7 +187,7 @@ afterEach(async () => {
 
 describe("the default endpoint, against a real server", () => {
   test("a valid host and port connect, and a query reaches that server's /api/v1/query", async () => {
-    const provider = new PrometheusProvider(connection({ port }));
+    const provider = new PrometheusProvider(connection({ port }), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await provider.connect();
     await provider.query("up");
 
@@ -197,7 +203,7 @@ describe("the default endpoint, against a real server", () => {
     async (carrying) => {
       const host = `127.0.0.1:${port}${SMUGGLED[carrying]}`;
       const config = connection({ host, port });
-      const provider = new PrometheusProvider(config);
+      const provider = new PrometheusProvider(config, {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
       await expectRefusedWithoutEcho(provider.connect(), sharedRefusal(host, port), host, SMUGGLED[carrying]);
       expect(hits).toEqual([]);
@@ -212,7 +218,7 @@ describe("the default endpoint, against a real server", () => {
       const smuggled = `${port}${SMUGGLED[carrying]}`;
       // Typed as a number, but a connection arrives as JSON from the store, a seed or the API.
       const config = connection({ port: smuggled as unknown as number });
-      const provider = new PrometheusProvider(config);
+      const provider = new PrometheusProvider(config, {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
       await expectRefusedWithoutEcho(
         provider.connect(),
@@ -246,7 +252,11 @@ describe("the default endpoint builds the configured origin", () => {
   });
 
   test("an absent port is the declared default, 9090", async () => {
-    const provider = new PrometheusProvider(connection({ host: "prometheus.test", port: undefined }));
+    const provider = new PrometheusProvider(
+      connection({ host: "prometheus.test", port: undefined }),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
     await provider.connect();
     await provider.query("up");
 
@@ -256,7 +266,7 @@ describe("the default endpoint builds the configured origin", () => {
   });
 
   test.each(["::1", "[::1]"])("the IPv6 literal %p is addressed in brackets", async (host) => {
-    const provider = new PrometheusProvider(connection({ host }));
+    const provider = new PrometheusProvider(connection({ host }), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await provider.connect();
     await provider.query("up");
 
@@ -283,7 +293,7 @@ describe("the default endpoint takes its scheme from the TLS panel", () => {
     const provider = new PrometheusProvider(
       connection({ host: "prometheus.test", port: 9443, ssl: { mode } }),
       {},
-      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
       { send: recorder(seen) },
     );
     await provider.connect();

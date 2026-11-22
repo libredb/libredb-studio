@@ -89,6 +89,7 @@ import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement
 import type { ManagedConnection } from "@/lib/seed";
 import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 
 // ============================================================================
 // Connection
@@ -111,7 +112,7 @@ function makeConnection(overrides: Partial<DatabaseConnection> = {}): DatabaseCo
 }
 
 function transport(): SearchHttpTransport {
-  return new SearchHttpTransport("opensearch", makeConnection());
+  return new SearchHttpTransport("opensearch", makeConnection(), ALLOWS_PRIVATE_HOSTS);
 }
 
 // ============================================================================
@@ -839,7 +840,7 @@ function sqlWith(match: string): string {
 }
 
 async function connectProvider(): Promise<OpenSearchProvider> {
-  const provider = new OpenSearchProvider(makeConnection());
+  const provider = new OpenSearchProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
   await provider.connect();
   return provider;
 }
@@ -1077,7 +1078,9 @@ describe("OpenSearch faults", () => {
     // What this cluster answers a request for ELASTICSEARCH's endpoint: HTTP 405,
     // with `error` as a STRING where an engine fault spells it as an object. That
     // JSON type is the discriminator, and the status is not consulted at all.
-    const fault = await faultOf(() => new SearchHttpTransport("elasticsearch", makeConnection()).query("SELECT 1"));
+    const fault = await faultOf(() =>
+      new SearchHttpTransport("elasticsearch", makeConnection(), ALLOWS_PRIVATE_HOSTS).query("SELECT 1"),
+    );
 
     expect(fault.category).toBe("unreachable");
     expect(fault.message).toContain("Incorrect HTTP method for uri [/_sql?format=json]");
@@ -1096,6 +1099,8 @@ describe("OpenSearchProvider refuses an API key pair", () => {
     // OpenSearch's security plugin accepts Authorization: ApiKey.
     const provider = new OpenSearchProvider(
       makeConnection({ apiKeyId: "seed-key-id", apiKeySecret: "seed-key-secret" }),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
     );
 
     await expect(provider.connect()).rejects.toBeInstanceOf(DatabaseConfigError);
@@ -1103,7 +1108,11 @@ describe("OpenSearchProvider refuses an API key pair", () => {
   });
 
   test("a half-filled pair is refused the same way, not treated as leftover Basic", async () => {
-    const provider = new OpenSearchProvider(makeConnection({ apiKeyId: "seed-key-id", user: "admin" }));
+    const provider = new OpenSearchProvider(
+      makeConnection({ apiKeyId: "seed-key-id", user: "admin" }),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
 
     await expect(provider.connect()).rejects.toBeInstanceOf(DatabaseConfigError);
   });
@@ -1137,12 +1146,16 @@ describe("OpenSearchProvider shares the Elasticsearch implementation", () => {
       identifierQuoting: osQuoting,
       supportsResultPagination: osPaging,
       ...opensearch
-    } = new OpenSearchProvider(makeConnection()).getCapabilities();
+    } = new OpenSearchProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities();
     const {
       identifierQuoting: esQuoting,
       supportsResultPagination: esPaging,
       ...elasticsearch
-    } = new ElasticsearchProvider(makeConnection({ type: ELASTICSEARCH })).getCapabilities();
+    } = new ElasticsearchProvider(
+      makeConnection({ type: ELASTICSEARCH }),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    ).getCapabilities();
 
     expect(opensearch).toEqual(elasticsearch);
     expect(osQuoting).toBe("backtick");
@@ -1167,9 +1180,15 @@ describe("OpenSearchProvider shares the Elasticsearch implementation", () => {
     // connected cluster is the whole point of the field - a live plan run answered
     // with a native aggregation body when it was told only "one runnable statement"
     // (2026-08-19).
-    const { statementLanguage: osLanguage, ...opensearch } = new OpenSearchProvider(makeConnection()).getLabels();
+    const { statementLanguage: osLanguage, ...opensearch } = new OpenSearchProvider(
+      makeConnection(),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    ).getLabels();
     const { statementLanguage: esLanguage, ...elasticsearch } = new ElasticsearchProvider(
       makeConnection({ type: ELASTICSEARCH }),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
     ).getLabels();
 
     expect(opensearch).toEqual(elasticsearch);
@@ -1204,7 +1223,7 @@ describe("OpenSearchProvider shares the Elasticsearch implementation", () => {
 // ============================================================================
 
 describe("OpenSearchProvider query preparation", () => {
-  const provider = () => new OpenSearchProvider(makeConnection());
+  const provider = () => new OpenSearchProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
   test("paginates with LIMIT n OFFSET m, which Elasticsearch refuses outright", () => {
     // Measured: `SELECT customer FROM probe_orders LIMIT 25 OFFSET 50` is HTTP 200
@@ -1223,7 +1242,11 @@ describe("OpenSearchProvider query preparation", () => {
     // limiter, two outcomes. Elasticsearch cannot serve a second page through this
     // surface at all, and refusing is better than sending `LIMIT n` alone - that
     // would return page ONE while the editor appends it to what it already shows.
-    const elasticsearch = new ElasticsearchProvider(makeConnection({ type: ELASTICSEARCH }));
+    const elasticsearch = new ElasticsearchProvider(
+      makeConnection({ type: ELASTICSEARCH }),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
 
     expect(() => elasticsearch.prepareQuery("SELECT customer FROM probe_orders", { limit: 25, offset: 50 })).toThrow(
       QueryError,
@@ -1237,10 +1260,11 @@ describe("OpenSearchProvider query preparation", () => {
     // `LIMIT n` alone is correct on both, so the shared limiter's ordinary output
     // needs no product to be right about.
     const opensearch = provider().prepareQuery("SELECT customer FROM probe_orders", { limit: 25 });
-    const elasticsearch = new ElasticsearchProvider(makeConnection({ type: ELASTICSEARCH })).prepareQuery(
-      "SELECT customer FROM probe_orders",
-      { limit: 25 },
-    );
+    const elasticsearch = new ElasticsearchProvider(
+      makeConnection({ type: ELASTICSEARCH }),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    ).prepareQuery("SELECT customer FROM probe_orders", { limit: 25 });
 
     expect(opensearch.query).toBe("SELECT customer FROM probe_orders LIMIT 25");
     expect(elasticsearch.query).toBe(opensearch.query);
@@ -1365,7 +1389,11 @@ describe("OpenSearchProvider query", () => {
     // The measured cross-product mistake: `POST /_sql?format=json` answers HTTP 405
     // here. The connect probe is what turns a mis-typed connection into an error at
     // the connection form rather than at the user's first query.
-    const wrongProduct = new ElasticsearchProvider(makeConnection({ type: ELASTICSEARCH }));
+    const wrongProduct = new ElasticsearchProvider(
+      makeConnection({ type: ELASTICSEARCH }),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
 
     const failure = wrongProduct.connect();
 
@@ -1583,7 +1611,11 @@ describe("object surface", () => {
     // capability, so this test asserts the object model's own half rather than
     // restating it: the kinds, their roles and the zero container depth, all of which
     // are facts about a search cluster and not about either product.
-    const capabilities = new OpenSearchProvider(makeConnection()).getCapabilities();
+    const capabilities = new OpenSearchProvider(
+      makeConnection(),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    ).getCapabilities();
     const kinds = capabilities.objectKinds ?? [];
 
     expect(kinds.map((kind) => kind.id).sort()).toEqual(["alias", "index", "pipeline", "stream", "template"]);
@@ -1623,7 +1655,9 @@ describe("object surface", () => {
     // written out here rather than compared against the other product's: a suite that
     // drove only one of the two would certify the other by assumption, and the equality
     // test above is what proves they are the same object.
-    const kinds = new OpenSearchProvider(makeConnection()).getCapabilities().objectKinds ?? [];
+    const kinds =
+      new OpenSearchProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities().objectKinds ??
+      [];
 
     const declared = kinds
       .filter((kind) => kind.hasSource === true)
@@ -2176,7 +2210,7 @@ describe("OpenSearch object source", () => {
     // hardcoded depth and a positional bind behaviour-identical on its own fixture, so
     // the derivations are driven with a TWO-LEVEL declaration swapped in.
     const provider = await connectProvider();
-    const real = new OpenSearchProvider(makeConnection()).getCapabilities();
+    const real = new OpenSearchProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities();
     const levels: ProviderCapabilities["containerLevels"] = [
       { id: "catalog", label: "Cluster", labelPlural: "Clusters" },
       { id: "schema", label: "Namespace", labelPlural: "Namespaces" },
@@ -2380,7 +2414,7 @@ describe("OpenSearch object source", () => {
     // nothing anywhere saying so; without the second, a declared kind with no reader
     // would call `undefined`.
     const provider = await connectProvider();
-    const real = new OpenSearchProvider(makeConnection()).getCapabilities();
+    const real = new OpenSearchProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities();
     const kinds = real.objectKinds ?? [];
     const spy = spyOn(provider, "getCapabilities");
     sentPaths = [];
@@ -2425,7 +2459,7 @@ describe("endOpenQueryTransaction()", () => {
   ] as const;
 
   test("is not implemented, and the doc names WHICH absence that is", () => {
-    const provider: DatabaseProvider = new OpenSearchProvider(makeConnection());
+    const provider: DatabaseProvider = new OpenSearchProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     expect(provider.endOpenQueryTransaction).toBeUndefined();
 
@@ -2598,7 +2632,7 @@ function overrideRoot(reply: Reply): void {
 }
 
 async function openAgent(execution: ProviderExecutionContext = AGENT_PROFILE): Promise<unknown> {
-  const provider = new OpenSearchProvider(makeConnection(), {}, execution);
+  const provider = new OpenSearchProvider(makeConnection(), {}, { ...execution, egress: ALLOWS_PRIVATE_HOSTS });
   return provider.connect().then(
     () => provider,
     (error: unknown) => error,
@@ -2858,7 +2892,7 @@ describe("OpenSearchProvider agent profile open: the login probes", () => {
 
 describe("OpenSearchProvider.queryReadOnly", () => {
   async function agentProvider(execution: ProviderExecutionContext = AGENT_PROFILE): Promise<OpenSearchProvider> {
-    const provider = new OpenSearchProvider(makeConnection(), {}, execution);
+    const provider = new OpenSearchProvider(makeConnection(), {}, { ...execution, egress: ALLOWS_PRIVATE_HOSTS });
     await provider.connect();
     return provider;
   }
@@ -3174,7 +3208,7 @@ describe("OpenSearch 3.8.0's catalog-read answers, replayed through queryReadOnl
   test.each(CATALOG_READS.filter((entry) => entry.status === 200).map((entry) => [entry.name, entry] as const))(
     "%s: the provider sends the composed command unchanged and answers the engine's rows",
     async (_name, entry) => {
-      const agent = new OpenSearchProvider(makeConnection(), {}, AGENT_PROFILE);
+      const agent = new OpenSearchProvider(makeConnection(), {}, { ...AGENT_PROFILE, egress: ALLOWS_PRIVATE_HOSTS });
       await agent.connect();
       overridePath("/_plugins/_sql", ok(entry.body));
 
@@ -3192,7 +3226,7 @@ describe("OpenSearch 3.8.0's catalog-read answers, replayed through queryReadOnl
   // Every table is `*`, which reaches the indices whose names start with a dot on a stock node: the overlay never
   // composes it, and the reader refuses it when it arrives anyway, before any request.
   test("the every-table read is refused by the reader, before anything is sent", async () => {
-    const agent = new OpenSearchProvider(makeConnection(), {}, AGENT_PROFILE);
+    const agent = new OpenSearchProvider(makeConnection(), {}, { ...AGENT_PROFILE, egress: ALLOWS_PRIVATE_HOSTS });
     await agent.connect();
     const before = sentPaths.length;
 
@@ -3206,7 +3240,7 @@ describe("OpenSearch 3.8.0's catalog-read answers, replayed through queryReadOnl
   test("a name the node does not hold is refused as resolving to none, before the command is sent", async () => {
     const entry = CATALOG_READS.find((capture) => capture.name === "catalog-read/columns-missing");
     if (entry === undefined) throw new Error("no capture");
-    const agent = new OpenSearchProvider(makeConnection(), {}, AGENT_PROFILE);
+    const agent = new OpenSearchProvider(makeConnection(), {}, { ...AGENT_PROFILE, egress: ALLOWS_PRIVATE_HOSTS });
     await agent.connect();
     overridePath("/_plugins/_sql", { status: entry.status, body: entry.body });
 
@@ -3253,7 +3287,11 @@ describe("MCP run_read_query on an OpenSearch connection", () => {
     resolve: async () => SEED,
     acquire: async (_connection: ManagedConnection, profile: ExecutionProfile) => {
       acquired.push(profile);
-      const provider = new OpenSearchProvider(makeConnection(), {}, executionContextFor(profile));
+      const provider = new OpenSearchProvider(
+        makeConnection(),
+        {},
+        { ...executionContextFor(profile), egress: ALLOWS_PRIVATE_HOSTS },
+      );
       await provider.connect();
       return provider;
     },

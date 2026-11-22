@@ -47,7 +47,7 @@ import {
   type ObjectSourceDocument,
   type PerformanceMetrics,
   type ProviderCapabilities,
-  type ProviderExecutionContext,
+  type ProviderBuildContext,
   type ProviderLabels,
   type ProviderOptions,
   type QueryResult,
@@ -57,6 +57,7 @@ import {
   type StorageStats,
   type TableStats,
 } from "@/lib/db/types";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import {
   AuthenticationError,
   ConnectionError,
@@ -211,10 +212,14 @@ export class LibSQLProvider extends SQLBaseProvider {
    */
   private readonly readOnlyProfile: boolean;
 
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
+  /** The egress decision the factory built this provider with, handed to the transport `connect()` builds. */
+  private readonly egress: ProviderBuildContext["egress"];
+
+  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderBuildContext = {}) {
     super(config, options);
     this.connection = resolveConnection(config);
     this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
+    this.egress = execution.egress;
     this.validate();
   }
 
@@ -325,7 +330,7 @@ export class LibSQLProvider extends SQLBaseProvider {
       }
     }
 
-    const transport = new LibSQLHranaTransport(this.connection);
+    const transport = new LibSQLHranaTransport(this.connection, requireEgressDecision(this.egress));
 
     try {
       await transport.execute(CONNECT_PROBE_SQL, { timeoutMs: this.queryTimeout });

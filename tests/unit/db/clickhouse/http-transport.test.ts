@@ -21,6 +21,7 @@ import {
 } from "@/lib/db/providers/sql/clickhouse/transport";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
 import type { DatabaseConnection, DatabaseType } from "@/lib/db/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 // ============================================================================
 // Harness
@@ -90,7 +91,7 @@ function makeConnection(overrides: Partial<DatabaseConnection> = {}): DatabaseCo
 }
 
 function makeTransport(overrides: Partial<DatabaseConnection> = {}): ClickHouseHttpTransport {
-  return new ClickHouseHttpTransport(makeConnection(overrides));
+  return new ClickHouseHttpTransport(makeConnection(overrides), ALLOWS_PRIVATE_HOSTS);
 }
 
 function lastCall(): FetchCall {
@@ -351,12 +352,15 @@ describe("ClickHouseHttpTransport request", () => {
 
 describe("ClickHouseHttpTransport endpoint", () => {
   test("defaults to the documented HTTP port on localhost", async () => {
-    await new ClickHouseHttpTransport({
-      id: "ch-2",
-      name: "ClickHouse",
-      type: CLICKHOUSE,
-      createdAt: new Date(),
-    }).query("SELECT 1");
+    await new ClickHouseHttpTransport(
+      {
+        id: "ch-2",
+        name: "ClickHouse",
+        type: CLICKHOUSE,
+        createdAt: new Date(),
+      },
+      ALLOWS_PRIVATE_HOSTS,
+    ).query("SELECT 1");
 
     expect(lastUrl().origin).toBe("http://localhost:8123");
   });

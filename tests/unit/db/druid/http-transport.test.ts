@@ -19,6 +19,7 @@ import { DruidHttpTransport } from "@/lib/db/providers/sql/druid/http-transport"
 import { DRUID_TRANSPORT_FAILURE, DruidTransportError } from "@/lib/db/providers/sql/druid/transport";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
 import type { DatabaseConnection, DatabaseType } from "@/lib/db/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 // ============================================================================
 // Harness
@@ -81,7 +82,7 @@ function makeConnection(overrides: Partial<DatabaseConnection> = {}): DatabaseCo
 }
 
 function makeTransport(overrides: Partial<DatabaseConnection> = {}): DruidHttpTransport {
-  return new DruidHttpTransport(makeConnection(overrides));
+  return new DruidHttpTransport(makeConnection(overrides), ALLOWS_PRIVATE_HOSTS);
 }
 
 function lastCall(): FetchCall {
@@ -256,9 +257,10 @@ describe("DruidHttpTransport request", () => {
 
 describe("DruidHttpTransport endpoint", () => {
   test("defaults to the Router's port on localhost", async () => {
-    await new DruidHttpTransport({ id: "druid-2", name: "Druid", type: DRUID, createdAt: new Date() }).query(
-      "SELECT 1",
-    );
+    await new DruidHttpTransport(
+      { id: "druid-2", name: "Druid", type: DRUID, createdAt: new Date() },
+      ALLOWS_PRIVATE_HOSTS,
+    ).query("SELECT 1");
 
     expect(lastCall().url).toBe("http://localhost:8888/druid/v2/sql");
   });

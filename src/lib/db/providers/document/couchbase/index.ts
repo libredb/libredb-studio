@@ -63,7 +63,7 @@ import {
   type PerformanceMetrics,
   type PreparedQuery,
   type ProviderCapabilities,
-  type ProviderExecutionContext,
+  type ProviderBuildContext,
   type ProviderLabels,
   type ProviderOptions,
   type QueryPrepareOptions,
@@ -87,6 +87,7 @@ import {
   TIME_BUDGET_PREFIX,
 } from "@/lib/db/providers/sql/read-only-budget";
 import { couchbaseAgentStatementRefusal, verifyCouchbaseAgentProfile } from "./agent-boundary";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { CouchbaseHttpTransport, type CouchbaseHttpTransportDeps } from "./http-transport";
 import { CATALOG_TIMEOUT_MS, inferColumns, inferColumnsEach } from "./introspect";
 import { COUCHBASE_DEFAULT_SCOPE, keyspaceFromDisplayName, keyspacePath, quoteIdentifier } from "./keyspace";
@@ -364,6 +365,9 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
    */
   private readonly readOnlyProfile: boolean;
 
+  /** The egress decision the factory built this provider with, handed to the transport `connect()` builds. */
+  private readonly egress: ProviderBuildContext["egress"];
+
   /**
    * `transportDeps` is the test seam of the transport the open builds: the factory passes three arguments, so a real
    * connection always builds its own.
@@ -371,11 +375,12 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
   constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    execution: ProviderExecutionContext = {},
+    execution: ProviderBuildContext = {},
     private readonly transportDeps: CouchbaseHttpTransportDeps = {},
   ) {
     super(config, options);
     this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
+    this.egress = execution.egress;
     this.validate();
   }
 
@@ -497,7 +502,11 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
 
   public async connect(): Promise<void> {
     this.validate();
-    const transport = new CouchbaseHttpTransport(this.transportConfig(), this.transportDeps);
+    const transport = new CouchbaseHttpTransport(
+      this.transportConfig(),
+      this.transportDeps,
+      requireEgressDecision(this.egress),
+    );
 
     try {
       // Cheapest proof that the cluster is reachable AND the credentials work:

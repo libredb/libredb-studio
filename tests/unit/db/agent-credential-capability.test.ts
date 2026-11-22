@@ -6,6 +6,7 @@ import { SearchHttpTransport } from "@/lib/db/providers/sql/search/http-transpor
 import type { AgentCredentialForm } from "@/lib/db/types";
 import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 
 const STAND_IN_PASSWORD = ["not", "a", "real", "password"].join("-");
 
@@ -116,13 +117,17 @@ describe("SEED_AGENT_CREDENTIAL against each provider's form and field row", () 
   });
 
   test("the Elasticsearch transport signs with the API key pair when a user and password stand beside it", () => {
-    const transport = new SearchHttpTransport("elasticsearch", {
-      ...CENSUS_CONNECTION.elasticsearch,
-      apiKeyId: "not-a-real-key-id",
-      apiKeySecret: "not-a-real-key-secret",
-      user: "agent_reader",
-      password: STAND_IN_PASSWORD,
-    });
+    const transport = new SearchHttpTransport(
+      "elasticsearch",
+      {
+        ...CENSUS_CONNECTION.elasticsearch,
+        apiKeyId: "not-a-real-key-id",
+        apiKeySecret: "not-a-real-key-secret",
+        user: "agent_reader",
+        password: STAND_IN_PASSWORD,
+      },
+      ALLOWS_PRIVATE_HOSTS,
+    );
     const authorization = (transport as unknown as { readonly authorization?: string }).authorization ?? "";
     expect(authorization.startsWith("ApiKey ")).toBe(true);
   });

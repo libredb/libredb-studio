@@ -25,8 +25,8 @@ import {
   assertPublicDnsAnswers,
   assertPublicLiteralHost,
 } from "@/lib/db/http/egress-policy";
-import { egressDecision } from "@/lib/db/egress-decision";
 import { QueryError } from "@/lib/db/errors";
+import type { EgressDecision } from "@/lib/db/types";
 import { randomBytes } from "node:crypto";
 import { decodeResponse, encodePdu, encodeRequest, type Response, SnmpAnswerTooLargeError } from "./message";
 import { localizedKey, SALT_BYTES, type AuthHash } from "./usm";
@@ -80,17 +80,18 @@ export interface ResolvedTarget extends GuardedTarget {
  * A literal is what `isIP` reads as one, as in the shared guard. A dotted form such as `127.1`
  * is not, although a resolver reads it as an address, so it is resolved here like any other
  * name and the socket is connected to the address the checks saw.
+ *
+ * `egress` is the decision the provider was built with: core takes it once per process from
+ * DB_HTTP_BLOCK_PRIVATE_HOSTS and the factory hands it to the provider, which refused an invalid
+ * value by name before the provider existed, so before any lookup leaves the machine.
  */
-export async function resolveTarget(host: string, port: number): Promise<ResolvedTarget> {
-  // Core's one decision (`@/lib/db/egress-decision`), read before anything else, as the shared
-  // transport reads it before it dials: an invalid DB_HTTP_BLOCK_PRIVATE_HOSTS is refused by name
-  // for every host form, before any lookup leaves the machine.
-  const { blocksPrivateHosts } = egressDecision();
+export async function resolveTarget(host: string, port: number, egress: EgressDecision): Promise<ResolvedTarget> {
+  const { blocksPrivateHosts } = egress;
   const bare = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
   const family = isIP(bare);
   if (family === 4 || family === 6) {
     assertNotLinkLocalLiteral(bare);
-    assertPublicLiteralHost(bare);
+    assertPublicLiteralHost(bare, egress);
     return { address: bare, port, asked: host, family };
   }
   const answers = await new Promise<{ address: string; family: number }[]>((resolve, reject) => {
@@ -103,13 +104,13 @@ export async function resolveTarget(host: string, port: number): Promise<Resolve
     });
   });
   // The two checks are not applied the same way, and copying the shared transport's shape is
-  // the point rather than a detail. `assertPublicLiteralHost` consults the decision itself and
+  // the point rather than a detail. `assertPublicLiteralHost` consults the decision it is handed and
   // returns when it allows private destinations (`egress-policy.ts`), but `assertPublicDnsAnswers`
   // does NOT: it refuses loopback and private answers unconditionally, because the shared transport
   // only installs it when the decision blocks them (`guardedNodeOptions`). Calling it
   // unconditionally here refused every agent reached by name on a local network with the flag
   // off, which is the common case; a test with a name rather than a literal is what found it.
-  // Both checks read core's one decision, so they cannot disagree.
+  // Both checks follow the one decision handed in, so they cannot disagree.
   if (blocksPrivateHosts) assertPublicDnsAnswers(answers);
   // The link-local refusal is not flag-dependent anywhere, so it runs either way. It also refuses
   // an answer set with no usable address, or an answer whose family does not match its address,

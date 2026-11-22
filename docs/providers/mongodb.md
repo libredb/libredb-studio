@@ -67,7 +67,7 @@ Loaded on demand by `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/
 ```ts
 case 'mongodb': {
   const { MongoDBProvider } = await import('./providers/document/mongodb');
-  return new MongoDBProvider(connection, options, execution);
+  return new MongoDBProvider(connection, options, context);
 }
 ```
 

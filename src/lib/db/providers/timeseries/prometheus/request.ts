@@ -42,6 +42,7 @@ import { urlToHttpOptions } from "node:url";
 import { rejectRedirect } from "@/lib/db/http/endpoint";
 import { guardedNodeOptions, httpTransportFetch } from "@/lib/db/http/egress-policy";
 import { DatabaseConfigError } from "@/lib/db/errors";
+import type { EgressDecision } from "@/lib/db/types";
 import type { SSLConfig } from "@/lib/types";
 
 /** One request, built whole by the caller. */
@@ -219,16 +220,20 @@ async function readCapped(body: Response["body"], maxBytes: number): Promise<str
   }
 }
 
-async function sendPlain(request: OutboundRequest): Promise<InboundResponse> {
+async function sendPlain(request: OutboundRequest, egress: EgressDecision): Promise<InboundResponse> {
   let response: Response;
   try {
-    response = await httpTransportFetch(request.url, {
-      method: request.method,
-      headers: request.headers,
-      body: request.body,
-      redirect: "manual",
-      signal: request.signal,
-    });
+    response = await httpTransportFetch(
+      request.url,
+      {
+        method: request.method,
+        headers: request.headers,
+        body: request.body,
+        redirect: "manual",
+        signal: request.signal,
+      },
+      egress,
+    );
   } catch (error) {
     throw failureFrom(error, request.signal);
   }
@@ -254,7 +259,7 @@ async function sendPlain(request: OutboundRequest): Promise<InboundResponse> {
   }
 }
 
-function sendOverTls(tls: TlsMaterial, request: OutboundRequest): Promise<InboundResponse> {
+function sendOverTls(tls: TlsMaterial, request: OutboundRequest, egress: EgressDecision): Promise<InboundResponse> {
   return new Promise<InboundResponse>((resolve, reject) => {
     const { protocol, hostname, port, path } = urlToHttpOptions(request.url);
     let clientRequest: ClientRequest | undefined;
@@ -287,7 +292,7 @@ function sendOverTls(tls: TlsMaterial, request: OutboundRequest): Promise<Inboun
           method: request.method,
           headers: request.headers,
           ...tls,
-          ...guardedNodeOptions(hostname),
+          ...guardedNodeOptions(hostname, egress),
         },
         (incoming) => {
           response = incoming;
@@ -339,9 +344,13 @@ function sendOverTls(tls: TlsMaterial, request: OutboundRequest): Promise<Inboun
   });
 }
 
-/** null: plaintext through the global fetch, read at call time. Non-null: node:https with that material. */
-export function createSendRequest(tls: TlsMaterial | null): SendRequest {
-  const send: SendRequest = tls === null ? sendPlain : (request) => sendOverTls(tls, request);
+/**
+ * null: plaintext through the global fetch, read at call time. Non-null: node:https with that material. Either path
+ * follows `egress`, the decision the provider was built with.
+ */
+export function createSendRequest(tls: TlsMaterial | null, egress: EgressDecision): SendRequest {
+  const send: SendRequest =
+    tls === null ? (request) => sendPlain(request, egress) : (request) => sendOverTls(tls, request, egress);
   return async (request) => {
     // An already-aborted signal never fires "abort" again, and node:https would send the request regardless.
     if (request.signal.aborted) throw abortFailure(request.signal);
