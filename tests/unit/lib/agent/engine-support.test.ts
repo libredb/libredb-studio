@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { AGENT_EXECUTION_ENGINES, namedList } from "@/lib/agent/engine-support";
+import { namedList } from "@/lib/agent/engine-support";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
+import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
 import type { DatabaseType } from "@/lib/types";
 
 /**
@@ -100,6 +101,11 @@ async function hasReadOnlyPath(type: DatabaseType): Promise<boolean> {
 }
 
 describe("AGENT_EXECUTION_ENGINES", () => {
+  test("is frozen, so no code widens the review record at run time", () => {
+    expect(Object.isFrozen(AGENT_EXECUTION_ENGINES)).toBe(true);
+    expect(() => (AGENT_EXECUTION_ENGINES as DatabaseType[]).push("spark")).toThrow(TypeError);
+  });
+
   test("the factory dispatches on exactly the DatabaseType union", () => {
     expect([...dispatch.keys()].sort()).toEqual([...databaseTypes].sort());
   });

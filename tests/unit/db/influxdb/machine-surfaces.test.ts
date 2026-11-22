@@ -12,7 +12,7 @@
  */
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
+import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import { type AgentToolContext, readObjectInventoryForGrounding } from "@/lib/agent/tools";

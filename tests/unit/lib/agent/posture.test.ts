@@ -1,6 +1,8 @@
 import { describe, expect, mock, test } from "bun:test";
 import * as manifest from "@/lib/agent/agent-manifest";
-import { AGENT_EXECUTION_ENGINES, namedList } from "@/lib/agent/engine-support";
+import { namedList } from "@/lib/agent/engine-support";
+import * as compatibility from "@/lib/db/compatibility";
+import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
 import { AGENT_HANDOVER_BUDGET, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { engineServerDialect } from "@/lib/agent/languages/engines/server";
 import { agentPosture, autoExecuteTerms } from "@/lib/agent/posture";
@@ -38,7 +40,7 @@ const STATEMENT_BUDGETS = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets;
  * `catalogCapture` is supplied, in `AGENT_STATEMENT_LANGUAGE` order.
  *
  * The server dialect is server tier, so a posture module that imported it would stop being
- * client-safe - which is the rule `engine-support.ts` records in its own header. So the
+ * client-safe - which is the rule the review record's docblock in `src/lib/db/compatibility.ts` records. So the
  * production module reads the client dialects, and this reads the real server one to keep
  * them honest: an engine that gains a `catalogCapture` fails this file until the copy names it.
  */
@@ -553,14 +555,13 @@ describe("autoExecuteTerms", () => {
  */
 describe("the engine names follow the enforcing list", () => {
   test("an engine added to AGENT_EXECUTION_ENGINES changes the copy with no copy edit", async () => {
-    const real = [...AGENT_EXECUTION_ENGINES];
+    // Captured as a plain object before the substitution: the namespace itself follows the replacement, and every
+    // other record of the module is carried over so only the review record is swapped.
+    const real = { ...compatibility };
     try {
-      // `namedList` is re-exported by the substitute rather than dropped: the module under
-      // test imports it from here too, and a factory naming only the array would swap the
-      // list for a third engine and take the join with it.
-      mock.module("@/lib/agent/engine-support", () => ({
+      mock.module("@/lib/db/compatibility", () => ({
+        ...real,
         AGENT_EXECUTION_ENGINES: ["postgres", "sqlite", "mysql"],
-        namedList,
       }));
       const { agentPosture: withThree } = await import("@/lib/agent/posture");
       const blocked = withThree({
@@ -573,7 +574,7 @@ describe("the engine names follow the enforcing list", () => {
       expect(blocked.body).toContain("boundary it declares: PostgreSQL, SQLite and MySQL.");
       expect(withThree({ mode: "agent", engine: "mysql", engineLabel: "MySQL", handover: false }).tone).toBe("reads");
     } finally {
-      mock.module("@/lib/agent/engine-support", () => ({ AGENT_EXECUTION_ENGINES: real, namedList }));
+      mock.module("@/lib/db/compatibility", () => real);
     }
   });
 

@@ -18,20 +18,21 @@
  *  - **Client-safe imports only** - types, `AGENT_EXECUTION_ENGINES`, the manifest's
  *    `AGENT_STATEMENT_LANGUAGE`, the language packs' client facets (`languages/client.ts`, where each
  *    language's reads, widened and hand-over sentences live), the engines' client facets (`languages/engines/client.ts`), `getDBConfig` and the policy constants. A provider module here would drag `oracledb`/`mssql` toward a bundle
- *    that must not have them, which is the rule `engine-support.ts` records in its header.
+ *    that must not have them, which is the rule the review record's docblock in `src/lib/db/compatibility.ts` records.
  *  - **Every engine name and every number is DERIVED.** Not one is typed as a literal, and
  *    not one is a count. The point of #425 is that "7+" was written when the answer was 7
  *    and stayed while the answer became 11; the same trap is one edit away here, because
  *    each of these sentences names a set the server decides.
  *  - **The qualifier is visible, never folded into the popover.** A bare "executes nothing"
  *    overclaims: on the dialects with a `catalogCapture`, plan mode's grounding capture IS a
- *    catalog read, and `engine-support.ts` says in its own header that copy compressing these
+ *    catalog read, and the review record's docblock in `src/lib/db/compatibility.ts` says that copy compressing these
  *    facts overclaims. The strip therefore shows both halves on one line, and the popover
  *    carries the full claim rather than the missing half.
  */
 
 import { AGENT_STATEMENT_LANGUAGE, type AgentStatementLanguageId } from "@/lib/agent/agent-manifest";
-import { AGENT_EXECUTION_ENGINES, namedList } from "@/lib/agent/engine-support";
+import { namedList } from "@/lib/agent/engine-support";
+import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { languageClientPack } from "@/lib/agent/languages/client";
 import { enginesSupporting } from "@/lib/agent/languages/engines/client";

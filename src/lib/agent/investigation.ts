@@ -4082,7 +4082,7 @@ export async function runInvestigation(
           // rather than relied on.
           // `operations` is the one agent set built on a different four, because the
           // read-class tools need `queryReadOnly`, which only the engines
-          // `AGENT_EXECUTION_ENGINES` (`src/lib/agent/engine-support.ts`) names implement -
+          // `AGENT_EXECUTION_ENGINES` (`src/lib/db/compatibility.ts`) names implement -
           // named rather than counted here, because the count is what went stale: the rule
           // that decides is the factory's probe of that method, not a number. Told to
           // call a tool it has not got, a run calls it, is answered "there is no such tool",

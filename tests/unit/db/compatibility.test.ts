@@ -10,6 +10,7 @@
  */
 import { describe, test, expect } from "bun:test";
 import {
+  AGENT_EXECUTION_ENGINES,
   WIRE_COMPATIBLE_ENGINES,
   compatibleEnginesFor,
   CONNECTION_FORM_URI_MODE,
@@ -28,7 +29,6 @@ import {
   SHIPPED_DATABASE_TYPES,
   SINGLE_WRITER_FILE,
 } from "@/lib/db/compatibility";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { SEED_AGENT_CREDENTIAL, SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { isFileBased } from "@/lib/db-ui-config";

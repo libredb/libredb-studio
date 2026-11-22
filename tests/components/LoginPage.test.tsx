@@ -12,12 +12,16 @@ import { mockToastSuccess, mockToastError } from "../helpers/mock-sonner";
 import { mock } from "bun:test";
 import { listShowcaseDatabases } from "@/lib/db-showcase";
 import { getDBConfig } from "@/lib/db-ui-config";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { LIVE_CHANNELS, LIVE_PLATFORMS } from "@/lib/distribution/channels.generated";
 import { DEPLOY_GROUP_LABELS, DEPLOY_GROUP_ORDER } from "@/lib/distribution/deploy-groups";
 import { ENGINE_URI_SCHEMES, parseConnectionString } from "@/lib/connection-string-parser";
 import { SIGNATURE_URIS } from "@/components/login/connection-signature";
-import { EXTERNAL_DATABASE_TYPES, SHIPPED_DATABASE_TYPES, WIRE_COMPATIBLE_ENGINES } from "@/lib/db/compatibility";
+import {
+  AGENT_EXECUTION_ENGINES,
+  EXTERNAL_DATABASE_TYPES,
+  SHIPPED_DATABASE_TYPES,
+  WIRE_COMPATIBLE_ENGINES,
+} from "@/lib/db/compatibility";
 
 // sonner and next/navigation are mocked via preload
 // lucide-react resolves fine natively — no mock needed

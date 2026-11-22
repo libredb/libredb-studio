@@ -6220,7 +6220,7 @@ Found 2026-10-08 by the browser verification of the Databend provider (#1593); p
 
 ### U101. Agent mode asks consent for an Analyze run that the server then refuses on the engine
 
-On an engine outside `AGENT_EXECUTION_ENGINES` (`src/lib/agent/engine-support.ts`), the rail's amber notice says that a run whose workflow sends a statement is refused at start, yet a start that resolves to Analyze (`data-analysis`) first raises the consent step.
+On an engine outside `AGENT_EXECUTION_ENGINES` (`src/lib/db/compatibility.ts`), the rail's amber notice says that a run whose workflow sends a statement is refused at start, yet a start that resolves to Analyze (`data-analysis`) first raises the consent step.
 The step is headed "Start this run" with a "read-only" pill, says "This run will open as Analyze on <connection>, which answers with a result.", and its checkbox note promises "the same database-enforced read-only session either way".
 Its "Start run" then sends `POST /api/agent/runs`, which answers 400 `{"refused":"engine-unsupported"}`, and the rail says "No run was opened. The notice above says why, and what still runs on this engine."
 `hold` in `src/components/agent/AgentRail.tsx` raises the step whenever `canHandOver` holds, and `canHandOver` reads the mode, `AGENT_WORKFLOW_PRESENTS_ANSWER` and the hand-over runner but never the engine, while the route refuses on `AGENT_WORKFLOW_SENDS_STATEMENTS` and the engine (`src/app/api/agent/runs/route.ts`).

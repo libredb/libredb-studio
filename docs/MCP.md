@@ -55,7 +55,7 @@ In the rest of this guide, `agent-read-only` is Studio's least-privilege read pr
   - `run_read_query` runs one read-only SQL statement.
     A `SELECT` runs on every engine it serves; a refused statement's answer names what else that engine takes.
     Runs on the engines listed below with the forms each takes; other engines refuse it, and list_connections' read_tool names the tool that reads each connection.
-    It serves an engine only where `AGENT_EXECUTION_ENGINES` in `src/lib/agent/engine-support.ts` lists it, the engine is offered to MCP, and `MCP_STATEMENT_READ` in `src/lib/db/compatibility.ts` opens statement reads on it, so an engine that joins `AGENT_EXECUTION_ENGINES` stays closed here until a change of its own opens it.
+    It serves an engine only where `AGENT_EXECUTION_ENGINES` in `src/lib/db/compatibility.ts` lists it, the engine is offered to MCP, and `MCP_STATEMENT_READ` in `src/lib/db/compatibility.ts` opens statement reads on it, so an engine that joins `AGENT_EXECUTION_ENGINES` stays closed here until a change of its own opens it.
     It refuses every engine outside that list as soon as the connection resolves, before anything is acquired, answering "this tool does not serve <engine>; use <tool> there", where the tool is the one the connection's `read_tool` names, or `inspect_schema` where it is `null`.
     A connection that carries `unavailable` gets that sentence instead, from every statement tool, naming no tool.
     Elasticsearch SQL has no `OFFSET`, so there `pagination.nextOffset` is always `null`, an `offset` is refused before anything is sent, and the answer says to page by key instead: `ORDER BY` a unique field, and for the next page add `WHERE` that field `>` the last value read.

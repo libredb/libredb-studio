@@ -115,7 +115,7 @@ Three properties frame everything below, and each of them is load-bearing rather
   `driveAgentRun()` ([`runtime.ts`](../src/lib/agent/runtime.ts)), which is what a run opened by an
   earlier build still does. Both
   read the same fact, which is why the route can refuse without duplicating the decision. Surfaces that must *state* that reach — the login hero does,
-  since #425 — read `AGENT_EXECUTION_ENGINES` (`src/lib/agent/engine-support.ts`), which mirrors the
+  since #425 — read `AGENT_EXECUTION_ENGINES` (`src/lib/db/compatibility.ts`), which mirrors the
   gate rather than replacing it: the factory keeps probing `typeof provider.queryReadOnly`, and
   `tests/unit/lib/agent/engine-support.test.ts` measures the provider prototypes so the constant
   cannot go stale against them in either direction. It is client-safe by construction (it imports
@@ -2635,7 +2635,7 @@ unresolved connection (`engineUnsupported`, `AgentRail.tsx`) — is where that r
 
 **The qualifier is visible, and that is a claim rather than a layout choice.** A bare "executes
 nothing" overclaims: on the dialects that supply a `catalogCapture` (`src/lib/agent/languages/sql/engines/`)
-plan mode's grounding capture IS a catalog read, and `engine-support.ts` says in its own header that
+plan mode's grounding capture IS a catalog read, and the review record's docblock in `src/lib/db/compatibility.ts` says that
 copy compressing these facts overclaims. So both halves sit on the same line, the row wraps rather
 than truncating — a qualifier cut off mid-clause is the same overclaim with an ellipsis on it — and
 the ⓘ carries the whole claim rather than the missing half. That claim node is rendered whether or
