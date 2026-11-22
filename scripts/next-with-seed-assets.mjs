@@ -23,9 +23,11 @@
  * handling, and no other command starts a server. The variable is read from the caller's environment before the .env
  * files are loaded, and a value that only a .env file Next.js loads for `start` sets stops this launcher with exit
  * code 1 before the CLI runs: the documented rule is never to set it in a .env file, and this launcher's own `true` in
- * the process environment would otherwise replace the file's value unseen. Bun loads the working directory's .env
- * files into its own environment before this file runs, so on Bun the value of a file Bun loaded arrives as the
- * caller's and is passed on as given, for the server to accept or refuse by name; nothing is added there to hide it.
+ * the process environment would otherwise replace the file's value unseen. The refusal names each file that sets it,
+ * from the loader's loadedEnvFiles. It holds on Bun as on Node.js: under `bun start` Bun runs the script's `node`,
+ * as Bun itself under `bun --bun run start` or where no Node.js is installed, and loads no .env file into its
+ * environment; only a direct `bun scripts/next-with-seed-assets.mjs` run, which no package.json script makes, has Bun
+ * load the .env files first, so that the file's value arrives as the caller's.
  *
  * Every argument is passed to the Next.js CLI unchanged. The CLI is the `next` binary named by the `bin` field of the
  * checkout's own node_modules/next/package.json, run with this Node.js, so no shell, no PATH lookup and no package
@@ -106,12 +108,18 @@ const callerEnv = { ...process.env };
 const callerManualSignalHandling = process.env[MANUAL_SIGNAL_HANDLING_VARIABLE];
 const command = process.argv[2];
 const silent = { info() {}, error() {} };
-const { combinedEnv } = loadEnvConfig(process.cwd(), command === "dev", silent);
+const { combinedEnv, loadedEnvFiles } = loadEnvConfig(process.cwd(), command === "dev", silent);
 const start = command === "start";
 if (start && callerManualSignalHandling === undefined && combinedEnv[MANUAL_SIGNAL_HANDLING_VARIABLE] !== undefined) {
+  // Windows compares environment names without letter case, as process.env does there.
+  const sameName =
+    process.platform === "win32"
+      ? (name) => name.toUpperCase() === MANUAL_SIGNAL_HANDLING_VARIABLE
+      : (name) => name === MANUAL_SIGNAL_HANDLING_VARIABLE;
+  const setters = loadedEnvFiles.filter((file) => Object.keys(file.env).some(sameName)).map((file) => file.path);
   console.error(
-    `${MANUAL_SIGNAL_HANDLING_VARIABLE} is set in a .env file Next.js loads for start, where it is not honoured: set it ` +
-      "in the environment bun start runs in, or remove it from the .env file " +
+    `${MANUAL_SIGNAL_HANDLING_VARIABLE} is set in a .env file Next.js loads for start (${setters.join(", ")}), ` +
+      "where it is not honoured: set it in the environment bun start runs in, or remove it from the file " +
       "(docs/DISTRIBUTION.md#stopping-the-server).",
   );
   process.exit(1);
