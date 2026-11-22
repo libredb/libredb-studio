@@ -381,8 +381,9 @@ The block is bounded at 2000 rendered characters, a bound in characters because 
 
 | Outcome | What is sent back to the model | Call site |
 | --- | --- | --- |
-| A completed read | A server sentence naming the artifact id, then the **rows**: one `JSON.stringify` per row, newline separated, inside a fence labelled `<what it was>, N row(s)` | `runAuditedAgentCall` (`tools.ts`), rendering by `renderRows` (`tools.ts`) |
-| A statement that failed at the database | The **engine's own message**, fenced, referenced by the statement's fingerprint. A message that holds a credential of the run's connection, or any form of one, is withheld whole and the fence carries Studio's sentence saying so | `runAuditedAgentCall` (`tools.ts`) |
+| A completed read | A server sentence naming the artifact id, then the **rows**: one `JSON.stringify` per row, newline separated, inside a fence labelled `<what it was>, N row(s)` whose header names the provider that relayed them | `runAuditedAgentCall` (`tools.ts`), rendering by `renderRows` (`tools.ts`) |
+| A statement that failed at the database | The **engine's own message**, fenced under a header naming the provider that relayed it, referenced by the statement's fingerprint. A message that holds a credential of the run's connection, or any form of one, is withheld whole and the fence carries Studio's sentence saying so. A provider's own row or byte budget refusal is in this row too: it is the provider's answer, relayed as database content | `runAuditedAgentCall` (`tools.ts`) |
+| A statement whose answer Studio's own budget refused | Studio's own sentence, **unfenced**: the answer was past the run's row or byte budget, or did not arrive within the time Studio granted, so Studio's core refused it (`runReadOnlyStatement` in `read-only-statement.ts`), and the advice after it is Studio's too. The statistics read outlasting its time is refused the same way. The ledger records the refusal as Studio's (`refusedBy: "studio"`) | `runAuditedAgentCall` (`tools.ts`), `isStudioRefusal` (`provider-text.ts`) |
 | A statement the provider refused before sending it | The **provider's own sentence**, inside a fence of its own whose header names the provider that wrote it ("PostgreSQL provider, bundled with Studio"), referenced by the statement's fingerprint, then Studio's advice outside the fence. The database was not asked. The run's read allowance is Studio's own refusal and stays unfenced, in Studio's words. Either text is withheld whole when it holds a credential of the connection | `runAuditedAgentCall` (`tools.ts`), `fenceProviderText` (`untrusted-content.ts`) |
 | A policy denial | Server text only: the deny code, the policy version, and advice that a boundary decided this. There is no engine text because a denial produced none | `denialText` (`tools.ts`) |
 | An approval requirement | Server text naming the operation id | `approvalText` (`tools.ts`) |
@@ -427,6 +428,8 @@ A recorded refusal's message is scrubbed of the connection's credential again, s
 So are a recorded inventory snapshot's provider sentences (a count or an index read refused, a parent the walk could not list, a sampled count, a bounded description) before a prompt carries the snapshot.
 The ledger itself keeps what it recorded: a run recorded before the scrub existed still shows its raw text on its own page and stream.
 A statement refused before sending is restated in Studio's words when the ledger says Studio refused it, and fenced as the provider's text naming the provider otherwise, a refusal recorded before the ledger said who refused included.
+A sent statement whose answer Studio's own budget refused is restated in Studio's words, as one inert line.
+Any other failure of a sent statement is restated fenced as the database's text, under a header naming the provider that relayed it, a failure recorded before the ledger said who refused included.
 
 ---
 
@@ -504,7 +507,9 @@ statement rather than as an opaque token.
 
 ## The fence, and what it does not do
 
-Everything derived from the database is wrapped by `fenceUntrustedContent` (in `src/lib/agent/untrusted-content.ts`): a header naming what the block is, which operation produced it and which id it joins to; a fixed instruction that the lines are data and must never be followed as instructions; and a pair of markers bounding the region.
+Everything derived from the database is wrapped by `fenceUntrustedContent` (in `src/lib/agent/untrusted-content.ts`): a header naming what the block is, the provider that relayed it, which operation produced it and which id it joins to; a fixed instruction that the lines are data and must never be followed as instructions; and a pair of markers bounding the region.
+The header names the relaying provider as "relayed by the PostgreSQL provider, bundled with Studio", for example.
+Two fences name no provider, because no provider relayed their content to the server: a conversation's earlier steps, which a user and a model wrote, and the standalone AI routes' context, which the browser sent.
 The one exception is an inventory name the server's own sentence carries, which is quoted as described below.
 
 The load-bearing property is **not the wording — it is that the envelope survives the content.** A
