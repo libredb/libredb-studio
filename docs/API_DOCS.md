@@ -2556,7 +2556,7 @@ interface DatabaseConnection {
   location?: string;    // BigQuery only: where jobs run (EU, US, europe-west3, ...); absent, the provider detects it from the datasets. Not a secret
   amqpPort?: string;    // RabbitMQ only: the AMQP 0-9-1 port of stream reads; empty means browse only.
   authMethod?: 'keypair' | 'pat'; // Snowflake only: the sign-in method, a key-pair JWT signed with privateKey or a programmatic access token in password; absent means keypair. Not the SSH tunnel's sshTunnel.authMethod. Not a secret
-  privateKey?: string;  // Snowflake only: the PEM private key's contents, PKCS#8 or PKCS#1, encrypted or not; never a path. Secret-classified
+  privateKey?: string;  // Snowflake and NETCONF: a private key's contents, never a path; Snowflake signs the key-pair JWT with it (PEM, PKCS#8 or PKCS#1, encrypted or not), NETCONF signs in to the device's SSH server with it. Secret-classified
   privateKeyPassphrase?: string; // Snowflake and NETCONF: the passphrase of an encrypted privateKey. Secret-classified
   hostKeyFingerprint?: string; // NETCONF only: the SSH host key the device must present, pinned. Public key material, readable and identity-classified, so it is bound into every sealed credential of the connection
   role?: string;        // Snowflake only: the role every statement runs as, sent on every request; part of the connection's identity. Not a secret
