@@ -543,8 +543,8 @@ export interface BoundaryContext {
 
 /**
  * The one boundary every public method and every path of a read ends in. An own error, the shared egress
- * refusal and the refusal of a dial made without an egress decision (a provider built outside Studio's factory) pass
- * through unchanged; a TransportError the client did not map becomes its row by kind; anything else,
+ * refusal and the refusal of a provider built outside Studio's factory without an egress decision, at connect() or at
+ * a dial, pass through unchanged; a TransportError the client did not map becomes its row by kind; anything else,
  * a SyntaxError, a TypeError or a DOMException included, becomes the unexpected-answer sentence. The original value is never the message,
  * the detail or the cause.
  */

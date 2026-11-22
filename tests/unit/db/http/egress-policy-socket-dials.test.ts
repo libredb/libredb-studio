@@ -16,6 +16,9 @@
  *
  * RabbitMQ dials AMQP only for a stream read, so its operation is `connect()` over a recorded management API, then the
  * stream read.
+ * Its management origin checks a literal host by the same handed decision inside `connect()`, so a blocking decision at
+ * 127.0.0.1 is refused there; the row that dials the name localhost passes that origin and is the one that reaches the
+ * AMQP dial.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
@@ -471,6 +474,21 @@ describe("where a socket dial may connect, whatever the decision allows or block
           { egress: BLOCKS_PRIVATE_HOSTS },
         );
         return { provider, dial: () => provider.connect() };
+      },
+      BLOCKED_HOST,
+    ],
+    [
+      "RabbitMQ",
+      (port: number) => {
+        const config = rabbitmqConnection({ host: "localhost", amqpPort: String(port), password: crypto.randomUUID() });
+        const provider = new RabbitMQProvider(
+          config,
+          {},
+          { egress: BLOCKS_PRIVATE_HOSTS },
+          { managementTransport: connectedStub().factory },
+        );
+        const read = JSON.stringify({ vhost: "/", stream: "orders" });
+        return { provider, dial: () => provider.connect().then(() => provider.query(read)) };
       },
       BLOCKED_HOST,
     ],

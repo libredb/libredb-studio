@@ -79,7 +79,14 @@ function connectionTo(origin: string): DatabaseConnection {
 }
 
 async function open(origin: string, execution: ProviderExecutionContext, sent: SentRecord[]) {
-  const provider = new PrometheusProvider(connectionTo(origin), {}, execution, { send: recordingSender(sent) });
+  const provider = new PrometheusProvider(
+    connectionTo(origin),
+    {},
+    { ...execution, egress: egressDecision() },
+    {
+      send: recordingSender(sent),
+    },
+  );
   await provider.connect();
   return provider;
 }

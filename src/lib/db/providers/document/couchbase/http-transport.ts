@@ -29,7 +29,7 @@ import { request as httpsRequest, type RequestOptions as HttpsRequestOptions } f
 import { BodyLimitExceededError, readBoundedText } from "@/lib/db/http/bounded-body";
 import { endpointUrl, type HttpOrigin, httpOrigin, rejectRedirect } from "@/lib/db/http/endpoint";
 import { DatabaseConfigError } from "@/lib/db/errors";
-import { guardedNodeOptions, httpTransportFetch } from "@/lib/db/http/egress-policy";
+import { guardedNodeOptions, httpTransportFetch, requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { describeFetchFailure } from "@/lib/db/http/fetch-failure";
 import {
   createNodeTransport,
@@ -473,10 +473,10 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
 
   /**
    * `deps` is a test's seam (the provider passes its own, empty unless a test set them); `egress` is the decision the
-   * provider was built with, last, as at every other guarded transport, so a call that omits it fails closed.
+   * provider was built with, last, as at every other guarded transport, so a call that omits it is refused by name.
    */
   constructor(config: DatabaseConnection, deps: CouchbaseHttpTransportDeps, egress: EgressDecision) {
-    this.egress = egress;
+    this.egress = requireEgressDecision(egress);
     this.host = config.host ?? DEFAULT_HOST;
     this.explicitPort = config.port;
     this.tls = buildTlsMaterial(config.ssl);

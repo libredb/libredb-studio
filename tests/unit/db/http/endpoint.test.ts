@@ -97,9 +97,10 @@ describe("httpOrigin: host", () => {
   });
 
   test("names the field without repeating the value", () => {
-    const error = refusal(() => httpOrigin("https", "evil.example/leak?token=SECRET", 443, ALLOWS_PRIVATE_HOSTS));
+    const marker = crypto.randomUUID();
+    const error = refusal(() => httpOrigin("https", `evil.example/leak?token=${marker}`, 443, ALLOWS_PRIVATE_HOSTS));
     expect(error.message).toMatch(/\bhost\b/);
-    expect(error.message).not.toContain("SECRET");
+    expect(error.message).not.toContain(marker);
     expect(error.message).not.toContain("evil.example");
   });
 });

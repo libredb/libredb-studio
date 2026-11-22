@@ -28,7 +28,8 @@ afterEach(() => {
 /**
  * The providers whose fetch path takes the egress decision as an argument (FND-2 slice 2b): each is handed a blocking
  * decision while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset, so a refusal shows the handed decision decided, not the variable.
- * `localhost` is a name, so the refusal comes from the guarded fetch's lookup, not from the interim `httpOrigin`.
+ * `localhost` is a name, which `httpOrigin` lets through whatever the decision, so the refusal comes from the guarded
+ * fetch's lookup.
  */
 const handedDecision = [
   ["ClickHouse", "clickhouse", ClickHouseProvider],

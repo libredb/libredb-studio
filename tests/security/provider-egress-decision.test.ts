@@ -282,7 +282,7 @@ async function factoryConnect(type: DatabaseType, host: string, port: number): P
     queryTimeout: 1500,
     createdAt: new Date(),
     // Kubernetes over TLS, so its own refusal of plain HTTP to a loopback host never comes first and no
-    // KUBERNETES_ALLOW_LOOPBACK_PLAINTEXT is written; MTConnect over TLS too for the link-local literals.
+    // KUBERNETES_ALLOW_LOOPBACK_PLAINTEXT is written; MTConnect over TLS too, so each engine has one connection shape.
     ...(type === "kubernetes" || type === "mtconnect" ? { ssl: { mode: "verify-full" as const } } : {}),
   };
   return createDatabaseProvider(connection)
@@ -313,17 +313,21 @@ describe("what the provider docs of MTConnect, InfluxDB, InfluxDB 3, Kubernetes 
     },
   );
 
+  // Unset, the link-local rule refuses with its own sentence; true, the blocking decision refuses first with the guard's.
   test.each(
     (["mtconnect", "kubernetes"] as const).flatMap((type) =>
-      ["169.254.169.254", "[fe80::1]", "[fd00:ec2::254]"].map((host) => [type, host] as const),
+      ["169.254.169.254", "[fe80::1]", "[fd00:ec2::254]"].flatMap((host) => [
+        [type, host, "unset", undefined, LINK_LOCAL_HOST] as const,
+        [type, host, "true", "true", BLOCKED_HOST] as const,
+      ]),
     ),
   )(
-    "%s built by createDatabaseProvider never reaches the link-local literal %s, whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says",
-    async (type, host) => {
-      setEgressFlag(undefined);
+    "%s built by createDatabaseProvider never reaches the link-local literal %s with DB_HTTP_BLOCK_PRIVATE_HOSTS %s",
+    async (type, host, _label, flag, sentence) => {
+      setEgressFlag(flag);
       const failure = await factoryConnect(type, host, 6443);
       expect(failure).toBeInstanceOf(DatabaseConfigError);
-      expect((failure as Error).message).toBe(LINK_LOCAL_HOST);
+      expect((failure as Error).message).toBe(sentence);
     },
   );
 });

@@ -24,12 +24,14 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { httpOrigin } from "@/lib/db/http/endpoint";
+import { BLOCKED_HOST, EGRESS_DECISION_MISSING } from "@/lib/db/http/egress-policy";
 import type { PrometheusEndpoint } from "@/lib/db/providers/timeseries/prometheus/http-transport";
 import { PrometheusProvider } from "@/lib/db/providers/timeseries/prometheus/index";
 import type { InboundResponse, OutboundRequest } from "@/lib/db/providers/timeseries/prometheus/request";
 import type { DatabaseConnection } from "@/lib/types";
 import { capture } from "../../../helpers/prometheus-fixtures";
-import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 /**
  * A capture of the compose `prometheus` service (`tests/fixtures/prometheus/v3.13.3/`), replayed as
@@ -302,5 +304,56 @@ describe("the default endpoint takes its scheme from the TLS panel", () => {
     expect(seen.length).toBeGreaterThan(0);
     expect(seen.every((request) => request.url.origin === origin)).toBe(true);
     await provider.disconnect();
+  });
+});
+
+/**
+ * An injected `send` takes no egress decision, so the default endpoint's origin is the only check left before it is
+ * called: it is built with the decision the provider was built with, and a provider built without one is refused by name.
+ * The variable is unset in both cases, so a refusal shows the handed decision, or its absence, decided.
+ */
+describe("the default endpoint takes the egress decision the provider was built with", () => {
+  const original = process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
+
+  afterEach(() => {
+    setEgressFlag(original);
+  });
+
+  function counted(context: { egress?: typeof BLOCKS_PRIVATE_HOSTS }): {
+    provider: PrometheusProvider;
+    sends: () => number;
+  } {
+    let sends = 0;
+    const provider = new PrometheusProvider(connection(), {}, context, {
+      send: async (request) => {
+        sends += 1;
+        return answerFor(request.method, request.url.pathname);
+      },
+    });
+    return { provider, sends: () => sends };
+  }
+
+  test("handed a blocking decision, it refuses 127.0.0.1 before the injected send while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset", async () => {
+    setEgressFlag(undefined);
+    const { provider, sends } = counted({ egress: BLOCKS_PRIVATE_HOSTS });
+    const failure = await provider.connect().then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(DatabaseConfigError);
+    expect((failure as Error).message).toBe(BLOCKED_HOST);
+    expect(sends()).toBe(0);
+  });
+
+  test("built without a decision, it refuses by name before the injected send", async () => {
+    setEgressFlag(undefined);
+    const { provider, sends } = counted({});
+    const failure = await provider.connect().then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(DatabaseConfigError);
+    expect((failure as Error).message).toBe(EGRESS_DECISION_MISSING);
+    expect(sends()).toBe(0);
   });
 });
