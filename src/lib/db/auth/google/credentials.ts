@@ -4,18 +4,26 @@
  * label, the kinds it accepts, the quota-project rule, the server-identity gate), and the environment and files
  * through GoogleCredentialIo.
  *
- * Three pasted kinds exist: a service-account key JSON, an authorized-user JSON and an access token, and a kind the
- * rules do not list is refused even when this module parses it. Every URL a credential JSON carries (token_uri,
- * auth_uri, universe_domain, credential_source and any other) is dropped, so a token request can only go to Google's
- * fixed token endpoint. No refusal repeats a key, a secret, a token or the JSON parser's own message.
+ * Four pasted kinds exist: a service-account key JSON, an authorized-user JSON, an external-account JSON and an access
+ * token, and a kind the rules do not list is refused even when this module parses it. Every URL a service-account or
+ * authorized-user JSON carries (token_uri, auth_uri, universe_domain and any other) is dropped, so their token request
+ * can only go to Google's fixed token endpoint. An external-account JSON is the one kind that names a URL of its own,
+ * the one its subject token is read from: it is parsed as a closed world by external-account.ts, exchanges only at
+ * Google's fixed STS URL, and is accepted only on a server-written connection. No refusal repeats a key, a secret, a
+ * token or the JSON parser's own message.
  */
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { type HttpOrigin, validateHost, validatePort } from "@/lib/db/http/endpoint";
 import type { DatabaseConnection, DatabaseType, WithLiteralSeedFile } from "@/lib/types";
-import { type AuthEnv, admitServerIdentity, type ServerIdentityGate } from "../server-identity-gate";
+import { type AuthEnv, admitServerIdentity, isServerWritten, type ServerIdentityGate } from "../server-identity-gate";
+import {
+  GOOGLE_EXTERNAL_ACCOUNT_SENTENCES,
+  type GoogleExternalAccount,
+  parseExternalAccount,
+} from "./external-account";
 
 /** The kinds a credential text can be. */
-export type GooglePastedKind = "service_account" | "authorized_user" | "access_token";
+export type GooglePastedKind = "service_account" | "authorized_user" | "external_account" | "access_token";
 
 export type GoogleCredentials =
   | {
@@ -32,6 +40,8 @@ export type GoogleCredentials =
       /** Sent as x-goog-user-project; present only after it passed the rules' project id rule. */
       readonly quotaProjectId?: string;
     }
+  /** Workload Identity Federation: a subject token from the config's URL, exchanged at STS. Server-written only. */
+  | GoogleExternalAccount
   /** Pasted as is (gcloud auth print-access-token): about an hour of life and no refresh. */
   | { readonly type: "access_token"; readonly token: string }
   /** GKE Workload Identity or a GCE or Cloud Run service account, through the metadata server at `host[:port]`. */
@@ -101,6 +111,7 @@ const S = GOOGLE_CREDENTIAL_SENTENCES;
 const KIND_NAMES = Object.freeze([
   Object.freeze({ kind: "service_account", name: "a service-account key JSON" }),
   Object.freeze({ kind: "authorized_user", name: "an authorized-user JSON" }),
+  Object.freeze({ kind: "external_account", name: "an external-account JSON" }),
   Object.freeze({ kind: "access_token", name: "an access token" }),
 ] as const);
 
@@ -119,7 +130,7 @@ const METADATA_HOST = /^(\[[^\]]+\]|[^:[\]/@?#\s]+)(?::(\d{1,5}))?$/;
 
 /**
  * notACredential, notJson, noType, unknownType and unsupportedType(type), worded from the kinds in the fixed order
- * service account, authorized user, access token, duplicates removed: two or more kinds read "neither A, B nor C"
+ * service account, authorized user, external account, access token, duplicates removed: two or more kinds read "neither A, B nor C"
  * and "paste A, B or C"; one kind reads "is not A" and "paste A".
  */
 export function acceptedKindSentences(
@@ -189,10 +200,15 @@ function authorizedUser(
   return { type: "authorized_user", clientId, clientSecret, refreshToken, quotaProjectId: quota };
 }
 
-/** A text that starts with "{": one of the accepted JSON kinds, every other field dropped. */
+/**
+ * A text that starts with "{": one of the accepted JSON kinds. Every other field of a service-account or
+ * authorized-user JSON is dropped. An external-account JSON is refused with `externalAccountRefusal` when there is
+ * one, as soon as its type is read and admitted and before any other field is; null admits it.
+ */
 function parseCredentialJson<K extends GooglePastedKind>(
   text: string,
   rules: GoogleCredentialRules<K>,
+  externalAccountRefusal: string | null,
 ): GoogleCredentialsOf<K> {
   let parsed: unknown;
   try {
@@ -210,6 +226,12 @@ function parseCredentialJson<K extends GooglePastedKind>(
     // Admitted above: the kind is one of K.
     return credentials as GoogleCredentialsOf<K>;
   }
+  if (type === "external_account") {
+    admitKind(type, rules);
+    if (externalAccountRefusal !== null) throw refuse(externalAccountRefusal, rules);
+    // Admitted above: the kind is one of K.
+    return parseExternalAccount(json, rules.provider) as GoogleCredentialsOf<K>;
+  }
   const sentences = acceptedKindSentences(rules.accepts);
   throw refuse(TYPE_NAME.test(type) ? sentences.unsupportedType(type) : sentences.unknownType, rules);
 }
@@ -218,11 +240,13 @@ function parseCredentialJson<K extends GooglePastedKind>(
  * The password field: a credential JSON or an access token of a kind the rules accept. Line feeds and carriage
  * returns are removed from a JSON text first, as the browser's password input removes them, so a pretty-printed, CRLF
  * or terminal-wrapped key parses the same whichever way it arrived; a key's own line breaks are `\n` escapes and
- * survive. No server effect.
+ * survive. `serverWritten` is isServerWritten(connection) for the connection the text came from: an external-account
+ * JSON is refused without it, and no other kind reads it. No server effect.
  */
 export function parseGoogleCredentialText<K extends GooglePastedKind>(
   text: string,
   rules: GoogleCredentialRules<K>,
+  serverWritten: boolean,
 ): GoogleCredentialsOf<K> {
   const trimmed = text.trim();
   if (!trimmed.startsWith("{")) {
@@ -232,7 +256,8 @@ export function parseGoogleCredentialText<K extends GooglePastedKind>(
     // Admitted above: access_token is one of K.
     return { type: "access_token", token } as GoogleCredentialsOf<K>;
   }
-  return parseCredentialJson(trimmed.replace(/[\r\n]/g, ""), rules);
+  const refusal = serverWritten ? null : GOOGLE_EXTERNAL_ACCOUNT_SENTENCES.serverWrittenOnly;
+  return parseCredentialJson(trimmed.replace(/[\r\n]/g, ""), rules, refusal);
 }
 
 function parseCredentialFile<K extends GooglePastedKind>(
@@ -241,7 +266,8 @@ function parseCredentialFile<K extends GooglePastedKind>(
 ): GoogleCredentialsOf<K> {
   const trimmed = text.trim();
   if (!trimmed.startsWith("{")) throw refuse(S.fileNotJson, rules);
-  return parseCredentialJson(trimmed, rules);
+  // The server's own identity is never an external account: that credential is a connection's own text only.
+  return parseCredentialJson(trimmed, rules, GOOGLE_EXTERNAL_ACCOUNT_SENTENCES.serverFile);
 }
 
 function wellKnownPath(io: GoogleCredentialIo): string | null {
@@ -314,14 +340,15 @@ export function resolveGoogleCredential<K extends GooglePastedKind>(
   io: GoogleCredentialIo,
 ): GoogleCredentialsOf<K> | GoogleCredentialsOf<"metadata"> {
   const text = connection.password?.trim() ?? "";
-  if (text !== "") return parseGoogleCredentialText(text, rules);
+  if (text !== "") return parseGoogleCredentialText(text, rules, isServerWritten(connection));
   admitServerIdentity(rules.serverIdentity, connection, io.env, rules.provider);
   return readServerIdentity(io, rules);
 }
 
 /**
  * The secrets a credential holds, for secretForms: an access token's token; a service account's private key, then its
- * key id when present; an authorized user's client secret, then its refresh token; nothing for the metadata server.
+ * key id when present; an authorized user's client secret, then its refresh token; an external account's subject
+ * header values, which may carry a credential of the subject endpoint; nothing for the metadata server.
  * An exhaustive switch, so a new kind does not compile without its row.
  */
 export function googleCredentialSecrets(credentials: GoogleCredentials): readonly string[] {
@@ -332,6 +359,8 @@ export function googleCredentialSecrets(credentials: GoogleCredentials): readonl
       return [credentials.privateKey, ...(credentials.privateKeyId === undefined ? [] : [credentials.privateKeyId])];
     case "authorized_user":
       return [credentials.clientSecret, credentials.refreshToken];
+    case "external_account":
+      return Object.values(credentials.source.headers);
     case "metadata":
       return [];
   }

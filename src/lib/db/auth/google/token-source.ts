@@ -1,14 +1,18 @@
 /**
  * Google OAuth2 access tokens with no Google SDK: jose signs the service-account assertion, the token endpoint is one
  * form POST to the fixed token URL, a refresh grant carries no scope, and the metadata server hands out the workload's
- * token. The scope, the provider label, the response cap, the clock, the deadline and the transport factory come in
+ * token, and an external account's subject token is read from its URL and exchanged at Google's STS. The scope, the
+ * provider label, the response cap, the clock, the deadline and the transport factory come in
  * as GoogleTokenSourceDeps; the lane options come from authLaneOptions, never from the caller.
  *
  * One cached token per source, held by the shared refreshing value (../refresh.ts): refreshed 60 seconds before it
  * expires; concurrent callers share one refresh, which runs on its own 30-second deadline so no caller's abort fails
  * the others; a failed refresh caches nothing. An answer without a usable expires_in lives Google's documented one
- * hour. No error carries a token, an assertion, a key, a key id, a refresh token or a client secret: a reason quoted
- * from the server passes serverText with the forms of the credential's secrets before it is cut to 300 characters.
+ * hour, except an STS answer, which is refused without one. A subject token is read again at every refresh and never
+ * kept. No error carries a token, an assertion, a subject token, a key, a key id, a refresh token, a client secret or
+ * a subject header's value: a reason quoted from the server passes serverText with the forms of the credential's
+ * secrets, and of the subject token an STS answer may echo, before it is cut to 300 characters. Nothing the subject
+ * endpoint answers is ever quoted.
  */
 import { importPKCS8, SignJWT } from "jose";
 import { AuthenticationError } from "@/lib/db/errors";
@@ -24,12 +28,16 @@ import {
   googleCredentialSecrets,
   parseMetadataHost,
 } from "./credentials";
+import { GOOGLE_STS_URL, type GoogleSubjectSource } from "./external-account";
 
 /** The only token URL; a credential's own `token_uri` is never read. */
 export const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 
-/** Which credential endpoint a transport serves: Google's token endpoint or the metadata server. */
-export type GoogleAuthLane = "token" | "metadata";
+/**
+ * Which credential endpoint a transport serves: Google's token endpoint, the metadata server, Google's STS, or the
+ * URL an external account reads its subject token from.
+ */
+export type GoogleAuthLane = "token" | "metadata" | "sts" | "subject";
 
 export interface GoogleTokenSource {
   token(signal: AbortSignal): Promise<string>;
@@ -52,6 +60,9 @@ export const GOOGLE_TOKEN_SOURCE_SENTENCES = Object.freeze({
   keyUnreadable:
     "The service-account key's private_key could not be read as an RSA PKCS #8 key, so Studio cannot sign with it",
   closed: "The Google token source is closed",
+  subjectRefused: (reason: string) => `Subject token request failed: ${reason}`,
+  subjectMissing: "the answer holds no subject token",
+  stsWithoutExpiry: "Google STS answered with no usable expires_in, so Studio cannot tell when the token ends",
 });
 
 const S = GOOGLE_TOKEN_SOURCE_SENTENCES;
@@ -62,15 +73,23 @@ const DEFAULT_TTL_S = 3600;
 const REASON_CHARACTERS = 300;
 const JWT_BEARER = "urn:ietf:params:oauth:grant-type:jwt-bearer";
 const METADATA_TOKEN_PATH = "/computeMetadata/v1/instance/service-accounts/default/token";
+const TOKEN_EXCHANGE = "urn:ietf:params:oauth:grant-type:token-exchange";
+const ACCESS_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:access_token";
+/** A subject token is one unbroken run of visible ASCII: a JWT, or an opaque token of the same alphabet. */
+const SUBJECT_TOKEN = /^[\x21-\x7e]{1,16384}$/;
 
 /** The kinds that refresh: every kind but a pasted access token. */
 type RefreshingKind = Exclude<GoogleCredentials["type"], "access_token">;
 
-/** What a strategy reaches: the deps, the refresh, and the one lane of a kind, built on first use. */
+/**
+ * What a strategy reaches: the deps, the refresh, the one lane of a kind, built on first use, and withhold, which
+ * adds a secret made during this refresh to the forms a quoted reason is checked against.
+ */
 interface StrategyContext {
   readonly deps: GoogleTokenSourceDeps;
   readonly run: RefreshRun;
   lane(kind: GoogleAuthLane, spec: () => AuthLaneSpec): NodeTransport;
+  withhold(secret: string): void;
 }
 
 type Strategy<K extends RefreshingKind> = (
@@ -153,10 +172,53 @@ const metadataToken: Strategy<"metadata"> = async (credentials, context) => {
   });
 };
 
+/**
+ * The subject token of an external account: one GET to its URL, on a lane of its own origin carrying its headers.
+ * Only a 200 is read, as the whole body or as one string field of a JSON body. A refusal names the status or that
+ * the token was missing and never the answer, which may be the token.
+ */
+async function subjectToken(source: GoogleSubjectSource, context: StrategyContext): Promise<string> {
+  const lane = context.lane("subject", () => ({ origin: source.origin, headers: source.headers }));
+  const response = await lane.request({
+    method: "GET",
+    url: source.url,
+    signal: context.run.signal,
+    maxResponseBytes: context.deps.maxResponseBytes,
+  });
+  const failed = (reason: string) => new AuthenticationError(S.subjectRefused(reason), context.deps.provider);
+  if (response.status !== 200) throw failed(`HTTP ${response.status}`);
+  const token = source.format.type === "text" ? response.text.trim() : tokenBody(response.text)[source.format.field];
+  if (typeof token !== "string" || !SUBJECT_TOKEN.test(token)) throw failed(S.subjectMissing);
+  return token;
+}
+
+/** The token exchange: a fresh subject token, then one form POST to the fixed STS URL for the provider's scope. */
+const tokenExchange: Strategy<"external_account"> = async (credentials, context) => {
+  const subject = await subjectToken(credentials.source, context);
+  context.withhold(subject);
+  context.run.throwIfClosed();
+  const lane = context.lane("sts", () => ({ origin: httpOrigin("https", new URL(GOOGLE_STS_URL).hostname, 443) }));
+  return lane.request({
+    method: "POST",
+    url: GOOGLE_STS_URL,
+    form: {
+      grant_type: TOKEN_EXCHANGE,
+      audience: credentials.audience,
+      scope: context.deps.scope,
+      requested_token_type: ACCESS_TOKEN_TYPE,
+      subject_token_type: credentials.subjectTokenType,
+      subject_token: subject,
+    },
+    signal: context.run.signal,
+    maxResponseBytes: context.deps.maxResponseBytes,
+  });
+};
+
 /** One strategy per refreshing kind: a kind without one does not compile. */
 const STRATEGIES: { readonly [K in RefreshingKind]: Strategy<K> } = Object.freeze({
   service_account: jwtBearerGrant,
   authorized_user: refreshTokenGrant,
+  external_account: tokenExchange,
   metadata: metadataToken,
 });
 
@@ -194,7 +256,8 @@ export function createGoogleTokenSource(
     return { token: async () => token, close() {} };
   }
 
-  const forms = secretForms(googleCredentialSecrets(credentials));
+  const secrets = googleCredentialSecrets(credentials);
+  const forms = secretForms(secrets);
   const lanes = new Map<GoogleAuthLane, NodeTransport>();
 
   const lane = (kind: GoogleAuthLane, spec: () => AuthLaneSpec): NodeTransport => {
@@ -207,15 +270,22 @@ export function createGoogleTokenSource(
   };
 
   const refresh = async (run: RefreshRun): Promise<Expiring<string>> => {
-    const response = await exchange(credentials.type, credentials, { deps, run, lane });
+    const made: string[] = [];
+    const withhold = (secret: string) => void made.push(secret);
+    const response = await exchange(credentials.type, credentials, { deps, run, lane, withhold });
     const body = tokenBody(response.text);
     const token = body.access_token;
     if (response.status !== 200 || typeof token !== "string" || token === "") {
-      throw new AuthenticationError(S.refused(reasonOf(body, response.status, forms)), deps.provider);
+      const withheld = made.length === 0 ? forms : secretForms([...secrets, ...made]);
+      throw new AuthenticationError(S.refused(reasonOf(body, response.status, withheld)), deps.provider);
     }
     const expiresIn = body.expires_in;
-    const ttl =
-      typeof expiresIn === "number" && Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn : DEFAULT_TTL_S;
+    const usable = typeof expiresIn === "number" && Number.isFinite(expiresIn) && expiresIn > 0;
+    // The other kinds have Google's documented hour to fall back on; an exchanged token ends with its subject.
+    if (!usable && credentials.type === "external_account") {
+      throw new AuthenticationError(S.refused(S.stsWithoutExpiry), deps.provider);
+    }
+    const ttl = usable ? expiresIn : DEFAULT_TTL_S;
     return { value: token, expiresAt: deps.now() + ttl * 1000 };
   };
 

@@ -405,6 +405,7 @@ describe("the real tree holds every rule", () => {
       `${LAYER}/aws/signer.ts`,
       SIGV4,
       `${LAYER}/google/credentials.ts`,
+      `${LAYER}/google/external-account.ts`,
       `${LAYER}/google/token-source.ts`,
       `${LAYER}/lanes.ts`,
       `${LAYER}/refresh.ts`,

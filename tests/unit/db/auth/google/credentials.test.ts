@@ -19,6 +19,7 @@ import {
   quotaProjectHeaders,
   resolveGoogleCredential,
 } from "@/lib/db/auth/google/credentials";
+import { GOOGLE_EXTERNAL_ACCOUNT_SENTENCES as X, GOOGLE_STS_URL } from "@/lib/db/auth/google/external-account";
 import { type FakeIo, type FakeIoOptions, fakeIo } from "../../../../helpers/auth-fakes";
 
 const QUOTA_RULE = "6 to 30 lowercase letters, digits or hyphens";
@@ -40,7 +41,7 @@ const K = acceptedKindSentences(ALL_KINDS);
 
 /** The text a user pastes, under the neutral rules. */
 const parseCredentialText = (text: string, given: GoogleCredentialRules<GooglePastedKind>) =>
-  parseGoogleCredentialText(text, given);
+  parseGoogleCredentialText(text, given, false);
 
 /** An IO whose environment carries the opt-in, so an empty credential on a managed connection reaches ADC. */
 function fakeSeams(options: FakeIoOptions = {}): FakeIo {
@@ -375,7 +376,7 @@ describe("acceptedKindSentences", () => {
 
 describe("the accept list", () => {
   const serviceAccountJson = JSON.stringify(serviceAccount);
-  const texts: Readonly<Record<GooglePastedKind, string>> = {
+  const texts: Readonly<Record<(typeof ALL_KINDS)[number], string>> = {
     service_account: serviceAccountJson,
     authorized_user: JSON.stringify(authorizedUser),
     access_token: TOKEN,
@@ -388,7 +389,7 @@ describe("the accept list", () => {
         ...GooglePastedKind[],
       ];
       const narrow: GoogleCredentialRules<GooglePastedKind> = { ...rules, accepts: others };
-      const error = refusal(() => parseGoogleCredentialText(texts[kind], narrow));
+      const error = refusal(() => parseGoogleCredentialText(texts[kind], narrow, false));
       expect(error.message).toBe(acceptedKindSentences(others).unsupportedType(kind));
       expect(error.provider).toBe(rules.provider);
     }
@@ -398,7 +399,7 @@ describe("the accept list", () => {
     const narrow: GoogleCredentialRules<"access_token"> = { ...rules, accepts: ["access_token"] };
     const sentences = acceptedKindSentences(["access_token"]);
     const broken = JSON.stringify({ type: "service_account" });
-    expect(refusal(() => parseGoogleCredentialText(broken, narrow)).message).toBe(
+    expect(refusal(() => parseGoogleCredentialText(broken, narrow, false)).message).toBe(
       sentences.unsupportedType("service_account"),
     );
     const io = fakeSeams({
@@ -412,7 +413,7 @@ describe("the accept list", () => {
 
   test("a text that is not a token and not JSON is not a credential, whatever the rules accept", () => {
     const narrow: GoogleCredentialRules<"service_account"> = { ...rules, accepts: ["service_account"] };
-    expect(refusal(() => parseGoogleCredentialText("hello", narrow)).message).toBe(
+    expect(refusal(() => parseGoogleCredentialText("hello", narrow, false)).message).toBe(
       acceptedKindSentences(["service_account"]).notACredential,
     );
   });
@@ -514,5 +515,96 @@ describe("quotaProjectHeaders", () => {
     ] as const) {
       expect(quotaProjectHeaders(credentials)).toEqual({});
     }
+  });
+});
+
+describe("an external-account JSON is accepted only on a server-written connection", () => {
+  const FOUR_KINDS = ["service_account", "authorized_user", "external_account", "access_token"] as const;
+  const federatedRules: GoogleCredentialRules<GooglePastedKind> = { ...rules, accepts: FOUR_KINDS };
+  const config = {
+    type: "external_account",
+    audience: "//iam.googleapis.com/projects/123456/locations/global/workloadIdentityPools/acme/providers/people",
+    subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
+    token_url: GOOGLE_STS_URL,
+    credential_source: { url: "https://tokens.example/subject/alice", headers: { "x-pool": "header-secret-value" } },
+  };
+  const text = JSON.stringify(config);
+  const parsed: GoogleCredentials = {
+    type: "external_account",
+    audience: config.audience,
+    subjectTokenType: config.subject_token_type,
+    source: {
+      url: "https://tokens.example/subject/alice",
+      origin: { scheme: "https", host: "tokens.example", port: 443 },
+      headers: { "x-pool": "header-secret-value" },
+      format: { type: "text" },
+    },
+  };
+  /** An IO with no opt-in and no file: nothing of the server is read on this path. */
+  const bare = () => fakeIo({ env: {} });
+
+  test("the four kinds are named in a fixed order, the external account before the access token", () => {
+    expect(acceptedKindSentences(FOUR_KINDS).notJson).toBe(
+      "The credential starts like JSON but is not valid JSON: paste a service-account key JSON, an authorized-user JSON, an external-account JSON or an access token",
+    );
+  });
+
+  test("the text parses when the connection is server-written, and is refused when it is not", () => {
+    expect(parseGoogleCredentialText(text, federatedRules, true)).toEqual(parsed);
+    const error = refusal(() => parseGoogleCredentialText(text, federatedRules, false));
+    expect(error.message).toBe(X.serverWrittenOnly);
+    expect(error.provider).toBe(rules.provider);
+  });
+
+  test("a browser record is refused before any other field is read, however broken the rest is", () => {
+    const broken = JSON.stringify({ type: "external_account", token_url: "https://evil.example/token" });
+    expect(refusal(() => parseGoogleCredentialText(broken, federatedRules, false)).message).toBe(X.serverWrittenOnly);
+    expect(refusal(() => parseGoogleCredentialText(broken, federatedRules, true)).message).toBe(X.audience);
+  });
+
+  test("rules that do not list the kind refuse it as unsupported, server-written or not", () => {
+    for (const serverWritten of [true, false]) {
+      expect(refusal(() => parseGoogleCredentialText(text, rules, serverWritten)).message).toBe(
+        K.unsupportedType("external_account"),
+      );
+    }
+  });
+
+  test("a managed connection signs in with it, with no opt-in and nothing of the server read", () => {
+    const io = bare();
+    expect(resolveGoogleCredential({ password: text, managed: true }, federatedRules, io)).toEqual(parsed);
+    expect(io.envReads).toEqual([]);
+    expect(io.fileReads).toEqual([]);
+  });
+
+  test("a connection a browser sent, and a seed-file row read in literal mode, are refused", () => {
+    const io = bare();
+    for (const connection of [
+      { password: text },
+      { password: text, managed: false },
+      { password: text, managed: true, [LITERAL_SEED_FILE]: true as const },
+    ]) {
+      expect(refusal(() => resolveGoogleCredential(connection, federatedRules, io)).message).toBe(X.serverWrittenOnly);
+    }
+    expect(io.envReads).toEqual([]);
+    expect(io.fileReads).toEqual([]);
+  });
+
+  test("the server's own credentials file is never one, named or well-known, with the opt-in set", () => {
+    const named = fakeSeams({
+      env: { GOOGLE_APPLICATION_CREDENTIALS: "/srv/federation.json" },
+      files: { "/srv/federation.json": text },
+    });
+    const wellKnown = fakeSeams({ files: { [WELL_KNOWN]: text } });
+    for (const io of [named, wellKnown]) {
+      expect(refusal(() => resolveGoogleCredential({ password: "", managed: true }, federatedRules, io)).message).toBe(
+        X.serverFile,
+      );
+    }
+  });
+
+  test("its secrets are its subject header values, and it sends no quota project", () => {
+    expect(googleCredentialSecrets(parsed)).toEqual(["header-secret-value"]);
+    expect(quotaProjectHeaders(parsed)).toEqual({});
   });
 });

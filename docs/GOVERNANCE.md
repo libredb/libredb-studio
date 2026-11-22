@@ -129,6 +129,7 @@ It prints one banner that names every variable to fix and never prints a secret,
 - Sign-in with a password, a passkey or a launch token: the identity provider is the only way in, for an account that holds the admin or the user role, as [sign-in](#sign-in) describes.
 - Custom connections, the embedded samples, seed files and discovery: the governance source is the only catalog of connections.
 - The server's own Google identity for BigQuery and Firestore connections.
+  A governed BigQuery connection can still sign in without a stored Google key: the credential a grant selects may be an external-account JSON (Workload Identity Federation), which is accepted on a governed connection because the control plane wrote it, needs no server opt-in, and is not the server's identity ([providers/bigquery.md](providers/bigquery.md#32-credentials)).
 - MCP and the agent, until a later Studio release runs them under governance.
 
 A governed connection carries no agent credential: a definition holding `agentUser` or `agentPassword` is refused as `DEFINITION_HAS_SECRET` and the credential envelope has no agent key, and since the agent and MCP are off under governance in this contract version, the seed file's agent credential does not reach a governed deployment.

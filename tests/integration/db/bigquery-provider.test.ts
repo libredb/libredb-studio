@@ -62,6 +62,16 @@ const USER_GRANT = {
   refresh_token: "1//rt",
 };
 const USER_JSON = JSON.stringify({ type: "authorized_user", ...USER_GRANT, quota_project_id: "quota-project" });
+const FEDERATION_AUDIENCE =
+  "//iam.googleapis.com/projects/123456/locations/global/workloadIdentityPools/acme/providers/people";
+const SUBJECT_TOKEN = "eyJhbGciOiJSUzI1NiJ9.the-subject-token-of-alice.signature";
+const FEDERATION_JSON = JSON.stringify({
+  type: "external_account",
+  audience: FEDERATION_AUDIENCE,
+  subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
+  token_url: "https://sts.googleapis.com/v1/token",
+  credential_source: { url: "https://tokens.example/subject/alice", headers: { "X-Pool": "acme" } },
+});
 
 const ok = (json: Wire): Reply => ({ status: 200, json });
 const apiError = (status: number, message: string, reason: string): Reply => ({
@@ -76,6 +86,10 @@ class FakeGoogle {
   tokenReply: Reply | null = null;
   datasetsReply: Reply | null = null;
   tokensIssued = 0;
+  /** The requests the subject endpoint and STS received, and a failure the subject endpoint raises instead. */
+  subjectRequests: NodeRequest[] = [];
+  stsForms: Record<string, string>[] = [];
+  subjectFailure: Error | null = null;
   closed = 0;
   /** Every transport's options, in the order they were built. */
   built: NodeTransportOptions[] = [];
@@ -91,6 +105,11 @@ class FakeGoogle {
     return {
       request: async (request: NodeRequest): Promise<NodeResponse> => {
         const url = new URL(request.url);
+        if (url.host === "tokens.example") {
+          this.subjectRequests.push(request);
+          if (this.subjectFailure) throw this.subjectFailure;
+          return { status: 200, contentType: "text/plain", retryAfter: null, text: `${SUBJECT_TOKEN}\n` };
+        }
         const reply = this.route(request, url, authorization, userProject);
         return {
           status: reply.status,
@@ -112,6 +131,11 @@ class FakeGoogle {
     userProject: string | undefined,
   ): Reply {
     if (url.host === "oauth2.googleapis.com") return this.token(request);
+    if (url.host === "sts.googleapis.com") {
+      this.stsForms.push({ ...request.form });
+      this.tokensIssued += 1;
+      return ok({ access_token: `ya29.federated-token-${this.tokensIssued}`, expires_in: 600, token_type: "Bearer" });
+    }
     const path = url.pathname.replace("/bigquery/v2/projects/demo-project", "");
     const body = request.body ? (JSON.parse(request.body) as Wire) : null;
     this.requests.push({ method: request.method, path, params: url.searchParams, body, authorization, userProject });
@@ -196,6 +220,7 @@ mock.module("@/lib/db/http/node-transport", () => ({
 }));
 const { BigQueryProvider } = await import("@/lib/db/providers/sql/bigquery");
 const { BIGQUERY_CREDENTIAL_SENTENCES } = await import("@/lib/db/providers/sql/bigquery/credential-policy");
+const { admitConnectionRows } = await import("@/lib/governance/admission");
 
 // ============================================================================
 // Harness
@@ -295,7 +320,7 @@ describe("sign-in through the shared Google auth", () => {
 
   test("a credential that does not parse is refused with the shared sentence, before anything is sent", async () => {
     expect(await refusedBeforeSending("{nope")).toBe(
-      "The credential starts like JSON but is not valid JSON: paste a service-account key JSON, an authorized-user JSON or an access token",
+      "The credential starts like JSON but is not valid JSON: paste a service-account key JSON, an authorized-user JSON, an external-account JSON or an access token",
     );
   });
 
@@ -334,6 +359,125 @@ describe("sign-in through the shared Google auth", () => {
     expect(google.built.some((options) => options.origin.host !== "bigquery.googleapis.com")).toBe(false);
     expect(google.tokensIssued).toBe(0);
     expect(queriesWith(/^SELECT 1$/)[0].authorization).toBe("Bearer ya29.a-pasted-access-token-value");
+  });
+});
+
+describe("an external-account credential (workload identity federation)", () => {
+  const SERVER_WRITTEN_ONLY =
+    "An external-account credential is accepted only on a connection the server wrote (an operator seed or a governed connection), never on one typed in the browser or read from a seed file in literal mode";
+  const nothingSent = () => {
+    expect(google.built).toHaveLength(0);
+    expect(google.subjectRequests).toHaveLength(0);
+    expect(google.stsForms).toHaveLength(0);
+    expect(google.requests).toHaveLength(0);
+    expect(google.tokensIssued).toBe(0);
+  };
+
+  test("a server-written row signs in end to end: the subject is read, exchanged at STS, and its token queries", async () => {
+    const provider = await open({ password: FEDERATION_JSON, managed: true });
+    expect(provider.isConnected()).toBe(true);
+    expect(google.subjectRequests).toHaveLength(1);
+    expect(google.subjectRequests[0].method).toBe("GET");
+    expect(google.subjectRequests[0].url).toBe("https://tokens.example/subject/alice");
+    expect(google.stsForms).toEqual([
+      {
+        grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+        audience: FEDERATION_AUDIENCE,
+        scope: "https://www.googleapis.com/auth/bigquery",
+        requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
+        subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
+        subject_token: SUBJECT_TOKEN,
+      },
+    ]);
+    expect(queriesWith(/^SELECT 1$/)[0].authorization).toBe("Bearer ya29.federated-token-1");
+    const lanes = google.built.filter((options) => options.origin.host !== "bigquery.googleapis.com");
+    expect(lanes.map((options) => options.origin.host)).toEqual(["tokens.example", "sts.googleapis.com"]);
+    expect(lanes[0]).toMatchObject({ maxSockets: 1, refusesLinkLocal: true, refusesUpgrade: true });
+    expect(lanes[0].headers).toEqual({ "x-pool": "acme" });
+    expect(lanes[1]).toMatchObject({ maxSockets: 1, refusesLinkLocal: true, refusesUpgrade: true, headers: {} });
+    expect(google.requests.every((request) => request.authorization?.startsWith("Bearer ya29.federated-token-"))).toBe(
+      true,
+    );
+  });
+
+  test("it needs no server opt-in", async () => {
+    const saved = process.env.BIGQUERY_SERVER_CREDENTIALS;
+    delete process.env.BIGQUERY_SERVER_CREDENTIALS;
+    try {
+      expect((await open({ password: FEDERATION_JSON, managed: true })).isConnected()).toBe(true);
+    } finally {
+      if (saved !== undefined) process.env.BIGQUERY_SERVER_CREDENTIALS = saved;
+    }
+  });
+
+  test("a governed row, built by admission from the control plane's row, signs in end to end", async () => {
+    const definition = { database: "demo-project" };
+    const { admitted, skipped } = admitConnectionRows(
+      [
+        {
+          connection_id: "6b1d9c2e-4f3a-4e8b-9a71-2c5d8e0f1a34",
+          name: "Governed BigQuery",
+          engine: "bigquery",
+          environment: "production",
+          group_name: null,
+          color: null,
+          definition,
+          read_secret: "lsb1.opened-by-the-test",
+          write_secret: null,
+          mcp_enabled: false,
+          updated_at: new Date("2026-11-22T00:00:00.000Z"),
+        },
+      ],
+      { allowedEngines: ["bigquery"], openSecret: () => ({ password: FEDERATION_JSON }) },
+    );
+    expect(skipped).toEqual([]);
+    const governed = admitted[0].read;
+    expect(governed).toMatchObject({ managed: true, roles: ["*"], type: "bigquery", database: "demo-project" });
+    const saved = process.env.BIGQUERY_SERVER_CREDENTIALS;
+    delete process.env.BIGQUERY_SERVER_CREDENTIALS;
+    try {
+      const provider = new BigQueryProvider(governed as unknown as DatabaseConnection);
+      opened.push(provider);
+      await provider.connect();
+      expect(provider.isConnected()).toBe(true);
+    } finally {
+      if (saved !== undefined) process.env.BIGQUERY_SERVER_CREDENTIALS = saved;
+    }
+    expect(google.subjectRequests).toHaveLength(1);
+    expect(google.stsForms).toHaveLength(1);
+    expect(queriesWith(/^SELECT 1$/)[0].authorization).toBe("Bearer ya29.federated-token-1");
+  });
+
+  test("a connection a browser sent is refused at connect, with no request", async () => {
+    for (const managed of [undefined, false]) {
+      const failure = await new BigQueryProvider(connection({ password: FEDERATION_JSON, managed }))
+        .connect()
+        .catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(DatabaseConfigError);
+      expect((failure as Error).message).toBe(SERVER_WRITTEN_ONLY);
+      nothingSent();
+    }
+  });
+
+  test("a seed-file row read in literal mode is refused at connect, with no request", async () => {
+    const marked = { ...connection({ password: FEDERATION_JSON, managed: true }), [LITERAL_SEED_FILE]: true as const };
+    const failure = await new BigQueryProvider(marked).connect().catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(DatabaseConfigError);
+    expect((failure as Error).message).toBe(SERVER_WRITTEN_ONLY);
+    nothingSent();
+  });
+
+  test("a redirect the subject lane refuses fails the connect, and neither STS nor the API is asked", async () => {
+    google.subjectFailure = new TransportError("redirect", "refused a 302 from tokens.example");
+    const failure = await new BigQueryProvider(connection({ password: FEDERATION_JSON, managed: true }))
+      .connect()
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).not.toContain(SUBJECT_TOKEN);
+    // The provider tries a failed sign-in again; every try stops at the subject endpoint.
+    expect(google.subjectRequests.length).toBeGreaterThan(0);
+    expect(google.stsForms).toHaveLength(0);
+    expect(google.requests).toHaveLength(0);
   });
 });
 

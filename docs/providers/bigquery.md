@@ -1,7 +1,7 @@
 # Google BigQuery Provider
 
 > Google BigQuery support for LibreDB Studio over the BigQuery REST API v2 (`https://bigquery.googleapis.com`), with no Google SDK.
-> Every statement is a `jobs.query` call through the shared `node:https` transport, and the access token comes from a service-account key, Application Default Credentials or the metadata server (Workload Identity).
+> Every statement is a `jobs.query` call through the shared `node:https` transport, and the access token comes from a service-account key, an external-account credential (Workload Identity Federation), Application Default Credentials or the metadata server (Workload Identity).
 > This document is the reference for the BigQuery provider: connection, credentials, seeding, query behaviour, the dry-run estimate, schema introspection and monitoring.
 
 |                        |                                                                                                      |
@@ -63,8 +63,9 @@ This section is BigQuery's policy, declared in `credential-policy.ts`.
 The provider resolves credentials in this order:
 
 1. **Service-account key JSON** in the `password` field. Always used when present, and needs no server setting. An `authorized_user` JSON (from `gcloud auth application-default login`) is accepted too.
-2. **An access token** in the `password` field, e.g. the output of `gcloud auth print-access-token` (`ya29.…`, with or without a `Bearer ` prefix). It is used as-is: Google issues it for about an hour and the provider has no way to refresh it, so the connection fails with an authentication error once it expires and the token must be pasted again. Use it for short-lived access or a CI job, not for a saved connection.
-3. **The server's own identity**, only when the server runs with `BIGQUERY_SERVER_CREDENTIALS=true` and only for an operator-seeded (`managed: true`) connection, and never for a connection read from a seed file in literal mode (`SEED_LITERAL_VALUES`); a connection a user creates needs a key or an access token:
+2. **An external-account JSON** (Workload Identity Federation) in the `password` field, on a server-written connection only: an operator seed or a governed connection (`managed: true`), and never one typed in the browser or read from a seed file in literal mode (`SEED_LITERAL_VALUES`). It needs no server setting, and the server's own credentials file (`GOOGLE_APPLICATION_CREDENTIALS`) is never read as one. Studio reads a subject token from the file's `credential_source.url` and exchanges it at Google's STS for a token of the federated identity itself, at every refresh, so no long-lived Google key is stored. The file is read as a closed world ([DB_AUTH.md](../DB_AUTH.md#external-account)): a workforce pool, service-account impersonation, a file or executable source and any field Studio does not read are refused.
+3. **An access token** in the `password` field, e.g. the output of `gcloud auth print-access-token` (`ya29.…`, with or without a `Bearer ` prefix). It is used as-is: Google issues it for about an hour and the provider has no way to refresh it, so the connection fails with an authentication error once it expires and the token must be pasted again. Use it for short-lived access or a CI job, not for a saved connection.
+4. **The server's own identity**, only when the server runs with `BIGQUERY_SERVER_CREDENTIALS=true` and only for an operator-seeded (`managed: true`) connection, and never for a connection read from a seed file in literal mode (`SEED_LITERAL_VALUES`); a connection a user creates needs a key or an access token:
    1. the file named by `GOOGLE_APPLICATION_CREDENTIALS` (a named file that cannot be read is an error, not a fallback);
    2. gcloud's ADC file, `~/.config/gcloud/application_default_credentials.json`, or `%APPDATA%\gcloud\application_default_credentials.json` on Windows (a file that exists and cannot be read is an error, not a fallback);
    3. the metadata server (`metadata.google.internal`, or `GCE_METADATA_HOST`), which is how GKE Workload Identity, GCE and Cloud Run hand out tokens.
@@ -74,7 +75,8 @@ That is also why a keyless connection that is not operator-seeded is refused eve
 Without the flag and without a key, the connection is refused with a message that names the variable.
 BigQuery's three refusals are its own: "BigQuery needs a service-account key or an access token in the password field: the server's own credentials are used only for operator-seeded connections" for a keyless connection a user created, "BigQuery needs a service-account key in the password field. To use the server's own credentials (ADC or Workload Identity) instead, set BIGQUERY_SERVER_CREDENTIALS=true on the server." for a seed without the opt-in, and "BigQuery needs a service-account key or an access token in the password field: the server's own credentials are not used for a connection read from a seed file in literal mode (SEED_LITERAL_VALUES)" for a keyless row of a seed file read in literal mode, with the opt-in on or off ([SEED_CONNECTIONS.md](../SEED_CONNECTIONS.md#literal-values-written-by-a-platform)).
 
-`external_account` (Workload Identity Federation outside GKE) and `impersonated_service_account` credential files are refused with a message.
+An external-account JSON on a connection a user created is refused with "An external-account credential is accepted only on a connection the server wrote (an operator seed or a governed connection), never on one typed in the browser or read from a seed file in literal mode", before any request.
+An `impersonated_service_account` credential file is refused with a message.
 
 An `authorized_user` JSON's `quota_project_id`, when present, must pass BigQuery's project id rule (a letter, then at most 200 letters, digits, colons, dots or hyphens), and is sent as `x-goog-user-project` on every API request, a job cancel included, so the API calls bill that project; the token requests never carry it.
 The scope is `https://www.googleapis.com/auth/bigquery`.
@@ -84,7 +86,7 @@ The environment is read at each connect, so a changed variable applies to the ne
 
 Moving onto the shared Google auth changed these, each pinned by a test:
 
-1. A credential that does not parse is refused with the shared sentences, such as "The credential starts like JSON but is not valid JSON: paste a service-account key JSON, an authorized-user JSON or an access token", instead of BigQuery's own three.
+1. A credential that does not parse is refused with the shared sentences, such as "The credential starts like JSON but is not valid JSON: paste a service-account key JSON, an authorized-user JSON, an external-account JSON or an access token", instead of BigQuery's own three.
 2. A key or an authorized-user JSON whose fields are empty strings is refused at parse.
 3. A private key that is not PKCS #8 PEM (`-----BEGIN PRIVATE KEY-----`) is refused at parse; a key that has the markers and still cannot be imported is refused as an authentication error before any request.
 4. The service-account assertion carries the key's `private_key_id` as `kid`.
@@ -108,7 +110,7 @@ The agent's connection identity includes it too, because a moved location is ano
 The shared transport treats `Authorization` as a connection header, so each token gets its own transport, and a replaced one closes once its in-flight requests finish.
 
 The agent's own credential is a service-account key JSON in `agentPassword` alone, because BigQuery declares `agentCredential: "service-account-key"`: the provider mints that key's token itself, so Studio chooses the scope the token carries.
-An `agentUser`, an access token or an `authorized_user` JSON as the agent password is refused before the provider connects, since Studio cannot choose the scope of a token minted elsewhere.
+An `agentUser`, an access token, an `authorized_user` JSON or an external-account JSON as the agent password is refused before the provider connects, since Studio cannot choose the scope of a token minted elsewhere.
 Today that token carries the same `https://www.googleapis.com/auth/bigquery` scope as the connection's, so the form gives the agent no read-only property yet; moving the agent token to the `cloud-platform.read-only` scope is left to the change that brings BigQuery into agent execution.
 
 ### 3.3 Required IAM

@@ -11,7 +11,6 @@ import {
   mapTransportFailure,
   readGoogleError,
 } from "@/lib/db/providers/document/firestore/errors";
-import type { GoogleCredentials } from "@/lib/db/auth/google/credentials";
 import type { FirestoreTarget } from "@/lib/db/providers/document/firestore/names";
 import { buildRequest, type FirestoreRequest } from "@/lib/db/providers/document/firestore/requests";
 import type { LaneKind } from "@/lib/db/providers/document/firestore/seams";
@@ -27,6 +26,8 @@ const named: FirestoreTarget = { projectId: "demo-p", databaseId: "orders" };
 const TOKEN = "ya29.a0AfB_byC-test-token_value.123";
 const signal = new AbortController().signal;
 const context: ErrorContext = { phase: "statement", credential: "authorized_user", target, surface: "console" };
+/** The credentials this provider accepts: the kinds of its own policy, and no other. */
+type GoogleCredentials = Extract<FirestoreAuth, { mode: "google" }>["credentials"];
 const user: GoogleCredentials = {
   type: "authorized_user",
   clientId: "cid.apps.googleusercontent.com",

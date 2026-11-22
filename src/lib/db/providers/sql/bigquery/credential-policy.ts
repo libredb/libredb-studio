@@ -32,7 +32,12 @@ const TOKEN_RESPONSE_BYTES = 64 * 1024;
 
 export const BIGQUERY_SCOPE = "https://www.googleapis.com/auth/bigquery";
 
-const BIGQUERY_KINDS = Object.freeze(["service_account", "authorized_user", "access_token"] as const);
+const BIGQUERY_KINDS = Object.freeze([
+  "service_account",
+  "authorized_user",
+  "external_account",
+  "access_token",
+] as const);
 type BigQueryKind = (typeof BIGQUERY_KINDS)[number];
 /** BigQuery's credentials: a kind another provider lists never reaches this type. */
 export type BigQueryCredentials = GoogleCredentialsOf<BigQueryKind | "metadata">;
