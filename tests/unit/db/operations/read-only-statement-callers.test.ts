@@ -529,10 +529,12 @@ const KNOWN_PRESENCE_TESTS: readonly string[] = [
   `${join("src", "lib", "agent", "tools.ts")} in runStatement`,
   `${FACTORY} in acquireExecutionProfileProvider`,
   `${CORE_CALLER} in read`,
-  `${join("src", "lib", "mcp", "tools", "run-statement.ts")} in execute`,
+  `${join("src", "lib", "mcp", "tools", "run-statement.ts")} in executeOpened`,
 ];
 /** The presence tests that return their refusal as a value: MCP's statement tool answers every refusal that way. */
-const RETURNED_REFUSALS: readonly string[] = [`${join("src", "lib", "mcp", "tools", "run-statement.ts")} in execute`];
+const RETURNED_REFUSALS: readonly string[] = [
+  `${join("src", "lib", "mcp", "tools", "run-statement.ts")} in executeOpened`,
+];
 
 describe("the review record gates the protected read path", () => {
   test("the scan finds a presence test that opens, and not one that refuses the absence", () => {
