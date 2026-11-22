@@ -374,9 +374,8 @@ declare, so there is nothing here a reading could have missed (#414, driven from
 `ProviderCapabilities.declaresForeignKeys` rather than from the connection's type). It is one server
 sentence and no database content, which makes it the one form of this block that discloses nothing.
 
-Every identifier is quoted with its delimiter doubled as SQL does it, and every control character is
-escaped, so a table named `orders -> secrets` renders as one quoted name rather than as a relation
-nobody has (`quote`/`escapeInIdentifier`, `er-diagram.ts`). The block is bounded at 2000
+Every identifier is quoted with its delimiter doubled as SQL does it, every control character and every Unicode line or paragraph separator is escaped, and any fence marker inside it is neutralised, so a table named `orders -> secrets` renders as one quoted name rather than as a relation nobody has (`quoteIdentifierForPrompt` in `untrusted-content.ts`, which `er-diagram.ts` calls `quote`).
+The block is bounded at 2000
 rendered characters — a bound in characters, because a count of edges is not a bound on a prompt
 (`MAX_ER_CHARS`, `er-diagram.ts`).
 
@@ -526,6 +525,10 @@ database returned.
 A sentence a provider wrote refusing a statement before the database was asked is neither database content nor this server's words, so it has a fence of its own (`fenceProviderText` in `untrusted-content.ts`).
 Its header names the provider that wrote it, for example "PostgreSQL provider, bundled with Studio", and its markers say provider text rather than database content.
 The neutraliser defangs all four markers, both fences' pairs, everywhere it is applied, so neither fence can be closed from inside either.
+
+Where this server's own sentence names an object from the inventory (the column advice after a failed statement, the tables or collections a profile refusal offers, the MongoDB inventory checks), a name that is not a plain name is quoted and escaped and any marker in it neutralised, so no name can end a line or a fence (`nameForPrompt` and `quoteIdentifierForPrompt` in `untrusted-content.ts`).
+A plain name, one made of letters, combining marks, digits, `_`, `$`, `.` and `-`, reads as the inventory spells it.
+A fence header is one line whatever its label holds: every control character and line or paragraph separator in it is escaped.
 
 Two limits stated as plainly as the property:
 
