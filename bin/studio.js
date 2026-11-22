@@ -319,6 +319,15 @@ function verifyProvenance(archivePath, name) {
  * (resolveBindAddress owns that rule and the reasoning - issue #813; the
  * standalone Next server would otherwise default to 0.0.0.0).
  *
+ * SIGINT and SIGTERM are forwarded to the server from the moment it exists, and
+ * this process exits with the server's exit code, or 1 when a signal ended it.
+ * The forwarding is installed right before the spawn, in the same synchronous
+ * step, and Node.js and Bun run a signal listener only from their event loop,
+ * so a signal that reaches this process while the spawn runs is held and
+ * forwarded as soon as the server exists. One that reaches it earlier, while
+ * it downloads, verifies or unpacks the payload, takes its default action and
+ * ends this process, which has started no server to forward it to.
+ *
  * @param {string} payloadDir
  * @param {number | null} port
  * @param {string | null} host
@@ -360,11 +369,14 @@ function startServer(payloadDir, port, host) {
   // Log-line contract: npx-engine-smoke.yml parses the resolved version from
   // "Starting LibreDB Studio <version> " - keep the prefix stable.
   console.log(`Starting LibreDB Studio ${pkg.version} on ${startupUrl(env.HOSTNAME, env.PORT)}`);
-  const child = spawn(process.execPath, ["server.js"], { cwd: payloadDir, env, stdio: "inherit" });
-  child.on("error", (error) => fail(`Could not start server.js: ${error.message}`));
+  // Installed before the spawn, so no signal falls between the server existing and its forwarding; the
+  // listener cannot run before `child` is set, since Node.js and Bun run it only from the event loop, after
+  // this synchronous step.
   for (const signal of /** @type {const} */ (["SIGINT", "SIGTERM"])) {
     process.on(signal, () => child.kill(signal));
   }
+  const child = spawn(process.execPath, ["server.js"], { cwd: payloadDir, env, stdio: "inherit" });
+  child.on("error", (error) => fail(`Could not start server.js: ${error.message}`));
   child.on("exit", (code, signal) => process.exit(signal ? 1 : (code ?? 1)));
 }
 

@@ -86,6 +86,15 @@ describe("docs/DISTRIBUTION.md, Stopping the server", () => {
     );
   });
 
+  test("it says npx and bun start forward a signal from the moment the server exists, and what one before that does", () => {
+    const text = section();
+
+    expect(text).toContain(
+      "`bin/studio.js` and `scripts/next-with-seed-assets.mjs` install that forwarding right before they spawn the server",
+    );
+    expect(text).toContain("ends the launcher, which has started no server yet");
+  });
+
   test("it names the test that holds every stop grace this repository sets", () => {
     expect(section()).toContain("tests/unit/stop-grace.test.ts");
   });

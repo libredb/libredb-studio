@@ -34,6 +34,7 @@ import {
   OTHER_PROGRAM_PATH_VARIABLES,
 } from "../../bin/lib/launcher-utils.mjs";
 import { MANUAL_SIGNAL_HANDLING_VARIABLE as SERVER_MANUAL_SIGNAL_HANDLING_VARIABLE } from "@/lib/shutdown-handler";
+import { type SpawnProbeOptions, spawnProbe, untilPrinted } from "../helpers/launcher-spawn-probe";
 import { describeIf, missingUnixTool, resolveUnixTool, testIf } from "../helpers/posix-tools";
 import { howItFailed } from "../helpers/spawn-outcome";
 
@@ -1303,4 +1304,110 @@ describe("launcher NEXT_MANUAL_SIG_HANDLE", () => {
       expect(onNode({ next_manual_sig_handle: "" })).toContain("MANUAL=\n");
     },
   );
+});
+
+/**
+ * The launcher's SIGINT and SIGTERM forwarding (docs/DISTRIBUTION.md, "Stopping the server"), read from a real
+ * launcher process with two preloads: one points os.homedir() at a fixture home whose cached payload holds a stub
+ * server.js, and the spawn probe records what held when the launcher spawned it, so no case depends on how the
+ * launcher and the stub are scheduled.
+ */
+describe("launcher signal forwarding", () => {
+  const NO_POSIX_SIGNALS =
+    process.platform === "win32"
+      ? "POSIX signals: Windows has no SIGINT or SIGTERM to forward, and kill() there ends a process at once"
+      : null;
+  const root = path.resolve(import.meta.dir, "../..");
+  const version = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
+
+  /** The launcher on Node.js against a payload whose server.js is `server`, with the spawn probe preloaded. */
+  function launcherWith(server: string, options: SpawnProbeOptions = {}) {
+    const node = Bun.which("node");
+    expect(node).not.toBeNull();
+    const ambient = Bun.spawnSync([node!, "-p", "process.versions.node"]).stdout.toString().trim();
+    expect(assessNodeRuntime(ambient).message).toBeNull();
+    const home = fs.mkdtempSync(path.join(tempDir, "signals-"));
+    const payload = path.join(home, ".libredb-studio", version, "payload");
+    fs.mkdirSync(payload, { recursive: true });
+    fs.writeFileSync(path.join(payload, "server.js"), server);
+    const preload = path.join(home, "home-fixture.mjs");
+    fs.writeFileSync(
+      preload,
+      'import os from "node:os"; import { syncBuiltinESMExports } from "node:module"; ' +
+        `os.homedir = () => ${JSON.stringify(home)}; syncBuiltinESMExports();`,
+    );
+    const probe = spawnProbe(home, options);
+    const env = { ...process.env };
+    for (const name of ["PORT", "LIBREDB_STUDIO_ARCHIVE", "LIBREDB_BIND", "HOSTNAME"]) delete env[name];
+    const command = [
+      node!,
+      "--import",
+      pathToFileURL(preload).href,
+      "--import",
+      probe.importUrl,
+      path.join(root, "bin/studio.js"),
+    ];
+    return { probe, command, env };
+  }
+
+  test("installs its SIGINT and SIGTERM forwarding before it spawns the server", () => {
+    const { probe, command, env } = launcherWith('console.log("served");');
+    const run = Bun.spawnSync(command, { env, stdout: "pipe", stderr: "pipe" });
+    expect(run.exitCode, `launcher stderr: ${run.stderr.toString()}`).toBe(0);
+    expect(probe.listenersAtSpawn()).toEqual({ SIGINT: 1, SIGTERM: 1 });
+  });
+
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    testIf(
+      NO_POSIX_SIGNALS,
+      `forwards a ${signal} that reaches it as it spawns the server to the server once it exists, and exits 1`,
+      () => {
+        // The probe sends the signal before the real spawn runs; the stub has no handler, so the forwarded signal
+        // ends it, and only a forwarded one does: it would otherwise exit 99 after five seconds.
+        const { probe, command, env } = launcherWith("setTimeout(() => process.exit(99), 5000);", { signal });
+        const run = Bun.spawnSync(command, { env, stdout: "pipe", stderr: "pipe" });
+        expect(probe.childEnd()).toEqual([null, signal]);
+        expect([run.exitCode, run.signalCode ?? null]).toEqual([1, null]);
+      },
+    );
+  }
+
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    testIf(
+      NO_POSIX_SIGNALS,
+      `ends with a ${signal} that reaches it while it checks its cached payload, and starts no server`,
+      () => {
+        // The probe sends the signal at the launcher's first look for the payload's server.js, main's cache check,
+        // before the spawn step; the forwarding is not installed yet, so the signal ends the launcher.
+        const { probe, command, env } = launcherWith('console.log("served");', { signal, before: "server.js" });
+        const run = Bun.spawnSync(command, { env, stdout: "pipe", stderr: "pipe" });
+        expect(probe.listenersAtSpawn()).toBeNull();
+        expect([run.exitCode, run.signalCode ?? null]).toEqual([null, signal]);
+      },
+    );
+  }
+
+  for (const [signal, code] of [
+    ["SIGTERM", 143],
+    ["SIGINT", 130],
+  ] as const) {
+    testIf(
+      NO_POSIX_SIGNALS,
+      `forwards ${signal} to the server and exits with the code it then exits with`,
+      async () => {
+        // `ready` only says the stub has its handlers; the launcher has its own by then because it installs them
+        // before the spawn, which the probe asserts.
+        const { probe, command, env } = launcherWith(
+          'process.on("SIGINT", () => process.exit(130)); process.on("SIGTERM", () => process.exit(143)); ' +
+            'setTimeout(() => process.exit(99), 5000); console.log("ready");',
+        );
+        const proc = Bun.spawn(command, { env, stdout: "pipe", stderr: "pipe" });
+        await untilPrinted(proc.stdout, "ready");
+        expect(probe.listenersAtSpawn()).toEqual({ SIGINT: 1, SIGTERM: 1 });
+        proc.kill(signal);
+        await proc.exited;
+        expect([proc.exitCode, proc.signalCode ?? null]).toEqual([code, null]);
+      },
+    );
+  }
 });
