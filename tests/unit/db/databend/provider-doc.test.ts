@@ -119,6 +119,7 @@ import {
   transportDeps,
   transportHarness,
 } from "../../../helpers/databend-node-transport";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
@@ -1138,7 +1139,7 @@ describe("docs/providers/databend.md quotes what the code says", () => {
       { method: "POST", path: LOGOUT_PATH, reply: { status: 200 } },
     ]);
     const time = transportDeps(script);
-    const subject = new DatabendProvider(CONNECTION, {}, time.deps);
+    const subject = new DatabendProvider(CONNECTION, {}, { egress: ALLOWS_PRIVATE_HOSTS }, time.deps);
     await subject.connect();
     const running = subject.query("SELECT 1", undefined, "doc-cancel").catch((error: unknown) => error);
     await script.received(3);

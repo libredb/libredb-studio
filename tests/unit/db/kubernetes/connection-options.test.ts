@@ -9,9 +9,11 @@ import {
   readClusterEndpoint,
 } from "@/lib/db/providers/platform/kubernetes/connection-options";
 import { TUNNEL_FAR_END, type DatabaseConnection, type WithTunnelFarEnd } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { kubernetesConnection, TEST_TOKEN } from "../../../helpers/kubernetes-connection";
 
-const CONTEXT = { queryTimeout: 30_000, appVersion: "0.18.2" };
+// An allowing decision, so the origin never refuses and each case's own rule is the subject.
+const CONTEXT = { queryTimeout: 30_000, appVersion: "0.18.2", egress: ALLOWS_PRIVATE_HOSTS };
 
 function refusal(connection: DatabaseConnection & WithTunnelFarEnd): DatabaseConfigError {
   try {
@@ -52,6 +54,7 @@ describe("an accepted connection", () => {
     const endpoint = readClusterEndpoint(kubernetesConnection({ password: "" }), {
       queryTimeout: 1000,
       appVersion: null,
+      egress: ALLOWS_PRIVATE_HOSTS,
     });
     expect(endpoint.headers).toEqual({ "user-agent": "libredb-studio (kubernetes)" });
     expect(endpoint.secretForms).toEqual([]);
@@ -288,6 +291,8 @@ describe("the tunnel and the timeout", () => {
   });
 
   test("a query timeout outside 1 to 2147483647 is refused", () => {
-    expect(() => readClusterEndpoint(kubernetesConnection(), { queryTimeout: 0 })).toThrow(S.queryTimeout);
+    expect(() =>
+      readClusterEndpoint(kubernetesConnection(), { queryTimeout: 0, egress: ALLOWS_PRIVATE_HOSTS }),
+    ).toThrow(S.queryTimeout);
   });
 });

@@ -23,6 +23,7 @@ import { FirestoreProvider } from "@/lib/db/providers/document/firestore/index";
 import type { LaneKind } from "@/lib/db/providers/document/firestore/seams";
 import { FIRESTORE_EXPLAIN_MARKER } from "@/lib/explain/firestore-explain";
 import { type DatabaseConnection, LITERAL_SEED_FILE, type WithLiteralSeedFile } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 import {
   jsonAnswer,
   readCapture,
@@ -53,7 +54,7 @@ function emulatorProvider(createTransport: ReplayTransport["createTransport"]): 
   return new FirestoreProvider(
     connection,
     { queryTimeout: 30_000 },
-    {},
+    { egress: ALLOWS_PRIVATE_HOSTS },
     { createTransport, env: { FIRESTORE_EMULATOR_HOST: "127.0.0.1:8080" }, ...QUIET },
   );
 }
@@ -336,7 +337,7 @@ function google(
   const provider = new FirestoreProvider(
     connection,
     { queryTimeout: 30_000 },
-    {},
+    { egress: ALLOWS_PRIVATE_HOSTS },
     {
       createTransport: script.createTransport,
       env: options.env ?? {},

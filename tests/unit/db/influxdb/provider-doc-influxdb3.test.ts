@@ -55,6 +55,7 @@ import { generateSelectQuery, generateTableQuery } from "@/lib/query-generators"
 import { SeedConnectionSchema } from "@/lib/seed/types";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import type { DatabaseConnection } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { loadInfluxCapture, loadInfluxManifest } from "../../../helpers/influxdb-fixtures";
 import { recordingInfluxTransport } from "../../../helpers/influxdb-transport";
 
@@ -217,7 +218,7 @@ describe("docs/providers/influxdb3.md quotes what the code says", () => {
       loadInfluxCapture("2.9.1", "ping-auth"),
       loadInfluxCapture("2.9.1", "health-auth"),
     ]);
-    const misPicked = new InfluxDB3Provider(CONNECTION, {}, {}, (options, routes) =>
+    const misPicked = new InfluxDB3Provider(CONNECTION, {}, { egress: ALLOWS_PRIVATE_HOSTS }, (options, routes) =>
       createInfluxClient(options, routes, wire.factory),
     );
     const refusal = await misPicked.connect().then(

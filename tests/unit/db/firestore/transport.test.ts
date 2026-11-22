@@ -20,6 +20,7 @@ import {
   FIRESTORE_TRANSPORT_SENTENCES as S,
   routingHeaders,
 } from "@/lib/db/providers/document/firestore/transport";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { type FirestoreAnswer, fakeSeams, held, jsonAnswer, tokenAnswer } from "../../../helpers/firestore-seams";
 
 const target: FirestoreTarget = { projectId: "demo-p", databaseId: DEFAULT_DATABASE_ID };
@@ -84,7 +85,9 @@ describe("firestore routingHeaders", () => {
 describe("firestore transport API lanes", () => {
   test("a pasted token opens one API lane with the bearer, both routing headers and the lane guards", async () => {
     const seams = fakeSeams({ answer: () => jsonAnswer({ name: "projects/demo-p/databases/(default)" }) });
-    const client = createFirestoreClient(target, google({ type: "access_token", token: TOKEN }), seams);
+    const client = createFirestoreClient(target, google({ type: "access_token", token: TOKEN }), seams, {
+      egress: ALLOWS_PRIVATE_HOSTS,
+    });
     expect(client.mode).toBe("google");
     expect(client.target).toBe(target);
     expect(await client.send({ kind: "database" }, { signal, context })).toEqual({
@@ -108,16 +111,18 @@ describe("firestore transport API lanes", () => {
 
   test("a named database sends its own routing headers", async () => {
     const seams = fakeSeams();
-    await createFirestoreClient(named, google({ type: "access_token", token: TOKEN }), seams).send(
-      { kind: "database" },
-      { signal, context },
-    );
+    await createFirestoreClient(named, google({ type: "access_token", token: TOKEN }), seams, {
+      egress: ALLOWS_PRIVATE_HOSTS,
+    }).send({ kind: "database" }, { signal, context });
     expect(seams.lanes[0].options.headers).toEqual({ authorization: `Bearer ${TOKEN}`, ...routingHeaders(named) });
   });
 
   test("an authorized user gets its token on a guarded token lane, and its quota project as x-goog-user-project", async () => {
     const plain = fakeSeams({ answer: routed(() => jsonAnswer({})) });
-    await createFirestoreClient(target, google(user), plain).send({ kind: "database" }, { signal, context });
+    await createFirestoreClient(target, google(user), plain, { egress: ALLOWS_PRIVATE_HOSTS }).send(
+      { kind: "database" },
+      { signal, context },
+    );
     expect(plain.lanes.map((lane) => lane.lane)).toEqual(["token", "api"]);
     expect(plain.lanesOf("token")[0].options).toEqual({
       origin: { scheme: "https", host: "oauth2.googleapis.com", port: 443 },
@@ -129,10 +134,9 @@ describe("firestore transport API lanes", () => {
     });
     expect(plain.lanesOf("api")[0].options.headers).toEqual({ authorization: "Bearer t1", ...routingHeaders(target) });
     const quota = fakeSeams({ answer: routed(() => jsonAnswer({})) });
-    await createFirestoreClient(target, google({ ...user, quotaProjectId: "demo-quota-1" }), quota).send(
-      { kind: "database" },
-      { signal, context },
-    );
+    await createFirestoreClient(target, google({ ...user, quotaProjectId: "demo-quota-1" }), quota, {
+      egress: ALLOWS_PRIVATE_HOSTS,
+    }).send({ kind: "database" }, { signal, context });
     expect(quota.lanesOf("api")[0].options.headers).toEqual({
       authorization: "Bearer t1",
       ...routingHeaders(target),
@@ -142,10 +146,9 @@ describe("firestore transport API lanes", () => {
 
   test("the metadata lane is plain HTTP with the flavor header and no link-local refusal", async () => {
     const seams = fakeSeams({ answer: routed(() => jsonAnswer({})) });
-    await createFirestoreClient(target, google({ type: "metadata", host: "meta.internal:8080" }), seams).send(
-      { kind: "database" },
-      { signal, context },
-    );
+    await createFirestoreClient(target, google({ type: "metadata", host: "meta.internal:8080" }), seams, {
+      egress: ALLOWS_PRIVATE_HOSTS,
+    }).send({ kind: "database" }, { signal, context });
     expect(seams.lanes.map((lane) => lane.lane)).toEqual(["metadata", "api"]);
     expect(seams.lanesOf("metadata")[0].options).toEqual({
       origin: { scheme: "http", host: "meta.internal", port: 8080 },
@@ -160,7 +163,7 @@ describe("firestore transport API lanes", () => {
     const first = held<ReturnType<typeof jsonAnswer>>();
     let calls = 0;
     const seams = fakeSeams({ answer: routed(() => (++calls === 1 ? first.promise : jsonAnswer({ n: calls })), 30) });
-    const client = createFirestoreClient(target, google(user), seams);
+    const client = createFirestoreClient(target, google(user), seams, { egress: ALLOWS_PRIVATE_HOSTS });
     const slow = client.send({ kind: "database" }, { signal, context });
     // Without this the second send would share the first send's single-flight refresh and get t1 too.
     await settle();
@@ -187,7 +190,9 @@ describe("firestore transport API lanes", () => {
     };
     const stream = [{ document: { name: "projects/demo-p/databases/(default)/documents/users/a" } }];
     const seams = fakeSeams({ answer: () => jsonAnswer(stream) });
-    const client = createFirestoreClient(target, google({ type: "access_token", token: TOKEN }), seams);
+    const client = createFirestoreClient(target, google({ type: "access_token", token: TOKEN }), seams, {
+      egress: ALLOWS_PRIVATE_HOSTS,
+    });
     expect(await client.send(request, { signal, context })).toEqual(stream);
     const sent = seams.lanes[0].requests[0];
     const built = buildRequest(target, request);
@@ -206,7 +211,9 @@ describe("firestore transport API lanes", () => {
       maskFieldPaths: ["__name__"],
     };
     const seams = fakeSeams({ answer: () => jsonAnswer({ documents: [] }) });
-    await createFirestoreClient(target, google({ type: "access_token", token: TOKEN }), seams).send(request, {
+    await createFirestoreClient(target, google({ type: "access_token", token: TOKEN }), seams, {
+      egress: ALLOWS_PRIVATE_HOSTS,
+    }).send(request, {
       signal,
       context,
     });
@@ -235,7 +242,7 @@ describe("firestore transport refuses before any token or socket", () => {
   for (const request of forbidden) {
     test(`${JSON.stringify(request)} is refused by the closed table`, async () => {
       const seams = fakeSeams({ answer: routed(() => jsonAnswer({})) });
-      const client = createFirestoreClient(target, google(user), seams);
+      const client = createFirestoreClient(target, google(user), seams, { egress: ALLOWS_PRIVATE_HOSTS });
       expect(await failureOf(client.send(request, { signal, context }))).toBeInstanceOf(QueryError);
       expect(seams.lanes).toEqual([]);
     });
@@ -245,7 +252,12 @@ describe("firestore transport refuses before any token or socket", () => {
 describe("firestore transport answers", () => {
   const client = (answer: FirestoreAnswer) => {
     const seams = fakeSeams({ answer });
-    return { seams, client: createFirestoreClient(target, google({ type: "access_token", token: TOKEN }), seams) };
+    return {
+      seams,
+      client: createFirestoreClient(target, google({ type: "access_token", token: TOKEN }), seams, {
+        egress: ALLOWS_PRIVATE_HOSTS,
+      }),
+    };
   };
 
   test("a non-2xx answer is Google's envelope mapped by the error table", async () => {
@@ -374,7 +386,10 @@ describe("firestore transport answers", () => {
         jsonAnswer({ error: "invalid_grant", error_description: "Token has been expired or revoked." }, 400),
     });
     const error = await failureOf(
-      createFirestoreClient(target, google(user), seams).send({ kind: "database" }, { signal, context }),
+      createFirestoreClient(target, google(user), seams, { egress: ALLOWS_PRIVATE_HOSTS }).send(
+        { kind: "database" },
+        { signal, context },
+      ),
     );
     expect(error).toBeInstanceOf(AuthenticationError);
     expect(error.message).toBe("Google token request failed: Token has been expired or revoked.");
@@ -383,7 +398,7 @@ describe("firestore transport answers", () => {
 
   test("close closes every API lane and the token lane", async () => {
     const seams = fakeSeams({ answer: routed(() => jsonAnswer({})) });
-    const firestore = createFirestoreClient(target, google(user), seams);
+    const firestore = createFirestoreClient(target, google(user), seams, { egress: ALLOWS_PRIVATE_HOSTS });
     await firestore.send({ kind: "database" }, { signal, context });
     firestore.close();
     expect(seams.lanes.map((lane) => [lane.lane, lane.closed])).toEqual([

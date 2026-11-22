@@ -20,6 +20,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import path from "node:path";
 import type { ImportedContext } from "@/lib/connection-import";
 import { probePastPage } from "@/lib/api/page-probe";
+import { egressDecision } from "@/lib/db/egress-decision";
 import { createNodeTransport } from "@/lib/db/http/node-transport";
 import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes/index";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
@@ -232,6 +233,7 @@ async function runScenario(
     connectionOf(context, scenario.persona),
     { queryTimeout: QUERY_TIMEOUT_MS },
     { createTransport: recordingTransport(createNodeTransport, sink) },
+    { egress: egressDecision() },
   );
   try {
     for (const step of scenario.steps) await runStep(provider, step);

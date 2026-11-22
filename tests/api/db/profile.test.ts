@@ -1,4 +1,5 @@
 import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { grantedSnapshot } from "../../helpers/governance/granted-snapshot";
@@ -188,7 +189,7 @@ async function connectedInfluxdb3(
   const provider = new InfluxDB3Provider(
     { ...influxdb3Connection, createdAt: new Date(0) },
     {},
-    {},
+    { egress: ALLOWS_PRIVATE_HOSTS },
     (options, routes) => createInfluxClient(options, routes, wire.factory),
   );
   await provider.connect();

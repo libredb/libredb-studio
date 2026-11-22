@@ -11,6 +11,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { importPKCS8, SignJWT } from "jose";
 import { createGoogleTokenSource } from "@/lib/db/auth/google/token-source";
+import { egressDecision } from "@/lib/db/egress-decision";
 import {
   bigQueryCredentialIo,
   bigQueryTokenSourceDeps,
@@ -42,7 +43,7 @@ const creds = resolveBigQueryCredential(
   { password: undefined, managed: true },
   { ...bigQueryCredentialIo(), env: { ...process.env, BIGQUERY_SERVER_CREDENTIALS: "true" } },
 );
-const tokens = createGoogleTokenSource(creds, bigQueryTokenSourceDeps());
+const tokens = createGoogleTokenSource(creds, bigQueryTokenSourceDeps(egressDecision()));
 const token = (signal: AbortSignal) => tokens.token(signal);
 
 type Wire = Record<string, unknown>;

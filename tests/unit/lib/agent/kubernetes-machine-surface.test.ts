@@ -13,6 +13,7 @@ import { createTargetScope } from "@/lib/db/operations/policy";
 import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes/index";
 import { KUBERNETES_KIND_TABLE } from "@/lib/db/providers/platform/kubernetes/kinds";
 import type { QueryResult } from "@/lib/db/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { fakeCluster } from "../../../helpers/kubernetes-cluster";
 import { kubernetesConnection } from "../../../helpers/kubernetes-connection";
 import { KUBERNETES_SAMPLE_MARKERS as M } from "../../../helpers/kubernetes-markers";
@@ -130,7 +131,9 @@ function plantedServer(request: Parameters<typeof fallback>[0], line: string): N
 async function capture(): Promise<AgentContextSnapshot> {
   const transport = recordingKubernetesTransport(plantedServer);
   const connection = kubernetesConnection({ database: NAMESPACE });
-  const provider = new KubernetesProvider(connection, { queryTimeout: 30_000 }, testSeams(transport));
+  const provider = new KubernetesProvider(connection, { queryTimeout: 30_000 }, testSeams(transport), {
+    egress: ALLOWS_PRIVATE_HOSTS,
+  });
   await provider.connect();
   const clock = () => 1_000;
   const context: AgentToolContext = {

@@ -33,6 +33,7 @@ import {
 import { MAX_UNLIMITED_ROWS } from "@/lib/db/utils/query-limiter";
 import { logger } from "@/lib/logger";
 import type { DatabaseConnection } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { failureAnswer, handleAnswer, resultAnswer } from "../../../helpers/snowflake-answers";
 import { KEY_TEST_PASSPHRASE, pbes2Pbkdf2Pem, pkcs8Pem, rsaKey } from "../../../helpers/snowflake-keys";
 import {
@@ -91,7 +92,7 @@ function build(overrides: Record<string, unknown> = {}): Built {
   const transports = scriptedTransports();
   const clock = fakeClock();
   const deps = testDeps(transports, clock);
-  const provider = new SnowflakeProvider(connection(overrides), {}, deps);
+  const provider = new SnowflakeProvider(connection(overrides), {}, { egress: ALLOWS_PRIVATE_HOSTS }, deps);
   const entry = { provider, transports, deps, clock };
   built.push(entry);
   return entry;
@@ -430,7 +431,7 @@ describe("a connect that gets no answer (SF-018)", () => {
     const clock = fakeClock();
     const deps = testDeps(transports, clock);
     const entry = {
-      provider: new SnowflakeProvider(connection(), { queryTimeout: 10_000 }, deps),
+      provider: new SnowflakeProvider(connection(), { queryTimeout: 10_000 }, { egress: ALLOWS_PRIVATE_HOSTS }, deps),
       transports,
       deps,
       clock,

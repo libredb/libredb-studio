@@ -16,6 +16,7 @@ import { FIRESTORE_AGENT_CLIENT_MEMBERS } from "@/lib/db/providers/document/fire
 import { FirestoreProvider } from "@/lib/db/providers/document/firestore";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import type { ProviderExecutionContext } from "@/lib/db/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { fakeSeams, jsonAnswer } from "../../../helpers/firestore-seams";
 import {
   firestoreConnection,
@@ -184,7 +185,12 @@ describe("every request an agent-mode handle sends", () => {
     ["the agent operations profile", { readOnly: true }],
   ] as const)("on %s is a request of the closed agent table", async (_name, execution: ProviderExecutionContext) => {
     const seams = fakeSeams({ answer: wire(SERVER) });
-    const firestore = new FirestoreProvider(firestoreConnection(), { queryTimeout: 30_000 }, execution, seams);
+    const firestore = new FirestoreProvider(
+      firestoreConnection(),
+      { queryTimeout: 30_000 },
+      { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
+      seams,
+    );
     await firestore.connect();
     const budget = {
       statementTimeoutMs: 5_000,

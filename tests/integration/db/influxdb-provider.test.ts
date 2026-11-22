@@ -32,6 +32,7 @@ import { evaluateInfluxql } from "@/lib/db/providers/timeseries/influxdb/influxq
 import { InfluxDBProvider } from "@/lib/db/providers/timeseries/influxdb/influxql-provider";
 import { influxqlSource } from "@/lib/db/providers/timeseries/influxdb/influxql-quote";
 import type { DatabaseConnection } from "@/lib/db/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 import {
   INFLUX_FIXTURE_VERSIONS,
   type InfluxCapture,
@@ -92,7 +93,7 @@ function recordedServer(version: InfluxFixtureVersion, extra: Readonly<Record<st
   const wire = recordingInfluxTransport(Array.from({ length: 200 }, () => answer));
   const factory: InfluxClientFactory = (options, routes) => createInfluxClient(options, routes, wire.factory);
   const config = version === "1.13.1" ? CONNECTION : { ...CONNECTION, user: "" };
-  return { provider: new InfluxDBProvider(config, {}, {}, factory), wire, capture };
+  return { provider: new InfluxDBProvider(config, {}, { egress: ALLOWS_PRIVATE_HOSTS }, factory), wire, capture };
 }
 
 async function rejection(promise: Promise<unknown>): Promise<Error> {
@@ -326,7 +327,12 @@ describe("the agent read-only profile", () => {
     const wire = recordingInfluxTransport([...CONNECT[version], listing, ...script]);
     const factory: InfluxClientFactory = (options, routes) => createInfluxClient(options, routes, wire.factory);
     const base = version === "1.13.1" ? { ...CONNECTION, user: "reader" } : { ...CONNECTION, user: "" };
-    const provider = new InfluxDBProvider({ ...base, database: "home", ...config }, {}, execution, factory);
+    const provider = new InfluxDBProvider(
+      { ...base, database: "home", ...config },
+      {},
+      { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
+      factory,
+    );
     return { provider, wire };
   }
 
@@ -439,9 +445,9 @@ describe("the agent read-only profile", () => {
     const wire = recordingInfluxTransport(v3);
     const factory: InfluxClientFactory = (options, routes) => createInfluxClient(options, routes, wire.factory);
     const provider = new InfluxDBProvider(
-      { ...CONNECTION, user: "", password: "not-a-real-token", database: "home" },
+      { ...CONNECTION, user: "", password: crypto.randomUUID(), database: "home" },
       {},
-      AGENT,
+      { ...AGENT, egress: ALLOWS_PRIVATE_HOSTS },
       factory,
     );
     const error = await rejection(provider.connect());

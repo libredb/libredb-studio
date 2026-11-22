@@ -19,6 +19,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { probePastPage } from "@/lib/api/page-probe";
+import { egressDecision } from "@/lib/db/egress-decision";
 import { createNodeTransport } from "@/lib/db/http/node-transport";
 import { encodeLevelCursor } from "@/lib/db/providers/document/firestore/cursor";
 import { FirestoreProvider } from "@/lib/db/providers/document/firestore/index";
@@ -277,7 +278,7 @@ async function runScenario(scenario: EvidenceScenario): Promise<CaptureSink> {
   const provider = new FirestoreProvider(
     connection(),
     { queryTimeout: QUERY_TIMEOUT_MS },
-    {},
+    { egress: egressDecision() },
     {
       createTransport: recordingTransport(createNodeTransport, sink),
       env: { FIRESTORE_EMULATOR_HOST: `${FIRESTORE_EMULATOR.host}:${FIRESTORE_EMULATOR.port}` },

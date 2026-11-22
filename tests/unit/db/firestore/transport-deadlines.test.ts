@@ -10,6 +10,7 @@ import {
   FIRESTORE_TRANSPORT_SENTENCES as S,
 } from "@/lib/db/providers/document/firestore/transport";
 import { DEFAULT_QUERY_TIMEOUT } from "@/lib/db/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { type FirestoreAnswer, fakeSeams, held, jsonAnswer, tokenAnswer } from "../../../helpers/firestore-seams";
 
 const target: FirestoreTarget = { projectId: "demo-p", databaseId: DEFAULT_DATABASE_ID };
@@ -48,12 +49,12 @@ describe("firestore transport deadline", () => {
   test("every request runs under the query timeout plus 5 seconds, the default timeout when none is given", async () => {
     const seams = fakeSeams({ answer: () => jsonAnswer({}) });
     await createFirestoreClient(target, { mode: "google", credentials: pasted }, seams, {
+      egress: ALLOWS_PRIVATE_HOSTS,
       queryTimeoutMs: 30_000,
     }).send({ kind: "database" }, { signal: new AbortController().signal, context });
-    await createFirestoreClient(target, { mode: "google", credentials: pasted }, seams).send(
-      { kind: "database" },
-      { signal: new AbortController().signal, context },
-    );
+    await createFirestoreClient(target, { mode: "google", credentials: pasted }, seams, {
+      egress: ALLOWS_PRIVATE_HOSTS,
+    }).send({ kind: "database" }, { signal: new AbortController().signal, context });
     expect(seams.deadlines.map((deadline) => deadline.ms)).toEqual([
       30_000 + LIMITS.deadlineGraceMs,
       DEFAULT_QUERY_TIMEOUT + LIMITS.deadlineGraceMs,
@@ -63,6 +64,7 @@ describe("firestore transport deadline", () => {
   test("a deadline that fires mid-request is mapped as the transport's timeout", async () => {
     const seams = fakeSeams({ answer: never });
     const client = createFirestoreClient(target, { mode: "google", credentials: pasted }, seams, {
+      egress: ALLOWS_PRIVATE_HOSTS,
       queryTimeoutMs: 1000,
     });
     const caller = new AbortController();
@@ -82,7 +84,9 @@ describe("firestore transport deadline", () => {
     const answer: FirestoreAnswer = (_request, lane: LaneKind) =>
       lane === "token" ? token.promise : jsonAnswer({ ok: true });
     const seams = fakeSeams({ answer });
-    const client = createFirestoreClient(target, { mode: "google", credentials: user }, seams);
+    const client = createFirestoreClient(target, { mode: "google", credentials: user }, seams, {
+      egress: ALLOWS_PRIVATE_HOSTS,
+    });
     const first = failureOf(client.send({ kind: "database" }, { signal: new AbortController().signal, context }));
     await settle();
     expect(seams.deadlines.map((deadline) => deadline.ms)).toEqual([
@@ -105,7 +109,9 @@ describe("firestore transport cancel", () => {
   test("a caller's cancel aborts its request, is mapped as aborted, and leaves the lane serving", async () => {
     let calls = 0;
     const seams = fakeSeams({ answer: () => (++calls === 1 ? never() : jsonAnswer({ n: calls })) });
-    const client = createFirestoreClient(target, { mode: "google", credentials: pasted }, seams);
+    const client = createFirestoreClient(target, { mode: "google", credentials: pasted }, seams, {
+      egress: ALLOWS_PRIVATE_HOSTS,
+    });
     const caller = new AbortController();
     const pending = failureOf(client.send({ kind: "database" }, { signal: caller.signal, context }));
     await settle();
@@ -123,7 +129,9 @@ describe("firestore transport cancel", () => {
 
   test("a signal already aborted fails the request as aborted", async () => {
     const seams = fakeSeams({ answer: () => jsonAnswer({}) });
-    const client = createFirestoreClient(target, { mode: "google", credentials: pasted }, seams);
+    const client = createFirestoreClient(target, { mode: "google", credentials: pasted }, seams, {
+      egress: ALLOWS_PRIVATE_HOSTS,
+    });
     const error = await failureOf(client.send({ kind: "database" }, { signal: AbortSignal.abort(), context }));
     expectMapped(error, seams.lanes[0].failures[0]);
     expect(seams.lanes[0].failures[0]).toMatchObject({ kind: "aborted" });
@@ -133,7 +141,9 @@ describe("firestore transport cancel", () => {
 describe("firestore transport close", () => {
   test("close fails the request in flight as aborted and closes every lane once", async () => {
     const seams = fakeSeams({ answer: (_request, lane) => (lane === "token" ? tokenAnswer("t1") : never()) });
-    const client = createFirestoreClient(target, { mode: "google", credentials: user }, seams);
+    const client = createFirestoreClient(target, { mode: "google", credentials: user }, seams, {
+      egress: ALLOWS_PRIVATE_HOSTS,
+    });
     const pending = failureOf(client.send({ kind: "database" }, { signal: new AbortController().signal, context }));
     await settle();
     client.close();
@@ -150,7 +160,9 @@ describe("firestore transport close", () => {
 
   test("close while the token is being fetched fails the call and aborts the refresh", async () => {
     const seams = fakeSeams({ answer: never });
-    const client = createFirestoreClient(target, { mode: "google", credentials: user }, seams);
+    const client = createFirestoreClient(target, { mode: "google", credentials: user }, seams, {
+      egress: ALLOWS_PRIVATE_HOSTS,
+    });
     const pending = failureOf(client.send({ kind: "database" }, { signal: new AbortController().signal, context }));
     await settle();
     client.close();
@@ -161,7 +173,9 @@ describe("firestore transport close", () => {
 
   test("close landing while a pasted token resolves opens no lane", async () => {
     const seams = fakeSeams({ answer: () => jsonAnswer({}) });
-    const client = createFirestoreClient(target, { mode: "google", credentials: pasted }, seams);
+    const client = createFirestoreClient(target, { mode: "google", credentials: pasted }, seams, {
+      egress: ALLOWS_PRIVATE_HOSTS,
+    });
     const pending = failureOf(client.send({ kind: "database" }, { signal: new AbortController().signal, context }));
     client.close();
     expectMapped(await pending, new TransportError("aborted", S.closed));
@@ -170,7 +184,9 @@ describe("firestore transport close", () => {
 
   test("a send after close is refused without a lane, a token or a deadline", async () => {
     const seams = fakeSeams({ answer: () => jsonAnswer({}) });
-    const client = createFirestoreClient(target, { mode: "google", credentials: user }, seams);
+    const client = createFirestoreClient(target, { mode: "google", credentials: user }, seams, {
+      egress: ALLOWS_PRIVATE_HOSTS,
+    });
     client.close();
     const error = await failureOf(client.send({ kind: "database" }, { signal: new AbortController().signal, context }));
     expectMapped(error, new TransportError("aborted", S.closed));

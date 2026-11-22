@@ -15,6 +15,7 @@ import {
 } from "@/lib/db/providers/platform/kubernetes/discovery";
 import { KubernetesRequestError } from "@/lib/db/providers/platform/kubernetes/errors";
 import { expectCalls } from "../../../helpers/call-log";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { kubernetesConnection } from "../../../helpers/kubernetes-connection";
 import { CORE_DISCOVERY, discoveryList, GROUPS_DISCOVERY, resource } from "../../../helpers/kubernetes-discovery";
 import {
@@ -180,7 +181,11 @@ describe("readDiscovery", () => {
     const transport = recordingKubernetesTransport((_request, line) =>
       jsonAnswer(line.startsWith("GET /apis") ? GROUPS_DISCOVERY : CORE_DISCOVERY),
     );
-    const endpoint = readClusterEndpoint(kubernetesConnection(), { queryTimeout: 30_000, appVersion: null });
+    const endpoint = readClusterEndpoint(kubernetesConnection(), {
+      queryTimeout: 30_000,
+      appVersion: null,
+      egress: ALLOWS_PRIVATE_HOSTS,
+    });
     const client = createKubernetesClient(endpoint, testSeams(transport));
     const index = await readDiscovery(client, { signal: new AbortController().signal, timeoutMs: 5_000 });
     expect(findResource(index, "probe.libredb.dev", "widgets")?.shortNames).toEqual(["wd"]);
@@ -190,7 +195,11 @@ describe("readDiscovery", () => {
 
   test("a rejected token is exactly one request: /apis is read only after /api answered", async () => {
     const transport = recordingKubernetesTransport(() => statusAnswer(401, "Unauthorized"));
-    const endpoint = readClusterEndpoint(kubernetesConnection(), { queryTimeout: 30_000, appVersion: null });
+    const endpoint = readClusterEndpoint(kubernetesConnection(), {
+      queryTimeout: 30_000,
+      appVersion: null,
+      egress: ALLOWS_PRIVATE_HOSTS,
+    });
     const client = createKubernetesClient(endpoint, testSeams(transport));
     await expect(
       readDiscovery(client, { signal: new AbortController().signal, timeoutMs: 5_000 }),

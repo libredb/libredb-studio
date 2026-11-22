@@ -15,6 +15,7 @@ import { FIRESTORE_AGENT_WITHHELD as W } from "@/lib/db/providers/document/fires
 import { TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
 import { READ_ALLOWANCE_PREFIX, RunReadAllowance } from "@/lib/db/read-allowance";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { type FakeFirestoreSeams, fakeSeams, jsonAnswer } from "../../../helpers/firestore-seams";
 import {
   firestoreConnection,
@@ -73,7 +74,12 @@ async function open(
 }> {
   const seams = fakeSeams({ env, answer: wire(handler) });
   const connection = firestoreConnection(env.FIRESTORE_EMULATOR_HOST === undefined ? {} : { password: undefined });
-  const provider = new FirestoreProvider(connection, { queryTimeout: 30_000 }, execution, seams);
+  const provider = new FirestoreProvider(
+    connection,
+    { queryTimeout: 30_000 },
+    { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
+    seams,
+  );
   await provider.connect();
   const probes = requestsOf(seams).length;
   return { provider, seams, afterProbe: () => requestsOf(seams).slice(probes) };
@@ -268,13 +274,23 @@ describe("failures", () => {
         : jsonAnswer({});
     for (const execution of [READ_ONLY, OPERATIONS]) {
       const seams = fakeSeams({ answer: wire(refusedProbe) });
-      const provider = new FirestoreProvider(firestoreConnection(), { queryTimeout: 30_000 }, execution, seams);
+      const provider = new FirestoreProvider(
+        firestoreConnection(),
+        { queryTimeout: 30_000 },
+        { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
+        seams,
+      );
       const error = await rejected(provider.connect());
       expect(error.message).toBe(F.denied);
     }
     const datastore: WireHandler = googleServer({ type: "DATASTORE_MODE" });
     const seams = fakeSeams({ answer: wire(datastore) });
-    const provider = new FirestoreProvider(firestoreConnection(), { queryTimeout: 30_000 }, READ_ONLY, seams);
+    const provider = new FirestoreProvider(
+      firestoreConnection(),
+      { queryTimeout: 30_000 },
+      { ...READ_ONLY, egress: ALLOWS_PRIVATE_HOSTS },
+      seams,
+    );
     expect((await rejected(provider.connect())).message).toContain("Datastore mode");
   });
 });

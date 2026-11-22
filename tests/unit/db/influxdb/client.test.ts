@@ -32,6 +32,7 @@ import {
   SQL_ROUTES,
 } from "@/lib/db/providers/timeseries/influxdb/routes";
 import type { DatabaseConnection } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 // Named placeholders, never realistic values: a credential in a test fixture is a stand-in.
 const TEST_USER = "reader";
@@ -48,7 +49,7 @@ function options(type: InfluxType, overrides: Record<string, unknown> = {}): Inf
       createdAt: new Date(0),
       ...overrides,
     } as unknown as DatabaseConnection,
-    { type, queryTimeout: 30_000 },
+    { type, queryTimeout: 30_000, egress: ALLOWS_PRIVATE_HOSTS },
   );
 }
 

@@ -1283,7 +1283,11 @@ describe("declared field rules (Databend design 6.3)", () => {
     });
     const providerSentence = (fields: Partial<DatabaseConnection>): string | undefined => {
       try {
-        readClusterEndpoint(kubernetes(fields), { queryTimeout: 30_000, appVersion: null });
+        readClusterEndpoint(kubernetes(fields), {
+          queryTimeout: 30_000,
+          appVersion: null,
+          egress: ALLOWS_PRIVATE_HOSTS,
+        });
         return undefined;
       } catch (error) {
         return (error as Error).message;
@@ -1312,7 +1316,11 @@ describe("declared field rules (Databend design 6.3)", () => {
       const form = connectionFieldRefusal(getDBConfig("databend"), databend({ warehouse }));
       let provider: string | undefined;
       try {
-        buildDatabendConnectionOptions(databend({ warehouse }), { queryTimeout: 30_000, appVersion: null });
+        buildDatabendConnectionOptions(databend({ warehouse }), {
+          queryTimeout: 30_000,
+          appVersion: null,
+          egress: ALLOWS_PRIVATE_HOSTS,
+        });
       } catch (error) {
         provider = (error as Error).message;
       }

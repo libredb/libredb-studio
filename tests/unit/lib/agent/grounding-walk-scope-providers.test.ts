@@ -27,6 +27,7 @@ import { SnowflakeProvider } from "@/lib/db/providers/sql/snowflake/index";
 import { SparkProvider } from "@/lib/db/providers/sql/spark/index";
 import type { Container, DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import type { SparkCaptureName } from "../../../live/spark-evidence-plan";
 import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
 import { resultAnswer } from "../../../helpers/snowflake-answers";
@@ -101,6 +102,7 @@ const HELD: Readonly<Partial<Record<DatabaseType, "one level" | ParentProof>>> =
           createdAt: new Date(0),
         } as DatabaseConnection,
         {},
+        { egress: ALLOWS_PRIVATE_HOSTS },
         testDeps(transports, fakeClock()),
       );
       // The connect statement's warehouse row, then the role check answering the configured role and, since a token

@@ -56,6 +56,7 @@ import { INFLUX_SYSTEM_DATABASES, RUN_DATABASE_SENTENCES } from "@/lib/db/provid
 import { GENERATION_TRAITS } from "@/lib/db/providers/timeseries/influxdb/versions";
 import { SeedConnectionSchema } from "@/lib/seed/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { loadInfluxCapture, loadInfluxManifest } from "../../../helpers/influxdb-fixtures";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
@@ -240,7 +241,7 @@ describe("docs/providers/influxdb.md quotes what the code says", () => {
     const remote = new InfluxDBProvider(
       { ...INFLUXDB, host: "influx.example.com", password: TEST_PASSWORD },
       {},
-      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
       factory,
     );
     const sentence = await rejection(() => remote.connect());
@@ -272,7 +273,12 @@ describe("docs/providers/influxdb.md quotes what the code says", () => {
     const statements = [...(line ?? "").matchAll(/`([^`]+)`/g)].map((match) => match[1]);
     expect(statements.length).toBe(10);
     const { factory, requests } = scriptedClient();
-    const connected = new InfluxDBProvider({ ...INFLUXDB, database: "home" }, {}, {}, factory);
+    const connected = new InfluxDBProvider(
+      { ...INFLUXDB, database: "home" },
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+      factory,
+    );
     await connected.connect();
     for (const statement of [...statements, "SHOW MEASUREMENTS"]) {
       const text = statement === "SHOW GRANTS FOR" ? 'SHOW GRANTS FOR "reader"' : statement;
@@ -319,7 +325,12 @@ describe("docs/providers/influxdb.md quotes what the code says", () => {
       "SHOW USERS": "SHOW USERS",
     };
     const { factory, requests } = scriptedClient();
-    const connected = new InfluxDBProvider({ ...INFLUXDB, database: "home" }, {}, {}, factory);
+    const connected = new InfluxDBProvider(
+      { ...INFLUXDB, database: "home" },
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+      factory,
+    );
     await connected.connect();
     const withoutDatabase: string[] = [];
     for (const [form, text] of Object.entries(grammar)) {

@@ -27,6 +27,7 @@
  */
 import { generateKeyPairSync } from "node:crypto";
 import { AuthenticationError, QueryCancelledError, QueryError } from "@/lib/db/errors";
+import { egressDecision } from "@/lib/db/egress-decision";
 import { createDatabaseProvider, getOrCreateProvider, removeProvider } from "@/lib/db/factory";
 import {
   createNodeByteTransport,
@@ -114,6 +115,7 @@ function recorded(conn: DatabaseConnection): { provider: SnowflakeProvider; wire
   const provider = new SnowflakeProvider(
     conn,
     { queryTimeout: QUERY_TIMEOUT_MS },
+    { egress: egressDecision() },
     {
       createNodeTransport: (options: NodeTransportOptions) => {
         const inner = createNodeTransport(options);

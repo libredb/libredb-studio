@@ -59,6 +59,7 @@ import {
   quoteObjectPath,
 } from "@/lib/query-generators";
 import type { ColumnSchema } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { type InfluxCapture, type InfluxFixtureVersion, loadInfluxCapture } from "../../../helpers/influxdb-fixtures";
 import {
   type RecordedInfluxRequest,
@@ -147,7 +148,12 @@ function harness(
   };
   const factory: InfluxClientFactory = (clientOptions, routes) => createInfluxClient(clientOptions, routes, transport);
   return {
-    provider: new InfluxDB3Provider({ ...CONNECTION, ...config }, options, execution, factory),
+    provider: new InfluxDB3Provider(
+      { ...CONNECTION, ...config },
+      options,
+      { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
+      factory,
+    ),
     requests: wire.requests,
     closed: () => closed,
     built: () => made,
