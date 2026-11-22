@@ -61,7 +61,7 @@ import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statem
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import { loadMilvusDescriptor } from "../../scripts/generate-milvus-descriptor.mjs";
-import { fakeTextScrub } from "../helpers/mcp-fixtures";
+import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
 
 function env(name: string): string {
   const value = process.env[name];
@@ -493,7 +493,9 @@ async function boundary(): Promise<void> {
         fenced.acquired.length === 0 &&
         textOf(fenced.result).includes("The request was refused before it reached the server") &&
         unfenced.result.isError === true &&
-        textOf(unfenced.result).includes("The statement was refused before it reached the database"),
+        providerRefusalText(unfenced.result, "milvus").startsWith(
+          "The statement was refused before it reached the database: ",
+        ),
       { fenced: textOf(fenced.result), unfenced: textOf(unfenced.result), acquired: unfenced.acquired },
     );
   }

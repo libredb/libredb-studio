@@ -180,7 +180,7 @@ async function mcp(
 const textOf = (result: ToolResult): string =>
   result.content.map((part) => ("text" in part ? part.text : "")).join(" ");
 
-/** The last text block of an MCP answer, where the refusal or the database's words are. */
+/** The last text block of an MCP answer: the database's words, after the untrusted-data notice. */
 const lastTextOf = (result: ToolResult): string =>
   result.content.map((part) => ("text" in part ? part.text : "")).at(-1) ?? "";
 
@@ -499,14 +499,15 @@ async function main(): Promise<void> {
     const cql = template.replaceAll("@", KS);
     const fenced = await mcp(agent, { sql: cql });
     const { result } = await mcp(agent, { sql: cql }, UNFENCED);
-    const text = lastTextOf(result);
     const fenceAnswered = fenced.result.isError === true && fenced.acquired.length === 0;
     if (cql.startsWith("SELECT ")) {
+      const text = lastTextOf(result);
       check(
         !fenceAnswered && text.startsWith(ENGINE) && UNAUTHORIZED.test(text.slice(ENGINE.length)),
         `boundary: the MCP fence admits ${cql}; the server refuses it as Unauthorized -> ${text}`,
       );
     } else {
+      const text = providerRefusalText(result, "cassandra");
       check(
         fenceAnswered && text.startsWith(NOT_SELECT),
         `boundary: the MCP fence refuses ${cql}; bypassed, the provider refuses it before it is sent -> ${text}`,
@@ -519,16 +520,19 @@ async function main(): Promise<void> {
     );
   }
   const use = await mcp(agent, { sql: `USE ${OTHER}` }, UNFENCED);
-  check(lastTextOf(use.result).startsWith(NOT_SELECT), `boundary: a USE -> ${lastTextOf(use.result)}`);
+  check(
+    providerRefusalText(use.result, "cassandra").startsWith(NOT_SELECT),
+    `boundary: a USE -> ${lastTextOf(use.result)}`,
+  );
   const second = await mcp(agent, { sql: `SELECT id FROM ${KS}.customers; DROP TABLE ${KS}.big` }, UNFENCED);
   check(
-    lastTextOf(second.result).includes("this text goes on after its first statement's semicolon"),
+    providerRefusalText(second.result, "cassandra").includes("this text goes on after its first statement's semicolon"),
     `boundary: a second statement -> ${lastTextOf(second.result)}`,
   );
   const crText = `SELECT id FROM ${KS}.customers -- x\rALTER ROLE ${PREFIX}ro WITH PASSWORD = 'not-a-real-password'`;
   const cr = await mcp(agent, { sql: crText }, UNFENCED);
   check(
-    lastTextOf(cr.result).includes("carriage return inside a -- or // comment"),
+    providerRefusalText(cr.result, "cassandra").includes("carriage return inside a -- or // comment"),
     `boundary: a statement after a carriage return in a comment -> ${lastTextOf(cr.result)}`,
   );
   check((await stateHash()) === before, "boundary: the state hash is the same before and after");
@@ -568,7 +572,7 @@ async function main(): Promise<void> {
   for (const [cql, table] of OUT_OF_SCOPE) {
     for (const arm of [RUN_READ_QUERY, UNFENCED]) {
       const { result, acquired } = await mcp(agent, { sql: cql }, arm);
-      const text = lastTextOf(result);
+      const text = providerRefusalText(result, "cassandra");
       check(
         acquired.join() === "agent-read-only" &&
           text ===
@@ -601,7 +605,7 @@ async function main(): Promise<void> {
     const { result } = await mcp(agent, { sql: cql });
     const raw = await asRole(`${PREFIX}ro`, cql);
     check(
-      lastTextOf(result).startsWith(NOT_SELECT) && "code" in raw && raw.code === 8192,
+      providerRefusalText(result, "cassandra").startsWith(NOT_SELECT) && "code" in raw && raw.code === 8192,
       `forms: ${cql} passes the MCP fence and the provider refuses it; the server answers it as a syntax error -> ${"code" in raw ? raw.message : "ran"}`,
     );
   }

@@ -38,7 +38,7 @@ import { inspectSchema, InspectSchemaInputSchema } from "@/lib/mcp/tools/inspect
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
-import { fakeTextScrub } from "../helpers/mcp-fixtures";
+import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
 
 const required = (name: string): string => {
   const value = process.env[name];
@@ -264,7 +264,7 @@ async function main(): Promise<void> {
       `refused: ${what} fenced, in its own words (${code}), nothing acquired`,
     );
     check(
-      textOf(unfenced.result).includes(NOT_SENT) && opened === 1,
+      providerRefusalText(unfenced.result, "sparkplug").startsWith(NOT_SENT) && opened === 1,
       `refused: ${what} unfenced, refused after the handshake alone (${opened} session)`,
     );
     refused.push({ request: what, code, ownWords, sessionsUnfenced: opened });

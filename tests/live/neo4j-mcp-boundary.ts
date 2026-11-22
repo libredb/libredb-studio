@@ -313,8 +313,10 @@ try {
     check(
       textOf(fenced.result).startsWith("The statement was refused before it reached the database (") &&
         fenced.acquired.length === 0 &&
-        textOf(unfenced.result).includes("The statement was refused before it reached the database: ") &&
-        textOf(unfenced.result).endsWith("Nothing was sent."),
+        providerRefusalText(unfenced.result, "neo4j").startsWith(
+          "The statement was refused before it reached the database: ",
+        ) &&
+        providerRefusalText(unfenced.result, "neo4j").endsWith("Nothing was sent."),
       `${statement}: refused by the fence before anything is acquired, and unfenced by the provider's reader, unsent`,
     );
   }
