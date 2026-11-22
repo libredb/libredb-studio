@@ -5959,6 +5959,11 @@ test("a denied SQLite caller cannot borrow a cached administrator handle", async
 const { SnowflakeProvider } = await import("@/lib/db/providers/sql/snowflake/index");
 
 describe("the Snowflake provider in the factory", () => {
+  /**
+   * Generated once per run, so it is never a literal credential in test source, and shared by every connection below,
+   * so two of them differ only where a test makes them differ.
+   */
+  const token = crypto.randomUUID();
   /** A Snowflake connection as a census builds one: nothing in it is read before connect(). */
   const snowflake = (overrides: Partial<DatabaseConnection> = {}): DatabaseConnection =>
     makeConnection("snowflake", {
@@ -5967,7 +5972,7 @@ describe("the Snowflake provider in the factory", () => {
       user: "studio_svc",
       role: "STUDIO_RO",
       authMethod: "pat",
-      password: "stand-in-token",
+      password: token,
       warehouse: "STUDIO_WH",
       ...overrides,
     });
