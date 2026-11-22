@@ -12,6 +12,8 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `storage`: `getStorageStats` answers `[]` without asking the engine.
  *
  * Maintenance: `s3` offers no maintenance operation.
+ *
+ * Agent readings: `health`.
  */
 export const S3_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -24,4 +26,5 @@ export const S3_ENGINE_FACETS: EngineFacets = {
     storage: "not-offered",
   },
   maintenance: [],
+  agentReadings: ["health"],
 };

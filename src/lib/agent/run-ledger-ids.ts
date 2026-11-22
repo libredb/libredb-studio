@@ -1,6 +1,7 @@
 /**
  * The one check of the ids a run header persists that this build resolves against its own vocabulary (FND-1): the
- * statement language the run is written in, the workflow it was opened for, and the goal rule it is judged by. A header
+ * statement language the run is written in, the workflow it was opened for, the goal rule it is judged by, and the
+ * engine of the connection it was opened on. A header
  * naming one this build does not hold, or holds only as retired, is refused by name when its ledger is read
  * (`AgentRunUnavailableError` in `run-store.ts`), so no record this build folds carries an id it cannot resolve.
  *
@@ -9,28 +10,36 @@
  *  - the workflow, in every mode, because the planning deliverable is read from it; an agent-mode run also reads its
  *    variant, the workflow on the run's language, for its tools, objective and verifier, so that pair must exist;
  *  - the verifier, in agent mode only, because a plan is judged by the planning rule whatever its header names
- *    (`goalFor` in `goal-verifier.ts`).
+ *    (`goalFor` in `goal-verifier.ts`);
+ *  - the engine, in every mode, because tool selection and the curated readings are read from its `ENGINE_FACETS`
+ *    row; an agent-mode operations run also needs the engine to offer agent mode at least one reading, since its
+ *    reading tool would otherwise have nothing to offer, so that pair is refused the way a workflow with no variant
+ *    on its language is.
  *
  * An absent id keeps its meaning: an absent language reads as `sql`, an absent workflow as
- * `DEFAULT_AGENT_WORKFLOW_TYPE`, and an absent verifier as the variant's, which the variant check makes resolvable.
+ * `DEFAULT_AGENT_WORKFLOW_TYPE`, an absent verifier as the variant's, which the variant check makes resolvable, and an
+ * absent engine as a run recorded before the field, offered the six curated readings it was opened with. No engine is
+ * retired, so an engine is only ever live or unknown.
  *
  * Server-side: the verifier set is read from the goal rules, which are server modules.
  */
-import { quoteTypeId } from "@/lib/db/type-id";
+import { engineFacetsFor } from "@/lib/db/engine-facets";
+import { isDatabaseType, quoteTypeId } from "@/lib/db/type-id";
 import { type AgentStatementLanguageId, agentVariant } from "./agent-manifest";
 import { hasGoalRule, RETIRED_GOAL_VERIFIERS } from "./goal-verifier";
 import { isAgentStatementLanguage, RETIRED_STATEMENT_LANGUAGES, statementFamilyOf } from "./languages/client";
 import { AGENT_WORKFLOW_PRESENTS_ANSWER, type AgentRunWorkflowType, DEFAULT_AGENT_WORKFLOW_TYPE } from "./types";
 
-export type AgentRunHeaderField = "statementLanguage" | "workflowType" | "verifier";
+export type AgentRunHeaderField = "statementLanguage" | "workflowType" | "verifier" | "engine";
 
 /** Why a run header cannot be read by this build: which field, whether its id is unknown or retired, and the sentence. */
 export interface AgentRunHeaderRefusal {
   readonly field: AgentRunHeaderField;
   /**
-   * `unknown` also covers an agent-mode `workflowType` this build holds whose variant is missing on the run's language:
-   * `id` is then a workflow this build has, and the language that makes the pair unresolvable is carried in `named`
-   * and in the sentence, not in `field`, `reason` or `id`. A log line that gives only the field and the reason is
+   * `unknown` also covers an agent-mode `workflowType` this build holds whose variant is missing on the run's language,
+   * or an agent-mode `operations` run on an engine that offers agent mode no reading: `id` is then a workflow this build
+   * has, and the language or engine that makes the pair unresolvable is carried in `named` and in the sentence, not in
+   * `field`, `reason` or `id`. A log line that gives only the field and the reason is
    * resolved by reading the ledger's header, which names both.
    */
   readonly reason: "unknown" | "retired";
@@ -39,7 +48,7 @@ export interface AgentRunHeaderRefusal {
   /**
    * What is refused, as a noun phrase with every id quoted by `quoteTypeId`: `the statement language "cobol"`, or, for a
    * workflow this build holds but not on the run's language, `the workflow "data-analysis" in the statement language
-   * "rediscli"`. The store's error message and the sentence both name the refusal by it.
+   * "rediscli"`, or on the run's engine, `the workflow "operations" on the engine "mqtt"`. The store's error message and the sentence both name the refusal by it.
    */
   readonly named: string;
   /** What the run's owner is told. */
@@ -52,6 +61,7 @@ export interface AgentRunHeaderIds {
   readonly statementLanguage?: string;
   readonly workflowType?: string;
   readonly verifier?: string;
+  readonly engine?: string;
 }
 
 /**
@@ -66,6 +76,9 @@ export interface AgentRunHeaderVocabulary {
   readonly hasVariant: (language: string | undefined, workflow: string) => boolean;
   readonly isVerifier: (id: string) => boolean;
   readonly retiredVerifiers: ReadonlySet<string>;
+  readonly isEngine: (id: string) => boolean;
+  /** Whether the engine offers agent mode at least one curated reading; asked only of an id `isEngine` holds. */
+  readonly hasReading: (engine: string) => boolean;
 }
 
 /** This build's vocabulary. */
@@ -79,6 +92,8 @@ export const RUN_HEADER_VOCABULARY: AgentRunHeaderVocabulary = Object.freeze({
     agentVariant(language as AgentStatementLanguageId | undefined, workflow as AgentRunWorkflowType) !== undefined,
   isVerifier: hasGoalRule,
   retiredVerifiers: RETIRED_GOAL_VERIFIERS,
+  isEngine: isDatabaseType,
+  hasReading: (engine: string) => engineFacetsFor(engine).agentReadings.length > 0,
 });
 
 /** The noun each field is named by. */
@@ -86,12 +101,14 @@ const FIELD_NOUN: Readonly<Record<AgentRunHeaderField, string>> = Object.freeze(
   statementLanguage: "statement language",
   workflowType: "workflow",
   verifier: "goal rule",
+  engine: "engine",
 });
 
 const SUBJECT: Readonly<Record<AgentRunHeaderField, string>> = Object.freeze({
   statementLanguage: "This run was recorded in",
   workflowType: "This run is for",
   verifier: "This run is judged by",
+  engine: "This run was recorded on",
 });
 
 /** How this build holds a refused id, after "which this LibreDB Studio". */
@@ -102,11 +119,16 @@ export const RUN_HEADER_REASON_VERB: Readonly<Record<AgentRunHeaderRefusal["reas
 
 const KEPT = "The run is kept as it was, and this LibreDB Studio does not open, drive, stop or replay it.";
 
+/**
+ * The refusal of `id`. `held` is the clause after the named id; by default it says how this build holds the id, and a
+ * refusal whose id this build does hold passes the clause that says what is missing instead.
+ */
 function refusal(
   field: AgentRunHeaderField,
   reason: AgentRunHeaderRefusal["reason"],
   id: string,
   context = "",
+  held = `which this LibreDB Studio ${RUN_HEADER_REASON_VERB[reason]}`,
 ): AgentRunHeaderRefusal {
   const named = `the ${FIELD_NOUN[field]} ${quoteTypeId(id)}${context}`;
   return {
@@ -114,7 +136,7 @@ function refusal(
     reason,
     id,
     named,
-    sentence: `${SUBJECT[field]} ${named}, which this LibreDB Studio ${RUN_HEADER_REASON_VERB[reason]}. ${KEPT}`,
+    sentence: `${SUBJECT[field]} ${named}, ${held}. ${KEPT}`,
   };
 }
 
@@ -140,9 +162,30 @@ function workflowRefusal(
 }
 
 /**
+ * The refusal of an engine this build has no provider for, or of an agent-mode operations run on an engine that offers
+ * agent mode no curated reading, or `null`.
+ */
+function engineRefusal(header: AgentRunHeaderIds, vocabulary: AgentRunHeaderVocabulary): AgentRunHeaderRefusal | null {
+  const { engine } = header;
+  if (engine === undefined) return null;
+  if (!vocabulary.isEngine(engine)) return refusal("engine", "unknown", engine);
+  const workflow = header.workflowType ?? DEFAULT_AGENT_WORKFLOW_TYPE;
+  if (header.mode === "planning" || workflow !== "operations" || vocabulary.hasReading(engine)) return null;
+  // This build has the operations workflow on other engines, so the sentence names what this engine lacks rather than
+  // saying the build does not have the workflow.
+  return refusal(
+    "workflowType",
+    "unknown",
+    workflow,
+    ` on the engine ${quoteTypeId(engine)}`,
+    "and that engine offers no agent reading in this LibreDB Studio",
+  );
+}
+
+/**
  * Why `header` cannot be read by this build, or `null` when it can. The language is checked first, then the workflow,
- * then the verifier, so a header that names two refused ids is named by the first, and the variant is asked for only
- * with a language this build holds. An id is looked up exactly: no trimming, no case folding.
+ * then the verifier, then the engine, so a header that names two refused ids is named by the first, the variant is
+ * asked for only with a language this build holds, and the readings only of an engine this build holds. An id is looked up exactly: no trimming, no case folding.
  */
 export function runHeaderRefusal(
   header: AgentRunHeaderIds,
@@ -153,6 +196,7 @@ export function runHeaderRefusal(
     workflowRefusal(header, vocabulary) ??
     (header.mode === "planning"
       ? null
-      : refusalOf("verifier", header.verifier, vocabulary.isVerifier, vocabulary.retiredVerifiers))
+      : refusalOf("verifier", header.verifier, vocabulary.isVerifier, vocabulary.retiredVerifiers)) ??
+    engineRefusal(header, vocabulary)
   );
 }

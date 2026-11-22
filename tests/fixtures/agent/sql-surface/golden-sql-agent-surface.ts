@@ -122,6 +122,8 @@ async function driveFirstTurn(
       runId: `run_golden_${mode}_${workflowType.replaceAll("-", "_")}_${engine}`,
       mode,
       workflowType,
+      // The engine the start route records from the connection's type, which picks the run's curated readings.
+      engine,
       actor: { sessionId: "sess_1", role: "user" },
       connectionId: connection.id,
       objective: OBJECTIVE,

@@ -598,14 +598,15 @@ Each surface reads the HTTP API only, and a surface that cannot give an honest n
 | `getIndexStats()` | none | `[]`: a Prometheus TSDB has no secondary index object to describe, so the panel is not offered |
 | `getPoolStats()` | not implemented | The route detects it by presence and shows its fallback |
 
-The `operations` agent workflow reads these surfaces on every engine in both modes, so agent runs reach the monitored server through them too.
+In agent mode the `operations` workflow takes only the `table-stats`, `storage` and `health` readings here ([Engine facets](#engine-facets)), so agent runs reach the monitored server through those surfaces too, and every other kind is refused by name before the server is reached.
 On a handle opened for an agent-mode profile the overview, performance, slow-query, session and index readings answer their reason instead ([§14.4](#144-values-and-what-each-path-reads)).
 
 ### Engine facets
 
 Which of the seven monitoring panels and which maintenance operations `prometheus` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/timeseries/prometheus/engine-facets.ts).
 `getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
-The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
 
 | Monitoring panel | Offered | Why |
 |---|---|---|
@@ -619,6 +620,8 @@ The agent's `inspect_operations` tool does not read this row yet: it still calls
 
 Maintenance operations offered: none.
 `POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `table-stats`, `storage`, `health`.
 
 ---
 

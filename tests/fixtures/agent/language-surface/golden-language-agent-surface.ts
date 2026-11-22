@@ -190,7 +190,7 @@ async function drive(
       runId: `run_golden_language_${drives}`,
       mode,
       workflowType,
-      ...persistedRunFacts(mode, workflowType, availability),
+      ...persistedRunFacts(mode, workflowType, engine, availability),
       actor: { sessionId: "sess_1", role: "user" },
       connectionId: connection.id,
       objective: OBJECTIVE,

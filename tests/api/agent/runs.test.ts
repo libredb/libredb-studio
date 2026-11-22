@@ -766,9 +766,24 @@ describe("POST /api/agent/runs", () => {
     expect(mockStart).not.toHaveBeenCalled();
   });
 
+  test("an operations run on mqtt is refused 400 with the requirement's sentence before a run is opened", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:plant", name: "Plant", type: "mqtt" });
+
+    const res = await POST(startRequest({ ...VALID_BODY, workflowType: "operations" }));
+    const body = await parseResponseJSON<{ error: string; refused?: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(body.error).toBe(
+      "Agent mode takes no operational reading on this engine: it offers agent mode none of the session, slow-query, table, index, storage or health readings, so the operations workflow's reading tool could only refuse. Plan mode drafts here.",
+    );
+    expect(body.refused).toBe("engine-unsupported");
+    expect(mockStart).not.toHaveBeenCalled();
+    expect(mockAdmitAgentModel).not.toHaveBeenCalled();
+  });
+
   test("the operations workflow still opens on the same connection", async () => {
-    // It sends no statement at all: its reads are the curated provider methods every
-    // engine implements, under a profile whose gate does not ask for `queryReadOnly`.
+    // It sends no statement at all: its reads are the curated readings this engine offers
+    // agent mode, under a profile whose gate does not ask for `queryReadOnly`.
     mockResolveConnection.mockResolvedValueOnce(UNSUPPORTED_ENGINE);
 
     const res = await POST(startRequest({ ...VALID_BODY, workflowType: "operations" }));
@@ -830,17 +845,18 @@ describe("POST /api/agent/runs", () => {
     expect(source.includes("@/lib/db/providers/")).toBe(false);
   });
 
-  test("plan mode and the operations workflow open on the same connection, and roots open the investigation", async () => {
+  test("plan mode opens on the same connection, and roots open the investigation", async () => {
     mockResolveConnection.mockResolvedValueOnce(ROOTLESS_PLANT);
     expect((await POST(startRequest({ ...VALID_BODY, mode: "planning" }))).status).toBe(202);
+    // The operations workflow is not opened here at all: OPC UA offers agent mode no curated reading, roots or not.
     mockResolveConnection.mockResolvedValueOnce(ROOTLESS_PLANT);
-    expect((await POST(startRequest({ ...VALID_BODY, workflowType: "operations" }))).status).toBe(202);
+    expect((await POST(startRequest({ ...VALID_BODY, workflowType: "operations" }))).status).toBe(400);
     mockResolveConnection.mockResolvedValueOnce({
       ...ROOTLESS_PLANT,
       agentReadRoots: ["nsu=urn:plant;s=Line1"],
     } as never);
     expect((await POST(startRequest({ ...VALID_BODY, workflowType: "investigation" }))).status).toBe(202);
-    expect(mockStart).toHaveBeenCalledTimes(3);
+    expect(mockStart).toHaveBeenCalledTimes(2);
   });
 
   test("an Apache Spark investigation is refused with the posture's own paragraph", async () => {
@@ -871,7 +887,16 @@ describe("POST /api/agent/runs", () => {
     expect(mockStart.mock.calls[0]?.[0].statementLanguage).toBe("mongo");
   });
 
-  test("a Postgres run is opened with no statement language and no verifier, so its header is unchanged", async () => {
+  test("the start route records the connection's type on the run header", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:events", name: "Events", type: "kafka" });
+
+    const res = await POST(startRequest({ ...VALID_BODY, workflowType: "operations" }));
+
+    expect(res.status).toBe(202);
+    expect(mockStart.mock.calls[0]?.[0]).toMatchObject({ engine: "kafka", statementLanguage: "kafkaread" });
+  });
+
+  test("a Postgres run is opened with its engine and no statement language or verifier, which absence reads as", async () => {
     for (const mode of ["agent", "planning"]) {
       mockStart.mockClear();
       const res = await POST(startRequest({ ...VALID_BODY, mode, workflowType: "query-optimization" }));
@@ -879,6 +904,7 @@ describe("POST /api/agent/runs", () => {
       const input = mockStart.mock.calls[0]?.[0] as Record<string, unknown>;
       expect(Object.hasOwn(input, "statementLanguage"), mode).toBe(false);
       expect(Object.hasOwn(input, "verifier"), mode).toBe(false);
+      expect(input.engine, mode).toBe("postgres");
     }
   });
 
@@ -1025,6 +1051,7 @@ describe("POST /api/agent/runs", () => {
       mode: "agent",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      engine: "postgres",
       // The database behind that record, fingerprinted by the route (B68). Asserted as a
       // presence here and by value in the re-pointing test below.
       connectionIdentity: expect.any(String),
@@ -1043,6 +1070,7 @@ describe("POST /api/agent/runs", () => {
       workflowType: "query-optimization",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      engine: "postgres",
       // The database behind that record, fingerprinted by the route (B68). Asserted as a
       // presence here and by value in the re-pointing test below.
       connectionIdentity: expect.any(String),
@@ -1075,6 +1103,7 @@ describe("POST /api/agent/runs", () => {
       autoExecute: true,
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      engine: "postgres",
       // The database behind that record, fingerprinted by the route (B68). Asserted as a
       // presence here and by value in the re-pointing test below.
       connectionIdentity: expect.any(String),
@@ -1127,6 +1156,7 @@ describe("POST /api/agent/runs", () => {
       mode: "agent",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      engine: "postgres",
       // The database behind that record, fingerprinted by the route (B68). Asserted as a
       // presence here and by value in the re-pointing test below.
       connectionIdentity: expect.any(String),
@@ -1172,6 +1202,7 @@ describe("POST /api/agent/runs", () => {
       mode: "agent",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      engine: "postgres",
       // The database behind that record, fingerprinted by the route (B68). Asserted as a
       // presence here and by value in the re-pointing test below.
       connectionIdentity: expect.any(String),
@@ -1190,6 +1221,7 @@ describe("POST /api/agent/runs", () => {
       workflowSource: "inferred",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      engine: "postgres",
       // The database behind that record, fingerprinted by the route (B68). Asserted as a
       // presence here and by value in the re-pointing test below.
       connectionIdentity: expect.any(String),
@@ -1229,6 +1261,7 @@ describe("POST /api/agent/runs", () => {
       mode: "agent",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      engine: "postgres",
       // The database behind that record, fingerprinted by the route (B68). Asserted as a
       // presence here and by value in the re-pointing test below.
       connectionIdentity: expect.any(String),
@@ -1252,6 +1285,7 @@ describe("POST /api/agent/runs", () => {
       workflowReading: "unclassified",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      engine: "postgres",
       // The database behind that record, fingerprinted by the route (B68). Asserted as a
       // presence here and by value in the re-pointing test below.
       connectionIdentity: expect.any(String),

@@ -38,6 +38,7 @@ import {
   AGENT_STATEMENT_LANGUAGE,
   type AgentStatementLanguageId,
   notReviewedSentence,
+  operationsWorkflowOpens,
 } from "@/lib/agent/agent-manifest";
 import { namedList } from "@/lib/agent/engine-support";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
@@ -181,7 +182,7 @@ function unsupportedPosture(engineLabel: string): AgentPosture {
     headline: `Cannot execute on ${engineLabel}`,
     qualifier: "plan mode drafts here, and the operations workflow still runs",
     title: `Agent mode has no read-only statement path on ${engineLabel}`,
-    body: `Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: ${engineNames(AGENT_EXECUTION_ENGINES)}. On ${engineLabel} a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine.`,
+    body: `Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: ${engineNames(AGENT_EXECUTION_ENGINES)}. On ${engineLabel} a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it takes the operational readings this engine offers agent mode. Plan mode drafts on every engine.`,
   };
 }
 
@@ -210,14 +211,25 @@ function notReviewedPosture(engineLabel: string): AgentPosture {
  * server behind it. The engine runs agent mode, so the reads posture would be true of the engine and false of this
  * connection: measured 2026-10-17 on an admin MongoDB seed, the strip said "Reads only, enforced by the server" before
  * Start, and Start then refused the run. The sentence is the refusal's own, so the strip, the card and the timeline
- * say one thing.
+ * say one thing. The operations workflow is named as still running only where it opens (`operationsWorkflowOpens`):
+ * an engine that offers agent mode no curated reading does not open it.
  */
-function refusedPosture(engineLabel: string, refusal: string): AgentPosture {
+function refusedPosture(engine: DatabaseType, engineLabel: string, refusal: string): AgentPosture {
+  const title = `Agent mode cannot run on this ${engineLabel} connection as it is configured`;
+  if (!operationsWorkflowOpens(engine)) {
+    return {
+      tone: "blocked",
+      headline: "Refused on this connection",
+      qualifier: "plan mode drafts here",
+      title,
+      body: `${refusal} Plan mode drafts on every connection.`,
+    };
+  }
   return {
     tone: "blocked",
     headline: "Refused on this connection",
     qualifier: "plan mode drafts here, and the operations workflow still runs",
-    title: `Agent mode cannot run on this ${engineLabel} connection as it is configured`,
+    title,
     body: `${refusal} Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement.`,
   };
 }
@@ -238,7 +250,7 @@ function unresolvedPosture(): AgentPosture {
     headline: "Cannot execute yet",
     qualifier: "no connection is resolved, so no engine has been established",
     title: "Agent mode has no connection to execute on",
-    body: `Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: ${engineNames(AGENT_EXECUTION_ENGINES)}. No connection is resolved here, so this panel cannot say which engine you are on, or whether it is one of those: until one is resolved, agent mode executes nothing. The operations workflow sends no statement at all, so it runs wherever a connection does, and plan mode drafts on every engine.`,
+    body: `Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: ${engineNames(AGENT_EXECUTION_ENGINES)}. No connection is resolved here, so this panel cannot say which engine you are on, or whether it is one of those: until one is resolved, agent mode executes nothing. The operations workflow sends no statement at all, so it runs on every engine that offers agent mode an operational reading, and plan mode drafts on every engine.`,
   };
 }
 
@@ -314,6 +326,8 @@ export function agentPosture(input: {
   if (input.engine === null) return unresolvedPosture();
   if (language === null) return unsupportedPosture(input.engineLabel);
   if (!AGENT_EXECUTION_ENGINES.includes(input.engine)) return notReviewedPosture(input.engineLabel);
-  if (typeof input.refusedHere === "string") return refusedPosture(input.engineLabel, input.refusedHere);
+  if (typeof input.refusedHere === "string") {
+    return refusedPosture(input.engine, input.engineLabel, input.refusedHere);
+  }
   return input.handover && offersHandover(language) ? widenedPosture(language) : readsPosture(language);
 }

@@ -193,7 +193,7 @@ function persistableIds(): {
       for (const workflow of workflows) {
         const availability = workflowAvailability(mode, workflow, type);
         if (!availability.open) continue;
-        const facts = persistedRunFacts(mode, workflow, availability);
+        const facts = persistedRunFacts(mode, workflow, type, availability);
         if (facts.statementLanguage !== undefined) languages.add(facts.statementLanguage);
         if (facts.verifier !== undefined) verifiers.add(facts.verifier);
         if (mode === "agent") agentPairs.add(pairKey(facts.statementLanguage ?? "sql", workflow));
@@ -352,6 +352,51 @@ describe("runHeaderRefusal", () => {
       field: "statementLanguage",
       id: "cobol",
     });
+  });
+
+  test.each([
+    ["agent", "acmefoo", '"acmefoo"'],
+    ["planning", "acmefoo", '"acmefoo"'],
+    ["agent", "constructor", '"constructor"'],
+    ["planning", "Postgres", '"Postgres"'],
+  ] as const)(
+    "a header naming an engine that is not a type id is refused by name in every mode (%s, %s)",
+    (mode, engine, quoted) => {
+      expect(runHeaderRefusal({ mode, engine })).toEqual({
+        field: "engine",
+        reason: "unknown",
+        id: engine,
+        named: `the engine ${quoted}`,
+        sentence: `This run was recorded on the engine ${quoted}, which this LibreDB Studio does not have. The run is kept as it was, and this LibreDB Studio does not open, drive, stop or replay it.`,
+      });
+    },
+  );
+
+  test.each(["mqtt", "sparkplug", "opcua", "mtconnect"])(
+    "an agent-mode operations header on an engine that offers no reading is refused by name (%s)",
+    (engine) => {
+      expect(runHeaderRefusal({ ...AGENT, workflowType: "operations", engine })).toEqual({
+        field: "workflowType",
+        reason: "unknown",
+        id: "operations",
+        named: `the workflow "operations" on the engine "${engine}"`,
+        sentence: `This run is for the workflow "operations" on the engine "${engine}", and that engine offers no agent reading in this LibreDB Studio. The run is kept as it was, and this LibreDB Studio does not open, drive, stop or replay it.`,
+      });
+    },
+  );
+
+  test("a planning operations header on such an engine is read", () => {
+    expect(runHeaderRefusal({ mode: "planning", workflowType: "operations", engine: "mqtt" })).toBeNull();
+  });
+
+  test("an agent-mode header on an engine that offers no reading is read for a workflow other than operations", () => {
+    expect(runHeaderRefusal({ ...AGENT, statementLanguage: "mqttread", engine: "mqtt" })).toBeNull();
+  });
+
+  test("an agent-mode operations header on an engine that offers a reading is read", () => {
+    expect(
+      runHeaderRefusal({ ...AGENT, statementLanguage: "kafkaread", workflowType: "operations", engine: "kafka" }),
+    ).toBeNull();
   });
 
   test.each([

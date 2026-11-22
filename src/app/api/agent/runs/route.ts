@@ -80,7 +80,8 @@ import type { DatabaseConnection } from "@/lib/types";
  *    has no read-only statement path**, from the connection's own type and before a run
  *    id exists (#512). It is the one refusal here that is about the
  *    DATABASE rather than the request's own consistency, and it is narrowed by the
- *    workflow: `operations` sends no statement, so it opens on every engine.
+ *    workflow: `operations` sends no statement, so it opens on every engine that offers
+ *    agent mode a curated reading.
  *  - **Auto-execute is fixed at start, and that is the reason it is a run field at
  *    all.** It is what the run may hand to the editor to RUN, on a path with none of
  *    the agent's own bounds, so it is decided once by the request that opens the run
@@ -339,12 +340,14 @@ export async function POST(req: Request) {
 
        - **The MODE.** Plan mode drafts on every engine and executes nothing it drafts,
          so an unsupported engine is no reason to refuse one.
-       - **The WORKFLOW.** `operations` sends no statement at all, and refusing it would
-         withhold a workflow that runs on every engine over a claim that is not true of
-         it (#411) — which is the same reason the rail's amber pre-start card does not
-         gate Start. The workflow has to be known first, and under Automatic it is: the
-         rail classifies at `POST /api/agent/classify` and names the workflow in this
-         request, so the refusal lands after the classify call and before the open.
+       - **The WORKFLOW.** `operations` sends no statement at all, and refusing it for
+         want of a statement path would withhold a workflow over a claim that is not true
+         of it (#411), which is the same reason the rail's amber pre-start card does not
+         gate Start. It is refused only on an engine that offers agent mode no curated
+         reading, with the `agent-readings` requirement's sentence. The workflow has to be
+         known first, and under Automatic it is: the rail classifies at
+         `POST /api/agent/classify` and names the workflow in this request, so the
+         refusal lands after the classify call and before the open.
        - **The ENGINE'S LANGUAGE**, from `AGENT_STATEMENT_LANGUAGE`, keyed by type-id
          and held by `tests/unit/lib/agent/agent-manifest.test.ts` to every provider
          that has `queryReadOnly`. Read here rather than probed
@@ -364,7 +367,8 @@ export async function POST(req: Request) {
 
       An engine with no language is answered with the posture's sentence, which is the one
       the rail's own amber card shows as its reason: it names the engines that DO have
-      such a path, that `operations` runs here, and that plan mode drafts here, so a
+      such a path, that `operations` runs here (every such engine offers a reading), and
+      that plan mode drafts here, so a
       refused user is told both ways forward rather than a third phrasing of the same
       fact. The other three refusals carry the same marker, because they are the same kind
       of fact: the request has to change its workflow, its mode or its connection.
@@ -403,7 +407,8 @@ export async function POST(req: Request) {
       declares none: refused here, before a run exists, for the reason the engine refusal above is. The provider would
       refuse the profile at its first acquisition, but an engine that declares no object kinds is grounded without one,
       so without this the run would open, take its first model turn and fail at its first read. Only a workflow that
-      sends statements in agent mode: plan mode and the operations workflow read nothing beneath roots, and open.
+      sends statements in agent mode: plan mode and the operations workflow read nothing beneath roots, and the roots
+      decide neither (the operations workflow opens where the engine offers agent mode a curated reading).
     */
     if (
       mode === "agent" &&
@@ -583,9 +588,9 @@ export async function POST(req: Request) {
       // the request that predates the field, so a run that starts its own conversation
       // writes the same bytes a run opened before conversations existed did.
       ...(thread === undefined ? {} : { thread }),
-      // The language and the verifier the run was opened under, each written only where it
-      // differs from what its absence reads as, so an SQL run's header keeps its bytes.
-      ...persistedRunFacts(mode as AgentRunMode, requestedWorkflow, availability),
+      // The connection's engine, and the language and the verifier the run was opened under,
+      // the last two written only where they differ from what their absence reads as.
+      ...persistedRunFacts(mode as AgentRunMode, requestedWorkflow, connection.type, availability),
       actor: { sessionId: guard.session.username, role: guard.session.role },
       connectionId: connection.id,
       // The database this run is ACTUALLY reading, written unconditionally - including

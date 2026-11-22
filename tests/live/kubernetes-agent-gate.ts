@@ -124,7 +124,7 @@ async function gateRun(
   forgetHeldSnapshots();
   const availability = workflowAvailability("agent", workflowType, "kubernetes");
   if (!availability.open) throw new Error(`${workflowType} does not open on kubernetes`);
-  const facts = persistedRunFacts("agent", workflowType, availability);
+  const facts = persistedRunFacts("agent", workflowType, "kubernetes", availability);
   if (facts.statementLanguage !== "kubectl") throw new Error(`${workflowType} does not open as a kubectl run`);
 
   const store = new AgentRunStore({

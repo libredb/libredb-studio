@@ -4,6 +4,8 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * `mssql` offers all seven monitoring panels: each read asks the engine.
  *
  * Maintenance: `mssql` offers `analyze`, `check`, `optimize` and `kill`, in its provider's declaration order.
+ *
+ * Agent readings: `sessions`, `slow-queries`, `table-stats`, `index-stats`, `storage` and `health`.
  */
 export const MSSQL_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -16,4 +18,5 @@ export const MSSQL_ENGINE_FACETS: EngineFacets = {
     storage: "offered",
   },
   maintenance: ["analyze", "check", "optimize", "kill"],
+  agentReadings: ["sessions", "slow-queries", "table-stats", "index-stats", "storage", "health"],
 };

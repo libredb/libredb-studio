@@ -114,11 +114,13 @@ describe("the prompt texts", () => {
     expect(grounding.ungroundedPlanning).toBeUndefined();
   });
 
-  test("only the investigation and the operations workflow are offered, and nothing auto-executes", () => {
+  test("only the investigation and the operations variants are held, the operations workflow opens nowhere here, and nothing auto-executes", () => {
     expect(Object.keys(AGENT_WORKFLOW_VARIANTS.mtconnectread).sort()).toEqual(["investigation", "operations"]);
     expect(AGENT_WORKFLOW_VARIANTS.mtconnectread.investigation?.canAutoExecute).toBe(false);
     expect(workflowAvailability("agent", "investigation", "mtconnect").open).toBe(true);
-    expect(workflowAvailability("agent", "operations", "mtconnect").open).toBe(true);
+    // The language holds an operations variant, and the workflow still does not open: the engine offers agent mode no
+    // curated reading (its `ENGINE_FACETS` row's `agentReadings` is empty).
+    expect(workflowAvailability("agent", "operations", "mtconnect").open).toBe(false);
     expect(workflowAvailability("agent", "data-analysis", "mtconnect").open).toBe(false);
   });
 });

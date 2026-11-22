@@ -2,8 +2,7 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
 
 /**
  * `cassandra`: the monitoring panels whose reads ask the engine, now or from what it said at connect. `getMonitoringData`
- * never reads a panel not offered and no surface draws it, though the agent's `inspect_operations` tool still calls
- * the session, slow-query, table, index and storage members on every engine:
+ * never reads a panel not offered and no surface draws it:
  *
  * - `slowQueries`: `getSlowQueries` answers `[]` without asking the engine.
  * - `tables`: `getTableStats` refuses with `CASSANDRA_TABLE_STATS_REFUSAL` without asking the engine.
@@ -11,6 +10,8 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `storage`: `getStorageStats` refuses with `CASSANDRA_STORAGE_STATS_REFUSAL` without asking the engine.
  *
  * Maintenance: `cassandra` offers no maintenance operation.
+ *
+ * Agent readings: `sessions` and `health`.
  */
 export const CASSANDRA_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -23,4 +24,5 @@ export const CASSANDRA_ENGINE_FACETS: EngineFacets = {
     storage: "not-offered",
   },
   maintenance: [],
+  agentReadings: ["sessions", "health"],
 };

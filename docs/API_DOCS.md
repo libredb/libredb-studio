@@ -2122,7 +2122,7 @@ could arrive twice.
 { "error": "previousRunId must be a non-empty string when provided" }
 { "error": "This connection reaches every database on its server: name the database the run reads in catalog" }
 {
-  "error": "Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino. On Apache Spark a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine.",
+  "error": "Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino. On Apache Spark a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it takes the operational readings this engine offers agent mode. Plan mode drafts on every engine.",
   "refused": "engine-unsupported"
 }
 
@@ -2141,8 +2141,9 @@ could arrive twice.
 > Since #512 an `agent` run whose `workflowType` sends a statement, which is every workflow but `operations`, is refused here when the connection's engine is not on Studio's review record (`AGENT_EXECUTION_ENGINES` in `src/lib/db/compatibility.ts`), and `error` carries the posture's whole paragraph.
 > It is refused **before a run id exists**: a client that used to receive
 > `202` for `investigation` on Oracle and then read `engine-unsupported` off the run receives `400`
-> and no run. `operations` is admitted on every engine because it sends no statement at all, and a
+> and no run. `operations` is admitted on every engine that offers agent mode a curated reading, because it sends no statement at all, and a
 > `planning` run is never refused this way: it executes nothing anywhere.
+> On an engine that offers no curated reading to the agent (MQTT, Sparkplug B, OPC UA and MTConnect), an `agent` `operations` run is refused `400` with the same `refused` value and the `agent-readings` requirement's sentence.
 > The refusal reads the same record the provider factory does, not `typeof provider.queryReadOnly`, so the two cannot disagree.
 > An engine with a statement language that the record does not list is answered in a sentence of its own naming it, under the same `refused` value.
 >

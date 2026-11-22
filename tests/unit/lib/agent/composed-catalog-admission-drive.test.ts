@@ -146,7 +146,7 @@ async function drive(
   const run = await service.start({
     mode: "agent",
     workflowType,
-    ...persistedRunFacts("agent", workflowType, availability),
+    ...persistedRunFacts("agent", workflowType, connection.type, availability),
     actor: { sessionId: "sess_1", role: "user" },
     connectionId: connection.id,
     objective: "Which customers ordered most?",

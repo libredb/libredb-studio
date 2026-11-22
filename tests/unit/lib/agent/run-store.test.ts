@@ -813,6 +813,8 @@ describe("AgentRunStore — refuses a ledger it cannot trust", () => {
     ["verifier", null],
     ["verifier", {}],
     ["verifier", []],
+    ["engine", null],
+    ["engine", {}],
   ] as const)("refuses a header whose %s is %p, not text, as malformed", async (field, value) => {
     const dataDir = freshDataDir();
     const world = worldAt(dataDir);
@@ -872,6 +874,60 @@ describe("AgentRunStore — refuses a ledger it cannot trust", () => {
       const { runId } = await store.openRun({ ...OPEN_INPUT, verifier });
       expect((await store.read(runId))?.record.verifier).toBe(verifier);
     }
+  });
+
+  test("openRun writes the engine and the fold reads it back", async () => {
+    const { store, dataDir } = storeAt();
+    const opened = await store.openRun({ ...OPEN_INPUT, engine: "kafka" });
+
+    expect(opened.engine).toBe("kafka");
+    const { store: resumed } = storeAt(dataDir);
+    expect((await resumed.read(opened.runId))?.record.engine).toBe("kafka");
+  });
+
+  test("a header written before the engine field folds without one", async () => {
+    const { store } = storeAt();
+    const { runId } = await store.openRun(OPEN_INPUT);
+
+    const record = (await store.read(runId))?.record;
+
+    expect(record && "engine" in record).toBe(false);
+  });
+
+  test("a header whose engine is not text is malformed", async () => {
+    const dataDir = freshDataDir();
+    const world = worldAt(dataDir);
+    const runId = "arun_engine5";
+    const header = {
+      kind: "run-opened",
+      atMs: 1,
+      runId,
+      mode: "agent",
+      actor: ACTOR,
+      connectionId: "conn_1",
+      objective: "Why?",
+      engine: 5,
+    };
+    await world.writeToStream(ledgerStreamName(runId), runId, `${JSON.stringify(header)}\n`);
+
+    const error = await captureStoreError(() => new AgentRunStore({ world }).read(runId));
+
+    expect(error.reasonCode).toBe("MALFORMED_LEDGER");
+    expect(error.message).toBe(`agent run "${runId}" has an unreadable ledger: its header's engine is not text`);
+  });
+
+  test("a header naming an engine this build has no provider for is unavailable by name", async () => {
+    const { store } = storeAt();
+    const { runId } = await store.openRun({ ...OPEN_INPUT, engine: "acmefoo" as never });
+
+    const error = await captureStoreError(() => store.read(runId));
+
+    expect(error.reasonCode).toBe("RUN_UNAVAILABLE");
+    expect((error as AgentRunUnavailableError).refusal).toMatchObject({
+      field: "engine",
+      reason: "unknown",
+      id: "acmefoo",
+    });
   });
 
   test("a header with no language folds without one, and reads as sql", async () => {

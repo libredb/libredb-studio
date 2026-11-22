@@ -550,7 +550,7 @@ Each surface reads the Kafka protocol only, and a surface that cannot give an ho
 | `getPoolStats()` | not implemented | The route detects it by presence and shows its fallback |
 
 A principal without Describe on the cluster is refused the log directories, and one without DescribeConfigs on the cluster the broker configs, and each refusal degrades only its own figure; any other failure, and a refusal of any other read, still fails the panel.
-The `operations` agent workflow reads these surfaces on every engine in both modes, so agent runs reach the broker through them too.
+In agent mode the `operations` workflow takes only the `health` reading on Kafka ([Engine facets](#engine-facets)) and refuses every other kind by name before the broker is reached.
 
 On a handle opened for an agent-mode profile, which the `operations` workflow, plan-mode grounding and MCP open, every surface reads through the agent's client, which holds the Metadata and ListOffsets reads alone ([§15](#15-agent-mode)), so no surface reads a config or a log directory there:
 
@@ -565,7 +565,8 @@ On a handle opened for an agent-mode profile, which the `operations` workflow, p
 
 Which of the seven monitoring panels and which maintenance operations `kafka` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/stream/kafka/engine-facets.ts).
 `getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
-The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
 
 | Monitoring panel | Offered | Why |
 |---|---|---|
@@ -579,6 +580,9 @@ The agent's `inspect_operations` tool does not read this row yet: it still calls
 
 Maintenance operations offered: none.
 `POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `health`.
+`storage` is not offered to agent mode although the panel is: the agent handle refuses it with `KAFKA_AGENT_WITHHELD.storage`.
 
 ---
 

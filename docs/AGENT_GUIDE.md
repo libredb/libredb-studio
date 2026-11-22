@@ -398,14 +398,16 @@ For how the database is **running right now** — the slowest queries, who is co
 blocked, the biggest tables, the unused indexes, storage pressure. It is the one workflow that
 **sends no SQL at all**: the only tool that reaches the database is `inspect_operations`, and you
 name a *reading* rather than a statement — `sessions`, `slow-queries`, `table-stats`, `index-stats`,
-`storage` or `health`. The server calls the engine's own reporting interface and stores the answer
+`storage` or `health`, of those your engine offers agent mode. The server calls the engine's own reporting interface and stores the answer
 as an ordinary citable result.
+Each engine offers only the readings it actually answers: its provider document lists them under `Agent readings offered`, the run is offered those alone, and any other kind is refused by name before Studio reaches the engine.
 
 Two consequences you will notice:
 
-- **It runs on every engine.** The other workflows need a read-only statement path the provider implements,
+- **It runs on every engine that offers agent mode a reading.** The other workflows need a read-only statement path the provider implements,
   which only PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino have; this one needs none, so a run opened on
   Oracle, Cassandra or Redis works rather than ending `engine-unsupported`.
+  MQTT, Sparkplug B, OPC UA and MTConnect offer Operate no reading, so it is refused there at Start with the reason, and plan mode still drafts.
 - **It has no free-form SQL, and its schema is a short list of names.** There is no `inspect_schema`
   and no `run_read_query` here, and the run is told so in its opening message rather than being left
   to discover it. What it is given instead is an inventory of your table names and the indexes on
@@ -479,6 +481,7 @@ It is one of the readings below and not a mood, and the qualifier beside the pil
 | *Cannot execute on `<engine>`* | *plan mode drafts here, and the operations workflow still runs* | **Agent** mode on any other engine. A run whose workflow sends a statement is refused when it is started, before a run is opened |
 | *Cannot execute yet* | *no connection is resolved, so no engine has been established* | **Agent** mode with no connection resolved. Nothing has been read, so the panel does not claim to know which engine you are on |
 | *Refused on this connection* | *plan mode drafts here, and the operations workflow still runs* | **Agent** mode after a run on this connection was refused for the connection itself, for example a user that holds writes or a server with authorization off. The popover says why; switch to another connection and the strip goes back to what its engine does |
+| *Refused on this connection* | *plan mode drafts here* | The same, on an engine where Operate does not open in agent mode because the engine offers agent mode no reading |
 
 Those two figures are the ones the server is enforcing, and they are the same on every workflow — the
 strip is shown before a run has one, so it states the pair every workflow row shares rather than

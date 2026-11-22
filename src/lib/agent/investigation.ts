@@ -142,6 +142,7 @@ import {
   type AgentToolName,
   type AgentTableProfileOutcome,
   type AgentToolOutcome,
+  agentReadingsOf,
   agentToolDefinition,
   comparePlansTool,
   composeReportTool,
@@ -197,7 +198,7 @@ import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 /** Everything a tool call needs EXCEPT what the run's own record decides. */
 export type AgentToolResources = Omit<
   AgentToolContext,
-  "runId" | "modelId" | "mode" | "workflowType" | "statementLanguage" | "actor" | "readAllowance"
+  "runId" | "modelId" | "mode" | "workflowType" | "statementLanguage" | "engine" | "actor" | "readAllowance"
 >;
 
 export interface AgentInvestigationOptions {
@@ -733,7 +734,7 @@ const CORE_SHORTFALL_NOTICES: Readonly<Partial<Record<AgentGoalShortfall, Shortf
       narrow: true,
     };
   },
-  "no-reading": (_table, { readingsHeld }) => {
+  "no-reading": (_table, { readingsHeld, readings }) => {
     // Only for a run that read NOTHING. A run holding artifacts and citing the inventory
     // instead earns the same verdict, but the useful sentence there is
     // `citeWhatYouReadNotice`, which can name the ids it actually has. Saying "this run has
@@ -759,7 +760,7 @@ const CORE_SHORTFALL_NOTICES: Readonly<Partial<Record<AgentGoalShortfall, Shortf
     return {
       said: [
         "This workflow is scored on what the ENGINE reports about itself, and this run has taken no reading: the schema inventory in this conversation was captured for you before your first turn and citing it establishes nothing about what the engine is doing.",
-        "Your compose_report call was not run. Call inspect_operations first — sessions, slow-queries, table-stats, index-stats, storage or health — then cite the artifact id it returns in a claim, and then call compose_report.",
+        `Your compose_report call was not run. Call inspect_operations first (${readings.join(", ")}), then cite the artifact id it returns in a claim, and then call compose_report.`,
       ].join(" "),
       narrow: false,
     };
@@ -2879,6 +2880,7 @@ export async function runInvestigation(
       mode: record.mode,
       workflowType: record.workflowType,
       ...(record.statementLanguage === undefined ? {} : { statementLanguage: record.statementLanguage }),
+      ...(record.engine === undefined ? {} : { engine: record.engine }),
       actor: record.actor,
       // Created here, with the drive's own context, and never taken from the caller: the allowance is
       // what tells this run's reads from another run's on the same cached provider, so two drives may
@@ -4299,6 +4301,7 @@ export async function runInvestigation(
               // completed step under a plan-estimate operation, not an event kind of its own.
               plans: inspectedPlans(sofar.events),
               readingsHeld: sofar.events.filter((event) => event.kind === "tool-completed").length,
+              readings: agentReadingsOf(record.engine),
               // Asked of the same function `present_answer` asks, so "presentable" cannot
               // drift between the notice and the tool it points at.
               holdsPresentable: presentableArtifact(sofar.events) !== undefined,

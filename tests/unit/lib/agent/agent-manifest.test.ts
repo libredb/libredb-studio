@@ -21,6 +21,7 @@ import { AGENT_WORKFLOW_GOALS } from "@/lib/agent/goal-verifier";
 import { agentToolDefinition } from "@/lib/agent/tools";
 import { AGENT_WORKFLOW_PRESENTS_ANSWER, type AgentRunWorkflowType } from "@/lib/agent/types";
 import { AGENT_EXECUTION_ENGINES, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import { UnknownProviderError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { typeIdRefusal } from "@/lib/db/type-id";
@@ -242,7 +243,7 @@ describe("the SQL variants", () => {
     ["investigation", ["sql-catalog"]],
     ["query-optimization", ["sql-composers"]],
     ["database-assessment", ["sql-catalog"]],
-    ["operations", []],
+    ["operations", ["agent-readings"]],
     ["data-analysis", ["sql-catalog"]],
   ] as const)("%s requires exactly %p", (workflow, requires) => {
     expect(AGENT_WORKFLOW_VARIANTS.sql[workflow]?.requires).toEqual(requires);
@@ -497,7 +498,10 @@ describe("workflowAvailability", () => {
     });
     if (!open.open) throw new Error("refused");
     // Its verifier is the SQL investigation's, so only the language is written to the header.
-    expect(persistedRunFacts("agent", "investigation", open)).toEqual({ statementLanguage: "kubectl" });
+    expect(persistedRunFacts("agent", "investigation", "kubernetes", open)).toEqual({
+      engine: "kubernetes",
+      statementLanguage: "kubectl",
+    });
   });
 
   test("a kubernetes resource-efficiency run opens in agent mode and persists its language and its own verifier", () => {
@@ -508,14 +512,18 @@ describe("workflowAvailability", () => {
       variant: requiredVariant("kubectl", "query-optimization"),
     });
     if (!open.open) throw new Error("refused");
-    expect(persistedRunFacts("agent", "query-optimization", open)).toEqual({
+    expect(persistedRunFacts("agent", "query-optimization", "kubernetes", open)).toEqual({
+      engine: "kubernetes",
       statementLanguage: "kubectl",
       verifier: "agent-query-optimization-kubectl.1",
     });
     // A plan is judged by the planning rule, so it persists the language and never the verifier.
     const plan = workflowAvailability("planning", "query-optimization", "kubernetes");
     if (!plan.open) throw new Error("refused");
-    expect(persistedRunFacts("planning", "query-optimization", plan)).toEqual({ statementLanguage: "kubectl" });
+    expect(persistedRunFacts("planning", "query-optimization", "kubernetes", plan)).toEqual({
+      engine: "kubernetes",
+      statementLanguage: "kubectl",
+    });
   });
 
   test("a kubernetes cluster-health run opens in agent mode and persists its language and its own verifier", () => {
@@ -526,7 +534,8 @@ describe("workflowAvailability", () => {
       variant: requiredVariant("kubectl", "database-assessment"),
     });
     if (!open.open) throw new Error("refused");
-    expect(persistedRunFacts("agent", "database-assessment", open)).toEqual({
+    expect(persistedRunFacts("agent", "database-assessment", "kubernetes", open)).toEqual({
+      engine: "kubernetes",
       statementLanguage: "kubectl",
       verifier: "agent-database-assessment-kubectl.1",
     });
@@ -600,6 +609,87 @@ describe("workflowAvailability", () => {
     requirementEngines: { ...AGENT_REQUIREMENT_ENGINES, "cluster-usage-reading": [] },
     reviewed: AGENT_EXECUTION_ENGINES,
   } as const;
+
+  const AGENT_READINGS_SENTENCE =
+    "Agent mode takes no operational reading on this engine: it offers agent mode none of the session, slow-query, table, index, storage or health readings, so the operations workflow's reading tool could only refuse. Plan mode drafts here.";
+  const WITHOUT_READINGS = ["mqtt", "sparkplug", "opcua", "mtconnect"] as const;
+
+  test.each(WITHOUT_READINGS)(
+    "operations does not open in agent mode on %s, which offers agent mode no reading",
+    (type) => {
+      expect(workflowAvailability("agent", "operations", type)).toEqual({
+        open: false,
+        cause: "requirement-unmet",
+        sentence: AGENT_READINGS_SENTENCE,
+      });
+      expect(workflowAvailability("planning", "operations", type).open).toBe(true);
+    },
+  );
+
+  test.each(["spark", "kubernetes", "kafka"] as const)(
+    "operations still opens in agent mode on %s, which offers a reading",
+    (type) => {
+      expect(workflowAvailability("agent", "operations", type)).toMatchObject({
+        open: true,
+        variant: { requires: ["agent-readings"] },
+      });
+    },
+  );
+
+  test("AGENT_REQUIREMENT_ENGINES['agent-readings'] is every engine whose row offers a reading", () => {
+    const offering = (Object.keys(ENGINE_FACETS) as DatabaseType[]).filter(
+      (type) => ENGINE_FACETS[type].agentReadings.length > 0,
+    );
+    expect([...AGENT_REQUIREMENT_ENGINES["agent-readings"]]).toEqual(offering);
+    expect(WITHOUT_READINGS.filter((type) => AGENT_REQUIREMENT_ENGINES["agent-readings"].includes(type))).toEqual([]);
+  });
+
+  test("the operations arm refuses an engine the tables leave out of the agent-readings requirement", () => {
+    const tables = {
+      languages: AGENT_STATEMENT_LANGUAGE,
+      variants: AGENT_WORKFLOW_VARIANTS,
+      requirementEngines: { ...AGENT_REQUIREMENT_ENGINES, "agent-readings": [] },
+      reviewed: AGENT_EXECUTION_ENGINES,
+    } as const;
+    expect(workflowAvailability("agent", "operations", "spark", tables)).toEqual({
+      open: false,
+      cause: "requirement-unmet",
+      sentence: AGENT_READINGS_SENTENCE,
+    });
+    expect(workflowAvailability("planning", "operations", "spark", tables).open).toBe(true);
+  });
+
+  test("a workflow with no variant on an engine without a reading names only plan mode as the way forward", () => {
+    expect(workflowAvailability("agent", "query-optimization", "mqtt")).toEqual({
+      open: false,
+      cause: "no-variant",
+      sentence: "Agent mode does not offer this workflow on this engine. Plan mode drafts here.",
+    });
+  });
+
+  test("no availability refusal on an engine without a reading says the operations workflow runs there", () => {
+    const withoutReadings = SHIPPED_DATABASE_TYPES.filter((type) => ENGINE_FACETS[type].agentReadings.length === 0);
+    expect([...withoutReadings].sort()).toEqual([...WITHOUT_READINGS].sort());
+    const claims: string[] = [];
+    for (const type of withoutReadings) {
+      for (const mode of ["agent", "planning"] as const) {
+        for (const workflow of Object.keys(AGENT_WORKFLOW_PRESENTS_ANSWER) as AgentRunWorkflowType[]) {
+          const availability = workflowAvailability(mode, workflow, type);
+          if (availability.open) continue;
+          // `not-reviewed` is answered with `notReviewedSentence`, which names the operations workflow as a way forward.
+          if (availability.cause === "not-reviewed" || availability.cause === "no-adapter") {
+            claims.push(`${type} ${mode} ${workflow}: ${availability.cause}`);
+          } else if (
+            /operations workflow/.test(availability.sentence) &&
+            availability.sentence !== AGENT_READINGS_SENTENCE
+          ) {
+            claims.push(`${type} ${mode} ${workflow}: ${availability.sentence}`);
+          }
+        }
+      }
+    }
+    expect(claims).toEqual([]);
+  });
 
   test("a workflow the language has no variant of is refused with the no-variant sentence", () => {
     expect(workflowAvailability("agent", "query-optimization", "kubernetes", partialLanguage)).toEqual({
@@ -721,31 +811,45 @@ describe("workflowAvailability", () => {
     );
   });
 
-  test("an SQL run persists nothing, so its ledger header is the bytes it always was", () => {
+  test("an SQL run persists only its engine, since sql and the SQL verifier are what absence reads as", () => {
     const open = workflowAvailability("agent", "query-optimization", "postgres");
     if (!open.open) throw new Error("refused");
-    expect(persistedRunFacts("agent", "query-optimization", open)).toEqual({});
+    expect(persistedRunFacts("agent", "query-optimization", "postgres", open)).toEqual({ engine: "postgres" });
   });
 
-  test("a run on an engine with no language persists nothing either", () => {
+  test("a run on an engine with no language persists only its engine", () => {
     for (const mode of ["agent", "planning"] as const) {
       const open = workflowAvailability(mode, "operations", "spark");
       if (!open.open) throw new Error("refused");
-      expect(persistedRunFacts(mode, "operations", open), mode).toEqual({});
+      expect(persistedRunFacts(mode, "operations", "spark", open), mode).toEqual({ engine: "spark" });
     }
+  });
+
+  test.each(["agent", "planning"] as const)("persistedRunFacts records the engine in %s mode", (mode) => {
+    const open = workflowAvailability(mode, "operations", "kafka");
+    if (!open.open) throw new Error("refused");
+    expect(persistedRunFacts(mode, "operations", "kafka", open)).toEqual({
+      engine: "kafka",
+      statementLanguage: "kafkaread",
+    });
   });
 
   test("another language persists itself, and an agent run its own verifier where it is not the SQL one", () => {
     const variant = { ...sqlInvestigation, verifier: "agent-database-assessment.1" } as const;
     const open = { open: true, statementLanguage: "kubectl", variant } as const;
-    expect(persistedRunFacts("agent", "investigation", open)).toEqual({
+    expect(persistedRunFacts("agent", "investigation", "kubernetes", open)).toEqual({
+      engine: "kubernetes",
       statementLanguage: "kubectl",
       verifier: "agent-database-assessment.1",
     });
     // A plan is judged by the planning rule whatever the variant says, so no verifier is written for it.
-    expect(persistedRunFacts("planning", "investigation", open)).toEqual({ statementLanguage: "kubectl" });
+    expect(persistedRunFacts("planning", "investigation", "kubernetes", open)).toEqual({
+      engine: "kubernetes",
+      statementLanguage: "kubectl",
+    });
     // The SQL verifier is what an absent field reads as, so it is not written either.
-    expect(persistedRunFacts("agent", "investigation", { ...open, variant: sqlInvestigation })).toEqual({
+    expect(persistedRunFacts("agent", "investigation", "kubernetes", { ...open, variant: sqlInvestigation })).toEqual({
+      engine: "kubernetes",
       statementLanguage: "kubectl",
     });
   });

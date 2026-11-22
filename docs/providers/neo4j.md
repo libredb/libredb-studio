@@ -403,7 +403,8 @@ Health answers healthy after the connectivity check and the ping, or raises; Bol
 
 Which of the seven monitoring panels and which maintenance operations `neo4j` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/graph/neo4j/engine-facets.ts).
 `getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
-The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
 
 | Monitoring panel | Offered | Why |
 |---|---|---|
@@ -417,6 +418,8 @@ The agent's `inspect_operations` tool does not read this row yet: it still calls
 
 Maintenance operations offered: none.
 `POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `sessions`, `table-stats`, `index-stats`, `health`.
 
 ## 8. Maintenance
 

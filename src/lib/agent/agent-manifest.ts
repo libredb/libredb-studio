@@ -4,7 +4,8 @@
  *
  * Client-safe on purpose, like `engine-support.ts`: besides types it imports only the language packs' and the engines'
  * client facets (`languages/client.ts`, `languages/engines/client.ts`), the leaf `workflow-tool-sets.ts`, the type id
- * check `@/lib/db/type-id.ts` and the review record in `@/lib/db/compatibility.ts`, which are client-safe themselves, because the rail, the safety strip and the posture read it, and a provider module or
+ * check `@/lib/db/type-id.ts`, the review record in `@/lib/db/compatibility.ts` and the engine facets registry
+ * `@/lib/db/engine-facets` (its rows, their types and the type id check), which are client-safe themselves, because the rail, the safety strip and the posture read it, and a provider module or
  * `node:crypto` here would reach a browser bundle. What a language DOES (its fingerprint, its advice, its admission) is
  * server code and lives in `languages/server.ts`.
  *
@@ -13,6 +14,7 @@
  * has a language exactly when its provider has `queryReadOnly`.
  */
 import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
+import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import { assertDatabaseType } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
 import type { AgentGoalVerifierId } from "./goal-verifier";
@@ -160,7 +162,7 @@ function packRequirementProjection<Value>(
  * answer it with no provider in hand. A requirement only one language's variants name is its pack's own
  * (`AgentPackVariantRequirement`).
  */
-export type AgentVariantRequirement = "sql-catalog" | "sql-composers" | AgentPackVariantRequirement;
+export type AgentVariantRequirement = "sql-catalog" | "sql-composers" | "agent-readings" | AgentPackVariantRequirement;
 
 /**
  * The engines each requirement holds on. `sql-catalog` and `sql-composers` are read from the engines' client dialects
@@ -168,6 +170,8 @@ export type AgentVariantRequirement = "sql-catalog" | "sql-composers" | AgentPac
  * the engines that compose a catalog read, and those that compose both a catalog read and an estimating plan. A
  * statement workflow names the one it cannot run without, so a dialect with no estimating plan still opens every
  * workflow whose verdict cites none; the assessment verdict's table profile is deliberately not held (`client.ts`).
+ * `agent-readings`, which the operations variant names, holds on every engine whose `ENGINE_FACETS` row offers agent
+ * mode at least one curated reading (`agentReadings`), in the registry's order.
  * A pack's requirement holds on the engines its pack names (`AGENT_PACK_REQUIREMENTS`).
  * `agent-manifest.test.ts` holds both SQL requirements to the composed-SQL entry points in `composed-sql.ts` and each
  * pack requirement to the providers that declare its reading.
@@ -176,6 +180,9 @@ export const AGENT_REQUIREMENT_ENGINES: Readonly<Record<AgentVariantRequirement,
   Object.freeze({
     "sql-catalog": enginesSupporting("catalogRead"),
     "sql-composers": enginesSupporting("catalogRead", "planEstimate"),
+    "agent-readings": (Object.keys(ENGINE_FACETS) as DatabaseType[]).filter(
+      (type) => ENGINE_FACETS[type].agentReadings.length > 0,
+    ),
     ...packRequirementProjection((spec) => spec.engines),
   } satisfies Record<AgentVariantRequirement, readonly DatabaseType[]>);
 
@@ -345,8 +352,24 @@ const MANIFEST_TABLES: AgentAvailabilityTables = Object.freeze({
   reviewed: AGENT_EXECUTION_ENGINES,
 });
 
-const NO_VARIANT_SENTENCE =
-  "Agent mode does not offer this workflow on this engine. The operations workflow runs here, and plan mode drafts here.";
+/**
+ * Whether the operations workflow opens in agent mode on `type`: the engine offers agent mode at least one curated
+ * reading. Read by the availability arm and by the posture, so neither names the workflow as a way forward where it
+ * does not open.
+ */
+export function operationsWorkflowOpens(
+  type: DatabaseType,
+  requirementEngines: Readonly<Record<AgentVariantRequirement, readonly DatabaseType[]>> = AGENT_REQUIREMENT_ENGINES,
+): boolean {
+  return requirementEngines["agent-readings"].includes(type);
+}
+
+/** The refusal of a workflow the engine's language has no variant of, naming only the ways forward that open there. */
+function noVariantSentence(operationsOpens: boolean): string {
+  return operationsOpens
+    ? "Agent mode does not offer this workflow on this engine. The operations workflow runs here, and plan mode drafts here."
+    : "Agent mode does not offer this workflow on this engine. Plan mode drafts here.";
+}
 
 /**
  * The refusal of a statement-sending run on an engine whose language would open it but which Studio's review record
@@ -366,6 +389,8 @@ const REQUIREMENT_SENTENCES: Readonly<Record<AgentVariantRequirement, string>> =
     "Agent mode has no verified catalog composition for this engine, so this workflow's tools could only refuse. The operations workflow runs here, and plan mode drafts here.",
   "sql-composers":
     "This workflow needs both a catalog read and an estimating plan, and agent mode has no verified composition of both for this engine, so this workflow's tools could only refuse. Workflows that need less still run here, the operations workflow among them, and plan mode drafts here.",
+  "agent-readings":
+    "Agent mode takes no operational reading on this engine: it offers agent mode none of the session, slow-query, table, index, storage or health readings, so the operations workflow's reading tool could only refuse. Plan mode drafts here.",
   ...packRequirementProjection((spec) => spec.sentence),
 } satisfies Record<AgentVariantRequirement, string>);
 
@@ -381,7 +406,8 @@ function variantIn(
 
 /**
  * The arms in the order they exclude each other. Plan mode first, because it executes nothing it drafts and so no
- * adapter gates it. Then operations, which sends no statement and opens on every engine, language or not. Only then
+ * adapter gates it. Then operations, which sends no statement and opens on every engine that offers agent mode a
+ * curated reading (its `agent-readings` requirement), language or not. Only then
  * does the language matter, then whether Studio's review record lists the engine (the record the provider factory
  * and the core read path read again at run time), then whether the language has the workflow, then whether the engine
  * holds what the variant needs. The record is read after the language, so an engine with neither keeps the
@@ -405,30 +431,48 @@ export function workflowAvailability(
       variant: language === null ? null : (variantIn(tables, language, workflow) ?? null),
     };
   }
-  if (workflow === "operations") return { open: true, statementLanguage: language, variant: OPERATIONS_VARIANT };
+  if (workflow === "operations") {
+    if (!operationsWorkflowOpens(type, tables.requirementEngines)) {
+      return { open: false, cause: "requirement-unmet", sentence: REQUIREMENT_SENTENCES["agent-readings"] };
+    }
+    return { open: true, statementLanguage: language, variant: OPERATIONS_VARIANT };
+  }
   if (language === null) return { open: false, cause: "no-adapter" };
   if (!tables.reviewed.includes(type)) return { open: false, cause: "not-reviewed" };
   const variant = variantIn(tables, language, workflow);
-  if (variant === undefined) return { open: false, cause: "no-variant", sentence: NO_VARIANT_SENTENCE };
+  if (variant === undefined) {
+    return {
+      open: false,
+      cause: "no-variant",
+      sentence: noVariantSentence(operationsWorkflowOpens(type, tables.requirementEngines)),
+    };
+  }
   const unmet = variant.requires.find((requirement) => !tables.requirementEngines[requirement].includes(type));
   if (unmet !== undefined) return { open: false, cause: "requirement-unmet", sentence: REQUIREMENT_SENTENCES[unmet] };
   return { open: true, statementLanguage: language, variant };
 }
 
 /**
- * What a run opened under an availability persists: the language unless it is sql, the verifier unless it is the SQL
- * one. Absence is what both fields read as, so an SQL run writes the header bytes it always wrote. A plan is judged by
- * the planning rule whatever its variant says, so it never persists a verifier.
+ * What a run opened under an availability on an engine persists: the engine's type id, in every mode, because it is a
+ * fact of the run rather than of its tools; the language unless it is sql; the verifier unless it is the SQL one.
+ * Absence is what the last two read as. A plan is judged by the planning rule whatever its variant says, so it never
+ * persists a verifier.
  */
 export function persistedRunFacts(
   mode: AgentRunMode,
   workflow: AgentRunWorkflowType,
+  type: DatabaseType,
   availability: Extract<AgentWorkflowAvailability, { open: true }>,
-): { readonly statementLanguage?: AgentStatementLanguageId; readonly verifier?: AgentGoalVerifierId } {
+): {
+  readonly engine: DatabaseType;
+  readonly statementLanguage?: AgentStatementLanguageId;
+  readonly verifier?: AgentGoalVerifierId;
+} {
   const language = availability.statementLanguage;
   const sqlVerifier = requiredVariant(DEFAULT_STATEMENT_LANGUAGE, workflow).verifier;
   const verifier = mode === "agent" ? availability.variant?.verifier : undefined;
   return {
+    engine: type,
     ...(language === null || language === DEFAULT_STATEMENT_LANGUAGE ? {} : { statementLanguage: language }),
     ...(verifier === undefined || verifier === sqlVerifier ? {} : { verifier }),
   };

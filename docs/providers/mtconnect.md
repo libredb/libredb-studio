@@ -353,7 +353,8 @@ The Header of a read without `from` and `to`: `instanceId`, `firstSequence`, `la
 
 Which of the seven monitoring panels and which maintenance operations `mtconnect` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/industrial/mtconnect/engine-facets.ts).
 `getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
-The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
 
 | Monitoring panel | Offered | Why |
 |---|---|---|
@@ -367,6 +368,9 @@ The agent's `inspect_operations` tool does not read this row yet: it still calls
 
 Maintenance operations offered: none.
 `POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: none.
+`health` is not offered to agent mode: the agent handle refuses it with `MTCONNECT_AGENT_WITHHELD.health`.
 
 ## 8. Maintenance
 
@@ -583,7 +587,8 @@ The agent reads it through `runServerPack` and `agentEnginePack`.
 Both overlays are empty, so the engine resolves to the `mtconnectread` family pack itself.
 The `mtconnectread` statement-language family has no dialect-bound member.
 This overlay overrides no Shared member, so every Shared member is the `mtconnectread` statement-language family's own.
-The family offers the investigation workflow, through `run_read_query` with one request line, and the operations workflow; it offers no query optimization or database assessment, since an agent has no plan and no profile, and no data analysis, whose tools assume a store of records, and no workflow hands an answer to the editor.
+The family offers the investigation workflow, through `run_read_query` with one request line, and holds an operations variant; it offers no query optimization or database assessment, since an agent has no plan and no profile, and no data analysis, whose tools assume a store of records, and no workflow hands an answer to the editor.
+The operations workflow still does not open in agent mode on MTConnect: the engine offers agent mode no curated reading, so Start refuses it with the reason, and plan mode drafts instead.
 The investigation rule tells the model to read what the question names directly, a device's or a data item's current values or a window of its history, and to read `/probe` only for a data item neither the question nor the inventory names.
 Plan mode's safety strip is the shared one, which is true here: an agent-mode handle reads only the device model when it opens, and that one read grounds the plan; plan mode follows the provider's `statementLanguage` label, which names the console's request line, its routes and what is never drafted.
 The editor language id stays `mtconnect`, and the fence alias `mtconnectread` names this engine.

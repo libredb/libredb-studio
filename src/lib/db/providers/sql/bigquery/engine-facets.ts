@@ -2,12 +2,13 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
 
 /**
  * `bigquery`: the monitoring panels whose reads ask the engine, now or from what it said at connect. `getMonitoringData`
- * never reads a panel not offered and no surface draws it, though the agent's `inspect_operations` tool still calls
- * the session, slow-query, table, index and storage members on every engine:
+ * never reads a panel not offered and no surface draws it:
  *
  * - `indexes`: `getIndexStats` answers `[]` without asking the engine.
  *
  * Maintenance: `bigquery` offers no maintenance operation.
+ *
+ * Agent readings: `sessions`, `slow-queries`, `table-stats`, `storage` and `health`.
  */
 export const BIGQUERY_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -20,4 +21,5 @@ export const BIGQUERY_ENGINE_FACETS: EngineFacets = {
     storage: "offered",
   },
   maintenance: [],
+  agentReadings: ["sessions", "slow-queries", "table-stats", "storage", "health"],
 };

@@ -366,7 +366,8 @@ Kubernetes keeps no query log, lists no client sessions and has no tables, so on
 
 Which of the seven monitoring panels and which maintenance operations `kubernetes` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/platform/kubernetes/engine-facets.ts).
 `getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
-The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
 
 | Monitoring panel | Offered | Why |
 |---|---|---|
@@ -380,6 +381,8 @@ The agent's `inspect_operations` tool does not read this row yet: it still calls
 
 Maintenance operations offered: none.
 `POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `health`.
 
 ## 8. Maintenance
 
@@ -437,7 +440,7 @@ MCP:
 - Its admission refuses what an agent run's does, exec, writes and the paging line among them, before anything is acquired; a watch is refused by the machine read; a read past the 1000-row budget is refused with the command's own row-cap advice, and it takes no `offset` and no `database` ([`docs/MCP.md`](../MCP.md)).
 - `inspect_schema` refuses a Kubernetes connection by name and names `run_kubectl_read` in its refusal: it lists the kinds an engine declares as relations, and every Kubernetes kind is `config`, so it has no table to list; the refusal is answered as soon as the connection resolves, before anything is acquired or sent, so no object name, a Secret's included, reaches it.
 - A seed may opt a Kubernetes connection in with `mcp: true`; every MCP read runs as its agent token, `agentPassword` ([an agent credential](../SEED_CONNECTIONS.md#an-agent-credential)), when it sets one, and as its `password`, the ServiceAccount token, otherwise.
-- The operations workflow opens on Kubernetes in both modes, as on every engine, because it sends no statement; its reports of sessions, slow queries, health, storage, table statistics and index usage come back empty or N/A here.
+- The operations workflow opens on Kubernetes in both modes, because it sends no statement; in agent mode it offers only the `health` reading, which comes back with N/A figures here, and refuses every other kind by name before the cluster is reached.
 
 ### 9.1 Agent language pack
 

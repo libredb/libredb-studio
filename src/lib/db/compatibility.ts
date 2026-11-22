@@ -769,8 +769,9 @@ export const SINGLE_WRITER_FILE: Readonly<Record<DatabaseType, boolean>> = Objec
  * overclaims (docs/AGENT.md, the "Agent mode requires" paragraph that opens it):
  * - **Plan mode opens on every engine and runs no statement of the model's anywhere.** Since #414
  *   a plan run is grounded, and this list reaches only that grounding: see below.
- * - **The `operations` workflow opens on every engine, in both modes**, because it composes no
- *   SQL: its `agent-operations` acquisition sets `requiresReadOnlyStatements: false`.
+ * - **The `operations` workflow opens without this list, in both modes**, because it composes no
+ *   SQL: its `agent-operations` acquisition sets `requiresReadOnlyStatements: false`. In agent mode
+ *   it opens on every engine whose `ENGINE_FACETS` row offers agent mode a curated reading.
  *
  * Both are grounded before their first turn, and on an engine whose catalog read is a composed
  * statement (its overlay's `catalogCapture`) that read is sent under `agent-read-only`, so it passes

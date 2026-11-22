@@ -39,6 +39,7 @@ export const OPERATIONS_VARIANT: AgentWorkflowVariant = Object.freeze({
     "Your objective is how this database is RUNNING right now: what is connected to it, what it is spending its time on, what is blocked, and where its space and its indexes are going.",
   planDeliverable: Object.freeze({ kind: "prose" }),
   canAutoExecute: false,
-  requires: Object.freeze<AgentVariantRequirement[]>([]),
+  // An engine that offers agent mode no curated reading would hand this workflow a reading tool with nothing to offer.
+  requires: Object.freeze<AgentVariantRequirement[]>(["agent-readings"]),
   verifier: "agent-operations.2",
 });
