@@ -708,12 +708,12 @@ At its start, before it serves, the first server:
 
 From then on a version 1 or unsealed value is refused by name, as `retired`, and omitted like any value that does not open.
 
-Every other server that starts while the first holds the lock waits for it, finds the store retired, and logs that nothing was read, written or backed up.
+Every other server that starts while the first holds the lock waits for it, finds the store retired, and logs that no stored credential was read or re-sealed and nothing was backed up.
 Then remove `STORAGE_ENCRYPTION_RESEAL`, set `STORAGE_ENCRYPTION_REQUIRE_V2=true`, and start again ([Requiring version 2](#requiring-version-2-storage_encryption_require_v2)).
-A store that is already retired is never read, written or backed up again, but while the variable is set without `STORAGE_ENCRYPTION_REQUIRE_V2`, every start that finds no `credential_envelope` row re-seals the store as it is then.
+A store that is already retired is never re-sealed or backed up again, but while the variable is set without `STORAGE_ENCRYPTION_REQUIRE_V2`, every start that finds no `credential_envelope` row re-seals the store as it is then.
 
 The re-seal opens each value with the key the server runs with.
-It derives that key before it reads anything, so a server with no usable key material refuses the start by name and changes nothing.
+It derives that key before it reads anything, so a server with no usable key material refuses the start by name, reads and writes no stored credential, and backs nothing up.
 
 A well-formed version 1 envelope, a connection value or an account's second factor, that does not open under the key in use was most likely sealed under another key, and once version 1 is retired that key could not open it again.
 So the re-seal refuses: it rolls back, the store is as it was, and the start stops with a banner that names each such value, as `<owner> <connection id> <field>` or `<email> <field>`, and says that the key in use is likely not the one that sealed them.
@@ -743,7 +743,7 @@ The start refuses, with a banner and exit status 1, when:
 
 - the value is anything other than `true`, `1`, `on`, `leave-unopened`, `false`, `0`, `off` or empty, because a requested re-seal that cannot be read must not be skipped;
 - `STORAGE_PROVIDER` is `local`, which has no server store;
-- `STORAGE_ENCRYPTION_REQUIRE_V2` is set and the store holds no `credential_envelope` row: the re-seal does not run, and nothing is read, written or backed up ([Requiring version 2](#requiring-version-2-storage_encryption_require_v2));
+- `STORAGE_ENCRYPTION_REQUIRE_V2` is set and the store holds no `credential_envelope` row: the re-seal does not run, no stored credential is read or written, and nothing is backed up ([Requiring version 2](#requiring-version-2-storage_encryption_require_v2));
 - the store cannot be opened, or its `credential_envelope` row holds a value this version does not know;
 - the server has no usable key material;
 - the backup cannot be written (a target that already exists, a directory the process cannot write, or an in-memory SQLite store);
@@ -751,7 +751,8 @@ The start refuses, with a banner and exit status 1, when:
 - an element of a `connections` row cannot be re-sealed, or a row the re-seal must write back cannot be serialized, for example because an element nests deeper than the serializer goes: the banner names the owner and the element, so remove or repair that element and start again;
 - anything else fails during the re-seal.
 
-A refusal before the re-seal's transaction changes nothing, and a failure inside it rolls every change back.
+A refusal before the re-seal's transaction reads and writes no stored credential and backs nothing up, and a failure inside it rolls every change back.
+Opening the store, as every start does first, creates the tables this version adds when they are missing, so a refused start can leave them, empty, in a store an earlier version wrote.
 A database connection lost during the commit can lose only the answer to a commit that happened, so the banner does not claim that the store is unchanged.
 Start again with the variable still set: that run reports the store's state, retired already or re-sealed now.
 
@@ -767,7 +768,7 @@ STORAGE_ENCRYPTION_RESEAL: remove it now, and start with STORAGE_ENCRYPTION_REQU
 ```
 
 The second to fifth lines appear only when they have something to name, and the third only with `leave-unopened`.
-On a store that records the re-seal already, `STORAGE_ENCRYPTION_RESEAL: this store retired version 1 already, so nothing was read, written or backed up.` takes the place of the first five, and the last line follows it.
+On a store that records the re-seal already, `STORAGE_ENCRYPTION_RESEAL: this store retired version 1 already, so no stored credential was read or re-sealed and nothing was backed up.` takes the place of the first five, and the last line follows it.
 On the second and third lines an entry is `<owner> <connection id> <field>` for a connection value, or `<email> <field>` for an account's second factor (`totpSecret` or `totpPending`).
 On the fourth an entry is always a connection value, `<owner> <connection id> <field>`, and its reason is `not-text` or `mixed`.
 On the fifth an entry is `<owner> connections` for a row whose data is not a JSON list, or `<owner> connections[<index>]` for one element of the list.
@@ -805,7 +806,7 @@ The re-seal is the one step that converts such values: it seals each one as `v2`
 
 At its start, before it serves and before any re-seal step, a server with the setting opens the store and refuses the start by name unless the store holds the `credential_envelope = v2` row.
 While the setting is set, the re-seal runs only on a store that records it, where it has nothing to do.
-So with `STORAGE_ENCRYPTION_RESEAL` set too, a store with the row starts and logs that nothing was read, written or backed up, and a store without it is refused before anything is read, written or backed up.
+So with `STORAGE_ENCRYPTION_RESEAL` set too, a store with the row starts and logs that no stored credential was read or re-sealed and nothing was backed up, and a store without it is refused before any stored credential is read or written and before any backup.
 A store this version created or re-sealed holds that row.
 It is missing from a store that was never re-sealed, from one restored from a copy taken before its re-seal, and from one whose row was deleted, as the recovery steps in [Re-sealing the store](#re-sealing-the-store) and [Downgrading](#downgrading) do.
 If the store was re-sealed before, restore it from a backup taken after that re-seal.

@@ -20,7 +20,7 @@ import { sealVersionOne } from "../../../helpers/storage-envelope-v1";
 
 /** Logged when STORAGE_ENCRYPTION_RESEAL is set and the store records the re-seal already. */
 const ALREADY_RETIRED_LINE =
-  "STORAGE_ENCRYPTION_RESEAL: this store retired version 1 already, so nothing was read, written or backed up.";
+  "STORAGE_ENCRYPTION_RESEAL: this store retired version 1 already, so no stored credential was read or re-sealed and nothing was backed up.";
 /** Logged after every start with STORAGE_ENCRYPTION_RESEAL set that the store passed. */
 const REMOVE_RESEAL_LINE =
   "STORAGE_ENCRYPTION_RESEAL: remove it now, and start with STORAGE_ENCRYPTION_REQUIRE_V2=true from now on; while STORAGE_ENCRYPTION_RESEAL is set without STORAGE_ENCRYPTION_REQUIRE_V2, every start that finds no credential_envelope row re-seals the store as it is then.";
@@ -216,8 +216,9 @@ describe("resealStoreAtBoot", () => {
     );
   });
 
-  test("refuses the boot naming the version 1 values the key in use does not open, and changes nothing", async () => {
+  test("refuses the boot naming the version 1 values the key in use does not open, and leaves the stored credentials and the envelope row as they were", async () => {
     previousVersionStore();
+    const before = userStorageRows();
     process.env.STORAGE_ENCRYPTION_RESEAL = "true";
     process.env.JWT_SECRET = randomBytes(32).toString("base64url");
     resetStorageEncryptionKey();
@@ -230,6 +231,7 @@ describe("resealStoreAtBoot", () => {
     expect(banner).toContain("1 version 1 value(s) do not open under the key in use: alice c1 password");
     expect(banner).toContain("STORAGE_ENCRYPTION_RESEAL=leave-unopened");
     expect(markerOf()).toBeUndefined();
+    expect(userStorageRows()).toEqual(before);
   });
 
   test("with leave-unopened, re-seals, retires version 1 and names the version 1 values it left", async () => {
@@ -282,6 +284,12 @@ describe("resealStoreAtBoot", () => {
     expect(banner).toContain("An in-memory SQLite store cannot be backed up");
     expect(banner).toContain("start again with STORAGE_ENCRYPTION_RESEAL still set");
     expect(banner).toContain("retired already or re-sealed now");
+    // Opening the store creates the tables this version adds, so a failure before the transaction claims only that no
+    // stored credential changed.
+    expect(banner).toContain(
+      "failure before it (opening the store, reading its state, the key, the backup) changed no stored credential.",
+    );
+    expect(banner).not.toContain("changed nothing");
     // The failing process cannot tell a failure before the transaction, a rollback and a commit whose answer was lost
     // apart, so the banner promises none of them.
     expect(banner).not.toContain("The store is as it was");
@@ -344,19 +352,44 @@ describe("resealStoreAtBoot", () => {
     expect(banner).toContain("STORAGE_ENCRYPTION_REQUIRE_V2 is set, but STORAGE_PROVIDER is local");
   });
 
-  test("with STORAGE_ENCRYPTION_REQUIRE_V2 set, refuses the start by name on a store that holds no credential_envelope row, and changes nothing", async () => {
+  test("with STORAGE_ENCRYPTION_REQUIRE_V2 set, refuses the start by name on a store an earlier version wrote, reading or writing no stored credential and backing nothing up, whatever STORAGE_ENCRYPTION_RESEAL says", async () => {
     previousVersionStore();
+    const before = userStorageRows();
     process.env.STORAGE_ENCRYPTION_REQUIRE_V2 = "true";
 
-    const { result, exits, banner } = await run();
+    for (const value of [undefined, "true", "leave-unopened"]) {
+      // oxlint-disable-next-line no-await-in-loop -- each value boots on its own, one after another.
+      await closeStorageProvider();
+      if (value === undefined) delete process.env.STORAGE_ENCRYPTION_RESEAL;
+      else process.env.STORAGE_ENCRYPTION_RESEAL = value;
+      const reads = spyOnStoreReads();
+      try {
+        // oxlint-disable-next-line no-await-in-loop -- each value boots on its own, one after another.
+        const { result, exits, banner } = await run();
 
-    expect(result).toBe(false);
-    expect(exits).toEqual([1]);
-    expect(banner).toContain("the STORAGE_ENCRYPTION_REQUIRE_V2 check did not pass");
-    expect(banner).toContain(VERSION_TWO_NOT_RECORDED);
-    expect(readdirSync(dir).filter((name) => name.includes("pre-reseal"))).toEqual([]);
-    expect(markerOf()).toBeUndefined();
+        // rewriteStoredCredentials, getAllData, getCollection, listAccounts: none ran.
+        expect({ value, reads: reads.calls() }).toEqual({ value, reads: [0, 0, 0, 0] });
+        expect({ value, result, exits }).toEqual({ value, result: false, exits: [1] });
+        expect(banner).toContain("the STORAGE_ENCRYPTION_REQUIRE_V2 check did not pass");
+        expect(banner).toContain(VERSION_TWO_NOT_RECORDED);
+      } finally {
+        reads.restore();
+      }
+      expect(readdirSync(dir).filter((name) => name.includes("pre-reseal"))).toEqual([]);
+      expect(markerOf()).toBeUndefined();
+      expect(userStorageRows()).toEqual(before);
+    }
   });
+
+  /** The user_storage rows of the store file, read on a connection of its own. */
+  function userStorageRows(): unknown[] {
+    const db = new Database(path, { readonly: true });
+    try {
+      return db.prepare("SELECT * FROM user_storage ORDER BY user_id, collection").all();
+    } finally {
+      db.close();
+    }
+  }
 
   /** Every table of the store file and its rows, read on a connection of its own. */
   function storeDump(): Record<string, unknown[]> {
@@ -387,7 +420,7 @@ describe("resealStoreAtBoot", () => {
     };
   }
 
-  test("with both set, refuses the start by name on a store that records no re-seal, before anything is read, written or backed up, whatever STORAGE_ENCRYPTION_RESEAL says", async () => {
+  test("with both set, refuses the start by name on a store that records no re-seal, reading or writing no stored credential and backing nothing up, whatever STORAGE_ENCRYPTION_RESEAL says", async () => {
     // A store re-sealed once whose credential_envelope row is gone since, so every table exists and only the row is
     // missing.
     previousVersionStore();

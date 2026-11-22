@@ -1260,7 +1260,7 @@ describe("PostgresStorageProvider", () => {
       ),
     );
 
-  test("with STORAGE_ENCRYPTION_RESEAL and STORAGE_ENCRYPTION_REQUIRE_V2 both set, the start is refused by name on a store with no credential_envelope row, before anything is read, written or backed up", async () => {
+  test("with STORAGE_ENCRYPTION_RESEAL and STORAGE_ENCRYPTION_REQUIRE_V2 both set, the start is refused by name on a store with no credential_envelope row, reading or writing no stored credential and backing nothing up", async () => {
     const { result, exits, banner } = await bootWithBothSettings(undefined);
 
     expect(credentialWork()).toEqual([]);

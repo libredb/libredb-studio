@@ -49,7 +49,7 @@ export const UNOPENED_ADVICE =
 
 /** Logged when STORAGE_ENCRYPTION_RESEAL is set and the store records the re-seal already. */
 const ALREADY_RETIRED_LINE =
-  "STORAGE_ENCRYPTION_RESEAL: this store retired version 1 already, so nothing was read, written or backed up.";
+  "STORAGE_ENCRYPTION_RESEAL: this store retired version 1 already, so no stored credential was read or re-sealed and nothing was backed up.";
 
 /** Logged after every start with STORAGE_ENCRYPTION_RESEAL set that the store passed. */
 const REMOVE_RESEAL_LINE =
@@ -185,7 +185,7 @@ async function resealAtBoot(leaveUnopened: boolean): Promise<boolean> {
       " LibreDB Studio cannot start: the credential re-seal did not complete",
       ` ${error instanceof Error ? error.message : String(error)}`,
       " The re-seal commits in one transaction. A failure inside it rolls every change back, and a",
-      " failure before it (opening the store, reading its state, the key, the backup) changed nothing.",
+      " failure before it (opening the store, reading its state, the key, the backup) changed no stored credential.",
       " A database connection lost at the commit may have lost only the answer to a commit that happened.",
       " Fix the cause and start again with STORAGE_ENCRYPTION_RESEAL still set: that run reports the",
       " store's state, retired already or re-sealed now. A SQLite run that stopped after its backup",
