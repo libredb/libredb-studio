@@ -395,6 +395,11 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   [routeEvents, "failure", "providerTextScrub"],
   [routeEvents, "failure", "withheldProviderError"],
   [childHandlers, "runQuery", "providerTextScrub"],
+  [childHandlers, "answeringFor", "providerTextScrub"],
+  [childHandlers, "answeringFor", "withheldProviderError"],
+  [childHandlers, "answeringFor", "toResponseError"],
+  [childHandlers, "toResponseError", "withheldProviderError"],
+  [childHandlers, "toResponseError", "withWithheldText"],
 ];
 
 /** The reason a read of an inventory snapshot's provider sentence is no crossing of its own. */

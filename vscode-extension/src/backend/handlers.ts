@@ -1,16 +1,17 @@
 // The child's request handlers: each reads its params at the edge, then calls the provider layer as the route it
-// mirrors does (part 1, "The backend interface").
+// mirrors does (part 1, "The backend interface"). A provider-reaching step runs inside `answeringFor`, so a provider's
+// error whose text holds a credential of the connection is answered withheld, as the routes answer it.
 // The factory functions arrive as one parameter object, which main.ts fills with the real ones and the unit leg with
 // fakes, so this module value-imports neither src/lib/db/factory.ts nor src/lib/api/test-connection.ts.
 import { type CancellationToken, ErrorCodes, type MessageConnection, ResponseError } from "vscode-jsonrpc";
 import { checkEditorQuery, runEditorQuery } from "@/lib/api/editor-query";
-import { databaseErrorBody, internalErrorBody } from "@/lib/api/error-body";
+import { databaseErrorBody, internalErrorBody, withWithheldText } from "@/lib/api/error-body";
 import { pageOptionError } from "@/lib/api/page-probe";
 import type { testConnection } from "@/lib/api/test-connection";
 import { parseConnectionString } from "@/lib/connection-string-parser";
 import { scopeToCatalog } from "@/lib/db/catalog-scope";
 import { CONNECTION_FORM } from "@/lib/db/connection-form";
-import { providerTextScrub } from "@/lib/db/operations/provider-text";
+import { type ProviderTextScrub, providerTextScrub, withheldProviderError } from "@/lib/db/operations/provider-text";
 import { ConnectionError, waitedSeconds } from "@/lib/db/errors";
 import { executionUiFor } from "@/lib/db/execution-ui";
 import type { clearProviderCache, enabledProviderTypes, getOrCreateProvider } from "@/lib/db/factory";
@@ -186,6 +187,23 @@ function readConnectionParams(params: unknown): OpenRecord {
   return { connection, posture: { allowExternalFileAccess } };
 }
 
+/**
+ * Runs `work`, a handler's provider-reaching step on `connection`, and answers a failure whose text holds a credential
+ * of the connection (core's scrub, `providerTextScrub(connection, "any")`) as `toResponseError` answers it with that
+ * scrub: the error's own status, code, kind, outcome and retryable, with only its texts replaced. Any other failure,
+ * a `ResponseError` of the child's own included, is rethrown as it is, and `registerHandlers` answers it.
+ */
+async function answeringFor<T>(connection: DatabaseConnection, work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    if (error instanceof ResponseError) throw error;
+    const scrub = providerTextScrub(connection, "any");
+    if (withheldProviderError(scrub, error) === null) throw error;
+    throw toResponseError(error, scrub);
+  }
+}
+
 export function createHandlers(
   factory: BackendFactory,
   runtime: BackendRuntime,
@@ -279,7 +297,9 @@ export function createHandlers(
         }, TEST_DEADLINE_MS);
       });
       try {
-        return await Promise.race([factory.testConnection(connection, posture, TEST_ROUTE, stop.signal), deadline]);
+        return await answeringFor(connection, () =>
+          Promise.race([factory.testConnection(connection, posture, TEST_ROUTE, stop.signal), deadline]),
+        );
       } finally {
         clearTimeout(timer);
       }
@@ -289,26 +309,28 @@ export function createHandlers(
       const record = readConnectionParams(params);
       checkEnabledLocalFile(record.connection, record.posture);
       const { id } = record.connection;
-      return await inTurn(id, async () => {
-        // An edited connection closes its old pool now rather than at the idle sweep.
-        if (registry.differs(record)) {
-          registry.delete(id);
-          await factory.removeProvider(id);
-        }
-        const provider = await factory.getOrCreateProvider(record.connection, {}, record.posture);
-        registry.set(record);
-        const capabilities = provider.getCapabilities();
-        return {
-          description: {
-            // supportsQueryCancel is computed as POST /api/db/provider-meta computes it.
-            capabilities: { ...capabilities, supportsQueryCancel: supportsQueryCancel(provider) },
-            labels: provider.getLabels(),
-            editorLanguage: editorLanguageOf(capabilities),
-            // A contract registry row, looked up by the type the connection was opened with.
-            commitKeyword: executionUiFor(record.connection.type).commitKeyword,
-          },
-        };
-      });
+      return await answeringFor(record.connection, () =>
+        inTurn(id, async () => {
+          // An edited connection closes its old pool now rather than at the idle sweep.
+          if (registry.differs(record)) {
+            registry.delete(id);
+            await factory.removeProvider(id);
+          }
+          const provider = await factory.getOrCreateProvider(record.connection, {}, record.posture);
+          registry.set(record);
+          const capabilities = provider.getCapabilities();
+          return {
+            description: {
+              // supportsQueryCancel is computed as POST /api/db/provider-meta computes it.
+              capabilities: { ...capabilities, supportsQueryCancel: supportsQueryCancel(provider) },
+              labels: provider.getLabels(),
+              editorLanguage: editorLanguageOf(capabilities),
+              // A contract registry row, looked up by the type the connection was opened with.
+              commitKeyword: executionUiFor(record.connection.type).commitKeyword,
+            },
+          };
+        }),
+      );
     },
 
     async closeConnection(params) {
@@ -324,27 +346,31 @@ export function createHandlers(
       const connectionId = connectionIdOf(params);
       const parent = fieldOf(params, "parent");
       const path = parent === undefined ? undefined : stringArray(parent, "parent");
-      return await (await providerOf(openRecord(connectionId))).listContainers(path);
+      const record = openRecord(connectionId);
+      return await answeringFor(record.connection, async () => (await providerOf(record)).listContainers(path));
     },
 
     async countObjects(params) {
       const connectionId = connectionIdOf(params);
       const container = stringArray(fieldOf(params, "container"), "container");
-      return await (await providerOf(openRecord(connectionId))).countObjects(container);
+      const record = openRecord(connectionId);
+      return await answeringFor(record.connection, async () => (await providerOf(record)).countObjects(container));
     },
 
     async listObjects(params) {
       const connectionId = connectionIdOf(params);
       const container = stringArray(fieldOf(params, "container"), "container");
       const kind = aString(fieldOf(params, "kind"), "kind");
-      return await (await providerOf(openRecord(connectionId))).listObjects(container, kind);
+      const record = openRecord(connectionId);
+      return await answeringFor(record.connection, async () => (await providerOf(record)).listObjects(container, kind));
     },
 
     async describeObject(params) {
       const connectionId = connectionIdOf(params);
       const path = stringArray(fieldOf(params, "path"), "path");
       const kind = aString(fieldOf(params, "kind"), "kind");
-      return await (await providerOf(openRecord(connectionId))).describeObject(path, kind);
+      const record = openRecord(connectionId);
+      return await answeringFor(record.connection, async () => (await providerOf(record)).describeObject(path, kind));
     },
 
     // The steps of POST /api/db/query for one statement, in its order (part 1, "What query/run re-does from the query
@@ -375,16 +401,18 @@ export function createHandlers(
       const listener = token.onCancellationRequested(() => controller.abort());
       if (token.isCancellationRequested) controller.abort();
       try {
-        const provider = await scopeToCatalog(await providerOf(record), catalog);
-        const { body, resultSetCount } = await runEditorQuery(provider, {
-          statement,
-          options,
-          queryId,
-          signal: controller.signal,
-          route: RUN_ROUTE,
-          scrub: providerTextScrub(record.connection, "any"),
+        return await answeringFor(record.connection, async () => {
+          const provider = await scopeToCatalog(await providerOf(record), catalog);
+          const { body, resultSetCount } = await runEditorQuery(provider, {
+            statement,
+            options,
+            queryId,
+            signal: controller.signal,
+            route: RUN_ROUTE,
+            scrub: providerTextScrub(record.connection, "any"),
+          });
+          return { ...body, ...(resultSetCount > 1 && { resultSetCount }) };
         });
-        return { ...body, ...(resultSetCount > 1 && { resultSetCount }) };
       } finally {
         listener.dispose();
       }
@@ -394,11 +422,14 @@ export function createHandlers(
     async cancelQuery(params) {
       const connectionId = connectionIdOf(params);
       const queryId = nonEmptyString(fieldOf(params, "queryId"), "queryId");
-      const provider = await providerOf(openRecord(connectionId));
-      if (!supportsQueryCancel(provider)) {
-        throw refusal(400, "CANCEL_UNSUPPORTED", "Query cancellation is not supported for this database type");
-      }
-      return { cancelled: await provider.cancelQuery(queryId) };
+      const record = openRecord(connectionId);
+      return await answeringFor(record.connection, async () => {
+        const provider = await providerOf(record);
+        if (!supportsQueryCancel(provider)) {
+          throw refusal(400, "CANCEL_UNSUPPORTED", "Query cancellation is not supported for this database type");
+        }
+        return { cancelled: await provider.cancelQuery(queryId) };
+      });
     },
 
     // The dispatcher refuses every request from here on; this closes every pool the factory holds.
@@ -424,21 +455,24 @@ export function createHandlers(
     async selectStatement(params) {
       const connectionId = connectionIdOf(params);
       const object = databaseObjectOf(fieldOf(params, "object"));
-      const provider = await providerOf(openRecord(connectionId));
-      const capabilities = provider.getCapabilities();
-      let columns: readonly ColumnSchema[] | undefined;
-      if (capabilities.previewProjection !== undefined && kindHasColumns(findKind(capabilities, object.kind))) {
-        columns = (await provider.describeObject(object.path, object.kind)).columns;
-      }
-      try {
-        return {
-          statement: generateTableQuery(object.path, provider.type, capabilities, columns, {
-            readRanges: object.readRanges,
-          }),
-        };
-      } catch (error) {
-        throw refusal(500, "INTERNAL_ERROR", (error as Error).message);
-      }
+      const record = openRecord(connectionId);
+      return await answeringFor(record.connection, async () => {
+        const provider = await providerOf(record);
+        const capabilities = provider.getCapabilities();
+        let columns: readonly ColumnSchema[] | undefined;
+        if (capabilities.previewProjection !== undefined && kindHasColumns(findKind(capabilities, object.kind))) {
+          columns = (await provider.describeObject(object.path, object.kind)).columns;
+        }
+        try {
+          return {
+            statement: generateTableQuery(object.path, provider.type, capabilities, columns, {
+              readRanges: object.readRanges,
+            }),
+          };
+        } catch (error) {
+          throw refusal(500, "INTERNAL_ERROR", (error as Error).message);
+        }
+      });
     },
 
     // The web editor's run target rule on the offsets the host's editor reports, through runnableTarget: a target with
@@ -456,7 +490,9 @@ export function createHandlers(
       };
       const cursor = anInteger(fieldOf(params, "cursor"), "cursor");
       const record = openRecord(connectionId);
-      const capabilities = (await providerOf(record)).getCapabilities();
+      const capabilities = await answeringFor(record.connection, async () =>
+        (await providerOf(record)).getCapabilities(),
+      );
       const rule = {
         editorLanguage: editorLanguageOf(capabilities),
         statementTerminator: capabilities.statementTerminator,
@@ -478,10 +514,14 @@ export function createHandlers(
 
 /**
  * Part 1 "Error classification": a ResponseError passes through; a database error answers P3's status, sentence and
- * code, with its error kind and outcome as the route body carries them; anything else is 500 INTERNAL_ERROR.
+ * code, with its error kind and outcome as the route body carries them; anything else is 500 INTERNAL_ERROR. With the
+ * connection's `scrub`, an error whose text holds a credential of the connection answers the same status and data
+ * with only its texts replaced (`withWithheldText`), as the routes answer it.
  */
-export function toResponseError(error: unknown): ResponseError<BackendErrorData | void> {
+export function toResponseError(error: unknown, scrub?: ProviderTextScrub): ResponseError<BackendErrorData | void> {
   if (error instanceof ResponseError) return error;
+  const body = databaseErrorBody(error)?.body ?? internalErrorBody(error);
+  const withheld = scrub === undefined ? null : withheldProviderError(scrub, error);
   const {
     statusCode,
     error: message,
@@ -491,7 +531,7 @@ export function toResponseError(error: unknown): ResponseError<BackendErrorData 
     fixStatement,
     kind,
     outcome,
-  } = databaseErrorBody(error)?.body ?? internalErrorBody(error);
+  } = withheld === null ? body : withWithheldText(body, withheld.message);
   return new ResponseError<BackendErrorData>(statusCode, message, {
     // Both bodies always carry a code; the type leaves it optional for the routes' other answers.
     code: code as BackendErrorCode,

@@ -216,7 +216,10 @@ export function internalErrorBody(error: unknown): ApiErrorResponse {
  * not changed.
  */
 export function withWithheldText(body: ApiErrorResponse, message: string): ApiErrorResponse {
-  const { details, fixStatement: _fixStatement, ...kept } = body;
-  const position = (details as { position?: unknown } | undefined)?.position;
-  return { ...kept, error: message, ...(typeof position === "number" ? { details: { position } } : {}) };
+  const position = (body.details as { position?: unknown } | undefined)?.position;
+  const answered: ApiErrorResponse = { ...body, error: message };
+  delete answered.details;
+  delete answered.fixStatement;
+  if (typeof position === "number") answered.details = { position };
+  return answered;
 }
