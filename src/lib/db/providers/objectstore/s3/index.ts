@@ -27,6 +27,7 @@
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { AuthenticationError, DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import {
   createNodeByteTransport,
   type NodeByteTransport,
@@ -53,7 +54,7 @@ import type {
   PerformanceMetrics,
   PreparedQuery,
   ProviderCapabilities,
-  ProviderExecutionContext,
+  ProviderBuildContext,
   ProviderLabels,
   ProviderOptions,
   QueryResult,
@@ -191,7 +192,7 @@ export class S3Provider extends BaseDatabaseProvider {
   constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    private readonly execution: ProviderExecutionContext = {},
+    private readonly execution: ProviderBuildContext = {},
     deps: Partial<S3ProviderDeps> = {},
   ) {
     super(config, options);
@@ -533,6 +534,7 @@ export class S3Provider extends BaseDatabaseProvider {
     const options = buildS3ConnectionOptions(this.config, {
       executionReadOnly: this.execution.readOnly === true,
       queryTimeout: this.queryTimeout,
+      egress: requireEgressDecision(this.execution.egress),
     });
     const signer =
       options.credentials === null

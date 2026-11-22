@@ -9,6 +9,12 @@ import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 import { DatabaseConfigError, DatabaseError } from "@/lib/db/errors";
 import type { EgressDecision } from "@/lib/db/types";
 
+/**
+ * The decision type, re-exported for `src/lib/db/auth`, whose seam guard (AUTH1 in
+ * tests/unit/db/auth/seam-guard.test.ts) lets it import `@/lib/db/http/*` but not `@/lib/db/types`.
+ */
+export type { EgressDecision };
+
 /** The guard's refusal of a non-public destination, worded for any transport the guard serves: it names no protocol. */
 export const BLOCKED_HOST = "Invalid host: this database destination is blocked by DB_HTTP_BLOCK_PRIVATE_HOSTS";
 

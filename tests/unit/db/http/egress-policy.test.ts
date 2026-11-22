@@ -2,9 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { DatabaseConfigError } from "@/lib/db/errors";
-import { httpOrigin } from "@/lib/db/http/endpoint";
+import { httpOrigin, httpOriginWithCoreDecision } from "@/lib/db/http/endpoint";
 import { createNodeTransport } from "@/lib/db/http/node-transport";
-import { forgetEgressDecision } from "@/lib/db/egress-decision";
+import { forgetEgressDecision, INVALID_EGRESS_SETTING } from "@/lib/db/egress-decision";
 import {
   assertPublicDnsAnswers,
   assertPublicLiteralHost,
@@ -46,34 +46,37 @@ describe("opt-in HTTP database destination policy", () => {
     ["NAT64 tunnel", "64:ff9b::a00:1"],
     ["internal SRv6 range", "5f00::1"],
     ["IPv6 benchmark range", "2001:2::1"],
-  ])("refuses %s before building a request", (_label, host) => {
-    setEgressFlag("true");
-    expect(() => httpOrigin("http", host, 8080)).toThrow(DatabaseConfigError);
+  ])("refuses %s before building a request with a blocking decision", (_label, host) => {
+    expect(() => httpOrigin("http", host, 8080, BLOCKS_PRIVATE_HOSTS)).toThrow(BLOCKED_HOST);
     try {
-      httpOrigin("http", host, 8080);
+      httpOrigin("http", host, 8080, BLOCKS_PRIVATE_HOSTS);
     } catch (error) {
       expect((error as Error).message).not.toContain(host);
     }
   });
 
-  test("keeps public literals and hostnames available in guarded mode", () => {
-    setEgressFlag("1");
-    expect(httpOrigin("https", "8.8.8.8", 443).host).toBe("8.8.8.8");
-    expect(httpOrigin("https", "168.63.129.16", 443).host).toBe("168.63.129.16");
-    expect(httpOrigin("https", "2606:4700:4700::1111", 443).host).toBe("[2606:4700:4700::1111]");
-    expect(httpOrigin("https", "db.example.com", 443).host).toBe("db.example.com");
+  test("keeps public literals and hostnames available with a blocking decision", () => {
+    expect(httpOrigin("https", "8.8.8.8", 443, BLOCKS_PRIVATE_HOSTS).host).toBe("8.8.8.8");
+    expect(httpOrigin("https", "168.63.129.16", 443, BLOCKS_PRIVATE_HOSTS).host).toBe("168.63.129.16");
+    expect(httpOrigin("https", "2606:4700:4700::1111", 443, BLOCKS_PRIVATE_HOSTS).host).toBe("[2606:4700:4700::1111]");
+    expect(httpOrigin("https", "db.example.com", 443, BLOCKS_PRIVATE_HOSTS).host).toBe("db.example.com");
   });
 
-  test("leaves local connections enabled by default and with an explicit false", () => {
-    setEgressFlag(undefined);
-    expect(httpOrigin("http", "127.0.0.1", 8080).host).toBe("127.0.0.1");
-    setEgressFlag("false");
-    expect(httpOrigin("http", "[::1]", 8080).host).toBe("[::1]");
+  test("leaves local connections enabled with an allowing decision", () => {
+    expect(httpOrigin("http", "127.0.0.1", 8080, ALLOWS_PRIVATE_HOSTS).host).toBe("127.0.0.1");
+    expect(httpOrigin("http", "[::1]", 8080, ALLOWS_PRIVATE_HOSTS).host).toBe("[::1]");
   });
 
-  test("an invalid setting cannot silently disable the guard", () => {
+  test("an invalid setting cannot silently disable the guard of the interim reader httpOriginWithCoreDecision", () => {
     setEgressFlag("tru");
-    expect(() => httpOrigin("http", "8.8.8.8", 8080)).toThrow(DatabaseConfigError);
+    let failure: unknown;
+    try {
+      httpOriginWithCoreDecision("http", "8.8.8.8", 8080);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(DatabaseConfigError);
+    expect((failure as Error).message).toBe(INVALID_EGRESS_SETTING);
   });
 
   test("refuses mixed DNS answers, mapped IPv4, and an empty result", () => {
@@ -151,29 +154,30 @@ describe("LOOPBACK_NETWORKS", () => {
   });
 
   test("the blocked list refuses an address inside every row", () => {
-    setEgressFlag("true");
     for (const [network] of LOOPBACK_NETWORKS) {
-      for (const host of PROBES[network]) expect(() => httpOrigin("http", host, 8080)).toThrow(DatabaseConfigError);
+      for (const host of PROBES[network]) {
+        expect(() => httpOrigin("http", host, 8080, BLOCKS_PRIVATE_HOSTS)).toThrow(BLOCKED_HOST);
+      }
     }
   });
 });
 
 describe("the decision the interim readers read (FND-2 slice 2a)", () => {
   test("the interim readers keep the decision the process took: a value written after the first guarded call moves nothing until the decision is forgotten", () => {
-    // Built with the flag unset: httpOrigin runs the literal check too, and the transport's own check is wanted.
-    setEgressFlag(undefined);
-    const origin = httpOrigin("http", "127.0.0.1", 8080);
+    // An allowing decision, so the origin never refuses and the transport's own check is the subject.
+    const origin = httpOrigin("http", "127.0.0.1", 8080, ALLOWS_PRIVATE_HOSTS);
     const build = () => createNodeTransport({ origin, tls: null, maxSockets: 1, headers: {} });
     setEgressFlag("true");
-    expect(() => httpOrigin("http", "127.0.0.1", 8080)).toThrow(BLOCKED_HOST);
+    // The interim reader of the origins slice 2b-3b converts.
+    expect(() => httpOriginWithCoreDecision("http", "127.0.0.1", 8080)).toThrow(BLOCKED_HOST);
     expect(build).toThrow(BLOCKED_HOST);
     // A direct write, not the helper, on purpose: the process decided at its first read, so the write moves nothing.
     process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = "false";
-    expect(() => httpOrigin("http", "127.0.0.1", 8080)).toThrow(BLOCKED_HOST);
+    expect(() => httpOriginWithCoreDecision("http", "127.0.0.1", 8080)).toThrow(BLOCKED_HOST);
     // The other interim reader, the node transport, until slice 2b-4 hands it the decision too.
     expect(build).toThrow(BLOCKED_HOST);
     forgetEgressDecision();
-    expect(httpOrigin("http", "127.0.0.1", 8080).host).toBe("127.0.0.1");
+    expect(httpOriginWithCoreDecision("http", "127.0.0.1", 8080).host).toBe("127.0.0.1");
     build().close();
   });
 });
@@ -205,6 +209,20 @@ describe("the guard decides by the decision it is handed (FND-2 slice 2b)", () =
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
+  });
+
+  test("httpOrigin refuses 127.0.0.1 and [::1] with a blocking decision while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset, and keeps a public literal and a name", () => {
+    setEgressFlag(undefined);
+    expect(() => httpOrigin("http", "127.0.0.1", 8080, BLOCKS_PRIVATE_HOSTS)).toThrow(BLOCKED_HOST);
+    expect(() => httpOrigin("http", "[::1]", 8080, BLOCKS_PRIVATE_HOSTS)).toThrow(BLOCKED_HOST);
+    expect(httpOrigin("https", "8.8.8.8", 443, BLOCKS_PRIVATE_HOSTS).host).toBe("8.8.8.8");
+    expect(httpOrigin("https", "2606:4700:4700::1111", 443, BLOCKS_PRIVATE_HOSTS).host).toBe("[2606:4700:4700::1111]");
+    expect(httpOrigin("https", "db.example.com", 443, BLOCKS_PRIVATE_HOSTS).host).toBe("db.example.com");
+  });
+
+  test("httpOrigin lets 127.0.0.1 through with an allowing decision while DB_HTTP_BLOCK_PRIVATE_HOSTS is true", () => {
+    setEgressFlag("true");
+    expect(httpOrigin("http", "127.0.0.1", 8080, ALLOWS_PRIVATE_HOSTS).host).toBe("127.0.0.1");
   });
 
   test("socketEgress refuses 127.0.0.1 with a blocking decision while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset", () => {

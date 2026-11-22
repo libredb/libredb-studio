@@ -100,8 +100,11 @@ export function readAmqpPort(value: unknown): number | null {
   return port;
 }
 
-/** Every refusal of the connection rules before any socket, each an own error from errors.ts. */
-export function readConnectionOptions(config: DatabaseConnection): RabbitMQEndpoints {
+/**
+ * Every refusal of the connection rules before any socket, each an own error from errors.ts. `egress` is the decision
+ * the provider was built with, which the management origin's address literal is checked against.
+ */
+export function readConnectionOptions(config: DatabaseConnection, egress: EgressDecision): RabbitMQEndpoints {
   refuseTunnel(config as DatabaseConnection & WithTunnelFarEnd);
   if (optionalText(config.database, "database") !== undefined) throw configError(fieldNotOffered("database"));
   if (optionalText(config.namespaces, "namespaces") !== undefined) throw configError(fieldNotOffered("namespaces"));
@@ -112,7 +115,7 @@ export function readConnectionOptions(config: DatabaseConnection): RabbitMQEndpo
   const pathPrefix = readPathPrefix(config.apiPath);
   const amqpPort = readAmqpPort(config.amqpPort);
   // One Host and one TLS setting for both endpoints: the identity is always the host.
-  const probe = shared(() => httpOrigin("http", config.host, config.port ?? RABBITMQ_DEFAULT_MANAGEMENT_PORT));
+  const probe = shared(() => httpOrigin("http", config.host, config.port ?? RABBITMQ_DEFAULT_MANAGEMENT_PORT, egress));
   const host = unbracketed(probe.host);
   // One trailing dot of a DNS name is no part of the TLS identity, and Node 24.14.0, Bun 1.4.2 and Node
   // 26.10.0 all send it in SNI (measured), so it is taken off the identity of both endpoints here; the dialled host

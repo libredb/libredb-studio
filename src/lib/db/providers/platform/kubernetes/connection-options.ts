@@ -16,7 +16,13 @@
 import { getAppVersion } from "@/lib/app-version";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { assertNotLinkLocalLiteral } from "@/lib/db/http/egress-policy";
-import { type HttpOrigin, httpOrigin, isLoopbackHost, validateHost, validatePort } from "@/lib/db/http/endpoint";
+import {
+  type HttpOrigin,
+  httpOriginWithCoreDecision,
+  isLoopbackHost,
+  validateHost,
+  validatePort,
+} from "@/lib/db/http/endpoint";
 import { type NodeTlsMaterial, nodeTlsMaterial } from "@/lib/db/http/node-transport";
 import { secretForms } from "@/lib/db/utils/server-text";
 import {
@@ -178,7 +184,7 @@ export function readClusterEndpoint(
   context: ClusterEndpointContext,
 ): ClusterEndpoint {
   const farEnd = tunnelFarEnd(config);
-  const dialled = shared(() => httpOrigin("http", config.host, config.port ?? KUBERNETES_DEFAULT_PORT));
+  const dialled = shared(() => httpOriginWithCoreDecision("http", config.host, config.port ?? KUBERNETES_DEFAULT_PORT));
   const endpoint =
     farEnd === undefined
       ? { host: unbracketed(dialled.host), port: dialled.port }

@@ -769,6 +769,7 @@ export class TrinoHttpTransport implements TrinoTransport {
       secure ? "https" : "http",
       config.host ?? DEFAULT_HOST,
       config.port ?? dialect.defaultPort,
+      egress,
     );
     this.user = config.user ?? DEFAULT_USER;
     // The connection's `database` holds the CATALOG, the way a PostgreSQL

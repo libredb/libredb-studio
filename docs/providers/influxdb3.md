@@ -290,6 +290,10 @@ The TLS recipes of InfluxDB 1.x and 2.x are in [influxdb.md](./influxdb.md).
 
 A tunnel is offered; through it, the plaintext rule judges and the TLS identity is the tunnel's far end, never its local forward.
 
+### 4.8 Where the connection may connect
+
+With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, a loopback, private or other non-public address is refused before any request, with the shared sentence: an IP literal when `connect()` builds the connection's origin, and a name at the lookup the request's socket dials through.
+
 ### Connection string
 
 `influxdb3` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`influxdb3-connection-string.ts`](../../src/lib/db/providers/timeseries/influxdb/influxdb3-connection-string.ts)).

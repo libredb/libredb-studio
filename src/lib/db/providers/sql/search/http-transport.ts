@@ -1796,7 +1796,12 @@ export class SearchHttpTransport implements SearchTransport {
     // an explicit mode turns it on (the #264 lesson). No connection-string parsing:
     // this provider is configured by host and port, like Druid.
     const secure = config.ssl !== undefined && config.ssl.mode !== "disable";
-    this.origin = httpOrigin(secure ? "https" : "http", config.host ?? DEFAULT_HOST, config.port ?? DEFAULT_PORT);
+    this.origin = httpOrigin(
+      secure ? "https" : "http",
+      config.host ?? DEFAULT_HOST,
+      config.port ?? DEFAULT_PORT,
+      egress,
+    );
     // Measured on both probe clusters, which run with security disabled: a bogus
     // `Basic` header is IGNORED (HTTP 200), so credentials are optional and sending
     // none is the normal local case. When they are configured they are for the

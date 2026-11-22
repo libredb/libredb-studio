@@ -41,7 +41,10 @@ const handedDecision = [
   ["Prometheus", "prometheus", PrometheusProvider],
 ] as const;
 
-/** The providers that still read the process's decision through a node transport, until slices 2b-3 and 2b-4. */
+/**
+ * The providers that still read the process's decision through a node transport, until slices 2b-3b and 2b-4: at the
+ * name localhost the refusal comes from the node transport's checked lookup.
+ */
 const providers = [
   // A user and no password (Databend design 3.14): the plaintext refusal needs a password, so the guard is reached.
   ["Databend", "databend", DatabendProvider],
@@ -49,10 +52,6 @@ const providers = [
   // the guard is reached; with neither, the guard's DatabaseConfigError passes through toInfluxError unchanged.
   ["InfluxDB", "influxdb", InfluxDBProvider],
   ["InfluxDB 3", "influxdb3", InfluxDB3Provider],
-  // No key pair (the user-less set): an unsigned connection, so the half-pair refusal does not fire first, and
-  // `localhost` is loopback, so the plain-HTTP refusal does not either; the pinned bucket "test" makes the probe one
-  // ListObjectsV2.
-  ["S3-compatible object storage", "s3", S3Provider],
 ] as const;
 
 /** A user only where the provider takes one with no password: the two InfluxDB types and S3 refuse that before any guard. */
@@ -137,14 +136,12 @@ test("ClickHouse refuses the literal 127.0.0.1 with the decision it was handed w
   }
 });
 
-// A name and not a literal, on purpose: until slice 2b-3 the interim `httpOrigin` still applies the process's decision
-// to a literal, so only a name shows the fetch path deciding by the handed decision alone.
-test("ClickHouse handed an allowing decision reaches a local server by name while DB_HTTP_BLOCK_PRIVATE_HOSTS is true", async () => {
+test("ClickHouse handed an allowing decision reaches a local server at 127.0.0.1 while DB_HTTP_BLOCK_PRIVATE_HOSTS is true", async () => {
   setEgressFlag("true");
   const server = await countingServer();
   try {
     const provider = new ClickHouseProvider(
-      connectionTo("clickhouse", "localhost", server.port),
+      connectionTo("clickhouse", "127.0.0.1", server.port),
       {},
       { egress: ALLOWS_PRIVATE_HOSTS },
     );
@@ -225,3 +222,30 @@ test("libSQL version discovery also reports a DNS policy refusal", async () => {
   );
   await expect(transport.serverVersion()).rejects.toThrow(DatabaseConfigError);
 });
+
+// S3 builds its origin with the decision it was handed (slice 2b-3a), so it is handed a blocking one; its byte
+// transport still reads the process's decision at the lookup of a name until slice 2b-4, so the variable is true too.
+// No key pair (the user-less set): an unsigned connection, so the half-pair refusal does not fire first, and `localhost`
+// is loopback, so the plain-HTTP refusal does not either; the pinned bucket "test" makes the probe one ListObjectsV2.
+for (const secure of [false, true]) {
+  test(`S3-compatible object storage ${secure ? "TLS" : "plain HTTP"} keeps DNS policy refusals as configuration errors`, async () => {
+    setEgressFlag("true");
+    const server = await countingServer();
+    try {
+      const failure = await Promise.resolve()
+        .then(() =>
+          new S3Provider(
+            connectionTo("s3", "localhost", server.port, secure),
+            {},
+            { egress: BLOCKS_PRIVATE_HOSTS },
+          ).connect(),
+        )
+        .catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(DatabaseConfigError);
+      expect((failure as Error).message).toBe(BLOCKED_HOST);
+      expect(server.hits()).toBe(0);
+    } finally {
+      await server.close();
+    }
+  });
+}

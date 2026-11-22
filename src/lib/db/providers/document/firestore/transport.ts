@@ -16,7 +16,7 @@
 import { quotaProjectHeaders } from "@/lib/db/auth/google/credentials";
 import { createGoogleTokenSource } from "@/lib/db/auth/google/token-source";
 import { DatabaseError, QueryError } from "@/lib/db/errors";
-import { endpointUrl, type HttpOrigin, httpOrigin } from "@/lib/db/http/endpoint";
+import { endpointUrl, type HttpOrigin, httpOriginWithCoreDecision } from "@/lib/db/http/endpoint";
 import { type NodeResponse, type NodeTransport, TransportError } from "@/lib/db/http/node-transport";
 import { DEFAULT_QUERY_TIMEOUT } from "@/lib/db/types";
 import { DEFAULT_DATABASE_ID, FIRESTORE_API_ORIGIN, FIRESTORE_SCOPE, FIRESTORE_TYPE, LIMITS } from "./constants";
@@ -76,7 +76,7 @@ export function routingHeaders(target: FirestoreTarget): Readonly<Record<string,
 }
 
 function httpsOrigin(url: string): HttpOrigin {
-  return httpOrigin("https", new URL(url).hostname, 443);
+  return httpOriginWithCoreDecision("https", new URL(url).hostname, 443);
 }
 
 function tlsFor(origin: HttpOrigin) {
@@ -109,7 +109,7 @@ export function createFirestoreClient(
   const closer = new AbortController();
   const origin =
     auth.mode === "emulator"
-      ? httpOrigin("http", auth.emulator.host, auth.emulator.port)
+      ? httpOriginWithCoreDecision("http", auth.emulator.host, auth.emulator.port)
       : httpsOrigin(FIRESTORE_API_ORIGIN);
   const tokens =
     auth.mode === "emulator"

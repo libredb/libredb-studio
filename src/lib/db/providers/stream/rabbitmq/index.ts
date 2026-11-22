@@ -24,6 +24,7 @@
 import { getAppVersion } from "@/lib/app-version";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { RefusedBeforeSendError } from "@/lib/db/errors";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { createNodeTransport } from "@/lib/db/http/node-transport";
 import { assertReadOnlyBudget, rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
 import type {
@@ -293,11 +294,9 @@ export class RabbitMQProvider extends BaseDatabaseProvider {
     if (this.session !== null) return;
     let endpoints: RabbitMQEndpoints;
     try {
-      const read = readConnectionOptions(this.config);
-      endpoints =
-        read.amqp === null || this.execution.egress === undefined
-          ? read
-          : { ...read, amqp: { ...read.amqp, egress: this.execution.egress } };
+      const egress = requireEgressDecision(this.execution.egress);
+      const read = readConnectionOptions(this.config, egress);
+      endpoints = read.amqp === null ? read : { ...read, amqp: { ...read.amqp, egress } };
     } catch (error) {
       throw rabbitmqBoundary(error, { site: "connect", endpoint: "", route: label("whoami") });
     }

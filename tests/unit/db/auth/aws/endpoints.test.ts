@@ -11,6 +11,7 @@ import {
   parseAwsRegion,
 } from "@/lib/db/auth/aws/endpoints";
 import { DatabaseConfigError } from "@/lib/db/errors";
+import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../../helpers/egress-decisions";
 
 function refusal(run: () => unknown): DatabaseConfigError {
   try {
@@ -101,23 +102,25 @@ describe("awsServiceOrigin", () => {
   const region = parseAwsRegion("eu-west-1", undefined);
 
   test("is https://<service>.<region>.amazonaws.com:443", () => {
-    expect(awsServiceOrigin("dynamodb", parseAwsRegion("us-east-1", undefined))).toEqual({
+    expect(awsServiceOrigin("dynamodb", parseAwsRegion("us-east-1", undefined), BLOCKS_PRIVATE_HOSTS)).toEqual({
       scheme: "https",
       host: "dynamodb.us-east-1.amazonaws.com",
       port: 443,
     });
-    expect(awsServiceOrigin("athena", region)).toEqual({
+    expect(awsServiceOrigin("athena", region, BLOCKS_PRIVATE_HOSTS)).toEqual({
       scheme: "https",
       host: "athena.eu-west-1.amazonaws.com",
       port: 443,
     });
-    expect(awsServiceOrigin("redshift-serverless", region).host).toBe("redshift-serverless.eu-west-1.amazonaws.com");
+    expect(awsServiceOrigin("redshift-serverless", region, BLOCKS_PRIVATE_HOSTS).host).toBe(
+      "redshift-serverless.eu-west-1.amazonaws.com",
+    );
   });
 
   test.each(["", "a", "Dynamodb", "1st", "-x", "dynamo.db", "dynamo_db", "dynamodb/", `a${"b".repeat(63)}`])(
     "refuses the service name %p",
     (service) => {
-      expect(refusal(() => awsServiceOrigin(service, region)).message).toBe(
+      expect(refusal(() => awsServiceOrigin(service, region, BLOCKS_PRIVATE_HOSTS)).message).toBe(
         "The AWS service name must be a lower-case letter followed by 1 to 62 lower-case letters, digits or hyphens",
       );
     },
@@ -125,7 +128,7 @@ describe("awsServiceOrigin", () => {
 
   test("takes a 63-character service name", () => {
     const service = `a${"b".repeat(62)}`;
-    expect(awsServiceOrigin(service, region).host).toBe(`${service}.eu-west-1.amazonaws.com`);
+    expect(awsServiceOrigin(service, region, BLOCKS_PRIVATE_HOSTS).host).toBe(`${service}.eu-west-1.amazonaws.com`);
   });
 
   test.each<[string, AwsRegion]>([
@@ -133,8 +136,15 @@ describe("awsServiceOrigin", () => {
     ["a name that adds a host", { name: "us-east-1.evil.example", dnsSuffix: "amazonaws.com" }],
     ["another DNS suffix", { name: "us-east-1", dnsSuffix: "evil.example" }],
   ])("refuses a region that is not the commercial row's: %s", (_label, forged) => {
-    expect(refusal(() => awsServiceOrigin("dynamodb", forged)).message).toBe(
+    expect(refusal(() => awsServiceOrigin("dynamodb", forged, BLOCKS_PRIVATE_HOSTS)).message).toBe(
       "The AWS region is not one parseAwsRegion returned for the commercial partition",
     );
+  });
+
+  test("builds the same origin under a blocking and an allowing egress decision, since its host is always a name", () => {
+    expect(awsServiceOrigin("dynamodb", region, BLOCKS_PRIVATE_HOSTS)).toEqual(
+      awsServiceOrigin("dynamodb", region, ALLOWS_PRIVATE_HOSTS),
+    );
+    expect(awsServiceOrigin("dynamodb", region, ALLOWS_PRIVATE_HOSTS).host).toBe("dynamodb.eu-west-1.amazonaws.com");
   });
 });

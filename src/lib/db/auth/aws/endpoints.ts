@@ -12,6 +12,7 @@
  */
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { type HttpOrigin, httpOrigin } from "@/lib/db/http/endpoint";
+import type { EgressDecision } from "@/lib/db/http/egress-policy";
 import type { DatabaseType } from "@/lib/types";
 
 /** A region of the commercial partition, as parseAwsRegion returns it. */
@@ -71,12 +72,14 @@ export function checkAwsServiceName(service: string): void {
 /**
  * https://<service>.<region>.<dnsSuffix>:443 through httpOrigin. The service is the name the caller passes and must
  * match ^[a-z][a-z0-9-]{1,62}$; the region must be one parseAwsRegion returns, so no hand-built value names a host
- * outside the partition's suffix. Both refusals are DatabaseConfigError and quote nothing.
+ * outside the partition's suffix. Both refusals are DatabaseConfigError and quote nothing. `egress` is the egress
+ * decision of the provider that calls it; the host is always a name, so the decision refuses none, and it is handed so
+ * this origin is built as every other one is.
  */
-export function awsServiceOrigin(service: string, region: AwsRegion): HttpOrigin {
+export function awsServiceOrigin(service: string, region: AwsRegion, egress: EgressDecision): HttpOrigin {
   checkAwsServiceName(service);
   if (!COMMERCIAL_REGION.test(region.name) || region.dnsSuffix !== COMMERCIAL_DNS_SUFFIX) {
     throw new DatabaseConfigError(REGION_FORGED);
   }
-  return httpOrigin("https", `${service}.${region.name}.${region.dnsSuffix}`, HTTPS_PORT);
+  return httpOrigin("https", `${service}.${region.name}.${region.dnsSuffix}`, HTTPS_PORT, egress);
 }

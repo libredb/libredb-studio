@@ -26,7 +26,7 @@ import { tunnelRoute } from "@/lib/db/connection-fingerprint";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import {
   type HttpOrigin,
-  httpOrigin,
+  httpOriginWithCoreDecision,
   plaintextSecretRefusal,
   validateHost,
   validatePort,
@@ -149,7 +149,7 @@ export function buildDatabendConnectionOptions(
 ): DatabendConnectionOptions {
   const farEnd = tunnelFarEnd(config);
   // validateHost, validatePort and the egress policy's literal-address guard, on the host that is dialled.
-  const dialled = shared(() => httpOrigin("http", config.host, config.port ?? DATABEND_DEFAULT_PORT));
+  const dialled = shared(() => httpOriginWithCoreDecision("http", config.host, config.port ?? DATABEND_DEFAULT_PORT));
   const endpoint =
     farEnd === undefined
       ? { host: unbracketed(dialled.host), port: dialled.port }

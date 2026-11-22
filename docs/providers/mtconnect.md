@@ -223,6 +223,12 @@ Through an SSH tunnel the certificate is checked against the agent the user name
 The Path prefix is put in front of every route, so `/mtc` reads `/mtc/probe`, `/mtc/current` and so on.
 It is a path only: a query, a fragment, percent-encoding, a space or an empty, `.` or `..` segment is refused before any request.
 
+### 4.4 Where the connection may connect
+
+With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, a loopback, private or other non-public address is refused before any request, with the shared sentence: an IP literal when `connect()` builds the connection's origin, and a name at the lookup the request's socket dials through.
+A link-local address or AWS's IPv6 instance metadata address is never reached, whatever the variable says.
+Both refusals leave as the shared `DatabaseConfigError`, not as a `QueryError`: [section 10.1](#101-every-refusal-leaves-as-a-queryerror) is about this provider's own refusals.
+
 ### Connection string
 
 `mtconnect` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/industrial/mtconnect/connection-string.ts)).

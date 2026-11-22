@@ -32,6 +32,11 @@ describe("control 0.6 names the egress decision", () => {
     "src/lib/db/providers/industrial/modbus/client.ts",
     "src/lib/db/providers/network/netconf/dial.ts",
     "src/lib/db/providers/industrial/sparkplug/session.ts",
+    "src/lib/db/providers/industrial/mtconnect/connection-options.ts",
+    "src/lib/db/providers/vector/qdrant/connection-options.ts",
+    "src/lib/db/providers/vector/weaviate/connection-options.ts",
+    "src/lib/db/providers/objectstore/s3/connection-options.ts",
+    "src/lib/db/providers/stream/rabbitmq/connection-options.ts",
   ])("enforced in %s", (file) => {
     expect(enforcedIn).toContain(`[\`${file}\`](../${file})`);
   });
@@ -47,6 +52,7 @@ describe("control 0.6 names the egress decision", () => {
     "tests/unit/lib/db/provider-environment-scan.test.ts",
     "tests/security/provider-egress-decision.test.ts",
     "tests/unit/db/http/egress-policy-socket-dials.test.ts",
+    "tests/unit/db/http/egress-policy-origins.test.ts",
   ])("verified by %s", (file) => {
     expect(verifiedBy).toContain(`[\`${file}\`](../${file})`);
   });
@@ -61,9 +67,9 @@ describe("control 0.6 names the egress decision", () => {
     expect(control).toContain("logs the decision once, at info level,");
   });
 
-  test("the control says the factory hands the decision to every provider that takes a context, and which requests are checked against it", () => {
+  test("the control says the factory hands the decision to every provider that takes a context, and which origins and requests are checked against it", () => {
     expect(control).toContain(
-      "refuses such a value by name, and the factory hands the decision to every provider that takes a context, all but Databend, BigQuery, Snowflake and Spark, so the HTTP requests of ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, libSQL and Prometheus, Couchbase's own fetch and TLS paths, the AMQP, MQTT, Modbus, NETCONF and Sparkplug B dials and SNMP's name lookup are checked against the decision their provider was handed, and every other guarded path against the same decision, which core's guard reads on the provider's behalf",
+      "refuses such a value by name, and the factory hands the decision to every provider that takes a context, all but Databend, BigQuery, Snowflake and Spark, so the address literal of each origin ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, libSQL, Prometheus, Couchbase, MTConnect, Qdrant, Weaviate, S3-compatible object storage and RabbitMQ's management API build, the HTTP requests of ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, libSQL and Prometheus, Couchbase's own fetch and TLS paths, the AMQP, MQTT, Modbus, NETCONF and Sparkplug B dials and SNMP's name lookup are checked against the decision their provider was handed, and every other guarded path against the same decision, which core's guard reads on the provider's behalf",
     );
   });
 

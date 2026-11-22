@@ -15,12 +15,12 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { createSocket, type Socket } from "node:dgram";
-import { createServer } from "node:http";
+import { createServer, type Server } from "node:http";
 import { type AddressInfo, createServer as createTcpServer, type Socket as TcpSocket } from "node:net";
 import { egressDecision } from "@/lib/db/egress-decision";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
-import { BLOCKED_HOST } from "@/lib/db/http/egress-policy";
+import { BLOCKED_HOST, LINK_LOCAL_HOST } from "@/lib/db/http/egress-policy";
 import type { DatabaseConnection, ProviderExecutionContext } from "@/lib/db/types";
 import type { DatabaseType } from "@/lib/types";
 import { FIXTURE_COMMUNITY } from "../fixtures/snmp/identity";
@@ -29,7 +29,7 @@ import { ALLOWS_PRIVATE_HOSTS } from "../helpers/egress-decisions";
 import { setEgressFlag } from "../helpers/egress-flag";
 import { pathsToObject } from "../helpers/reachable-markers";
 
-/** The engines whose guard calls take the decision as an argument since slices 2b-1 and 2b-2. */
+/** The engines whose guard calls take the decision as an argument since slices 2b-1, 2b-2 and 2b-3a. */
 const GUARDED_ENGINES: readonly DatabaseType[] = [
   "clickhouse",
   "druid",
@@ -45,6 +45,10 @@ const GUARDED_ENGINES: readonly DatabaseType[] = [
   "netconf",
   "modbus",
   "rabbitmq",
+  "mtconnect",
+  "qdrant",
+  "weaviate",
+  "s3",
 ];
 
 const original = process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
@@ -221,4 +225,105 @@ describe("a guarded provider is built with the egress decision core took (FND-2 
       agent.close();
     }
   });
+});
+
+/**
+ * A local HTTP server on 127.0.0.1 that counts the requests it receives, with a twin on ::1 at the same port counting
+ * into the same record, so a request to the name localhost reaches it whichever family the name resolves to first.
+ */
+async function countingServer(): Promise<{ port: number; hits: () => number; close: () => Promise<void> }> {
+  let hits = 0;
+  const handler = (_request: unknown, response: { end: (body: string) => void }) => {
+    hits += 1;
+    response.end("unexpected request");
+  };
+  const listen = (server: Server, port: number, host: string) =>
+    new Promise<number>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(port, host, () => {
+        server.removeListener("error", reject);
+        resolve((server.address() as AddressInfo).port);
+      });
+    });
+  const close = (server: Server) =>
+    new Promise<void>((resolve, reject) => {
+      server.closeAllConnections();
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  for (let attempt = 1; ; attempt += 1) {
+    const v4 = createServer(handler);
+    // oxlint-disable-next-line no-await-in-loop -- each attempt needs the previous one's port to be closed or kept
+    const port = await listen(v4, 0, "127.0.0.1");
+    const v6 = createServer(handler);
+    // oxlint-disable-next-line no-await-in-loop -- the twin takes the port the line above was given
+    const refused = await listen(v6, port, "::1").then(
+      () => null,
+      (error: NodeJS.ErrnoException) => error,
+    );
+    if (refused === null) {
+      return { port, hits: () => hits, close: () => Promise.all([close(v4), close(v6)]).then(() => undefined) };
+    }
+    // oxlint-disable-next-line no-await-in-loop -- the next attempt starts after this port is released
+    await close(v4);
+    if (refused.code !== "EADDRINUSE" || attempt === 10) throw refused;
+  }
+}
+
+/** Builds `type` at `host` through the factory and connects, resolving to the error connect() rejected with, or null. */
+async function factoryConnect(type: DatabaseType, host: string, port: number): Promise<unknown> {
+  const connection: DatabaseConnection = {
+    id: `egress-n4-${type}`,
+    name: `egress n4 ${type}`,
+    type,
+    host,
+    port,
+    // A short deadline, so a refusal that regressed fails inside the test's time budget instead of waiting out the
+    // default one.
+    queryTimeout: 1500,
+    createdAt: new Date(),
+    // Kubernetes over TLS, so its own refusal of plain HTTP to a loopback host never comes first and no
+    // KUBERNETES_ALLOW_LOOPBACK_PLAINTEXT is written; MTConnect over TLS too for the link-local literals.
+    ...(type === "kubernetes" || type === "mtconnect" ? { ssl: { mode: "verify-full" as const } } : {}),
+  };
+  return createDatabaseProvider(connection)
+    .then((provider) => provider.connect())
+    .then(
+      () => null,
+      (error: unknown) => error,
+    );
+}
+
+/** The engines whose provider docs say how an address is refused (their "Where the connection may connect" subsection). */
+const N4_ENGINES: readonly DatabaseType[] = ["mtconnect", "influxdb", "influxdb3", "kubernetes", "weaviate"];
+
+describe("what the provider docs of MTConnect, InfluxDB, InfluxDB 3, Kubernetes and Weaviate say about egress (FND-2 slice 2b-3a)", () => {
+  test.each(N4_ENGINES.flatMap((type) => ["127.0.0.1", "localhost"].map((host) => [type, host] as const)))(
+    "%s built by createDatabaseProvider with DB_HTTP_BLOCK_PRIVATE_HOSTS true refuses %s before any request with the guard's sentence",
+    async (type, host) => {
+      setEgressFlag("true");
+      const server = await countingServer();
+      try {
+        const failure = await factoryConnect(type, host, server.port);
+        expect(failure).toBeInstanceOf(DatabaseConfigError);
+        expect((failure as Error).message).toBe(BLOCKED_HOST);
+        expect(server.hits()).toBe(0);
+      } finally {
+        await server.close();
+      }
+    },
+  );
+
+  test.each(
+    (["mtconnect", "kubernetes"] as const).flatMap((type) =>
+      ["169.254.169.254", "[fe80::1]", "[fd00:ec2::254]"].map((host) => [type, host] as const),
+    ),
+  )(
+    "%s built by createDatabaseProvider never reaches the link-local literal %s, whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says",
+    async (type, host) => {
+      setEgressFlag(undefined);
+      const failure = await factoryConnect(type, host, 6443);
+      expect(failure).toBeInstanceOf(DatabaseConfigError);
+      expect((failure as Error).message).toBe(LINK_LOCAL_HOST);
+    },
+  );
 });

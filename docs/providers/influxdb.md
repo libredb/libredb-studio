@@ -272,6 +272,10 @@ InfluxDB Cloud Serverless answers InfluxQL only for a bucket with an explicit DB
 
 Create the mapping with `influx v1 dbrp create --bucket-id <bucket-id> --db <database> --rp <policy> --default`.
 
+### 4.9 Where the connection may connect
+
+With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, a loopback, private or other non-public address is refused before any request, with the shared sentence: an IP literal when `connect()` builds the connection's origin, and a name at the lookup the request's socket dials through.
+
 ### Connection string
 
 `influxdb` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`influxdb-connection-string.ts`](../../src/lib/db/providers/timeseries/influxdb/influxdb-connection-string.ts)).

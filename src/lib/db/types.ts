@@ -2844,7 +2844,7 @@ export interface EgressDecision {
  * What `createDatabaseProvider` hands a provider it builds as its context argument: the caller's execution context
  * and `egress`, the egress decision core took (FND-2, the provider plugins design section 0.1). The factory builds it;
  * `egress` is always core's decision, never a caller's. A provider whose connections pass the shared egress guard
- * keeps it and, when it builds its transport or dial, hands `requireEgressDecision(context.egress)` from
+ * keeps it and, when it builds its origin, transport or dial, hands `requireEgressDecision(context.egress)` from
  * `./http/egress-policy` to the guard, so a provider built without a decision refuses by name and dials nothing.
  * Internal: the package exports `ProviderExecutionContext`, not this type.
  */

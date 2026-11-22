@@ -261,6 +261,11 @@ The connection's `agentPassword` alone is the agent's bearer token, because Kube
 Without an agent token, the agent uses the connection's own token.
 That identity's RBAC decides what the agent can see, so give it a ServiceAccount bound to `view`, and to `studio-reader` for the cluster-scoped kinds, as section 4.5 creates.
 
+### 4.12 Where the connection may connect
+
+With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, a loopback, private or other non-public address is refused before any request, with the shared sentence: an IP literal when `connect()` builds the connection's origin, and a name at the lookup the request's socket dials through.
+Link-local and instance metadata addresses are never dialled, whatever the variable says, as [section 11](#11-the-read-only-guarantee) says.
+
 ### Connection string
 
 `kubernetes` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/platform/kubernetes/connection-string.ts)).

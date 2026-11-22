@@ -12,7 +12,7 @@
  */
 import { importPKCS8, SignJWT } from "jose";
 import { AuthenticationError } from "@/lib/db/errors";
-import { endpointUrl, httpOrigin } from "@/lib/db/http/endpoint";
+import { endpointUrl, httpOriginWithCoreDecision } from "@/lib/db/http/endpoint";
 import type { NodeResponse, NodeTransport, NodeTransportOptions } from "@/lib/db/http/node-transport";
 import { secretForms, serverText } from "@/lib/db/utils/server-text";
 import type { DatabaseType } from "@/lib/types";
@@ -79,7 +79,9 @@ type Strategy<K extends RefreshingKind> = (
 ) => Promise<NodeResponse>;
 
 function tokenLane(context: StrategyContext): NodeTransport {
-  return context.lane("token", () => ({ origin: httpOrigin("https", new URL(GOOGLE_TOKEN_URL).hostname, 443) }));
+  return context.lane("token", () => ({
+    origin: httpOriginWithCoreDecision("https", new URL(GOOGLE_TOKEN_URL).hostname, 443),
+  }));
 }
 
 /** A grant to the token endpoint, once its form is built: close() may have landed while it was. */

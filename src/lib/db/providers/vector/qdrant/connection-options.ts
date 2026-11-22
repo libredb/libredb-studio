@@ -29,6 +29,7 @@ import {
   validatePort,
 } from "@/lib/db/http/endpoint";
 import { type NodeTlsMaterial, nodeTlsMaterial } from "@/lib/db/http/node-transport";
+import type { EgressDecision } from "@/lib/db/types";
 import { secretForms } from "@/lib/db/utils/server-text";
 import {
   type DatabaseConnection,
@@ -86,14 +87,17 @@ const SEED_REFUSED =
 const READ_ONLY_NOT_BOOLEAN = "readOnly must be true or false.";
 const QUERY_TIMEOUT_RANGE = "Query timeout must be a whole number between 1 and 2147483647 milliseconds.";
 
-/** Throws DatabaseConfigError for every refusal of QE1, QE4, QE6, VF1 and the seed stage; never echoes a value. */
+/**
+ * Throws DatabaseConfigError for every refusal of QE1, QE4, QE6, VF1 and the seed stage; never echoes a value.
+ * `context.egress` is the decision the provider was built with, which the dialled origin's literal is checked against.
+ */
 export function buildQdrantConnectionOptions(
   config: DatabaseConnection & WithTunnelFarEnd,
-  context: { readonly executionReadOnly: boolean; readonly queryTimeout: number },
+  context: { readonly executionReadOnly: boolean; readonly queryTimeout: number; readonly egress: EgressDecision },
 ): QdrantConnectionOptions {
   const farEnd = tunnelFarEnd(config);
   // QE1: validateHost, validatePort and the egress policy's literal-address guard, on the host that is dialled.
-  const dialled = shared(() => httpOrigin("http", config.host, config.port ?? QDRANT_DEFAULT_PORT));
+  const dialled = shared(() => httpOrigin("http", config.host, config.port ?? QDRANT_DEFAULT_PORT, context.egress));
   const endpoint =
     farEnd === undefined
       ? { host: unbracketed(dialled.host), port: dialled.port }
