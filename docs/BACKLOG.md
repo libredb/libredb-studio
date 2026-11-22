@@ -1446,12 +1446,12 @@ A Couchbase node addressed by an IPv6 literal is therefore unreachable over TLS,
 Found 2026-09-23 while designing the Prometheus transport (#1085, section 3.4), whose `request.ts` passes IPv6 literals through `url.urlToHttpOptions` for this reason.
 Not fixed there: the maintainer's decision for that PR is that it touches no other provider.
 
-Reproduced on node v24.14.0 and bun 1.4.2, from the repository root, with nothing listening on port 59999:
+Reproduced on node v24.22.1 and bun 1.4.4, from the repository root, with nothing listening on port 59999:
 
     bun -e 'import { nodeRequestJson } from "./src/lib/db/providers/document/couchbase/http-transport.ts"; for (const url of ["https://[::1]:59999/pools", "https://127.0.0.1:59999/pools"]) await nodeRequestJson(url, { method: "GET", headers: {} }, { rejectUnauthorized: false }, { blocksPrivateHosts: false, source: "default" }).then((r) => console.log(url, r.httpCode), (e) => console.log(url, e.message));'
 
 The IPv6 URL answers `Couchbase request failed: host [::1] not found (ENOTFOUND)`.
-The IPv4 URL is the control: `connect ECONNREFUSED 127.0.0.1:59999`, so the request reached the network and only the name failed.
+The IPv4 URL is the control: `Couchbase request failed: connection refused at 127.0.0.1:59999`, so the request reached the network and only the name failed.
 The engine fact underneath is the same on both runtimes: `https.request({ hostname: "[::1]", port: 59999 })` answers `ENOTFOUND` and `https.request({ hostname: "::1", port: 59999 })` answers `ECONNREFUSED`.
 
 D37's consolidation removes this if the shared TLS path is built on the Prometheus shape, which already handles it; until then it is a defect of its own.
