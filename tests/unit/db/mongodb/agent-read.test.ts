@@ -557,7 +557,7 @@ describe("the streamed read", () => {
     expect(error).toBeInstanceOf(QueryError);
     expect((error as Error).message).toBe(byteBudgetSentence(crossing, budget.maxResultBytes));
     // Core's refusal, not the provider's: it is Studio's own budget class.
-    expect(errorKind(error)).toBe("studio-budget-refusal");
+    expect(errorKind(error)).toBe("studio-byte-budget-refusal");
   });
 
   test("a decoded row is the editor's row: the driver's default decode, then the same serializer", async () => {

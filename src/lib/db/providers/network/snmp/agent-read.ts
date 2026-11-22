@@ -22,7 +22,7 @@
  * the whole of it is the failure the console's walk names. A refusal of Studio's own budget is worded as Studio's:
  * silence is named only when the agent answered nothing at all. Nothing of one read is kept for the next.
  */
-import { QueryError } from "@/lib/db/errors";
+import { ByteBudgetRefusal, QueryError, RowBudgetRefusal, TimeBudgetRefusal } from "@/lib/db/errors";
 import {
   byteBudgetSentence,
   measureResultBytes,
@@ -101,29 +101,33 @@ const fail = (sentence: string): never => {
   throw new SnmpAgentError(sentence);
 };
 
-/** A failed exchange, worded by its category alone; never the failure's own reason, which may name an identifier. */
-function failureSentence(failure: SnmpFailure, timeoutMs: number): string {
+/**
+ * A failed exchange, worded by its category alone; never the failure's own reason, which may name an identifier.
+ * Silence is the time budget's refusal, since the exchange waits for the read's time budget; every other category is
+ * a `SnmpAgentError`.
+ */
+function failureError(failure: SnmpFailure, timeoutMs: number): QueryError {
   switch (failure.kind) {
     case "silence":
-      return F.silence(timeoutMs);
+      return new TimeBudgetRefusal(F.silence(timeoutMs), SNMP_TYPE);
     case "tooLarge":
-      return F.tooBig;
+      return new SnmpAgentError(F.tooBig);
     case "requestTooLarge":
-      return F.requestTooLarge;
+      return new SnmpAgentError(F.requestTooLarge);
     case "answerTooLarge":
-      return F.answerTooLarge;
+      return new SnmpAgentError(F.answerTooLarge);
     case "credential":
-      return F.credential;
+      return new SnmpAgentError(F.credential);
     case "transport":
-      return F.unreachable;
+      return new SnmpAgentError(F.unreachable);
     case "refused":
-      return F.report;
+      return new SnmpAgentError(F.report);
   }
 }
 
 /** The answer of one exchange, or the read's refusal: a failure by its category, a non-zero error-status by its number. */
 function answered(answer: Response | SnmpFailure, timeoutMs: number): Response {
-  if (!("varbinds" in answer)) return fail(failureSentence(answer, timeoutMs));
+  if (!("varbinds" in answer)) throw failureError(answer, timeoutMs);
   const status = failureFromStatus(answer.errorStatus);
   if (status === undefined) return answer;
   return fail(status.kind === "tooLarge" ? F.tooBig : F.refused(answer.errorStatus));
@@ -178,18 +182,31 @@ async function readNamed(
   return { fields: ["object", "value", "type"], rows, withheld };
 }
 
-/** Why a walk ended, as a refusal, when it did not end at its subtree's end. */
-function walkEndRefusal(command: string, end: WalkEnd, rows: number, budget: ReadOnlyStatementBudget): string {
-  if (end.reason === "subtree") return "";
+/**
+ * Why a walk ended, as its refusal, or undefined when it ended at its subtree's end: the row budget a
+ * `RowBudgetRefusal`, the wall time a `TimeBudgetRefusal`, and the request and inbound byte bounds and an unfinished
+ * walk a `SnmpAgentError`.
+ */
+function walkEndRefusal(
+  command: string,
+  end: WalkEnd,
+  rows: number,
+  budget: ReadOnlyStatementBudget,
+): QueryError | undefined {
+  if (end.reason === "subtree") return undefined;
   if (end.reason === "budget") {
-    if (end.budget === "rows") return rowBudgetSentence(rows, budget.maxResultRows);
-    if (end.budget === "wallMs") return F.walkTime(command, budget.statementTimeoutMs);
-    return F.walkBound(command, end.budget === "requests" ? "request" : "inbound byte");
+    if (end.budget === "rows") return new RowBudgetRefusal(rowBudgetSentence(rows, budget.maxResultRows), SNMP_TYPE);
+    if (end.budget === "wallMs") {
+      return new TimeBudgetRefusal(F.walkTime(command, budget.statementTimeoutMs), SNMP_TYPE);
+    }
+    return new SnmpAgentError(F.walkBound(command, end.budget === "requests" ? "request" : "inbound byte"));
   }
-  if (end.reason === "notForward") return F.walkIncomplete(command, "the agent's answers did not move forward");
+  if (end.reason === "notForward") {
+    return new SnmpAgentError(F.walkIncomplete(command, "the agent's answers did not move forward"));
+  }
   // A silent step is refused by the exchange before the walk reads it, so only an empty answer arrives here; the two
   // share the sentence, since both leave the subtree unfinished.
-  return F.walkIncomplete(command, "the agent answered a step with no objects");
+  return new SnmpAgentError(F.walkIncomplete(command, "the agent answered a step with no objects"));
 }
 
 /** The walk's state after one more request that read nothing it keeps. */
@@ -245,20 +262,25 @@ async function readSubtree(
       scoped.push(varbind);
       const index = command === "table" ? tableIndexOf(subtree, varbind) : undefined;
       if (index !== undefined) indexes.add(index);
-      if (indexes.size > budget.maxResultRows) fail(F.tableOverRows(indexes.size, budget.maxResultRows));
+      if (indexes.size > budget.maxResultRows) {
+        throw new RowBudgetRefusal(F.tableOverRows(indexes.size, budget.maxResultRows), SNMP_TYPE);
+      }
     }
     if (landed !== undefined && read.length === 0) {
       // An answer that opens inside a withheld subtree is read as nothing, and the step is charged all the same.
       state = chargedStep(state);
       const spent = budgetSpent(state, bounds, now());
-      if (spent !== undefined)
-        fail(walkEndRefusal(command, { reason: "budget", complete: false, budget: spent }, state.rows, budget));
+      const refusal =
+        spent === undefined
+          ? undefined
+          : walkEndRefusal(command, { reason: "budget", complete: false, budget: spent }, state.rows, budget);
+      if (refusal !== undefined) throw refusal;
     } else {
       const step = stepWalk(subtree, bounds, state, read.map(toWalkVarbind), now());
       state = step.state;
       if (step.kind === "stop") {
         const refusal = walkEndRefusal(command, step.end, state.rows, budget);
-        if (refusal !== "") fail(refusal);
+        if (refusal !== undefined) throw refusal;
         break;
       }
       from = step.request.oids[0];
@@ -320,7 +342,7 @@ export async function runSnmpAgentReadWithin(
   };
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new SnmpAgentError(heard ? F.deadline(ms) : F.silence(ms))), ms);
+    timer = setTimeout(() => reject(new TimeBudgetRefusal(heard ? F.deadline(ms) : F.silence(ms), SNMP_TYPE)), ms);
   });
   try {
     return await Promise.race([runSnmpAgentRead(tracked, plan, budget, now), deadline]);
@@ -336,9 +358,13 @@ export function snmpAgentResult(
   executionTime: number,
 ): QueryResult {
   const rows = answer.rows.map((row) => ({ ...row }));
-  if (rows.length > budget.maxResultRows) fail(rowBudgetSentence(rows.length, budget.maxResultRows));
+  if (rows.length > budget.maxResultRows) {
+    throw new RowBudgetRefusal(rowBudgetSentence(rows.length, budget.maxResultRows), SNMP_TYPE);
+  }
   const bytes = measureResultBytes(rows);
-  if (bytes > budget.maxResultBytes) fail(byteBudgetSentence(bytes, budget.maxResultBytes));
+  if (bytes > budget.maxResultBytes) {
+    throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), SNMP_TYPE);
+  }
   const warnings: QueryWarning[] = answer.withheld.map((entry) => ({ message: withheldReason(entry) }));
   return {
     fields: [...answer.fields],

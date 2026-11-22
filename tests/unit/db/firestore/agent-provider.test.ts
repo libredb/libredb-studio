@@ -7,6 +7,7 @@
  */
 // oxlint-disable no-await-in-loop -- each surface runs after the one before, so each request is one surface's.
 import { describe, expect, test } from "bun:test";
+import { errorKind } from "@/lib/db/error-record";
 import { QueryError, ReadAllowanceExceededError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { FIRESTORE_PROVIDER_SENTENCES as S, FirestoreProvider } from "@/lib/db/providers/document/firestore";
 import { FIRESTORE_AGENT_FAILURE_SENTENCES as F } from "@/lib/db/providers/document/firestore/agent-metadata-read";
@@ -264,7 +265,10 @@ describe("failures", () => {
     const index = seams.deadlines.map((deadline) => deadline.ms).lastIndexOf(4_000);
     expect(index).toBeGreaterThanOrEqual(0);
     seams.fireDeadline(index);
-    expect((await rejected(reading)).message).toBe(`${TIME_BUDGET_PREFIX}: no answer within 4000ms`);
+    const error = await rejected(reading);
+    expect(error.message).toBe(`${TIME_BUDGET_PREFIX}: no answer within 4000ms`);
+    expect(errorKind(error)).toBe("time-budget-refusal");
+    expect((error as QueryError).query).toBe("db.listCollections()");
   });
 
   test("a probe refused by Google on an agent-mode handle is worded by category; Studio's own probe sentences pass", async () => {

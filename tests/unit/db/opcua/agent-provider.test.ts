@@ -5,11 +5,24 @@
  * than cut, failures worded by category, and every other reading of an agent-mode handle answering its reason.
  */
 import { describe, expect, test } from "bun:test";
-import { DatabaseConfigError, ExecutionProfileError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { errorKind } from "@/lib/db/error-record";
 import {
+  ByteBudgetRefusal,
+  CutValueRefusal,
+  DatabaseConfigError,
+  ExecutionProfileError,
+  QueryError,
+  RefusedBeforeSendError,
+  RowBudgetRefusal,
+  SerialisedResultRefusal,
+  TimeBudgetRefusal,
+} from "@/lib/db/errors";
+import {
+  agentFailure,
   OPCUA_AGENT_FAILURE_SENTENCES,
   OPCUA_AGENT_MAX_REQUESTS,
   OPCUA_AGENT_VALUE_COLUMNS,
+  opcuaAgentResult,
 } from "@/lib/db/providers/industrial/opcua/agent-read";
 import {
   OPCUA_LEAF_NOTE,
@@ -36,6 +49,16 @@ const PKI_ROOT = "/app/data/opcua-pki";
 const AGENT: ProviderExecutionContext = { readOnly: true, sendsStatements: true };
 const OPERATIONS: ProviderExecutionContext = { readOnly: true };
 const BUDGET: ReadOnlyStatementBudget = { maxResultRows: 5, maxResultBytes: 1_000_000, statementTimeoutMs: 2_000 };
+
+/** What a read rejects with, settled before anything is asserted on it. */
+async function caught(read: Promise<unknown>): Promise<Error> {
+  const outcome = await read.then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+  if (!(outcome instanceof Error)) throw new Error("the read was answered");
+  return outcome;
+}
 
 const PLC = "http://microsoft.com/Opc/OpcPlc/";
 const DA = "urn:plant:DataAccess";
@@ -388,9 +411,10 @@ describe("queryReadOnly answers only on a handle opened under the agent read-onl
   test("a value read of more nodes than the row budget is refused before a session is opened", async () => {
     const { provider, record } = await agentHandle();
     const ids = Array.from({ length: BUDGET.maxResultRows + 1 }, (_, at) => `ns=3;s=N${at}`);
-    const refused = provider.queryReadOnly(JSON.stringify({ read: ids }), BUDGET);
-    await expect(refused).rejects.toBeInstanceOf(RefusedBeforeSendError);
-    await expect(refused).rejects.toThrow(`${ROW_BUDGET_PREFIX}: 6 rows > 5 allowed`);
+    const refused = await caught(provider.queryReadOnly(JSON.stringify({ read: ids }), BUDGET));
+    expect(refused).toBeInstanceOf(RefusedBeforeSendError);
+    expect(refused.message).toContain(`${ROW_BUDGET_PREFIX}: 6 rows > 5 allowed`);
+    expect(errorKind(refused)).toBe("refused-before-send");
     expect(record.opened).toBe(1);
     const exact = await provider.queryReadOnly(JSON.stringify({ read: ids.slice(0, 5) }), BUDGET);
     expect(exact.rowCount).toBe(5);
@@ -621,14 +645,16 @@ describe("a history read", () => {
     const exact = await agentHandle(plant(), { history: holding(5) });
     expect((await exact.provider.queryReadOnly('{"history": "ns=3;s=HistorianInt32"}', BUDGET)).rowCount).toBe(5);
     const over = await agentHandle(plant(), { history: holding(6) });
-    await expect(over.provider.queryReadOnly('{"history": "ns=3;s=HistorianInt32"}', BUDGET)).rejects.toThrow(
-      OPCUA_AGENT_FAILURE_SENTENCES.historyOverRows(6, 5),
-    );
+    const refused = await caught(over.provider.queryReadOnly('{"history": "ns=3;s=HistorianInt32"}', BUDGET));
+    expect(refused.message).toContain(OPCUA_AGENT_FAILURE_SENTENCES.historyOverRows(6, 5));
+    expect(errorKind(refused)).toBe("row-budget-refusal");
     expect(over.record.calls.find((call) => call.startsWith("historyRead"))).toContain('"valuesPerPage":6');
     const limited = await agentHandle(plant(), { history: holding(60) });
-    await expect(
+    const limitedRefusal = await caught(
       limited.provider.queryReadOnly('{"history": "ns=3;s=HistorianInt32", "limit": 50}', BUDGET),
-    ).rejects.toThrow(ROW_BUDGET_PREFIX);
+    );
+    expect(limitedRefusal.message).toContain(ROW_BUDGET_PREFIX);
+    expect(errorKind(limitedRefusal)).toBe("row-budget-refusal");
   });
 
   test("a stated limit equal to the row budget is the request's own: answered at it, and one more is refused", async () => {
@@ -637,9 +663,11 @@ describe("a history read", () => {
     expect(answered.rowCount).toBe(5);
     expect(answered.warnings?.[0]?.message).toContain("reached its cap of 5 values");
     const over = await agentHandle(plant(), { history: holding(60) });
-    await expect(
+    const refused = await caught(
       over.provider.queryReadOnly('{"history": "ns=3;s=HistorianInt32", "limit": 6}', BUDGET),
-    ).rejects.toThrow(OPCUA_AGENT_FAILURE_SENTENCES.historyOverRows(6, 5));
+    );
+    expect(refused.message).toContain(OPCUA_AGENT_FAILURE_SENTENCES.historyOverRows(6, 5));
+    expect(errorKind(refused)).toBe("row-budget-refusal");
   });
 
   test("with no limit written, a window past the console's own cap is refused, never cut at that cap", async () => {
@@ -666,9 +694,11 @@ describe("a history read", () => {
       history: async () => ({ ...page(2), continuationPoint: new Uint8Array([1]) }),
       historyReadNext: async (options) => ({ nodeId: options.nodeId, values: [], statusCode: "BadTimeout" }),
     });
-    await expect(partial.provider.queryReadOnly('{"history": "ns=3;s=HistorianInt32"}', BUDGET)).rejects.toThrow(
+    const refused = await caught(partial.provider.queryReadOnly('{"history": "ns=3;s=HistorianInt32"}', BUDGET));
+    expect(refused.message).toContain(
       "The history read was not finished, so it is refused rather than answered in part",
     );
+    expect(errorKind(refused)).toBe("query");
   });
 
   test("an id outside the roots and a missing one are refused alike, with nothing sent for either", async () => {
@@ -794,9 +824,11 @@ describe("a browse", () => {
 
   test("of a member holding more kept references than the row budget is refused rather than cut", async () => {
     const { provider } = await agentHandle();
-    await expect(
+    const refused = await caught(
       provider.queryReadOnly('{"browse": "ns=3;s=Telemetry"}', { ...BUDGET, maxResultRows: 2 }),
-    ).rejects.toThrow(OPCUA_AGENT_FAILURE_SENTENCES.browseOverRows(3, 2));
+    );
+    expect(refused.message).toContain(OPCUA_AGENT_FAILURE_SENTENCES.browseOverRows(3, 2));
+    expect(errorKind(refused)).toBe("row-budget-refusal");
   });
 
   test("an id outside the roots and a missing one are refused alike, with nothing sent for either", async () => {
@@ -829,9 +861,11 @@ describe("the bounds", () => {
         return endless;
       },
     });
-    await expect(
+    const refused = await caught(
       provider.queryReadOnly('{"history": "ns=3;s=HistorianInt32"}', { ...BUDGET, maxResultRows: 1_000 }),
-    ).rejects.toThrow(OPCUA_AGENT_FAILURE_SENTENCES.requests);
+    );
+    expect(refused.message).toContain(OPCUA_AGENT_FAILURE_SENTENCES.requests);
+    expect(errorKind(refused)).toBe("query");
     // The limits and the namespace table are two of the answer's requests; the walk's own are not among them.
     expect(history).toBe(OPCUA_AGENT_MAX_REQUESTS - 2);
     expect(
@@ -847,11 +881,10 @@ describe("the bounds", () => {
           release = () => resolve({});
         }),
     });
-    const message = await provider.queryReadOnly('{"read": ["i=2256"]}', { ...BUDGET, statementTimeoutMs: 50 }).then(
-      () => "answered",
-      (error: Error) => error.message,
-    );
+    const refused = await caught(provider.queryReadOnly('{"read": ["i=2256"]}', { ...BUDGET, statementTimeoutMs: 50 }));
+    const message = refused.message;
     expect(message).toBe(OPCUA_AGENT_FAILURE_SENTENCES.time(50));
+    expect(errorKind(refused)).toBe("time-budget-refusal");
     expect(message).toStartWith(TIME_BUDGET_PREFIX);
     release();
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -860,9 +893,27 @@ describe("the bounds", () => {
 
   test("an answer past the byte budget is refused rather than cut", async () => {
     const { provider } = await agentHandle();
-    await expect(
+    const refused = await caught(
       provider.queryReadOnly('{"read": ["ns=3;s=SlowUInt1"]}', { ...BUDGET, maxResultBytes: 10 }),
-    ).rejects.toThrow("Read-only execution exceeded the byte budget");
+    );
+    expect(refused.message).toContain("Read-only execution exceeded the byte budget");
+    expect(errorKind(refused)).toBe("byte-budget-refusal");
+  });
+
+  test("an answer past the row budget is refused as row-budget-refusal", () => {
+    // A value read past the row budget is refused before its session, and a history or a browse inside its read, so the
+    // result's own row check is held here directly.
+    const answer = { fields: [], rows: [{ a: 1 }, { a: 2 }], warnings: [] };
+    const refused = (() => {
+      try {
+        opcuaAgentResult(answer, { ...BUDGET, maxResultRows: 1 }, 1);
+      } catch (error) {
+        return error;
+      }
+      throw new Error("the answer was answered");
+    })();
+    expect((refused as Error).message).toBe(`${ROW_BUDGET_PREFIX}: 2 rows > 1 allowed`);
+    expect(errorKind(refused)).toBe("row-budget-refusal");
   });
 });
 
@@ -881,6 +932,16 @@ describe("failures are worded by category, never in the server's or the library'
     );
     expect(message).toBe(OPCUA_AGENT_FAILURE_SENTENCES.status("BadUserAccessDenied"));
     expect(message).not.toContain("SecretRecipe");
+    expect(errorKind(agentFailure(new QueryError("BadUserAccessDenied"), true))).toBe("query");
+  });
+
+  test.each(
+    [RowBudgetRefusal, ByteBudgetRefusal, TimeBudgetRefusal, CutValueRefusal, SerialisedResultRefusal].map(
+      (Class) => [Class.name, Class] as const,
+    ),
+  )("a budget refusal passes through agentFailure as it is: %s", (_name, Class) => {
+    const refusal = new Class(`refused ${crypto.randomUUID()}`, "opcua");
+    expect(agentFailure(refusal, false)).toBe(refusal);
   });
 
   test("a failure with no code during the read is the transport's", async () => {
@@ -889,9 +950,9 @@ describe("failures are worded by category, never in the server's or the library'
         throw new Error(SERVER_TEXT);
       },
     });
-    await expect(provider.queryReadOnly('{"read": ["ns=3;s=SlowUInt1"]}', BUDGET)).rejects.toThrow(
-      OPCUA_AGENT_FAILURE_SENTENCES.transport,
-    );
+    const refused = await caught(provider.queryReadOnly('{"read": ["ns=3;s=SlowUInt1"]}', BUDGET));
+    expect(refused.message).toContain(OPCUA_AGENT_FAILURE_SENTENCES.transport);
+    expect(errorKind(refused)).toBe("query");
   });
 
   test("a session that cannot be opened is the session's, and names no endpoint or path", async () => {
@@ -914,6 +975,7 @@ describe("failures are worded by category, never in the server's or the library'
     );
     expect(message).toBe(OPCUA_AGENT_FAILURE_SENTENCES.session);
     expect(message).not.toContain("plc-7");
+    expect(errorKind(agentFailure(new DatabaseConfigError("not opened"), false))).toBe("query");
   });
 });
 

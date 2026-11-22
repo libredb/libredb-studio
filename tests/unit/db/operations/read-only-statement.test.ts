@@ -1,7 +1,14 @@
 import { describe, expect, mock, spyOn, test } from "bun:test";
 import path from "node:path";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
-import { ExecutionProfileError, QueryError, StudioBudgetRefusal } from "@/lib/db/errors";
+import { errorKind } from "@/lib/db/error-record";
+import {
+  ExecutionProfileError,
+  QueryError,
+  StudioByteBudgetRefusal,
+  StudioRowBudgetRefusal,
+  StudioTimeBudgetRefusal,
+} from "@/lib/db/errors";
 import { logger } from "@/lib/logger";
 import {
   byteBudgetSentence,
@@ -674,11 +681,12 @@ describe("Studio's own class for core's refusals of an answer", () => {
         wait: "statement-timeout",
       }),
     );
-    expect(error).toBeInstanceOf(StudioBudgetRefusal);
-    expect((error as StudioBudgetRefusal).name).toBe("QueryError");
-    expect((error as StudioBudgetRefusal).message).toBe(rowBudgetSentence(3, 2));
-    expect((error as StudioBudgetRefusal).provider).toBe("postgres");
-    expect((error as StudioBudgetRefusal).query).toBe("SELECT id FROM t");
+    expect(error).toBeInstanceOf(StudioRowBudgetRefusal);
+    expect(errorKind(error)).toBe("studio-row-budget-refusal");
+    expect((error as StudioRowBudgetRefusal).name).toBe("QueryError");
+    expect((error as StudioRowBudgetRefusal).message).toBe(rowBudgetSentence(3, 2));
+    expect((error as StudioRowBudgetRefusal).provider).toBe("postgres");
+    expect((error as StudioRowBudgetRefusal).query).toBe("SELECT id FROM t");
   });
 
   test("a result past the byte budget is refused with Studio's own class, named QueryError, in the byte sentence", async () => {
@@ -694,9 +702,10 @@ describe("Studio's own class for core's refusals of an answer", () => {
         wait: "statement-timeout",
       }),
     );
-    expect(error).toBeInstanceOf(StudioBudgetRefusal);
-    expect((error as StudioBudgetRefusal).name).toBe("QueryError");
-    expect((error as StudioBudgetRefusal).message).toBe(
+    expect(error).toBeInstanceOf(StudioByteBudgetRefusal);
+    expect(errorKind(error)).toBe("studio-byte-budget-refusal");
+    expect((error as StudioByteBudgetRefusal).name).toBe("QueryError");
+    expect((error as StudioByteBudgetRefusal).message).toBe(
       byteBudgetSentence(first + measureRowBytes(rows[1]), first + 10),
     );
   });
@@ -714,9 +723,10 @@ describe("Studio's own class for core's refusals of an answer", () => {
           wait: "statement-timeout",
         }),
       );
-      expect(error).toBeInstanceOf(StudioBudgetRefusal);
-      expect((error as StudioBudgetRefusal).name).toBe("QueryError");
-      expect((error as StudioBudgetRefusal).message).toBe(`${TIME_BUDGET_PREFIX}: no answer within 5ms`);
+      expect(error).toBeInstanceOf(StudioTimeBudgetRefusal);
+      expect(errorKind(error)).toBe("studio-time-budget-refusal");
+      expect((error as StudioTimeBudgetRefusal).name).toBe("QueryError");
+      expect((error as StudioTimeBudgetRefusal).message).toBe(`${TIME_BUDGET_PREFIX}: no answer within 5ms`);
     } finally {
       warned.mockRestore();
     }
@@ -738,7 +748,10 @@ describe("Studio's own class for core's refusals of an answer", () => {
       }),
     );
     expect(error).toBeInstanceOf(QueryError);
-    expect(error).not.toBeInstanceOf(StudioBudgetRefusal);
+    for (const Class of [StudioRowBudgetRefusal, StudioByteBudgetRefusal, StudioTimeBudgetRefusal]) {
+      expect(error, Class.name).not.toBeInstanceOf(Class);
+    }
+    expect(errorKind(error)).toBe("query");
   });
 });
 

@@ -18,8 +18,10 @@ import {
   RefusedBeforeSendError,
   RowBudgetRefusal,
   SerialisedResultRefusal,
-  StudioBudgetRefusal,
+  StudioByteBudgetRefusal,
   StudioProfileRefusal,
+  StudioRowBudgetRefusal,
+  StudioTimeBudgetRefusal,
   StudioTimeoutRefusal,
   ProviderTextWithheldError,
   TimeBudgetRefusal,
@@ -335,15 +337,17 @@ describe("isStudioRefusal", () => {
   });
 
   test("the core budget and time classes are Studio's, and a plain QueryError or TimeoutError is not", () => {
-    const budgetRefusal = new StudioBudgetRefusal("refused by the row budget", "postgres", "SELECT 1");
     const timeRefusal = new StudioTimeoutRefusal("did not answer in time", "postgres", 50);
-    expect(isStudioRefusal(budgetRefusal)).toBe(true);
+    for (const Class of [StudioRowBudgetRefusal, StudioByteBudgetRefusal, StudioTimeBudgetRefusal]) {
+      const budgetRefusal = new Class("refused by the budget", "postgres", "SELECT 1");
+      expect(isStudioRefusal(budgetRefusal), Class.name).toBe(true);
+      expect(budgetRefusal, Class.name).toBeInstanceOf(QueryError);
+      expect(budgetRefusal.name, Class.name).toBe("QueryError");
+      expect(budgetRefusal.query, Class.name).toBe("SELECT 1");
+    }
     expect(isStudioRefusal(timeRefusal)).toBe(true);
     expect(isStudioRefusal(new QueryError("refused by the row budget", "postgres"))).toBe(false);
     expect(isStudioRefusal(new TimeoutError("did not answer in time", "postgres", 50))).toBe(false);
-    expect(budgetRefusal).toBeInstanceOf(QueryError);
-    expect(budgetRefusal.name).toBe("QueryError");
-    expect(budgetRefusal.query).toBe("SELECT 1");
     expect(timeRefusal).toBeInstanceOf(TimeoutError);
     expect(timeRefusal.name).toBe("TimeoutError");
     expect(timeRefusal.timeout).toBe(50);

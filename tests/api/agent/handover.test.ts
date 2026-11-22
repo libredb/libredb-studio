@@ -469,7 +469,7 @@ describe("POST /api/agent/runs/[runId]/handover", () => {
     expect(res.status).toBe(400);
     expect(body.code).toBe("QUERY_ERROR");
     expect(body.error).toBe(rowBudgetSentence(DEFAULT_QUERY_LIMIT + 1, DEFAULT_QUERY_LIMIT));
-    expect(body.kind).toBe("studio-budget-refusal");
+    expect(body.kind).toBe("studio-row-budget-refusal");
     expect(body.outcome).toBe("unknown");
     expect(body.result).toBeUndefined();
   });

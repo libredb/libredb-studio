@@ -65,7 +65,12 @@
  * execution-profile acquisition uses; `query()` is never the fallback.
  */
 
-import { StudioBudgetRefusal, StudioProfileRefusal } from "@/lib/db/errors";
+import {
+  StudioByteBudgetRefusal,
+  StudioProfileRefusal,
+  StudioRowBudgetRefusal,
+  StudioTimeBudgetRefusal,
+} from "@/lib/db/errors";
 import {
   assertReadOnlyBudget,
   byteBudgetSentence,
@@ -194,11 +199,11 @@ export async function runReadOnlyReading<T>(call: ReadOnlyReadingCall<T>): Promi
 }
 
 function sharedRowRefusal(type: DatabaseType, statement: string): (rows: number, allowed: number) => Error {
-  return (rows, allowed) => new StudioBudgetRefusal(rowBudgetSentence(rows, allowed), type, statement);
+  return (rows, allowed) => new StudioRowBudgetRefusal(rowBudgetSentence(rows, allowed), type, statement);
 }
 
 function sharedByteRefusal(type: DatabaseType, statement: string): (bytes: number, allowed: number) => Error {
-  return (bytes, allowed) => new StudioBudgetRefusal(byteBudgetSentence(bytes, allowed), type, statement);
+  return (bytes, allowed) => new StudioByteBudgetRefusal(byteBudgetSentence(bytes, allowed), type, statement);
 }
 
 /**
@@ -216,7 +221,7 @@ function withinStatementTimeout<T>(
     timer = setTimeout(() => {
       logLateSettlement(answered, call.type, call.scrub, startedAt);
       reject(
-        new StudioBudgetRefusal(
+        new StudioTimeBudgetRefusal(
           `${TIME_BUDGET_PREFIX}: no answer within ${statementTimeoutMs}ms`,
           call.type,
           call.statement,

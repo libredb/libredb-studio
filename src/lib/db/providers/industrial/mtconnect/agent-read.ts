@@ -27,7 +27,7 @@
  * standard names, never by its text; a transport failure, an answer that is not MTConnect, an unreadable answer and
  * an answer Studio's reader refuses by its own rule are each worded by their category, never in the agent's words.
  */
-import { QueryError } from "@/lib/db/errors";
+import { ByteBudgetRefusal, isBudgetRefusal, QueryError, RowBudgetRefusal, TimeBudgetRefusal } from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
 import {
   byteBudgetSentence,
@@ -203,7 +203,7 @@ export function renderXmlElement(element: MtcElement): string {
 }
 
 function refuseRows(rows: number, budget: ReadOnlyStatementBudget): never {
-  throw new MtconnectAgentError(MTCONNECT_AGENT_FAILURE_SENTENCES.overRows(rows, budget.maxResultRows));
+  throw new RowBudgetRefusal(MTCONNECT_AGENT_FAILURE_SENTENCES.overRows(rows, budget.maxResultRows), MTCONNECT_TYPE);
 }
 
 function warningsOf(withheld: number, noun: "observation" | "data item"): QueryWarning[] {
@@ -281,7 +281,8 @@ async function observations(
   }
   // The walk stopped at the first row past the budget, so how many more the agent held is not known: the read is
   // refused as holding more than the budget, never answered in part.
-  if (over) throw new MtconnectAgentError(MTCONNECT_AGENT_FAILURE_SENTENCES.overWalk(budget.maxResultRows));
+  if (over)
+    throw new RowBudgetRefusal(MTCONNECT_AGENT_FAILURE_SENTENCES.overWalk(budget.maxResultRows), MTCONNECT_TYPE);
   const sorted = sortRows(rows);
   return {
     rows: sorted.map((row) => ({ ...row })),
@@ -456,7 +457,7 @@ export function mtconnectAgentResult(
   const rows = answer.rows.map((row) => ({ ...row }));
   const bytes = measureResultBytes(rows);
   if (bytes > budget.maxResultBytes) {
-    throw new MtconnectAgentError(`${byteBudgetSentence(bytes, budget.maxResultBytes)}. ${STUDIO}`);
+    throw new ByteBudgetRefusal(`${byteBudgetSentence(bytes, budget.maxResultBytes)}. ${STUDIO}`, MTCONNECT_TYPE);
   }
   return {
     rows,
@@ -469,14 +470,17 @@ export function mtconnectAgentResult(
 
 /**
  * A failure of the read worded by its category, never in the agent's or the transport's text. `timedOut` is whether
- * the read's own time budget ended it, which decides a failure the deadline caused whatever shape it took.
+ * the read's own time budget ended it, which decides a failure the deadline caused whatever shape it took. Studio's
+ * own failure and a budget refusal (`isBudgetRefusal`) pass as they are, so each keeps its class and kind.
  */
 export function agentFailure(error: unknown, timedOut: boolean, ms: number): unknown {
-  if (error instanceof MtconnectAgentError) return error;
-  if (timedOut) return new MtconnectAgentError(MTCONNECT_AGENT_FAILURE_SENTENCES.deadline(ms));
+  if (error instanceof MtconnectAgentError || isBudgetRefusal(error)) return error;
+  if (timedOut) return new TimeBudgetRefusal(MTCONNECT_AGENT_FAILURE_SENTENCES.deadline(ms), MTCONNECT_TYPE);
   if (error instanceof TransportError) {
     if (error.kind === "too-large") return new MtconnectAgentError(MTCONNECT_AGENT_FAILURE_SENTENCES.tooLarge);
-    if (error.kind === "timeout") return new MtconnectAgentError(MTCONNECT_AGENT_FAILURE_SENTENCES.deadline(ms));
+    if (error.kind === "timeout") {
+      return new TimeBudgetRefusal(MTCONNECT_AGENT_FAILURE_SENTENCES.deadline(ms), MTCONNECT_TYPE);
+    }
     return new MtconnectAgentError(MTCONNECT_AGENT_FAILURE_SENTENCES.transport(error.kind, ms));
   }
   if (error instanceof MtcClientError) {
