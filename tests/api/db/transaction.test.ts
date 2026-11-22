@@ -26,6 +26,8 @@ import {
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import type { BeginTransactionOptions, BeginTransactionResult } from "@/lib/db/types";
 import type { QueryEventInput } from "@/lib/query-events/types";
+import { CONFIRMATION_FIELD_MESSAGE } from "@/lib/api/run-confirmation";
+import { forgetUsedRunConfirmations, mintRunConfirmation } from "@/lib/api/run-confirmation-token";
 
 // ─── Create mock provider with transaction methods ──────────────────────────
 const baseMockProvider = createMockProvider();
@@ -1905,5 +1907,179 @@ describe("POST /api/db/transaction: a body that is not a JSON object", () => {
     expect(res.status).toBe(400);
     expect(await parseResponseJSON(res)).toEqual({ error: "Invalid request body" });
     expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+  });
+});
+
+// ─── The server's confirmation of a run (FND-5) ─────────────────────────────
+describe("POST /api/db/transaction: the server's confirmation of a run", () => {
+  const original = process.env.LIBREDB_RUN_CONFIRMATION;
+  const session = { role: "user", username: "alice", iat: 1_700_000_000 };
+  let warn: ReturnType<typeof spyOn>;
+
+  function run(body: Record<string, unknown>) {
+    return POST(createMockRequest("/api/db/transaction", { method: "POST", body }) as never);
+  }
+
+  function nothingRan(): void {
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockTxProvider.queryInTransaction).not.toHaveBeenCalled();
+    expect(mockAdmitQueryExecution).not.toHaveBeenCalled();
+  }
+
+  beforeEach(() => {
+    delete process.env.LIBREDB_RUN_CONFIRMATION;
+    clearRateLimitState();
+    forgetUsedRunConfirmations();
+    mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateProvider.mockImplementation(async () => mockTxProvider as never);
+    mockAdmitQueryExecution.mockClear();
+    mockTxProvider.isInTransaction.mockImplementation(() => true);
+    mockTxProvider.queryInTransaction.mockClear();
+    mockTxProvider.beginTransaction.mockClear();
+    mockTxProvider.beginTransaction.mockImplementation(async () => {});
+    mockTxProvider.commitTransaction.mockClear();
+    mockTxProvider.commitTransaction.mockImplementation(async () => {});
+    mockTxProvider.rollbackTransaction.mockClear();
+    mockTxProvider.rollbackTransaction.mockImplementation(async () => {});
+    mockTxProvider.queryInTransaction.mockImplementation(async () => ({
+      rows: [{ id: 1 }],
+      fields: ["id"],
+      rowCount: 1,
+      executionTime: 1,
+    }));
+    (mockTxProvider.prepareQuery as ReturnType<typeof mock>).mockImplementation((query: string) => ({
+      query,
+      wasLimited: false,
+      limit: 50,
+      offset: 0,
+    }));
+    mockGetSession.mockImplementation(async () => session);
+    warn = spyOn(logger, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warn.mockRestore();
+    releaseTransaction(transactionKey(validConnection.id, undefined, undefined));
+    if (original === undefined) delete process.env.LIBREDB_RUN_CONFIRMATION;
+    else process.env.LIBREDB_RUN_CONFIRMATION = original;
+    mockGetSession.mockImplementation(async () => ({ role: "admin", username: "admin" }));
+  });
+
+  describe("server confirmation, advisory", () => {
+    test("a write sent without the field runs in the transaction and its answer says unconfirmed", async () => {
+      const res = await run({ connection: validConnection, action: "query", sql: "DELETE FROM t" });
+      expect(res.status).toBe(200);
+      expect((await parseResponseJSON<{ confirmation?: string }>(res)).confirmation).toBe("unconfirmed");
+      expect(mockTxProvider.queryInTransaction).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls.filter((call) => call[1]?.route === "api/db/transaction")).toEqual([
+        [
+          "A statement that needs a confirmation ran without one",
+          { route: "api/db/transaction", type: "postgres", user: "alice" },
+        ],
+      ]);
+    });
+
+    test("a script that writes, sent without the field, runs and its answer says unconfirmed", async () => {
+      const res = await run({ connection: validConnection, action: "query", sql: "SELECT 1; DROP TABLE t" });
+      expect(res.status).toBe(200);
+      expect((await parseResponseJSON<{ confirmation?: string }>(res)).confirmation).toBe("unconfirmed");
+    });
+
+    test("a read runs with no field in its answer", async () => {
+      const res = await run({ connection: validConnection, action: "query", sql: "SELECT 1" });
+      expect(res.status).toBe(200);
+      expect(await parseResponseJSON<Record<string, unknown>>(res)).not.toHaveProperty("confirmation");
+    });
+  });
+
+  describe("server confirmation, ask", () => {
+    test.each(["advisory", "required"])("a write that asks is answered 428 in %s mode, before any provider", async (mode) => {
+      process.env.LIBREDB_RUN_CONFIRMATION = mode;
+      const res = await run({ connection: validConnection, action: "query", sql: "DELETE FROM t", confirmation: "ask" });
+      expect(res.status).toBe(428);
+      expect(await parseResponseJSON(res)).toMatchObject({ code: "CONFIRMATION_REQUIRED" });
+      nothingRan();
+    });
+
+    test("a malformed field is refused before any provider", async () => {
+      const res = await run({ connection: validConnection, action: "query", sql: "SELECT 1", confirmation: 0 });
+      expect(res.status).toBe(400);
+      expect(await parseResponseJSON(res)).toEqual({ error: CONFIRMATION_FIELD_MESSAGE });
+      nothingRan();
+    });
+  });
+
+  describe("server confirmation, required", () => {
+    beforeEach(() => {
+      process.env.LIBREDB_RUN_CONFIRMATION = "required";
+    });
+
+    test("a write sent without the field is answered 428, and the token runs it once", async () => {
+      const body = { connection: validConnection, action: "query", sql: "DELETE FROM t WHERE id = $1", params: [7] };
+      const asked = await run(body);
+      expect(asked.status).toBe(428);
+      nothingRan();
+      const { token } = (await parseResponseJSON<{ confirmation: { token: string } }>(asked)).confirmation;
+      const ran = await run({ ...body, confirmation: { token } });
+      expect(ran.status).toBe(200);
+      expect(mockTxProvider.queryInTransaction).toHaveBeenCalledTimes(1);
+      const again = await run({ ...body, confirmation: { token } });
+      expect(again.status).toBe(400);
+      expect(await parseResponseJSON(again)).toEqual({
+        error: "this confirmation has already been used",
+        code: "CONFIRMATION_INVALID",
+      });
+    });
+
+    test("a token minted on this route is refused on POST /api/db/query's route name, and the reverse here", async () => {
+      const issued = await mintRunConfirmation({
+        session,
+        connection: validConnection as never,
+        catalog: undefined,
+        route: "query",
+        statement: "DELETE FROM t",
+        params: undefined,
+        verdict: { decision: "confirm", unreadable: false, typedConfirmation: null, classificationFailed: false },
+      });
+      const res = await run({
+        connection: validConnection,
+        action: "query",
+        sql: "DELETE FROM t",
+        confirmation: { token: issued.token },
+      });
+      expect(res.status).toBe(400);
+      expect((await parseResponseJSON<{ error: string }>(res)).error).toBe("this confirmation was issued for another route");
+    });
+
+    test("begin, commit and rollback are not classified", async () => {
+      mockTxProvider.isInTransaction.mockImplementation(() => false);
+      const begun = await run({ connection: validConnection, action: "begin", sql: "DROP TABLE t" });
+      expect(begun.status).toBe(200);
+      mockTxProvider.isInTransaction.mockImplementation(() => true);
+      expect((await run({ connection: validConnection, action: "commit", sql: "DROP TABLE t" })).status).toBe(200);
+      expect((await run({ connection: validConnection, action: "rollback", confirmation: "nonsense" })).status).toBe(200);
+    });
+  });
+
+  describe("server confirmation, order", () => {
+    test.each([
+      ["a missing statement", { connection: validConnection, action: "query", confirmation: "ask" }],
+      ["a statement that is not text", { connection: validConnection, action: "query", sql: 1, confirmation: "ask" }],
+      [
+        "bad bound values",
+        { connection: validConnection, action: "query", sql: "DELETE FROM t", params: "x", confirmation: "ask" },
+      ],
+      [
+        "bad page bounds",
+        { connection: validConnection, action: "query", sql: "DELETE FROM t", options: { offset: -1 }, confirmation: "ask" },
+      ],
+      ["a missing action", { connection: validConnection, sql: "DELETE FROM t", confirmation: "ask" }],
+    ] as const)("%s is refused for its fields whatever the confirmation holds", async (_label, body) => {
+      process.env.LIBREDB_RUN_CONFIRMATION = "required";
+      const res = await run(body as Record<string, unknown>);
+      expect(res.status).toBe(400);
+      expect(await parseResponseJSON<Record<string, unknown>>(res)).not.toHaveProperty("code", "CONFIRMATION_REQUIRED");
+      nothingRan();
+    });
   });
 });

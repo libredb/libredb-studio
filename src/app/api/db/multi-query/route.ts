@@ -20,6 +20,7 @@ import type { DatabaseProvider, OpenQueryTransactionOutcome } from "@/lib/db/typ
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 import type { DatabaseConnection } from "@/lib/types";
 import { admitQueryExecution } from "@/lib/query-events/admission";
+import { gateRun } from "@/lib/api/run-confirmation";
 import { queryEventStart } from "@/lib/query-events/build";
 import {
   type QueryEventRequest,
@@ -284,6 +285,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No valid SQL statements found" }, { status: 400 });
     }
 
+    // The server's confirmation gate (docs/API_DOCS.md, "Server confirmation of a run"), over the whole submitted
+    // script: after every field check, and before the admission gate and any provider, so a request it answers opens
+    // nothing, runs nothing and records no query event.
+    const gate = await gateRun({
+      route: "multi-query",
+      session: guard.session,
+      connection,
+      catalog: requestCatalog(body),
+      sql,
+      params: undefined,
+      confirmation: body.confirmation,
+      explain: false,
+    });
+    if (gate.kind === "answer") return NextResponse.json(gate.body, { status: gate.status });
+
     // Before the provider: a request the gate refuses opens nothing and runs nothing.
     admitting = true;
     admitQueryExecution();
@@ -385,6 +401,7 @@ export async function POST(req: NextRequest) {
       executedCount: results.length,
       hasError,
       statements: results,
+      ...(gate.unconfirmed && { confirmation: "unconfirmed" }),
     });
   } catch (error) {
     if (admitting || (resolved === undefined && error instanceof SeedConnectionError)) {
