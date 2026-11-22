@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import ts from "typescript";
 import { customConnectionsAllowed } from "@/lib/config/custom-connections";
+import { unknownTypeSentence } from "@/lib/db/type-id";
 import { governanceEnabled, governanceSource } from "@/lib/governance/config";
 import { resetGovernanceKeyring } from "@/lib/governance/keyring";
 import { verifyGovernanceEnvAtBoot } from "@/lib/governance/preflight";
@@ -262,6 +263,16 @@ describe("governance/preflight verifyGovernanceEnvAtBoot", () => {
         "STORAGE_POSTGRES_SCHEMA",
       ].sort(),
     );
+  });
+
+  test("names each GOVERNANCE_ALLOWED_ENGINES entry that names no provider with the sentence every surface refuses its type with", () => {
+    process.env.GOVERNANCE_ALLOWED_ENGINES = "postgres,postgress,mysql,constructor,acmefoo";
+    const run = runPreflight();
+    expect(run.passed).toBe(false);
+    expect(run.exitCalls).toEqual([1]);
+    expect(run.problems).toEqual([
+      `GOVERNANCE_ALLOWED_ENGINES must name connection type ids such as postgres: ${unknownTypeSentence("postgress")} ${unknownTypeSentence("constructor")} ${unknownTypeSentence("acmefoo")}`,
+    ]);
   });
 
   test("the banner never carries a password, a launch secret or the governance URL", () => {

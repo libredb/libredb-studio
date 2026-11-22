@@ -122,7 +122,7 @@ It prints one banner that names every variable to fix and never prints a secret,
 - `LIBREDB_MCP_ENABLED` or `LIBREDB_AGENT_ENABLED` is set to anything but empty or a value that switches it off: `false`, `off` or `0`.
 - `GOVERNANCE_POSTGRES_URL`, `GOVERNANCE_INSTANCE_ID`, `GOVERNANCE_PRIVATE_KEYS_FILE` or `STORAGE_POSTGRES_SCHEMA` is missing.
 - The keyring file does not load, for one of the reasons [keyring](#keyring) lists.
-- A variable of the table above has an invalid value, `GOVERNANCE_SOURCE` included, or `GOVERNANCE_ALLOWED_ENGINES` names an engine Studio has no connection type for.
+- A variable of the table above has an invalid value, `GOVERNANCE_SOURCE` included, or `GOVERNANCE_ALLOWED_ENGINES` names an engine this Studio has no provider for, which the banner names in the sentence Studio refuses such a connection type with, such as `No provider for the connection type "postgress" is installed in this LibreDB Studio.`
 
 ### What governance mode switches off
 
