@@ -35,6 +35,7 @@ const SOURCE_ROOTS = ["src", join("vscode-extension", "src")];
 const PROVIDER_CODE = join("src", "lib", "db", "providers") + sep;
 const READ_ALLOWANCE = join("src", "lib", "db", "read-allowance.ts");
 const PROVIDER_TEXT = join("src", "lib", "db", "operations", "provider-text.ts");
+const READ_ONLY_STATEMENT = join("src", "lib", "db", "operations", "read-only-statement.ts");
 
 function sourceFiles(directory: string): string[] {
   const found: string[] = [];
@@ -255,6 +256,31 @@ describe("who wrote a refusal", () => {
     ).toBe(true);
     expect(constructed("ReadAllowanceExceededError", (file) => !file.provider).length).toBeGreaterThan(0);
     expect(constructed("OffsetUnsupportedError", (file) => !file.provider)).toEqual([]);
+  });
+
+  test("no provider module constructs StudioBudgetRefusal or StudioTimeoutRefusal", () => {
+    for (const className of ["StudioBudgetRefusal", "StudioTimeoutRefusal"]) {
+      expect(constructed(className, (file) => file.provider)).toEqual([]);
+    }
+  });
+
+  test("the core read path constructs no plain QueryError, and its row, byte and time refusals are Studio's own", () => {
+    const corePath = (file: { file: string }) => file.file === READ_ONLY_STATEMENT;
+    expect(constructed("QueryError", corePath)).toEqual([]);
+    expect(constructed("StudioBudgetRefusal", corePath)).toEqual([
+      `${READ_ONLY_STATEMENT}: sharedRowRefusal`,
+      `${READ_ONLY_STATEMENT}: sharedByteRefusal`,
+      `${READ_ONLY_STATEMENT}: withinStatementTimeout`,
+    ]);
+  });
+
+  test("the agent tool layer constructs a TimeoutError only as Studio's own", () => {
+    const agentLayer = (file: { file: string }) => file.file.startsWith(join("src", "lib", "agent") + sep);
+    expect(constructed("TimeoutError", agentLayer)).toEqual([]);
+    expect(constructed("StudioTimeoutRefusal", agentLayer)).toEqual([
+      // The statistics read's own time limit, raised inside the `invoke` of `readStatisticsForGrounding`.
+      `${join("src", "lib", "agent", "tools.ts")}: invoke`,
+    ]);
   });
 
   test("only the core scrub constructs a ProviderTextWithheldError", () => {

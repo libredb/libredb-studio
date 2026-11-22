@@ -30,7 +30,7 @@
  *   one-statement-per-table contract is not something to trade silently.
  */
 import type { z } from "zod";
-import { providerTextScrub } from "@/lib/db/operations/provider-text";
+import { providerAuthor, providerTextScrub } from "@/lib/db/operations/provider-text";
 import { runReadOnlyReading } from "@/lib/db/operations/read-only-statement";
 import type { ReadOnlyCatalogReading, ReadOnlyCatalogSelector } from "@/lib/db/types";
 import type { ColumnSchema } from "@/lib/types";
@@ -412,7 +412,7 @@ export async function runMongoProfile(
     kind: "profiled",
     artifact: outcome.artifact,
     profile,
-    modelText: mongoProfileModelText(profile, outcome.artifact, plan),
+    modelText: mongoProfileModelText(profile, outcome.artifact, plan, providerAuthor(context.connection.type)),
   };
 }
 
@@ -428,11 +428,15 @@ function fieldCoverage(plan: MongoProfilePlan): string {
   return `${plan.remaining} further field(s) are NOT covered by this profile; call profile_table again with fromColumn=${plan.from + plan.columns.length} to reach them.`;
 }
 
-/** The model-facing text of one profiled collection, mirroring the SQL arm's sentence for sentence. */
+/**
+ * The model-facing text of one profiled collection, mirroring the SQL arm's sentence for sentence; the collection's
+ * name and the findings are fenced naming `relayedBy`, the provider that relayed them.
+ */
 function mongoProfileModelText(
   profile: AgentTableProfile,
   artifact: AgentArtifactReference,
   plan: MongoProfilePlan,
+  relayedBy: string,
 ): string {
   const fields = plan.columns.length === 0 ? "no field" : `fields ${plan.from + 1}-${plan.from + plan.columns.length}`;
   return [
@@ -443,7 +447,8 @@ function mongoProfileModelText(
       label: "profiled collection name",
       operationId: "mongo.table.profile",
       reference: artifact.correlationId,
+      relayedBy,
     }),
-    describeFindings(profile.findings, "mongo.table.profile"),
+    describeFindings(profile.findings, "mongo.table.profile", relayedBy),
   ].join(" ");
 }

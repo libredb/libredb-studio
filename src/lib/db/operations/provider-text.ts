@@ -20,7 +20,9 @@ import {
   ProviderTextWithheldError,
   QueryError,
   ReadAllowanceExceededError,
+  StudioBudgetRefusal,
   StudioProfileRefusal,
+  StudioTimeoutRefusal,
 } from "@/lib/db/errors";
 import { holdsSecretForm, secretForms } from "@/lib/db/utils/server-text";
 import { type SecretFieldRecord, secretFieldValues } from "@/lib/storage/secret-fields";
@@ -139,7 +141,17 @@ export function providerAuthor(type: DatabaseType): string {
   return `${CONNECTION_FORM[type].label} provider, bundled with Studio`;
 }
 
-/** Whether a refusal is Studio's own: the two classes only core constructs. */
+/**
+ * Whether a refusal is Studio's own: the four classes only core constructs. `ReadAllowanceExceededError` (the run's
+ * read allowance, before sending) and `StudioProfileRefusal` (an execution profile refusal) come before a statement is
+ * sent; `StudioBudgetRefusal` (core's row, byte or time refusal of an answer) and `StudioTimeoutRefusal` (the agent's
+ * statistics read outlasting its time) come after.
+ */
 export function isStudioRefusal(error: unknown): boolean {
-  return error instanceof ReadAllowanceExceededError || error instanceof StudioProfileRefusal;
+  return (
+    error instanceof ReadAllowanceExceededError ||
+    error instanceof StudioProfileRefusal ||
+    error instanceof StudioBudgetRefusal ||
+    error instanceof StudioTimeoutRefusal
+  );
 }

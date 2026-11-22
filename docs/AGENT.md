@@ -476,9 +476,16 @@ dead process left with no outcome is still told apart: its outcome is unknowable
 
 **A statement the provider refused before sending it stays a `database-error` refusal, marked `sent: false`.**
 A provider whose own read-only fence will not send a statement raises `RefusedBeforeSendError` (`src/lib/db/errors.ts`) rather than a plain `QueryError`, and the run read allowance's refusal is one.
-A provider doc whose fence raises it names which of its refusals do; a refusal raised after the database answered, such as a row or byte budget, stays a plain `QueryError`.
-The tool layer records the provider's sentence as `message`, unfenced, because it is this server's and not the engine's, and tells the model the statement was refused before it was sent and the database was not asked.
+A provider doc whose fence raises it names which of its refusals do; a refusal raised after the database answered, such as a row or byte budget, is not one.
+The tool layer records the provider's sentence as `message` and `refusedBy: "provider"`, and tells the model, in a fence of its own naming the provider ("PostgreSQL provider, bundled with Studio"), that the statement was refused before it was sent and the database was not asked; the read allowance's sentence is this server's own, said unfenced and recorded `refusedBy: "studio"`.
+MCP answers a provider's refusal behind a notice naming the provider.
 It still counts a statement and a repair attempt, because the run spent the execution and the rewrite is the model's to author.
+
+**A provider's row or byte budget refusal is database content; Studio's own is Studio's.**
+A provider that refuses its own answer by the row or byte budget raises a plain `QueryError`, and the tool layer fences that sentence as database content relayed by the provider, as it fences any engine error.
+Studio's core holds every answer to the same budgets and to the time the run granted (`runReadOnlyStatement` in `src/lib/db/operations/read-only-statement.ts`), and raises its own refusals as `StudioBudgetRefusal`; the statistics read outlasting its time raises `StudioTimeoutRefusal`.
+Only core constructs either class, so the tool layer tells them apart by class, never by text, says the sentence unfenced in this server's voice, and records `refusedBy: "studio"` on the sent statement.
+A resumed run is told such a refusal in this server's words too, and any other failure of a sent statement fenced as the database's.
 The rail shows it as "Refused before the database" with that sentence as the detail, not as "The database refused the statement", and a repeat of the call is answered from the ledger in the same words.
 A resumed run is told to draft a statement that does not do what the refusal names, an allowance refusal included, because the ledger keeps the sentence and not which advice the model was first given.
 MCP answers a fence's refusal as `mcp_statement_refused` and the allowance's as `mcp_result_too_large`, both in this server's words, never behind the untrusted-content notice as the database's error.
@@ -1995,8 +2002,9 @@ left byte-identical, so a marker the model reconstructs is defanged there as wel
 
 **Database content is untrusted input.** A table name, a column comment, a row value and an engine
 error message all come from whoever can write to the database, so everything crossing into a prompt
-is fenced first: a header naming what the content is and where it came from, and a stated boundary
+is fenced first: a header naming what the content is, where it came from and the provider that relayed it, and a stated boundary
 the content cannot forge.
+A conversation's earlier steps and the standalone AI routes' context name no relaying provider, because no provider relayed them to the server.
 
 **A binary cell reaches the model as hex, not as its wire JSON** (2026-08-24). A `bytea`, `BLOB` or
 `blob` value used to be put in the prompt by a plain `JSON.stringify`, so the model was handed
@@ -3154,7 +3162,8 @@ src/lib/agent/
 ├── capability-probe.ts   # tool calling / structured output / streaming, established positively
 ├── capability-labels.ts  # what those three are called in front of a user; shared with the rail
 ├── drive-token.ts        # the single-purpose credential the resume seam verifies
-└── untrusted-content.ts  # the prompt-side fence for database content
+└── untrusted-content.ts  # the prompt-side fences: database content, naming the provider that
+                          #   relayed it, and a provider's own text, naming the provider that wrote it
 
 src/app/api/agent/        # the six route paths above
 src/components/agent/     # AgentRail.tsx, SafetyStrip.tsx, AnswerCard.tsx,

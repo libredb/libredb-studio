@@ -47,12 +47,16 @@ import { randomBytes } from "node:crypto";
 import neo4j, { type Driver } from "neo4j-driver-lite";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
 import type { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_CANCELLED_TEXT, MCP_UNTRUSTED_NOTICE, type ToolResult } from "@/lib/mcp/output";
+import { databaseContentNotice, MCP_CANCELLED_TEXT, type ToolResult } from "@/lib/mcp/output";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { inspectSchema, InspectSchemaInputSchema } from "@/lib/mcp/tools/inspect-schema";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
+
+/** The notice an answer carrying database content opens with on this file's neo4j connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("neo4j"));
 
 function env(name: string): string {
   const value = process.env[name];
@@ -270,7 +274,7 @@ try {
     JSON.stringify(rowsOf(served.result)) === JSON.stringify([{ name: "Ada" }, { name: "Bob" }]) &&
       served.acquired.join(",") === "agent-read-only" &&
       served.result.content[0]?.type === "text" &&
-      (served.result.content[0] as { text: string }).text === MCP_UNTRUSTED_NOTICE,
+      (served.result.content[0] as { text: string }).text === DATABASE_CONTENT_NOTICE,
     `the proved reader is served under the agent read-only profile (${served.acquired.join(",")}), behind the notice`,
   );
   for (const [name, connection, words] of [

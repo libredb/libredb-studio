@@ -357,8 +357,11 @@ export interface AgentRecommendationCard<
     events: readonly AgentRunEvent[],
     modelId: string,
   ): AgentRecommendationOutcome | undefined;
-  /** Called after the core verified the card's evidence; returns the outcome verbatim. */
-  record(events: readonly AgentRunEvent[], card: Card): AgentRecommendationOutcome;
+  /**
+   * Called after the core verified the card's evidence; returns the outcome verbatim. `relayedBy` names the provider
+   * of the run's connection (`providerAuthor`), for a card whose answer fences a name that provider relayed.
+   */
+  record(events: readonly AgentRunEvent[], card: Card, relayedBy: string): AgentRecommendationOutcome;
 }
 
 /**

@@ -1,7 +1,7 @@
 import { describe, expect, mock, spyOn, test } from "bun:test";
 import path from "node:path";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
-import { ExecutionProfileError, QueryError } from "@/lib/db/errors";
+import { ExecutionProfileError, QueryError, StudioBudgetRefusal } from "@/lib/db/errors";
 import { logger } from "@/lib/logger";
 import {
   byteBudgetSentence,
@@ -657,6 +657,88 @@ describe("runReadOnlyReading", () => {
     expect(error).toBeInstanceOf(QueryError);
     expect((error as QueryError).message).toContain("statementTimeoutMs");
     expect(read).not.toHaveBeenCalled();
+  });
+});
+
+describe("Studio's own class for core's refusals of an answer", () => {
+  // Core's row, byte and time refusals carry the same sentences a provider raises, so a class of their own is what
+  // tells Studio's sentence apart; their name stays QueryError, so no log line or error body reading a name moves.
+  test("a result past the row budget is refused with Studio's own class, named QueryError, in the row sentence", async () => {
+    const { provider } = providerAnswering(async () => answer([{ id: 1 }, { id: 2 }, { id: 3 }]));
+    const error = await settled(
+      runReadOnlyStatement(provider, {
+        type: "postgres",
+        scrub: noForms("postgres"),
+        statement: "SELECT id FROM t",
+        budget: { ...budget, maxResultRows: 2 },
+        wait: "statement-timeout",
+      }),
+    );
+    expect(error).toBeInstanceOf(StudioBudgetRefusal);
+    expect((error as StudioBudgetRefusal).name).toBe("QueryError");
+    expect((error as StudioBudgetRefusal).message).toBe(rowBudgetSentence(3, 2));
+    expect((error as StudioBudgetRefusal).provider).toBe("postgres");
+    expect((error as StudioBudgetRefusal).query).toBe("SELECT id FROM t");
+  });
+
+  test("a result past the byte budget is refused with Studio's own class, named QueryError, in the byte sentence", async () => {
+    const rows = [{ text: "a".repeat(60) }, { text: "b".repeat(60) }];
+    const { provider } = providerAnswering(async () => answer(rows));
+    const first = measureRowBytes(rows[0]);
+    const error = await settled(
+      runReadOnlyStatement(provider, {
+        type: "mysql",
+        scrub: noForms("mysql"),
+        statement: "SELECT text FROM t",
+        budget: { ...budget, maxResultBytes: first + 10 },
+        wait: "statement-timeout",
+      }),
+    );
+    expect(error).toBeInstanceOf(StudioBudgetRefusal);
+    expect((error as StudioBudgetRefusal).name).toBe("QueryError");
+    expect((error as StudioBudgetRefusal).message).toBe(
+      byteBudgetSentence(first + measureRowBytes(rows[1]), first + 10),
+    );
+  });
+
+  test("a call it stopped waiting for is refused with Studio's own class in the time sentence", async () => {
+    const { provider } = providerAnswering(() => new Promise<QueryResult>(() => {}));
+    const warned = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const error = await settled(
+        runReadOnlyStatement(provider, {
+          type: "duckdb",
+          scrub: noForms("duckdb"),
+          statement: "SELECT 1",
+          budget: { ...budget, statementTimeoutMs: 5 },
+          wait: "statement-timeout",
+        }),
+      );
+      expect(error).toBeInstanceOf(StudioBudgetRefusal);
+      expect((error as StudioBudgetRefusal).name).toBe("QueryError");
+      expect((error as StudioBudgetRefusal).message).toBe(`${TIME_BUDGET_PREFIX}: no answer within 5ms`);
+    } finally {
+      warned.mockRestore();
+    }
+  });
+
+  test("a reading's caller-named refusals are the caller's, not Studio's core class", async () => {
+    const refuseRows = (rows: number, allowed: number) => new QueryError(`rows ${rows} of ${allowed}`, "mongodb");
+    const error = await settled(
+      runReadOnlyReading({
+        type: "mongodb",
+        scrub: noForms("mongodb"),
+        statement: '{"object":"orders"}',
+        budget,
+        wait: "statement-timeout",
+        read: async () => [{ a: 1 }, { a: 2 }],
+        servedRows: (rows: Record<string, unknown>[]) => rows,
+        maxRows: 1,
+        refuseRows,
+      }),
+    );
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error).not.toBeInstanceOf(StudioBudgetRefusal);
   });
 });
 

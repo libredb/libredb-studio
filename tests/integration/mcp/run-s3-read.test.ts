@@ -20,9 +20,9 @@ import { join } from "node:path";
 import { languageServer } from "@/lib/agent/languages/server";
 import { getServerAuditBuffer } from "@/lib/audit";
 import { S3_AGENT_FAILURE_SENTENCES } from "@/lib/db/providers/objectstore/s3/agent-metadata-read";
-import { PROVIDER_TEXT_WITHHELD } from "@/lib/db/operations/provider-text";
+import { PROVIDER_TEXT_WITHHELD, providerAuthor } from "@/lib/db/operations/provider-text";
 import { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_CANCELLED_TEXT, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { databaseContentNotice, MCP_CANCELLED_TEXT } from "@/lib/mcp/output";
 import { timeoutText } from "@/lib/mcp/tools/read-query-limits";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
@@ -36,6 +36,9 @@ import {
 } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
 import { bucketsXml, errorXml, objectsXml } from "../../helpers/s3-fake-transport";
+
+/** The notice an answer carrying database content opens with on this file's s3 connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("s3"));
 
 pinMcpTestEnvironment();
 
@@ -266,7 +269,7 @@ describe("a read under the agent read key", () => {
   test("the bucket list holds the agent key's buckets alone, behind the notice, recorded under the tool", async () => {
     const result = await s3("aws s3api list-buckets");
     expect(result.isError ?? false).toBe(false);
-    expect(result.content[0]).toEqual({ type: "text", text: MCP_UNTRUSTED_NOTICE });
+    expect(result.content[0]).toEqual({ type: "text", text: DATABASE_CONTENT_NOTICE });
     expect(result.structuredContent).toMatchObject({
       connection_id: "seed:store",
       rows: [{ bucket: "sales", created: "2026-10-09T13:13:17.442Z" }],

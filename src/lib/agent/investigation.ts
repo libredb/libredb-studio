@@ -1757,10 +1757,11 @@ const INSPECT_SCHEMA_RELATIONS_OMISSION_ADVICE = 'Call inspect_schema with kind=
 function packSnapshotMessage(
   snapshot: AgentContextSnapshot,
   objective: string,
+  relayedBy: string,
   noun: AgentInventoryNoun,
   grounding: { readonly omissionAdvice: string; readonly sampledFields?: boolean },
 ): string {
-  return packContextForTask(snapshot, objective, {
+  return packContextForTask(snapshot, objective, relayedBy, {
     preface: snapshotHandoverText(snapshot.fingerprint),
     omissionAdvice: grounding.omissionAdvice,
     noun,
@@ -1844,11 +1845,12 @@ const planningSnapshotPreface = (
 function packPlanningSnapshotMessage(
   snapshot: AgentContextSnapshot,
   objective: string,
+  relayedBy: string,
   readBy: PlanningGrounding["readBy"],
   noun: AgentInventoryNoun,
   sampledFields: boolean,
 ): string {
-  return packContextForTask(snapshot, objective, {
+  return packContextForTask(snapshot, objective, relayedBy, {
     preface: planningSnapshotPreface(snapshot, readBy, noun),
     noun,
     ...(sampledFields ? { sampledFields: true } : {}),
@@ -1882,6 +1884,8 @@ function packPlanningSnapshotMessage(
  * declare a foreign key at all must not be described as one that happens to declare
  * none. The provider is the only thing that knows, and `CLAUDE.md` forbids asking the
  * connection's type here instead.
+ *
+ * `relayedBy` names the provider that relayed the inventory the relations are read from (`providerAuthor`).
  */
 function packRelations(
   snapshot: AgentContextSnapshot,
@@ -1889,6 +1893,7 @@ function packRelations(
   mode: AgentRunMode,
   capabilities: ProviderCapabilities,
   noun: AgentInventoryNoun,
+  relayedBy: string,
 ): string {
   const omissionAdvice = mode === "agent" ? INSPECT_SCHEMA_RELATIONS_OMISSION_ADVICE : undefined;
   return fenceUntrustedContent(
@@ -1905,6 +1910,7 @@ function packRelations(
       label: "schema relations",
       operationId: "agent/context-snapshot",
       reference: snapshot.fingerprint,
+      relayedBy,
     },
   );
 }
@@ -1970,6 +1976,13 @@ function describeSettled(event: AgentSettledStepEvent, toolName: string, connect
     });
     return `Step ${event.stepId} (${toolName}) was refused before it was sent, by the ${author}, so the database never saw it:\n${fenced}\nDraft a statement that does not do what the refusal names.`;
   }
+  if (refusal.refusedBy === "studio") {
+    // Sent, and this server refused its answer by its own row, byte or time budget: this server's sentence, said in its
+    // voice as one inert line rather than fenced as the database's.
+    const detail = oneLineForPrompt(message);
+    const reason = /[.!?]$/.test(detail) ? detail : `${detail}.`;
+    return `Step ${event.stepId} (${toolName}) was sent, and this server refused its answer by its own budget: ${reason} Narrow the statement, or answer from what you have already read.`;
+  }
   // The engine's own words: untrusted, so fenced rather than quoted into the
   // server's voice. The fingerprint stands in for a correlation id, which a
   // statement that failed never produced.
@@ -1977,6 +1990,7 @@ function describeSettled(event: AgentSettledStepEvent, toolName: string, connect
     label: "database error",
     operationId: toolName,
     reference: refusal.statementFingerprint,
+    relayedBy: providerAuthor(connection.type),
   });
   return `Step ${event.stepId} (${toolName}) failed at the database.\n${fenced}`;
 }
@@ -2056,6 +2070,7 @@ function describePriorProgress(record: AgentRunRecord, connection: DatabaseConne
             label: "profile already taken",
             operationId: "sql.table.profile",
             reference: event.artifact.correlationId,
+            relayedBy: providerAuthor(connection.type),
           },
         )}`,
       );
@@ -2113,6 +2128,8 @@ function describeThreadContext(record: AgentRunRecord): string | null {
     label: "earlier steps",
     operationId: "agent/thread",
     reference: record.thread.threadId,
+    // Prose a user and a model wrote across runs: no provider relayed it to this server.
+    relayedBy: null,
   });
   return [
     "This run continues a conversation. Its earlier steps are listed below, oldest first, with the most recent step's report.",
@@ -3216,7 +3233,7 @@ export async function runInvestigation(
         messages.push({ role: "user", content: planningOperationsContextNote(engine.noun) });
         messages.push({
           role: "user",
-          content: packOperationsInventory(packed, {
+          content: packOperationsInventory(packed, providerAuthor(context.connection.type), {
             preface: planningSnapshotPreface(packed, readBy, engine.noun),
             noun: engine.noun,
           }),
@@ -3227,6 +3244,7 @@ export async function runInvestigation(
           content: packPlanningSnapshotMessage(
             packed,
             record.objective,
+            providerAuthor(context.connection.type),
             readBy,
             engine.noun,
             runServer.grounding.sampledFields === true,
@@ -3234,7 +3252,14 @@ export async function runInvestigation(
         });
         messages.push({
           role: "user",
-          content: packRelations(packed, record.workflowType, record.mode, context.capabilities, engine.noun),
+          content: packRelations(
+            packed,
+            record.workflowType,
+            record.mode,
+            context.capabilities,
+            engine.noun,
+            providerAuthor(context.connection.type),
+          ),
         });
       }
 
@@ -3328,7 +3353,7 @@ export async function runInvestigation(
           messages.push({ role: "user", content: operationsContextNote(engine.noun) });
           messages.push({
             role: "user",
-            content: packOperationsInventory(snapshot, {
+            content: packOperationsInventory(snapshot, providerAuthor(context.connection.type), {
               preface: snapshotHandoverText(snapshot.fingerprint),
               noun: engine.noun,
             }),
@@ -3337,12 +3362,25 @@ export async function runInvestigation(
         }
         messages.push({
           role: "user",
-          content: packSnapshotMessage(snapshot, record.objective, engine.noun, languageGrounding),
+          content: packSnapshotMessage(
+            snapshot,
+            record.objective,
+            providerAuthor(context.connection.type),
+            engine.noun,
+            languageGrounding,
+          ),
         });
         if (!languageGrounding.relations) return;
         messages.push({
           role: "user",
-          content: packRelations(snapshot, record.workflowType, record.mode, context.capabilities, engine.noun),
+          content: packRelations(
+            snapshot,
+            record.workflowType,
+            record.mode,
+            context.capabilities,
+            engine.noun,
+            providerAuthor(context.connection.type),
+          ),
         });
       };
 

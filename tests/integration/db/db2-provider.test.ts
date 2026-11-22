@@ -94,9 +94,9 @@ import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import {
+  databaseContentNotice,
   MCP_ENGINE_ERROR_PREFIX,
   MCP_PROVIDER_ROW_CAP,
-  MCP_UNTRUSTED_NOTICE,
   providerTextNotice,
 } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
@@ -106,6 +106,9 @@ import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from ".
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { fakeTextScrub } from "../../helpers/mcp-fixtures";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
+
+/** The notice an answer carrying database content opens with on this file's db2 connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("db2"));
 
 // ============================================================================
 // The fixture, as the catalog holds it
@@ -2804,7 +2807,7 @@ describe("MCP run_read_query on a Db2 connection", () => {
       pagination: { offset: 0, limit: 2, hasMore: true, nextOffset: 2, wasLimited: true },
       hint: "Call again with offset 2 for the next page.",
     });
-    expect((result.content as { text: string }[])[0]?.text).toBe(MCP_UNTRUSTED_NOTICE);
+    expect((result.content as { text: string }[])[0]?.text).toBe(DATABASE_CONTENT_NOTICE);
   });
 
   test("checks the user before every statement, with no verdict kept between calls", async () => {
@@ -2905,7 +2908,7 @@ describe("MCP run_read_query on a Db2 connection", () => {
     expect(bounded).toEqual([boundAgentStatement(sql, MCP_PROVIDER_ROW_CAP)]);
     expect(result).toEqual({
       content: [
-        { type: "text", text: MCP_UNTRUSTED_NOTICE },
+        { type: "text", text: DATABASE_CONTENT_NOTICE },
         { type: "text", text: `${MCP_ENGINE_ERROR_PREFIX}${refusal}` },
       ],
       isError: true,

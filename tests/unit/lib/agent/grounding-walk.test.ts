@@ -19,7 +19,7 @@ import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import type { AgentToolContext } from "@/lib/agent/tools";
 import type { AgentContextSnapshot, AgentInventory } from "@/lib/agent/types";
 import { QueryError } from "@/lib/db/errors";
-import { PROVIDER_TEXT_WITHHELD } from "@/lib/db/operations/provider-text";
+import { PROVIDER_TEXT_WITHHELD, providerAuthor } from "@/lib/db/operations/provider-text";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
@@ -36,6 +36,9 @@ import type {
 } from "@/lib/db/types";
 import type { QueryResult } from "@/lib/types";
 import { TABLE_LABELS } from "../../../fixtures/provider-labels";
+
+/** The provider that relays every inventory this file packs. */
+const RELAYED_BY = providerAuthor("kubernetes");
 
 const frozenClock = () => 1_000;
 
@@ -149,8 +152,8 @@ async function captured(
 }
 
 const packings = (snapshot: AgentContextSnapshot): readonly string[] => [
-  packContextForTask(snapshot, "why do pods restart"),
-  packOperationsInventory(snapshot),
+  packContextForTask(snapshot, "why do pods restart", RELAYED_BY),
+  packOperationsInventory(snapshot, RELAYED_BY),
 ];
 
 describe("a kind whose names are withheld", () => {
@@ -294,7 +297,7 @@ describe("a provider's sentence that carries the connection's credential", () =>
     });
 
     expect(snapshot.objects[0]?.indexes).toEqual({ unavailable: PROVIDER_TEXT_WITHHELD });
-    expect(packOperationsInventory(snapshot)).toContain(`indexes unavailable (${PROVIDER_TEXT_WITHHELD})`);
+    expect(packOperationsInventory(snapshot, RELAYED_BY)).toContain(`indexes unavailable (${PROVIDER_TEXT_WITHHELD})`);
     expectAbsent(snapshot, password);
   });
 
@@ -1054,7 +1057,7 @@ describe("an object with no columns", () => {
           : [{ path: [...container, "pod/web"], name: "pod/web", kind }],
     });
     // The task packer's lines: the operations packer lists names and indexes only, never columns.
-    const lines = packContextForTask(snapshot, "why do pods restart").split("\n");
+    const lines = packContextForTask(snapshot, "why do pods restart", RELAYED_BY).split("\n");
     expect(lines.find((line) => line.includes("pod/web"))).toMatch(/pod\/web \(Pod\)$/);
     expect(lines.find((line) => line.includes("orders"))).toMatch(
       /orders \(Table\): no columns derivable from the stored definition$/,

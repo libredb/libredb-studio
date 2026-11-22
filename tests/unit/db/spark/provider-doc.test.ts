@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { IMPORT_NO_TARGET, importRefusal } from "@/components/DataImportModal";
 import { packOperationsInventory } from "@/lib/agent/context-snapshot";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { MCP_EXPOSABLE } from "@/lib/db/compatibility";
 import { readIpcColumns } from "@/lib/db/providers/sql/spark/arrow";
 import { SPARK_FIELD_SENTENCES } from "@/lib/db/providers/sql/spark/connection-options";
@@ -35,6 +36,9 @@ import { MAX_UNLIMITED_ROWS } from "@/lib/db/utils/query-limiter";
 import { type ConfirmCodeForm, resolveSqlGrammar } from "@/lib/sql/grammar";
 import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
 import { captureBytes, readSparkCapture } from "../../../helpers/spark-captures";
+
+/** The provider that relays every inventory this file packs. */
+const RELAYED_BY = providerAuthor("spark");
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const DOC = readFileSync(path.join(ROOT, "docs/providers/spark.md"), "utf8");
@@ -247,19 +251,22 @@ describe("docs/providers/spark.md", () => {
     const [catalog, namespace] = levels;
     // The note past the catalogs the walk names, written for <n> of them and for one.
     const note = (count: number): string => {
-      const packed = packOperationsInventory({
-        objects: [],
-        connectionId: "spark",
-        fingerprint: "doc",
-        capturedAtMs: 0,
-        unreadContainers: {
-          count: 0,
-          label: namespace.label,
-          labelPlural: namespace.labelPlural,
-          read: ["spark_catalog.default"],
-          unlistedParentsNotNamed: { count, label: catalog.label, labelPlural: catalog.labelPlural },
+      const packed = packOperationsInventory(
+        {
+          objects: [],
+          connectionId: "spark",
+          fingerprint: "doc",
+          capturedAtMs: 0,
+          unreadContainers: {
+            count: 0,
+            label: namespace.label,
+            labelPlural: namespace.labelPlural,
+            read: ["spark_catalog.default"],
+            unlistedParentsNotNamed: { count, label: catalog.label, labelPlural: catalog.labelPlural },
+          },
         },
-      });
+        RELAYED_BY,
+      );
       const found = packed.match(new RegExp(`${count} more [^.]*\\.`));
       if (found === null) throw new Error(`the packing wrote no count of ${count} catalogs`);
       return found[0];

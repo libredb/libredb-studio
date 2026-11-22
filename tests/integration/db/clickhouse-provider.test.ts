@@ -51,13 +51,16 @@ import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
 import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
 import type { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE, providerTextNotice } from "@/lib/mcp/output";
+import { databaseContentNotice, MCP_ENGINE_ERROR_PREFIX, providerTextNotice } from "@/lib/mcp/output";
 import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import type { ManagedConnection } from "@/lib/seed";
 import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 import { fakeTextScrub } from "../../helpers/mcp-fixtures";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
+
+/** The notice an answer carrying database content opens with on this file's clickhouse connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("clickhouse"));
 
 // ============================================================================
 // Connection
@@ -4669,7 +4672,7 @@ describe("MCP run_read_query on a ClickHouse connection", () => {
       pagination: { offset: 0, limit: 2, hasMore: true, nextOffset: 2, wasLimited: true },
       hint: "Call again with offset 2 for the next page.",
     });
-    expect(textOf(result)[0]).toBe(MCP_UNTRUSTED_NOTICE);
+    expect(textOf(result)[0]).toBe(DATABASE_CONTENT_NOTICE);
     const statement = "SELECT id FROM demo.orders ORDER BY id LIMIT 3";
     expect(sentSql.at(-1)).toBe(statement);
     expect(sentSql).toContain("SHOW GRANTS FINAL");
@@ -4744,7 +4747,7 @@ describe("MCP run_read_query on a ClickHouse connection", () => {
 
     expect(result.isError).toBe(true);
     expect(textOf(result)).toEqual([
-      MCP_UNTRUSTED_NOTICE,
+      DATABASE_CONTENT_NOTICE,
       `${MCP_ENGINE_ERROR_PREFIX}Code: 164. DB::Exception: agent_ro: Cannot execute query in readonly mode. (READONLY)`,
     ]);
   });

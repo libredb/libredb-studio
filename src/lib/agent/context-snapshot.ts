@@ -1422,7 +1422,8 @@ const SAMPLED_FIELDS_NOTE =
  *
  * Table and column names are DATABASE CONTENT and are therefore fenced as untrusted
  * input, exactly like rows: a column comment or a table name is writable by whoever
- * can write to the database.
+ * can write to the database. The fence names `relayedBy`, the provider that relayed the
+ * inventory (`providerAuthor` of the run's connection type); the snapshot carries no type.
  *
  * A `preface` is the SERVER's own sentence, placed ahead of the fence — a caller that
  * needs to say something about the inventory (how to cite it, say) cannot say it
@@ -1450,6 +1451,7 @@ const SAMPLED_FIELDS_NOTE =
 export function packContextForTask(
   snapshot: AgentContextSnapshot,
   objective: string,
+  relayedBy: string,
   options: {
     readonly maxChars?: number;
     readonly preface?: string;
@@ -1470,6 +1472,7 @@ export function packContextForTask(
     label: "schema inventory",
     operationId: "agent/context-snapshot",
     reference: snapshot.fingerprint,
+    relayedBy,
   };
 
   // The capture time is named because the inventory can be REUSED: a run resumed
@@ -1546,6 +1549,7 @@ export function packContextForTask(
  */
 export function packOperationsInventory(
   snapshot: AgentContextSnapshot,
+  relayedBy: string,
   options: { readonly maxChars?: number; readonly preface?: string; readonly noun?: AgentInventoryNoun } = {},
 ): string {
   const lead = options.preface === undefined ? "" : `${options.preface}\n`;
@@ -1555,6 +1559,7 @@ export function packOperationsInventory(
     label: "schema inventory: names and indexes",
     operationId: "agent/context-snapshot",
     reference: snapshot.fingerprint,
+    relayedBy,
   };
 
   const header = `Schema inventory for this run — fingerprint ${snapshot.fingerprint}, ${snapshot.objects.length} ${noun.singular}(s) read at epoch ${snapshot.capturedAtMs}ms and not re-read since. Names and the indexes on each; no columns and no relations are included.`;

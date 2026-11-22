@@ -35,13 +35,17 @@ import { forgetStorageLocation } from "@/lib/data-dir";
 import { LibreDBProvider } from "@/lib/db/providers/embedded/libredb";
 import { admittedFileConnection } from "@/lib/db/provider-files";
 import { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_CANCELLED_TEXT, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { databaseContentNotice, MCP_CANCELLED_TEXT } from "@/lib/mcp/output";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { timeoutText } from "@/lib/mcp/tools/read-query-limits";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { type McpStatementArm, mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { DatabaseConnection } from "@/lib/types";
 import { createSqliteFile, pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
+
+/** The notice an answer carrying database content opens with on this file's libredb connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("libredb"));
 
 pinMcpTestEnvironment();
 
@@ -240,7 +244,7 @@ describe("a read", () => {
   test("get answers the key and its value behind the notice, recorded under run_libredb_read", async () => {
     const result = await libredb("get users:1");
     expect(result.isError ?? false).toBe(false);
-    expect(result.content[0]).toEqual({ type: "text", text: MCP_UNTRUSTED_NOTICE });
+    expect(result.content[0]).toEqual({ type: "text", text: DATABASE_CONTENT_NOTICE });
     expect(result.content[1].text).toBe(JSON.stringify(result.structuredContent));
     expect(result.structuredContent).toMatchObject({
       connection_id: "seed:kv",

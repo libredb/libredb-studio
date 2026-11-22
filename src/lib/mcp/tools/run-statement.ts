@@ -49,7 +49,7 @@ import {
   type ToolResult,
 } from "../output";
 import { redactErrorMessage, safeSerialize } from "../serializer";
-import { McpDatabaseChoiceError, providerInDatabase } from "./database-choice";
+import { databaseRequiredAnswer, McpDatabaseChoiceError, providerInDatabase } from "./database-choice";
 import {
   classifyReadQueryFailure,
   nextPageHint,
@@ -173,7 +173,10 @@ function failureAnswer(
   if (failure.kind === "not-sent") {
     return [providerTextError(NOT_SENT_LEAD, failure.error, scrub, providerAuthor(call.type)), "mcp_statement_refused"];
   }
-  return [engineError(MCP_ENGINE_ERROR_PREFIX, failure.error, scrub), "mcp_execution_failed"];
+  return [
+    engineError(MCP_ENGINE_ERROR_PREFIX, failure.error, scrub, providerAuthor(call.type)),
+    "mcp_execution_failed",
+  ];
 }
 
 const NOT_SENT_LEAD = "The statement was refused before it reached the database: ";
@@ -239,7 +242,7 @@ function resultOf(call: StatementCall, type: DatabaseType, prepared: PreparedQue
         byte_size: 0,
         execution_time_ms: raw.executionTime,
       },
-      untrustedResult,
+      (structured) => untrustedResult(structured, providerAuthor(type)),
     );
   };
   const whole = build(page.length);
@@ -310,7 +313,7 @@ async function execute(
   try {
     return await executeOpened(call, tool, connection, record, deadline, scrub);
   } catch (error) {
-    return [engineError(MCP_ENGINE_ERROR_PREFIX, error, scrub), "mcp_execution_failed"];
+    return [engineError(MCP_ENGINE_ERROR_PREFIX, error, scrub, providerAuthor(call.type)), "mcp_execution_failed"];
   }
 }
 
@@ -349,6 +352,11 @@ async function executeOpened(
         providerTextError(DATABASE_REFUSED_LEAD, choice.error, scrub, providerAuthor(call.type)),
         "mcp_execution_failed",
       ];
+    }
+    // The databases the call could name are database content: behind the notice naming the provider, never spliced
+    // into Studio's sentence.
+    if (choice.kind === "database-required") {
+      return [databaseRequiredAnswer(choice, providerAuthor(call.type)), "mcp_execution_failed"];
     }
     provider = choice.provider;
   } catch (error) {

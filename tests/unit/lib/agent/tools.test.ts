@@ -79,7 +79,7 @@ import {
   RefusedBeforeSendError,
   TimeoutError,
 } from "@/lib/db/errors";
-import { PROVIDER_TEXT_WITHHELD } from "@/lib/db/operations/provider-text";
+import { PROVIDER_TEXT_WITHHELD, providerAuthor } from "@/lib/db/operations/provider-text";
 import { secretForms } from "@/lib/db/utils/server-text";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import {
@@ -3618,6 +3618,10 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
       // Refused before the read was sent: a smaller read that fits what the run's read allowance has left is the repair.
       ReadAllowanceExceededError: "repairable",
       TimeoutError: "repairable",
+      // Core's own row, byte or time refusal of an answer, a QueryError: narrowing the statement is the repair.
+      StudioBudgetRefusal: "repairable",
+      // The statistics read outlasting the time Studio gave it, a TimeoutError: a narrower read is the repair.
+      StudioTimeoutRefusal: "repairable",
       QueryCancelledError: "repairable",
       AuthenticationError: "repairable",
       // A grant the agent's least-privilege credential lacks: reading another object is the repair.
@@ -7192,6 +7196,20 @@ describe("present_answer records which result IS the answer, and how to show it"
     expect(outcome.modelText).toContain("region");
   });
 
+  test("a chart naming a column the result lacks lists the real names fenced, naming the provider", () => {
+    const h = harness();
+
+    const outcome = present(h, answered(h), {
+      artifact: ANSWER_CORRELATION,
+      presentation: { kind: "chart", spec: { type: "bar", x: "regoin", y: ["net_total"], caption: "typo" } },
+    });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected a refusal");
+    expect(outcome.modelText).toContain(
+      `[UNTRUSTED DATABASE CONTENT: the 2 column name(s) of result ${ANSWER_CORRELATION}; relayed by the PostgreSQL provider, bundled with Studio; operation sql.query.read; reference ${ANSWER_CORRELATION}]`,
+    );
+  });
+
   test("a y column that holds no numbers is refused, against the rows that were delivered", () => {
     const h = harness();
     const events = answered(h, {
@@ -7903,5 +7921,152 @@ describe("a name Studio's own sentence takes from the inventory", () => {
     expect(outcome.modelText).toContain(`${shown("shop").slice(0, -1)}.sales.orders"`);
     expect(outcome.modelText).toContain("archive.sales.orders");
     expectNoLineInStudiosVoice(outcome.modelText);
+  });
+});
+
+describe("database content names the provider that relayed it", () => {
+  /** The header line of the only database fence in `text`. */
+  const databaseFenceHeader = (text: string): string => {
+    const headers = text.split("\n").filter((line) => line.includes("[UNTRUSTED DATABASE CONTENT"));
+    expect(headers).toHaveLength(1);
+    return headers[0];
+  };
+  const POSTGRES = providerAuthor("postgres");
+
+  test("a completed read's rows are fenced naming the provider that relayed them", async () => {
+    const h = harness();
+
+    const outcome = await runReadQueryTool(h.context, { sql: "SELECT id FROM orders" });
+    if (outcome.kind !== "completed") throw new Error(`expected a completed read, got ${outcome.kind}`);
+
+    expect(databaseFenceHeader(outcome.modelText)).toBe(
+      `[UNTRUSTED DATABASE CONTENT: read result, 1 row(s); relayed by the ${POSTGRES}; operation sql.query.read; reference ${outcome.artifact.correlationId}]`,
+    );
+  });
+
+  test("its warnings likewise", async () => {
+    const h = harness({}, async () => queryResult({ warnings: [{ message: "Studio read the last 100 lines." }] }));
+
+    const outcome = await runReadQueryTool(h.context, { sql: "SELECT id FROM orders" });
+    if (outcome.kind !== "completed") throw new Error(`expected a completed read, got ${outcome.kind}`);
+
+    const headers = outcome.modelText.split("\n").filter((line) => line.includes("[UNTRUSTED DATABASE CONTENT"));
+    expect(headers[1]).toBe(
+      `[UNTRUSTED DATABASE CONTENT: read result warnings; relayed by the ${POSTGRES}; operation sql.query.read; reference ${outcome.artifact.correlationId}]`,
+    );
+  });
+
+  test("an engine error is fenced naming the provider that relayed it", async () => {
+    const h = harness({}, async () => {
+      throw new QueryError('column "ordr_id" does not exist', "postgres", "SELECT ordr_id FROM orders");
+    });
+
+    const outcome = await runReadQueryTool(h.context, { sql: "SELECT ordr_id FROM orders" });
+    if (outcome.kind !== "refused") throw new Error("expected refused");
+
+    expect(databaseFenceHeader(outcome.modelText)).toBe(
+      `[UNTRUSTED DATABASE CONTENT: database error; relayed by the ${POSTGRES}; operation sql.query.read; reference ${fingerprintStatement("SELECT ordr_id FROM orders")}]`,
+    );
+  });
+
+  test("a provider's own row budget refusal stays database content, fenced naming the provider", async () => {
+    const h = harness({}, async () => {
+      throw new QueryError(rowBudgetSentence(1000, 200), "postgres");
+    });
+
+    const outcome = await runReadQueryTool(h.context, { sql: "SELECT * FROM orders" });
+    if (outcome.kind !== "refused" || outcome.refusal.class !== "database-error") throw new Error("expected refused");
+
+    expect(databaseFenceHeader(outcome.modelText)).toContain(`database error; relayed by the ${POSTGRES};`);
+    expect(outcome.refusal.refusedBy).toBeUndefined();
+  });
+
+  test("a profiled table's name and its findings name the provider", async () => {
+    const snapshot = {
+      connectionId: "conn-1",
+      fingerprint: "ctx_1",
+      capturedAtMs: 1,
+      objects: [
+        {
+          name: "public.orders",
+          columns: [{ name: "customer", type: "text", nullable: true, isPrimary: false }],
+          indexes: [],
+        },
+      ],
+    };
+    const run = {
+      runId: "run-1",
+      events: [{ kind: "context-captured", atMs: 1, fingerprint: "ctx_1", tableCount: 1, snapshot }],
+    } as Pick<AgentRunRecord, "runId" | "events">;
+    // One value in a hundred present: a high-null finding on the column.
+    const h = harness({}, async () =>
+      queryResult({ rows: [{ row_count: 100, present_0: 1 }], fields: ["row_count", "present_0"] }),
+    );
+    const planned = planTableProfile(h.context, run, { table: "orders" });
+    if (planned.kind !== "planned") throw new Error(`expected a plan, got ${planned.kind}`);
+
+    const outcome = await profileTableTool(h.context, planned.plan);
+    if (outcome.kind !== "profiled") throw new Error(`expected a profile, got ${outcome.kind}`);
+
+    expect(outcome.profile.findings.length).toBeGreaterThan(0);
+    expect(outcome.modelText).toContain(
+      `[UNTRUSTED DATABASE CONTENT: profiled table name; relayed by the ${POSTGRES}; operation sql.table.profile; reference ${outcome.artifact.correlationId}]`,
+    );
+    expect(outcome.modelText).toContain(
+      `[UNTRUSTED DATABASE CONTENT: ${outcome.profile.findings.length} profile finding(s); relayed by the ${POSTGRES}; operation sql.table.profile; reference server-derived]`,
+    );
+  });
+});
+
+describe("Studio's own refusal of a sent statement's answer", () => {
+  /** Settles a refused outcome as a database error, or throws naming what it was instead. */
+  const databaseError = (outcome: Awaited<ReturnType<typeof runReadQueryTool>>) => {
+    if (outcome.kind !== "refused" || outcome.refusal.class !== "database-error") {
+      throw new Error(`expected a database error, got ${JSON.stringify(outcome)}`);
+    }
+    return { outcome, refusal: outcome.refusal };
+  };
+  const rowsBudget = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxResultRows;
+
+  test("a result past the run's row budget that the provider served is refused in Studio's voice, unfenced, and recorded refusedBy studio", async () => {
+    const rows = Array.from({ length: rowsBudget + 1 }, (_, id) => ({ id }));
+    const h = harness({}, async () => queryResult({ rows, fields: ["id"], rowCount: rows.length }));
+
+    const { outcome, refusal } = databaseError(await runReadQueryTool(h.context, { sql: "SELECT id FROM orders" }));
+
+    expect(refusal.message).toBe(rowBudgetSentence(rowsBudget + 1, rowsBudget));
+    expect(refusal.refusedBy).toBe("studio");
+    expect(refusal.sent).toBeUndefined();
+    expect(outcome.modelText).not.toContain(UNTRUSTED_CONTENT_BEGIN);
+    expect(outcome.modelText).not.toContain(UNTRUSTED_PROVIDER_TEXT_BEGIN);
+    expect(outcome.modelText.startsWith(rowBudgetSentence(rowsBudget + 1, rowsBudget))).toBe(true);
+    // The row budget's advice still follows: the repair is a narrower statement.
+    expect(outcome.modelText).toContain(`LIMIT ${rowsBudget}`);
+    expect(h.repairs.attemptsUsed).toBe(1);
+  });
+
+  test("a result past the byte budget likewise", async () => {
+    const bytesBudget = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxResultBytes;
+    const rows = [{ text: "x".repeat(bytesBudget) }];
+    const h = harness({}, async () => queryResult({ rows, fields: ["text"], rowCount: 1 }));
+
+    const { outcome, refusal } = databaseError(await runReadQueryTool(h.context, { sql: "SELECT text FROM notes" }));
+
+    expect(refusal.message).toBe(byteBudgetSentence(measureRowBytes(rows[0]), bytesBudget));
+    expect(refusal.refusedBy).toBe("studio");
+    expect(outcome.modelText).not.toContain(UNTRUSTED_CONTENT_BEGIN);
+    expect(outcome.modelText).toContain(refusal.message);
+  });
+
+  test("a statement the core stopped waiting for is refused in Studio's voice", async () => {
+    // A run with 300ms left grants the statement 300ms; the double never answers, so core's own time refusal settles it.
+    const h = harness({ deadline: new AgentRunDeadline(300, frozenClock) }, () => new Promise<QueryResult>(() => {}));
+
+    const { outcome, refusal } = databaseError(await runReadQueryTool(h.context, { sql: "SELECT 1" }));
+
+    expect(refusal.message).toBe(`${TIME_BUDGET_PREFIX}: no answer within 300ms`);
+    expect(refusal.refusedBy).toBe("studio");
+    expect(outcome.modelText).not.toContain(UNTRUSTED_CONTENT_BEGIN);
+    expect(outcome.modelText).toContain(refusal.message);
   });
 });

@@ -10,6 +10,7 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { captureContextSnapshot, packContextForTask } from "@/lib/agent/context-snapshot";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
@@ -27,6 +28,9 @@ import type { DatabaseConnection, QueryResult } from "@/lib/types";
 import { fakeTextScrub, pinMcpTestEnvironment, resetMcpTestState } from "../../helpers/mcp-fixtures";
 import { recordedAnswer, resultOf, vectorCapture } from "../../helpers/qdrant-surface-fixtures";
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
+
+/** The provider that relays every inventory this file packs. */
+const RELAYED_BY = providerAuthor("qdrant");
 
 pinMcpTestEnvironment();
 
@@ -175,6 +179,6 @@ describe("QE17: the machine surfaces carry the schema and no marker", () => {
       expect.arrayContaining(["id", "vector.text", "category"]),
     );
     expectNoMarker(JSON.stringify(capture.snapshot));
-    expectNoMarker(packContextForTask(capture.snapshot, COLLECTION));
+    expectNoMarker(packContextForTask(capture.snapshot, COLLECTION, RELAYED_BY));
   });
 });

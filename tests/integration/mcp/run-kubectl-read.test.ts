@@ -21,7 +21,8 @@ import type { ExecutionProfile } from "@/lib/db/factory";
 import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes/index";
 import { MACHINE_PROFILE_SENTENCE, MACHINE_WATCH_SENTENCE } from "@/lib/db/providers/platform/kubernetes/machine-read";
 import { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { databaseContentNotice } from "@/lib/mcp/output";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
@@ -33,6 +34,9 @@ import { fakeCluster, manyRows } from "../../helpers/kubernetes-cluster";
 import { TEST_CA_PEM, TEST_TOKEN } from "../../helpers/kubernetes-connection";
 import { KUBERNETES_SAMPLE_MARKERS as M } from "../../helpers/kubernetes-markers";
 import { recordingKubernetesTransport, testSeams } from "../../helpers/kubernetes-transport";
+
+/** The notice an answer carrying database content opens with on this file's kubernetes connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("kubernetes"));
 
 pinMcpTestEnvironment();
 
@@ -171,7 +175,7 @@ describe("a read", () => {
   test("a get answers its rows behind the notice, recorded under run_kubectl_read", async () => {
     const result = await kubectl("get pods -n shop");
     expect(result.isError ?? false).toBe(false);
-    expect(result.content[0]).toEqual({ type: "text", text: MCP_UNTRUSTED_NOTICE });
+    expect(result.content[0]).toEqual({ type: "text", text: DATABASE_CONTENT_NOTICE });
     expect(result.content[1].text).toBe(JSON.stringify(result.structuredContent));
     expect(result.structuredContent).toMatchObject({
       connection_id: "seed:cluster",

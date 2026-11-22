@@ -382,14 +382,18 @@ export const handoverText = (correlationId: string): string =>
  * The findings, in the server's own words.
  *
  * A column NAME is untrusted database content, so it is fenced rather than spliced
- * into a sentence the model would read as the server speaking. The finding codes
- * and the counts are this repository's own.
+ * into a sentence the model would read as the server speaking, naming `relayedBy`, the
+ * provider that relayed it. The finding codes and the counts are this repository's own.
  */
-export function describeFindings(findings: readonly AgentProfileFinding[], operationId: AgentOperationId): string {
+export function describeFindings(
+  findings: readonly AgentProfileFinding[],
+  operationId: AgentOperationId,
+  relayedBy: string,
+): string {
   if (findings.length === 0) return "Nothing crossed a finding threshold.";
   return fenceUntrustedContent(
     findings.map((finding) => `${finding.column}: ${finding.code} — ${finding.detail}`).join("\n"),
-    { label: `${findings.length} profile finding(s)`, operationId, reference: "server-derived" },
+    { label: `${findings.length} profile finding(s)`, operationId, reference: "server-derived", relayedBy },
   );
 }
 

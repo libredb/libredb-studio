@@ -33,7 +33,7 @@ import { evaluateInfluxSql } from "@/lib/db/providers/timeseries/influxdb/sql-po
 import { InfluxDB3Provider } from "@/lib/db/providers/timeseries/influxdb/sql-provider";
 import type { DatabaseConnection, ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE, providerTextNotice } from "@/lib/mcp/output";
+import { databaseContentNotice, MCP_ENGINE_ERROR_PREFIX, providerTextNotice } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import { generateTableQuery } from "@/lib/query-generators";
@@ -50,6 +50,9 @@ import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 import { fakeTextScrub } from "../../helpers/mcp-fixtures";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
+
+/** The notice an answer carrying database content opens with on this file's influxdb3 connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("influxdb3"));
 
 const S = INFLUX_ERROR_SENTENCES as unknown as Record<string, string & ((...parts: string[]) => string)>;
 
@@ -535,7 +538,7 @@ describe("MCP run_read_query on an InfluxDB 3 connection", () => {
       pagination: { offset: 0, limit: 2, hasMore: true, nextOffset: 2, wasLimited: true },
       hint: "Call again with offset 2 for the next page.",
     });
-    expect((result.content as { text: string }[])[0]?.text).toBe(MCP_UNTRUSTED_NOTICE);
+    expect((result.content as { text: string }[])[0]?.text).toBe(DATABASE_CONTENT_NOTICE);
   });
 
   test("pages with DataFusion's own LIMIT n OFFSET m", async () => {
@@ -676,7 +679,7 @@ describe("MCP run_read_query on an InfluxDB 3 connection", () => {
 
     expect(result.isError).toBe(true);
     const text = (result.content as { text: string }[]).map((part) => part.text);
-    expect(text[0]).toBe(MCP_UNTRUSTED_NOTICE);
+    expect(text[0]).toBe(DATABASE_CONTENT_NOTICE);
     expect(text[1]).toStartWith(MCP_ENGINE_ERROR_PREFIX);
     expect(text[1]).toContain("DML not supported: Insert Into");
   });

@@ -18,6 +18,7 @@ import { MAX_IDENTIFICATION_ROUNDS } from "@/lib/db/providers/industrial/modbus/
 import { MODBUS_PROVIDER_SENTENCES, ModbusProvider } from "@/lib/db/providers/industrial/modbus/index";
 import { TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import { fenceUntrustedContent, UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
 import type { DatabaseConnection } from "@/lib/types";
@@ -203,6 +204,7 @@ describe("each admitted read sends exactly the console's request, and only it", 
       label: "read result",
       operationId: "modbusread.query.read",
       reference: "r",
+      relayedBy: providerAuthor("modbus"),
     });
     expect(fenced.split(UNTRUSTED_CONTENT_END)).toHaveLength(2);
   });
