@@ -9,6 +9,7 @@ import { ApiErrorCode } from "./error-codes";
 import {
   DatabaseError,
   DatabaseConfigError,
+  FacetNotOfferedError,
   ConnectionError,
   AuthenticationError,
   PermissionDeniedError,
@@ -160,6 +161,15 @@ export function databaseErrorBody(error: unknown): DatabaseErrorAnswer | null {
     return {
       body: { error: error.message, code: ApiErrorCode.POOL_EXHAUSTED, statusCode: 503, retryable: true },
       log: { level: "error", message: "Pool exhausted", context: { provider: error.provider } },
+    };
+  }
+
+  // --- DB: FacetNotOfferedError ---
+  // 400 before the generic branch it would otherwise reach as a 500: the engine does not offer what the request names.
+  if (error instanceof FacetNotOfferedError) {
+    return {
+      body: { error: error.message, code: ApiErrorCode.FACET_NOT_OFFERED, statusCode: 400 },
+      log: { level: "warn", message: "Facet not offered", context: { provider: error.provider } },
     };
   }
 

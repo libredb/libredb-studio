@@ -97,6 +97,28 @@ export class UnknownProviderError extends DatabaseConfigError {
   }
 }
 
+/** A facet of an engine's `ENGINE_FACETS` row that a request can name a member of; only maintenance is refused today. */
+export type DeclaredFacet = "maintenance";
+
+/**
+ * A request names a member of a facet the connection's engine does not offer: before any provider is built, an
+ * operation its `ENGINE_FACETS` row does not list, or, after connect, one the connected server does not accept.
+ * Answered 400 `FACET_NOT_OFFERED` with its sentence, which names the member and the engine. A `DatabaseError` and not
+ * a `DatabaseConfigError`: no setting of the connection is wrong, so a configuration error's remedy does not apply.
+ */
+export class FacetNotOfferedError extends DatabaseError {
+  constructor(
+    message: string,
+    provider: DatabaseType,
+    readonly facet: DeclaredFacet,
+    readonly operation: string,
+  ) {
+    super(message, provider, ApiErrorCode.FACET_NOT_OFFERED);
+    this.name = "FacetNotOfferedError";
+    Object.setPrototypeOf(this, FacetNotOfferedError.prototype);
+  }
+}
+
 // ============================================================================
 // Connection Errors
 // ============================================================================
@@ -494,11 +516,12 @@ export function isRetryableError(error: unknown): boolean {
     return false;
   }
 
-  // Auth, privilege and config errors are not retryable
+  // Auth, privilege, config and facet-not-offered errors are not retryable
   if (
     error instanceof AuthenticationError ||
     error instanceof PermissionDeniedError ||
     error instanceof DatabaseConfigError ||
+    error instanceof FacetNotOfferedError ||
     error instanceof TransactionLostError
   ) {
     return false;
