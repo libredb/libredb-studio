@@ -736,7 +736,7 @@ describe("StorageTab draws only the panels the engine offers (FND-4)", () => {
 
   test("draws no table or index figure, breakdown or largest-tables list where the engine does not offer table statistics", () => {
     const data = { ...makeMonitoringData(), tables: undefined } as MonitoringData;
-    const view = render(<StorageTab offer={withheld("tables", "indexes")} data={data} loading={false} />);
+    const view = render(<StorageTab offer={withheld("tables")} data={data} loading={false} />);
 
     expect(view.queryByTestId("storage-stat-tables")).toBeNull();
     expect(view.queryByTestId("storage-stat-indexes")).toBeNull();
@@ -745,5 +745,32 @@ describe("StorageTab draws only the panels the engine offers (FND-4)", () => {
     expect(view.queryByText("DB Size")).not.toBeNull();
     expect(view.getAllByText("WAL").length).toBeGreaterThan(0);
     expect(view.queryByText("Tablespaces")).not.toBeNull();
+  });
+
+  test("keeps every table-derived figure where the engine offers table statistics but not indexes", () => {
+    expect(ENGINE_FACETS.bigquery.monitoring.tables).toBe("offered");
+    expect(ENGINE_FACETS.bigquery.monitoring.indexes).toBe("not-offered");
+    const data = { ...makeMonitoringData(), indexes: undefined } as MonitoringData;
+    const view = render(<StorageTab offer={withheld("indexes")} data={data} loading={false} />);
+
+    expect(view.queryByTestId("storage-stat-tables")).not.toBeNull();
+    expect(view.queryByTestId("storage-stat-indexes")).not.toBeNull();
+    expect(view.queryByText("Storage Breakdown")).not.toBeNull();
+    expect(view.queryByText("Largest Tables")).not.toBeNull();
+  });
+
+  test("still says why the overview failed where the engine offers storage but not table statistics", () => {
+    const redis = ENGINE_FACETS.redis.monitoring;
+    expect(redis.storage).toBe("offered");
+    expect(redis.tables).toBe("not-offered");
+    const reason = `NOPERM ${crypto.randomUUID()}`;
+    const rest: MonitoringData = { ...makeMonitoringData(), tables: undefined } as MonitoringData;
+    delete rest.overview;
+    const data = { ...rest, errors: { overview: reason } } as MonitoringData;
+
+    const view = render(<StorageTab offer={redis} data={data} loading={false} />);
+
+    expect(view.getByTestId("panel-unavailable-message").textContent).toBe(reason);
+    expect(view.queryByText("Storage Breakdown")).toBeNull();
   });
 });

@@ -44,8 +44,10 @@ export function StorageTab({ offer, data, loading }: StorageTabProps) {
   // engine's own sentence. See MonitoringData in src/lib/db/types.ts.
   //
   // `overview` is not a panel of its own on this tab: what it feeds is the Storage Breakdown,
-  // so that is where its sentence goes. The DB Size card keeps the "N/A" it already draws for
-  // a byte figure it does not have, because a stat card has nowhere to put a sentence.
+  // so that is where its sentence goes. Where the engine offers no table statistics there is no
+  // Storage Breakdown, and the sentence goes under the stat cards instead. The DB Size card keeps
+  // the "N/A" it already draws for a byte figure it does not have, because a stat card has nowhere
+  // to put a sentence.
   const overviewUnavailable = data?.overview === undefined ? data?.errors?.overview : undefined;
   const storageUnavailable = data?.storage === undefined ? data?.errors?.storage : undefined;
   const tablesUnavailable = data?.tables === undefined ? data?.errors?.tables : undefined;
@@ -197,6 +199,8 @@ export function StorageTab({ offer, data, loading }: StorageTabProps) {
           </CardContent>
         </Card>
       </div>
+
+      {!offersTables && overviewUnavailable && <PanelUnavailable message={overviewUnavailable} />}
 
       {/* Storage Breakdown */}
       {offersTables && (
