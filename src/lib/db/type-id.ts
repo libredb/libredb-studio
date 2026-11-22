@@ -97,9 +97,10 @@ export function assertDatabaseType(value: unknown): asserts value is DatabaseTyp
 
 /**
  * Reads `table`'s row for `value` after `assertDatabaseType`, so a value that is not a type id is refused by name
- * before the table is read, and a prototype key such as `"constructor"` never reaches an `Object.prototype` member. A
- * total table answers its row; a partial table answers `undefined` for a type id it has no row for. The table is an
- * argument, so any module holding a per-engine table reads it through this one function.
+ * before the table is read, and a prototype key such as `"constructor"` never reaches an `Object.prototype` member. It
+ * reads only a table's own rows: a total table answers its row, and a partial table answers `undefined` for a type id
+ * it holds no row of its own for. The table is an argument, so any module holding a per-engine table reads it through
+ * this one function.
  *
  * @throws {UnknownProviderError} When `value` is absent, not text, or names no provider.
  */
@@ -108,5 +109,5 @@ export function typeIdRow<T extends Readonly<Partial<Record<DatabaseType, unknow
   value: unknown,
 ): T[DatabaseType] {
   assertDatabaseType(value);
-  return table[value];
+  return Object.hasOwn(table, value) ? table[value] : undefined;
 }

@@ -180,6 +180,19 @@ describe("typeIdRow", () => {
     expect(typeIdRow(PARTIAL, "mysql")).toBeUndefined();
   });
 
+  test("reads only a table's own rows, so a row a partial table inherits answers undefined", () => {
+    // Every key of the table's prototype is a shipped type id, so only the own-row rule can answer undefined.
+    const inherited: Readonly<Partial<Record<DatabaseType, string>>> = Object.create(
+      Object.fromEntries(SHIPPED_DATABASE_TYPES.map((id) => [id, `inherited row of ${id}`])),
+    );
+    const partial: Partial<Record<DatabaseType, string>> = Object.create(inherited);
+    partial.postgres = "row of postgres";
+    expect(inherited.mysql).toBe("inherited row of mysql");
+    for (const id of SHIPPED_DATABASE_TYPES) expect(typeIdRow(inherited, id)).toBeUndefined();
+    expect(typeIdRow(partial, "postgres")).toBe("row of postgres");
+    expect(typeIdRow(partial, "mysql")).toBeUndefined();
+  });
+
   test.each(OUTSIDE_THE_UNION)("refuses %s by name before it reads the table", (_label, value) => {
     expect(refusalThrownBy(() => typeIdRow(TOTAL, value))).toEqual(refusalOf(value));
     expect(refusalThrownBy(() => typeIdRow(PARTIAL, value))).toEqual(refusalOf(value));
