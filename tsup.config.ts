@@ -22,6 +22,13 @@ export default defineConfig({
   // node:sqlite — that builtin exists only WITH the prefix. The package
   // targets Node >= 24 + modern bundlers, which all understand `node:`.
   removeNodeProtocol: false,
+  // The published JavaScript imports no stylesheet: Node cannot load a `.css` import, so a host importing the
+  // package under Node would fail on the ER diagram's `@xyflow/react/dist/style.css`. Bundling every `.css` import
+  // (`noExternal`, since tsup would otherwise mark a dependency's stylesheet external by its package name) and
+  // loading it with esbuild's documented `empty` loader drops the import. The ER diagram's base styles reach a host
+  // through `dist/styles.css` instead, which scripts/copy-theme.mjs starts with an `@import` of that stylesheet.
+  noExternal: [/\.css$/],
+  loader: { ".css": "empty" },
   external: [
     "react",
     "react-dom",
@@ -113,25 +120,6 @@ export default defineConfig({
             kind: args.kind,
           });
         });
-      },
-    },
-    {
-      name: "handle-css-and-xyflow",
-      setup(build) {
-        // Replace CSS imports with empty modules.
-        // CSS is handled by the consumer's bundler (Next.js/Vite), not at runtime.
-        build.onResolve({ filter: /\.css$/ }, (args) => ({
-          path: args.path,
-          namespace: "ignore-css",
-        }));
-        build.onLoad({ filter: /.*/, namespace: "ignore-css" }, () => ({
-          contents: "",
-        }));
-        // Mark @xyflow/react (non-CSS) as external
-        build.onResolve({ filter: /^@xyflow\/react$/ }, () => ({
-          path: "@xyflow/react",
-          external: true,
-        }));
       },
     },
   ],

@@ -1,8 +1,21 @@
-import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const ROOT = join(import.meta.dir, "..", "..");
+/** The line copy-theme writes first into `dist/styles.css`. */
+const XYFLOW_IMPORT = '@import "@xyflow/react/dist/style.css";';
 const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as {
   files: string[];
   exports: Record<string, unknown>;
@@ -63,5 +76,84 @@ describe("the theme stylesheet reaches the published package", () => {
    */
   test("attw skips the CSS entry point, so these tests are the gate instead", () => {
     expect(pkg.scripts.attw).toContain("--exclude-entrypoints styles.css");
+  });
+});
+
+/** A throwaway root holding copy-theme and the token stylesheet, with node_modules linked to the repository's when asked. */
+function copyThemeRoot(linkNodeModules: boolean): string {
+  const root = mkdtempSync(join(tmpdir(), "copy-theme-"));
+  copyThemeRoots.push(root);
+  mkdirSync(join(root, "scripts"));
+  mkdirSync(join(root, "src", "styles"), { recursive: true });
+  copyFileSync(join(ROOT, "scripts", "copy-theme.mjs"), join(root, "scripts", "copy-theme.mjs"));
+  copyFileSync(join(ROOT, "src", "styles", "theme.css"), join(root, "src", "styles", "theme.css"));
+  writeFileSync(join(root, "package.json"), '{ "name": "copy-theme-root", "private": true }\n');
+  // A junction needs no privilege on Windows; on POSIX the type argument is ignored.
+  if (linkNodeModules) symlinkSync(join(ROOT, "node_modules"), join(root, "node_modules"), "junction");
+  return root;
+}
+
+const copyThemeRoots: string[] = [];
+afterAll(() => {
+  for (const root of copyThemeRoots) rmSync(root, { recursive: true, force: true });
+});
+
+function runCopyTheme(root: string) {
+  const run = spawnSync("node", [join(root, "scripts", "copy-theme.mjs")], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 30_000,
+  });
+  if (run.error) throw run.error;
+  return run;
+}
+
+/**
+ * The published JavaScript imports no stylesheet: Node cannot load a `.css` import, so a host that ran
+ * `import("@libredb/studio")` under Node failed on the ER diagram's `@xyflow/react/dist/style.css` import. The ER
+ * diagram's base styles reach an embedding host through `dist/styles.css` instead, as an `@import` its bundler
+ * resolves from the package's own location.
+ */
+describe("the ER diagram's stylesheet reaches hosts through styles.css, not the JavaScript", () => {
+  test("copy-theme puts the ER diagram's stylesheet import first and the tokens after it, unchanged", () => {
+    const root = copyThemeRoot(true);
+
+    const run = runCopyTheme(root);
+
+    expect(run.status).toBe(0);
+    const written = readFileSync(join(root, "dist", "styles.css"), "utf8");
+    const theme = readFileSync(join(ROOT, "src", "styles", "theme.css"), "utf8");
+    expect(written).toBe(`${XYFLOW_IMPORT}\n${theme}`);
+  });
+
+  test("copy-theme refuses when the ER diagram's stylesheet does not resolve", () => {
+    const root = copyThemeRoot(false);
+
+    const run = runCopyTheme(root);
+
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("@xyflow/react/dist/style.css");
+    expect(existsSync(join(root, "dist", "styles.css"))).toBe(false);
+  });
+
+  test("the imported stylesheet is an export of a declared dependency", () => {
+    const dependencies = (pkg as unknown as { dependencies: Record<string, string> }).dependencies;
+    expect(Object.keys(dependencies)).toContain("@xyflow/react");
+    const xyflow = JSON.parse(readFileSync(join(ROOT, "node_modules", "@xyflow", "react", "package.json"), "utf8")) as {
+      exports: Record<string, unknown>;
+    };
+    expect(xyflow.exports["./dist/style.css"]).toBe("./dist/style.css");
+  });
+
+  test("tsup turns every stylesheet import into an empty module", async () => {
+    const config = (await import("../../tsup.config.ts")).default as {
+      loader?: Record<string, string>;
+      noExternal?: (string | RegExp)[];
+      esbuildPlugins?: { name: string }[];
+    };
+
+    expect(config.loader?.[".css"]).toBe("empty");
+    expect((config.noExternal ?? []).some((entry) => entry instanceof RegExp && entry.source === "\\.css$")).toBe(true);
+    expect((config.esbuildPlugins ?? []).map((plugin) => plugin.name)).not.toContain("handle-css-and-xyflow");
   });
 });

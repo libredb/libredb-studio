@@ -114,6 +114,9 @@ itself or every `var(--studio-*)` resolves to nothing:
 import "@libredb/studio/styles.css";
 ```
 
+The same import also brings the ER diagram's base styles: `dist/styles.css` starts with `@import "@xyflow/react/dist/style.css";`, which the host's bundler resolves from the package's own location.
+The published JavaScript imports no stylesheet, because Node cannot load a `.css` import.
+
 See [`docs/TOOLCHAIN.md`](../TOOLCHAIN.md) for how that file is staged into `dist/` and what
 guards it.
 
