@@ -6,7 +6,18 @@ import React from "react";
 import { describe, test, expect, afterEach } from "bun:test";
 import { cleanup, render } from "@testing-library/react";
 import { StorageTab } from "@/components/monitoring/tabs/StorageTab";
+import { ENGINE_FACETS } from "@/lib/db/engine-facets";
+import type { MonitoringPanel, MonitoringPanelOffer } from "@/lib/db/engine-facets/types";
 import type { MonitoringData } from "@/lib/db/types";
+
+/** PostgreSQL's row, which offers all seven panels: the offer every render passes unless a test narrows it. */
+const ALL_PANELS: MonitoringPanelOffer = ENGINE_FACETS.postgres.monitoring;
+
+/** PostgreSQL's offer with the named panels not offered. */
+const withheld = (...panels: MonitoringPanel[]): MonitoringPanelOffer => ({
+  ...ALL_PANELS,
+  ...Object.fromEntries(panels.map((panel) => [panel, "not-offered"])),
+});
 
 function makeMonitoringData(): MonitoringData {
   return {
@@ -153,7 +164,7 @@ describe("StorageTab", () => {
   });
 
   test("renders skeleton when loading without data", () => {
-    const { queryByText } = render(<StorageTab data={null} loading />);
+    const { queryByText } = render(<StorageTab offer={ALL_PANELS} data={null} loading />);
     expect(queryByText("Storage Breakdown")).toBeNull();
   });
 
@@ -164,7 +175,7 @@ describe("StorageTab", () => {
       tables: [],
       indexes: [],
     } as MonitoringData;
-    const { queryByText } = render(<StorageTab data={emptyData} loading={false} />);
+    const { queryByText } = render(<StorageTab offer={ALL_PANELS} data={emptyData} loading={false} />);
 
     expect(queryByText("No tablespace information available.")).not.toBeNull();
     expect(queryByText("No table information available.")).not.toBeNull();
@@ -187,7 +198,7 @@ describe("StorageTab", () => {
       indexes: [],
     } as MonitoringData;
 
-    const { queryByText, queryAllByText } = render(<StorageTab data={noSize} loading={false} />);
+    const { queryByText, queryAllByText } = render(<StorageTab offer={ALL_PANELS} data={noSize} loading={false} />);
 
     expect(queryAllByText("0 B").length).toBe(0);
     expect(queryAllByText("0.0%").length).toBe(0);
@@ -213,7 +224,9 @@ describe("StorageTab", () => {
       indexes: [],
     } as MonitoringData;
 
-    const { queryByText, queryAllByText } = render(<StorageTab data={measuredZero} loading={false} />);
+    const { queryByText, queryAllByText } = render(
+      <StorageTab offer={ALL_PANELS} data={measuredZero} loading={false} />,
+    );
 
     expect(queryAllByText("0 B").length).toBe(5);
     expect(queryAllByText("0.0%").length).toBe(0);
@@ -238,7 +251,7 @@ describe("StorageTab", () => {
       indexes: [],
     } as MonitoringData;
 
-    const { container } = render(<StorageTab data={measuredZero} loading={false} />);
+    const { container } = render(<StorageTab offer={ALL_PANELS} data={measuredZero} loading={false} />);
 
     // The fixture answers `[]` for the tablespace and table lists, so the breakdown's three
     // rows are the only `Progress` bars on the tab.
@@ -250,7 +263,7 @@ describe("StorageTab", () => {
     // share the two known figures leave - 2 GB less 700 MB of data and 200 MB of indexes, so
     // 56.0546875%, drawn as `translateX(-43.9453125%)`. Without this the fix could be a
     // blanket "never draw the remainder".
-    const { container } = render(<StorageTab data={makeMonitoringData()} loading={false} />);
+    const { container } = render(<StorageTab offer={ALL_PANELS} data={makeMonitoringData()} loading={false} />);
 
     expect(barTransforms(container).slice(0, 3)).toEqual([
       "translateX(-65.8203125%)",
@@ -273,7 +286,7 @@ describe("StorageTab", () => {
     } as MonitoringData;
 
     const { container, getByTestId, queryAllByText } = render(
-      <StorageTab data={zeroTotalWithTables} loading={false} />,
+      <StorageTab offer={ALL_PANELS} data={zeroTotalWithTables} loading={false} />,
     );
 
     // The honest numerators survive: this tab measured those bytes itself. Read by testid
@@ -305,7 +318,7 @@ describe("StorageTab", () => {
     } as unknown as MonitoringData;
 
     const { container, getByTestId, queryAllByTestId } = render(
-      <StorageTab data={answeredWithErrors} loading={false} />,
+      <StorageTab offer={ALL_PANELS} data={answeredWithErrors} loading={false} />,
     );
 
     expect(queryAllByTestId("panel-unavailable").length).toBe(0);
@@ -322,7 +335,9 @@ describe("StorageTab", () => {
   });
 
   test("renders storage cards, breakdown, badges and largest tables", () => {
-    const { queryByText, queryAllByText } = render(<StorageTab data={makeMonitoringData()} loading={false} />);
+    const { queryByText, queryAllByText } = render(
+      <StorageTab offer={ALL_PANELS} data={makeMonitoringData()} loading={false} />,
+    );
 
     expect(queryByText("Storage Breakdown")).not.toBeNull();
     expect(queryByText("Tablespaces")).not.toBeNull();
@@ -340,7 +355,7 @@ describe("StorageTab", () => {
   test("a tablespace whose engine reports no usage share reads a dash, with no bar", () => {
     const data = makeMonitoringData();
     data.storage = [{ name: "fast_ssd", location: "/mnt/ssd", size: "40 GB", sizeBytes: 42949672960 }];
-    const { getByText } = render(<StorageTab data={data} loading={false} />);
+    const { getByText } = render(<StorageTab offer={ALL_PANELS} data={data} loading={false} />);
 
     const row = getByText("/mnt/ssd").closest("tr")!;
     const cells = row.querySelectorAll("td");
@@ -355,7 +370,9 @@ describe("StorageTab", () => {
     // database, the sum read 147,456 B (49,152 data + 98,304 indexes), which drew "Indexes" as
     // 100% of the database and a remainder of "-49152 B". The fixture's index row is 2 GB, the
     // whole database, so a regression to summing it is visible here rather than only on a server.
-    const { queryByText, queryAllByText } = render(<StorageTab data={makeMonitoringData()} loading={false} />);
+    const { queryByText, queryAllByText } = render(
+      <StorageTab offer={ALL_PANELS} data={makeMonitoringData()} loading={false} />,
+    );
 
     // 120 MB + 80 MB from the two tables, on a 2 GB database.
     expect(queryAllByText("200 MB").length).toBe(2); // Indexes card and breakdown row
@@ -383,7 +400,7 @@ describe("StorageTab", () => {
       }),
     } as MonitoringData;
 
-    const { queryAllByText } = render(<StorageTab data={partial} loading={false} />);
+    const { queryAllByText } = render(<StorageTab offer={ALL_PANELS} data={partial} loading={false} />);
 
     expect(queryAllByText("500 MB").length).toBe(0);
     // Tables card, the breakdown's Tables row, and the remainder that cannot be
@@ -408,7 +425,7 @@ describe("StorageTab", () => {
       }),
     } as MonitoringData;
 
-    const { queryByText, queryAllByText } = render(<StorageTab data={noBytes} loading={false} />);
+    const { queryByText, queryAllByText } = render(<StorageTab offer={ALL_PANELS} data={noBytes} loading={false} />);
 
     expect(queryByText("orders")).not.toBeNull();
     expect(queryByText("users")).not.toBeNull();
@@ -425,7 +442,9 @@ describe("StorageTab", () => {
     // engine's storage layout on all fifteen. Both breakpoint labels are asserted by value,
     // which is what keeps the "no PostgreSQL words" check below non-vacuous: a later rename
     // cannot satisfy it by moving the wording somewhere this test does not look.
-    const { container, getByTestId } = render(<StorageTab data={makeMonitoringData()} loading={false} />);
+    const { container, getByTestId } = render(
+      <StorageTab offer={ALL_PANELS} data={makeMonitoringData()} loading={false} />,
+    );
 
     expect(getByTestId("storage-breakdown-other-label").textContent).toBe("Other (unattributed)");
     expect(getByTestId("storage-breakdown-other-label-compact").textContent).toBe("Other");
@@ -442,7 +461,7 @@ describe("StorageTab", () => {
     // structure. The label must be identical on both engines because this tab is given no
     // provider labels to vary it by.
     const { container, getByTestId, queryAllByText } = render(
-      <StorageTab data={makeLibsqlMonitoringData()} loading={false} />,
+      <StorageTab offer={ALL_PANELS} data={makeLibsqlMonitoringData()} loading={false} />,
     );
 
     expect(getByTestId("storage-breakdown-other-label").textContent).toBe("Other (unattributed)");
@@ -468,7 +487,7 @@ describe("StorageTab", () => {
       }),
     } as MonitoringData;
 
-    const { queryAllByText } = render(<StorageTab data={unknownIndexSize} loading={false} />);
+    const { queryAllByText } = render(<StorageTab offer={ALL_PANELS} data={unknownIndexSize} loading={false} />);
 
     // Indexes card, breakdown row and the now-uncomputable remainder.
     expect(queryAllByText("N/A").length).toBe(3);
@@ -497,7 +516,7 @@ describe("StorageTab", () => {
       tables: [{ ...first, tableSizeBytes: bytes }],
     } as MonitoringData;
 
-    const { getByTestId } = render(<StorageTab data={single} loading={false} />);
+    const { getByTestId } = render(<StorageTab offer={ALL_PANELS} data={single} loading={false} />);
 
     expect(getByTestId("storage-stat-tables").textContent).toBe(expected);
     expect(getByTestId("storage-breakdown-tables").textContent).toBe(expected);
@@ -522,7 +541,7 @@ describe("a refused storage read", () => {
     const rest: MonitoringData = makeMonitoringData();
     delete rest.storage;
     const data = { ...rest, errors: { storage: REFUSAL } } as MonitoringData;
-    const { getByTestId, queryByText } = render(<StorageTab data={data} loading={false} />);
+    const { getByTestId, queryByText } = render(<StorageTab offer={ALL_PANELS} data={data} loading={false} />);
 
     expect(getByTestId("panel-unavailable-message").textContent).toBe(REFUSAL);
     expect(queryByText("No tablespace information available.")).toBeNull();
@@ -530,7 +549,7 @@ describe("a refused storage read", () => {
 
   test("an answered empty tablespace list keeps the empty state", () => {
     const data = { ...makeMonitoringData(), storage: [] } as MonitoringData;
-    const { queryByTestId, queryByText } = render(<StorageTab data={data} loading={false} />);
+    const { queryByTestId, queryByText } = render(<StorageTab offer={ALL_PANELS} data={data} loading={false} />);
 
     expect(queryByTestId("panel-unavailable")).toBeNull();
     expect(queryByText("No tablespace information available.")).not.toBeNull();
@@ -561,7 +580,9 @@ describe("a refused table statistics read", () => {
   }
 
   test("shows the engine's own sentence instead of the largest-tables empty state", () => {
-    const { getByTestId, queryByText } = render(<StorageTab data={refusedTables()} loading={false} />);
+    const { getByTestId, queryByText } = render(
+      <StorageTab offer={ALL_PANELS} data={refusedTables()} loading={false} />,
+    );
 
     expect(getByTestId("panel-unavailable-message").textContent).toBe(REFUSAL);
     expect(queryByText("No table information available.")).toBeNull();
@@ -572,7 +593,7 @@ describe("a refused table statistics read", () => {
     // read a measured "0 B" at "0.0%" of the database - a measurement the engine declined to
     // make. Five figures come off those rows: the Tables and Indexes cards, the breakdown's
     // Tables and Indexes rows, and the remainder computed from both.
-    const { queryAllByText } = render(<StorageTab data={refusedTables()} loading={false} />);
+    const { queryAllByText } = render(<StorageTab offer={ALL_PANELS} data={refusedTables()} loading={false} />);
 
     expect(queryAllByText("N/A").length).toBe(5);
     expect(queryAllByText("0 B").length).toBe(0);
@@ -584,7 +605,9 @@ describe("a refused table statistics read", () => {
     // the database at 100% - the round's relabelled "Other (unattributed)" row asserting
     // confidently that all 2 GB is unattributed. "2.00 GB" must appear once, on the DB Size
     // card, which is the one panel that did answer.
-    const { container, queryAllByText, getByTestId } = render(<StorageTab data={refusedTables()} loading={false} />);
+    const { container, queryAllByText, getByTestId } = render(
+      <StorageTab offer={ALL_PANELS} data={refusedTables()} loading={false} />,
+    );
 
     expect(queryAllByText("2.00 GB").length).toBe(1);
     // The label still renders - the row is drawn, only its figure is an absence.
@@ -604,7 +627,9 @@ describe("a refused table statistics read", () => {
     // them, so the zeros are real and the breakdown remainder is the whole database. Without
     // this the refusal fix could be a blanket "N/A whenever the list is empty".
     const data = { ...makeMonitoringData(), tables: [] } as MonitoringData;
-    const { queryAllByText, queryByTestId, queryByText } = render(<StorageTab data={data} loading={false} />);
+    const { queryAllByText, queryByTestId, queryByText } = render(
+      <StorageTab offer={ALL_PANELS} data={data} loading={false} />,
+    );
 
     expect(queryByTestId("panel-unavailable")).toBeNull();
     expect(queryByText("No table information available.")).not.toBeNull();
@@ -619,7 +644,9 @@ describe("a refused table statistics read", () => {
   });
 
   test("a populated table list keeps its measured figures", () => {
-    const { queryAllByText, queryByTestId } = render(<StorageTab data={makeMonitoringData()} loading={false} />);
+    const { queryAllByText, queryByTestId } = render(
+      <StorageTab offer={ALL_PANELS} data={makeMonitoringData()} loading={false} />,
+    );
 
     expect(queryByTestId("panel-unavailable")).toBeNull();
     // 500 MB + 200 MB of table data, on the Tables card and the breakdown's Tables row -
@@ -652,7 +679,9 @@ describe("a refused overview read", () => {
   }
 
   test("the breakdown shows the engine's own sentence instead of its empty state", () => {
-    const { getByTestId, queryByText } = render(<StorageTab data={refusedOverview()} loading={false} />);
+    const { getByTestId, queryByText } = render(
+      <StorageTab offer={ALL_PANELS} data={refusedOverview()} loading={false} />,
+    );
 
     expect(getByTestId("panel-unavailable-message").textContent).toBe(REFUSAL);
     // "No ... available." says the engine answered with nothing, which is not what happened.
@@ -663,7 +692,9 @@ describe("a refused overview read", () => {
     // The DB Size card has no byte figure and neither do the two cards whose percentages are
     // taken against it, so all three read "N/A" - and no bar is drawn at all, because the
     // breakdown is replaced rather than emptied.
-    const { container, queryAllByText } = render(<StorageTab data={refusedOverview()} loading={false} />);
+    const { container, queryAllByText } = render(
+      <StorageTab offer={ALL_PANELS} data={refusedOverview()} loading={false} />,
+    );
 
     expect(queryAllByText("N/A").length).toBe(3);
     expect(queryAllByText("0 B").length).toBe(0);
@@ -677,7 +708,7 @@ describe("a refused overview read", () => {
     // than rendering an empty refusal.
     const rest: MonitoringData = makeMonitoringData();
     delete rest.overview;
-    const { queryByTestId, queryByText } = render(<StorageTab data={rest} loading={false} />);
+    const { queryByTestId, queryByText } = render(<StorageTab offer={ALL_PANELS} data={rest} loading={false} />);
 
     expect(queryByTestId("panel-unavailable")).toBeNull();
     expect(queryByText("No storage size information available.")).not.toBeNull();
@@ -691,9 +722,28 @@ describe("a refused overview read", () => {
     delete (overview as { databaseSizeBytes?: number }).databaseSizeBytes;
     const answered = { ...base, overview: { ...overview, databaseSize: "N/A" } } as MonitoringData;
 
-    const { queryByTestId, queryByText } = render(<StorageTab data={answered} loading={false} />);
+    const { queryByTestId, queryByText } = render(<StorageTab offer={ALL_PANELS} data={answered} loading={false} />);
 
     expect(queryByTestId("panel-unavailable")).toBeNull();
     expect(queryByText("No storage size information available.")).not.toBeNull();
+  });
+});
+
+describe("StorageTab draws only the panels the engine offers (FND-4)", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  test("draws no table or index figure, breakdown or largest-tables list where the engine does not offer table statistics", () => {
+    const data = { ...makeMonitoringData(), tables: undefined } as MonitoringData;
+    const view = render(<StorageTab offer={withheld("tables", "indexes")} data={data} loading={false} />);
+
+    expect(view.queryByTestId("storage-stat-tables")).toBeNull();
+    expect(view.queryByTestId("storage-stat-indexes")).toBeNull();
+    expect(view.queryByText("Storage Breakdown")).toBeNull();
+    expect(view.queryByText("Largest Tables")).toBeNull();
+    expect(view.queryByText("DB Size")).not.toBeNull();
+    expect(view.getAllByText("WAL").length).toBeGreaterThan(0);
+    expect(view.queryByText("Tablespaces")).not.toBeNull();
   });
 });

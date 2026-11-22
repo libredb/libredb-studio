@@ -6,10 +6,21 @@ import React from "react";
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, render } from "@testing-library/react";
 import { OverviewTab } from "@/components/monitoring/tabs/OverviewTab";
+import { ENGINE_FACETS } from "@/lib/db/engine-facets";
+import type { MonitoringPanel, MonitoringPanelOffer } from "@/lib/db/engine-facets/types";
 import { flattenTree } from "@/components/object-tree/flatten";
 import { storage } from "@/lib/storage";
 import type { MonitoringData } from "@/lib/db/types";
 import type { TimeSeriesPoint } from "@/lib/time-series-buffer";
+
+/** PostgreSQL's row, which offers all seven panels: the offer every render passes unless a test narrows it. */
+const ALL_PANELS: MonitoringPanelOffer = ENGINE_FACETS.postgres.monitoring;
+
+/** PostgreSQL's offer with the named panels not offered. */
+const withheld = (...panels: MonitoringPanel[]): MonitoringPanelOffer => ({
+  ...ALL_PANELS,
+  ...Object.fromEntries(panels.map((panel) => [panel, "not-offered"])),
+});
 
 mock.module("@/components/monitoring/tabs/MetricChart", () => ({
   MetricChart: ({ title }: { title: string }) => React.createElement("div", { "data-testid": "metric-chart" }, title),
@@ -78,7 +89,7 @@ describe("OverviewTab", () => {
 
   test("uses saved monitoring thresholds and falls back for missing metrics", () => {
     const data = makeData();
-    const { getByText, rerender } = render(<OverviewTab data={data} loading={false} />);
+    const { getByText, rerender } = render(<OverviewTab offer={ALL_PANELS} data={data} loading={false} />);
     const connectionCard = () => getByText("Connections").closest('[data-slot="card"]')!;
     const cacheCard = () => getByText("Cache Hit").closest('[data-slot="card"]')!;
     expect(connectionCard().className).toContain("border-hue-green");
@@ -88,12 +99,12 @@ describe("OverviewTab", () => {
       { metric: "connectionPercent", warning: 5, critical: 7, direction: "above", label: "Connections" },
       { metric: "cacheHitRatio", warning: 99, critical: 97, direction: "below", label: "Cache" },
     ]);
-    rerender(<OverviewTab data={data} loading={false} />);
+    rerender(<OverviewTab offer={ALL_PANELS} data={data} loading={false} />);
     expect(connectionCard().className).toContain("border-hue-red");
     expect(cacheCard().className).toContain("border-hue-red");
 
     storage.saveThresholdConfig([]);
-    rerender(<OverviewTab data={data} loading={false} />);
+    rerender(<OverviewTab offer={ALL_PANELS} data={data} loading={false} />);
     expect(connectionCard().className).toContain("border-hue-green");
     expect(cacheCard().className).toContain("border-hue-green");
   });
@@ -109,18 +120,18 @@ describe("OverviewTab", () => {
       overview: { ...base.overview, maxConnections: 0 },
       performance: { ...base.performance, cacheHitRatio: undefined },
     } as MonitoringData;
-    const { getByText } = render(<OverviewTab data={data} loading={false} />);
+    const { getByText } = render(<OverviewTab offer={ALL_PANELS} data={data} loading={false} />);
     expect(getByText("Connections").closest('[data-slot="card"]')!.className).toContain("border-hue-green");
     expect(getByText("Cache Hit").closest('[data-slot="card"]')!.className).toContain("border-hue-green");
   });
 
   test("renders skeleton while loading without data", () => {
-    const { queryByText } = render(<OverviewTab data={null} loading />);
+    const { queryByText } = render(<OverviewTab offer={ALL_PANELS} data={null} loading />);
     expect(queryByText("Connections")).toBeNull();
   });
 
   test("renders key overview cards and quick stats", () => {
-    const { queryByText, container } = render(<OverviewTab data={makeData()} loading={false} />);
+    const { queryByText, container } = render(<OverviewTab offer={ALL_PANELS} data={makeData()} loading={false} />);
     expect(queryByText("PostgreSQL 16.3")).not.toBeNull();
     expect(queryByText("2h 5m")).not.toBeNull();
     expect(container.textContent).toContain("8/100");
@@ -138,6 +149,7 @@ describe("OverviewTab", () => {
     const base = makeData();
     const { queryByText, container } = render(
       <OverviewTab
+        offer={ALL_PANELS}
         data={{ ...base, overview: { ...base.overview, activeConnections: 3, maxConnections: 0 } } as MonitoringData}
         loading={false}
       />,
@@ -161,7 +173,7 @@ describe("OverviewTab", () => {
     delete overview.activeConnections;
     const data = { ...base, overview } as unknown as MonitoringData;
 
-    const { queryByText } = render(<OverviewTab data={data} loading={false} />);
+    const { queryByText } = render(<OverviewTab offer={ALL_PANELS} data={data} loading={false} />);
     const card = queryByText("Connections")!.closest('[data-slot="card"]')!;
 
     expect(card.textContent).toContain("N/A");
@@ -189,7 +201,7 @@ describe("OverviewTab", () => {
     const base = makeData();
     const data = { ...base, overview: { ...base.overview, activeConnections: 0 } } as MonitoringData;
 
-    const { queryByText } = render(<OverviewTab data={data} loading={false} />);
+    const { queryByText } = render(<OverviewTab offer={ALL_PANELS} data={data} loading={false} />);
     const card = queryByText("Connections")!.closest('[data-slot="card"]')!;
 
     expect(card.textContent).toContain("0/100");
@@ -216,7 +228,7 @@ describe("OverviewTab", () => {
       { timestamp: new Date("2026-02-15T12:01:00Z"), data: { ...base, overview } },
     ] as unknown as TimeSeriesPoint<MonitoringData>[];
 
-    const { queryByText } = render(<OverviewTab data={base} loading={false} history={history} />);
+    const { queryByText } = render(<OverviewTab offer={ALL_PANELS} data={base} loading={false} history={history} />);
 
     // Both samples were dropped, so there is nothing to chart.
     expect(queryByText("Connection Trend")).toBeNull();
@@ -228,6 +240,7 @@ describe("OverviewTab", () => {
     const base = makeData();
     const { queryByText, container } = render(
       <OverviewTab
+        offer={ALL_PANELS}
         data={{ ...base, performance: { ...base.performance, cacheHitRatio: undefined } } as MonitoringData}
         loading={false}
       />,
@@ -239,7 +252,7 @@ describe("OverviewTab", () => {
 
   test("renders connection trend when history has enough points", () => {
     const { queryByText, queryByTestId } = render(
-      <OverviewTab data={makeData()} loading={false} history={makeHistory()} />,
+      <OverviewTab offer={ALL_PANELS} data={makeData()} loading={false} history={makeHistory()} />,
     );
     expect(queryByText("Connection Trend")).not.toBeNull();
     expect(queryByTestId("metric-chart")).not.toBeNull();
@@ -247,18 +260,18 @@ describe("OverviewTab", () => {
 
   test("labels cache hit ratio between 80 and 90 as Good", () => {
     const data = { ...makeData(), performance: { ...makeData().performance, cacheHitRatio: 85 } } as MonitoringData;
-    const { queryByText } = render(<OverviewTab data={data} loading={false} />);
+    const { queryByText } = render(<OverviewTab offer={ALL_PANELS} data={data} loading={false} />);
     expect(queryByText("Good")).not.toBeNull();
   });
 
   test("labels cache hit ratio below 80 as Needs tuning", () => {
     const data = { ...makeData(), performance: { ...makeData().performance, cacheHitRatio: 72 } } as MonitoringData;
-    const { queryByText } = render(<OverviewTab data={data} loading={false} />);
+    const { queryByText } = render(<OverviewTab offer={ALL_PANELS} data={data} loading={false} />);
     expect(queryByText("Needs tuning")).not.toBeNull();
   });
 
   test("renders the measured cache hit ratio with a bar and a rating", () => {
-    const { queryByText } = render(<OverviewTab data={makeData()} loading={false} />);
+    const { queryByText } = render(<OverviewTab offer={ALL_PANELS} data={makeData()} loading={false} />);
     const card = queryByText("Cache Hit")!.closest('[data-slot="card"]')!;
     expect(card.textContent).toContain("95.7%");
     expect(card.querySelectorAll('[data-slot="progress"]').length).toBe(1);
@@ -267,7 +280,7 @@ describe("OverviewTab", () => {
 
   test("reports an unmeasured cache hit ratio as unavailable instead of 0.0%", () => {
     const data = { ...makeData(), performance: { bufferPoolUsage: 62, deadlocks: 0 } } as MonitoringData;
-    const { queryByText, container } = render(<OverviewTab data={data} loading={false} />);
+    const { queryByText, container } = render(<OverviewTab offer={ALL_PANELS} data={data} loading={false} />);
 
     // The card, its title and the 4-card grid all stay put.
     expect(queryByText("Cache Hit")).not.toBeNull();
@@ -295,7 +308,7 @@ describe("OverviewTab", () => {
       ...base,
       performance: { ...base.performance, bufferPoolUsage: undefined },
     } as MonitoringData;
-    const { queryByText } = render(<OverviewTab data={data} loading={false} />);
+    const { queryByText } = render(<OverviewTab offer={ALL_PANELS} data={data} loading={false} />);
     const card = queryByText("Performance")!.closest('[data-slot="card"]')!;
 
     expect(card.textContent).toContain("N/A");
@@ -310,7 +323,7 @@ describe("OverviewTab", () => {
   test("keeps a measured zero buffer pool rendering as 0% with its bar", () => {
     const base = makeData();
     const data = { ...base, performance: { ...base.performance, bufferPoolUsage: 0 } } as MonitoringData;
-    const { queryByText } = render(<OverviewTab data={data} loading={false} />);
+    const { queryByText } = render(<OverviewTab offer={ALL_PANELS} data={data} loading={false} />);
     const card = queryByText("Performance")!.closest('[data-slot="card"]')!;
 
     expect(card.textContent).toContain("0%");
@@ -324,7 +337,7 @@ describe("OverviewTab", () => {
   test("reports unmeasured deadlocks as unavailable instead of a healthy zero", () => {
     const base = makeData();
     const data = { ...base, performance: { ...base.performance, deadlocks: undefined } } as MonitoringData;
-    const { queryByText } = render(<OverviewTab data={data} loading={false} />);
+    const { queryByText } = render(<OverviewTab offer={ALL_PANELS} data={data} loading={false} />);
     const row = queryByText("Deadlocks")!.parentElement!;
 
     expect(row.textContent).toContain("N/A");
@@ -336,7 +349,7 @@ describe("OverviewTab", () => {
   test("keeps a measured zero deadlock count rendering as a healthy 0", () => {
     const base = makeData();
     const data = { ...base, performance: { ...base.performance, deadlocks: 0 } } as MonitoringData;
-    const { queryByText } = render(<OverviewTab data={data} loading={false} />);
+    const { queryByText } = render(<OverviewTab offer={ALL_PANELS} data={data} loading={false} />);
     const row = queryByText("Deadlocks")!.parentElement!;
 
     const badge = row.querySelector('[data-slot="badge"]')!;
@@ -360,14 +373,14 @@ describe("a refused overview read", () => {
     const rest: MonitoringData = makeData();
     delete rest.overview;
     const data = { ...rest, errors: { overview: REFUSAL } } as MonitoringData;
-    const { getByTestId, queryByText } = render(<OverviewTab data={data} loading={false} />);
+    const { getByTestId, queryByText } = render(<OverviewTab offer={ALL_PANELS} data={data} loading={false} />);
 
     expect(getByTestId("panel-unavailable-message").textContent).toBe(REFUSAL);
     expect(queryByText("Connections")).toBeNull();
   });
 
   test("an overview that answered renders the cards, with no failure panel", () => {
-    const { queryByTestId, queryByText } = render(<OverviewTab data={makeData()} loading={false} />);
+    const { queryByTestId, queryByText } = render(<OverviewTab offer={ALL_PANELS} data={makeData()} loading={false} />);
 
     expect(queryByTestId("panel-unavailable")).toBeNull();
     expect(queryByText("Connections")).not.toBeNull();
@@ -389,7 +402,7 @@ describe("Quick Stats never counts a refused read as zero", () => {
     const rest: MonitoringData = makeData();
     delete rest.activeSessions;
     const data = { ...rest, errors: { activeSessions: REFUSAL } } as MonitoringData;
-    const { getByTestId } = render(<OverviewTab data={data} loading={false} />);
+    const { getByTestId } = render(<OverviewTab offer={ALL_PANELS} data={data} loading={false} />);
 
     expect(getByTestId("quick-stat-active").textContent).toBe("N/A");
     expect(getByTestId("quick-stat-idle").textContent).toBe("N/A");
@@ -399,14 +412,14 @@ describe("Quick Stats never counts a refused read as zero", () => {
     const rest: MonitoringData = makeData();
     delete rest.slowQueries;
     const data = { ...rest, errors: { slowQueries: "SLOWLOG is disabled" } } as MonitoringData;
-    const { getByTestId } = render(<OverviewTab data={data} loading={false} />);
+    const { getByTestId } = render(<OverviewTab offer={ALL_PANELS} data={data} loading={false} />);
 
     expect(getByTestId("quick-stat-slow-queries").textContent).toBe("N/A");
   });
 
   test("an answered empty list still reads 0, because zero sessions is a measurement", () => {
     const data = { ...makeData(), activeSessions: [], slowQueries: [] } as MonitoringData;
-    const { getByTestId } = render(<OverviewTab data={data} loading={false} />);
+    const { getByTestId } = render(<OverviewTab offer={ALL_PANELS} data={data} loading={false} />);
 
     expect(getByTestId("quick-stat-active").textContent).toBe("0");
     expect(getByTestId("quick-stat-idle").textContent).toBe("0");
@@ -461,7 +474,7 @@ describe("Quick Stats publishes no cap-bounded figure as a count", () => {
   const claim = (el: HTMLElement): string => el.closest("div")!.textContent ?? "";
 
   test("each figure is labelled with the rows it counts, and no unscoped label survives", () => {
-    const { getByTestId, queryByText } = render(<OverviewTab data={makeData()} loading={false} />);
+    const { getByTestId, queryByText } = render(<OverviewTab offer={ALL_PANELS} data={makeData()} loading={false} />);
 
     expect(claim(getByTestId("quick-stat-slow-queries"))).toBe("Listed slow queries1");
     expect(claim(getByTestId("quick-stat-active"))).toBe("Active of listed sessions1");
@@ -475,7 +488,7 @@ describe("Quick Stats publishes no cap-bounded figure as a count", () => {
 
   test("a saturated payload states the ceiling as a property of the listed rows", () => {
     const data = atCap();
-    const { getByTestId } = render(<OverviewTab data={data} loading={false} />);
+    const { getByTestId } = render(<OverviewTab offer={ALL_PANELS} data={data} loading={false} />);
 
     expect(claim(getByTestId("quick-stat-slow-queries"))).toBe("Listed slow queries10");
     expect(claim(getByTestId("quick-stat-active"))).toBe("Active of listed sessions29");
@@ -511,7 +524,9 @@ describe("the Tables card of a count that is a floor", () => {
     getByText("Tables").closest('[data-slot="card"]') as HTMLElement;
 
   test("renders N+ and says what the count was taken from", () => {
-    const { getByText, getByTestId, queryByText } = render(<OverviewTab data={floorOf(7, SCOPE)} loading={false} />);
+    const { getByText, getByTestId, queryByText } = render(
+      <OverviewTab offer={ALL_PANELS} data={floorOf(7, SCOPE)} loading={false} />,
+    );
 
     expect(queryByText("7+")).not.toBeNull();
     expect(queryByText("7")).toBeNull();
@@ -536,7 +551,9 @@ describe("the Tables card of a count that is a floor", () => {
     if (badge === undefined || badgeTitle === undefined) throw new Error("the tree drew no floor for a sampled count");
     expect(badge).toBe("401,440+");
 
-    const { getByText, getByTestId } = render(<OverviewTab data={floorOf(401_440, SCOPE)} loading={false} />);
+    const { getByText, getByTestId } = render(
+      <OverviewTab offer={ALL_PANELS} data={floorOf(401_440, SCOPE)} loading={false} />,
+    );
 
     expect(getByTestId("overview-table-count-scope").textContent).toBe(badgeTitle);
     expect(tablesCard(getByText).textContent).toBe(`Tables${badge}${badgeTitle}61 indexes`);
@@ -546,13 +563,13 @@ describe("the Tables card of a count that is a floor", () => {
     // `isCountSampled` asks for the FIELD and not for a filled one, and so does this card: a
     // provider that sets the field is saying the number is not the whole count, and drawing it
     // as exact would repeat the claim the field exists to withdraw.
-    const { queryByText } = render(<OverviewTab data={floorOf(7, "")} loading={false} />);
+    const { queryByText } = render(<OverviewTab offer={ALL_PANELS} data={floorOf(7, "")} loading={false} />);
 
     expect(queryByText("7+")).not.toBeNull();
   });
 
   test("an overview without the field renders the card exactly as it always has", () => {
-    const { getByText, queryByTestId } = render(<OverviewTab data={makeData()} loading={false} />);
+    const { getByText, queryByTestId } = render(<OverviewTab offer={ALL_PANELS} data={makeData()} loading={false} />);
 
     expect(tablesCard(getByText).textContent).toBe("Tables2461 indexes");
     expect(queryByTestId("overview-table-count-scope")).toBeNull();
@@ -563,7 +580,7 @@ describe("the Tables card of a count that is a floor", () => {
     // text, so only a count this size shows that every other provider's card still renders as before.
     const base = makeData();
     const data = { ...base, overview: { ...base.overview, tableCount: 401_440 } } as MonitoringData;
-    const { getByText, queryByTestId } = render(<OverviewTab data={data} loading={false} />);
+    const { getByText, queryByTestId } = render(<OverviewTab offer={ALL_PANELS} data={data} loading={false} />);
 
     expect(tablesCard(getByText).textContent).toBe("Tables40144061 indexes");
     expect(queryByTestId("overview-table-count-scope")).toBeNull();
@@ -601,7 +618,7 @@ describe("Quick Stats counts classified sessions", () => {
         },
       ],
     } as MonitoringData;
-    const { getByTestId } = render(<OverviewTab data={data} loading={false} />);
+    const { getByTestId } = render(<OverviewTab offer={ALL_PANELS} data={data} loading={false} />);
     expect(getByTestId("quick-stat-active").textContent).toBe("1");
     expect(getByTestId("quick-stat-idle").textContent).toBe("1");
   });
@@ -611,8 +628,74 @@ describe("Quick Stats counts classified sessions", () => {
       ...makeData(),
       activeSessions: [{ pid: 1, user: "u", database: "db", state: "Sleep", query: "", duration: "1s", durationMs: 1 }],
     } as MonitoringData;
-    const { getByTestId } = render(<OverviewTab data={data} loading={false} />);
+    const { getByTestId } = render(<OverviewTab offer={ALL_PANELS} data={data} loading={false} />);
     expect(getByTestId("quick-stat-active").textContent).toBe("N/A");
     expect(getByTestId("quick-stat-idle").textContent).toBe("N/A");
+  });
+});
+
+describe("OverviewTab draws only the panels the engine offers (FND-4)", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  test("draws no cache or performance figure where the engine does not offer performance", () => {
+    const data = { ...makeData(), performance: undefined } as MonitoringData;
+    const view = render(<OverviewTab offer={withheld("performance")} data={data} loading={false} />);
+
+    expect(view.queryByText("Cache Hit")).toBeNull();
+    expect(view.queryByText("Performance")).toBeNull();
+    expect(view.queryByText("Buffer Pool")).toBeNull();
+    expect(view.queryByText("Deadlocks")).toBeNull();
+    expect(view.queryByText("Connections")).not.toBeNull();
+    expect(view.queryByText("Quick Stats")).not.toBeNull();
+  });
+
+  test("draws no quick stat of a panel the engine does not offer, and no Quick Stats card when it offers neither", () => {
+    const noSlow = render(
+      <OverviewTab
+        offer={withheld("slowQueries")}
+        data={{ ...makeData(), slowQueries: undefined } as MonitoringData}
+        loading={false}
+      />,
+    );
+    expect(noSlow.queryByTestId("quick-stat-slow-queries")).toBeNull();
+    expect(noSlow.queryByText("Listed slow queries")).toBeNull();
+    expect(noSlow.queryByTestId("quick-stat-active")).not.toBeNull();
+    cleanup();
+
+    const noSessions = render(
+      <OverviewTab
+        offer={withheld("activeSessions")}
+        data={{ ...makeData(), activeSessions: undefined } as MonitoringData}
+        loading={false}
+      />,
+    );
+    expect(noSessions.queryByTestId("quick-stat-active")).toBeNull();
+    expect(noSessions.queryByTestId("quick-stat-idle")).toBeNull();
+    expect(noSessions.queryByTestId("quick-stat-slow-queries")).not.toBeNull();
+    cleanup();
+
+    const neither = render(
+      <OverviewTab
+        offer={withheld("slowQueries", "activeSessions")}
+        data={{ ...makeData(), slowQueries: undefined, activeSessions: undefined } as MonitoringData}
+        loading={false}
+      />,
+    );
+    expect(neither.queryByText("Quick Stats")).toBeNull();
+    expect(neither.queryByText("Performance")).not.toBeNull();
+    cleanup();
+
+    const overviewOnly = render(
+      <OverviewTab
+        offer={withheld("performance", "slowQueries", "activeSessions", "tables", "indexes", "storage")}
+        data={{ timestamp: new Date(), overview: makeData().overview } as MonitoringData}
+        loading={false}
+      />,
+    );
+    expect(overviewOnly.queryByText("Quick Stats")).toBeNull();
+    expect(overviewOnly.queryByText("Performance")).toBeNull();
+    expect(overviewOnly.queryByText("DB Size")).not.toBeNull();
   });
 });

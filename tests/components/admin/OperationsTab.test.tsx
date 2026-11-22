@@ -135,6 +135,7 @@ import { render, act, cleanup, fireEvent, waitFor, within } from "@testing-libra
 import React from "react";
 
 import { OperationsTab } from "@/components/admin/tabs/OperationsTab";
+import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import {
   SYNTHETIC_ENTITY_CAPABILITIES,
   SYNTHETIC_PREVIEW,
@@ -3390,5 +3391,78 @@ describe("OperationsTab", () => {
     } finally {
       restoreGlobalFetch();
     }
+  });
+
+  // =========================================================================
+  // Monitoring panels the engine does not offer (FND-4)
+  // =========================================================================
+
+  const connectionOfType = (type: string) => ({
+    id: "c-facets",
+    name: `${type} facets`,
+    type,
+    host: "localhost",
+    port: 1,
+    database: "dev",
+    createdAt: new Date(),
+  });
+
+  test("draws no Sessions card where the engine does not offer sessions", async () => {
+    expect(ENGINE_FACETS.elasticsearch.monitoring.activeSessions).toBe("not-offered");
+    expect(ENGINE_FACETS.elasticsearch.monitoring.tables).toBe("offered");
+    mockConnectionsList = [connectionOfType("elasticsearch")];
+    mockActiveConnectionId = "c-facets";
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<OperationsTab />);
+    });
+    expect(view!.queryByText("Tables (1)")).not.toBeNull();
+    expect(view!.queryByText(/^Sessions/)).toBeNull();
+    expect(view!.queryByText("1234")).toBeNull();
+    expect(view!.queryByTestId("operations-nothing-offered")).toBeNull();
+  });
+
+  test("draws no Tables card where the engine does not offer table statistics", async () => {
+    expect(ENGINE_FACETS.cassandra.monitoring.tables).toBe("not-offered");
+    expect(ENGINE_FACETS.cassandra.monitoring.activeSessions).toBe("offered");
+    mockConnectionsList = [connectionOfType("cassandra")];
+    mockActiveConnectionId = "c-facets";
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<OperationsTab />);
+    });
+    expect(view!.queryByText("Sessions (1)")).not.toBeNull();
+    expect(view!.queryByText(/^Tables/)).toBeNull();
+    expect(view!.queryByText("users")).toBeNull();
+    expect(view!.queryByTestId("operations-nothing-offered")).toBeNull();
+  });
+
+  test("says in one sentence that an engine with no maintenance and neither panel has nothing to operate on", async () => {
+    expect(ENGINE_FACETS.kafka.monitoring.tables).toBe("not-offered");
+    expect(ENGINE_FACETS.kafka.monitoring.activeSessions).toBe("not-offered");
+    mockConnectionsList = [connectionOfType("kafka")];
+    mockActiveConnectionId = "c-facets";
+    mockMetadata = { capabilities: { supportsMaintenance: false, maintenanceOperations: [] } };
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<OperationsTab />);
+    });
+    expect(view!.getByTestId("operations-nothing-offered").textContent).toBe(
+      "This engine offers no maintenance, no session list and no table statistics in LibreDB Studio.",
+    );
+    expect(view!.queryByText(/^Sessions/)).toBeNull();
+    expect(view!.queryByText(/^Tables/)).toBeNull();
+    expect(view!.queryByText("Global Operations")).toBeNull();
+  });
+
+  test("draws no nothing-offered sentence where the engine offers maintenance", async () => {
+    mockConnectionsList = [connectionOfType("kafka")];
+    mockActiveConnectionId = "c-facets";
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<OperationsTab />);
+    });
+    expect(view!.queryByText("Global Operations")).not.toBeNull();
+    expect(view!.queryByTestId("operations-nothing-offered")).toBeNull();
   });
 });

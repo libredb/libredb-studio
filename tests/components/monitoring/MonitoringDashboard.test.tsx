@@ -246,6 +246,7 @@ import React from "react";
 
 import { mockRouterPush } from "../../helpers/mock-navigation";
 import { mockGlobalFetch, restoreGlobalFetch } from "../../helpers/mock-fetch";
+import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 
 // Dynamic import AFTER the mock.module() calls above: a static import would be
 // hoisted and evaluate the real tab modules, poisoning coverage with all-zero
@@ -702,6 +703,101 @@ describe("MonitoringDashboard", () => {
 
     const capabilities = sessionsTabProps.at(-1)?.capabilities as { maintenanceOperations: string[] };
     expect(capabilities.maintenanceOperations).toEqual(["analyze"]);
+  });
+});
+
+/** The dashboard draws a tab only for a panel the connection's engine offers (FND-4). */
+describe("MonitoringDashboard draws only the panels an engine offers", () => {
+  const ofType = (id: string, type: string) => ({
+    id,
+    name: `${type} conn`,
+    type,
+    host: "localhost",
+    port: 1,
+    database: "dev",
+    createdAt: new Date(),
+  });
+  let storageRecord: Record<string, unknown>;
+  let originals: Record<string, unknown>;
+
+  beforeEach(async () => {
+    mockUseMonitoringData.mockClear();
+    mockUseMonitoringData.mockImplementation(monitoringDataDefaults);
+    selectCallbacks.clear();
+    currentCapabilities = mockCapabilities;
+    storageRecord = (await import("@/lib/storage")).storage as unknown as Record<string, unknown>;
+    originals = {
+      getConnections: storageRecord.getConnections,
+      getActiveConnectionId: storageRecord.getActiveConnectionId,
+    };
+  });
+
+  afterEach(() => {
+    cleanup();
+    Object.assign(storageRecord, originals);
+  });
+
+  const openOn = async (connections: ReturnType<typeof ofType>[], activeId: string) => {
+    storageRecord.getConnections = mock(() => connections);
+    storageRecord.getActiveConnectionId = mock(() => activeId);
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<MonitoringDashboard />);
+    });
+    return view!;
+  };
+
+  const tabTitles = (view: ReturnType<typeof render>): string[] =>
+    Array.from(view.container.querySelectorAll('[role="tab"]')).map((tab) => tab.getAttribute("title") ?? "");
+
+  test("draws a tab for each panel a Kafka connection's engine offers and Pool, and names the four it does not", async () => {
+    const offer = ENGINE_FACETS.kafka.monitoring;
+    expect([offer.overview, offer.storage]).toEqual(["offered", "offered"]);
+    const view = await openOn([ofType("k1", "kafka")], "k1");
+
+    expect(tabTitles(view)).toEqual(["Overview", "Storage", "Pool"]);
+    expect(view.getByTestId("monitoring-not-offered").textContent).toBe(
+      "Not offered by this engine: Performance, Queries, Sessions, Tables.",
+    );
+  });
+
+  test("draws every tab and no not-offered line for an engine that offers every panel", async () => {
+    const view = await openOn([ofType("p1", "postgres")], "p1");
+
+    expect(tabTitles(view)).toEqual(["Overview", "Performance", "Queries", "Sessions", "Tables", "Storage", "Pool"]);
+    expect(view.queryByTestId("monitoring-not-offered")).toBeNull();
+  });
+
+  test("an S3 connection draws that its engine offers no monitoring panel and requests no monitoring data", async () => {
+    const view = await openOn([ofType("s1", "s3")], "s1");
+
+    expect(view.queryByText("No Monitoring Panels")).not.toBeNull();
+    expect(view.queryByText("This engine offers no monitoring panel in LibreDB Studio.")).not.toBeNull();
+    expect(view.container.querySelectorAll('[role="tab"]')).toHaveLength(0);
+    const handed = mockUseMonitoringData.mock.calls.map((call) => (call as unknown[])[0]);
+    expect(handed.length).toBeGreaterThan(0);
+    expect(handed.filter((connection) => connection !== null)).toEqual([]);
+  });
+
+  test("a connection whose engine does not offer the open tab opens on the first tab it offers", async () => {
+    const user = userEvent.setup();
+    const view = await openOn([ofType("p1", "postgres"), ofType("k1", "kafka")], "p1");
+    const sessions = Array.from(view.container.querySelectorAll('[role="tab"]')).find(
+      (tab) => tab.getAttribute("title") === "Sessions",
+    ) as HTMLElement;
+    await user.click(sessions);
+    await waitFor(() => {
+      expect(view.queryByTestId("monitoring-sessionstab")).not.toBeNull();
+    });
+
+    await act(async () => {
+      selectCallbacks.get("p1")!("k1");
+    });
+
+    expect(view.queryByTestId("monitoring-sessionstab")).toBeNull();
+    expect(view.queryByTestId("monitoring-overviewtab")).not.toBeNull();
+    const selected = view.container.querySelector('[role="tab"][aria-selected="true"]');
+    expect(selected?.getAttribute("title")).toBe("Overview");
   });
 });
 
