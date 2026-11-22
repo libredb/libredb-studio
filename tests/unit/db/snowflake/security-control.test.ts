@@ -9,9 +9,8 @@
  * the host `localhost`, while a Snowflake Account is always read into a Snowflake host, so a private address can
  * only come from DNS. The resolver is stubbed (the runner gives this file its own process, so the module mock reaches
  * no other test file): a PrivateLink host answering 10.0.0.5 is refused at the lookup, before any socket, and no name
- * is resolved by a real resolver. The provider is handed a blocking decision, which its origin is built with; the
- * lookup is the node transport's, which reads the process's decision until FND-2 slice 2b-4, so the variable is true
- * too.
+ * is resolved by a real resolver. The provider is handed a blocking decision, which its origin and its node transport
+ * are built with, while the variable is unset, so the refusal at the lookup shows the handed decision decided.
  */
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { LookupAddress } from "node:dns";
@@ -94,7 +93,7 @@ describe("the address policy on the Snowflake connect path", () => {
   });
 
   test("a PrivateLink host resolving to a private address is refused at the lookup, before any socket", async () => {
-    setEgressFlag("true");
+    setEgressFlag(undefined);
     const provider = new SnowflakeProvider(
       {
         id: "blocked-snowflake",

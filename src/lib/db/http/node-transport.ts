@@ -13,9 +13,10 @@
  *   socket closed after IDLE_SOCKET_MS so a server's keep-alive timeout never closes one under a request, destroyed by
  *   close(). Never the global agent, which routes through a proxy variable (HTTP_PROXY under NODE_USE_ENV_PROXY=1 on
  *   Node, and under Bun), and never `globalThis.fetch`, so no proxy variable can carry a request or its credential.
- * - With DB_HTTP_BLOCK_PRIVATE_HOSTS on, the guard's literal check runs when the transport is built, before any socket,
- *   because an IP literal never reaches a lookup, and the guard's lookup goes on this connection's own Agent in place of
- *   the `agent: false` of guardedNodeOptions. The Agent never carries an unguarded request, so every socket it pools was
+ * - The transport takes the egress decision its provider was built with in `egress`, reads no setting, and refuses by
+ *   name when built without one. When that decision blocks private destinations, the guard's literal check runs when
+ *   the transport is built, before any socket, because an IP literal never reaches a lookup, and the guard's lookup
+ *   goes on this connection's own Agent in place of the `agent: false` of guardedNodeOptions. The Agent never carries an unguarded request, so every socket it pools was
  *   opened through the guarded lookup, and a pooled socket costs one lookup rather than one per request.
  * - No redirect is followed: every 3xx goes to the shared rejectRedirect, a 304 to a conditional request included, and
  *   its body is released unread.
@@ -52,7 +53,7 @@
  * - never reaches a link-local address or AWS's IPv6 instance metadata address (LINK_LOCAL_NETWORKS in
  *   egress-policy.ts), whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says: a literal is refused when the transport is built,
  *   and every socket is opened through a lookup that checks the address it dials, after the guard's own check when the
- *   flag is on.
+ *   egress decision blocks private destinations.
  *
  * `createNodeTransport` takes three of these on request, the refusal of a 101 without the upgrade headers as
  * `refusesUpgrade`, the link-local refusal as `refusesLinkLocal` and the signer as `signer`, all off when absent, so a
@@ -85,9 +86,9 @@ import { isIP, type LookupFunction, type Socket } from "node:net";
 import { type ConnectionOptions, checkServerIdentity, type PeerCertificate } from "node:tls";
 import { urlToHttpOptions } from "node:url";
 import { ConnectionError, DatabaseConfigError, waitedSeconds } from "@/lib/db/errors";
-import { egressDecision } from "@/lib/db/egress-decision";
-import { socketEgress } from "@/lib/db/http/egress-policy";
+import { requireEgressDecision, socketEgress } from "@/lib/db/http/egress-policy";
 import { endpointUrl, type HttpOrigin, originHost, rejectRedirect } from "@/lib/db/http/endpoint";
+import type { EgressDecision } from "@/lib/db/types";
 import type { SSLConfig, SSLMode } from "@/lib/types";
 
 /** The SSL / TLS panel as node:https takes it. */
@@ -107,6 +108,8 @@ export interface NodeTransportOptions {
   readonly tls: NodeTlsMaterial | null;
   /** The provider's in-flight bound. */
   readonly maxSockets: number;
+  /** The egress decision the provider was built with; built without one, the transport refuses by name. */
+  readonly egress: EgressDecision;
   /** Set once per connection, the credential header among them. */
   readonly headers: Readonly<Record<string, string>>;
   /** How long a pooled socket may sit idle before the transport closes it; IDLE_SOCKET_MS when absent. */
@@ -1270,8 +1273,8 @@ interface ConnectionRules {
   readonly reportsUnreachable: boolean;
   /**
    * A link-local or metadata literal is refused, and every socket is opened through a lookup that checks the address
-   * it dials. The byte factory always sets it; the text factory sets it when its caller asks, and otherwise
-   * DB_HTTP_BLOCK_PRIVATE_HOSTS alone limits where it connects.
+   * it dials. The byte factory always sets it; the text factory sets it when its caller asks, and otherwise the egress
+   * decision the transport was handed alone limits where it connects.
    */
   readonly refusesLinkLocal: boolean;
   /** The connection's headers as checked: lowerCased for the text factory, checkedConnectionHeaders for the byte one. */
@@ -1293,18 +1296,17 @@ function connectionOf<A>(
   const { origin, tls, maxSockets } = options;
   if (!isPositiveInteger(maxSockets)) throw new DatabaseConfigError(INVALID_MAX_SOCKETS);
   if ((origin.scheme === "https") !== (tls !== null)) throw new DatabaseConfigError(SCHEME_MISMATCH);
-  // With DB_HTTP_BLOCK_PRIVATE_HOSTS on, this refuses a blocked IP literal now, before any socket, because a literal
-  // never reaches a lookup, and hands back the guard's lookup for this connection's own Agent. Its `agent: false` is not
-  // taken: the Agent built from these settings belongs to this connection alone and never carries an unguarded request
-  // (R44 QM1).
-  // With refusesLinkLocal, and whatever the flag says, a link-local or metadata literal is refused next, so the guard's
-  // sentence wins when it is on, and every socket is opened through a lookup that checks the answer it dials: with the
-  // guard on, its check and then the link-local check, so the guard's sentence wins where both refuse; with it off,
-  // linkLocalRefusingLookup (byte transport design 3.9). Without refusesLinkLocal the guard's lookup is kept alone.
+  // Built without an egress decision, the transport refuses by name here, after the socket bound and the scheme check,
+  // and builds nothing. With a decision that blocks private destinations, this refuses a blocked IP literal now, before
+  // any socket, because a literal never reaches a lookup, and hands back the guard's lookup for this connection's own
+  // Agent. Its `agent: false` is not taken: the Agent built from these settings belongs to this connection alone and
+  // never carries an unguarded request (R44 QM1).
+  // With refusesLinkLocal, and whatever the decision says, a link-local or metadata literal is refused next, so the
+  // guard's sentence wins when it blocks, and every socket is opened through a lookup that checks the answer it dials:
+  // with a blocking decision, the guard's check and then the link-local check, so the guard's sentence wins where both
+  // refuse; with an allowing one, linkLocalRefusingLookup (byte transport design 3.9). Without refusesLinkLocal the guard's lookup is kept alone.
   // socketEgress holds that rule, so a socket dial outside this transport applies the same one.
-  // An interim reader: it reads core's decision on the calling provider's behalf until FND-2 slice 2b-4 hands it the
-  // decision as an argument (tests/unit/lib/db/provider-environment-scan.test.ts lists it until then).
-  const lookup = socketEgress(origin.host, { refusesLinkLocal }, egressDecision());
+  const lookup = socketEgress(origin.host, { refusesLinkLocal }, requireEgressDecision(options.egress));
   const addressed = address(origin);
   const connectionHeaders = headersOf(options.headers);
   const requestHeaderNames = requestHeaderNamesOf(options.requestHeaderNames, connectionHeaders);

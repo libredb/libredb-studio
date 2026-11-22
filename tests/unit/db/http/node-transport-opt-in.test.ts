@@ -16,17 +16,13 @@ import {
   type TransportError,
 } from "@/lib/db/http/node-transport";
 import { closeAll, eventually, rawAnswer, rawHttpListener } from "../../../helpers/node-transport-fixtures";
-import { setEgressFlag } from "../../../helpers/egress-flag";
-import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const LINK_LOCAL =
   "Invalid host: this connection never reaches a link-local address or AWS's IPv6 instance metadata address, whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says";
-const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
-const original = process.env[FLAG];
 
 const transports: NodeTransport[] = [];
 afterEach(async () => {
-  setEgressFlag(original);
   for (const transport of transports.splice(0)) transport.close();
   await closeAll();
 });
@@ -46,16 +42,25 @@ function refusal(run: () => unknown): Error {
   throw new Error("expected the call to throw");
 }
 
-/** A transport that would dial `host` on port 80, never sent a request here. */
+/**
+ * A transport that would dial `host` on port 80, never sent a request here, handed an allowing decision (the guard off)
+ * unless `extra` hands another.
+ */
 function toHost(host: string, extra: Partial<NodeTransportOptions> = {}): NodeTransportOptions {
-  return { origin: { scheme: "http", host, port: 80 }, tls: null, maxSockets: 1, headers: {}, ...extra };
+  return {
+    origin: { scheme: "http", host, port: 80 },
+    tls: null,
+    maxSockets: 1,
+    egress: ALLOWS_PRIVATE_HOSTS,
+    headers: {},
+    ...extra,
+  };
 }
 
 describe("refusesLinkLocal", () => {
   test.each(["169.254.169.254", "[fe80::1]", "[fd00:ec2::254]", "[::ffff:169.254.169.254]"])(
     "%s is refused when the transport is built, with the guard off",
     (host) => {
-      setEgressFlag(undefined);
       const error = refusal(() => build(toHost(host, { refusesLinkLocal: true })));
       expect(error).toBeInstanceOf(DatabaseConfigError);
       expect(error.message).toBe(LINK_LOCAL);
@@ -63,23 +68,29 @@ describe("refusesLinkLocal", () => {
   );
 
   test("with the guard on, a link-local literal gets the guard's sentence, because the guard runs first", () => {
-    setEgressFlag("true");
-    const error = refusal(() => build(toHost("169.254.169.254", { refusesLinkLocal: true })));
+    const error = refusal(() =>
+      build(toHost("169.254.169.254", { refusesLinkLocal: true, egress: BLOCKS_PRIVATE_HOSTS })),
+    );
     expect(error.message).toBe(BLOCKED_HOST);
   });
 
   test.each([undefined, false])("set to %p, a link-local literal builds a transport as it always has", (value) => {
-    setEgressFlag(undefined);
     expect(() =>
       build(toHost("169.254.169.254", value === undefined ? {} : { refusesLinkLocal: value })),
     ).not.toThrow();
   });
 
   test("loopback stays reachable when it is set", async () => {
-    setEgressFlag(undefined);
     const listener = await rawHttpListener(() => rawAnswer("200 OK", ["content-length: 2"], "ok"));
     const origin = httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS);
-    const transport = build({ origin, tls: null, maxSockets: 1, headers: {}, refusesLinkLocal: true });
+    const transport = build({
+      origin,
+      tls: null,
+      maxSockets: 1,
+      egress: ALLOWS_PRIVATE_HOSTS,
+      headers: {},
+      refusesLinkLocal: true,
+    });
     const answer = await transport.request({
       method: "GET",
       url: endpointUrl(origin, "/ok"),
@@ -98,7 +109,6 @@ describe("refusesLinkLocal", () => {
   });
 
   test("the byte transport refuses a link-local literal whatever a caller passes for the text transport's option", () => {
-    setEgressFlag(undefined);
     const error = refusal(() =>
       createNodeByteTransport({ ...toHost("169.254.169.254"), ...({ refusesLinkLocal: false } as object) }),
     );
@@ -145,7 +155,14 @@ describe("refusesUpgrade", () => {
     async (_label, headerLines) => {
       const listener = await upgradeListener(headerLines);
       const origin = httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS);
-      const transport = build({ origin, tls: null, maxSockets: 1, headers: {}, refusesUpgrade: true });
+      const transport = build({
+        origin,
+        tls: null,
+        maxSockets: 1,
+        egress: ALLOWS_PRIVATE_HOSTS,
+        headers: {},
+        refusesUpgrade: true,
+      });
       const started = Date.now();
       const error = await failure(() => transport.request(get(origin, "/switch")));
       expect({ name: error.name, kind: error.kind, message: error.message }).toEqual({
@@ -162,14 +179,14 @@ describe("refusesUpgrade", () => {
   test("absent, a 101 with no upgrade headers is answered as a status, as it always was", async () => {
     const listener = await upgradeListener(["content-length: 0"]);
     const origin = httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS);
-    const transport = build({ origin, tls: null, maxSockets: 1, headers: {} });
+    const transport = build({ origin, tls: null, maxSockets: 1, egress: ALLOWS_PRIVATE_HOSTS, headers: {} });
     expect((await transport.request(get(origin, "/switch"))).status).toBe(101);
   });
 
   test("absent, a 101 with upgrade headers still fails at once as a network failure, closes its socket and frees its slot", async () => {
     const listener = await upgradeListener(["connection: upgrade", "upgrade: websocket"]);
     const origin = httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS);
-    const transport = build({ origin, tls: null, maxSockets: 1, headers: {} });
+    const transport = build({ origin, tls: null, maxSockets: 1, egress: ALLOWS_PRIVATE_HOSTS, headers: {} });
     const started = Date.now();
     const error = await failure(() => transport.request(get(origin, "/switch")));
     expect({ name: error.name, kind: error.kind, message: error.message }).toEqual({

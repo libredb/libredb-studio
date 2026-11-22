@@ -19,6 +19,7 @@ import {
 } from "@/lib/db/auth/google/token-source";
 import { AuthenticationError } from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
+import type { EgressDecision } from "@/lib/db/types";
 import { secretForms } from "@/lib/db/utils/server-text";
 import {
   type FakeAnswer,
@@ -453,26 +454,32 @@ describe("google token source deadlines while signing", () => {
 
 describe("google token source lanes", () => {
   test("the token lane and the metadata lane equal the options the shared transport is given today, key for key", async () => {
-    const token = sourceOf(user, () => tokenAnswer("t"));
+    // A decision of this test's own, so the lanes' is the deps' by identity, not merely an equal one.
+    const egress: EgressDecision = { blocksPrivateHosts: false, source: "set" };
+    const token = sourceOf(user, () => tokenAnswer("t"), egress);
     await token.source.token(signal);
     expect(token.seams.lanes.map((lane) => lane.lane)).toEqual(["token"]);
     expect(token.seams.lanes[0].options).toEqual({
       origin: { scheme: "https", host: "oauth2.googleapis.com", port: 443 },
       tls: { rejectUnauthorized: true, identity: "oauth2.googleapis.com" },
       maxSockets: 1,
+      egress,
       headers: {},
       refusesLinkLocal: true,
       refusesUpgrade: true,
     });
-    const meta = sourceOf(metadata, () => tokenAnswer("m"));
+    expect(token.seams.lanes[0].options.egress).toBe(egress);
+    const meta = sourceOf(metadata, () => tokenAnswer("m"), egress);
     await meta.source.token(signal);
     expect(meta.seams.lanes[0].options).toEqual({
       origin: { scheme: "http", host: "meta.internal", port: 8080 },
       tls: null,
       maxSockets: 1,
+      egress,
       headers: { "metadata-flavor": "Google" },
       refusesUpgrade: true,
     });
+    expect(meta.seams.lanes[0].options.egress).toBe(egress);
     expect("refusesLinkLocal" in meta.seams.lanes[0].options).toBe(false);
   });
 

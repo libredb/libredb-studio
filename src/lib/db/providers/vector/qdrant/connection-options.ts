@@ -54,6 +54,8 @@ export interface QdrantConnectionOptions {
   readonly headers: Readonly<Record<string, string>>;
   /** The provider's in-flight bound, which is the transport's socket bound. */
   readonly maxSockets: number;
+  /** The egress decision the provider was built with, which the transport is built with. */
+  readonly egress: EgressDecision;
   /** The most bytes one response may hold. */
   readonly responseCapBytes: number;
   readonly readOnly?: QdrantReadOnlySource;
@@ -120,6 +122,7 @@ export function buildQdrantConnectionOptions(
     tls,
     headers: secret === undefined ? {} : { "api-key": secret },
     maxSockets: QDRANT_MAX_IN_FLIGHT,
+    egress: context.egress,
     responseCapBytes: QDRANT_RESPONSE_CAP_BYTES,
     ...(readOnly === undefined ? {} : { readOnly }),
     callTimeoutMs: callTimeout(context.queryTimeout),

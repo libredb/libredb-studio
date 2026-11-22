@@ -602,6 +602,7 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
         origin,
         tls: this.tls ? nodeTlsMaterial(this.ssl, origin.host) : null,
         maxSockets: AGENT_MAX_SOCKETS,
+        egress: this.egress,
         headers: { accept: "application/json", authorization: this.authorization },
       });
       this.agentTransports.set(key, transport);

@@ -15,8 +15,9 @@
  *
  * The byte transport's cases run after that control request (runByteCases). Each child starts from an unbundled
  * entry.mjs that answers the name metadata.test with 169.254.169.254 before the bundle loads, so the byte transport's
- * refusal of a link-local DNS answer, and a text transport's built with `refusesLinkLocal`, with
- * DB_HTTP_BLOCK_PRIVATE_HOSTS off, are proven on every runtime listed.
+ * refusal of a link-local DNS answer, and a text transport's built with `refusesLinkLocal`, each handed an allowing
+ * egress decision, are proven on every runtime listed. The transports take the egress decision in their options and read
+ * no setting, so the child is handed an allowing and a blocking decision, written out as plain objects in its entry.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -46,7 +47,6 @@ import {
 } from "../../../helpers/node-transport-fixtures";
 import { howItFailed } from "../../../helpers/spawn-outcome";
 import { answerWithUpgrade } from "../../../helpers/upgrade-answer";
-import type { setEgressFlag } from "../../../helpers/egress-flag";
 import type { EgressDecision } from "@/lib/db/types";
 import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
@@ -57,7 +57,8 @@ interface Deps {
   readonly httpOrigin: typeof httpOrigin;
   /** The decision every origin here is built with, so the origin never refuses and the transport's own check decides. */
   readonly allowsPrivateHosts: EgressDecision;
-  readonly setEgressFlag: typeof setEgressFlag;
+  /** The decision the guard cases hand their transport. */
+  readonly blocksPrivateHosts: EgressDecision;
   readonly http: typeof http;
   readonly https: typeof https;
 }
@@ -196,10 +197,17 @@ async function runCases(deps: Deps, plan: Plan): Promise<Report> {
       method?: "GET" | "POST";
       body?: string;
       keep?: boolean;
+      egress?: EgressDecision;
     } = {},
   ) => {
     const origin = deps.httpOrigin(scheme, host, port, deps.allowsPrivateHosts);
-    const transport = deps.createNodeTransport({ origin, tls, maxSockets: 4, headers: { "api-key": SECRET } });
+    const transport = deps.createNodeTransport({
+      origin,
+      tls,
+      maxSockets: 4,
+      egress: extra.egress ?? deps.allowsPrivateHosts,
+      headers: { "api-key": SECRET },
+    });
     try {
       return await transport.request({
         method: extra.method ?? "GET",
@@ -297,7 +305,13 @@ async function runCases(deps: Deps, plan: Plan): Promise<Report> {
   );
   await record("keep-alive: three at once, then five more, at most two sockets", async () => {
     const origin = deps.httpOrigin("http", "127.0.0.1", ports.slow, deps.allowsPrivateHosts);
-    const transport = deps.createNodeTransport({ origin, tls: null, maxSockets: 2, headers: { "api-key": SECRET } });
+    const transport = deps.createNodeTransport({
+      origin,
+      tls: null,
+      maxSockets: 2,
+      egress: deps.allowsPrivateHosts,
+      headers: { "api-key": SECRET },
+    });
     const request = () =>
       transport.request({
         method: "GET",
@@ -319,7 +333,13 @@ async function runCases(deps: Deps, plan: Plan): Promise<Report> {
   });
   await record("a request cancelled while queued behind maxSockets", async () => {
     const origin = deps.httpOrigin("http", "127.0.0.1", ports.silent, deps.allowsPrivateHosts);
-    const transport = deps.createNodeTransport({ origin, tls: null, maxSockets: 1, headers: { "api-key": SECRET } });
+    const transport = deps.createNodeTransport({
+      origin,
+      tls: null,
+      maxSockets: 1,
+      egress: deps.allowsPrivateHosts,
+      headers: { "api-key": SECRET },
+    });
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 100);
     const send = (path: string, signal: AbortSignal) =>
@@ -345,6 +365,7 @@ async function runCases(deps: Deps, plan: Plan): Promise<Report> {
       origin,
       tls: null,
       maxSockets: 1,
+      egress: deps.allowsPrivateHosts,
       headers: { "api-key": SECRET },
       requestHeaderNames: ["x-databend-session"],
     });
@@ -367,7 +388,7 @@ async function runCases(deps: Deps, plan: Plan): Promise<Report> {
   await record("request headers: an unlisted header is refused before a socket", () =>
     sendHeaders(ports.guarded, "/unlisted", { "x-other": "1" }),
   );
-  // A text transport asked to refuse link-local addresses, with the guard off: entry.mjs answers metadata.test with
+  // A text transport asked to refuse link-local addresses, handed an allowing decision: entry.mjs answers metadata.test with
   // 169.254.169.254, and the lookup on the Agent refuses it before a socket, so the guarded listener sees nothing.
   await record("text: metadata.test refused with refusesLinkLocal", async () => {
     const origin = deps.httpOrigin("http", "metadata.test", ports.guarded, deps.allowsPrivateHosts);
@@ -375,6 +396,7 @@ async function runCases(deps: Deps, plan: Plan): Promise<Report> {
       origin,
       tls: null,
       maxSockets: 1,
+      egress: deps.allowsPrivateHosts,
       headers: {},
       refusesLinkLocal: true,
     });
@@ -389,19 +411,24 @@ async function runCases(deps: Deps, plan: Plan): Promise<Report> {
       transport.close();
     }
   });
+  // The guard cases hand their transport a blocking decision; the origin is built with the allowing one, so the
+  // transport's own check is what refuses.
   const guardedOrigin = deps.httpOrigin("http", "127.0.0.1", ports.guarded, deps.allowsPrivateHosts);
-  deps.setEgressFlag("true");
-  try {
-    await record("guard: 127.0.0.1 refused before a socket", async () => {
-      kept.push(deps.createNodeTransport({ origin: guardedOrigin, tls: null, maxSockets: 4, headers: {} }));
-      return { status: 0, retryAfter: null, text: "built" };
-    });
-    await record("guard: localhost refused by the lookup on the Agent", () =>
-      once("http", "localhost", ports.guarded, null, "/guarded"),
+  await record("guard: 127.0.0.1 refused before a socket", async () => {
+    kept.push(
+      deps.createNodeTransport({
+        origin: guardedOrigin,
+        tls: null,
+        maxSockets: 4,
+        egress: deps.blocksPrivateHosts,
+        headers: {},
+      }),
     );
-  } finally {
-    deps.setEgressFlag(undefined);
-  }
+    return { status: 0, retryAfter: null, text: "built" };
+  });
+  await record("guard: localhost refused by the lookup on the Agent", () =>
+    once("http", "localhost", ports.guarded, null, "/guarded", { egress: deps.blocksPrivateHosts }),
+  );
   // A text transport built without refusesUpgrade, against a peer that answers an h2c upgrade and keeps its socket:
   // node:http has handed the switched socket over, so only the transport's own destroy closes it, which the socket
   // count below reads.
@@ -486,6 +513,7 @@ async function runByteCases(
       origin: deps.httpOrigin("http", host, plan.bytePort, deps.allowsPrivateHosts),
       tls: null,
       maxSockets: 4,
+      egress: deps.allowsPrivateHosts,
       headers: {},
       responseHeaders: { names: ["x-amz-bucket-region"] },
     });
@@ -519,8 +547,8 @@ async function runByteCases(
   await record("byte: a dot-segment target", () => once("127.0.0.1", "/b/sp/./dot.txt"));
   await record("byte: a stored gzip body", () => once("127.0.0.1", "/b/gz"));
   await record("byte: a 301 with x-amz-bucket-region", () => once("127.0.0.1", "/b/region"));
-  // DB_HTTP_BLOCK_PRIVATE_HOSTS is off here (runCases deletes it, and the child starts without it); entry.mjs
-  // answers metadata.test with 169.254.169.254.
+  // The byte transport is handed an allowing decision here, so the guard is off; entry.mjs answers metadata.test with
+  // 169.254.169.254.
   await record("byte: metadata.test with the guard off", () => once("metadata.test", "/b/k"));
   // 5000 requests queued behind one under maxSockets 1, each refused by its signer once the slot frees: a queue that
   // started the next request from inside the last one's failure overflowed the stack on Node past about 1,800 and
@@ -530,6 +558,7 @@ async function runByteCases(
       origin: deps.httpOrigin("http", "127.0.0.1", plan.bytePort, deps.allowsPrivateHosts),
       tls: null,
       maxSockets: 1,
+      egress: deps.allowsPrivateHosts,
       headers: {},
       signer: {
         headerNames: ["authorization"],
@@ -565,6 +594,7 @@ async function runByteCases(
       origin: deps.httpOrigin("http", "127.0.0.1", plan.bytePort, deps.allowsPrivateHosts),
       tls: null,
       maxSockets: 1,
+      egress: deps.allowsPrivateHosts,
       headers: {},
     });
     try {
@@ -597,6 +627,7 @@ async function runByteCases(
       origin: deps.httpOrigin("http", "127.0.0.1", plan.bytePort, deps.allowsPrivateHosts),
       tls: null,
       maxSockets: 1,
+      egress: deps.allowsPrivateHosts,
       headers: {},
       responseHeaders: { names: ["x-amz-meta-city"] },
     });
@@ -876,14 +907,13 @@ beforeAll(async () => {
       `import { createNodeTransport, nodeTlsMaterial } from ${JSON.stringify(join(HTTP_SOURCES, "node-transport.ts"))};`,
       `import { endpointUrl, httpOrigin } from ${JSON.stringify(join(HTTP_SOURCES, "endpoint.ts"))};`,
       `import { createNodeByteTransport } from ${JSON.stringify(join(HTTP_SOURCES, "node-transport.ts"))};`,
-      `import { setEgressFlag } from ${JSON.stringify(join(import.meta.dir, "../../../helpers/egress-flag.ts"))};`,
-      `import { ALLOWS_PRIVATE_HOSTS } from ${JSON.stringify(join(import.meta.dir, "../../../helpers/egress-decisions.ts"))};`,
       `const runCases = ${runCases.toString()};`,
       `const runByteCases = ${runByteCases.toString()};`,
       'const plan = JSON.parse(readFileSync(process.argv[2], "utf8"));',
-      "const allowsPrivateHosts = ALLOWS_PRIVATE_HOSTS;",
+      'const allowsPrivateHosts = { blocksPrivateHosts: false, source: "set" };',
+      'const blocksPrivateHosts = { blocksPrivateHosts: true, source: "set" };',
       "const report = await runCases(",
-      "  { createNodeTransport, nodeTlsMaterial, endpointUrl, httpOrigin, allowsPrivateHosts, setEgressFlag, http, https },",
+      "  { createNodeTransport, nodeTlsMaterial, endpointUrl, httpOrigin, allowsPrivateHosts, blocksPrivateHosts, http, https },",
       "  plan,",
       ");",
       "Object.assign(report, await runByteCases({ createNodeByteTransport, httpOrigin, allowsPrivateHosts, http, https }, plan));",

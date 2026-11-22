@@ -48,7 +48,14 @@ afterEach(async () => {
 
 function connect(listener: { readonly port: number }, extra: Partial<NodeTransportOptions> = {}) {
   const origin = httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS);
-  const transport = createNodeTransport({ origin, tls: null, maxSockets: 4, headers: {}, ...extra });
+  const transport = createNodeTransport({
+    origin,
+    tls: null,
+    maxSockets: 4,
+    egress: ALLOWS_PRIVATE_HOSTS,
+    headers: {},
+    ...extra,
+  });
   transports.push(transport);
   return { transport, url: (path: string) => endpointUrl(origin, path) };
 }
@@ -59,6 +66,7 @@ function build(extra: Partial<NodeTransportOptions>): () => NodeTransport {
       origin: httpOrigin("http", "127.0.0.1", 1, ALLOWS_PRIVATE_HOSTS),
       tls: null,
       maxSockets: 1,
+      egress: ALLOWS_PRIVATE_HOSTS,
       headers: {},
       ...extra,
     });
@@ -434,6 +442,7 @@ describe("header value caps", () => {
       origin,
       tls: null,
       maxSockets: 1,
+      egress: ALLOWS_PRIVATE_HOSTS,
       headers: {},
       signer: byteSigner("t".repeat(8192)),
     });
@@ -441,6 +450,7 @@ describe("header value caps", () => {
       origin,
       tls: null,
       maxSockets: 1,
+      egress: ALLOWS_PRIVATE_HOSTS,
       headers: {},
       signer: byteSigner("t".repeat(8193)),
     });
@@ -547,14 +557,21 @@ describe("refusals when the transport is built", () => {
   test("a duplicate spelling and an unknown jsonContentType open no socket", async () => {
     const listener: Listener = await rawHttpListener(OK);
     const origin = httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS);
-    expect(() => createNodeTransport({ origin, tls: null, maxSockets: 1, headers: { A: "1", a: "2" } })).toThrow(
-      DatabaseConfigError,
-    );
     expect(() =>
       createNodeTransport({
         origin,
         tls: null,
         maxSockets: 1,
+        egress: ALLOWS_PRIVATE_HOSTS,
+        headers: { A: "1", a: "2" },
+      }),
+    ).toThrow(DatabaseConfigError);
+    expect(() =>
+      createNodeTransport({
+        origin,
+        tls: null,
+        maxSockets: 1,
+        egress: ALLOWS_PRIVATE_HOSTS,
         headers: {},
         jsonContentType: "text/plain" as unknown as NodeTransportOptions["jsonContentType"],
       }),

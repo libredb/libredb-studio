@@ -13,6 +13,7 @@ import {
 import type { HttpOrigin } from "@/lib/db/http/endpoint";
 import { TransportError } from "@/lib/db/http/node-transport";
 import { FIXED_NOW, fakeClock, fakeTransports, held, jsonAnswer } from "../../../helpers/auth-fakes";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const SAMPLE: HttpOrigin = { scheme: "https", host: "sample.test", port: 443 };
 const CLOSED = "The sample source is closed";
@@ -123,7 +124,10 @@ describe("refreshing value deadline", () => {
   test("a deadline that fires during a step that takes no signal is reported as the timeout, never as closed", async () => {
     const step = held<void>();
     const transports = fakeTransports<"sample">(() => jsonAnswer({}));
-    const transport = transports.createTransport(authLaneOptions({ origin: SAMPLE }), "sample");
+    const transport = transports.createTransport(
+      authLaneOptions({ origin: SAMPLE, egress: ALLOWS_PRIVATE_HOSTS }),
+      "sample",
+    );
     const { clock, value } = valueOf<string>(async (run) => {
       await step.promise;
       run.throwIfClosed();

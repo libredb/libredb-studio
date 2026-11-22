@@ -192,6 +192,7 @@ export function createRestQdrantClient(
     origin: options.origin,
     tls: options.tls,
     maxSockets: options.maxSockets,
+    egress: options.egress,
     headers: options.headers,
     // A connect that never completes names the host, the port and the seconds waited, as a ConnectionError.
     reportsUnreachable: true,

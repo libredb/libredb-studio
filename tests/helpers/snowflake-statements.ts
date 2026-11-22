@@ -71,7 +71,7 @@ export function setup(
   const clock = fakeClock();
   const deps = testDeps(transports, clock);
   const tokens = scriptedTokens(["token-one", "token-two"], "PROGRAMMATIC_ACCESS_TOKEN");
-  const transport = createSnowflakeTransport({ origin: ORIGIN, tls: TLS, tokens }, deps);
+  const transport = createSnowflakeTransport({ origin: ORIGIN, tls: TLS, tokens, egress: ALLOWS_PRIVATE_HOSTS }, deps);
   const statements = createSnowflakeStatements({
     transport,
     origin: ORIGIN,

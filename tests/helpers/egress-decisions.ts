@@ -3,10 +3,9 @@
  * DB_HTTP_BLOCK_PRIVATE_HOSTS (`src/lib/db/egress-decision.ts`).
  *
  * Since FND-2 slice 2b the guard decides by the decision it is handed and the factory hands core's to each provider
- * that takes a context, so a test of a path that takes the decision as an argument hands one of these and never writes
- * the variable to reach it: a write reaches only the factory and the interim readers. The variable is still written
- * only through `./egress-flag`, by a test of core's own reading or of an interim reader, or to show a handed decision
- * wins over it.
+ * that takes a context, so a test of a path that takes the decision as an argument or an option hands one of these and
+ * never writes the variable to reach it: a write reaches only the factory and the boot preflight. The variable is still
+ * written only through `./egress-flag`, by a test of core's own reading, or to show a handed decision wins over it.
  */
 import type { EgressDecision } from "@/lib/db/types";
 

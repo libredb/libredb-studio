@@ -58,6 +58,8 @@ export interface ClusterEndpoint {
   readonly defaultNamespace: string;
   /** The provider's in-flight bound, which is the transport's socket bound. */
   readonly maxSockets: number;
+  /** The egress decision the provider was built with, which the transport is built with. */
+  readonly egress: EgressDecision;
   /** The connection's query timeout, which caps every request's deadline. */
   readonly callTimeoutMs: number;
   /** `secretForms` of the token: empty with none. */
@@ -215,6 +217,7 @@ export function readClusterEndpoint(
     namespaces,
     defaultNamespace,
     maxSockets: KUBERNETES_MAX_IN_FLIGHT,
+    egress: context.egress,
     callTimeoutMs: callTimeout(context.queryTimeout),
     secretForms: secretForms(token === undefined ? [] : [token]),
   };

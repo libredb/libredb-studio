@@ -42,6 +42,7 @@ function readers() {
     deadlineSignal: deadlines.factory,
     queryTimeoutMs: 60_000,
     lifetime: new AbortController().signal,
+    egress: ALLOWS_PRIVATE_HOSTS,
     limiters: { management: rabbitmqManagementLimiter(), bindings: rabbitmqBindingsLimiter() },
   });
   return {

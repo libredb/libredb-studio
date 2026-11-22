@@ -138,6 +138,7 @@ async function rawFirstPage(options: DatabendConnectionOptions, sql: string) {
     origin: options.origin,
     tls: options.tls,
     maxSockets: 1,
+    egress: options.egress,
     headers: options.headers,
   });
   const send = async (method: "GET" | "POST", path: string, body?: string) => {

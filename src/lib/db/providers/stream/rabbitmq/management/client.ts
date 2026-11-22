@@ -28,6 +28,7 @@ import {
   type LimiterTicket,
   type ProviderLimiter,
 } from "@/lib/db/utils/bounded-limiter";
+import type { EgressDecision } from "@/lib/db/types";
 import type { ManagementEndpoint } from "../connection-options";
 import {
   cancelledError,
@@ -446,6 +447,8 @@ export interface ManagementClientOptions {
   readonly deadlineSignal: DeadlineSignalFactory;
   readonly queryTimeoutMs: number;
   readonly lifetime: AbortSignal;
+  /** The egress decision the provider was built with, which the transport is built with. */
+  readonly egress: EgressDecision;
   readonly limiters: { readonly management: ProviderLimiter; readonly bindings: ProviderLimiter };
 }
 
@@ -469,6 +472,7 @@ export function createManagementClient(options: ManagementClientOptions): Manage
     origin: endpoint.origin,
     tls: endpoint.tls,
     maxSockets: RABBITMQ_MANAGEMENT_LIMITS.perProvider + RABBITMQ_BINDINGS_LIMITS.perProvider,
+    egress: options.egress,
     headers: { authorization: `Basic ${credential}` },
     requestHeaderNames: ["accept"],
     refusesLinkLocal: true,

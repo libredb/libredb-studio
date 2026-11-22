@@ -17,6 +17,7 @@ import { objectPath, s3Query } from "@/lib/db/providers/objectstore/s3/encoding"
 import { S3_RESPONSE_HEADERS } from "@/lib/db/providers/objectstore/s3/headers";
 import { s3Signer } from "@/lib/db/providers/objectstore/s3/sigv4";
 import { bucketsXml, objectsXml } from "../../../helpers/s3-fake-transport";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { howItFailed } from "../../../helpers/spawn-outcome";
 
 interface Received {
@@ -97,6 +98,7 @@ function clientWith(maxSockets: number): S3Client {
       origin: { scheme: "http", host: "127.0.0.1", port },
       tls: null,
       maxSockets,
+      egress: ALLOWS_PRIVATE_HOSTS,
       headers: {},
       requestHeaderNames: ["range"],
       responseHeaders: S3_RESPONSE_HEADERS,
@@ -279,6 +281,8 @@ async function runWire(deps: WireDeps, plan: WirePlan): Promise<{ readonly runti
         origin: { scheme: "http", host: "127.0.0.1", port: plan.port },
         tls: null,
         maxSockets,
+        // Written out, since this text is bundled into the child and reads nothing outside its two arguments.
+        egress: { blocksPrivateHosts: false, source: "set" },
         headers: {},
         requestHeaderNames: ["range"],
         responseHeaders: deps.S3_RESPONSE_HEADERS,

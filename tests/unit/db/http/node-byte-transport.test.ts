@@ -33,7 +33,6 @@ import {
   silentListener,
   type TransportCertificates,
 } from "../../../helpers/node-transport-fixtures";
-import { setEgressFlag } from "../../../helpers/egress-flag";
 import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const MIB = 1024 * 1024;
@@ -63,7 +62,14 @@ function connect(
   host = "127.0.0.1",
 ): NodeByteTransport {
   const origin = httpOrigin("http", host, listener.port, ALLOWS_PRIVATE_HOSTS);
-  const transport = createNodeByteTransport({ origin, tls: null, maxSockets: 4, headers: {}, ...extra });
+  const transport = createNodeByteTransport({
+    origin,
+    tls: null,
+    maxSockets: 4,
+    egress: ALLOWS_PRIVATE_HOSTS,
+    headers: {},
+    ...extra,
+  });
   transports.push(transport);
   return transport;
 }
@@ -178,6 +184,7 @@ describe("the connection headers meet the rule a request's own headers meet, whe
       origin: httpOrigin("http", "127.0.0.1", 9, ALLOWS_PRIVATE_HOSTS),
       tls: null,
       maxSockets: 1,
+      egress: ALLOWS_PRIVATE_HOSTS,
       headers: { authorization: `Bearer ${crypto.randomUUID()}`, connection: "close" },
     });
     transport.close();
@@ -625,7 +632,7 @@ describe("HEAD and the byte answer", () => {
       rawAnswer("200 OK", ["content-encoding: gzip", `content-length: ${stored.length}`], stored),
     );
     const origin = httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS);
-    const text = createNodeTransport({ origin, tls: null, maxSockets: 1, headers: {} });
+    const text = createNodeTransport({ origin, tls: null, maxSockets: 1, egress: ALLOWS_PRIVATE_HOSTS, headers: {} });
     try {
       const error = await failure(() =>
         text.request({
@@ -687,6 +694,7 @@ describe("TLS", () => {
       origin,
       tls: nodeTlsMaterial({ mode: "verify-full", caCert: certificates.ca }, "localhost"),
       maxSockets: 1,
+      egress: ALLOWS_PRIVATE_HOSTS,
       headers: {},
     });
     transports.push(transport);
@@ -741,7 +749,14 @@ describe("the response-header selection, checked when the transport is built", (
     const listener = await rawHttpListener(OK);
     const origin = httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS);
     const error = refusal(() =>
-      createNodeByteTransport({ origin, tls: null, maxSockets: 1, headers: {}, responseHeaders }),
+      createNodeByteTransport({
+        origin,
+        tls: null,
+        maxSockets: 1,
+        egress: ALLOWS_PRIVATE_HOSTS,
+        headers: {},
+        responseHeaders,
+      }),
     );
     expect(error).toBeInstanceOf(DatabaseConfigError);
     expect(error.message).toBe(sentence);
@@ -756,6 +771,7 @@ describe("the response-header selection, checked when the transport is built", (
           origin,
           tls: null,
           maxSockets: 1,
+          egress: ALLOWS_PRIVATE_HOSTS,
           headers: {},
           responseHeaders: {
             names: Array.from({ length: 32 }, (_, index) => `x-h${index}`),
@@ -1160,6 +1176,7 @@ describe("the signer's names, checked when the transport is built", () => {
         origin,
         tls: null,
         maxSockets: 1,
+        egress: ALLOWS_PRIVATE_HOSTS,
         headers: { "x-api": "k" },
         requestHeaderNames: ["range"],
         signer: { headerNames, sign: () => ({}) },
@@ -1191,7 +1208,16 @@ describe("the signer's names, checked when the transport is built", () => {
   test("authorization is accepted", () => {
     const origin = httpOrigin("http", "127.0.0.1", 9000, ALLOWS_PRIVATE_HOSTS);
     expect(() =>
-      transports.push(createNodeByteTransport({ origin, tls: null, maxSockets: 1, headers: {}, signer: signer() })),
+      transports.push(
+        createNodeByteTransport({
+          origin,
+          tls: null,
+          maxSockets: 1,
+          egress: ALLOWS_PRIVATE_HOSTS,
+          headers: {},
+          signer: signer(),
+        }),
+      ),
     ).not.toThrow();
   });
 });
@@ -1503,9 +1529,14 @@ describe("link-local origins", () => {
   test.each(["169.254.169.254", "[fd00:ec2::254]", "[fe80::1]"])(
     "%s is refused when the transport is built, with the guard off",
     (host) => {
-      setEgressFlag(undefined);
       const error = refusal(() =>
-        createNodeByteTransport({ origin: { scheme: "http", host, port: 80 }, tls: null, maxSockets: 1, headers: {} }),
+        createNodeByteTransport({
+          origin: { scheme: "http", host, port: 80 },
+          tls: null,
+          maxSockets: 1,
+          egress: ALLOWS_PRIVATE_HOSTS,
+          headers: {},
+        }),
       );
       expect(error).toBeInstanceOf(DatabaseConfigError);
       expect(error.message).toBe(

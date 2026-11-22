@@ -2841,6 +2841,7 @@ export async function s3Fingerprint(
     origin: options.origin,
     tls: options.tls,
     maxSockets: 1,
+    egress: egressDecision(),
     headers: {},
     requestHeaderNames: ["range"],
     responseHeaders: S3_RESPONSE_HEADERS,

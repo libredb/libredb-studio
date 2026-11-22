@@ -275,6 +275,7 @@ describe("the server name a trailing-dot host sends", () => {
       origin: management.origin,
       tls: management.tls,
       maxSockets: 1,
+      egress: ALLOWS_PRIVATE_HOSTS,
       headers: {},
     });
     try {

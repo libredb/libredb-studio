@@ -24,11 +24,13 @@ import {
   scriptedTransport,
   UNRECORDED_ANSWER,
 } from "../../../helpers/firestore-replay";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const options = (overrides: Partial<NodeTransportOptions> = {}): NodeTransportOptions => ({
   origin: { scheme: "http", host: "127.0.0.1", port: 8080 },
   tls: null,
   maxSockets: 4,
+  egress: ALLOWS_PRIVATE_HOSTS,
   headers: { authorization: "Bearer owner" },
   ...overrides,
 });

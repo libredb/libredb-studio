@@ -73,6 +73,7 @@ function harness(
     deadlineSignal: deadlines.factory,
     queryTimeoutMs: options.queryTimeoutMs ?? 60_000,
     lifetime: lifetime.signal,
+    egress: ALLOWS_PRIVATE_HOSTS,
     limiters: { management: rabbitmqManagementLimiter(), bindings: rabbitmqBindingsLimiter() },
   });
   return { client, stub, deadlines, lifetime };
@@ -192,6 +193,8 @@ describe("the transport the client builds", () => {
     expect(options.refusesLinkLocal).toBe(true);
     expect(options.refusesUpgrade).toBe(true);
     expect(options.reportsUnreachable).toBe(true);
+    // The egress decision the client was handed, by identity.
+    expect(options.egress).toBe(ALLOWS_PRIVATE_HOSTS);
   });
 
   test("close() closes the transport, and a GET after it is refused before any request", async () => {

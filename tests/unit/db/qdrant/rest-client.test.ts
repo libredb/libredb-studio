@@ -70,10 +70,13 @@ describe("what the client hands the transport", () => {
         origin: { scheme: "http", host: "127.0.0.1", port: 6333 },
         tls: null,
         maxSockets: 4,
+        egress: ALLOWS_PRIVATE_HOSTS,
         headers: { "api-key": TEST_PASSWORD },
         reportsUnreachable: true,
       },
     ]);
+    // The egress decision the connection options were built with, by identity.
+    expect(wire.built[0].egress).toBe(ALLOWS_PRIVATE_HOSTS);
   });
 
   test("a request carries the caller's signal, the response cap and the body as written", async () => {

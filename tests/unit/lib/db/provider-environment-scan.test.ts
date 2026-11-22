@@ -17,15 +17,6 @@ const PROVIDERS = "src/lib/db/providers/";
 const FACTORY = "src/lib/db/factory.ts";
 const BOOT_PREFLIGHT = "src/lib/config/egress-preflight.ts";
 
-/**
- * The core modules that read core's decision on a provider's behalf until a later slice of FND-2 slice 2b hands them
- * the decision as an argument. Each slice deletes its own entry; an entry whose module no longer imports the reader
- * fails the importer test, so the list never outlives the code.
- */
-const INTERIM_READERS: Readonly<Record<string, string>> = {
-  "src/lib/db/http/node-transport.ts": "createNodeTransport and createNodeByteTransport, until slice 2b-4",
-};
-
 function readsTheSetting(source: string, fileName = "probe.ts", variable = VARIABLE): boolean {
   // The script kind follows the extension: parsed as TSX, a generic arrow or an angle-bracket assertion in a .ts file
   // opens a JSX element, and a read after it would never be visited.
@@ -138,8 +129,13 @@ describe("a setting core owns has one reader, and no provider imports it (FND-2 
     expect(importersOfTheReader().filter((name) => name.startsWith(PROVIDERS))).toEqual([]);
   });
 
-  test("the modules that import src/lib/db/egress-decision.ts are the provider factory, the boot preflight and the interim readers, each until its slice", () => {
-    expect(importersOfTheReader()).toEqual([BOOT_PREFLIGHT, FACTORY, ...Object.keys(INTERIM_READERS)].sort());
+  test("the modules that import src/lib/db/egress-decision.ts are the provider factory and the boot preflight", () => {
+    expect(importersOfTheReader()).toEqual([BOOT_PREFLIGHT, FACTORY].sort());
+  });
+
+  test("no module under src/lib/db/providers/ reaches src/lib/db/egress-decision.ts through its imports", () => {
+    const reaching = providerModules().filter((name) => valueImportClosure(name).modules.includes(READER));
+    expect(reaching).toEqual([]);
   });
 
   test("no module under src/lib/db/providers/ reaches the provider factory or the boot preflight through its imports", () => {

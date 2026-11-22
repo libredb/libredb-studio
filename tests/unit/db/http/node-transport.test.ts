@@ -50,6 +50,7 @@ function connect(listener: Listener, overrides: Partial<NodeTransportOptions> = 
     origin,
     tls: null,
     maxSockets: 4,
+    egress: ALLOWS_PRIVATE_HOSTS,
     headers: { "api-key": SECRET },
     ...overrides,
   });
@@ -251,6 +252,7 @@ describe("refused before any socket", () => {
         origin: httpOrigin("http", "127.0.0.1", 6333, ALLOWS_PRIVATE_HOSTS),
         tls: null,
         maxSockets,
+        egress: ALLOWS_PRIVATE_HOSTS,
         headers: {},
       }),
     );
@@ -269,6 +271,7 @@ describe("refused before any socket", () => {
         origin: httpOrigin("http", "127.0.0.1", 6333, ALLOWS_PRIVATE_HOSTS),
         tls: null,
         maxSockets: 1,
+        egress: ALLOWS_PRIVATE_HOSTS,
         headers: { [name]: `5-${marker}` },
       }),
     );
@@ -286,6 +289,7 @@ describe("refused before any socket", () => {
         origin: httpOrigin(scheme, "127.0.0.1", 6333, ALLOWS_PRIVATE_HOSTS),
         tls,
         maxSockets: 1,
+        egress: ALLOWS_PRIVATE_HOSTS,
         headers: {},
       }),
     );
@@ -494,7 +498,13 @@ describe("bounded, stoppable and never resent", () => {
     const { port } = listener;
     await listener.close();
     const origin = httpOrigin("http", "127.0.0.1", port, ALLOWS_PRIVATE_HOSTS);
-    const transport = createNodeTransport({ origin, tls: null, maxSockets: 1, headers: { "api-key": SECRET } });
+    const transport = createNodeTransport({
+      origin,
+      tls: null,
+      maxSockets: 1,
+      egress: ALLOWS_PRIVATE_HOSTS,
+      headers: { "api-key": SECRET },
+    });
     transports.push(transport);
     const error = await failure(() =>
       transport.request(get(endpointUrl(origin, "/collections", new URLSearchParams({ token: SECRET })))),

@@ -59,6 +59,7 @@ describe("the transport of a session", () => {
       origin: { scheme: "http", host: "localhost", port: 9000 },
       tls: null,
       maxSockets: 4,
+      egress: ALLOWS_PRIVATE_HOSTS,
       headers: {},
       requestHeaderNames: ["range"],
       responseHeaders: S3_RESPONSE_HEADERS,

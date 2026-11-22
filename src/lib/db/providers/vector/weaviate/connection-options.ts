@@ -52,6 +52,8 @@ export interface WeaviateConnectionOptions {
   readonly headers: Readonly<Record<string, string>>;
   /** The provider's in-flight bound, which is the transport's socket bound. */
   readonly maxSockets: number;
+  /** The egress decision the provider was built with, which the transport is built with. */
+  readonly egress: EgressDecision;
   /** The most bytes one response may hold. */
   readonly responseCapBytes: number;
   readonly readOnly?: WeaviateReadOnlySource;
@@ -117,6 +119,7 @@ export function buildWeaviateConnectionOptions(
     tls,
     headers: secret === undefined ? {} : { authorization: `Bearer ${secret}` },
     maxSockets: WEAVIATE_MAX_IN_FLIGHT,
+    egress: context.egress,
     responseCapBytes: WEAVIATE_RESPONSE_CAP_BYTES,
     ...(readOnly === undefined ? {} : { readOnly }),
     callTimeoutMs: callTimeout(context.queryTimeout),

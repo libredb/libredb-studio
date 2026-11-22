@@ -10,8 +10,10 @@
  * provider, by identity. Building connects nothing. The cases that connect go through the same factory and show the
  * composed path refuses a private destination before anything is sent.
  *
- * The list of engines is a test-side list: a provider whose connections pass the shared egress guard joins it
- * (docs/ADDING_A_PROVIDER.md, "Step 3: Register in the Factory"), and the later slices of FND-2 slice 2b extend it.
+ * The list of engines is a test-side list: it holds every engine whose connections pass the shared egress guard, and a
+ * new provider that passes it joins it (docs/ADDING_A_PROVIDER.md, "Step 3: Register in the Factory"). Since FND-2 slice
+ * 2b-4 the node transports take the decision too, so the composed cases cover the fetch (ClickHouse), the socket dial
+ * (MQTT), the name lookup (SNMP) and the node transport (Qdrant).
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { createSocket, type Socket } from "node:dgram";
@@ -29,7 +31,7 @@ import { ALLOWS_PRIVATE_HOSTS } from "../helpers/egress-decisions";
 import { setEgressFlag } from "../helpers/egress-flag";
 import { pathsToObject } from "../helpers/reachable-markers";
 
-/** The engines whose guard calls take the decision as an argument since slices 2b-1, 2b-2, 2b-3a and 2b-3b. */
+/** The engines whose guard calls take the decision as an argument since slices 2b-1, 2b-2, 2b-3a, 2b-3b and 2b-4. */
 const GUARDED_ENGINES: readonly DatabaseType[] = [
   "clickhouse",
   "druid",
@@ -233,6 +235,41 @@ describe("a guarded provider is built with the egress decision core took (FND-2 
       expect(received).toBe(0);
     } finally {
       agent.close();
+    }
+  });
+
+  test("a Qdrant connection to localhost built by createDatabaseProvider with DB_HTTP_BLOCK_PRIVATE_HOSTS true is refused at its node transport's lookup and the listener accepts no connection", async () => {
+    setEgressFlag("true");
+    let accepted = 0;
+    const server: Server = createServer((_request, response) => {
+      response.end("unexpected request");
+    });
+    server.on("connection", () => {
+      accepted += 1;
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      // `localhost` is a name, which the origin lets through, so the refusal is the node transport's lookup.
+      const connection: DatabaseConnection = {
+        id: "egress-census-qdrant",
+        name: "egress census qdrant",
+        type: "qdrant",
+        host: "localhost",
+        port: (server.address() as AddressInfo).port,
+        createdAt: new Date(),
+      };
+      const provider = await createDatabaseProvider(connection);
+      const failure = await provider.connect().then(
+        () => null,
+        (error: unknown) => error,
+      );
+      await provider.disconnect();
+      expect(failure).toBeInstanceOf(DatabaseConfigError);
+      expect((failure as Error).message).toBe(BLOCKED_HOST);
+      expect(accepted).toBe(0);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
   });
 });

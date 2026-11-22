@@ -113,11 +113,14 @@ describe("what the client hands the transport", () => {
         origin: { scheme: "http", host: "127.0.0.1", port: 8086 },
         tls: null,
         maxSockets: INFLUX_MAX_IN_FLIGHT,
+        egress: ALLOWS_PRIVATE_HOSTS,
         headers: { authorization: `Basic ${Buffer.from(`${TEST_USER}:${TEST_PASSWORD}`).toString("base64")}` },
         reportsUnreachable: true,
       },
     ]);
     expect(wire.built[0].headers).toBe(INFLUXQL.headers);
+    // The egress decision the connection options were built with, by identity.
+    expect(wire.built[0].egress).toBe(ALLOWS_PRIVATE_HOSTS);
     expect(wire.requests).toEqual([]);
   });
 

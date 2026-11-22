@@ -6,11 +6,14 @@
  * Only files of src/lib/db/auth import this module: no provider builds an auth lane, so no provider can turn the
  * link-local refusal off for an origin it chose.
  */
+import type { EgressDecision } from "@/lib/db/http/egress-policy";
 import type { HttpOrigin } from "@/lib/db/http/endpoint";
 import type { NodeTransportOptions } from "@/lib/db/http/node-transport";
 
 export interface AuthLaneSpec {
   readonly origin: HttpOrigin;
+  /** The egress decision the provider was built with. */
+  readonly egress: EgressDecision;
   /** Connection headers; none when absent. */
   readonly headers?: Readonly<Record<string, string>>;
   /** The lower-case names a request may carry in its own headers; none when absent. */
@@ -28,6 +31,7 @@ export function authLaneOptions(spec: AuthLaneSpec): NodeTransportOptions {
     origin: spec.origin,
     tls: spec.origin.scheme === "https" ? { rejectUnauthorized: true, identity: spec.origin.host } : null,
     maxSockets: 1,
+    egress: spec.egress,
     headers: spec.headers ?? {},
     ...(spec.requestHeaderNames === undefined ? {} : { requestHeaderNames: spec.requestHeaderNames }),
     ...(spec.linkLocalEndpoint === true ? {} : { refusesLinkLocal: true }),

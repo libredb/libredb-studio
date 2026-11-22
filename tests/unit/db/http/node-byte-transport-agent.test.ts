@@ -39,6 +39,7 @@ function build(extra: Partial<ByteOptions>): Error | undefined {
         origin: httpOrigin("http", "127.0.0.1", 9000, ALLOWS_PRIVATE_HOSTS),
         tls: null,
         maxSockets: 1,
+        egress: ALLOWS_PRIVATE_HOSTS,
         headers: { "x-api": "k" },
         ...extra,
       }),

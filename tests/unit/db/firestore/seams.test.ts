@@ -3,11 +3,13 @@ import { homedir } from "node:os";
 import { createNodeTransport } from "@/lib/db/http/node-transport";
 import { FIRESTORE_ENV_NAMES, readFirestoreEnv, resolveSeams } from "@/lib/db/providers/document/firestore/seams";
 import { fakeSeams } from "../../../helpers/firestore-seams";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const LANE_OPTIONS = {
   origin: { scheme: "http", host: "127.0.0.1", port: 9 },
   tls: null,
   maxSockets: 1,
+  egress: ALLOWS_PRIVATE_HOSTS,
   headers: {},
 } as const;
 

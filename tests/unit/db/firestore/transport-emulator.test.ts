@@ -61,10 +61,13 @@ describe("firestore emulator lane", () => {
       origin: { scheme: "http", host: "127.0.0.1", port: 8080 },
       tls: null,
       maxSockets: 8,
+      egress: ALLOWS_PRIVATE_HOSTS,
       headers: { authorization: "Bearer owner" },
       refusesLinkLocal: true,
       refusesUpgrade: true,
     });
+    // FirestoreClientOptions.egress, by identity.
+    expect(seams.lanes[0].options.egress).toBe(ALLOWS_PRIVATE_HOSTS);
     expect(seams.lanes[0].requests).toHaveLength(2);
     for (const request of seams.lanes[0].requests) {
       expect(request.url).toStartWith("http://127.0.0.1:8080/v1/projects/demo-p/databases/");

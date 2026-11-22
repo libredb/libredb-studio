@@ -411,6 +411,7 @@ describe("through a real text transport", () => {
       origin,
       tls: null,
       maxSockets: 1,
+      egress: ALLOWS_PRIVATE_HOSTS,
       headers: {},
       requestHeaderNames: ["x-amz-target"],
       jsonContentType: "application/x-amz-json-1.0",
@@ -457,6 +458,7 @@ describe("through a real text transport", () => {
       origin,
       tls: null,
       maxSockets: 1,
+      egress: ALLOWS_PRIVATE_HOSTS,
       headers: {},
       signer: createAwsSigner({
         credentials: () => {
@@ -511,6 +513,7 @@ describe("through a real text transport", () => {
       origin,
       tls: null,
       maxSockets: 1,
+      egress: ALLOWS_PRIVATE_HOSTS,
       headers: {},
       signer: createAwsSigner({
         credentials: () => ({ accessKeyId: "AKIDEXAMPLE", secretAccessKey: "secret" }),
@@ -544,6 +547,7 @@ describe("through a real text transport", () => {
       origin,
       tls: null,
       maxSockets: 1,
+      egress: ALLOWS_PRIVATE_HOSTS,
       headers: {},
       signer: createAwsSigner({ credentials: () => keys, region: "us-east-1", service: "sts", clock: SUITE_CLOCK }),
     });

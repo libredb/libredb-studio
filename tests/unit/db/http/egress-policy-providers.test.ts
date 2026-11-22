@@ -43,9 +43,9 @@ const handedDecision = [
 ] as const;
 
 /**
- * The providers that build their origin with the decision they were handed (slice 2b-3b) and still read the process's
- * decision through a node transport, until slice 2b-4: at the name localhost the refusal comes from the node
- * transport's checked lookup, so each is handed a blocking decision and the variable is true too.
+ * The providers that build their origin (slice 2b-3b) and their node transport (slice 2b-4) with the decision they were
+ * handed: at the name localhost the refusal comes from the node transport's checked lookup, so each is handed a
+ * blocking decision while the variable is unset.
  */
 const providers = [
   // A user and no password (Databend design 3.14): the plaintext refusal needs a password, so the guard is reached.
@@ -177,7 +177,7 @@ test("ClickHouse built without an egress decision refuses to connect by name and
 for (const [name, type, Provider] of providers) {
   for (const secure of [false, true]) {
     test(`${name} ${secure ? "TLS" : "plain HTTP"} keeps DNS policy refusals as configuration errors`, async () => {
-      setEgressFlag("true");
+      setEgressFlag(undefined);
       let hits = 0;
       const server = createServer((_request, response) => {
         hits += 1;
@@ -225,13 +225,13 @@ test("libSQL version discovery also reports a DNS policy refusal", async () => {
   await expect(transport.serverVersion()).rejects.toThrow(DatabaseConfigError);
 });
 
-// S3 builds its origin with the decision it was handed (slice 2b-3a), so it is handed a blocking one; its byte
-// transport still reads the process's decision at the lookup of a name until slice 2b-4, so the variable is true too.
+// S3 builds its origin (slice 2b-3a) and its byte transport (slice 2b-4) with the decision it was handed, so it is handed
+// a blocking one while the variable is unset, and the refusal at the name localhost is the byte transport's lookup.
 // No key pair (the user-less set): an unsigned connection, so the half-pair refusal does not fire first, and `localhost`
 // is loopback, so the plain-HTTP refusal does not either; the pinned bucket "test" makes the probe one ListObjectsV2.
 for (const secure of [false, true]) {
   test(`S3-compatible object storage ${secure ? "TLS" : "plain HTTP"} keeps DNS policy refusals as configuration errors`, async () => {
-    setEgressFlag("true");
+    setEgressFlag(undefined);
     const server = await countingServer();
     try {
       const failure = await Promise.resolve()

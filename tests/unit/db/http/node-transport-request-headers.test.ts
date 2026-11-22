@@ -41,6 +41,7 @@ function connect(listener: Listener, extra: Partial<NodeTransportOptions> = {}) 
     origin,
     tls: null,
     maxSockets: 4,
+    egress: ALLOWS_PRIVATE_HOSTS,
     headers: { authorization: SECRET, accept: "application/json" },
     ...extra,
   });
@@ -54,6 +55,7 @@ function build(requestHeaderNames: readonly string[]): () => NodeTransport {
       origin: httpOrigin("http", "127.0.0.1", 1, ALLOWS_PRIVATE_HOSTS),
       tls: null,
       maxSockets: 1,
+      egress: ALLOWS_PRIVATE_HOSTS,
       headers: { accept: "application/json" },
       requestHeaderNames,
     });
@@ -120,6 +122,7 @@ describe("requestHeaderNames at creation", () => {
         origin: httpOrigin("http", "127.0.0.1", 1, ALLOWS_PRIVATE_HOSTS),
         tls: null,
         maxSockets: 1,
+        egress: ALLOWS_PRIVATE_HOSTS,
         headers: { "X-Databend-Warehouse": "default" },
         requestHeaderNames: ["x-databend-warehouse"],
       });

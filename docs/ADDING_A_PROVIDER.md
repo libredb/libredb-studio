@@ -133,7 +133,8 @@ interface XTransport {
 A new provider that speaks HTTP builds the HTTP side of its transport seam on `createNodeTransport` in [`node-transport.ts`](../src/lib/db/http/node-transport.ts), so the provider's own transport file is a thin adapter.
 It dials through `node:http` or `node:https` with one keep-alive Agent per connection, `maxSockets` set to the provider's in-flight bound and an idle socket closed after 4 s (below a server keep-alive such as Qdrant's 5 s, #1419), so no proxy variable can route a request, no redirect is followed, a request whose answer was lost is never sent again, and an answer stops at the byte cap the provider passes.
 It maps the SSL / TLS panel through `nodeTlsMaterial`, the one TLS mapping a new provider takes, and checks the certificate against the far end of an SSH tunnel rather than the local forward.
-With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, the egress guard's lookup runs on that Agent, so pooled sockets stay guarded.
+It takes the egress decision the provider was built with in `egress`, and refuses by name when built without one.
+When that decision blocks private destinations, the egress guard's lookup runs on that Agent, so pooled sockets stay guarded.
 A provider that needs headers per request lists their lower-case names in `requestHeaderNames` and passes them in `NodeRequest.headers`; a name the transport or the connection owns is refused when the transport is built.
 A provider that reads stored objects instead of statement results builds on `createNodeByteTransport` in the same file.
 It sends GET and HEAD only, to an exact request target built with `rfc3986Path` and `rfc3986Query` from [`endpoint.ts`](../src/lib/db/http/endpoint.ts), and returns the body as bytes, never decoded, with an optional `truncateAt` that keeps the first bytes and says so.
@@ -521,7 +522,7 @@ The factory copies only plain data: an execution context that is a class instanc
 A provider whose connections pass the shared egress guard keeps that context and, when it builds its transport or dial, hands `requireEgressDecision(context.egress)` from `src/lib/db/http/egress-policy.ts` to the guard as the last argument; built without a decision, it refuses by name and dials nothing.
 A provider that builds an HTTP origin hands `httpOrigin` in `src/lib/db/http/endpoint.ts` the same decision as its last argument when `connect()` builds the origin, so an address literal the decision blocks is refused before any request; a helper that builds the provider's origin takes the decision from its caller and never reads it.
 A provider that dials its own socket carries `egress` from the context in its dial input, and its dial hands `requireEgressDecision(input.egress)` to `socketEgress` in `src/lib/db/http/egress-policy.ts` as the last argument, so a test seam that replaces the dial needs no decision.
-A provider built on `createNodeTransport` or `createNodeByteTransport` (`src/lib/db/http/node-transport.ts`) hands its origin the decision too, but the transport takes none yet: both factories read core's decision on the provider's behalf until FND-2 slice 2b-4.
+A provider built on `createNodeTransport` or `createNodeByteTransport` (`src/lib/db/http/node-transport.ts`) hands each transport the same decision in its options' `egress`, as it hands its origin; a transport built without one refuses by name and opens nothing.
 A provider that hands the decision to its guard also joins the engines of `tests/security/provider-egress-decision.test.ts`, which holds that the factory hands it the decision.
 A provider never reads `DB_HTTP_BLOCK_PRIVATE_HOSTS` and never imports `src/lib/db/egress-decision.ts`; `tests/unit/lib/db/provider-environment-scan.test.ts` holds it.
 

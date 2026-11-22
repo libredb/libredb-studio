@@ -74,6 +74,7 @@ function options(signer?: RequestSigner): NodeByteTransportOptions {
     origin: httpOrigin("http", "127.0.0.1", 9010, ALLOWS_PRIVATE_HOSTS),
     tls: null,
     maxSockets: 1,
+    egress: ALLOWS_PRIVATE_HOSTS,
     headers: {},
     requestHeaderNames: ["range"],
     responseHeaders: { names: ["etag", "date"], prefixes: ["x-amz-meta-"] },
