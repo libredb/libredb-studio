@@ -300,9 +300,29 @@ describe("re-sealing a real SQLite store", () => {
     const store = await provider();
 
     await expect(resealStore(store, NOW)).rejects.toThrow(
-      "The re-seal cannot write the connections row of alice back: connections[0] nest too deep to serialize",
+      "The re-seal cannot write the connections row of alice back: it cannot re-seal or serialize connections[0]",
     );
     expect(dump()).toEqual(before);
+  });
+
+  test("an element nested too deep in a field outside the binding fails the run by name, and leaves the store as it was and no backup", async () => {
+    await previousVersionStore();
+    const depth = 200_000;
+    // No secret at all, beside bob's version 1 row: the element still cannot be bound in this runtime.
+    const deep = `{"id":"c0","name":"c0","type":"postgres","host":"a.internal","options":${"[".repeat(depth)}"x"${"]".repeat(depth)}}`;
+    raw((db) =>
+      db
+        .prepare("UPDATE user_storage SET data = ? WHERE user_id = 'alice' AND collection = 'connections'")
+        .run(`[${deep}]`),
+    );
+    const before = dump();
+    const store = await provider();
+
+    await expect(resealStore(store, NOW)).rejects.toThrow(
+      "The re-seal cannot write the connections row of alice back: it cannot re-seal or serialize connections[0]",
+    );
+    expect(dump()).toEqual(before);
+    expect(readdirSync(dir).filter((name) => name.includes("pre-reseal"))).toEqual([]);
   });
 
   test("a value that does not open is left as it is and named", async () => {

@@ -328,6 +328,35 @@ describe("resealStore", () => {
     expect(store.marker).toBeUndefined();
   });
 
+  test("an element the re-seal cannot handle, nested too deep in a field outside the binding, fails the run naming the owner and the element, and leaves the store as it was", async () => {
+    const store = new MemoryStorageProvider();
+    const depth = 200_000;
+    // The binding check measures the id and the identity fields only; `options` is neither, so the element passes it.
+    const deep = JSON.stringify(connection("c1", { password: randomUUID(), options: "OPTIONS" })).replace(
+      '"OPTIONS"',
+      `${"[".repeat(depth)}"x"${"]".repeat(depth)}`,
+    );
+    store.putRow("alice", "connections", `[${deep}]`);
+    store.putRow("bob", "connections", JSON.stringify([connection("c2", { password: sealVersionOne(randomUUID()) })]));
+    const rows = new Map(store.rows);
+
+    let failure: unknown;
+    try {
+      await resealStore(store, NOW);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(ResealRowUnwritable);
+    expect(failure).toMatchObject({ name: "ResealRowUnwritable", owner: "alice", elements: [0] });
+    expect((failure as Error).message).toContain("the connections row of alice");
+    expect((failure as Error).message).toContain("connections[0]");
+    expect((failure as Error).message).toContain("remove or repair that element and start again");
+    expect((failure as Error).cause).toBeInstanceOf(RangeError);
+    expect(store.rows).toEqual(rows);
+    expect(store.marker).toBeUndefined();
+  });
+
   test("leave-unopened retires version 1 over the version 1 values it left and names them, and the documented recovery reopens them", async () => {
     // docs/STORAGE.md, "Re-sealing the store": restore the key that sealed the store, delete the credential_envelope
     // row with every server stopped, and re-seal again.

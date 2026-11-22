@@ -745,7 +745,7 @@ The start refuses, with a banner and exit status 1, when:
 - the server has no usable key material;
 - the backup cannot be written (a target that already exists, a directory the process cannot write, or an in-memory SQLite store);
 - a version 1 value does not open under the key in use, unless the value is `leave-unopened`;
-- a `connections` row the re-seal must write back cannot be written, because an element it left unread beside one it re-sealed nests deeper than the serializer goes: the banner names the owner and the element, so remove or repair that element and start again;
+- an element of a `connections` row cannot be re-sealed, or a row the re-seal must write back cannot be serialized, for example because an element nests deeper than the serializer goes: the banner names the owner and the element, so remove or repair that element and start again;
 - anything else fails during the re-seal.
 
 A refusal before the re-seal's transaction changes nothing, and a failure inside it rolls every change back.

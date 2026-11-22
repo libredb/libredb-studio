@@ -19,9 +19,10 @@ import type { DatabaseConnection } from "@/lib/types";
  * by retirement, so they are always left as they are and named. A value that is not text, or a
  * version 1 or unsealed value beside a v2 value of its record, is left as it is and named
  * (./connection-secrets.ts). A row whose data is not a JSON list, a list element that is not an
- * object, and a connection that has no binding are left as they are and named; a row that must be
- * written back beside such an element and that the serializer cannot write fails the run by name
- * (`ResealRowUnwritable`). Once the provider commits, the store records that version 1 is retired.
+ * object, and a connection that has no binding are left as they are and named; an element that
+ * fails to re-seal, and a row that must be written back beside such an element and that the
+ * serializer cannot write, fail the run by name (`ResealRowUnwritable`). Once the provider commits,
+ * the store records that version 1 is retired.
  *
  * The key is derived before anything is read: without usable key material every value would read
  * as unopenable and be retired unopened, so the run throws by name instead.
@@ -86,10 +87,10 @@ export class ResealRefused extends Error {
 }
 
 /**
- * The re-seal could not write a connections row back: its rewritten list holds elements this runtime's serializer
- * cannot write (they nest too deep, so the re-seal left them unread beside an element it re-sealed). It threw inside the
- * provider's transaction, so the store is as it was. `elements` are their indexes in the row, and `cause` is the
- * serializer's error.
+ * The re-seal could not handle a connections row: an element of it failed to re-seal (for example one nested deeper
+ * than this runtime's serializer goes, in a field the binding check does not measure), or the rewritten list holds
+ * elements the serializer cannot write. It threw inside the provider's transaction, so the store is as it was.
+ * `elements` are their indexes in the row, and `cause` is the error of the step that failed.
  */
 export class ResealRowUnwritable extends Error {
   constructor(
@@ -98,8 +99,9 @@ export class ResealRowUnwritable extends Error {
     cause: unknown,
   ) {
     const names = elements.map((index) => `connections[${index}]`).join(", ");
+    const reason = cause instanceof Error ? cause.message : String(cause);
     super(
-      `The re-seal cannot write the connections row of ${owner} back: ${names} nest too deep to serialize, and the re-seal left them unread beside an element it re-sealed. The re-seal rolled back and version 1 is not retired: remove or repair that element and start again.`,
+      `The re-seal cannot write the connections row of ${owner} back: it cannot re-seal or serialize ${names} (${reason}). The re-seal rolled back and version 1 is not retired: remove or repair that element and start again.`,
       { cause },
     );
     this.name = "ResealRowUnwritable";
@@ -153,7 +155,12 @@ export async function resealStore(
         unread.push(`${owner} connections[${index}]`);
         return element;
       }
-      const result = resealConnections(owner, [element]);
+      let result: ReturnType<typeof resealConnections>;
+      try {
+        result = resealConnections(owner, [element]);
+      } catch (error) {
+        throw new ResealRowUnwritable(owner, [index], error);
+      }
       resealed += result.resealed;
       kept += result.kept;
       for (const { id, path } of result.unopened) unopened.push(`${owner} ${idText(id)} ${path}`);
