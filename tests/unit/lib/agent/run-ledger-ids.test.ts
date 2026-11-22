@@ -113,7 +113,8 @@ function persistableIds(): { readonly languages: ReadonlySet<string>; readonly v
   for (const language of Object.keys(AGENT_WORKFLOW_VARIANTS) as AgentStatementLanguageId[]) {
     for (const mode of ["agent", "planning"] as const satisfies readonly AgentRunMode[]) {
       for (const workflow of workflows) {
-        const variant = workflow === "operations" && mode === "agent" ? OPERATIONS_VARIANT : agentVariant(language, workflow);
+        const variant =
+          workflow === "operations" && mode === "agent" ? OPERATIONS_VARIANT : agentVariant(language, workflow);
         if (variant === undefined && mode === "agent") continue;
         const facts = persistedRunFacts(mode, workflow, {
           open: true,

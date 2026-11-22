@@ -44,7 +44,7 @@ let sessionUser = OWNER;
 
 const reached: string[] = [];
 function recorder(name: string) {
-  return mock(async (..._args: unknown[]): Promise<never> => {
+  return mock(async (): Promise<never> => {
     reached.push(name);
     throw new Error(`${name} must not be reached for a run this Studio cannot read`);
   });
@@ -159,7 +159,8 @@ const ROUTES: Readonly<Record<string, Call>> = {
     }),
   "POST handover": (runId) =>
     handoverRoute.POST(createMockRequest(`/api/agent/runs/${runId}/handover`, { method: "POST" }), params(runId)),
-  DELETE: (runId) => runRoute.DELETE(createMockRequest(`/api/agent/runs/${runId}`, { method: "DELETE" }), params(runId)),
+  DELETE: (runId) =>
+    runRoute.DELETE(createMockRequest(`/api/agent/runs/${runId}`, { method: "DELETE" }), params(runId)),
   "PATCH pause": (runId) =>
     runRoute.PATCH(
       createMockRequest(`/api/agent/runs/${runId}`, { method: "PATCH", body: { action: "pause" } }),
@@ -210,33 +211,36 @@ describe("a run whose ledger names an id this Studio does not have", () => {
     ["POST drive", "running", "verifier"],
     ["POST drive", "paused", "cobol"],
     ["PATCH resume", "paused", "verifier"],
-  ] as const)("%s on a %s run (%s) answers the run's owner 409 AGENT_RUN_UNAVAILABLE by name and reaches nothing", async (route, state, id) => {
-    const runId = `arun_${route.replace(" ", "")}_${state}_${id}`.toLowerCase();
-    const header = id === "cobol" ? { statementLanguage: "cobol" } : { verifier: "agent-nonexistent.1" };
-    await open(runId, header, id === "cobol" ? "data-analysis" : "investigation");
-    if (state === "finished") await finished(runId);
-    if (state === "paused") await paused(runId);
-    if (state === "running") await started(runId);
-    const before = await chunkCount(runId);
+  ] as const)(
+    "%s on a %s run (%s) answers the run's owner 409 AGENT_RUN_UNAVAILABLE by name and reaches nothing",
+    async (route, state, id) => {
+      const runId = `arun_${route.replace(" ", "")}_${state}_${id}`.toLowerCase();
+      const header = id === "cobol" ? { statementLanguage: "cobol" } : { verifier: "agent-nonexistent.1" };
+      await open(runId, header, id === "cobol" ? "data-analysis" : "investigation");
+      if (state === "finished") await finished(runId);
+      if (state === "paused") await paused(runId);
+      if (state === "running") await started(runId);
+      const before = await chunkCount(runId);
 
-    const response = await ROUTES[route](runId);
+      const response = await ROUTES[route](runId);
 
-    expect(response.status).toBe(409);
-    expect(await response.json()).toEqual({
-      error: runHeaderRefusal(header)?.sentence,
-      code: "AGENT_RUN_UNAVAILABLE",
-      statusCode: 409,
-    });
-    expect(reached).toEqual([]);
-    expect(await chunkCount(runId)).toBe(before);
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0]?.[0]).toBe("Agent run unavailable");
-    expect(warn.mock.calls[0]?.[1]).toMatchObject({
-      runId,
-      field: id === "cobol" ? "statementLanguage" : "verifier",
-      reason: "unknown",
-    });
-  });
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({
+        error: runHeaderRefusal(header)?.sentence,
+        code: "AGENT_RUN_UNAVAILABLE",
+        statusCode: 409,
+      });
+      expect(reached).toEqual([]);
+      expect(await chunkCount(runId)).toBe(before);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]?.[0]).toBe("Agent run unavailable");
+      expect(warn.mock.calls[0]?.[1]).toMatchObject({
+        runId,
+        field: id === "cobol" ? "statementLanguage" : "verifier",
+        reason: "unknown",
+      });
+    },
+  );
 
   test("a retired verifier is named as retired", async () => {
     const runId = "arun_retired_operations";

@@ -165,7 +165,8 @@ describe("a run whose header persists a statement language no pack serves", () =
     async (mode, workflowType) => {
       const { error, turns } = await firstError(mode, workflowType, "cobol");
 
-      if (!(error instanceof AgentRunUnavailableError)) throw new Error(`expected the read's refusal, got ${String(error)}`);
+      if (!(error instanceof AgentRunUnavailableError))
+        throw new Error(`expected the read's refusal, got ${String(error)}`);
       expect(error.refusal).toMatchObject({ field: "statementLanguage", reason: "unknown", id: "cobol" });
       expect(turns).toBe(0);
     },
