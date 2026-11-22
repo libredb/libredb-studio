@@ -1,5 +1,6 @@
 /**
- * The one core scrub of a provider's text on the agent, hand-over and MCP paths.
+ * The one core scrub of a provider's text on the agent, hand-over and MCP paths, the editor's query, script and
+ * transaction routes, the connection test and the VS Code extension's backend child.
  *
  * A provider scrubs the server's text at its own entry with `serverText` (src/lib/db/utils/server-text.ts); this is
  * the pass core runs after it, over every error, warning and notice text a provider hands core on those paths,
@@ -13,7 +14,8 @@
  *
  * It also says who wrote a refusal: `providerAuthor` names the provider for a fence or a notice, and
  * `isStudioRefusal` tells Studio's own refusals apart by class, never by text or code. And it is the only builder of
- * an error's full record (`errorRecord`), whose string fields therefore never hold a form.
+ * an error's full record (`errorRecord`), whose string fields therefore never hold a form, and which keeps the
+ * error's own kind, code and outcome when its text is withheld.
  */
 import { CONNECTION_FORM } from "@/lib/db/connection-form";
 import { type ErrorRecord, errorCode, errorKind, errorOutcome } from "@/lib/db/error-record";
@@ -133,33 +135,40 @@ function replacedClass(scrub: ProviderTextScrub, error: unknown): string {
 }
 
 /**
- * For a thrown value leaving core to a renderer that does not hold the connection (an error response, a route's log
- * line): the same value when none of the texts a renderer reads holds a form, otherwise a `ProviderTextWithheldError`
- * naming the connection's type, whose message names the class it replaced and says its text was withheld, and which
- * keeps the replaced error's `outcome`: whether a statement reached the database is no text of the error. The value
- * given is never changed, because providers throw shared instances.
+ * The one detection over a thrown value leaving core: `null` when none of the texts a renderer reads holds a form,
+ * otherwise a `ProviderTextWithheldError` naming the connection's type, whose message names the class it replaced and
+ * says its text was withheld, and which keeps the replaced error's `outcome`: whether a statement reached the database
+ * is no text of the error. The value given is never changed, because providers throw shared instances.
  */
-export function withholdProviderError(scrub: ProviderTextScrub, error: unknown): unknown {
-  if (!renderedTexts(error).some((text) => holdsSecretForm(text, scrub.forms))) return error;
+export function withheldProviderError(scrub: ProviderTextScrub, error: unknown): ProviderTextWithheldError | null {
+  if (!renderedTexts(error).some((text) => holdsSecretForm(text, scrub.forms))) return null;
   const withheld = new ProviderTextWithheldError(withheldErrorMessage(replacedClass(scrub, error)), scrub.type);
   if (errorOutcome(error) === "not-sent") withheld.outcome = "not-sent";
   return withheld;
 }
 
 /**
- * The error record of a thrown value (src/lib/db/error-record.ts), built from what `withholdProviderError` answers for
- * it, so a credential in any text the record would carry withholds the error whole and the record is the withheld
- * error's. `kind`, `code` and `outcome` are closed vocabularies; `sqlState` is the only string field an error carries
- * today, and `renderedTexts` reads it.
+ * For a thrown value leaving core to a renderer that does not hold the connection (the agent paths' error response, a
+ * log line): the withheld error `withheldProviderError` answers, or the same value when it answers `null`.
+ */
+export function withholdProviderError(scrub: ProviderTextScrub, error: unknown): unknown {
+  return withheldProviderError(scrub, error) ?? error;
+}
+
+/**
+ * The error record of a thrown value (src/lib/db/error-record.ts). `kind`, `code` and `outcome` are closed
+ * vocabularies and always the error's own, so a reader branches on what failed whether or not its text was withheld.
+ * `sqlState` is the only string field an error carries today; `renderedTexts` reads it, and the record carries it only
+ * when `withheldProviderError` answers `null`, so a credential in any text the error holds leaves it out.
  */
 export function errorRecord(scrub: ProviderTextScrub, error: unknown): ErrorRecord {
-  const answered = withholdProviderError(scrub, error);
-  const sqlState = answered instanceof DatabaseError ? answered.sqlstate : undefined;
+  const sqlState =
+    error instanceof DatabaseError && withheldProviderError(scrub, error) === null ? error.sqlstate : undefined;
   return {
-    kind: errorKind(answered),
-    code: errorCode(answered),
+    kind: errorKind(error),
+    code: errorCode(error),
     ...(sqlState === undefined ? {} : { sqlState }),
-    outcome: errorOutcome(answered),
+    outcome: errorOutcome(error),
   };
 }
 

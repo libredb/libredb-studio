@@ -13,7 +13,14 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { foldLedgerEntries } from "@/components/agent/timeline";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
-import { ExecutionProfileError, ProviderTextWithheldError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { createErrorResponse } from "@/lib/api/errors";
+import {
+  ConnectionError,
+  ExecutionProfileError,
+  ProviderTextWithheldError,
+  QueryError,
+  RefusedBeforeSendError,
+} from "@/lib/db/errors";
 import {
   errorRecord,
   PROVIDER_TEXT_WITHHELD,
@@ -281,5 +288,34 @@ describe("an error's SQLSTATE", () => {
     expect(record.sqlState).toBeUndefined();
     expect(JSON.stringify(record)).not.toContain(shaped);
     expect(JSON.stringify(withheld)).not.toContain(shaped);
+  });
+});
+
+describe("on the editor routes and the connection test", () => {
+  test("an error answer that holds the connection's credential in any form secretForms derives keeps its status, code, kind and outcome and holds none of the forms", async () => {
+    const scrub = providerTextScrub(
+      { id: "c1", name: "Prod", type: "postgres", host: "db.internal", password, createdAt: new Date(0) },
+      "any",
+    );
+    for (const form of forms) {
+      const queryFailure = createErrorResponse(new QueryError(`syntax error near ${form}`, "postgres"), {
+        route: "api/db/query",
+        scrub,
+      });
+      const queryBody = await queryFailure.json();
+      expect(queryFailure.status).toBe(400);
+      expect(queryBody).toMatchObject({ code: "QUERY_ERROR", kind: "query", outcome: "unknown" });
+      expectNoForm("a query error answer", JSON.stringify(queryBody));
+
+      const connectFailure = createErrorResponse(new ConnectionError(`could not connect as ${form}`, "postgres"), {
+        route: "api/db/test-connection",
+        scrub,
+      });
+      const connectBody = await connectFailure.json();
+      expect(connectFailure.status).toBe(503);
+      expect(connectBody).toMatchObject({ code: "CONNECTION_ERROR", kind: "connection", retryable: true });
+      expectNoForm("a connection error answer", JSON.stringify(connectBody));
+    }
+    expectNoForm("a log line", written.join("\n"));
   });
 });

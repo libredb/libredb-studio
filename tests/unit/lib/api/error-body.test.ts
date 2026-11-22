@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { databaseErrorBody, internalErrorBody, TIMEOUT_SENTENCE } from "@/lib/api/error-body";
+import { databaseErrorBody, internalErrorBody, TIMEOUT_SENTENCE, withWithheldText } from "@/lib/api/error-body";
 import type { ApiErrorResponse, DatabaseErrorLog } from "@/lib/api/error-body";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { createErrorResponse } from "@/lib/api/errors";
@@ -360,6 +360,48 @@ describe("internalErrorBody", () => {
       code: ApiErrorCode.INTERNAL_ERROR,
       statusCode: 500,
     });
+  });
+});
+
+describe("withWithheldText", () => {
+  const message = "(Studio withheld the text of this QueryError because it contained a credential of this connection)";
+
+  test("replaces the sentence, keeps a numeric position and leaves out the detail and the fix statement", () => {
+    const body: ApiErrorResponse = {
+      error: "a provider's sentence",
+      code: ApiErrorCode.QUERY_ERROR,
+      statusCode: 400,
+      details: { position: 7, detail: "a provider's detail" },
+      fixStatement: "ALTER ROLE x",
+      kind: "query",
+      outcome: "unknown",
+    };
+    expect(withWithheldText(body, message)).toEqual({
+      error: message,
+      code: ApiErrorCode.QUERY_ERROR,
+      statusCode: 400,
+      details: { position: 7 },
+      kind: "query",
+      outcome: "unknown",
+    });
+    const noPosition = withWithheldText({ ...body, details: { position: undefined, detail: "d" } }, message);
+    expect(Object.hasOwn(noPosition, "details")).toBe(false);
+    expect(Object.hasOwn(withWithheldText({ ...body, details: undefined }, message), "details")).toBe(false);
+    expect(Object.hasOwn(withWithheldText({ ...body, details: "a text" }, message), "details")).toBe(false);
+  });
+
+  test("keeps the status, code, retryable, kind and outcome, and does not change the body given", () => {
+    const body: ApiErrorResponse = {
+      error: "a provider's sentence",
+      code: ApiErrorCode.CONNECTION_ERROR,
+      statusCode: 503,
+      retryable: true,
+      kind: "connection",
+      outcome: "not-sent",
+    };
+    const given = structuredClone(body);
+    expect(withWithheldText(body, message)).toEqual({ ...given, error: message });
+    expect(body).toEqual(given);
   });
 });
 
