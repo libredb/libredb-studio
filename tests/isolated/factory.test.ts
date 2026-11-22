@@ -3281,22 +3281,35 @@ describe("acquireExecutionProfileProvider", () => {
     expect(getExecutionProfileCacheStats().size).toBe(0);
   });
 
-  test("refuses an engine on the review record whose provider implements no read-only statement path, and query() is never the fallback", async () => {
-    // The method is a second precondition beside the review record: an engine the record lists is still refused when
-    // its provider has no `queryReadOnly`, never served `query()`.
-    const error: unknown = await withoutPostgresReadOnlyPath(() =>
-      acquireExecutionProfileProvider(pgConn({ id: "pg-no-read-only-path" }), "agent-read-only").catch(
-        (e: unknown) => e,
-      ),
-    );
+  test.each(["agent-read-only", "agent-handover"] as const)(
+    "refuses %s on an engine on the review record whose provider implements no read-only statement path, before connecting it, and query() is never the fallback",
+    async (profile) => {
+      // The method is a second precondition beside the review record, for both profiles that send statements: an engine
+      // the record lists is still refused when its provider has no `queryReadOnly`, never served `query()`, and the
+      // provider is never connected, so no pool or session is opened with the agent's credential and left behind.
+      const { PostgresProvider } = await import("@/lib/db/providers/sql/postgres");
+      const connect = spyOn(PostgresProvider.prototype, "connect");
+      try {
+        const error: unknown = await withoutPostgresReadOnlyPath(() =>
+          acquireExecutionProfileProvider(pgConn({ id: `pg-no-read-only-path-${profile}` }), profile).catch(
+            (e: unknown) => e,
+          ),
+        );
 
-    expect(error).toBeInstanceOf(ExecutionProfileError);
-    expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("PROFILE_UNSUPPORTED_BY_PROVIDER");
-    expect((error as Error).message).toBe(
-      'Provider type "postgres" implements no read-only statement path (queryReadOnly)',
-    );
-    expect(getExecutionProfileCacheStats().size).toBe(0);
-  });
+        expect(error).toBeInstanceOf(ExecutionProfileError);
+        expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe(
+          "PROFILE_UNSUPPORTED_BY_PROVIDER",
+        );
+        expect((error as Error).message).toBe(
+          'Provider type "postgres" implements no read-only statement path (queryReadOnly)',
+        );
+        expect(connect).not.toHaveBeenCalled();
+        expect(getExecutionProfileCacheStats().size).toBe(0);
+      } finally {
+        connect.mockRestore();
+      }
+    },
+  );
 
   test("trino refuses an executed plan before anything is sent, the gate the explain-analyze descriptor's capability check is not", async () => {
     // `sql.explain.analyze` requires only `supportsExplain`, which Trino declares for the editor's Explain button, so
@@ -3351,11 +3364,11 @@ describe("acquireExecutionProfileProvider", () => {
 
   test("the hand-over profile takes the same engine gate, and caches apart from the run's own", async () => {
     // #373 review. `agent-handover` serves the editor replay of a statement a run
-    // already answered with, so it SENDS a statement and must be refused wherever the
-    // engine cannot bound one — the same rule as `agent-read-only`, from the same
-    // table. Its own key in the profiled cache is the other half: two profiles are two
-    // entries, so a later change to one path's lifecycle cannot reach the other, and
-    // neither is ever the editor's writable pool.
+    // already answered with, so it SENDS a statement and is refused on an engine off the
+    // review record, as `agent-read-only` is. Its own key in the profiled cache is the
+    // other half: two profiles are two entries, so a later change to one path's lifecycle
+    // cannot reach the other, and neither is ever the editor's writable pool. The method
+    // precondition for both profiles is held by the test above.
     const refused: unknown = await acquireExecutionProfileProvider(
       makeConnection("spark", { id: "spark-handover" }),
       "agent-handover",
