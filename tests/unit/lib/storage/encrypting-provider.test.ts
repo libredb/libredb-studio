@@ -539,6 +539,8 @@ describe("the warning", () => {
       expect(calls[0]).toContain(
         "deleting the store's storage_meta row credential_envelope with every server stopped and re-sealing under the key that sealed it",
       );
+      expect(calls[0]).toContain("or because STORAGE_ENCRYPTION_REQUIRE_V2 is set");
+      expect(calls[0]).toContain("One a re-seal run with leave-unopened left");
       expect(calls[0]).toContain("A value marked mixed is a version 1 or unsealed value");
       expect(calls[0]).toContain("A value marked not-text is a number, a boolean, a list or an object");
       expect(calls[0]).toContain("A value marked unbindable belongs to a connection");

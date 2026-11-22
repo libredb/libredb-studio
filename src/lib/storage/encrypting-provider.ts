@@ -65,7 +65,7 @@ export const RETIRED_IN_STORE_WARNING =
 const UNOPENABLE_ADVICE =
   "A value marked unopenable does not open for the place it is stored in with the current key: restore the previous JWT_SECRET (or STORAGE_ENCRYPTION_KEY) BEFORE the app writes again, or re-enter the affected credentials.";
 const RETIRED_ADVICE =
-  "A value marked retired is a version 1 or unsealed value, which this store refuses since STORAGE_ENCRYPTION_RESEAL retired version 1. One the re-seal left because the key then in use did not open it, or one an older server wrote after a downgrade, comes back by deleting the store's storage_meta row credential_envelope with every server stopped and re-sealing under the key that sealed it; any other one is re-entered (docs/STORAGE.md, Values refused as retired after the re-seal).";
+  "A value marked retired is a version 1 or unsealed value, which this store refuses since STORAGE_ENCRYPTION_RESEAL retired version 1, or because STORAGE_ENCRYPTION_REQUIRE_V2 is set. One a re-seal run with leave-unopened left because the key then in use did not open it, or one an older server wrote after a downgrade, comes back by deleting the store's storage_meta row credential_envelope with every server stopped and re-sealing under the key that sealed it, with STORAGE_ENCRYPTION_RESEAL set; any other one is re-entered (docs/STORAGE.md, Values refused as retired after the re-seal).";
 const MIXED_ADVICE =
   "A value marked mixed is a version 1 or unsealed value in a connection whose other values are sealed as v2, which this version never writes: it was put there outside Studio, so re-enter the affected credentials.";
 const NOT_TEXT_ADVICE =
