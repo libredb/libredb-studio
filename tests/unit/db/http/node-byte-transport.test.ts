@@ -178,7 +178,7 @@ describe("the connection headers meet the rule a request's own headers meet, whe
       origin: httpOrigin("http", "127.0.0.1", 9, ALLOWS_PRIVATE_HOSTS),
       tls: null,
       maxSockets: 1,
-      headers: { authorization: "Bearer fixed", connection: "close" },
+      headers: { authorization: `Bearer ${crypto.randomUUID()}`, connection: "close" },
     });
     transport.close();
   });

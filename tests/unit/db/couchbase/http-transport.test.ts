@@ -1495,4 +1495,69 @@ describe("CouchbaseHttpTransport agent path", () => {
       "http://cb.example.test:8091/pools/default/nodeServices",
     ]);
   });
+
+  test("refuses a private external alternate address the cluster advertises by the decision the transport was built with, before any request to it", async () => {
+    // The node is a name and only its external alternate address is private, so the query origin built from that
+    // address is the only check of the handed decision.
+    const built: Built[] = [];
+    const advertised = {
+      nodesExt: [
+        {
+          hostname: "cb-internal.example.test",
+          alternateAddresses: { external: { hostname: "10.0.0.5", ports: { n1ql: 8093 } } },
+          services: { n1ql: 8093 },
+        },
+      ],
+    };
+    const transport = new CouchbaseHttpTransport(
+      makeConnection({ host: "cb.example.test" }),
+      nodeDeps((request) => {
+        if (new URL(request.url).pathname === "/pools/default/nodeServices") {
+          return { status: 200, text: JSON.stringify(advertised) };
+        }
+        return cluster()(request);
+      }, built),
+      BLOCKS_PRIVATE_HOSTS,
+    );
+
+    // DB_HTTP_BLOCK_PRIVATE_HOSTS is unset, so a refusal shows the handed decision decided, not the variable.
+    const failure = await withEgressFlag(undefined, () =>
+      transport.agentQuery("SELECT 1", { ...bounds(), timeoutMs: 1000, readonly: true }).then(
+        () => null,
+        (error: unknown) => error,
+      ),
+    );
+
+    expect(failure).toBeInstanceOf(DatabaseConfigError);
+    expect((failure as Error).message).toBe(BLOCKED_HOST);
+    expect(built.flatMap((record) => record.requests.map((sent) => sent.url))).toEqual([
+      "http://cb.example.test:8091/pools/default/nodeServices",
+    ]);
+  });
+
+  test("refuses a private management host an SRV answer names, on the agent path, by the decision the transport was built with", async () => {
+    // The configured host is a name with no port, so the SRV answer picks the management host, and the origin built
+    // from it is the only check of the handed decision.
+    const built: Built[] = [];
+    const transport = new CouchbaseHttpTransport(
+      makeConnection({ host: "cb.example.test", port: undefined }),
+      {
+        ...nodeDeps(cluster(), built),
+        resolveSrv: async () => [{ name: "10.0.0.7", port: 11207, priority: 0, weight: 0 }],
+      },
+      BLOCKS_PRIVATE_HOSTS,
+    );
+
+    // DB_HTTP_BLOCK_PRIVATE_HOSTS is unset, so a refusal shows the handed decision decided, not the variable.
+    const failure = await withEgressFlag(undefined, () =>
+      transport.whoami(bounds()).then(
+        () => null,
+        (error: unknown) => error,
+      ),
+    );
+
+    expect(failure).toBeInstanceOf(DatabaseConfigError);
+    expect((failure as Error).message).toBe(BLOCKED_HOST);
+    expect(built.flatMap((record) => record.requests.map((sent) => sent.url))).toEqual([]);
+  });
 });
