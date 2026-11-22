@@ -214,6 +214,10 @@ const CORE_UNAVAILABLE_TEXT: Readonly<Record<CoreUnavailableCode, string>> = Obj
   // evidence object wrong was answered with a sentence about statements.
   INVALID_TOOL_INPUT:
     "The arguments did not match the shape this tool declares, so nothing was done. Correct them and call the tool again.",
+  // Said only by `inspect_operations`, whose definition lists the readings this run's engine offers; the detail names
+  // the kind asked for and those readings, so the sentence itself names neither.
+  READING_NOT_OFFERED:
+    "This engine does not offer that reading to agent mode, so nothing was read and nothing was spent. Take one of the readings this tool offers here, named in the parentheses after this sentence, or report with what you have already read.",
   /*
     The true sentence for an inventory that exists and is empty.
 

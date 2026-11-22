@@ -66,6 +66,7 @@ describe("mergeDisjoint", () => {
 const UNAVAILABLE_CODES: Readonly<Record<AgentToolUnavailableCode, true>> = {
   MODE_HAS_NO_TOOLS: true,
   INVALID_TOOL_INPUT: true,
+  READING_NOT_OFFERED: true,
   UNVERIFIABLE_EVIDENCE: true,
   UNVERIFIABLE_PLAN: true,
   TABLE_QUALIFIER_UNKNOWN: true,

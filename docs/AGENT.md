@@ -1541,10 +1541,19 @@ no inventory, and an ungrounded one is never handed a sentence saying it has one
 | `storage` | `getStorageStats` | Space and its growth |
 | `health` | `getHealth` | One row of connection, size and cache figures |
 
+**A run is offered only the kinds its engine offers agent mode.**
+Each engine's `ENGINE_FACETS` row declares them as `agentReadings`: the kind of each monitoring panel the row offers whose read the agent handle answers, and `health` unless the agent handle withholds it.
+`selectAgentTools` builds `inspect_operations` from the run's recorded engine (`AgentRunRecord.engine`), so its `kind` enum and its description list exactly those kinds, and its description names `schema` only where a table or index reading is offered.
+A call naming any other kind is refused by name, `unavailable` with `READING_NOT_OFFERED`, before a provider is acquired, the budget is charged or the repair ledger records anything, and the step settles as a `not-sent` refusal whose detail names the kind and the readings the engine offers.
+The handler parses with the six-kind contract on purpose: a native call whose kind fails the per-engine enum still reaches it, so the model hears that refusal rather than a generic `INVALID_TOOL_INPUT`.
+A run recorded before the engine field is offered the six kinds it was opened with.
+The run's rules name no kind, and the `no-reading` notice names the offered ones.
+
 Four properties carry the template:
 
-- **The reach is the point.** Every provider declares these six methods, so this workflow runs on
-  Redis and Apache Spark as well as on the engines agent mode executes on.
+- **The reach is the point.** No reading sends a statement, so this workflow runs on every engine that
+  offers agent mode at least one reading, Redis and Apache Spark among them, as well as on the engines
+  agent mode executes on.
   That is asserted against what a run actually did, not against its tool set:
   `tests/evals/operations.test.ts` drives the arc on a MySQL preset whose provider carries no `queryReadOnly` at all, so it can answer **no statement whatsoever**, and the eval asserts the run sent none.
 - **A reading is an ordinary artifact.** It settles a step through `runStep` like `profile_table`,

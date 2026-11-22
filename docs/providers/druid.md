@@ -1573,7 +1573,7 @@ counts live in `getTableStats()`, where a denial costs one panel instead of the 
 
 Which of the seven monitoring panels and which maintenance operations `druid` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/druid/engine-facets.ts).
 `getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
-The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
 
 | Monitoring panel | Offered | Why |
 |---|---|---|

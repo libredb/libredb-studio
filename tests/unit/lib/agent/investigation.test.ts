@@ -33,6 +33,7 @@ import { LibSQLProvider } from "@/lib/db/providers/sql/libsql";
 import { InfluxDB3Provider } from "@/lib/db/providers/timeseries/influxdb/sql-provider";
 import { ElasticsearchProvider, OpenSearchProvider } from "@/lib/db/providers/sql/search";
 import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes";
+import { KafkaProvider } from "@/lib/db/providers/stream/kafka";
 import { CLUSTER_USAGE_FIELDS, WORKLOAD_PROFILE_FIELDS } from "@/lib/db/providers/platform/kubernetes/agent-readings";
 import { kubectlStatementLanguage } from "@/lib/db/providers/platform/kubernetes/labels";
 import type {
@@ -1040,9 +1041,13 @@ async function agentDrive(
   declared: Declarations,
   turns: readonly ScriptedTurn[],
   methods: Readonly<Record<string, unknown>> = {},
-  options: { readonly workflowType?: AgentRunWorkflowType; readonly prior?: readonly AgentRunEvent[] } = {},
+  options: {
+    readonly workflowType?: AgentRunWorkflowType;
+    readonly prior?: readonly AgentRunEvent[];
+    readonly toolProtocol?: "native" | "prompted";
+  } = {},
 ): Promise<{ readonly events: readonly AgentRunEvent[]; readonly turns: readonly Turn[] }> {
-  const { workflowType = "investigation", prior = [] } = options;
+  const { workflowType = "investigation", prior = [], toolProtocol } = options;
   forgetHeldSnapshots();
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-step-identity-"));
   dataDirs.push(dataDir);
@@ -1071,6 +1076,7 @@ async function agentDrive(
     mode: "agent",
     workflowType,
     ...persistedRunFacts("agent", workflowType, connection.type, availability),
+    ...(toolProtocol === undefined ? {} : { toolProtocol }),
     actor: { sessionId: "sess_1", role: "user" },
     connectionId: connection.id,
     objective: "Which customers ordered most?",
@@ -1192,6 +1198,99 @@ describe("a step's identity is the call it makes", () => {
       callsTool("run_read_query", { sql: "SELECT count(*) FROM orders", rationale: "count them" }),
     ]);
     expect(ids).toEqual(["step_57da0a529f8975349da5d70663c32fb7"]);
+  });
+});
+
+describe("an operations run offered only its engine's readings", () => {
+  const kafkaConnection: DatabaseConnection = {
+    id: "conn_kafka",
+    name: "Events",
+    type: "kafka",
+    host: "127.0.0.1",
+    port: 9092,
+    createdAt: new Date(0),
+  };
+  const kafka = new KafkaProvider(kafkaConnection);
+  const declared = { capabilities: kafka.getCapabilities(), labels: kafka.getLabels() };
+  const SESSIONS_DETAIL =
+    '"sessions" is not a reading the Apache Kafka connection offers agent mode; it offers health.';
+
+  /** One operations drive on Kafka whose provider double fails the test if a session reading reaches it. */
+  async function kafkaOperationsDrive(turns: readonly ScriptedTurn[], toolProtocol?: "native" | "prompted") {
+    const getActiveSessions = mock(async () => []);
+    const drive = await agentDrive(
+      kafkaConnection,
+      declared,
+      turns,
+      { getActiveSessions },
+      { workflowType: "operations", ...(toolProtocol === undefined ? {} : { toolProtocol }) },
+    );
+    return { ...drive, getActiveSessions };
+  }
+
+  test.each([
+    [
+      "natively, with a kind that fails the engine's enum",
+      callsTool("inspect_operations", { kind: "sessions" }),
+      undefined,
+    ],
+    [
+      "through the prompted envelope",
+      answersProse('{"action": "inspect_operations", "arguments": {"kind": "sessions"}}'),
+      "prompted",
+    ],
+  ] as const)(
+    "an operations run on kafka is refused a sessions reading as READING_NOT_OFFERED, settled as a refused step, with nothing acquired (%s)",
+    async (_how, turn, toolProtocol) => {
+      const { events, turns, getActiveSessions } = await kafkaOperationsDrive([turn], toolProtocol);
+
+      const invoked = events.find((event) => event.kind === "tool-invoked" && event.tool === "inspect_operations");
+      expect(invoked).toBeDefined();
+      const refused = events.find((event) => event.kind === "tool-refused");
+      expect(refused?.kind === "tool-refused" && refused.refusal).toEqual({
+        class: "not-sent",
+        reasonCode: "READING_NOT_OFFERED",
+        detail: SESSIONS_DETAIL,
+      });
+      expect(refused?.kind === "tool-refused" && refused.stepId).toBe(
+        invoked?.kind === "tool-invoked" ? invoked.stepId : "none",
+      );
+      expect(events.some((event) => event.kind === "tool-completed")).toBe(false);
+      expect(getActiveSessions).not.toHaveBeenCalled();
+      // The model hears the refusal, naming the kind and the readings offered, on its next turn.
+      expect(promptText(turns[1] as Turn)).toContain(SESSIONS_DETAIL);
+    },
+  );
+
+  test("the run is offered inspect_operations with only the readings its engine offers", async () => {
+    const { turns } = await kafkaOperationsDrive([]);
+    const tools = (turns[0]?.body.tools ?? []) as {
+      readonly function: { readonly name: string; readonly parameters: { properties: { kind: { enum: unknown } } } };
+    }[];
+    const inspect = tools.find((tool) => tool.function.name === "inspect_operations");
+
+    expect(inspect?.function.parameters.properties.kind.enum).toEqual(["health"]);
+  });
+
+  test("the no-reading notice names only the readings the run's engine offers", async () => {
+    // A report resting on the captured inventory alone, which is what earns `no-reading`.
+    const reportsOffTheInventory: ScriptedTurn = (turn) => {
+      const fingerprint = /ctx_[0-9a-f]+/.exec(turn.transcript)?.[0];
+      if (fingerprint === undefined) throw new Error("no inventory was offered");
+      return callsTool("compose_report", {
+        claims: [{ claim: "The cluster holds one topic.", evidence: [{ source: "context-snapshot", fingerprint }] }],
+      })(turn);
+    };
+    const { events, turns } = await kafkaOperationsDrive([reportsOffTheInventory]);
+
+    const held = events.find((event) => event.kind === "call-held");
+    expect(held?.kind === "call-held" && held.reason).toContain(
+      "Your compose_report call was not run. Call inspect_operations first (health), then cite the artifact id it returns in a claim, and then call compose_report.",
+    );
+    // The run's rules name no kind: the tool definition carries the list.
+    expect(promptText(turns[0] as Turn)).toContain(
+      "Take the readings your objective needs, of the kinds inspect_operations offers on this engine, one call each",
+    );
   });
 });
 

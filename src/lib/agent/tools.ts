@@ -88,10 +88,14 @@ import {
 import type { ExecutionBudget, ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import {
   type AgentCuratedReadInput,
+  CURATED_OPERATION_KINDS,
   type CuratedOperationKind,
   agentCuratedReadInput,
   isStatementReadOperation,
 } from "@/lib/db/operations/descriptors";
+import { CONNECTION_FORM } from "@/lib/db/connection-form";
+import { engineFacetsFor } from "@/lib/db/engine-facets";
+import { typeIdRow } from "@/lib/db/type-id";
 import {
   type AuditedInvocation,
   actorLabel,
@@ -408,6 +412,11 @@ export function readOnlyBudgetFor(context: AgentToolContext, budget: ExecutionBu
 export type AgentToolUnavailableCode =
   | "MODE_HAS_NO_TOOLS"
   | "INVALID_TOOL_INPUT"
+  /**
+   * A curated reading the run's recorded engine does not offer agent mode (its `ENGINE_FACETS` row's
+   * `agentReadings`), refused before any provider is acquired, any budget charged or any repair entry made.
+   */
+  | "READING_NOT_OFFERED"
   | "UNVERIFIABLE_EVIDENCE"
   /** A cited plan is not an estimating plan THIS run produced. */
   | "UNVERIFIABLE_PLAN"
@@ -914,6 +923,69 @@ function isAnswerShapeFailure(problems: string): boolean {
   return /\bartifact:|arguments object:|^presentation: |\bpresentation: expected/.test(problems);
 }
 
+/**
+ * The curated readings a run is offered: its recorded engine's `ENGINE_FACETS` row's `agentReadings`, or all six kinds
+ * for a run recorded before the engine field, which was told those six in its earlier turns.
+ */
+export function agentReadingsOf(engine: DatabaseType | undefined): readonly CuratedOperationKind[] {
+  return engine === undefined ? CURATED_OPERATION_KINDS : engineFacetsFor(engine).agentReadings;
+}
+
+/** Each curated reading as `inspect_operations` describes it to the model. */
+const CURATED_READING_GLOSS: Readonly<Record<CuratedOperationKind, string>> = Object.freeze({
+  sessions: "sessions (who is connected, what each is running, how long it has been running and whether it is blocked)",
+  "slow-queries": "slow-queries (the statements this engine reports as costly)",
+  "table-stats": "table-stats (row counts and sizes, and dead rows where the engine tracks them)",
+  "index-stats": "index-stats (size and how many scans each index has served, so an unused one is visible)",
+  storage: "storage (space and its growth)",
+  health: "health (one row of connection, size and cache figures)",
+});
+
+/** `a`, `a or b`, `a, b or c`: a list of alternatives in prose. */
+function alternatives(items: readonly string[]): string {
+  return items.length === 1 ? items[0] : `${items.slice(0, -1).join(", ")} or ${items[items.length - 1]}`;
+}
+
+/** `a`, `a and b`, `a, b and c`: a list of members in prose. */
+function members(items: readonly string[]): string {
+  return items.length === 1 ? items[0] : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+/** One frozen definition per distinct list of readings, so a run is handed the same definition on every turn. */
+const INSPECT_OPERATIONS_DEFINITIONS = new Map<string, AgentToolDefinition>();
+
+/**
+ * The `inspect_operations` definition offering exactly `kinds`: its `kind` enum holds only those, and its description
+ * lists only those, names `schema` only where a table or index reading is offered, and says a kind not offered here is
+ * refused before anything is read. The handler still parses with the six-kind contract (`agentCuratedReadInput`), so
+ * a call naming a kind this definition left out reaches it and is refused by name (`READING_NOT_OFFERED`).
+ *
+ * @throws {Error} On an empty list: a run on an engine that offers agent mode no reading is not opened in the
+ * operations workflow (`workflowAvailability`) and its header is refused when read (`runHeaderRefusal`), so there is
+ * no run to build this tool for, and an empty enum would be a tool that can only refuse.
+ */
+function inspectOperationsDefinition(kinds: readonly CuratedOperationKind[]): AgentToolDefinition {
+  if (kinds.length === 0) throw new Error("agent tool layer: no operations reading to offer");
+  const key = kinds.join(",");
+  const held = INSPECT_OPERATIONS_DEFINITIONS.get(key);
+  if (held !== undefined) return held;
+  const narrows = kinds.includes("table-stats") || kinds.includes("index-stats");
+  const bounds = narrows
+    ? "limit bounds EVERY kind, and schema narrows the table and index ones; the server applies both itself, so they hold whatever the engine does with them."
+    : "limit bounds EVERY kind; the server applies it itself, so it holds whatever the engine does with it.";
+  const definition: AgentToolDefinition = Object.freeze({
+    name: "inspect_operations",
+    description: `Read what the engine says about ITSELF, right now. Pass kind to choose the reading. The readings offered here: ${alternatives(kinds.map((kind) => CURATED_READING_GLOSS[kind]))}. No SQL is involved: you name the reading and the server calls the engine's own reporting interface, and a kind not offered here is refused before anything is read. ${bounds} EVERY READING IS A MOMENT, not a history: it says what is true as it is taken, and calling it twice does not make a trend.`,
+    inputSchema: z.strictObject({
+      ...agentCuratedReadInput.shape,
+      kind: z.enum(kinds as readonly [CuratedOperationKind, ...CuratedOperationKind[]]),
+    }),
+    operationId: "db.operations.read",
+  });
+  INSPECT_OPERATIONS_DEFINITIONS.set(key, definition);
+  return definition;
+}
+
 export const AGENT_TOOL_DEFINITIONS: Readonly<Record<AgentToolName, AgentToolDefinition>> = Object.freeze({
   ...REFERENCE_STATEMENT_DEFINITIONS,
   compare_plans: {
@@ -923,13 +995,8 @@ export const AGENT_TOOL_DEFINITIONS: Readonly<Record<AgentToolName, AgentToolDef
     inputSchema: planComparisonSchema,
   },
   recommend_change: REFERENCE_RECOMMEND_CHANGE,
-  inspect_operations: {
-    name: "inspect_operations",
-    description:
-      "Read what the engine says about ITSELF, right now. Pass kind to choose the reading: sessions (who is connected, what each is running, how long it has been running and whether it is blocked), slow-queries (the statements this engine reports as costly), table-stats (row counts and sizes, and dead rows where the engine tracks them), index-stats (size and how many scans each index has served, so an unused one is visible), storage (space and its growth) or health (one row of connection, size and cache figures). No SQL is involved: you name the reading and the server calls the engine's own reporting interface, so these are the readings that work on every engine. limit bounds EVERY kind, and schema narrows the table and index ones; the server applies both itself, so they hold whatever the engine does with them. EVERY READING IS A MOMENT, not a history: it says what is true as it is taken, and calling it twice does not make a trend.",
-    inputSchema: agentCuratedReadInput,
-    operationId: "db.operations.read",
-  },
+  // What a run with no recorded engine is offered; `selectAgentTools` hands every other run its engine's readings.
+  inspect_operations: inspectOperationsDefinition(CURATED_OPERATION_KINDS),
   ...LANGUAGE_BASE_DEFINITIONS,
   present_answer: {
     name: "present_answer",
@@ -965,32 +1032,48 @@ const NO_TOOLS: readonly AgentToolDefinition[] = Object.freeze([]);
 
 /**
  * Workflow type → the tools that workflow may use (#330 T2), read from the workflow's
- * variant in `agent-manifest.ts`, which is the one place a tool set is decided.
+ * variant in `agent-manifest.ts`, which is the one place a tool set is decided, with
+ * `inspect_operations` offering only the readings of the run's recorded engine.
  *
- * Memoised per VARIANT, not per workflow or language, so a run is handed the same
- * frozen array on every turn, as it was when each set was a constant here, and so two
- * variants of one workflow can never share a set by accident.
+ * Memoised per VARIANT and per list of offered readings, not per workflow, language or
+ * engine, so a run is handed the same frozen array on every turn, as it was when each
+ * set was a constant here, two variants of one workflow can never share a set by
+ * accident, and two engines that offer the same readings share one.
  */
-const VARIANT_TOOLS = new WeakMap<AgentWorkflowVariant, readonly AgentToolDefinition[]>();
+const VARIANT_TOOLS = new WeakMap<AgentWorkflowVariant, Map<string, readonly AgentToolDefinition[]>>();
 
 function workflowTools(
   language: AgentStatementLanguageId | undefined,
   workflow: AgentRunWorkflowType,
+  engine: DatabaseType | undefined,
 ): readonly AgentToolDefinition[] {
   const variant = requiredVariant(language, workflow);
-  let tools = VARIANT_TOOLS.get(variant);
+  let byReadings = VARIANT_TOOLS.get(variant);
+  if (byReadings === undefined) {
+    byReadings = new Map();
+    VARIANT_TOOLS.set(variant, byReadings);
+  }
+  const readings = agentReadingsOf(engine);
+  const key = readings.join(",");
+  let tools = byReadings.get(key);
   if (tools === undefined) {
-    tools = Object.freeze(variant.tools.map((name) => agentToolDefinition(language, workflow, name)));
-    VARIANT_TOOLS.set(variant, tools);
+    tools = Object.freeze(
+      variant.tools.map((name) =>
+        name === "inspect_operations"
+          ? inspectOperationsDefinition(readings)
+          : agentToolDefinition(language, workflow, name),
+      ),
+    );
+    byReadings.set(key, tools);
   }
   return tools;
 }
 
 /**
- * The tools this run may use, decided from its persisted mode, workflow type and
- * statement language and nothing else.
+ * The tools this run may use, decided from its persisted mode, workflow type,
+ * statement language and engine and nothing else.
  *
- * The parameter is the run record (narrowed to the three fields that matter) rather
+ * The parameter is the run record (narrowed to the four fields that matter) rather
  * than bare strings, so the values can only have come from persisted state. There is
  * no parameter through which a request body could contribute a tool, which is what
  * "a client-supplied tool list is ignored, not merged" means here.
@@ -1000,9 +1083,9 @@ function workflowTools(
  * run a tool.
  */
 export function selectAgentTools(
-  run: Pick<AgentRunRecord, "mode" | "workflowType" | "statementLanguage">,
+  run: Pick<AgentRunRecord, "mode" | "workflowType" | "statementLanguage" | "engine">,
 ): readonly AgentToolDefinition[] {
-  return run.mode === "agent" ? workflowTools(run.statementLanguage, run.workflowType) : NO_TOOLS;
+  return run.mode === "agent" ? workflowTools(run.statementLanguage, run.workflowType, run.engine) : NO_TOOLS;
 }
 
 // ============================================================================
@@ -3738,6 +3821,16 @@ export async function inspectOperationsTool(context: AgentToolContext, input: un
   const parsed = parseToolInput(agentCuratedReadInput, input);
   if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT", parsed.problems);
   const selector = parsed.value;
+  // Before the audited call, so a kind the run's engine does not offer acquires no provider, charges no budget and
+  // makes no repair entry: the definition this run was handed never offered it.
+  const offered = agentReadingsOf(context.engine);
+  if (!offered.includes(selector.kind)) {
+    const label = typeIdRow(CONNECTION_FORM, context.engine).label;
+    return unavailable(
+      "READING_NOT_OFFERED",
+      `"${selector.kind}" is not a reading the ${label} connection offers agent mode; it offers ${members(offered)}.`,
+    );
+  }
   const reading = CURATED_READINGS[selector.kind];
   const scope = reading.scope?.(context.labels);
   return runAuditedAgentCall(context, {

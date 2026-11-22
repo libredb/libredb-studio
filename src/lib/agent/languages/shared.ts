@@ -21,7 +21,9 @@ export const OPERATIONS_TOOL_RULE = [
   // note, which is built from what this drive actually established.
   "You have NO SQL in this run: there is no inspect_schema, no run_read_query and no inspect_plan. Where this engine can be read, a schema inventory of table names and their indexes was captured for you before your first turn and the message opening this run says so; it is there to tell you what the engine names back at you.",
   "Everything you read, you read with inspect_operations.",
-  "Take the readings your objective needs — sessions, slow-queries, table-stats, index-stats, storage, health — one call each, and narrow them with limit or schema rather than asking for everything.",
+  // The kinds are not listed here: these rules are one text for every engine, and the inspect_operations definition a
+  // run is handed lists exactly the readings its engine offers.
+  "Take the readings your objective needs, of the kinds inspect_operations offers on this engine, one call each, and narrow them with limit or schema rather than asking for everything.",
   // The verifier's rule, in the model's own terms. A rule the model is never told is
   // a rule live runs fail (#350, #356), so the bar and its honest exception are both
   // said here, next to the tools that can satisfy them.

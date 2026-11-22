@@ -1,6 +1,7 @@
 /**
  * The shape of a statement language's pack (#1821). Types only: nothing here is evaluated, so every tier may read it.
  */
+import type { CuratedOperationKind } from "@/lib/db/operations/descriptors";
 import type { ClusterUsageInput } from "@/lib/db/types";
 import type { DatabaseType } from "@/lib/types";
 import type {
@@ -416,6 +417,8 @@ export interface ShortfallAdvice {
 export interface ShortfallContext {
   readonly plans: readonly string[];
   readonly readingsHeld: number;
+  /** The curated readings the run's engine offers agent mode, which the `no-reading` notice names. */
+  readonly readings: readonly CuratedOperationKind[];
   readonly holdsPresentable: boolean;
   readonly holdsCompare: boolean;
   readonly noun: string;

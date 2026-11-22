@@ -181,9 +181,9 @@ export const sqlTableProfileDescriptor: RegistrableOperationDescriptor = {
  *
  * Named after what a DBA asks about rather than after the provider method that
  * answers, because the method is an implementation this layer may re-route and the
- * question is not. Every member maps onto a method the `DatabaseProvider` interface
- * declares for EVERY engine (`src/lib/db/types.ts`), which is the whole reason this
- * operation can be offered where `sql.query.read` cannot.
+ * question is not. These are the vocabulary, and this operation's input contract
+ * accepts all six; which of them an engine offers agent mode is its `ENGINE_FACETS`
+ * row's `agentReadings`, and `inspect_operations` offers a run only those.
  */
 export const CURATED_OPERATION_KINDS = [
   "sessions",
