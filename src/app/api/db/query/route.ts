@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { INVALID_REQUEST_BODY, readJsonObject } from "@/lib/api/json-object-body";
 import { getOrCreateProvider, readProviderDeclarations } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
+import { providerTextScrub } from "@/lib/db/operations/provider-text";
 import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
@@ -294,6 +295,7 @@ export async function POST(req: NextRequest) {
       queryId,
       signal: req.signal,
       route: "api/db/query",
+      scrub: providerTextScrub(connection, "any"),
     });
     recordExecutedUnit(events, {
       connection,
@@ -319,6 +321,10 @@ export async function POST(req: NextRequest) {
     } else if (stage === "admission" || (connection === undefined && error instanceof SeedConnectionError)) {
       recordRefusedRequest(events, { requestedId, connection, statement: submitted, started, error });
     }
-    return createErrorResponse(error, { route: "api/db/query" });
+    // Once the connection resolved, a provider may have run: its error answers with the connection's scrub.
+    return createErrorResponse(error, {
+      route: "api/db/query",
+      scrub: connection === undefined ? undefined : providerTextScrub(connection, "any"),
+    });
   }
 }

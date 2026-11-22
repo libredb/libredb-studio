@@ -721,7 +721,7 @@ Capture follows `queryLog.statementCapture`, which is `none` while the control p
 | --- | --- | --- | --- |
 | `none` | NULL | NULL | NULL |
 | `redacted` | the statement with every string, number and comment replaced by `?` and white space collapsed, cut to `queryLog.maxStatementBytes` | the lowercase hex SHA-256 of the whole redacted text | NULL |
-| `full` | the statement as submitted, with the value after `PASSWORD` or `IDENTIFIED BY` and the user information of every URI replaced by `[REDACTED]`, cut to `queryLog.maxStatementBytes` | NULL | the error text, masked the same way and cut to 1000 characters |
+| `full` | the statement as submitted, with the value after `PASSWORD` or `IDENTIFIED BY` and the user information of every URI replaced by `[REDACTED]`, cut to `queryLog.maxStatementBytes` | NULL | the error text, masked the same way and cut to 1000 characters; on the `editor`, `multi-query` and `transaction` events, an error text that holds a credential of the connection is stored as Studio's withheld sentence |
 
 - The statement is the text the user submitted, never one Studio built around it, such as an `EXPLAIN` or an added row limit.
 - A statement is cut at `queryLog.maxStatementBytes` UTF-8 bytes on a character boundary, and `statement_truncated` is true when it was.
@@ -729,6 +729,7 @@ Capture follows `queryLog.statementCapture`, which is `none` while the control p
 - `redacted` reads a statement the way its engine reads it: SQL under the engine's own rules for literals and comments, a MongoDB command with its keys, operation, collection and database kept, and a Redis command with only its name kept.
   A password written as a bare word after `IDENTIFIED BY` is replaced as well, and the statement of an engine Studio has no reader for is stored as a single `?`.
 - `full` keeps every other secret written into a statement, such as a Redis `AUTH` argument, and an error text that quotes a statement in the driver's own words can carry one, so choose it only where the statements themselves must be kept.
+- On the `editor`, `multi-query` and `transaction` events, an error whose text holds a credential of the connection, in any form Studio derives from it, is stored as Studio's sentence naming the error's class, and its `error_code` is the error's API code rather than its SQLSTATE.
 - A refused request whose connection did not resolve, such as one for a connection the caller holds no grant on, stores no statement and no error text in any mode, because the engine that would read them is unknown.
 - In every mode `statement_type` is `SELECT`, `INSERT`, `UPDATE` or `DELETE` from the keyword that operates the statement, also behind a `WITH`, `DDL` for `CREATE`, `ALTER`, `DROP` and `TRUNCATE`, and `OTHER` for any other statement, for a unit without text and for every engine whose statements are not SQL.
   A `SELECT` behind a `WITH` whose CTE body writes takes the type of that write, so `WITH d AS (DELETE … RETURNING *) SELECT * FROM d` is `DELETE`, and a `MERGE` or `UPSERT` body is `OTHER`.

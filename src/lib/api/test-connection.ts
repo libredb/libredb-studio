@@ -5,6 +5,13 @@ import {
   withOneShotTunnel,
 } from "@/lib/db/factory";
 import { connectPhase } from "@/lib/db/errors";
+import {
+  type ProviderTextScrub,
+  providerTextScrub,
+  scrubProviderWarnings,
+  withheldProviderError,
+  withholdProviderError,
+} from "@/lib/db/operations/provider-text";
 import type { DatabaseProvider, EditorExecutionContext } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import type { DatabaseConnection, QueryWarning } from "@/lib/types";
@@ -32,6 +39,9 @@ export type TestConnectionAnswer =
  * The cautions of the probes a provider runs only when a user tests the connection (Test
  * Connection or the dialog's Save), or none when it declares no such probes.
  *
+ * A rejection is logged through core's scrub (`scrub`), so a text that holds a credential of the
+ * connection is logged as the withheld error.
+ *
  * The method's contract is cautions, never an error, so a rejection is a defect in the provider
  * and not a fact about the connection: `connect()` already succeeded, and the answer stays a
  * success. The thrown text is logged and not shown, because it was not a caution the provider
@@ -41,7 +51,11 @@ export type TestConnectionAnswer =
  * No deadline of its own is put on the call: the provider bounds its probes, as its
  * contract says, the same way `getHealth()` below is awaited unbounded.
  */
-async function testConnectionCautions(provider: DatabaseProvider, route: string): Promise<QueryWarning[]> {
+async function testConnectionCautions(
+  provider: DatabaseProvider,
+  route: string,
+  scrub: ProviderTextScrub,
+): Promise<QueryWarning[]> {
   if (!provider.testConnectionWarnings) return [];
   try {
     const found = await provider.testConnectionWarnings();
@@ -50,7 +64,7 @@ async function testConnectionCautions(provider: DatabaseProvider, route: string)
     if (!Array.isArray(found)) throw new TypeError("testConnectionWarnings() resolved a value that is not an array");
     return found;
   } catch (error) {
-    logger.error("Test Connection checks rejected", error, {
+    logger.error("Test Connection checks rejected", withholdProviderError(scrub, error), {
       route,
       provider: provider.type,
     });
@@ -82,6 +96,10 @@ function untilAborted<T>(work: Promise<T>, signal: AbortSignal | undefined): Pro
  * rejects with the signal's reason, so a one-shot tunnel closes at once, and the provider it built
  * is closed when that connect settles: no provider promises a disconnect during its connect, and
  * one measured there (PostgreSQL, SQL Server) frees nothing sooner.
+ *
+ * Every provider text the answer carries passes core's scrub of `connection`
+ * (`providerTextScrub(connection, "any")`): a caution field and the health failure's sentence that
+ * hold a credential of the connection are withheld.
  */
 export async function testConnection(
   connection: DatabaseConnection,
@@ -89,6 +107,7 @@ export async function testConnection(
   route: string,
   signal?: AbortSignal,
 ): Promise<TestConnectionAnswer> {
+  const scrub = providerTextScrub(connection, "any");
   // Through the tunnel, never around it (#457). This builds its provider directly rather than
   // through `getOrCreateProvider`, so it does not inherit that path's tunnel handling and has to
   // ask for it. `withOneShotTunnel` owns the tunnel's whole lifetime because nothing here is
@@ -161,10 +180,10 @@ export async function testConnection(
       // Save, which posts to the route too), after connectWarnings()'s cautions.
       // Only on a provider this test built: a borrowed handle is the editor's live session,
       // not the connection under test.
-      const cautions = [
+      const cautions = scrubProviderWarnings(scrub, [
         ...(provider.connectWarnings?.() ?? []),
-        ...(borrowed ? [] : await testConnectionCautions(provider, route)),
-      ];
+        ...(borrowed ? [] : await testConnectionCautions(provider, route, scrub)),
+      ]);
       const warnings = cautions.length > 0 ? { warnings: cautions } : {};
 
       /*
@@ -189,12 +208,13 @@ export async function testConnection(
       } catch (healthError) {
         await release();
 
+        const withheld = withheldProviderError(scrub, healthError);
+        const sentence =
+          withheld?.message ?? (healthError instanceof Error ? healthError.message : String(healthError));
         return {
           success: true,
           degraded: true,
-          message: `Connected, but this server answered no health data: ${
-            healthError instanceof Error ? healthError.message : String(healthError)
-          }`,
+          message: `Connected, but this server answered no health data: ${sentence}`,
           ...warnings,
         };
       }

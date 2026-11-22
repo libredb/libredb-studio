@@ -3,6 +3,7 @@ import { firstResultSet } from "@/lib/api/first-result-set";
 import { pageOfProbe, pageOptionError, probePastPage } from "@/lib/api/page-probe";
 import { consoleTextByteLimit, consoleTextOverLimit } from "@/lib/db/destructive-commands";
 import { QueryCancelledError } from "@/lib/db/errors";
+import { type ProviderTextScrub, withScrubbedWarnings } from "@/lib/db/operations/provider-text";
 import { supportsQueryCancel } from "@/lib/db/query-cancel";
 import { endsOpenQueryTransactions, newQueryCallScope } from "@/lib/db/types";
 import type { DatabaseProvider, OpenQueryTransactionOutcome, QueryPrepareOptions } from "@/lib/db/types";
@@ -80,6 +81,12 @@ export interface EditorQueryRun {
   signal: AbortSignal;
   /** The label a failed cancel is logged under. */
   route: string;
+  /**
+   * The core scrub of the connection the provider was built from (`providerTextScrub(connection, "any")`): a warning
+   * field that holds one of its credential forms is answered as `PROVIDER_TEXT_WITHHELD`. Required, so each caller
+   * holds it.
+   */
+  scrub: ProviderTextScrub;
 }
 
 /** The answer's body: the first result set's page, with `pagination` always present. */
@@ -163,7 +170,7 @@ export async function runEditorQuery(provider: DatabaseProvider, run: EditorQuer
   // The probe row is the proof (#1440): more than `prepared.limit` rows came back, so a next
   // page exists, and the page itself is cut back to the limit asked for.
   const { hasMore, rows: pageRows } = pageOfProbe(prepared, result.rows);
-  const answered = firstResultSet(result);
+  const answered = firstResultSet(withScrubbedWarnings(run.scrub, result));
   return {
     body: {
       ...answered,

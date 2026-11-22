@@ -19,6 +19,7 @@ import {
   isAuthenticationError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import type { QueryEventRow } from "@/lib/query-events/types";
 import type { QueryEventBatchWrite, QueryEventWriteFailure } from "@/lib/query-events/postgres-sink";
 import * as admission from "@/lib/query-events/admission";
@@ -1037,6 +1038,106 @@ describe("POST /api/db/multi-query", () => {
     });
   });
 
+  test("a statement's error that holds the connection's credential is withheld and the earlier statements are unchanged", async () => {
+    const password = crypto.randomUUID();
+    const connection = { ...validConnection, password };
+    for (const [thrown, expected] of [
+      [new QueryError(`syntax error near ${password}`, "postgres"), withheldErrorMessage("QueryError")],
+      [new QueryError("syntax error near FORM", "postgres"), "syntax error near FORM"],
+    ] as const) {
+      let call = 0;
+      (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => {
+        call++;
+        if (call === 2) throw thrown;
+        return { rows: [{ id: 1 }], fields: ["id"], rowCount: 1, executionTime: 1 };
+      });
+      const res = await POST(
+        createMockRequest("/api/db/multi-query", {
+          method: "POST",
+          body: { connection, sql: "SELECT 1; SELECT 2" },
+        }) as never,
+      );
+      const data = await parseResponseJSON<{ statements: Array<{ status: string; error?: string; rows?: unknown[] }> }>(
+        res,
+      );
+      expect(res.status).toBe(200);
+      expect(data.statements[0]).toMatchObject({ status: "success", rows: [{ id: 1 }] });
+      expect(data.statements[1]).toMatchObject({ status: "error", error: expected });
+      expect(JSON.stringify(data)).not.toContain(password);
+    }
+  });
+
+  test("a statement's warnings and the main result's warnings that hold the credential are withheld", async () => {
+    const password = crypto.randomUUID();
+    (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => ({
+      rows: [{ id: 1 }],
+      fields: ["id"],
+      rowCount: 1,
+      executionTime: 1,
+      warnings: [
+        { message: `a notice about ${password}`, code: 7, severity: "NOTICE" },
+        { message: "a clean notice", code: "01000" },
+      ],
+    }));
+    const res = await POST(
+      createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: { connection: { ...validConnection, password }, sql: "SELECT 1; SELECT 2" },
+      }) as never,
+    );
+    const data = await parseResponseJSON<{ warnings?: unknown[]; statements: Array<{ warnings?: unknown[] }> }>(res);
+    const expected = [
+      { message: PROVIDER_TEXT_WITHHELD, code: 7, severity: "NOTICE" },
+      { message: "a clean notice", code: "01000" },
+    ];
+    expect(data.statements[0].warnings).toEqual(expected);
+    expect(data.statements[1].warnings).toEqual(expected);
+    expect(data.warnings).toEqual(expected);
+    expect(JSON.stringify(data)).not.toContain(password);
+  });
+
+  test("an error answer that holds the credential keeps its status and code", async () => {
+    const password = crypto.randomUUID();
+    mockGetOrCreateProvider.mockImplementation(async () => {
+      throw new ConnectionError(`could not connect as ${password}`, "postgres");
+    });
+    const res = await POST(
+      createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: { connection: { ...validConnection, password }, sql: "SELECT 1" },
+      }) as never,
+    );
+    const data = await parseResponseJSON<Record<string, unknown>>(res);
+    expect(res.status).toBe(503);
+    expect(data).toMatchObject({
+      error: withheldErrorMessage("ConnectionError"),
+      code: "CONNECTION_ERROR",
+      retryable: true,
+      kind: "connection",
+    });
+    expect(JSON.stringify(data)).not.toContain(password);
+
+    mockGetOrCreateProvider.mockImplementation(
+      async () =>
+        ({
+          ...mockProvider,
+          endOpenQueryTransaction: mock(async () => {
+            throw new QueryError(`rollback failed for ${password}`, "postgres");
+          }),
+        }) as never,
+    );
+    const ended = await POST(
+      createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: { connection: { ...validConnection, password }, sql: "SELECT 1" },
+      }) as never,
+    );
+    expect(ended.status).toBe(400);
+    const endedBody = await parseResponseJSON<Record<string, unknown>>(ended);
+    expect(endedBody).toMatchObject({ error: withheldErrorMessage("QueryError"), code: "QUERY_ERROR" });
+    expect(JSON.stringify(endedBody)).not.toContain(password);
+  });
+
   test("QueryError from getOrCreateProvider returns 400", async () => {
     mockGetOrCreateProvider.mockImplementation(async () => {
       throw new QueryError("Bad query", "postgres");
@@ -1556,6 +1657,26 @@ describe("POST /api/db/multi-query: query events under governance", () => {
       else process.env[name] = value;
     }
     mockGetSession.mockImplementation(async () => ({ role: "admin", username: "admin" }));
+  });
+
+  test("governance: a failed unit's query event records the withheld sentence", async () => {
+    const password = crypto.randomUUID();
+    resolveConnectionOverride = async () => ({ ...governedConnection, password });
+    (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => {
+      throw new QueryError(`syntax error near ${password}`, "postgres");
+    });
+
+    const res = await run({ connectionId: "seed:orders", sql: "SELECT 1" });
+
+    expect(res.status).toBe(200);
+    const events = await recordedEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      status: "error",
+      error_code: "QUERY_ERROR",
+      error_message: withheldErrorMessage("QueryError"),
+    });
+    expect(JSON.stringify(events)).not.toContain(password);
   });
 
   test("governance: one event per executed unit and none after the first error", async () => {

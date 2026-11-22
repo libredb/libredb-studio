@@ -27,6 +27,13 @@ import { noteAppendedBound } from "@/lib/db/utils/query-limiter";
 import { withTimeout } from "@/lib/db/utils/pool-manager";
 import { NO_ACTIVE_TRANSACTION, QueryError } from "@/lib/db/errors";
 import { logger } from "@/lib/logger";
+import {
+  type ProviderTextScrub,
+  providerTextScrub,
+  withheldProviderError,
+  withholdProviderError,
+  withScrubbedWarnings,
+} from "@/lib/db/operations/provider-text";
 import type { UserPayload } from "@/lib/auth";
 import { clientAddress } from "@/lib/api/client-address";
 import type { GovernedConnection } from "@/lib/governance/visible";
@@ -73,12 +80,14 @@ interface TransactionProvider {
  * transaction and their work is still there to commit or roll back. Only the last statement is
  * bounded, as on the script route, and only when it is a single statement and not a batch. A
  * statement that ends the transaction ends the run as well, because the next one is refused by the
- * provider ("No active transaction") rather than autocommitted.
+ * provider ("No active transaction") rather than autocommitted. A statement's error answers the message of what
+ * core's scrub answers for it, so one whose text holds a credential of the connection answers the withheld sentence.
  */
 async function runScriptInTransaction(
   provider: TransactionProvider & Pick<DatabaseProvider, "prepareQuery">,
   units: ExecutionUnit[],
   options: Record<string, unknown>,
+  scrub: ProviderTextScrub,
 ) {
   const statements: {
     index: number;
@@ -113,11 +122,12 @@ async function runScriptInTransaction(
       noteAppendedBound(error, unit.sql, sql);
       const executionTime = Math.round(performance.now() - startTime);
       totalExecutionTime += executionTime;
+      const answered = withholdProviderError(scrub, error);
       statements.push({
         ...identity,
         status: "error",
         executionTime,
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: answered instanceof Error ? answered.message : "Unknown error",
       });
       break;
     }
@@ -164,7 +174,7 @@ const CREDENTIAL_CHANGED_UNCONFIRMED =
 /**
  * Roll back the transaction a governed owner opened on the provider cached under `providerKey`, the key its `begin`
  * resolved, once a request of theirs resolves another key (docs/GOVERNANCE.md#per-user-providers), and answer whether
- * it is known to have ended.
+ * it is known to have ended. `providerScrub` is core's scrub of that provider's credential, the one `begin` resolved.
  *
  * A provider that is no longer cached was disconnected when it was removed, which ended its transaction, and a
  * transaction its provider already ended (PostgresProvider and MySQLProvider roll back after their own TX_TIMEOUT_MS)
@@ -175,6 +185,7 @@ const CREDENTIAL_CHANGED_UNCONFIRMED =
  */
 async function rollBackOnProvider(
   providerKey: string,
+  providerScrub: ProviderTextScrub,
   catalog: string | undefined,
   connection: DatabaseConnection,
 ): Promise<boolean> {
@@ -186,7 +197,10 @@ async function rollBackOnProvider(
     }
     return true;
   } catch (error) {
-    logger.error("A transaction whose credential changed was released without a confirmed rollback", error, {
+    // The provider runs on the credential its begin resolved, which this request no longer carries, so its error is
+    // logged through core's scrub of that credential, kept in the transaction's record.
+    const logged = withholdProviderError(providerScrub, error);
+    logger.error("A transaction whose credential changed was released without a confirmed rollback", logged, {
       route: "api/db/transaction",
       connectionId: connection.id,
     });
@@ -228,10 +242,14 @@ function eventRowCount(count: number | undefined): number | undefined {
   return count !== undefined && Number.isSafeInteger(count) && count >= 0 ? count : undefined;
 }
 
-/** What a query event says of a failure: the API code a database error carries, and its text. */
-function eventError(error: unknown): { errorCode?: string; errorMessage?: string } {
+/**
+ * What a query event says of a failure: the API code a database error carries, and its text, which is the withheld
+ * sentence when the text holds a credential of the connection (core's scrub).
+ */
+function eventError(scrub: ProviderTextScrub, error: unknown): { errorCode?: string; errorMessage?: string } {
   const code: unknown = (error as { code?: unknown } | null)?.code;
-  const errorMessage = error instanceof Error ? error.message : String(error);
+  const withheld = withheldProviderError(scrub, error);
+  const errorMessage = withheld?.message ?? (error instanceof Error ? error.message : String(error));
   return { errorCode: typeof code === "string" ? code : undefined, errorMessage };
 }
 
@@ -245,8 +263,9 @@ function recordFailedEnd(
   statement: "COMMIT" | "ROLLBACK",
   started: QueryEventStart,
   error: unknown,
+  scrub: ProviderTextScrub,
 ): void {
-  const detail = { statement, status: "error" as const, started, ...eventError(error) };
+  const detail = { statement, status: "error" as const, started, ...eventError(scrub, error) };
   if (provider.isInTransaction()) recordTransactionStatement(owner, detail);
   else endTransactionEvent(owner, "rolled-back", detail);
 }
@@ -255,6 +274,9 @@ export async function POST(req: NextRequest) {
   const guard = await guardRoute({ route: "POST /api/db/transaction", bucket: "query", request: req });
   if ("response" in guard) return guard.response;
 
+  // Core's scrub of the providers the resolved connection builds, held out here for the `catch` below: before the
+  // connection resolves no provider ran.
+  let scrub: ProviderTextScrub | undefined;
   try {
     // A body that is not a JSON object is a malformed request, refused before any connection resolves.
     const body = await readJsonObject(req);
@@ -271,6 +293,8 @@ export async function POST(req: NextRequest) {
     } & Record<string, unknown>;
 
     const connection = await resolveConnection(body, guard.session);
+    const connectionScrub = providerTextScrub(connection, "any");
+    scrub = connectionScrub;
 
     if (!action) {
       return NextResponse.json({ error: "Connection and action are required" }, { status: 400 });
@@ -336,7 +360,7 @@ export async function POST(req: NextRequest) {
     const released = providerKey === undefined ? null : releaseIfProviderChanged(owned, providerKey);
     if (released !== null) {
       const started = queryEventStart();
-      const rolledBack = await rollBackOnProvider(released.providerKey, catalog, connection);
+      const rolledBack = await rollBackOnProvider(released.providerKey, released.providerScrub, catalog, connection);
       // Studio's own rollback ends the transaction: its terminal event, unless the reload that took the grant away
       // already recorded it (src/lib/governance/grant-diff.ts).
       endTransactionEvent(released, "rolled-back", {
@@ -423,7 +447,15 @@ export async function POST(req: NextRequest) {
         // the transaction's query events, and a timer looks for the provider's own timeout once it is due.
         const events =
           subject === undefined ? undefined : transactionEventScope(guard.session, subject, connection, req);
-        const claimed = claimTransaction(owned, guard.session.username, subject, providerKey, events);
+        // The scrub of this provider's credential is kept beside its key, for a rollback after the credential changes.
+        const claimed = claimTransaction(
+          owned,
+          guard.session.username,
+          subject,
+          providerKey,
+          events,
+          subject === undefined ? undefined : connectionScrub,
+        );
         watchTransactionTimeout(owned, claimed, () => provider.isInTransaction());
         // `stateReported: false` lets the UI say Studio cannot verify this transaction; `null`
         // is a provider that does not say, which is not a claim either way.
@@ -439,7 +471,7 @@ export async function POST(req: NextRequest) {
         try {
           await provider.commitTransaction();
         } catch (error) {
-          if (owner !== null) recordFailedEnd(owner, provider, "COMMIT", started, error);
+          if (owner !== null) recordFailedEnd(owner, provider, "COMMIT", started, error, connectionScrub);
           throw error;
         }
         // The reconcile above would also drop this record, on whatever call comes next. This is
@@ -458,7 +490,7 @@ export async function POST(req: NextRequest) {
         try {
           await provider.rollbackTransaction();
         } catch (error) {
-          if (owner !== null) recordFailedEnd(owner, provider, "ROLLBACK", started, error);
+          if (owner !== null) recordFailedEnd(owner, provider, "ROLLBACK", started, error, connectionScrub);
           throw error;
         }
         releaseTransaction(owned);
@@ -479,7 +511,7 @@ export async function POST(req: NextRequest) {
         const started = queryEventStart();
         const recordStatement = (status: "success" | "error", outcome: { rowCount?: number; error?: unknown }) => {
           if (owner === null) return;
-          const failure = outcome.error === undefined ? {} : eventError(outcome.error);
+          const failure = outcome.error === undefined ? {} : eventError(connectionScrub, outcome.error);
           recordTransactionStatement(owner, {
             statement: sql,
             status,
@@ -499,7 +531,7 @@ export async function POST(req: NextRequest) {
           const grammar = resolveSqlGrammar(connection.type);
           const units = splitExecutionUnits(sql, grammar).filter((unit) => countCodeStatements(unit.sql, grammar) > 0);
           if (units.length > 1) {
-            const script = await runScriptInTransaction(provider, units, options);
+            const script = await runScriptInTransaction(provider, units, options, connectionScrub);
             recordStatement(script.hasError ? "error" : "success", {});
             const stillOpen = provider.isInTransaction();
             if (stillOpen) touchTransaction(owned);
@@ -526,7 +558,7 @@ export async function POST(req: NextRequest) {
                 statement: sql,
                 status: "error",
                 started,
-                ...eventError(error),
+                ...eventError(connectionScrub, error),
               });
           }
           // An error that names the bound the limiter added says so (`noteAppendedBound`).
@@ -558,7 +590,8 @@ export async function POST(req: NextRequest) {
         const { hasMore, rows: pageRows } = pageOfProbe(prepared, result.rows);
 
         return NextResponse.json({
-          ...firstResultSet(result),
+          // A warning field that holds a credential of the connection is withheld.
+          ...firstResultSet(withScrubbedWarnings(connectionScrub, result)),
           ...(hasMore && { rowCount: pageRows.length }),
           // NaN and the infinities as words, as on `/api/db/query` (`src/lib/non-finite.ts`).
           rows: rowsWithNonFiniteWords(pageRows),
@@ -597,6 +630,6 @@ export async function POST(req: NextRequest) {
         );
     }
   } catch (error) {
-    return createErrorResponse(error, { route: "api/db/transaction" });
+    return createErrorResponse(error, { route: "api/db/transaction", scrub });
   }
 }

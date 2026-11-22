@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { ConnectionError, TimeoutError } from "@/lib/db/errors";
+import { ConnectionError, ProviderTextWithheldError, TimeoutError } from "@/lib/db/errors";
+import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import type { DatabaseProvider, EditorExecutionContext } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import type { DatabaseConnection, QueryWarning } from "@/lib/types";
@@ -181,6 +182,55 @@ describe("testConnection", () => {
           "The extra checks Test Connection runs for this connection did not finish, so a caution they would give may be missing.",
       },
     ]);
+  });
+
+  describe("provider text that holds the connection's credential", () => {
+    const password = crypto.randomUUID();
+    const holding = { ...connection, password } as DatabaseConnection;
+
+    test("a health failure that holds the connection's credential answers a degraded success with the withheld sentence", async () => {
+      built = recording({
+        getHealth: async () => {
+          throw new ConnectionError(`health read as ${password} failed`, "postgres");
+        },
+      });
+      const answer = await testConnection(holding, execution, route);
+      expect(answer).toEqual({
+        success: true,
+        degraded: true,
+        message: `Connected, but this server answered no health data: ${withheldErrorMessage("ConnectionError")}`,
+      });
+      expect(answer.message).not.toContain(password);
+    });
+
+    test("cautions that hold the credential are withheld", async () => {
+      built = recording({
+        connectWarnings: () => [{ message: `a startup notice about ${password}` }, { message: "a clean notice" }],
+        testConnectionWarnings: async () => [
+          { message: "a probe caution", code: `P-${password}`, severity: "WARNING" },
+        ],
+      });
+      const answer = await testConnection(holding, execution, route);
+      expect(answer.warnings).toEqual([
+        { message: PROVIDER_TEXT_WITHHELD },
+        { message: "a clean notice" },
+        { message: "a probe caution", code: PROVIDER_TEXT_WITHHELD, severity: "WARNING" },
+      ]);
+    });
+
+    test("a rejected check that holds the credential is logged withheld", async () => {
+      built = recording({
+        testConnectionWarnings: async () => {
+          throw new Error(`probe as ${password} broke`);
+        },
+      });
+      errorLog = spyOn(logger, "error").mockImplementation(() => {});
+      await testConnection(holding, execution, route);
+      expect(errorLog).toHaveBeenCalledTimes(1);
+      expect(errorLog.mock.calls[0]?.[1]).toBeInstanceOf(ProviderTextWithheldError);
+      expect(errorLog.mock.calls[0]?.[2]).toEqual({ route: "test-route", provider: "postgres" });
+      expect(JSON.stringify(errorLog.mock.calls)).not.toContain(password);
+    });
   });
 
   test("checks that resolve something other than an array get the same caution", async () => {

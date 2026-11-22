@@ -15,6 +15,7 @@ import {
   consoleTextOverLimit,
   NON_SQL_DESTRUCTIVE_VOCABULARY,
 } from "@/lib/db/destructive-commands";
+import { providerTextScrub } from "@/lib/db/operations/provider-text";
 import { executionUiFor } from "@/lib/db/execution-ui";
 import { generateTableQuery } from "@/lib/query-generators";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
@@ -638,6 +639,7 @@ describe("query/run", () => {
       queryId: "q-1",
       signal: new AbortController().signal,
       route: "test",
+      scrub: providerTextScrub({ ...WIRE, createdAt: new Date(WIRE.createdAt) }, "any"),
     });
     assert.deepEqual(route.body, body);
     assert.equal("explainFormat" in answer, false);

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { test, expect } from "@playwright/test";
 import { READ_ONLY_FIXED_HINT } from "../src/lib/db-ui-config";
 import { openConnectionDialog } from "./helpers/connection-dialog";
@@ -76,7 +77,8 @@ test.describe("Apache Kafka in the connection dialog", () => {
     await dialog.getByRole("button", { name: "Apache Kafka", exact: true }).click();
     await dialog.locator("select#saslMechanism").selectOption("SCRAM-SHA-512");
     await dialog.locator("#user").fill("reader");
-    await dialog.locator("#password").fill("x");
+    // A generated password: a one-character secret's forms occur in almost any sentence, and Studio withholds such text.
+    await dialog.locator("#password").fill(randomUUID());
     await dialog.getByRole("button", { name: "Test Connection", exact: true }).click();
 
     const result = dialog.getByTestId("connection-test-result");
@@ -90,7 +92,8 @@ test.describe("Apache Kafka in the connection dialog", () => {
     const dialog = page.locator('[role="dialog"]');
     await dialog.getByRole("button", { name: "Apache Kafka", exact: true }).click();
     await dialog.locator("#user").fill("reader");
-    await dialog.locator("#password").fill("x");
+    // A generated password: a one-character secret's forms occur in almost any sentence, and Studio withholds such text.
+    await dialog.locator("#password").fill(randomUUID());
     await dialog.getByRole("button", { name: "Test Connection", exact: true }).click();
 
     const result = dialog.getByTestId("connection-test-result");

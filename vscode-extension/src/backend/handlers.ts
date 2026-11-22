@@ -10,6 +10,7 @@ import type { testConnection } from "@/lib/api/test-connection";
 import { parseConnectionString } from "@/lib/connection-string-parser";
 import { scopeToCatalog } from "@/lib/db/catalog-scope";
 import { CONNECTION_FORM } from "@/lib/db/connection-form";
+import { providerTextScrub } from "@/lib/db/operations/provider-text";
 import { ConnectionError, waitedSeconds } from "@/lib/db/errors";
 import { executionUiFor } from "@/lib/db/execution-ui";
 import type { clearProviderCache, enabledProviderTypes, getOrCreateProvider } from "@/lib/db/factory";
@@ -381,6 +382,7 @@ export function createHandlers(
           queryId,
           signal: controller.signal,
           route: RUN_ROUTE,
+          scrub: providerTextScrub(record.connection, "any"),
         });
         return { ...body, ...(resultSetCount > 1 && { resultSetCount }) };
       } finally {

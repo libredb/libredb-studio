@@ -36,6 +36,9 @@ const SCOPE = {
 const GOVERNED = transactionKey("seed:orders", undefined, "alice-subject");
 const SHARED = transactionKey("orders");
 
+/** Core's scrub of the provider a governed begin ran on: the forms of the credential that begin resolved. */
+const WRITE_SCRUB = { type: "postgres" as const, forms: [crypto.randomUUID()] };
+
 afterEach(() => {
   releaseTransaction(GOVERNED);
   releaseTransaction(SHARED);
@@ -43,13 +46,21 @@ afterEach(() => {
 });
 
 describe("transaction ownership records", () => {
-  test("the record keeps the provider cache key its begin resolved", () => {
-    claimTransaction(GOVERNED, "alice@example.com", "alice-subject", "provider-key-of-the-write-credential");
+  test("the record keeps the provider cache key its begin resolved and that provider's scrub", () => {
+    claimTransaction(
+      GOVERNED,
+      "alice@example.com",
+      "alice-subject",
+      "provider-key-of-the-write-credential",
+      undefined,
+      WRITE_SCRUB,
+    );
 
     expect(transactionOwner(GOVERNED)).toMatchObject({
       username: "alice@example.com",
       subject: "alice-subject",
       providerKey: "provider-key-of-the-write-credential",
+      providerScrub: WRITE_SCRUB,
     });
 
     // Without governance a record names neither a subject nor a provider key, as before owners existed.
@@ -58,22 +69,40 @@ describe("transaction ownership records", () => {
     expect(shared?.username).toBe("alice");
     expect(shared?.subject).toBeUndefined();
     expect(shared?.providerKey).toBeUndefined();
+    expect(shared?.providerScrub).toBeUndefined();
   });
 
   test("a request that resolves another provider key releases the record and learns the key it was opened on", () => {
-    claimTransaction(GOVERNED, "alice@example.com", "alice-subject", "provider-key-of-the-write-credential");
+    claimTransaction(
+      GOVERNED,
+      "alice@example.com",
+      "alice-subject",
+      "provider-key-of-the-write-credential",
+      undefined,
+      WRITE_SCRUB,
+    );
 
     // The key the begin resolved: the record stays, so the owner keeps its transaction.
     expect(releaseIfProviderChanged(GOVERNED, "provider-key-of-the-write-credential")).toBeNull();
     expect(transactionOwner(GOVERNED)).not.toBeNull();
 
     // Another key: the record is released at once, and the caller is handed the key of the provider that holds it.
-    expect(releaseIfProviderChanged(GOVERNED, "provider-key-of-the-read-credential")?.providerKey).toBe(
-      "provider-key-of-the-write-credential",
-    );
+    const released = releaseIfProviderChanged(GOVERNED, "provider-key-of-the-read-credential");
+    expect(released?.providerKey).toBe("provider-key-of-the-write-credential");
+    // And the scrub of that provider's credential, so a failed rollback on it is logged through the right one.
+    expect(released?.providerScrub).toBe(WRITE_SCRUB);
     expect(transactionOwner(GOVERNED)).toBeNull();
     // Released once: a second request finds nothing left to release.
     expect(releaseIfProviderChanged(GOVERNED, "provider-key-of-the-read-credential")).toBeNull();
+  });
+
+  test("a record that names a provider key without its scrub is refused on release, never released unscrubbed", () => {
+    claimTransaction(GOVERNED, "alice@example.com", "alice-subject", "provider-key-of-the-write-credential");
+
+    expect(() => releaseIfProviderChanged(GOVERNED, "provider-key-of-the-read-credential")).toThrow(
+      "A transaction record that names a provider key must keep that provider's scrub",
+    );
+    expect(transactionOwner(GOVERNED)?.providerKey).toBe("provider-key-of-the-write-credential");
   });
 
   test("a record that names no provider key is never compared, so a record without governance is left alone", () => {

@@ -23,8 +23,10 @@
  * governed request opens the connection with the credential of the caller's grant level, and the provider's cache key
  * frames that credential, so a grant downgraded from write to read, or a credential the control plane sealed again,
  * resolves a provider other than the one the transaction was opened on. So the record keeps the provider cache key its
- * begin resolved, and a request that resolves another key has the record released by `releaseIfProviderChanged`: the
- * route rolls the transaction back on the provider that holds it and answers 409 TRANSACTION_CREDENTIAL_CHANGED.
+ * begin resolved, and core's scrub of that provider's credential, and a request that resolves another key has the record
+ * released by `releaseIfProviderChanged`: the route rolls the transaction back on the provider that holds it, logs a
+ * failed rollback through the scrub of the credential that provider holds, which the current request no longer carries,
+ * and answers 409 TRANSACTION_CREDENTIAL_CHANGED.
  * Without that, the reconcile below would drop the record because the NEW provider holds no transaction, and the old
  * one would stay open under a credential its owner no longer holds, on a provider their requests no longer reach.
  *
@@ -75,6 +77,7 @@
  * the timer `watchTransactionTimeout` arms at claim, the route's reconcile, or the lapsed lease.
  */
 import { randomUUID } from "node:crypto";
+import type { ProviderTextScrub } from "@/lib/db/operations/provider-text";
 import { queryEventStart } from "@/lib/query-events/build";
 import { recordQueryEvent } from "@/lib/query-events/sink";
 import type {
@@ -112,6 +115,12 @@ export interface TransactionOwner {
    * above). Absent without governance, where a record is never compared by key.
    */
   providerKey?: string;
+  /**
+   * Under governance, core's scrub of the provider `begin` ran on: the forms of the credential that begin resolved,
+   * which a request after a credential change no longer carries, so a failed rollback on that provider is logged
+   * through it. Present exactly when `providerKey` is.
+   */
+  providerScrub?: ProviderTextScrub;
   /** When the transaction was opened, for the refusal message and for `status`. */
   startedAt: number;
   /** When the owner last acted on it. The idle lease below is measured from here. */
@@ -210,8 +219,8 @@ export function transactionOwner(connectionId: string): TransactionOwner | null 
 
 /**
  * Record `username`, and under governance its identity provider `subject`, the `providerKey` of the provider the
- * transaction runs on and the scope of its query `events`, as the owner, with a new `transactionId`. Called only after
- * `beginTransaction()` has actually succeeded. Returns the record.
+ * transaction runs on, the scope of its query `events` and the `providerScrub` of that provider's credential, as the
+ * owner, with a new `transactionId`. Called only after `beginTransaction()` has actually succeeded. Returns the record.
  */
 export function claimTransaction(
   connectionId: string,
@@ -219,12 +228,14 @@ export function claimTransaction(
   subject?: string,
   providerKey?: string,
   events?: TransactionEventScope,
+  providerScrub?: ProviderTextScrub,
 ): TransactionOwner {
   const now = Date.now();
   const owner: TransactionOwner = {
     username,
     subject,
     providerKey,
+    providerScrub,
     startedAt: now,
     lastActiveAt: now,
     transactionId: randomUUID(),
@@ -266,8 +277,9 @@ export function endOwnerTransactions(connectionId: string, subject: string): voi
 /**
  * Under governance, release the live record under `connectionId` when its begin resolved a provider other than
  * `providerKey`, the key the current request resolves, and answer the released record, whose `providerKey` is the key
- * it was opened on, so the caller can roll the transaction back on that provider; null when the record names this key,
- * names none, or there is no live record.
+ * it was opened on, so the caller can roll the transaction back on that provider, and whose `providerScrub` covers the
+ * credential that provider holds; null when the record names this key, names none, or there is no live record. A record
+ * that names a key without its scrub is a claim that broke its contract, refused with an error and left in place.
  *
  * Read and released in one synchronous step, so of two requests that arrive together only one is handed the record:
  * the other finds no record, and its own provider holds no transaction.
@@ -275,12 +287,15 @@ export function endOwnerTransactions(connectionId: string, subject: string): voi
 export function releaseIfProviderChanged(
   connectionId: string,
   providerKey: string,
-): (TransactionOwner & { readonly providerKey: string }) | null {
+): (TransactionOwner & { readonly providerKey: string; readonly providerScrub: ProviderTextScrub }) | null {
   const owner = transactionOwner(connectionId);
   if (owner?.providerKey === undefined || owner.providerKey === providerKey) return null;
+  if (owner.providerScrub === undefined) {
+    throw new Error("A transaction record that names a provider key must keep that provider's scrub");
+  }
   owners().delete(connectionId);
   // The record itself, never a copy, so a terminal event recorded through it marks the one record every path reads.
-  return owner as TransactionOwner & { readonly providerKey: string };
+  return owner as TransactionOwner & { readonly providerKey: string; readonly providerScrub: ProviderTextScrub };
 }
 
 /** Extend the owner's lease after an authorized action. A no-op when there is no record. */

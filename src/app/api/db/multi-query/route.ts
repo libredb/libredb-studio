@@ -9,6 +9,12 @@ import { bridgeAbortToCancel } from "@/lib/api/abort-cancel";
 import { pageOptionError } from "@/lib/api/page-probe";
 import { supportsQueryCancel } from "@/lib/db/query-cancel";
 import { QueryCancelledError } from "@/lib/db/errors";
+import {
+  type ProviderTextScrub,
+  providerTextScrub,
+  withholdProviderError,
+  withScrubbedWarnings,
+} from "@/lib/db/operations/provider-text";
 import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
@@ -131,6 +137,16 @@ interface UnitEvents {
   readonly correlationId: string;
 }
 
+/**
+ * A unit's statement error as the script answers it: the message of what core's scrub answers for it, so an error
+ * whose text holds a credential of the connection answers the withheld sentence, and anything else that is not an
+ * `Error` answers "Unknown error".
+ */
+function statementError(scrub: ProviderTextScrub, error: unknown): string {
+  const answered = withholdProviderError(scrub, error);
+  return answered instanceof Error ? answered.message : "Unknown error";
+}
+
 async function runStatement(
   provider: DatabaseProvider,
   stmt: ExecutionUnit,
@@ -141,6 +157,7 @@ async function runStatement(
   scope: string,
   queryId: string | undefined,
   events: UnitEvents,
+  scrub: ProviderTextScrub,
 ): Promise<StatementResult> {
   const startTime = performance.now();
   const started = queryEventStart();
@@ -185,7 +202,8 @@ async function runStatement(
       // (`src/lib/non-finite.ts`). The main result reuses this array, so it carries them too.
       rows: rowsWithNonFiniteWords(shown.rows),
       executionTime: Math.round(performance.now() - startTime),
-      ...carriedChannels({ warnings: result.warnings, columnTypes }),
+      // A warning field that holds a credential of the connection is withheld; the main result reuses these.
+      ...carriedChannels({ warnings: withScrubbedWarnings(scrub, result).warnings, columnTypes }),
     };
   } catch (error) {
     // The last statement's bound, when an error names it, is said to be Studio's (`noteAppendedBound`).
@@ -195,7 +213,7 @@ async function runStatement(
       ...identity,
       status: "error",
       executionTime: Math.round(performance.now() - startTime),
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: statementError(scrub, error),
     };
   }
 }
@@ -305,6 +323,8 @@ export async function POST(req: NextRequest) {
     admitQueryExecution();
     admitting = false;
     const unitEvents: UnitEvents = { request: events, connection, correlationId: uuidv7() };
+    // Core's scrub of the providers this connection builds, over every provider text the script answers.
+    const scrub = providerTextScrub(connection, "any");
 
     const provider = await editorProvider(guard.session, connection, requestCatalog(body));
     // A request already gone, before or while the provider was acquired, starts nothing.
@@ -360,6 +380,7 @@ export async function POST(req: NextRequest) {
           scope,
           bound,
           unitEvents,
+          scrub,
         );
         totalExecutionTime += outcome.executionTime;
         results.push(outcome);
@@ -407,6 +428,10 @@ export async function POST(req: NextRequest) {
     if (admitting || (resolved === undefined && error instanceof SeedConnectionError)) {
       recordRefusedRequest(events, { requestedId, connection: resolved, statement: submitted, started, error });
     }
-    return createErrorResponse(error, { route: "api/db/multi-query" });
+    // Once the connection resolved, a provider may have run: its error answers with the connection's scrub.
+    return createErrorResponse(error, {
+      route: "api/db/multi-query",
+      scrub: resolved === undefined ? undefined : providerTextScrub(resolved, "any"),
+    });
   }
 }
