@@ -44,8 +44,11 @@ export const NUL_IN_DATABASE_PATH = "Invalid database path: NUL bytes are not al
 /** The refusal of a file name that is not text, which no stored or posted connection the forms write carries. */
 export const FILE_NAME_NOT_TEXT = "Invalid database path: the file a connection names must be text";
 
-/** The refusal of a SQLite connection string that is `file:` and nothing after it, which names no file. */
-export const NO_FILE_AFTER_SCHEME = "Invalid database path: the connection string names no file after file:";
+/**
+ * The refusal of a SQLite connection string that is `file:` and nothing after it, which names no file.
+ * The sentence does not repeat the connection string, a secret-class field, so the scrub of provider text keeps it.
+ */
+export const NO_FILE_AFTER_SCHEME = "Invalid database path: the connection string names no file after its scheme";
 
 /**
  * The start of the refusal of a path the reserved check could not read, followed by the filesystem's own reason: the
