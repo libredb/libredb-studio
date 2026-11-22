@@ -26,12 +26,13 @@ import { tunnelRoute } from "@/lib/db/connection-fingerprint";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import {
   type HttpOrigin,
-  httpOriginWithCoreDecision,
+  httpOrigin,
   plaintextSecretRefusal,
   validateHost,
   validatePort,
 } from "@/lib/db/http/endpoint";
 import { type NodeTlsMaterial, nodeTlsMaterial } from "@/lib/db/http/node-transport";
+import type { EgressDecision } from "@/lib/db/types";
 import { secretForms } from "@/lib/db/utils/server-text";
 import {
   type DatabaseConnection,
@@ -145,11 +146,11 @@ export const DATABEND_CONNECTION_SENTENCES = Object.freeze({
 /** Throws DatabaseConfigError for every refusal of design 6.3; never echoes a value. */
 export function buildDatabendConnectionOptions(
   config: DatabaseConnection & WithTunnelFarEnd,
-  context: { readonly queryTimeout: number; readonly appVersion?: string | null },
+  context: { readonly queryTimeout: number; readonly appVersion?: string | null; readonly egress: EgressDecision },
 ): DatabendConnectionOptions {
   const farEnd = tunnelFarEnd(config);
   // validateHost, validatePort and the egress policy's literal-address guard, on the host that is dialled.
-  const dialled = shared(() => httpOriginWithCoreDecision("http", config.host, config.port ?? DATABEND_DEFAULT_PORT));
+  const dialled = shared(() => httpOrigin("http", config.host, config.port ?? DATABEND_DEFAULT_PORT, context.egress));
   const endpoint =
     farEnd === undefined
       ? { host: unbracketed(dialled.host), port: dialled.port }

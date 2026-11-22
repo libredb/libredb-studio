@@ -21,9 +21,8 @@
  * module twice (src/lib/governance/keyring.ts does the same for the same reason).
  *
  * No provider reads the decision here: the provider factory hands it to every provider that takes a context, in the
- * build context (`ProviderBuildContext` in `./types`), and the guard takes it as an argument. Until the later slices of
- * FND-2 slice 2b convert them, two core modules read it on a provider's behalf: `httpOriginWithCoreDecision` in
- * `./http/endpoint`, for the origins FND-2 slice 2b-3b converts, and `createNodeTransport` and
+ * build context (`ProviderBuildContext` in `./types`), and the guard takes it as an argument. Until FND-2 slice 2b-4
+ * hands it to them too, one core module reads it on a provider's behalf: `createNodeTransport` and
  * `createNodeByteTransport` in `./http/node-transport`.
  * `tests/unit/lib/db/provider-environment-scan.test.ts` holds who imports this module.
  *

@@ -23,6 +23,7 @@ import {
 import { logger } from "@/lib/logger";
 import { LITERAL_SEED_FILE } from "@/lib/types";
 import { type FakeIoOptions, fakeIo } from "../../../helpers/auth-fakes";
+import { BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const OPT_IN = { BIGQUERY_SERVER_CREDENTIALS: "true" };
 const K = acceptedKindSentences(["service_account", "authorized_user", "access_token"]);
@@ -82,7 +83,8 @@ describe("bigquery credential policy pins", () => {
   });
 
   test("the token deps carry BigQuery's scope and label, and createNodeTransport itself in production", async () => {
-    const deps = bigQueryTokenSourceDeps();
+    const deps = bigQueryTokenSourceDeps(BLOCKS_PRIVATE_HOSTS);
+    expect(deps.egress).toBe(BLOCKS_PRIVATE_HOSTS);
     expect(BIGQUERY_SCOPE).toBe("https://www.googleapis.com/auth/bigquery");
     expect(deps.scope).toBe(BIGQUERY_SCOPE);
     expect(deps.provider).toBe("bigquery");

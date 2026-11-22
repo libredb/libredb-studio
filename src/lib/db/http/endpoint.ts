@@ -19,7 +19,6 @@
  */
 
 import { BlockList, isIP, isIPv6 } from "node:net";
-import { egressDecision } from "@/lib/db/egress-decision";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
 import type { EgressDecision } from "@/lib/db/types";
 import { assertPublicLiteralHost, LOOPBACK_NETWORKS } from "./egress-policy";
@@ -164,15 +163,6 @@ export function httpOrigin(scheme: HttpScheme, host: unknown, port: unknown, egr
   const validatedHost = validateHost(host);
   assertPublicLiteralHost(validatedHost, egress);
   return { scheme, host: validatedHost, port: validatePort(port) };
-}
-
-/**
- * `httpOrigin` with core's decision. An interim reader: it reads core's decision on the calling provider's behalf for
- * the origins FND-2 slice 2b-3b converts, until that slice hands them the decision as an argument
- * (tests/unit/lib/db/provider-environment-scan.test.ts lists it until then).
- */
-export function httpOriginWithCoreDecision(scheme: HttpScheme, host: unknown, port: unknown): HttpOrigin {
-  return httpOrigin(scheme, host, port, egressDecision());
 }
 
 /**

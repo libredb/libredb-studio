@@ -1,15 +1,19 @@
 /**
- * The HTTP origins take the egress decision their provider was built with (FND-2 slice 2b-3a, docs/SECURITY.md row
- * 0.6).
+ * The HTTP origins take the egress decision their provider was built with (FND-2 slices 2b-3a and 2b-3b,
+ * docs/SECURITY.md row 0.6).
  *
- * MTConnect, Qdrant, Weaviate, S3-compatible object storage and RabbitMQ's management API each build their origin
- * through `httpOrigin` in `src/lib/db/http/endpoint.ts`, which checks an address literal against the decision it is
- * handed and reads no setting. Each provider here is built directly, as a test or a live script builds it outside
- * Studio's factory, with a decision the test hands it, and connects to a local HTTP server on 127.0.0.1 that counts
- * the requests it receives. The variable is left unset, so a refusal shows the handed decision decided.
+ * MTConnect, Qdrant, Weaviate, S3-compatible object storage, RabbitMQ's management API, Databend, InfluxDB, InfluxDB 3,
+ * Kubernetes and Firestore's emulator each build their origin through `httpOrigin` in `src/lib/db/http/endpoint.ts`,
+ * which checks an address literal against the decision it is handed and reads no setting. Each provider here is built
+ * directly, as a test or a live script builds it outside Studio's factory, with a decision the test hands it, and
+ * connects to a local HTTP server on 127.0.0.1 that counts the connections it accepts and the requests it receives.
+ * The variable is left unset, so a refusal shows the handed decision decided. The accepted connections are the count
+ * that matters for Kubernetes: over TLS it opens a socket to a plain HTTP server and never sends a request.
  *
  * The inverse, an allowing decision while the variable is `true` at a literal, waits for FND-2 slice 2b-4 for these
- * five: their node transport reads core's decision on the provider's behalf until then. The fetch kind's inverse is in
+ * ten: their node transport reads core's decision on the provider's behalf until then, so a provider handed a decision
+ * other than the process's sees the handed one at its origin and the process's at its transport, which only a test
+ * can arrange. The fetch kind's inverse is in
  * `egress-policy-providers.test.ts`, and RabbitMQ's management origin's in `egress-policy-socket-dials.test.ts`, over
  * a recorded management API.
  */
@@ -18,9 +22,13 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { BLOCKED_HOST, EGRESS_DECISION_MISSING } from "@/lib/db/http/egress-policy";
+import { FirestoreProvider } from "@/lib/db/providers/document/firestore/index";
 import { MTConnectProvider } from "@/lib/db/providers/industrial/mtconnect/index";
 import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
+import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes/index";
+import { DatabendProvider } from "@/lib/db/providers/sql/databend/index";
 import { RabbitMQProvider } from "@/lib/db/providers/stream/rabbitmq/index";
+import { InfluxDB3Provider, InfluxDBProvider } from "@/lib/db/providers/timeseries/influxdb/index";
 import { QdrantProvider } from "@/lib/db/providers/vector/qdrant/index";
 import { WeaviateProvider } from "@/lib/db/providers/vector/weaviate/index";
 import type { DatabaseConnection, DatabaseProvider, EgressDecision } from "@/lib/db/types";
@@ -30,9 +38,10 @@ import { rabbitmqConnection } from "../../../helpers/rabbitmq-connection";
 
 const original = process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
 
-/** A local HTTP server on 127.0.0.1 that counts the requests it receives; `close` stops it. */
+/** A local HTTP server on 127.0.0.1 that counts the connections it accepts and the requests it receives. */
 interface CountingServer {
   readonly port: number;
+  connections(): number;
   hits(): number;
   close(): Promise<void>;
 }
@@ -45,15 +54,20 @@ afterEach(async () => {
 });
 
 async function countingServer(): Promise<CountingServer> {
+  let connections = 0;
   let hits = 0;
   const server = createServer((_request, response) => {
     hits += 1;
     response.statusCode = 500;
     response.end("unexpected request");
   });
+  server.on("connection", () => {
+    connections += 1;
+  });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const counting: CountingServer = {
     port: (server.address() as AddressInfo).port,
+    connections: () => connections,
     hits: () => hits,
     close: () =>
       new Promise<void>((resolve, reject) => {
@@ -95,6 +109,35 @@ const BUILDS: readonly [string, Build][] = [
     (host, port, context) =>
       new RabbitMQProvider(rabbitmqConnection({ host, port, password: crypto.randomUUID() }), OPTIONS, context),
   ],
+  [
+    "Databend",
+    // A user and no password, so neither the missing-user refusal nor the plaintext-password refusal fires first.
+    (host, port, context) =>
+      new DatabendProvider({ ...connection("databend", host, port), user: "tester" }, OPTIONS, context),
+  ],
+  // Neither user nor password: InfluxDB 3 refuses a user, InfluxDB a user without a password.
+  ["InfluxDB", (host, port, context) => new InfluxDBProvider(connection("influxdb", host, port), OPTIONS, context)],
+  ["InfluxDB 3", (host, port, context) => new InfluxDB3Provider(connection("influxdb3", host, port), OPTIONS, context)],
+  [
+    "Kubernetes",
+    // Over TLS, so its own refusal of plain HTTP to a loopback host never comes first.
+    (host, port, context) =>
+      new KubernetesProvider(
+        { ...connection("kubernetes", host, port), ssl: { mode: "verify-full" } },
+        OPTIONS,
+        {},
+        context,
+      ),
+  ],
+  [
+    "Firestore's emulator",
+    // The emulator address comes through the seams' env, never process.env; an emulator connection carries no
+    // credential, and the project id is a valid one.
+    (host, port, context) =>
+      new FirestoreProvider({ ...connection("firestore", host, port), database: "demo-project" }, OPTIONS, context, {
+        env: { FIRESTORE_EMULATOR_HOST: `${host}:${port}` },
+      }),
+  ],
 ];
 
 /** Runs `connect()` and disconnects, resolving to the error `connect()` rejected with, or null when it succeeded. */
@@ -107,7 +150,7 @@ async function connected(provider: DatabaseProvider): Promise<unknown> {
   return outcome;
 }
 
-describe("a provider builds its origin by the egress decision it was built with (FND-2 slice 2b-3a)", () => {
+describe("a provider builds its origin by the egress decision it was built with (FND-2 slices 2b-3a and 2b-3b)", () => {
   test.each(BUILDS)(
     "%s handed a blocking decision refuses 127.0.0.1 when connect() builds its origin, before any request, while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset",
     async (_name, build) => {
@@ -116,6 +159,7 @@ describe("a provider builds its origin by the egress decision it was built with 
       const failure = await connected(build("127.0.0.1", server.port, { egress: BLOCKS_PRIVATE_HOSTS }));
       expect(failure).toBeInstanceOf(DatabaseConfigError);
       expect((failure as Error).message).toBe(BLOCKED_HOST);
+      expect(server.connections()).toBe(0);
       expect(server.hits()).toBe(0);
     },
   );
@@ -130,6 +174,7 @@ describe("a provider builds its origin by the egress decision it was built with 
       const failure = await connected(provider);
       expect(failure).toBeInstanceOf(DatabaseConfigError);
       expect((failure as Error).message).toBe(EGRESS_DECISION_MISSING);
+      expect(server.connections()).toBe(0);
       expect(server.hits()).toBe(0);
     },
   );

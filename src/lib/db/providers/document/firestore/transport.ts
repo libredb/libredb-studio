@@ -16,9 +16,9 @@
 import { quotaProjectHeaders } from "@/lib/db/auth/google/credentials";
 import { createGoogleTokenSource } from "@/lib/db/auth/google/token-source";
 import { DatabaseError, QueryError } from "@/lib/db/errors";
-import { endpointUrl, type HttpOrigin, httpOriginWithCoreDecision } from "@/lib/db/http/endpoint";
+import { endpointUrl, type HttpOrigin, httpOrigin } from "@/lib/db/http/endpoint";
 import { type NodeResponse, type NodeTransport, TransportError } from "@/lib/db/http/node-transport";
-import { DEFAULT_QUERY_TIMEOUT } from "@/lib/db/types";
+import { DEFAULT_QUERY_TIMEOUT, type EgressDecision } from "@/lib/db/types";
 import { DEFAULT_DATABASE_ID, FIRESTORE_API_ORIGIN, FIRESTORE_SCOPE, FIRESTORE_TYPE, LIMITS } from "./constants";
 import type { FirestoreAuth } from "./credential-policy";
 import {
@@ -41,6 +41,8 @@ export interface SendOptions {
 export interface FirestoreClientOptions {
   /** The connection's query timeout; DEFAULT_QUERY_TIMEOUT when absent. */
   readonly queryTimeoutMs?: number;
+  /** The egress decision the provider was built with, which every origin the client builds is checked against. */
+  readonly egress: EgressDecision;
 }
 
 export interface FirestoreClient {
@@ -75,8 +77,8 @@ export function routingHeaders(target: FirestoreTarget): Readonly<Record<string,
   return { "x-goog-request-params": params, "google-cloud-resource-prefix": databaseName(target) };
 }
 
-function httpsOrigin(url: string): HttpOrigin {
-  return httpOriginWithCoreDecision("https", new URL(url).hostname, 443);
+function httpsOrigin(url: string, egress: EgressDecision): HttpOrigin {
+  return httpOrigin("https", new URL(url).hostname, 443, egress);
 }
 
 function tlsFor(origin: HttpOrigin) {
@@ -103,14 +105,14 @@ export function createFirestoreClient(
   target: FirestoreTarget,
   auth: FirestoreAuth,
   seams: FirestoreSeams,
-  options: FirestoreClientOptions = {},
+  options: FirestoreClientOptions,
 ): FirestoreClient {
   const deadlineMs = (options.queryTimeoutMs ?? DEFAULT_QUERY_TIMEOUT) + LIMITS.deadlineGraceMs;
   const closer = new AbortController();
   const origin =
     auth.mode === "emulator"
-      ? httpOriginWithCoreDecision("http", auth.emulator.host, auth.emulator.port)
-      : httpsOrigin(FIRESTORE_API_ORIGIN);
+      ? httpOrigin("http", auth.emulator.host, auth.emulator.port, options.egress)
+      : httpsOrigin(FIRESTORE_API_ORIGIN, options.egress);
   const tokens =
     auth.mode === "emulator"
       ? null
@@ -121,6 +123,7 @@ export function createFirestoreClient(
           now: () => seams.now(),
           timeoutSignal: (ms) => seams.timeoutSignal(ms),
           createTransport: seams.createTransport,
+          egress: options.egress,
         });
   // The emulator lane carries Bearer owner alone: no routing header and no quota project, since no credential exists.
   const extraHeaders: Readonly<Record<string, string>> =

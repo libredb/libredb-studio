@@ -24,6 +24,7 @@ import {
 } from "@/lib/db/providers/timeseries/influxdb/connection-options";
 import { secretForms } from "@/lib/db/utils/server-text";
 import { type DatabaseConnection, TUNNEL_FAR_END } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { setEgressFlag } from "../../../helpers/egress-flag";
 
 // Named placeholders, never realistic values: a credential in a test fixture is a stand-in.
@@ -54,8 +55,13 @@ function connection(type: InfluxType, overrides: Record<string, unknown> = {}): 
   } as unknown as DatabaseConnection;
 }
 
-const build = (type: InfluxType, overrides: Record<string, unknown> = {}, queryTimeout = QUERY_TIMEOUT) =>
-  buildInfluxConnectionOptions(connection(type, overrides), { type, queryTimeout });
+// An allowing decision unless a case hands another, so the origin's literal check is the subject only where it says so.
+const build = (
+  type: InfluxType,
+  overrides: Record<string, unknown> = {},
+  queryTimeout = QUERY_TIMEOUT,
+  egress = ALLOWS_PRIVATE_HOSTS,
+) => buildInfluxConnectionOptions(connection(type, overrides), { type, queryTimeout, egress });
 
 function tunnelled(type: InfluxType, overrides: Record<string, unknown>, farEnd: { host: string; port: number }) {
   return buildInfluxConnectionOptions(
@@ -63,7 +69,7 @@ function tunnelled(type: InfluxType, overrides: Record<string, unknown>, farEnd:
       ...connection(type, { host: "127.0.0.1", port: 41_001, sshTunnel: { enabled: true }, ...overrides }),
       [TUNNEL_FAR_END]: farEnd,
     },
-    { type, queryTimeout: QUERY_TIMEOUT },
+    { type, queryTimeout: QUERY_TIMEOUT, egress: ALLOWS_PRIVATE_HOSTS },
   );
 }
 
@@ -129,10 +135,13 @@ describe("the endpoint is exactly what it claims", () => {
     expect(refusal("influxdb", { port }).message).toBe("Invalid port: expected an integer from 1 to 65535");
   });
 
-  test("with the egress guard on, a private literal host is refused before anything else is read", () => {
-    setEgressFlag("true");
-    expect(refusal("influxdb3", { host: "10.0.0.5", user: TEST_USER }).message).toBe(BLOCKED_HOST);
-    expect(build("influxdb3", REMOTE).origin.host).toBe("influx.example.com");
+  test("with a blocking egress decision, a private literal host is refused before anything else is read, while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset", () => {
+    setEgressFlag(undefined);
+    const blocked = refused("influxdb3", () =>
+      build("influxdb3", { host: "10.0.0.5", user: TEST_USER }, QUERY_TIMEOUT, BLOCKS_PRIVATE_HOSTS),
+    );
+    expect(blocked.message).toBe(BLOCKED_HOST);
+    expect(build("influxdb3", REMOTE, QUERY_TIMEOUT, BLOCKS_PRIVATE_HOSTS).origin.host).toBe("influx.example.com");
   });
 
   test("through a tunnel the origin is the local forward and the endpoint the far end", () => {

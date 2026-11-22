@@ -20,6 +20,7 @@
 import { getAppVersion } from "@/lib/app-version";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { ConnectionError, DatabaseConfigError, QueryCancelledError, QueryError } from "@/lib/db/errors";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import type {
   ActiveSessionDetails,
   ClusterUsageInput,
@@ -36,8 +37,8 @@ import type {
   ObjectSourceDocument,
   PerformanceMetrics,
   PreparedQuery,
+  ProviderBuildContext,
   ProviderCapabilities,
-  ProviderExecutionContext,
   ProviderLabels,
   ProviderOptions,
   QueryPrepareOptions,
@@ -120,21 +121,25 @@ export class KubernetesProvider extends BaseDatabaseProvider {
   private readonly runs: RunRegistry = createRunRegistry();
   /** Whether this provider was opened under the agent read-only profile; only then does `queryReadOnly` answer. */
   private readonly readOnlyProfile: boolean;
+  /** The egress decision the factory built this provider with, handed to the origin each session builds. */
+  private readonly egress: ProviderBuildContext["egress"];
 
   /**
    * Validates nothing and opens nothing: the connection rules run in `connect()`, so a provider built only for its
-   * declarations (the factory's census, `POST /api/db/provider-meta`) touches no socket. The execution context is
-   * kept for `queryReadOnly` alone: every other path is read-only whatever a profile asks.
+   * declarations (the factory's census, `POST /api/db/provider-meta`) touches no socket. The build context gives the
+   * dialled origin its egress decision, and its profile is kept for `queryReadOnly` alone: every other path is read-only
+   * whatever a profile asks.
    */
   constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
     seams: Partial<KubernetesSeams> = {},
-    execution: ProviderExecutionContext = {},
+    execution: ProviderBuildContext = {},
   ) {
     super(config, options);
     this.seams = { ...DEFAULT_KUBERNETES_SEAMS, ...seams };
     this.readOnlyProfile = execution.readOnly === true;
+    this.egress = execution.egress;
   }
 
   /** Every member written out: the base's defaults are SQL's, so each flag here is a decision. */
@@ -220,6 +225,7 @@ export class KubernetesProvider extends BaseDatabaseProvider {
   private openSession(): KubernetesSession {
     const endpoint = readClusterEndpoint(this.config as DatabaseConnection & WithTunnelFarEnd, {
       queryTimeout: this.queryTimeout,
+      egress: requireEgressDecision(this.egress),
     });
     const client = createKubernetesClient(endpoint, this.seams);
     const lifetime = new AbortController();

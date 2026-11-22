@@ -122,6 +122,8 @@ The ADC file accepts the JSON kinds the provider lists; an access token is never
 
 Each refreshing kind has one strategy in a typed table, so a kind without a strategy does not compile.
 A lane is built on the first refresh that needs it, at most one per kind, and a pasted access token builds none.
+The token endpoint's origin is built through `httpOrigin` with `egress` from the deps, the egress decision of the provider that builds the token source.
+Its host is a fixed name, so the decision refuses none; it is handed so this origin is built as every other one is.
 `quotaProjectHeaders` gives the `x-goog-user-project` header for the provider's own API requests; no token request carries it.
 A token is held by the shared refresh: cached and refreshed 60 seconds before it expires; concurrent callers share one refresh, which runs on its own 30-second deadline, so no caller's abort fails the others; a failed refresh caches nothing.
 An answer without a usable `expires_in` lives Google's documented one hour.

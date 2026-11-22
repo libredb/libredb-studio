@@ -29,6 +29,7 @@ import {
   jsonAnswer,
   tokenAnswer,
 } from "../../../../helpers/auth-fakes";
+import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../../helpers/egress-decisions";
 
 const { privateKey, publicKey } = generateKeyPairSync("rsa", {
   modulusLength: 2048,
@@ -61,7 +62,8 @@ function fakeSeams(answer: FakeAnswer<GoogleAuthLane>) {
 }
 type FakeSeams = ReturnType<typeof fakeSeams>;
 
-function depsOf(seams: FakeSeams): GoogleTokenSourceDeps {
+/** The deps of one source; an allowing decision unless a case hands another, so the origin never refuses. */
+function depsOf(seams: FakeSeams, egress = ALLOWS_PRIVATE_HOSTS): GoogleTokenSourceDeps {
   return {
     scope: SCOPE,
     provider: "firestore",
@@ -69,12 +71,13 @@ function depsOf(seams: FakeSeams): GoogleTokenSourceDeps {
     now: () => seams.now(),
     timeoutSignal: (ms) => seams.timeoutSignal(ms),
     createTransport: seams.createTransport,
+    egress,
   };
 }
 
-function sourceOf(credentials: GoogleCredentials, answer: FakeAnswer<GoogleAuthLane>) {
+function sourceOf(credentials: GoogleCredentials, answer: FakeAnswer<GoogleAuthLane>, egress = ALLOWS_PRIVATE_HOSTS) {
   const seams = fakeSeams(answer);
-  return { seams, source: createGoogleTokenSource(credentials, depsOf(seams)) };
+  return { seams, source: createGoogleTokenSource(credentials, depsOf(seams, egress)) };
 }
 
 /** Lets queued microtasks run, so a refresh that awaits key import or a grant reaches its transport. */
@@ -471,6 +474,18 @@ describe("google token source lanes", () => {
       refusesUpgrade: true,
     });
     expect("refusesLinkLocal" in meta.seams.lanes[0].options).toBe(false);
+  });
+
+  test("the token lane is built on the same origin under a blocking and an allowing egress decision, since the token host is a fixed name", async () => {
+    const origins: unknown[] = [];
+    for (const egress of [BLOCKS_PRIVATE_HOSTS, ALLOWS_PRIVATE_HOSTS]) {
+      const { seams, source } = sourceOf(user, () => tokenAnswer("t"), egress);
+      // oxlint-disable-next-line no-await-in-loop -- one source per decision, each asked once
+      await source.token(signal);
+      origins.push(seams.lanes.map((lane) => [lane.lane, lane.options.origin]));
+    }
+    const expected = [["token", { scheme: "https", host: "oauth2.googleapis.com", port: 443 }]];
+    expect(origins).toEqual([expected, expected]);
   });
 
   test("close closes every lane the source built", async () => {

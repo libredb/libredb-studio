@@ -13,15 +13,17 @@
  * shared limiter's clauses run as written, and no `prepareQuery` is overridden.
  *
  * The constructor never dials or throws, so a census can build the provider unconnected; every refusal of the
- * connection comes from `connect()`, before any socket. The third argument replaces any of the transport's deps for a
- * test; the factory never passes it, and no connection field or environment variable stands in for the origin, which
- * `account.ts` builds from the Account field alone.
+ * connection comes from `connect()`, before any socket. The third argument is the build context, whose egress decision
+ * the origin is checked against. The fourth replaces any of the transport's deps for a test; the factory never passes
+ * it, and no connection field or environment variable stands in for the origin, which `account.ts` builds from the
+ * Account field alone.
  *
  * Every run, the connect statement and the role check included, is counted by its statements object until it ends
  * at its deadline, so `hasRunsInFlight()` keeps a cached provider through the idle sweep while one runs, and
  * `disconnect()` cancels each one that Snowflake has accepted.
  */
 import { QueryError } from "@/lib/db/errors";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import {
   assertContainerPathShape,
   assertObjectPathShape,
@@ -35,6 +37,7 @@ import type {
   DatabaseConnection,
   DatabaseObject,
   DatabaseOverview,
+  EgressDecision,
   HealthInfo,
   IndexStats,
   KindCount,
@@ -45,6 +48,7 @@ import type {
   ObjectKindSpec,
   ObjectSourceDocument,
   PerformanceMetrics,
+  ProviderBuildContext,
   ProviderCapabilities,
   ProviderLabels,
   ProviderOptions,
@@ -232,8 +236,8 @@ function refuse(sentence: string): never {
  * The account, the user, the sign-in method and its credential, then the role, in that order. An absent
  * method reads as `keypair`; a seed can write any other string, which is refused.
  */
-function readSettings(config: DatabaseConnection): SnowflakeSettings {
-  const endpoint = snowflakeEndpoint(config.host);
+function readSettings(config: DatabaseConnection, egress: EgressDecision): SnowflakeSettings {
+  const endpoint = snowflakeEndpoint(config.host, egress);
   if (isBlank(config.user)) refuse(SNOWFLAKE_FIELD_SENTENCES.userEmpty);
   const method: unknown = config.authMethod ?? "keypair";
   if (typeof method !== "string" || !SIGN_IN_METHODS.has(method)) refuse(SNOWFLAKE_FIELD_SENTENCES.method);
@@ -307,14 +311,18 @@ export class SnowflakeProvider extends SQLBaseProvider {
   /** Sessions whose close has begun, so a failed connect() and a disconnect() never close one twice. */
   private readonly closed = new WeakSet<SnowflakeSession>();
   private cautions: QueryWarning[] = [];
+  /** The egress decision the factory built this provider with, handed to the origin `connect()` builds. */
+  private readonly egress: ProviderBuildContext["egress"];
 
   /** Validates nothing and opens nothing: the connection's rules run in `connect()`, before any socket. */
   constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
+    execution: ProviderBuildContext = {},
     private readonly deps: Partial<SnowflakeTransportDeps> = {},
   ) {
     super(config, options);
+    this.egress = execution.egress;
   }
 
   // ==========================================================================
@@ -386,7 +394,7 @@ export class SnowflakeProvider extends SQLBaseProvider {
     let host = "";
     let cautions: QueryWarning[];
     try {
-      const settings = readSettings(this.config);
+      const settings = readSettings(this.config, requireEgressDecision(this.egress));
       host = settings.endpoint.host;
       const loaded: LoadedKey | null =
         settings.method === "keypair"

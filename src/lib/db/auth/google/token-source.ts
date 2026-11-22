@@ -1,8 +1,9 @@
 /**
  * Google OAuth2 access tokens with no Google SDK: jose signs the service-account assertion, the token endpoint is one
  * form POST to the fixed token URL, a refresh grant carries no scope, and the metadata server hands out the workload's
- * token. The scope, the provider label, the response cap, the clock, the deadline and the transport factory come in
- * as GoogleTokenSourceDeps; the lane options come from authLaneOptions, never from the caller.
+ * token. The scope, the provider label, the response cap, the clock, the deadline, the transport factory and the
+ * egress decision the token endpoint's origin is checked against come in as GoogleTokenSourceDeps; the lane options
+ * come from authLaneOptions, never from the caller.
  *
  * One cached token per source, held by the shared refreshing value (../refresh.ts): refreshed 60 seconds before it
  * expires; concurrent callers share one refresh, which runs on its own 30-second deadline so no caller's abort fails
@@ -12,7 +13,8 @@
  */
 import { importPKCS8, SignJWT } from "jose";
 import { AuthenticationError } from "@/lib/db/errors";
-import { endpointUrl, httpOriginWithCoreDecision } from "@/lib/db/http/endpoint";
+import type { EgressDecision } from "@/lib/db/http/egress-policy";
+import { endpointUrl, httpOrigin } from "@/lib/db/http/endpoint";
 import type { NodeResponse, NodeTransport, NodeTransportOptions } from "@/lib/db/http/node-transport";
 import { secretForms, serverText } from "@/lib/db/utils/server-text";
 import type { DatabaseType } from "@/lib/types";
@@ -45,6 +47,8 @@ export interface GoogleTokenSourceDeps {
   timeoutSignal(ms: number): AbortSignal;
   /** createNodeTransport in production; called at most once per lane kind, with options from authLaneOptions. */
   createTransport(options: NodeTransportOptions, lane: GoogleAuthLane): NodeTransport;
+  /** The egress decision the provider was built with, which the token endpoint's origin is checked against. */
+  readonly egress: EgressDecision;
 }
 
 export const GOOGLE_TOKEN_SOURCE_SENTENCES = Object.freeze({
@@ -80,7 +84,7 @@ type Strategy<K extends RefreshingKind> = (
 
 function tokenLane(context: StrategyContext): NodeTransport {
   return context.lane("token", () => ({
-    origin: httpOriginWithCoreDecision("https", new URL(GOOGLE_TOKEN_URL).hostname, 443),
+    origin: httpOrigin("https", new URL(GOOGLE_TOKEN_URL).hostname, 443, context.deps.egress),
   }));
 }
 
