@@ -584,6 +584,22 @@ Auto-refresh is off until the user starts it, as on every engine, and since `res
 - Index stats: `Snowflake has indexes only on hybrid tables; this schema has none.`
 - Storage is not offered: `Snowflake storage needs ACCOUNTADMIN; Studio does not read it.`
 
+#### Engine facets
+
+Which of the seven monitoring panels `snowflake` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/snowflake/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | Yes | `getPerformanceMetrics` asks the engine |
+| `slowQueries` | Yes | `getSlowQueries` asks the engine |
+| `activeSessions` | Yes | `getActiveSessions` asks the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | Yes | `getIndexStats` asks the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
 ### 8.3 Plan mode and agent operations
 
 Plan mode grounds through `SHOW` only, under its 10 s timer, and drafts SQL without running it; the draft reaches the editor, where the gate applies.

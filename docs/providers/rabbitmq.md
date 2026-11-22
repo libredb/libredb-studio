@@ -268,8 +268,24 @@ The tree handles about 1,200 virtual hosts; past that the `/api/vhosts` answer p
 ## 7. Monitoring and health
 
 `getHealth()` makes one GET, `/api/overview?columns=rabbitmq_version,product_name`; `getOverview()` two, the overview and `/api/health/checks/alarms`.
-The performance, slow-query, session, table, index and storage panels answer empty with no GET: RabbitMQ has no query log, and Studio does not list broker connections, because they name other users and client addresses.
+The performance, slow-query, session, table, index and storage reads answer empty with no GET, so none of those panels is offered (see Engine facets below): RabbitMQ has no query log, and Studio does not list broker connections, because they name other users and client addresses.
 No node name and no other principal's name is shown.
+
+### Engine facets
+
+Which of the seven monitoring panels `rabbitmq` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/stream/rabbitmq/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | No | `getTableStats` answers `[]` without asking the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
 
 ## 8. AI agent and MCP
 

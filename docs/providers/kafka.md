@@ -544,10 +544,10 @@ Each surface reads the Kafka protocol only, and a surface that cannot give an ho
 | `getHealth()` | a metadata read of the brokers, forced past the client's cache, then the log directories | The forced read must succeed, or the mapped error is thrown; `databaseSize` is the overview's figure, the cache hit ratio "N/A", and no active connection count, because Kafka does not report one and absence differs from zero |
 | `getOverview()` | the forced broker read, the topic listing, the configs of the lowest listed node id, and the log directories | `tableCount` is the exact topic count, internal topics excluded; `maxConnections` is that broker's `max.connections`, 0 ("no limit published") when the value is withheld or the configs are refused, and a value that is not a whole number is refused as a protocol error; `databaseSize` is the log-directory sum over every broker, labelled "on disk, all replicas, internal topics excluded", or "N/A" when that read is refused; `version` and `uptime` are "N/A", because the protocol reports neither a product version nor a start time |
 | `getStorageStats()` | the log directories | One row per broker and log directory, `broker <id>: <path>`, with the summed partition sizes of the listed topics and a usage percentage where the broker reports its totals; `[]` when the read is refused |
-| `getTableStats()` | none | `[]`: `TableStats.rowCount` is a required number, and a topic has no honest message count |
-| `getSlowQueries()`, `getActiveSessions()` | none | `[]`, with the empty states "Kafka exposes no query log" and "Kafka does not report client sessions over its protocol" |
-| `getIndexStats()` | none | `[]`: a topic has no index |
-| `getPerformanceMetrics()` | none | Every metric absent; the panel renders unavailable |
+| `getTableStats()` | none | `[]`: `TableStats.rowCount` is a required number, and a topic has no honest message count, so the panel is not offered |
+| `getSlowQueries()`, `getActiveSessions()` | none | `[]`, with the empty states "Kafka exposes no query log" and "Kafka does not report client sessions over its protocol"; neither panel is offered, so neither is read by the dashboard or drawn |
+| `getIndexStats()` | none | `[]`: a topic has no index, so the panel is not offered |
+| `getPerformanceMetrics()` | none | Every metric absent, so the panel is not offered: never read and not drawn |
 | `getPoolStats()` | not implemented | The route detects it by presence and shows its fallback |
 
 A principal without Describe on the cluster is refused the log directories, and one without DescribeConfigs on the cluster the broker configs, and each refusal degrades only its own figure; any other failure, and a refusal of any other read, still fails the panel.
@@ -561,6 +561,22 @@ On a handle opened for an agent-mode profile, which the `operations` workflow, p
 | `getOverview()`, `getStorageStats()` | refused with that reason: the overview needs the broker configs and the log directories, storage the log directories |
 | `getTableStats()`, `getIndexStats()`, `getSlowQueries()`, `getActiveSessions()` | refused with the reason Kafka has no such figure, rather than answered `[]`, so the model reads that the reading was not taken, never an empty reading as the broker's answer |
 | `getPerformanceMetrics()` | unchanged, every metric absent; the agent's operations readings do not read it |
+
+### Engine facets
+
+Which of the seven monitoring panels `kafka` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/stream/kafka/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | No | `getTableStats` answers `[]` without asking the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
 
 ---
 

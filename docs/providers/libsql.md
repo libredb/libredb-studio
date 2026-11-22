@@ -460,7 +460,7 @@ flight would be the provider describing itself. `maxConnections` is `0`, this co
 or catalog publishes one.
 
 `getSlowQueries()` answers `[]` for a reason of the engine's: libSQL keeps no statistics about
-finished statements. The empty state says exactly that instead of naming a PostgreSQL extension.
+finished statements, so the panel is not offered: it is never read and the dashboard draws no Queries tab for libSQL.
 
 ### 3.12 The dialect facts were re-measured, not inherited
 
@@ -1068,12 +1068,28 @@ Measured through the provider against both deployments (fixture: 2 tables, 3 and
 | Active connections | absent — Hrana is stateless |
 | Cache hit ratio | `N/A` — SQLite's counters are behind the C API, and no statement reaches them |
 | Health rows | `Integrity: OK`, `Journal Mode: wal` |
-| Slow queries | Empty, permanently: libSQL keeps no statement statistics |
-| Active sessions | Empty: no session exists to report |
-| Deadlocks | `0`, and it is a fact rather than a gap — SQLite serializes writers behind one write lock and refuses a second with `SQLITE_BUSY` |
+| Slow queries | Not offered: libSQL keeps no statement statistics, so the panel is never read and not drawn |
+| Active sessions | Not offered: no session exists to report |
+| Deadlocks | `0`, and it is a fact rather than a gap: SQLite serializes writers behind one write lock and refuses a second with `SQLITE_BUSY`. It is the performance panel's only figure and a constant, so that panel is not offered |
 | Table stats | `probe_customers` 3 rows, 4096 B table + 4096 B index; `probe_orders` 2000 rows, 53248 B |
 | Index stats | `idx_customers_country`, columns `[country]`, 4096 B, `scans: 0` (no per-index counter exists) |
 | Storage | One entry, `main`, 65536 B. No WAL size: no statement reports it |
+
+### Engine facets
+
+Which of the seven monitoring panels `libsql` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/libsql/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers the constant `{ deadlocks: 0 }` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | Yes | `getIndexStats` asks the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
 
 ---
 

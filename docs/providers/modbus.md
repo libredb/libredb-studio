@@ -358,6 +358,26 @@ The editor language id stays `modbus`, and the fence alias `modbusread` names th
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
 No MCP tool runs a Modbus request: the family declares no MCP facet, `MCP_EXPOSABLE.modbus` and `MCP_STATEMENT_READ.modbus` are false ([B160](../BACKLOG.md#b160-modbuss-agent-reads-are-paced-per-device-and-it-has-no-mcp-surface)), and `READ_ONLY_ENFORCED.modbus` is unchanged.
 
+## Monitoring
+
+No monitoring panel reads a Modbus device, so the monitoring dashboard draws none for this engine and says so.
+
+### Engine facets
+
+Which of the seven monitoring panels `modbus` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/industrial/modbus/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | No | `getOverview` answers constants and the size of the configured register map, never a figure the device reports |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | No | `getTableStats` answers `[]` without asking the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
+
 ## Migration DDL
 
 [`MODBUS_MIGRATION_DDL`](../../src/lib/db/providers/industrial/modbus/migration-ddl.ts) is what the schema-diff migration generator writes for `modbus`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.

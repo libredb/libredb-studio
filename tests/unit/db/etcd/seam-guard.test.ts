@@ -1607,9 +1607,11 @@ const SPEC_3_1_MODULES: readonly string[] = [
   "errors.ts",
   "labels.ts",
   "index.ts",
-  // The engine contract's connection string and execution UI rows (engine-contract spec 5.3), declared beside the provider.
+  // The engine contract's connection string, execution UI and engine facets rows (engine-contract spec 5.3), declared
+  // beside the provider.
   "connection-string.ts",
   "execution-ui.ts",
+  "engine-facets.ts",
   // The engine's migration DDL contract module (engine contract, migration DDL), which the registry under
   // src/lib/db/migration-ddl/ reads.
   "migration-ddl.ts",

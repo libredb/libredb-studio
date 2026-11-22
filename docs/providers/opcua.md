@@ -897,8 +897,8 @@ facts** — so what cannot be read is refused or named, and nothing is filled in
 | `getOverview()` | the product name with its software version, and the uptime, both read from `Server/ServerStatus` ([below](#71-what-the-overview-card-really-reads)); size `"unknown"`; `tableCount` and `indexCount` **0**, because the shape takes a number and a server has neither |
 | `getHealth()` | size and cache ratio `"unknown"`, no sessions, no slow queries |
 | `getStorageStats()` / `getTableStats()` / `getIndexStats()` | **refused**, with this provider's own sentence ([below](#72-a-panel-that-cannot-be-read-refuses-rather-than-reporting-zero)) |
-| `getSlowQueries()` | `[]`, and `getLabels().slowQueriesEmptyState` says why in the panel |
-| `getActiveSessions()` | `[]`, and `getLabels().sessionsEmptyState` says why in the panel |
+| `getSlowQueries()` | `[]`, and `getLabels().slowQueriesEmptyState` says why; the panel is not offered, so it is never read and not drawn |
+| `getActiveSessions()` | `[]`, and `getLabels().sessionsEmptyState` says why; the panel is not offered, so it is never read and not drawn |
 | `getPerformanceMetrics()` | `{}` |
 
 `CurrentSessionCount` (`i=2277`) is a number, not a session list, and it is not portable either:
@@ -936,15 +936,30 @@ passed, because each was right that the list is empty.
 
 They now reject with one sentence, `An OPC UA server holds an address space of nodes rather than
 tables, and publishes no table, index or size statistics: there is nothing here to measure. The nodes
-themselves are in the Keys panel.` `base-provider.ts` settles each panel separately and records a
-rejected one under `errors[panel]`, which the dashboard draws in the engine's own words.
+themselves are in the Keys panel.`
 
-**The two CORE panels keep their empty arrays**, because four rejections are read as a dead
-connection: slow queries and sessions say why through `getLabels()` instead, the member ten other
-providers use for exactly this. Their defaults are written for a SQL server, and that is not a
-theoretical mismatch — the Queries panel told an OPC UA reader to install `pg_stat_statements`, a
-PostgreSQL extension, and the Sessions panel said "No active sessions found." against a server that
-was holding this very session.
+**`getSlowQueries()` and `getActiveSessions()` keep their empty arrays**, and say why through `getLabels()`, the member ten other providers use for exactly this.
+The defaults are written for a SQL server, and that was not a theoretical mismatch: the Queries panel told an OPC UA reader to install `pg_stat_statements`, a PostgreSQL extension, and the Sessions panel said "No active sessions found." against a server that was holding this very session.
+
+Only the overview panel is offered in OPC UA's `ENGINE_FACETS` row ([Engine facets](#engine-facets)).
+`getMonitoringData` reads none of the six other panels and lists them in `notOffered`, so the dashboard draws the Overview tab and the pool view only, and none of the refusals or labels above is drawn.
+The refusals and empty arrays above are what each method answers when called directly.
+
+### Engine facets
+
+Which of the seven monitoring panels `opcua` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/industrial/opcua/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | No | `getTableStats` refuses with `OPCUA_NO_TABLE_STATISTICS` without asking the engine |
+| `indexes` | No | `getIndexStats` refuses with `OPCUA_NO_TABLE_STATISTICS` without asking the engine |
+| `storage` | No | `getStorageStats` refuses with `OPCUA_NO_TABLE_STATISTICS` without asking the engine |
 
 ## 8. Maintenance
 

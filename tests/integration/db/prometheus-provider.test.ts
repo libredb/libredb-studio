@@ -1387,11 +1387,12 @@ describe("monitoring", () => {
     await provider.disconnect();
   });
 
-  test("getMonitoringData answers every panel, with no panel error", async () => {
+  test("getMonitoringData answers every panel it offers, with no panel error", async () => {
     const provider = await connected();
     const data = await provider.getMonitoringData();
 
     expect(data.errors).toBeUndefined();
+    expect(data.notOffered).toEqual(["performance", "slowQueries", "activeSessions", "indexes"]);
     expect(data.overview?.version).toBe(BUILDINFO.data.version);
     expect(data.tables).toHaveLength(TSDB_TOP.data.seriesCountByMetricName.length);
     expect(uncaptured).toEqual([]);

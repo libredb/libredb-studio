@@ -57,8 +57,8 @@ export const OPCUA_LABELS: ProviderLabels = Object.freeze({
  * Why the Tables, Indexes and Storage panels have nothing to draw, in this engine's own terms.
  *
  * Those three have no label of their own to fall back on, so the provider REJECTS their reads and
- * this sentence travels as the rejection: `base-provider.ts` settles each panel separately and the
- * dashboard draws a refused one with the engine's words. An empty array there was drawn as a
+ * this sentence travels as the rejection to a direct caller; none of the three panels is offered in
+ * OPC UA's `ENGINE_FACETS` row, so `getMonitoringData` never reads them. An empty array there was drawn as a
  * measurement instead - "0 tables, 0 rows, 0 B" and "No tables found." against a server whose own
  * tree lists nine root folders, found by looking at the panel in a browser.
  */

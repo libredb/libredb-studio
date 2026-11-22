@@ -18,6 +18,7 @@ import {
   isRetryableError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 
 // ─── Mock provider ──────────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -189,6 +190,54 @@ describe("POST /api/admin/fleet-health", () => {
     expect(res.status).toBe(200);
     expect(data.results[0].status).toBe("healthy");
     expect(data.results[0].databaseSizeBytes).toBeUndefined();
+  });
+
+  test("an engine that offers the overview but not table statistics is asked for it once and carries its byte figure", async () => {
+    expect(ENGINE_FACETS.kafka.monitoring.overview).toBe("offered");
+    expect(ENGINE_FACETS.kafka.monitoring.tables).toBe("not-offered");
+    const kafkaProvider = createMockProvider();
+    mockGetOrCreateProvider.mockImplementation(async () => kafkaProvider);
+    const kafka = {
+      id: "conn-kafka",
+      name: "Events",
+      type: "kafka",
+      host: "broker.example.com",
+      port: 9092,
+      database: "",
+      createdAt: new Date(),
+    };
+
+    const req = createMockRequest("/api/admin/fleet-health", { method: "POST", body: { connections: [kafka] } });
+    const res = await POST(req);
+    const data = await parseResponseJSON<{ results: { databaseSizeBytes?: number }[] }>(res);
+
+    expect(res.status).toBe(200);
+    expect(kafkaProvider.getOverview).toHaveBeenCalledTimes(1);
+    expect(data.results[0].databaseSizeBytes).toBe(268435456);
+  });
+
+  test("an engine that does not offer the overview panel is never asked for it, and its row carries no byte figure", async () => {
+    const s3Provider = createMockProvider();
+    mockGetOrCreateProvider.mockImplementation(async () => s3Provider);
+    const s3 = {
+      id: "conn-s3",
+      name: "Objects",
+      type: "s3",
+      host: "objects.example.com",
+      port: 9000,
+      database: "",
+      createdAt: new Date(),
+    };
+
+    const req = createMockRequest("/api/admin/fleet-health", { method: "POST", body: { connections: [s3] } });
+    const res = await POST(req);
+    const data = await parseResponseJSON<{ results: { status: string; databaseSizeBytes?: number }[] }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.results[0].status).toBe("healthy");
+    expect(s3Provider.getHealth).toHaveBeenCalledTimes(1);
+    expect(s3Provider.getOverview).not.toHaveBeenCalled();
+    expect("databaseSizeBytes" in data.results[0]).toBe(false);
   });
 
   test("returns 403 for non-admin user", async () => {

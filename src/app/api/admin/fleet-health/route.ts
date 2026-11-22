@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createDatabaseProvider, getOrCreateProvider } from "@/lib/db";
+import { engineFacetsFor } from "@/lib/db/engine-facets";
 import type { DatabaseConnection } from "@/lib/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
@@ -112,10 +113,16 @@ export async function POST(request: Request) {
           // Best-effort and outside the latency measurement above: getOverview() is a second
           // round-trip this route did not previously make, and a provider that cannot answer it
           // (or has none of this data) must not turn a working connection into an error result.
-          const databaseSizeBytes = await provider
-            .getOverview()
-            .then((overview) => overview.databaseSizeBytes)
-            .catch(() => undefined);
+          // It is read only where the engine offers the overview panel (FND-4): elsewhere the
+          // overview is not a reading of the engine, so it is never asked for and no byte figure
+          // is carried.
+          const databaseSizeBytes =
+            engineFacetsFor(resolved.type).monitoring.overview === "offered"
+              ? await provider
+                  .getOverview()
+                  .then((overview) => overview.databaseSizeBytes)
+                  .catch(() => undefined)
+              : undefined;
 
           return {
             connectionId: conn.id,

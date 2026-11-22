@@ -493,13 +493,31 @@ A request without a schema is refused; the provider never falls back to `CURRENT
 Only three things are read: the version, from `SYSIBMADM.ENV_INST_INFO`, the counts of tables and indexes in `SYSCAT`, and the list of user tables and materialized query tables in `SYSCAT.TABLES`.
 The table list is what Run Statistics and Reorganize Table are run from: the object tree's menu items open the admin Operations list, or the monitoring Tables panel, at the table's row.
 Each row carries the catalog's `CARD` as its row count, which is -1 until RUNSTATS has run and reads as 0 then, and no size, which reads N/A.
-Every other panel is empty on purpose in this version, and says so:
+Every other read answers empty on purpose in this version, without asking the server: `getPerformanceMetrics` answers `{}`, and `getSlowQueries`, `getActiveSessions`, `getIndexStats` and `getStorageStats` answer `[]`.
+None of those five panels is offered (see Engine facets below), so `getMonitoringData` never reads them and the dashboard draws no Performance, Queries, Sessions or Storage tab for Db2.
+The empty-state labels the provider still ships are the labels for the `[]` that `getActiveSessions()` and `getSlowQueries()` answer, and no surface draws them while the panels are not offered:
 
 - Sessions: "Db2 sessions are not read in this version of the Db2 provider."
 - Slow queries: "Db2 query statistics are not read in this version of the Db2 provider."
 
-Database size and uptime read N/A, the cache ratio reads unavailable, and the index and storage statistics are empty.
-Only the table list can fail: a refused read is reported on that panel with the server's message, and the other panels still answer.
+The Overview tab reads database size and uptime as N/A.
+Only the table list can fail: a refused read is reported on that panel with the server's message, and the overview still answers.
+
+### Engine facets
+
+Which of the seven monitoring panels `db2` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/db2/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
 
 ## 10. Agent and MCP
 

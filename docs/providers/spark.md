@@ -495,10 +495,27 @@ No plan is requested beside an ordinary run.
 | Indexes | Empty: no Spark SQL statement lists indexes |
 | Storage | Refused: `Spark reports no storage figure Studio can read in this version.` |
 
+Only the overview is offered in Spark's `ENGINE_FACETS` row (Engine facets below), so `getMonitoringData` reads none of the six other panels and the dashboard draws the Overview tab and the pool view only; the rows above for those panels are what each method answers when called directly.
 A catalog with no current namespace, which Spark spells as an empty name, shows a table count of 0 and no "counted from" line.
 The overview's version is the server's text as the version sentences of [section 2.4](#24-test-connection) quote it: withheld whole when it holds the token, and otherwise cut to 64 characters.
 
 The 60 s connection pulse sends one AnalyzePlan on the metadata session, which also keeps that session from idling out.
+
+#### Engine facets
+
+Which of the seven monitoring panels `spark` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/spark/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | No | `getTableStats` refuses with `SPARK_MONITORING_LABELS.tablesRefused` without asking the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | No | `getStorageStats` refuses with `SPARK_MONITORING_LABELS.storageRefused` without asking the engine |
 
 ### 8.3 Plan mode and agent operations
 

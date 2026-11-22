@@ -455,6 +455,23 @@ On the no-cost Spark plan, a project that passes a product's no-cost quota has t
 ## 9. Monitoring & health
 
 Health and pulse reuse the connect probe; the overview and the monitoring panels send no request.
+The overview reports the version the server named at connect, so it is the one panel offered; the others answer empty without asking the server, so they are not offered, never read and not drawn.
+
+### Engine facets
+
+Which of the seven monitoring panels `firestore` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/document/firestore/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` reports the version the server named at connect |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | No | `getTableStats` answers `[]` without asking the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
 
 ## 10. Capabilities & labels
 

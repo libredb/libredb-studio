@@ -1104,6 +1104,50 @@ describe("useMonitoringData", () => {
     });
   });
 
+  // ── A switch shows none of the previous connection's payload ──────────
+  // The payload belongs to the selection that read it, as history does: a connection whose read is refused must
+  // answer its own error and no data, never the previous connection's panels under its own name.
+
+  test("a connection switch shows none of the previous connection's data, and a refused read is the new one's error", async () => {
+    const refused: DatabaseConnection = { ...mockConnection, id: "mon-k8s-refused", name: "Refused cluster" };
+
+    let releaseRefused: (() => void) | undefined;
+    const refusedLanded = new Promise<void>((resolve) => {
+      releaseRefused = resolve;
+    });
+
+    mockGlobalFetch({
+      "/api/db/monitoring": async (req) => {
+        const body = (await req.json()) as { connection: DatabaseConnection };
+        if (body.connection.id === refused.id) {
+          await refusedLanded;
+          return { ok: false, status: 400, json: { error: "overview read refused" } };
+        }
+        return { ok: true, json: mockMonitoringResponse };
+      },
+    });
+
+    const { result, rerender } = renderHook(({ conn }) => useMonitoringData(conn), {
+      initialProps: { conn: mockConnection as DatabaseConnection },
+    });
+
+    await waitFor(() => {
+      expect(result.current.data).not.toBeNull();
+    });
+
+    rerender({ conn: refused });
+
+    // The window before the new connection's answer lands holds none of the previous one's payload.
+    expect(result.current.data).toBeNull();
+
+    releaseRefused?.();
+
+    await waitFor(() => {
+      expect(result.current.error).toBe("overview read refused");
+    });
+    expect(result.current.data).toBeNull();
+  });
+
   // ── Returning after a failed excursion starts a fresh chart ───────────
 
   test("returning to a connection after a failed one starts a fresh history", async () => {

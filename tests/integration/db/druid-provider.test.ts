@@ -1627,12 +1627,14 @@ describe("DruidProvider monitoring", () => {
     const data = await provider.getMonitoringData();
 
     expect(data.overview?.version).toBe("unknown");
-    expect(data.performance).toEqual({});
-    expect(data.slowQueries).toEqual([]);
     expect(data.activeSessions).toEqual([]);
     expect(data.tables).toEqual([]);
-    expect(data.indexes).toEqual([]);
     expect(data.storage).toEqual([]);
+    // Druid has no query log, no cache figure and no secondary index to read: never read, listed instead.
+    expect(data.notOffered).toEqual(["performance", "slowQueries", "indexes"]);
+    expect(data.performance).toBeUndefined();
+    expect(data.slowQueries).toBeUndefined();
+    expect(data.indexes).toBeUndefined();
   });
 
   test("getMonitoringData fills every panel on a healthy cluster", async () => {

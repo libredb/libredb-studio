@@ -394,9 +394,25 @@ register.
 ## 7. Monitoring and health
 
 The health read reports the session: whether it is open, and the server's `session-id` and
-capability count from the hello. There are no performance metrics, no slow queries, no table or
-index statistics and no storage statistics, and each of those answers empty rather than throwing,
-because the truthful answer is that this engine publishes none of them.
+capability count from the hello.
+There are no performance metrics, no slow queries, no session list, no table or index statistics and no storage statistics: each of those methods refuses with its reason, because this engine publishes none of them.
+None of those six panels is offered, so `getMonitoringData` never reads them and the dashboard draws only the Overview tab and the pool view for NETCONF.
+
+### Engine facets
+
+Which of the seven monitoring panels `netconf` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/network/netconf/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` reports what the device's YANG library and datastore list said at connect |
+| `performance` | No | `getPerformanceMetrics` refuses with `SENTENCES.noMetrics` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` refuses with `SENTENCES.noMetrics` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` refuses with `SENTENCES.noSessions` without asking the engine |
+| `tables` | No | `getTableStats` refuses with `SENTENCES.noTables` without asking the engine |
+| `indexes` | No | `getIndexStats` refuses with `SENTENCES.noTables` without asking the engine |
+| `storage` | No | `getStorageStats` refuses with `SENTENCES.noStorage` without asking the engine |
 
 ## 8. Maintenance
 

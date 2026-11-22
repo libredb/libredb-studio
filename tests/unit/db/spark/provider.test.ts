@@ -2635,7 +2635,7 @@ describe("SparkProvider: Stop at the edges of a run", () => {
 });
 
 describe("SparkProvider: the panels through getMonitoringData", () => {
-  test("every panel getter is called: the overview, {}, the three [] and the two refusals", async () => {
+  test("only the overview is read and the six other panels are listed as not offered, and each getter still answers as before", async () => {
     const script = scripted({
       commands: {
         "SHOW CURRENT NAMESPACE": CURRENT,
@@ -2666,16 +2666,26 @@ describe("SparkProvider: the panels through getMonitoringData", () => {
       tableCount: 2,
       indexCount: 0,
     });
-    expect(data.performance).toStrictEqual({});
-    expect(data.slowQueries).toStrictEqual([]);
-    expect(data.activeSessions).toStrictEqual([]);
-    expect(data.indexes).toStrictEqual([]);
-    expect(data.tables).toBeUndefined();
-    expect(data.storage).toBeUndefined();
-    expect(data.errors).toStrictEqual({
-      tables: SPARK_MONITORING_LABELS.tablesRefused,
-      storage: SPARK_MONITORING_LABELS.storageRefused,
-    });
+    expect(data.notOffered).toStrictEqual([
+      "performance",
+      "slowQueries",
+      "activeSessions",
+      "tables",
+      "indexes",
+      "storage",
+    ]);
+    expect(Object.keys(data).sort()).toStrictEqual(["notOffered", "overview", "timestamp"]);
+    // Called directly, the getters core no longer calls answer as they did.
+    expect(await provider.getPerformanceMetrics()).toStrictEqual({});
+    expect(await provider.getSlowQueries()).toStrictEqual([]);
+    expect(await provider.getActiveSessions()).toStrictEqual([]);
+    expect(await provider.getIndexStats()).toStrictEqual([]);
+    expect(await provider.getTableStats().catch((error: Error) => error.message)).toBe(
+      SPARK_MONITORING_LABELS.tablesRefused,
+    );
+    expect(await provider.getStorageStats().catch((error: Error) => error.message)).toBe(
+      SPARK_MONITORING_LABELS.storageRefused,
+    );
     expect(await provider.getHealth()).toStrictEqual({
       databaseSize: "N/A",
       cacheHitRatio: "N/A",

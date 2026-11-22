@@ -524,6 +524,22 @@ Sessions are not read either:
 
 Performance, storage, table and index statistics are empty, and `/metrics` is never read ([D200](../BACKLOG.md)).
 
+### Engine facets
+
+Which of the seven monitoring panels `influxdb3` offers is its row in `ENGINE_FACETS`, declared in [`influxdb3-engine-facets.ts`](../../src/lib/db/providers/timeseries/influxdb/influxdb3-engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | No | `getTableStats` answers `[]` without asking the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
+
 ## 8. Maintenance
 
 None: no Admin > Operations card and no tree control is offered, because InfluxDB 3 compacts its own storage and the connection is read-only.

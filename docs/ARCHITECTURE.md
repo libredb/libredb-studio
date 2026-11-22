@@ -201,6 +201,10 @@ No `isMongoDB` / `=== 'mongodb'` checks outside provider classes. All behavior d
 The connection dialog reads the same way: each engine's fields are a row of `CONNECTION_FIELDS` in `src/lib/db/connection-fields.ts`, and its scheme, URL TLS reader, paste reader and seed checks a row of `CONNECTION_STRING` in `src/lib/db/connection-string/`, declared beside its provider.
 Each field is drawn from its row of `CONNECTION_FIELD_DESCRIPTORS` in the same module by one renderer, `src/components/ConnectionFieldControl.tsx`, in the order `src/lib/db/connection-field-layout.ts` works out, so `ConnectionModal.tsx` lays out only the engine-agnostic parts and names no engine and no engine-specific field.
 The rolled-back notice's keyword and the agent consent card's deadline chip and sentence are a row of `EXECUTION_UI` in `src/lib/db/execution-ui/`, read by type id so they answer without provider metadata, and the explain request's engine hint with no connection is `explainRequestEngine` there.
+Which of the seven monitoring panels an engine offers is a row of `ENGINE_FACETS` in `src/lib/db/engine-facets/`, declared beside its provider and read through `engineFacetsFor`.
+`BaseDatabaseProvider.getMonitoringData` hands the row to `readDeclaredPanels`, which reads only the offered panels, so a panel is answered, failed (with its sentence under `errors`), not requested, or not offered (listed in `notOffered` and never read).
+The monitoring dashboard, the admin Operations page and fleet health read the same row by type id and draw or ask for nothing an engine does not offer.
+When the whole read fails, `useMonitoringData` keeps only the payload its own selection read before, so a switch shows the new connection's error and none of the previous connection's panels, and the dashboard names a failed refresh beside the panels it keeps.
 `tests/unit/lib/no-engine-branches.test.ts` is the guard: outside the provider layer, a type-id branch fails unless its closed lists name it as a registry or a false positive, and its debt list of branches still to move is empty.
 
 `src/lib/db/object-kinds.ts` is the kernel through which every provider reads its own declaration, and it takes only facts that follow from the declaration and hold for every engine.
@@ -478,6 +482,8 @@ src/
     │   ├── http/            # endpoint.ts: the validated URL builder every HTTP transport uses (no redirects); node-transport.ts: the shared node:http(s) transport a new REST provider takes (one keep-alive Agent per connection, no proxy variables, a streamed byte cap, an optional request signer and AWS JSON media types); node-transport.ts also holds the byte transport (GET and HEAD to an exact target, bytes, selected headers, a per-request signer)
     │   ├── auth/            # How a connection signs in to a cloud service, not Studio's user sign-in (docs/DB_AUTH.md): server-identity-gate.ts (the operator opt-in rule), lanes.ts (credential-endpoint transport options), refresh.ts (a cached expiring value), google/ (credentials and the token source), aws/ (the SigV4 core, regions and endpoints, typed credentials and the request signer)
     │   ├── grpc/            # channel.ts: the one gRPC channel (options, unary and bidirectional calls, deadlines, aborts, the sent or unsent notice); credentials.ts: TLS credentials and the closing wrapper; tls.ts: the SSL / TLS panel, the TLS identity and the dial target, for every gRPC provider
+    │   ├── engine-facets/   # ENGINE_FACETS: the monitoring panels each engine offers, one row beside each provider,
+    │   │                    #   and readDeclaredPanels, the one orchestration of the panel reads
     │   ├── factory.ts       # Provider factory
     │   ├── query-dialects.ts # The dialect registry: each queryDialect's tab type and row-menu answers
     │   └── types.ts         # Database types

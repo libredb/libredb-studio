@@ -731,7 +731,7 @@ describe("LibreDBProvider — monitoring", () => {
     await provider.disconnect();
   });
 
-  test("getMonitoringData leaves the two refused panels absent with their sentences", async () => {
+  test("getMonitoringData lists the two refused panels as not offered, with no sentence, and reads the tables", async () => {
     rmDbFile(tmpFile);
     seedWithCatalog(tmpFile);
     const provider = new LibreDBProvider(makeConn(tmpFile));
@@ -740,11 +740,10 @@ describe("LibreDBProvider — monitoring", () => {
     const data = await provider.getMonitoringData();
     expect(data.activeSessions).toBeUndefined();
     expect(data.indexes).toBeUndefined();
-    expect(data.errors?.activeSessions).toBe(LIBREDB_ACTIVE_SESSIONS_REFUSAL);
-    expect(data.errors?.indexes).toBe(LIBREDB_INDEX_STATS_REFUSAL);
+    expect(data.notOffered).toEqual(["performance", "slowQueries", "activeSessions", "indexes"]);
+    expect(data.errors).toBeUndefined();
     // The panel that fabricated zero tables on a database with tables now answers.
     expect(data.tables?.length).toBe(5);
-    expect(data.errors?.tables).toBeUndefined();
     await provider.disconnect();
   });
 

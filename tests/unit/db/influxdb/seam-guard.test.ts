@@ -73,7 +73,12 @@ const BROWSER = [
 const INFLUXQL_SERVER = ["influxql-results", "influxql-objects", "influxql-provider", "influxql-agent-read"];
 const GRAMMAR = ["influxdb-sql-grammar", "influxdb3-sql-grammar"];
 /** Each type-id's declaration of a per-engine contract, which reads its contract and nothing of this directory. */
-const CONTRACT = ["influxdb-migration-ddl", "influxdb3-migration-ddl"];
+const CONTRACT = [
+  "influxdb-migration-ddl",
+  "influxdb3-migration-ddl",
+  "influxdb-engine-facets",
+  "influxdb3-engine-facets",
+];
 /** Each type-id's SQL writing row, which reads its contract's building blocks and nothing of this directory. */
 const WRITING = ["influxdb-sql-writing", "influxdb3-sql-writing"];
 

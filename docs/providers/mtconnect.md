@@ -349,6 +349,22 @@ The Header of a read without `from` and `to`: `instanceId`, `firstSequence`, `la
 `nextSequence` and `bufferSize`. MEASURED: with `to` given, `firstSequence` is the request's own
 `from` rather than the buffer's start, so buffer facts come only from a read without either.
 
+### Engine facets
+
+Which of the seven monitoring panels `mtconnect` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/industrial/mtconnect/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | No | `getTableStats` answers `[]` without asking the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
+
 ## 8. Maintenance
 
 None. A maintenance operation would be a write, and there is no request in this provider that

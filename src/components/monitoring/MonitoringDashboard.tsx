@@ -36,6 +36,8 @@ import { StorageTab } from "./tabs/StorageTab";
 import { PoolTab } from "./tabs/PoolTab";
 import { withConnectedMaintenance } from "@/lib/db/types";
 import { typeIdRefusal } from "@/lib/db/type-id";
+import { engineFacetsFor } from "@/lib/db/engine-facets";
+import type { MonitoringPanel } from "@/lib/db/engine-facets/types";
 import { ConnectionTypeLabel } from "@/components/connection-type-label";
 import {
   savedConnectionNotice,
@@ -48,6 +50,22 @@ import { useToast } from "@/hooks/use-toast";
 interface MonitoringDashboardProps {
   isEmbedded?: boolean;
 }
+
+/**
+ * The dashboard's tabs in display order, each with the monitoring panel it draws. Pool has no panel: it reads the
+ * connection pool, not `getMonitoringData`, so it is drawn for every engine that offers at least one panel; an engine
+ * that offers none gets the "No Monitoring Panels" body and no tab at all. A tab whose panel the connection's engine
+ * does not offer is not drawn. The index panel has no tab.
+ */
+const TABS: readonly { value: string; panel: MonitoringPanel | null; title: string; Icon: typeof Activity }[] = [
+  { value: "overview", panel: "overview", title: "Overview", Icon: LayoutDashboard },
+  { value: "performance", panel: "performance", title: "Performance", Icon: Activity },
+  { value: "queries", panel: "slowQueries", title: "Queries", Icon: Clock },
+  { value: "sessions", panel: "activeSessions", title: "Sessions", Icon: Users },
+  { value: "tables", panel: "tables", title: "Tables", Icon: Table2 },
+  { value: "storage", panel: "storage", title: "Storage", Icon: HardDrive },
+  { value: "pool", panel: null, title: "Pool", Icon: Database },
+];
 
 export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardProps) {
   const router = useRouter();
@@ -87,6 +105,22 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
     setShownId(selectedConnection.id);
   }
   const selectedRefusal = selectedConnection === null ? null : typeIdRefusal(selectedConnection.type);
+  // The panels the connection's engine offers, read from the same registry the server reads, so the tab bar is right
+  // before the first payload. Read only once the type is known to be a type id: the refusal above answers any other.
+  const offer =
+    selectedConnection !== null && selectedRefusal === null
+      ? engineFacetsFor(selectedConnection.type).monitoring
+      : null;
+  const offeredTabs = TABS.filter(({ panel }) => panel === null || offer?.[panel] === "offered");
+  const notOfferedTitles = TABS.filter(({ panel }) => panel !== null && offer?.[panel] === "not-offered").map(
+    ({ title }) => title,
+  );
+  // An engine that offers no panel has nothing for the monitoring read to fetch, so the hook below is handed no
+  // connection and the page says so instead of drawing a lone Pool tab.
+  const offersNoPanel = offer !== null && Object.values(offer).every((state) => state === "not-offered");
+  // The open tab when the engine offers it, otherwise the first tab it does: a pick made on another connection does
+  // not open a tab this one never draws.
+  const shownTab = offeredTabs.some(({ value }) => value === activeTab) ? activeTab : offeredTabs[0].value;
   // The saved active connection, when the first list names no provider for its type, is not replaced in silence: the
   // notice is decided once, on the first list, and raised by the effect below (FND-1).
   const [savedNotice, setSavedNotice] = useState<UnavailableNotice | null | undefined>(undefined);
@@ -136,7 +170,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
     killSession,
     runMaintenance,
     previewMaintenance,
-  } = useMonitoringData(waitingForCatalog ? null : selectedConnection, monitoringOptions, catalog);
+  } = useMonitoringData(waitingForCatalog || offersNoPanel ? null : selectedConnection, monitoringOptions, catalog);
 
   // The connected provider's maintenance over the declared capabilities (#1387): see
   // `withConnectedMaintenance`. The Sessions tab's Terminate and the Tables tab's per-row
@@ -306,11 +340,18 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
             Manage Connections
           </Button>
         </div>
-      ) : selectedRefusal !== null ? (
+      ) : offer === null ? (
+        // A selected connection has no offer exactly when its type is refused.
         <div className="flex flex-col items-center justify-center flex-1 gap-4 text-muted-foreground">
           <Database strokeWidth={1.5} className="h-12 w-12" />
           <h2 className="text-lg font-medium">Connection Unavailable</h2>
-          <p className="text-xs">{selectedRefusal.sentence}</p>
+          <p className="text-xs">{selectedRefusal?.sentence}</p>
+        </div>
+      ) : offersNoPanel ? (
+        <div className="flex flex-col items-center justify-center flex-1 gap-4 text-muted-foreground">
+          <Database strokeWidth={1.5} className="h-12 w-12" />
+          <h2 className="text-lg font-medium">No Monitoring Panels</h2>
+          <p className="text-xs">This engine offers no monitoring panel in LibreDB Studio.</p>
         </div>
       ) : (catalogsError ?? error) && !data ? (
         <div className="flex flex-col items-center justify-center flex-1 gap-4 text-destructive">
@@ -323,72 +364,42 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
         </div>
       ) : (
         <div className="flex-1 overflow-hidden">
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col h-full">
+          <Tabs value={shownTab} onValueChange={setActiveTab} className="flex flex-col h-full">
             {/* Tab Bar - Icon only on mobile, Icon + Text on desktop */}
             <div className="border-b bg-muted/30">
               <TabsList className="h-12 w-full justify-between sm:justify-start rounded-none bg-transparent p-0">
-                <TabsTrigger
-                  value="overview"
-                  className="flex-1 sm:flex-initial gap-2 px-2 sm:px-4 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent text-xs sm:text-xs"
-                  title="Overview"
-                >
-                  <LayoutDashboard strokeWidth={1.5} className="h-4 w-4 sm:h-4 sm:w-4" />
-                  <span className="hidden sm:inline">Overview</span>
-                </TabsTrigger>
-                <TabsTrigger
-                  value="performance"
-                  className="flex-1 sm:flex-initial gap-2 px-2 sm:px-4 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent text-xs sm:text-xs"
-                  title="Performance"
-                >
-                  <Activity strokeWidth={1.5} className="h-4 w-4 sm:h-4 sm:w-4" />
-                  <span className="hidden sm:inline">Performance</span>
-                </TabsTrigger>
-                <TabsTrigger
-                  value="queries"
-                  className="flex-1 sm:flex-initial gap-2 px-2 sm:px-4 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent text-xs sm:text-xs"
-                  title="Queries"
-                >
-                  <Clock strokeWidth={1.5} className="h-4 w-4 sm:h-4 sm:w-4" />
-                  <span className="hidden sm:inline">Queries</span>
-                </TabsTrigger>
-                <TabsTrigger
-                  value="sessions"
-                  className="flex-1 sm:flex-initial gap-2 px-2 sm:px-4 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent text-xs sm:text-xs"
-                  title="Sessions"
-                >
-                  <Users strokeWidth={1.5} className="h-4 w-4 sm:h-4 sm:w-4" />
-                  <span className="hidden sm:inline">Sessions</span>
-                </TabsTrigger>
-                <TabsTrigger
-                  value="tables"
-                  className="flex-1 sm:flex-initial gap-2 px-2 sm:px-4 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent text-xs sm:text-xs"
-                  title="Tables"
-                >
-                  <Table2 strokeWidth={1.5} className="h-4 w-4 sm:h-4 sm:w-4" />
-                  <span className="hidden sm:inline">Tables</span>
-                </TabsTrigger>
-                <TabsTrigger
-                  value="storage"
-                  className="flex-1 sm:flex-initial gap-2 px-2 sm:px-4 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent text-xs sm:text-xs"
-                  title="Storage"
-                >
-                  <HardDrive strokeWidth={1.5} className="h-4 w-4 sm:h-4 sm:w-4" />
-                  <span className="hidden sm:inline">Storage</span>
-                </TabsTrigger>
-                <TabsTrigger
-                  value="pool"
-                  className="flex-1 sm:flex-initial gap-2 px-2 sm:px-4 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent text-xs sm:text-xs"
-                  title="Pool"
-                >
-                  <Database strokeWidth={1.5} className="h-4 w-4 sm:h-4 sm:w-4" />
-                  <span className="hidden sm:inline">Pool</span>
-                </TabsTrigger>
+                {offeredTabs.map(({ value, title, Icon }) => (
+                  <TabsTrigger
+                    key={value}
+                    value={value}
+                    className="flex-1 sm:flex-initial gap-2 px-2 sm:px-4 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent text-xs sm:text-xs"
+                    title={title}
+                  >
+                    <Icon strokeWidth={1.5} className="h-4 w-4 sm:h-4 sm:w-4" />
+                    <span className="hidden sm:inline">{title}</span>
+                  </TabsTrigger>
+                ))}
               </TabsList>
+              {notOfferedTitles.length > 0 && (
+                <p className="px-3 py-1 text-xs text-muted-foreground sm:px-4" data-testid="monitoring-not-offered">
+                  {`Not offered by this engine: ${notOfferedTitles.join(", ")}.`}
+                </p>
+              )}
+              {/* A failed refresh keeps this selection's earlier payload, so the failure is named beside it. */}
+              {error && (
+                <p
+                  className="px-3 py-1 text-xs text-destructive sm:px-4"
+                  role="alert"
+                  data-testid="monitoring-read-failed"
+                >
+                  {`The last read failed, so the panels show the one before it: ${error}`}
+                </p>
+              )}
             </div>
 
             <div className="flex-1 overflow-auto">
               <TabsContent value="overview" className="h-full m-0 p-0">
-                <OverviewTab data={data} loading={loading} history={history} />
+                <OverviewTab offer={offer} data={data} loading={loading} history={history} />
               </TabsContent>
               <TabsContent value="performance" className="h-full m-0 p-0">
                 <PerformanceTab data={data} loading={loading} history={history} />
@@ -420,7 +431,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
                 />
               </TabsContent>
               <TabsContent value="storage" className="h-full m-0 p-0">
-                <StorageTab data={data} loading={loading} />
+                <StorageTab offer={offer} data={data} loading={loading} />
               </TabsContent>
               <TabsContent value="pool" className="h-full m-0 p-0">
                 <PoolTab connection={selectedConnection} catalog={catalog} />

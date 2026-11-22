@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D490, U17 · 363
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U222 · 207
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
 - [Dependencies](#dependencies) — P1-P14 · 12
 - [Documentation](#documentation) — DOC3-DOC38 · 32
 - [Release pipeline](#release-pipeline) — REL1-REL11 · 10
@@ -6183,9 +6183,10 @@ Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.
 
 ### U87. Monitoring's Overview and Storage tiles name tables, indexes and a buffer pool on key-value and streaming engines
 
-The Overview and Storage tabs draw the same SQL-shaped tiles for every engine, so a Redis connection reads "Tables 23 · 0 indexes" (23 is `DBSIZE`), "Buffer Pool", "Deadlocks" and "Checkpoint" as "Not measured", and Storage "Tables 0 B / Indexes 0 B / WAL N/A"; Kafka and Redpanda put every byte of topic data under "Other (unattributed)" beside "Tables 0 B 0.0%".
+The Overview and Storage tabs draw SQL-shaped tiles for every engine that offers their panels, so a Redis connection reads "Tables 23 · 0 indexes" (23 is `DBSIZE`), "Buffer Pool", "Deadlocks" and "Checkpoint" as "Not measured", and Storage "WAL N/A".
 Measured on Redis 8.10.2, Kafka 4.3.1 and Redpanda v26.2.3.
-The labels are fixed strings in `src/components/monitoring/tabs/OverviewTab.tsx` (`{overview?.indexCount ?? 0} indexes` and "Buffer Pool") and `src/components/monitoring/tabs/StorageTab.tsx` ("Tables", "Indexes", "WAL" and "Other (unattributed)").
+Since the engine facets registry (FND-4), the Storage tab draws its Tables and Indexes tiles, the Storage Breakdown and Largest Tables only where the engine offers table statistics, so Redis no longer reads "Tables 0 B / Indexes 0 B" there, and Kafka and Redpanda no longer put topic data under "Other (unattributed)" beside "Tables 0 B 0.0%".
+The labels that remain are fixed strings in `src/components/monitoring/tabs/OverviewTab.tsx` (`{overview?.indexCount ?? 0} indexes` and "Buffer Pool") and `src/components/monitoring/tabs/StorageTab.tsx` ("WAL").
 U71 is the same gap on the Tables tab.
 
 Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.
@@ -7608,6 +7609,17 @@ The next change in that browser pushes its copy of the collection whole, which r
 Found 2026-11-22 while reviewing the credential envelope's read path.
 
 **Done when:** a failed pull leaves the hook not ready, or ready without pushing until a later pull succeeds, the sync state shows the failure, and a hook test drives a failed `GET` followed by a change and shows nothing pushed.
+
+### U223. Fleet health drops a failed overview read and reports the row healthy
+
+`POST /api/admin/fleet-health` (`src/app/api/admin/fleet-health/route.ts`) reads `getOverview()` for the byte figure on an engine that offers the overview panel, and its `.catch(() => undefined)` turns any rejection into an absent `databaseSizeBytes`.
+The row still reads `healthy`, and nothing in the response says the overview read failed, so a refused read and an engine that reports no byte figure look the same.
+For example, a Redis user with `+info -dbsize` gets a healthy row with no `databaseSizeBytes`.
+The route's own comment states the exception, and `docs/API_DOCS.md` says the figure is absent when the read failed.
+
+Found 2026-11-22 while reviewing FND-4 slice 1.
+
+**Done when:** a failed overview read on an engine that offers the overview reaches the fleet-health row with the engine's sentence, the row still carries its health reading, and a route test drives a refused `getOverview` and asserts that sentence.
 
 ## Dependencies
 

@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import type { MonitoringPanelOffer } from "@/lib/db/engine-facets/types";
 import type { MonitoringData } from "@/lib/db/types";
 import type { TimeSeriesPoint } from "@/lib/time-series-buffer";
 import { evaluateThreshold, getThresholdColor, thresholdFor } from "@/lib/monitoring-thresholds";
@@ -16,12 +17,17 @@ import { MetricChart } from "./MetricChart";
 import { PanelUnavailable } from "../PanelUnavailable";
 
 interface OverviewTabProps {
+  /**
+   * The panels the connection's engine offers, its `ENGINE_FACETS` row: no figure is drawn from a panel the engine
+   * does not offer. Required, so no caller can draw every panel by leaving it out.
+   */
+  offer: MonitoringPanelOffer;
   data: MonitoringData | null;
   loading: boolean;
   history?: TimeSeriesPoint<MonitoringData>[];
 }
 
-export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
+export function OverviewTab({ offer, data, loading, history = [] }: OverviewTabProps) {
   if (loading && !data) {
     return <OverviewSkeleton />;
   }
@@ -103,6 +109,11 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
   const tableCountSampledFrom = overview?.tableCountSampledFrom;
   const tableFloor = tableCount.toLocaleString("en-US");
 
+  // A panel the engine does not offer was never read, so no card or row drawn from it is shown.
+  const offersPerformance = offer.performance === "offered";
+  const offersSlowQueries = offer.slowQueries === "offered";
+  const offersSessions = offer.activeSessions === "offered";
+
   return (
     <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">
       {/* Version & Status */}
@@ -165,30 +176,32 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
         </Card>
 
         {/* Cache Hit Ratio */}
-        <Card className={`p-0 border-2 transition-colors ${getThresholdColor(cacheThreshold)}`}>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 p-3 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Cache Hit</CardTitle>
-            <Activity strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-hue-green" />
-          </CardHeader>
-          <CardContent className="p-3 sm:p-4 pt-0">
-            {cacheHitRatio === undefined ? (
-              <>
-                <div className="text-lg sm:text-2xl font-medium text-muted-foreground">
-                  {CACHE_HIT_RATIO_UNAVAILABLE}
-                </div>
-                <p className="text-xs sm:text-xs text-muted-foreground mt-1 truncate">Not measured</p>
-              </>
-            ) : (
-              <>
-                <div className="text-lg sm:text-2xl font-medium">{cacheHitRatio.toFixed(1)}%</div>
-                <Progress value={cacheHitRatio} className="h-1 mt-1 sm:mt-2" />
-                <p className="text-xs sm:text-xs text-muted-foreground mt-1 truncate">
-                  {cacheHitRatio >= 90 ? "Excellent" : cacheHitRatio >= 80 ? "Good" : "Needs tuning"}
-                </p>
-              </>
-            )}
-          </CardContent>
-        </Card>
+        {offersPerformance && (
+          <Card className={`p-0 border-2 transition-colors ${getThresholdColor(cacheThreshold)}`}>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 p-3 sm:p-4 pb-1 sm:pb-2">
+              <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Cache Hit</CardTitle>
+              <Activity strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-hue-green" />
+            </CardHeader>
+            <CardContent className="p-3 sm:p-4 pt-0">
+              {cacheHitRatio === undefined ? (
+                <>
+                  <div className="text-lg sm:text-2xl font-medium text-muted-foreground">
+                    {CACHE_HIT_RATIO_UNAVAILABLE}
+                  </div>
+                  <p className="text-xs sm:text-xs text-muted-foreground mt-1 truncate">Not measured</p>
+                </>
+              ) : (
+                <>
+                  <div className="text-lg sm:text-2xl font-medium">{cacheHitRatio.toFixed(1)}%</div>
+                  <Progress value={cacheHitRatio} className="h-1 mt-1 sm:mt-2" />
+                  <p className="text-xs sm:text-xs text-muted-foreground mt-1 truncate">
+                    {cacheHitRatio >= 90 ? "Excellent" : cacheHitRatio >= 80 ? "Good" : "Needs tuning"}
+                  </p>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Tables & Indexes */}
         <Card className="p-0">
@@ -229,14 +242,20 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
       )}
 
       {/* Secondary Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-4">
-        <PerformanceSummaryCard
-          bufferPoolUsage={bufferPoolUsage}
-          deadlocks={deadlocks}
-          checkpointWriteTime={performance?.checkpointWriteTime}
-        />
-        <QuickStatsCard data={data} />
-      </div>
+      {(offersPerformance || offersSlowQueries || offersSessions) && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-4">
+          {offersPerformance && (
+            <PerformanceSummaryCard
+              bufferPoolUsage={bufferPoolUsage}
+              deadlocks={deadlocks}
+              checkpointWriteTime={performance?.checkpointWriteTime}
+            />
+          )}
+          {(offersSlowQueries || offersSessions) && (
+            <QuickStatsCard data={data} slowQueries={offersSlowQueries} sessions={offersSessions} />
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -369,7 +388,12 @@ function quickStat(rows: readonly unknown[] | undefined, count: () => number): s
   return rows === undefined ? "N/A" : String(count());
 }
 
-function QuickStatsCard({ data }: Readonly<{ data: MonitoringData | null }>) {
+/** `slowQueries` and `sessions` say whether the engine offers each panel; a row of a panel it does not offer is not drawn. */
+function QuickStatsCard({
+  data,
+  slowQueries: offersSlowQueries,
+  sessions: offersSessions,
+}: Readonly<{ data: MonitoringData | null; slowQueries: boolean; sessions: boolean }>) {
   const sessions = data?.activeSessions;
 
   return (
@@ -381,28 +405,34 @@ function QuickStatsCard({ data }: Readonly<{ data: MonitoringData | null }>) {
         </CardTitle>
       </CardHeader>
       <CardContent className="p-3 sm:p-4 pt-0 space-y-2 sm:space-y-3">
-        <div className="flex justify-between items-center">
-          <span className="text-xs sm:text-xs text-muted-foreground">Listed slow queries</span>
-          <Badge
-            variant={data?.slowQueries?.length ? "outline" : "secondary"}
-            className="text-xs"
-            data-testid="quick-stat-slow-queries"
-          >
-            {quickStat(data?.slowQueries, () => (data?.slowQueries ?? []).length)}
-          </Badge>
-        </div>
-        <div className="flex justify-between items-center">
-          <span className="text-xs sm:text-xs text-muted-foreground">Active of listed sessions</span>
-          <Badge variant="secondary" className="text-xs" data-testid="quick-stat-active">
-            {sessionActivityFigure(sessions ?? [], "active", sessions === undefined)}
-          </Badge>
-        </div>
-        <div className="flex justify-between items-center">
-          <span className="text-xs sm:text-xs text-muted-foreground">Idle of listed sessions</span>
-          <Badge variant="secondary" className="text-xs" data-testid="quick-stat-idle">
-            {sessionActivityFigure(sessions ?? [], "idle", sessions === undefined)}
-          </Badge>
-        </div>
+        {offersSlowQueries && (
+          <div className="flex justify-between items-center">
+            <span className="text-xs sm:text-xs text-muted-foreground">Listed slow queries</span>
+            <Badge
+              variant={data?.slowQueries?.length ? "outline" : "secondary"}
+              className="text-xs"
+              data-testid="quick-stat-slow-queries"
+            >
+              {quickStat(data?.slowQueries, () => (data?.slowQueries ?? []).length)}
+            </Badge>
+          </div>
+        )}
+        {offersSessions && (
+          <>
+            <div className="flex justify-between items-center">
+              <span className="text-xs sm:text-xs text-muted-foreground">Active of listed sessions</span>
+              <Badge variant="secondary" className="text-xs" data-testid="quick-stat-active">
+                {sessionActivityFigure(sessions ?? [], "active", sessions === undefined)}
+              </Badge>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-xs sm:text-xs text-muted-foreground">Idle of listed sessions</span>
+              <Badge variant="secondary" className="text-xs" data-testid="quick-stat-idle">
+                {sessionActivityFigure(sessions ?? [], "idle", sessions === undefined)}
+              </Badge>
+            </div>
+          </>
+        )}
       </CardContent>
     </Card>
   );

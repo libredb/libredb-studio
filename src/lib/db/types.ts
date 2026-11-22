@@ -27,6 +27,7 @@ import type {
   ForeignKeySchema,
   ExclusionConstraintSchema,
 } from "../types";
+import type { MonitoringPanel } from "./engine-facets/types";
 import { declaresDialect, dialectSpec } from "./query-dialects";
 import type { RunReadAllowance } from "./read-allowance";
 import type { MetadataOnlyDeclaration } from "./redaction/metadata-only";
@@ -3139,16 +3140,21 @@ export interface MonitoringData {
   /**
    * Every panel is optional, and ABSENCE is not ZERO here - the same distinction the
    * `activeConnections` comment above draws for a single field, applied to a whole panel.
-   * `getMonitoringData` reads the seven panels independently, so one read failing costs
-   * only its own panel: the field it would have filled is left absent and its own message
-   * is recorded under `errors`. An absent panel means "this engine could not answer",
-   * which is a different fact from an empty array or a zero - StarRocks 3.3 has no
-   * `information_schema.PROCESSLIST`, so `activeSessions` is absent there while an idle
-   * PostgreSQL answers `[]`. Rendering the first as the second would claim a measurement
-   * the engine refused to make (the very error `QueriesTab` in
-   * `src/components/monitoring/tabs/QueriesTab.tsx` documents for `slowQueries`). A
-   * consumer therefore gates on the field being present, and shows the `errors` entry in
-   * place of that panel.
+   * `getMonitoringData` reads the panels the engine offers independently, so one read failing
+   * costs only its own panel. A panel is in one of four states:
+   *
+   * - answered: the field is present;
+   * - failed: the field is absent and `errors` carries the engine's own sentence;
+   * - not requested: the field is absent, with no `errors` entry, and not listed in `notOffered`;
+   * - not offered: the field is absent and listed in `notOffered`; it was never read.
+   *
+   * A failed panel means "this engine could not answer", which is a different fact from an
+   * empty array or a zero - StarRocks 3.3 has no `information_schema.PROCESSLIST`, so
+   * `activeSessions` is absent there while an idle PostgreSQL answers `[]`. Rendering the
+   * first as the second would claim a measurement the engine refused to make (the very error
+   * `QueriesTab` in `src/components/monitoring/tabs/QueriesTab.tsx` documents for
+   * `slowQueries`). A consumer therefore gates on the field being present, shows the `errors`
+   * entry in place of a failed panel, and draws nothing for a panel not offered.
    */
   overview?: DatabaseOverview;
   performance?: PerformanceMetrics;
@@ -3162,11 +3168,17 @@ export interface MonitoringData {
    * ENGINE's own sentence (`Error.message`, not a generic stand-in), because it is the only
    * text that tells the user what the database actually refused. Absence of a panel plus its
    * entry here is how a partial read is reported; a panel that is absent with no entry here
-   * was simply not requested (`includeTables` and friends).
+   * was not requested (`includeTables` and friends) or is listed in `notOffered`.
    */
-  errors?: Partial<
-    Record<"overview" | "performance" | "slowQueries" | "activeSessions" | "tables" | "indexes" | "storage", string>
-  >;
+  errors?: Partial<Record<MonitoringPanel, string>>;
+  /**
+   * Every panel the engine does not offer, in `MONITORING_PANELS` order, whether or not the
+   * caller requested it: the engine's `ENGINE_FACETS` row says it has nothing to read for it,
+   * so it was never read, and no surface draws it. `getMonitoringData` always sets it (`[]`
+   * on an engine that offers all seven). Optional because a payload an embedding host builds
+   * itself may predate it.
+   */
+  notOffered?: readonly MonitoringPanel[];
   /**
    * The connected provider's maintenance declaration, added by `POST /api/db/monitoring` (#1387).
    *

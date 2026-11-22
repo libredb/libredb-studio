@@ -1436,7 +1436,7 @@ numbers this table used to carry had drifted, and a method name is greppable and
 | `getStorageStats()` | `_cluster/health` + `_cluster/stats` | **one row for the cluster**: `name` = `cluster_name`, `sizeBytes` = `indices.store.size_in_bytes`. **No row at all** when the size was unreported |
 | `getHealth()` | the above, composed | `databaseSize`; `activeConnections` **omitted**, carrying the overview's absence across; `cacheHitRatio` = the repo's word for "not measured"; `slowQueries` = `[]`; `activeSessions` = `[]` |
 
-**The slow-query panel is empty even though this product keeps top-N queries.** That is the sharpest
+**`getSlowQueries()` answers empty, and the slow-query panel is not offered, even though this product keeps top-N queries.** That is the sharpest
 "deliberately unused" decision in the provider: a stock 3.8.0 node ships a `top_queries-<date>` index —
 this provider *hides* it as engine bookkeeping ([§6](#6-schema-introspection)) — while upstream writes
 its slow log to a node **log file** that no API returns. Reading it would be a monitoring surface that
@@ -1477,12 +1477,14 @@ The honest empties, each with its reason:
   to a healthy 100 instead. Every other metric would read as a measurement of zero — and **the tabs did
   read them that way** until the rule #448 settled for the Storage tab reached them: measured
   2026-08-19 on this product, the Overview showed *Buffer Pool 0%* and *Deadlocks 0* for two fields
-  this payload omits. Both cards now read `N/A` beside *Not measured*, so the empty payload survives to
-  the screen. The numbers exist on this product's stats endpoints, so this is a recorded gap rather
+  this payload omits.
+  Since the answer asks the cluster nothing, the performance panel is not offered (see Engine facets below): `getMonitoringData` never reads it, and the Overview draws neither card.
+  The numbers exist on this product's stats endpoints, so this is a recorded gap rather
   than an impossibility.
 - **`getSlowQueries()` and `getActiveSessions()` return `[]` rather than throwing.** Nothing is broken
-  and nothing is misconfigured, so a monitoring tab should render as quiet, not as failed. Only
+  and nothing is misconfigured, so a caller of either method gets a quiet answer, not a failure. Only
   `runMaintenance()` throws, because that one is a *request to act*.
+  Neither answer asks the cluster, so neither panel is offered: the dashboard draws no Queries or Sessions tab for OpenSearch.
 - **`activeConnections` is absent, not 0.** The cluster counts open HTTP connections per node in its
   stats API, which is not one of this seam's five calls, and the shard and node counts that *are* here
   would be a different number wearing this field's name — so nothing is knowable, and the field is
@@ -1534,6 +1536,22 @@ missing byte count would blank a panel that already had the important number. It
 honestly: `getOverview()` shows `"N/A"` for the size **and omits `databaseSizeBytes`**, and
 `getStorageStats()` returns **no row at all** rather than a row claiming the cluster stores zero
 bytes.
+
+### Engine facets
+
+Which of the seven monitoring panels `opensearch` offers is its row in `ENGINE_FACETS`, declared in [`opensearch-engine-facets.ts`](../../src/lib/db/providers/sql/search/opensearch-engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
 
 ---
 
@@ -1630,8 +1648,8 @@ plan run answered with a native aggregation body, correct for the cluster and un
 SQL endpoint (measured in the browser, 2026-08-19). See
 [elasticsearch.md §9](./elasticsearch.md#9-capabilities--labels) for the mechanism, which is shared.
 
-`slowQueriesEmptyState` is the monitoring Queries panel's empty state, and it says what §7 already
-says about `getSlowQueries()`. That sentence was hardcoded to PostgreSQL's `pg_stat_statements`
+`slowQueriesEmptyState` was the monitoring Queries panel's empty state, and it says what §7 already
+says about `getSlowQueries()`; the slow-query panel is no longer offered, so the dashboard draws no Queries tab. That sentence was hardcoded to PostgreSQL's `pg_stat_statements`
 advice on every engine, measured in the browser on 2026-08-19 against **this** panel on a search
 connection (#463) - the #427 defect in another panel, and fixed the same way: by
 reading the label.

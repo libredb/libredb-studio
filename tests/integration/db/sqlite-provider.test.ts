@@ -1906,7 +1906,7 @@ describe("SQLiteProvider", () => {
   // --------------------------------------------------------------------------
 
   describe("getMonitoringData()", () => {
-    test("returns monitoring data with all sections", async () => {
+    test("returns the sections SQLite offers and lists the three it does not", async () => {
       provider = new SQLiteProvider(makeSQLiteConfig());
       await provider.connect();
 
@@ -1915,9 +1915,13 @@ describe("SQLiteProvider", () => {
       const data = await provider.getMonitoringData();
       expect(data.timestamp).toBeInstanceOf(Date);
       expect(data.overview).toBeDefined();
-      expect(data.performance).toBeDefined();
-      expect(data.slowQueries).toBeArray();
-      expect(data.activeSessions).toBeArray();
+      expect(data.tables).toBeArray();
+      expect(data.indexes).toBeArray();
+      expect(data.storage).toBeArray();
+      expect(data.notOffered).toEqual(["performance", "slowQueries", "activeSessions"]);
+      expect(data.performance).toBeUndefined();
+      expect(data.slowQueries).toBeUndefined();
+      expect(data.activeSessions).toBeUndefined();
     });
   });
 

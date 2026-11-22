@@ -577,10 +577,9 @@ export class OpcuaProvider extends BaseDatabaseProvider {
    * index or size statistics at all - it has no tables - so the honest answer is that the read
    * cannot be made, not that it was made and found nothing.
    *
-   * `base-provider.ts` settles each panel on its own and records a rejected one under
-   * `errors[panel]`, which the dashboard draws as the engine's own sentence; the two CORE panels
-   * that would turn four rejections into a dead connection (slow queries and sessions) keep their
-   * empty arrays and say why through `getLabels()` instead.
+   * None of these panels is offered in OPC UA's `ENGINE_FACETS` row, so `getMonitoringData` never
+   * reads them and no surface draws them; the refusal is what a direct caller gets. Slow queries and
+   * sessions keep their empty arrays and say why through `getLabels()` instead.
    */
   public async getStorageStats(): Promise<StorageStats[]> {
     if (this.agentProfile) this.agentWithheld(OPCUA_AGENT_WITHHELD.storage);

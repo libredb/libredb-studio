@@ -166,7 +166,7 @@ absence and zero are different facts: a zero is a measurement, and the Storage t
 formatted a `0 B` total and divided a 0.0% breakdown out of it. With the field absent the tab's two
 size cards read `N/A`, carry no percentage, and the breakdown is replaced by *"No storage size
 information available."* A provider that publishes a real `0` (Trino, Druid) has measured one and is
-unaffected. The **table, index and storage panels report nothing** — and for the table panel that
+unaffected. The **table, index and storage reads report nothing**, and for the table panel that
 became true only when the same rule was applied there. Measured 2026-08-21 in Chrome against this
 node, the monitoring **Tables** tab still summarised the empty `getTableStats()` as *Tables* `0` over
 *0 rows*, *Size* `0 B` over *Total*, and *Vacuum* `0` over *OK*, in the very frame where the Overview
@@ -1241,7 +1241,7 @@ connection list rather than a session list.
 
 ### 7.4 The panels that report nothing — and how they say so
 
-**ABSENT is not EMPTY.** `getMonitoringData` reads the seven panels independently, so a panel whose
+**ABSENT is not EMPTY.** `getMonitoringData` reads each panel the engine offers independently, so a panel whose
 read rejects is left out of the payload with the engine's own sentence recorded under
 `MonitoringData.errors`, and `PanelUnavailable` renders that sentence in its place. An empty array
 means the opposite: the engine looked and measured nothing. Until 2026-08-25 this provider answered
@@ -1266,18 +1266,38 @@ virtual table AND which of the three measured causes applies: this build has no
 connected role may not read the catalog. Three causes, three sentences, because they send the reader
 to three different places. See [§3.6](#36-a-monitoring-surface-degrades-on-a-denial-and-on-one-absent-keyspace).
 
-**One panel stays EMPTY on purpose.** Slow queries: there is no aggregate of finished statements
+**One method stays EMPTY on purpose.** Slow queries: there is no aggregate of finished statements
 anywhere CQL can read (`system_views.system_logs` is a tail of the node's log file, 0 rows on this
-image), **no statement is sent**, and `ProviderLabels.slowQueriesEmptyState` already carries
-Cassandra's own sentence into the panel — *"Cassandra keeps no aggregate of finished statements: the
-slow-query threshold writes to the node's log file rather than to a table."* Converting it would move
-the same sentence from a label the tab renders to an error entry, and buy nothing.
+image), **no statement is sent**, and `getSlowQueries()` answers `[]`.
+`ProviderLabels.slowQueriesEmptyState` carries Cassandra's own sentence for that answer: *"Cassandra keeps no aggregate of finished statements: the slow-query threshold writes to the node's log file rather than to a table."*
+Converting the answer to a refusal would move the same sentence from a label to an error entry, and buy nothing.
+
+**Four panels are not offered.**
+The three refused on every build and the slow-query panel are declared not offered in Cassandra's `ENGINE_FACETS` row ([Engine facets](#engine-facets)): `getMonitoringData` never reads them and lists them in `notOffered`, with no `errors` entry, and the dashboard draws no Queries, Tables or Storage tab for Cassandra.
+The three refusals in the table above are what each method answers when called directly; the slow-query sentence is the label for the `[]` that `getSlowQueries()` answers, and no surface draws it while the panel is not offered.
+The two panels refused only where `system_views` is absent stay offered: on such a build they fail with their sentence.
 
 `getHealth()` does **not** refuse: it degrades exactly as before, because
 `POST /api/db/test-connection` calls it and the connection dialog's save is gated on that request. A
 throwing health check would lock the whole ScyllaDB family out of the product
 ([§3.6](#36-a-monitoring-surface-degrades-on-a-denial-and-on-one-absent-keyspace)). A monitoring
 panel has the opposite obligation — it is the surface that must say what it could not read.
+
+### Engine facets
+
+Which of the seven monitoring panels `cassandra` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/cassandra/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | Yes | `getPerformanceMetrics` asks the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | Yes | `getActiveSessions` asks the engine |
+| `tables` | No | `getTableStats` refuses with `CASSANDRA_TABLE_STATS_REFUSAL` without asking the engine |
+| `indexes` | No | `getIndexStats` refuses with `CASSANDRA_INDEX_STATS_REFUSAL` without asking the engine |
+| `storage` | No | `getStorageStats` refuses with `CASSANDRA_STORAGE_STATS_REFUSAL` without asking the engine |
 
 ---
 
@@ -1349,9 +1369,7 @@ SQL, and each of those three is a syntax error here.
 
 `slowQueriesEmptyState` is declared — *"Cassandra keeps no aggregate of finished statements: the
 slow-query threshold writes to the node's log file rather than to a table."* — because
-`getSlowQueries()` is empty by design ([§7](#7-monitoring--health)), so the monitoring Queries panel
-is **always** empty here, and its hardcoded sentence used to tell the reader to enable
-`pg_stat_statements` (#463).
+`getSlowQueries()` is empty by design ([§7](#7-monitoring--health)), so the slow-query panel is not offered and the dashboard draws no Queries tab here; before that, the panel was **always** empty, and its hardcoded sentence used to tell the reader to enable `pg_stat_statements` (#463).
 
 ### SQL writing
 

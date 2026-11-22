@@ -2,6 +2,8 @@ import { describe, test, expect, spyOn } from "bun:test";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { maintenanceControl, offersCodeGeneration, offersColumnProfiling, offersSchemaDiagram } from "@/lib/db/types";
 import { AuthenticationError, ConnectionError, DatabaseConfigError, DatabaseError } from "@/lib/db/errors";
+import { ENGINE_FACETS } from "@/lib/db/engine-facets";
+import { MONITORING_PANELS } from "@/lib/db/engine-facets/types";
 import type {
   DatabaseConnection,
   QueryResult,
@@ -698,6 +700,7 @@ describe("BaseDatabaseProvider", () => {
       expect(data.tables).toBeArray();
       expect(data.indexes).toBeArray();
       expect(data.storage).toBeArray();
+      expect(data.notOffered).toEqual([]);
     });
 
     test("excludes tables when includeTables=false", async () => {
@@ -920,31 +923,33 @@ describe("getMonitoringData partial failures", () => {
     expect(data.errors).toBeUndefined();
   });
 
-  test("throws when ALL FOUR core reads reject, carrying every distinct sentence", async () => {
+  test("rejects when every panel it read rejected, carrying every distinct sentence", async () => {
     const provider = new TestProvider(makeConfig());
     await provider.connect();
-    provider.getOverview = async () => {
+    const lost = async () => {
       throw new Error("connection lost");
     };
-    provider.getPerformanceMetrics = async () => {
-      throw new Error("connection lost");
-    };
+    provider.getOverview = lost;
+    provider.getPerformanceMetrics = lost;
     provider.getSlowQueries = async () => {
       throw new Error("no slow log");
     };
     provider.getActiveSessions = async () => {
       throw new Error(STARROCKS);
     };
+    provider.getTableStats = lost;
+    provider.getIndexStats = lost;
+    provider.getStorageStats = lost;
 
-    // Duplicated sentences appear once: four reads against one dead socket say the
-    // same thing, and repeating it three times is noise, not information.
+    // Duplicated sentences appear once: seven reads against one dead socket say the
+    // same thing, and repeating it is noise, not information.
     await expect(provider.getMonitoringData()).rejects.toThrow(`connection lost; no slow log; ${STARROCKS}`);
   });
 
-  test("one sentence for all four rethrows the original error, keeping its class", async () => {
+  test("one sentence from every panel it read rethrows the original error, keeping its class", async () => {
     const provider = new TestProvider(makeConfig());
     await provider.connect();
-    // A dead connection answers the same sentence four times. The first rejection is
+    // A dead connection answers the same sentence on every read. The first rejection is
     // already a mapped provider error, so it must reach the route as itself: re-wrapping
     // it would re-classify from the text and cost /api/db/monitoring the status code it
     // answered before per-panel degradation landed.
@@ -956,8 +961,60 @@ describe("getMonitoringData partial failures", () => {
     provider.getPerformanceMetrics = throwRefused;
     provider.getSlowQueries = throwRefused;
     provider.getActiveSessions = throwRefused;
+    provider.getTableStats = throwRefused;
+    provider.getIndexStats = throwRefused;
+    provider.getStorageStats = throwRefused;
 
     await expect(provider.getMonitoringData()).rejects.toBe(refused);
+  });
+
+  test("the core reads rejecting while a table read answers is a partial answer", async () => {
+    const provider = new TestProvider(makeConfig());
+    await provider.connect();
+    const lost = async () => {
+      throw new Error("connection lost");
+    };
+    provider.getOverview = lost;
+    provider.getPerformanceMetrics = lost;
+    provider.getSlowQueries = lost;
+    provider.getActiveSessions = lost;
+
+    const data = await provider.getMonitoringData();
+
+    expect(data.tables).toBeArray();
+    expect(data.indexes).toBeArray();
+    expect(data.storage).toBeArray();
+    expect(data.errors).toEqual({
+      overview: "connection lost",
+      performance: "connection lost",
+      slowQueries: "connection lost",
+      activeSessions: "connection lost",
+    });
+  });
+
+  test("getMonitoringData reads the declaration of the connection's own type", async () => {
+    const provider = new TestProvider(makeConfig({ type: "kafka" }));
+    await provider.connect();
+    const methods = {
+      overview: "getOverview",
+      performance: "getPerformanceMetrics",
+      slowQueries: "getSlowQueries",
+      activeSessions: "getActiveSessions",
+      tables: "getTableStats",
+      indexes: "getIndexStats",
+      storage: "getStorageStats",
+    } as const;
+    const spies = MONITORING_PANELS.map((panel) => [panel, spyOn(provider, methods[panel])] as const);
+    const offer = ENGINE_FACETS.kafka.monitoring;
+    const notOffered = MONITORING_PANELS.filter((panel) => offer[panel] === "not-offered");
+
+    const data = await provider.getMonitoringData();
+
+    expect(notOffered.length).toBeGreaterThan(0);
+    expect(data.notOffered).toEqual(notOffered);
+    for (const [panel, spy] of spies) {
+      expect(spy, panel).toHaveBeenCalledTimes(offer[panel] === "offered" ? 1 : 0);
+    }
   });
 
   test("a non-Error rejection reason is stringified rather than dropped", async () => {

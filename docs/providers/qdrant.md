@@ -409,6 +409,22 @@ Sessions, performance and storage are not read either:
 
 Studio never reads `/telemetry`, `/metrics`, `/profiler`, `/debugger`, `/stacktrace`, `/logger`, `/issues`, `/audit/logs` or a snapshot download.
 
+### Engine facets
+
+Which of the seven monitoring panels `qdrant` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/vector/qdrant/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | Yes | `getIndexStats` asks the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
+
 ## 8. Maintenance
 
 None: Qdrant has no maintenance operation in v1, so no Admin > Operations card and no tree control is offered for it.

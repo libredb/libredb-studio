@@ -69,6 +69,7 @@ import { sessionActivityFigure } from "@/lib/session-activity";
 import { CatalogSelect } from "@/components/catalog-select";
 import { ConnectionTypeLabel } from "@/components/connection-type-label";
 import { typeIdRefusal } from "@/lib/db/type-id";
+import { engineFacetsFor } from "@/lib/db/engine-facets";
 import {
   savedConnectionNotice,
   shownConnection,
@@ -303,6 +304,12 @@ export function OperationsTab() {
   // Adjusting state during render, as SavedQueries does for its refresh trigger: the id recorded is the one drawn.
   if (selectedConnection !== null && selectedConnection.id !== shownId) setShownId(selectedConnection.id);
   const selectedRefusal = selectedConnection === null ? null : typeIdRefusal(selectedConnection.type);
+  // The monitoring panels the connection's engine offers (FND-4), read only once its type is known to be a type id: the
+  // refusal above answers any other. A Sessions or Tables card is drawn only for a panel the engine offers.
+  const monitoringOffer =
+    selectedConnection !== null && selectedRefusal === null
+      ? engineFacetsFor(selectedConnection.type).monitoring
+      : null;
   // The saved active connection, when the first list names no provider for its type, is not replaced in silence: the
   // notice is decided once, on the first list, and raised by the effect below (FND-1).
   const [savedNotice, setSavedNotice] = useState<UnavailableNotice | null | undefined>(undefined);
@@ -488,6 +495,20 @@ export function OperationsTab() {
   };
   // Declared cards count: an engine may offer none of the operations the three worded cards send.
   const anyMaintenance = globalAnalyze || globalVacuum || globalReindex || declaredCards.length > 0;
+  const drawsTablesCard = rowsAreAddressable && monitoringOffer?.tables === "offered";
+  const drawsSessionsCard = monitoringOffer?.activeSessions === "offered";
+  // With no maintenance and neither card the page would hold only the connection picker, so it says why. Each claim is
+  // read from what decides it: "no maintenance" from known capabilities (`metadata` is null while provider-meta is in
+  // flight or has failed, and then nothing is claimed), "no session list" and "no table statistics" from the engine's
+  // offer. An engine that offers table statistics whose rows are derived groupings gets its own sentence, because the
+  // Tables card is withheld there for that reason and not because the engine offers none.
+  const noMaintenanceKnown = metadata !== null && !anyMaintenance && !drawsSessionsCard;
+  const nothingOffered = noMaintenanceKnown && monitoringOffer?.tables === "not-offered";
+  const derivedTablesOnly = noMaintenanceKnown && monitoringOffer?.tables === "offered" && !rowsAreAddressable;
+  // A failed provider-meta read (`metadata` is then null) withholds every maintenance control, so the page names that
+  // failure; what the engine's row says it does not offer still holds, because the row is read by type id.
+  const capabilitiesFailed = metadataError !== null;
+  const noPanelsOffered = !drawsSessionsCard && monitoringOffer?.tables === "not-offered";
 
   // The per-row controls, in the provider's own words: the tab's own candidates, then every declared operation outside
   // `MaintenanceType` that runs on one row, in declaration order and under a generic icon (spec 3.11).
@@ -970,265 +991,303 @@ export function OperationsTab() {
 
       {maintenanceReport && <MaintenanceResultTable report={maintenanceReport} />}
 
+      {nothingOffered && (
+        <p className="text-sm text-fg-muted" data-testid="operations-nothing-offered">
+          This engine offers no maintenance, no session list and no table statistics in LibreDB Studio.
+        </p>
+      )}
+
+      {capabilitiesFailed && (
+        <div className="text-sm text-fg-muted" data-testid="operations-capabilities-unavailable">
+          <p>Maintenance is withheld because this engine&apos;s capabilities could not be read.</p>
+          <p className="text-xs break-words" data-testid="operations-capabilities-unavailable-message">
+            {metadataError}
+          </p>
+        </div>
+      )}
+
+      {capabilitiesFailed && noPanelsOffered && (
+        <p className="text-sm text-fg-muted" data-testid="operations-no-panels-offered">
+          This engine offers no session list and no table statistics in LibreDB Studio.
+        </p>
+      )}
+
+      {derivedTablesOnly && (
+        <p className="text-sm text-fg-muted" data-testid="operations-derived-tables-only">
+          This engine offers no maintenance and no session list in LibreDB Studio. Its table statistics group keys
+          rather than name tables, so they are drawn on the Monitoring dashboard&apos;s Tables tab and not here.
+        </p>
+      )}
+
       {/* Tables + Sessions Split */}
-      <div className="grid gap-6 md:grid-cols-2">
-        {/* Table Operations — absent where the provider's rows are derived groupings */}
-        {rowsAreAddressable && (
-          <div className="rounded-xl border border-hairline bg-panel">
-            <div className="p-4 border-b border-hairline flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Table2 className="w-4 h-4 text-brand" />
-                <span className="text-xs font-bold text-fg-secondary">
-                  {tablesUnavailable ? "Tables" : `${listNoun} (${tables.length})`}
-                </span>
+      {(drawsTablesCard || drawsSessionsCard) && (
+        <div className="grid gap-6 md:grid-cols-2">
+          {/* Table Operations: absent where the provider's rows are derived groupings, or the engine offers no table
+            statistics */}
+          {drawsTablesCard && (
+            <div className="rounded-xl border border-hairline bg-panel">
+              <div className="p-4 border-b border-hairline flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Table2 className="w-4 h-4 text-brand" />
+                  <span className="text-xs font-bold text-fg-secondary">
+                    {tablesUnavailable ? "Tables" : `${listNoun} (${tables.length})`}
+                  </span>
+                </div>
+                <Input
+                  placeholder="Filter..."
+                  value={tableSearch}
+                  onChange={(e) => setTableSearch(e.target.value)}
+                  className="w-[140px] h-7 text-xs bg-raised border-hairline-strong"
+                />
               </div>
-              <Input
-                placeholder="Filter..."
-                value={tableSearch}
-                onChange={(e) => setTableSearch(e.target.value)}
-                className="w-[140px] h-7 text-xs bg-raised border-hairline-strong"
-              />
-            </div>
-            {/* Outside the scrolling list, so it heads every row however far the list is scrolled. */}
-            {listScope !== undefined && (
-              <p
-                className="px-4 py-2 border-b border-hairline text-xs text-fg-muted"
-                data-testid="operations-tables-list-scope"
-              >
-                {listScope}
-              </p>
-            )}
-            <div className="max-h-[350px] overflow-y-auto">
-              {loading && tables.length === 0 ? (
-                <div className="p-4 space-y-2">
-                  {[...Array(5)].map((_, i) => (
-                    <Skeleton key={i} className="h-10 w-full bg-overlay" />
-                  ))}
-                </div>
-              ) : visibleTables.length === 0 ? (
-                <div className="p-8 text-center text-fg-subtle text-sm" data-testid="operations-tables-empty">
-                  {/* A filter that matched none of a partial list saw only the listed rows, and a
+              {/* Outside the scrolling list, so it heads every row however far the list is scrolled. */}
+              {listScope !== undefined && (
+                <p
+                  className="px-4 py-2 border-b border-hairline text-xs text-fg-muted"
+                  data-testid="operations-tables-list-scope"
+                >
+                  {listScope}
+                </p>
+              )}
+              <div className="max-h-[350px] overflow-y-auto">
+                {loading && tables.length === 0 ? (
+                  <div className="p-4 space-y-2">
+                    {[...Array(5)].map((_, i) => (
+                      <Skeleton key={i} className="h-10 w-full bg-overlay" />
+                    ))}
+                  </div>
+                ) : visibleTables.length === 0 ? (
+                  <div className="p-8 text-center text-fg-subtle text-sm" data-testid="operations-tables-empty">
+                    {/* A filter that matched none of a partial list saw only the listed rows, and a
                       table outside them may match, so it must not say no table was found. */}
-                  {tablesUnavailable ??
-                    (listScope !== undefined && tables.length > 0
-                      ? "No listed table matches the filter."
-                      : "No tables found.")}
-                </div>
-              ) : (
-                <div className="divide-y divide-hairline">
-                  {visibleTables.map((table) => (
-                    <div
-                      key={`${table.schemaName}.${table.tableName}`}
-                      data-selected={isDeepLinkedRow(table) ? "true" : undefined}
-                      className={`group flex items-center justify-between px-4 py-2 hover:bg-fill transition-colors ${
-                        isDeepLinkedRow(table) ? "bg-fill" : ""
-                      }`}
-                    >
-                      <div className="min-w-0">
-                        <div className="flex items-baseline min-w-0 text-sm font-medium text-fg-secondary">
-                          {/* A row with no schema (a Prometheus metric, a search index) prints its bare name. */}
-                          {table.schemaName !== "" && (
-                            <>
-                              <span className="shrink-0 text-fg-muted">{table.schemaName}</span>
-                              <span className="shrink-0 text-fg-subtle">.</span>
-                            </>
-                          )}
-                          <span className="truncate max-w-[160px]">{table.tableName}</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-xs text-fg-muted">
-                          {table.addressed ? (
-                            <span data-testid="operations-addressed-unmeasured">Not measured</span>
-                          ) : (
-                            <>
-                              {/* Dropped whole, separator included, where the catalog published no
-                                  estimate - CockroachDB's NULL `reltuples` (#1540). */}
-                              {table.rowCount !== undefined && (
-                                <>
-                                  <span className="font-mono">{table.rowCount.toLocaleString()} rows</span>
-                                  <span>-</span>
-                                </>
-                              )}
-                              <span className="font-mono">{table.tableSize}</span>
-                              {(table.bloatRatio ?? 0) > 10 && (
-                                <Badge
-                                  variant="outline"
-                                  className="text-[0.625rem] text-hue-yellow border-hue-yellow-tint/20 h-4"
-                                >
-                                  {(table.bloatRatio ?? 0).toFixed(0)}% bloat
-                                </Badge>
-                              )}
-                            </>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                        {tableActions.map(({ type, label, Icon, hover }) => (
-                          <Button
-                            key={type}
-                            size="icon"
-                            variant="ghost"
-                            className={`w-7 h-7 text-fg-muted ${hover}`}
-                            title={label}
-                            onClick={() => handleRunMaintenance(type, table.tableName, table.schemaName)}
-                            disabled={!!actionLoading}
-                          >
-                            {actionLoading === `${type}-${table.tableName}` ? (
-                              <LoaderCircle className="w-3 h-3 animate-spin" />
-                            ) : (
-                              <Icon className="w-3 h-3" />
+                    {tablesUnavailable ??
+                      (listScope !== undefined && tables.length > 0
+                        ? "No listed table matches the filter."
+                        : "No tables found.")}
+                  </div>
+                ) : (
+                  <div className="divide-y divide-hairline">
+                    {visibleTables.map((table) => (
+                      <div
+                        key={`${table.schemaName}.${table.tableName}`}
+                        data-selected={isDeepLinkedRow(table) ? "true" : undefined}
+                        className={`group flex items-center justify-between px-4 py-2 hover:bg-fill transition-colors ${
+                          isDeepLinkedRow(table) ? "bg-fill" : ""
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-baseline min-w-0 text-sm font-medium text-fg-secondary">
+                            {/* A row with no schema (a Prometheus metric, a search index) prints its bare name. */}
+                            {table.schemaName !== "" && (
+                              <>
+                                <span className="shrink-0 text-fg-muted">{table.schemaName}</span>
+                                <span className="shrink-0 text-fg-subtle">.</span>
+                              </>
                             )}
-                          </Button>
-                        ))}
+                            <span className="truncate max-w-[160px]">{table.tableName}</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-xs text-fg-muted">
+                            {table.addressed ? (
+                              <span data-testid="operations-addressed-unmeasured">Not measured</span>
+                            ) : (
+                              <>
+                                {/* Dropped whole, separator included, where the catalog published no
+                                  estimate - CockroachDB's NULL `reltuples` (#1540). */}
+                                {table.rowCount !== undefined && (
+                                  <>
+                                    <span className="font-mono">{table.rowCount.toLocaleString()} rows</span>
+                                    <span>-</span>
+                                  </>
+                                )}
+                                <span className="font-mono">{table.tableSize}</span>
+                                {(table.bloatRatio ?? 0) > 10 && (
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[0.625rem] text-hue-yellow border-hue-yellow-tint/20 h-4"
+                                  >
+                                    {(table.bloatRatio ?? 0).toFixed(0)}% bloat
+                                  </Badge>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {tableActions.map(({ type, label, Icon, hover }) => (
+                            <Button
+                              key={type}
+                              size="icon"
+                              variant="ghost"
+                              className={`w-7 h-7 text-fg-muted ${hover}`}
+                              title={label}
+                              onClick={() => handleRunMaintenance(type, table.tableName, table.schemaName)}
+                              disabled={!!actionLoading}
+                            >
+                              {actionLoading === `${type}-${table.tableName}` ? (
+                                <LoaderCircle className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <Icon className="w-3 h-3" />
+                              )}
+                            </Button>
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {rowsSayReadOnly && (
+                <p className="px-4 pb-4 text-xs text-fg-muted leading-relaxed" data-testid="operations-rows-read-only">
+                  {READ_ONLY_MAINTENANCE}
+                </p>
+              )}
+              {maintenanceUnreachable && (
+                <TableMaintenanceUnreachableNote
+                  actions={tableActions.map((a) => a.label)}
+                  missingTable={deepLinkRowMissing ? deepLinkedTable : null}
+                />
               )}
             </div>
-            {rowsSayReadOnly && (
-              <p className="px-4 pb-4 text-xs text-fg-muted leading-relaxed" data-testid="operations-rows-read-only">
-                {READ_ONLY_MAINTENANCE}
-              </p>
-            )}
-            {maintenanceUnreachable && (
-              <TableMaintenanceUnreachableNote
-                actions={tableActions.map((a) => a.label)}
-                missingTable={deepLinkRowMissing ? deepLinkedTable : null}
-              />
-            )}
-          </div>
-        )}
+          )}
 
-        {/* Session Manager */}
-        <div className="rounded-xl border border-hairline bg-panel">
-          <div className="p-4 border-b border-hairline">
-            <div className="flex items-center gap-2 mb-3">
-              <Users className="w-4 h-4 text-hue-green" />
-              <span className="text-xs font-bold text-fg-secondary">
-                {sessionsUnavailable ? "Sessions" : `Sessions (${sessions.length})`}
-              </span>
-            </div>
-            <div className="grid grid-cols-4 gap-2">
-              <div className="rounded-lg bg-fill p-2 text-center">
-                <div className="text-lg font-bold text-fg tabular-nums" data-testid="operations-session-stat-active">
-                  {activeCount}
+          {/* Session Manager: absent where the engine offers no session list */}
+          {drawsSessionsCard && (
+            <div className="rounded-xl border border-hairline bg-panel">
+              <div className="p-4 border-b border-hairline">
+                <div className="flex items-center gap-2 mb-3">
+                  <Users className="w-4 h-4 text-hue-green" />
+                  <span className="text-xs font-bold text-fg-secondary">
+                    {sessionsUnavailable ? "Sessions" : `Sessions (${sessions.length})`}
+                  </span>
                 </div>
-                <div className="text-[0.625rem] text-fg-muted uppercase font-bold">Active</div>
-              </div>
-              <div className="rounded-lg bg-fill p-2 text-center">
-                <div className="text-lg font-bold text-fg tabular-nums" data-testid="operations-session-stat-idle">
-                  {idleCount}
+                <div className="grid grid-cols-4 gap-2">
+                  <div className="rounded-lg bg-fill p-2 text-center">
+                    <div
+                      className="text-lg font-bold text-fg tabular-nums"
+                      data-testid="operations-session-stat-active"
+                    >
+                      {activeCount}
+                    </div>
+                    <div className="text-[0.625rem] text-fg-muted uppercase font-bold">Active</div>
+                  </div>
+                  <div className="rounded-lg bg-fill p-2 text-center">
+                    <div className="text-lg font-bold text-fg tabular-nums" data-testid="operations-session-stat-idle">
+                      {idleCount}
+                    </div>
+                    <div className="text-[0.625rem] text-fg-muted uppercase font-bold">Idle</div>
+                  </div>
+                  <div className="rounded-lg bg-fill p-2 text-center">
+                    <div
+                      className={`text-lg font-bold tabular-nums ${highlighted(idleInTxCount) ? "text-hue-yellow" : "text-fg"}`}
+                      data-testid="operations-session-stat-in-tx"
+                    >
+                      {idleInTxCount}
+                    </div>
+                    <div className="text-[0.625rem] text-fg-muted uppercase font-bold">In TX</div>
+                  </div>
+                  <div className="rounded-lg bg-fill p-2 text-center">
+                    <div
+                      className={`text-lg font-bold tabular-nums ${highlighted(waitingCount) ? "text-hue-orange" : "text-fg"}`}
+                      data-testid="operations-session-stat-wait"
+                    >
+                      {waitingCount}
+                    </div>
+                    <div className="text-[0.625rem] text-fg-muted uppercase font-bold">Wait</div>
+                  </div>
                 </div>
-                <div className="text-[0.625rem] text-fg-muted uppercase font-bold">Idle</div>
               </div>
-              <div className="rounded-lg bg-fill p-2 text-center">
-                <div
-                  className={`text-lg font-bold tabular-nums ${highlighted(idleInTxCount) ? "text-hue-yellow" : "text-fg"}`}
-                  data-testid="operations-session-stat-in-tx"
-                >
-                  {idleInTxCount}
-                </div>
-                <div className="text-[0.625rem] text-fg-muted uppercase font-bold">In TX</div>
-              </div>
-              <div className="rounded-lg bg-fill p-2 text-center">
-                <div
-                  className={`text-lg font-bold tabular-nums ${highlighted(waitingCount) ? "text-hue-orange" : "text-fg"}`}
-                  data-testid="operations-session-stat-wait"
-                >
-                  {waitingCount}
-                </div>
-                <div className="text-[0.625rem] text-fg-muted uppercase font-bold">Wait</div>
-              </div>
-            </div>
-          </div>
-          <div className="max-h-[280px] overflow-y-auto">
-            {loading && sessions.length === 0 ? (
-              <div className="p-4 space-y-2">
-                {[...Array(4)].map((_, i) => (
-                  <Skeleton key={i} className="h-10 w-full bg-overlay" />
-                ))}
-              </div>
-            ) : sessions.length === 0 ? (
-              <div className="p-8 text-center text-fg-subtle text-sm" data-testid="operations-sessions-empty">
-                {/* The order is deliberate: `sessionsUnavailable` is set only when the
+              <div className="max-h-[280px] overflow-y-auto">
+                {loading && sessions.length === 0 ? (
+                  <div className="p-4 space-y-2">
+                    {[...Array(4)].map((_, i) => (
+                      <Skeleton key={i} className="h-10 w-full bg-overlay" />
+                    ))}
+                  </div>
+                ) : sessions.length === 0 ? (
+                  <div className="p-8 text-center text-fg-subtle text-sm" data-testid="operations-sessions-empty">
+                    {/* The order is deliberate: `sessionsUnavailable` is set only when the
                     READ failed, while `sessionsEmptyState` explains an engine that
                     publishes no session list at all (#518). */}
-                {sessionsUnavailable ?? labels?.sessionsEmptyState ?? "No active sessions found."}
-              </div>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow className="border-hairline hover:bg-transparent">
-                    <TableHead className="text-xs text-fg-muted font-bold uppercase w-[60px]">PID</TableHead>
-                    <TableHead className="text-xs text-fg-muted font-bold uppercase">User</TableHead>
-                    <TableHead className="text-xs text-fg-muted font-bold uppercase">State</TableHead>
-                    <TableHead className="text-xs text-fg-muted font-bold uppercase hidden md:table-cell">
-                      Query
-                    </TableHead>
-                    <TableHead className="text-xs text-fg-muted font-bold uppercase">Time</TableHead>
-                    <TableHead className="text-right text-xs text-fg-muted font-bold uppercase w-10">Act</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {sessions.map((session) => (
-                    <TableRow key={session.pid} className="group border-hairline hover:bg-fill">
-                      <TableCell className="font-mono text-xs text-fg-tertiary py-2">{session.pid}</TableCell>
-                      <TableCell className="py-2">
-                        <span className="text-xs text-fg-secondary truncate max-w-[80px] block">{session.user}</span>
-                      </TableCell>
-                      <TableCell className="py-2">{getStateBadge(session.state)}</TableCell>
-                      <TableCell className="font-mono text-xs text-fg-muted hidden md:table-cell py-2">
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <div className="max-w-[120px] truncate cursor-help">{session.query || "-"}</div>
-                            </TooltipTrigger>
-                            <TooltipContent side="bottom" className="max-w-lg">
-                              <pre className="text-xs whitespace-pre-wrap">{session.query || "No query"}</pre>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      </TableCell>
-                      <TableCell className="py-2">
-                        <Badge
-                          variant={
-                            session.durationMs > 60000
-                              ? "destructive"
-                              : session.durationMs > 10000
-                                ? "outline"
-                                : "secondary"
-                          }
-                          className="text-[0.625rem]"
-                        >
-                          {session.duration}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right py-2">
-                        {offersTerminate && session.terminable !== false && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6 text-fg-subtle hover:text-danger hover:bg-danger-tint/10 opacity-0 group-hover:opacity-100 transition-all"
-                            onClick={() => handleKillClick(session)}
-                            aria-label={`Terminate session ${session.pid}`}
-                            disabled={killingPid === session.pid}
-                          >
-                            {killingPid === session.pid ? (
-                              <LoaderCircle className="h-3 w-3 animate-spin" />
-                            ) : (
-                              <Skull className="h-3 w-3" />
+                    {sessionsUnavailable ?? labels?.sessionsEmptyState ?? "No active sessions found."}
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="border-hairline hover:bg-transparent">
+                        <TableHead className="text-xs text-fg-muted font-bold uppercase w-[60px]">PID</TableHead>
+                        <TableHead className="text-xs text-fg-muted font-bold uppercase">User</TableHead>
+                        <TableHead className="text-xs text-fg-muted font-bold uppercase">State</TableHead>
+                        <TableHead className="text-xs text-fg-muted font-bold uppercase hidden md:table-cell">
+                          Query
+                        </TableHead>
+                        <TableHead className="text-xs text-fg-muted font-bold uppercase">Time</TableHead>
+                        <TableHead className="text-right text-xs text-fg-muted font-bold uppercase w-10">Act</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {sessions.map((session) => (
+                        <TableRow key={session.pid} className="group border-hairline hover:bg-fill">
+                          <TableCell className="font-mono text-xs text-fg-tertiary py-2">{session.pid}</TableCell>
+                          <TableCell className="py-2">
+                            <span className="text-xs text-fg-secondary truncate max-w-[80px] block">
+                              {session.user}
+                            </span>
+                          </TableCell>
+                          <TableCell className="py-2">{getStateBadge(session.state)}</TableCell>
+                          <TableCell className="font-mono text-xs text-fg-muted hidden md:table-cell py-2">
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <div className="max-w-[120px] truncate cursor-help">{session.query || "-"}</div>
+                                </TooltipTrigger>
+                                <TooltipContent side="bottom" className="max-w-lg">
+                                  <pre className="text-xs whitespace-pre-wrap">{session.query || "No query"}</pre>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          </TableCell>
+                          <TableCell className="py-2">
+                            <Badge
+                              variant={
+                                session.durationMs > 60000
+                                  ? "destructive"
+                                  : session.durationMs > 10000
+                                    ? "outline"
+                                    : "secondary"
+                              }
+                              className="text-[0.625rem]"
+                            >
+                              {session.duration}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right py-2">
+                            {offersTerminate && session.terminable !== false && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6 text-fg-subtle hover:text-danger hover:bg-danger-tint/10 opacity-0 group-hover:opacity-100 transition-all"
+                                onClick={() => handleKillClick(session)}
+                                aria-label={`Terminate session ${session.pid}`}
+                                disabled={killingPid === session.pid}
+                              >
+                                {killingPid === session.pid ? (
+                                  <LoaderCircle className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  <Skull className="h-3 w-3" />
+                                )}
+                              </Button>
                             )}
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </div>
+            </div>
+          )}
         </div>
-      </div>
+      )}
 
       {/* Operation Log */}
       {operationLog.length > 0 && (

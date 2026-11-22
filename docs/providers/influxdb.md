@@ -484,6 +484,22 @@ Sessions are not read either:
 
 Performance, storage, table and index statistics are empty: no route Studio reads reports them, and `/metrics` is never read.
 
+### Engine facets
+
+Which of the seven monitoring panels `influxdb` offers is its row in `ENGINE_FACETS`, declared in [`influxdb-engine-facets.ts`](../../src/lib/db/providers/timeseries/influxdb/influxdb-engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | No | `getTableStats` answers `[]` without asking the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
+
 ## 8. Maintenance
 
 None: InfluxDB compacts its own storage and keeps no statistics to update.
