@@ -1,5 +1,16 @@
 import { defineConfig } from "tsup";
 import path from "path";
+import { workspacePackageNames } from "./scripts/workspace-packages.mjs";
+
+/**
+ * Every bun workspace package under packages/, by manifest name. `@libredb/studio` on npm cannot depend on an
+ * unpublished package, so until a package is published on its own the library build bundles it: its code through
+ * `noExternal` and its declarations through `dts.resolve`. tsup's declaration resolver reads a package's `types`
+ * field, not its `exports`, so a workspace package points `types` under its `src/` (packages/README.md, "Library").
+ * The packages' own dependencies stay external because they are the root's dependencies too, and
+ * scripts/check-lib-load.mjs fails by name on a dist or a packed manifest that names a workspace package.
+ */
+const WORKSPACE_PACKAGES = workspacePackageNames(__dirname);
 
 export default defineConfig({
   entry: {
@@ -11,7 +22,7 @@ export default defineConfig({
     security: "src/exports/security.ts",
   },
   format: ["esm", "cjs"],
-  dts: true,
+  dts: { resolve: WORKSPACE_PACKAGES },
   splitting: true,
   sourcemap: true,
   clean: true,
@@ -27,7 +38,7 @@ export default defineConfig({
   // (`noExternal`, since tsup would otherwise mark a dependency's stylesheet external by its package name) and
   // loading it with esbuild's documented `empty` loader drops the import. The ER diagram's base styles reach a host
   // through `dist/styles.css` instead, which scripts/copy-theme.mjs starts with an `@import` of that stylesheet.
-  noExternal: [/\.css$/],
+  noExternal: [...WORKSPACE_PACKAGES, /\.css$/],
   loader: { ".css": "empty" },
   external: [
     "react",
