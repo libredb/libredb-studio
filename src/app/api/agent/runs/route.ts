@@ -583,9 +583,9 @@ export async function POST(req: Request) {
       // the request that predates the field, so a run that starts its own conversation
       // writes the same bytes a run opened before conversations existed did.
       ...(thread === undefined ? {} : { thread }),
-      // The language and the verifier the run was opened under, each written only where it
-      // differs from what its absence reads as, so an SQL run's header keeps its bytes.
-      ...persistedRunFacts(mode as AgentRunMode, requestedWorkflow, availability),
+      // The connection's engine, and the language and the verifier the run was opened under,
+      // the last two written only where they differ from what their absence reads as.
+      ...persistedRunFacts(mode as AgentRunMode, requestedWorkflow, connection.type, availability),
       actor: { sessionId: guard.session.username, role: guard.session.role },
       connectionId: connection.id,
       // The database this run is ACTUALLY reading, written unconditionally - including

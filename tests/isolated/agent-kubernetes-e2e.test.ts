@@ -250,7 +250,7 @@ async function drive(
   const run = await service.start({
     mode: "agent",
     workflowType,
-    ...persistedRunFacts("agent", workflowType, availability),
+    ...persistedRunFacts("agent", workflowType, "kubernetes", availability),
     actor: { sessionId: "sess_1", role: "user" },
     connectionId: connection.id,
     objective: "How are the workloads in shop doing?",

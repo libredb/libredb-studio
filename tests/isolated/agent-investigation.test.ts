@@ -5749,7 +5749,7 @@ describe("a MongoDB run is told only what its own tools can do", () => {
       mode: "agent",
       workflowType,
       autoExecute,
-      ...persistedRunFacts("agent", workflowType, availability),
+      ...persistedRunFacts("agent", workflowType, "mongodb", availability),
       // A ledger opened before `agent-query-optimization-mongo.1` existed carries `.3`, and keeps its rule.
       ...(verifier === undefined ? {} : { verifier }),
       actor: ACTOR,
@@ -6106,7 +6106,7 @@ describe("a run whose grounding the execution profile refuses", () => {
     return b.service.start({
       mode,
       workflowType,
-      ...persistedRunFacts(mode, workflowType, availability),
+      ...persistedRunFacts(mode, workflowType, type, availability),
       actor: ACTOR,
       connectionId: "conn_1",
       objective: OBJECTIVE,

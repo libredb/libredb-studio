@@ -66,6 +66,7 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { logger } from "@/lib/logger";
+import type { DatabaseType } from "@/lib/types";
 import { getAgentRuntimeConfig } from "./config";
 import { AGENT_RUN_ID_PATTERN } from "./run-id";
 import {
@@ -195,6 +196,12 @@ export type AgentLedgerEntry =
        * the statement-language layer was an SQL run.
        */
       readonly statementLanguage?: AgentStatementLanguageId;
+      /**
+       * Optional for the same reason, and never defaulted: a header written before this field names no
+       * engine, and its run is offered the six curated readings it was opened with; see
+       * `AgentRunRecord.engine`.
+       */
+      readonly engine?: DatabaseType;
       /**
        * Optional for the same reason, and absent folds to the verifier of the run's
        * variant, which is the rule that judged every run written before this field.
@@ -346,6 +353,8 @@ export interface AgentRunOpenInput {
   readonly toolProtocol?: AgentToolProtocol;
   /** Defaults to `sql`. Decided from the manifest at start; see `AgentRunRecord`. */
   readonly statementLanguage?: AgentStatementLanguageId;
+  /** The connection's type id, decided at start; absent only from a caller that records none. See `AgentRunRecord`. */
+  readonly engine?: DatabaseType;
   /** Defaults to the variant's verifier. Decided from the manifest at start; see `AgentRunRecord`. */
   readonly verifier?: AgentGoalVerifierId;
   /** The conversation this run continues; written to the header only when it does. */
@@ -431,9 +440,13 @@ function parseEntry(runId: string, line: string): AgentLedgerEntry {
  * @throws {AgentRunUnavailableError} For an id `runHeaderRefusal` refuses.
  */
 function assertReadableHeader(runId: string, header: Extract<AgentLedgerEntry, { kind: "run-opened" }>): void {
-  const raw: { readonly statementLanguage?: unknown; readonly workflowType?: unknown; readonly verifier?: unknown } =
-    header;
-  for (const field of ["statementLanguage", "workflowType", "verifier"] as const) {
+  const raw: {
+    readonly statementLanguage?: unknown;
+    readonly workflowType?: unknown;
+    readonly verifier?: unknown;
+    readonly engine?: unknown;
+  } = header;
+  for (const field of ["statementLanguage", "workflowType", "verifier", "engine"] as const) {
     if (raw[field] !== undefined && typeof raw[field] !== "string") {
       throw malformed(runId, `its header's ${field} is not text`);
     }
@@ -506,6 +519,8 @@ function foldLedger(runId: string, entries: readonly AgentLedgerEntry[]): AgentR
       // Spread for the same reason: `sql` and the variant's verifier are what absence says.
       ...(header.statementLanguage === undefined ? {} : { statementLanguage: header.statementLanguage }),
       ...(header.verifier === undefined ? {} : { verifier: header.verifier }),
+      // Spread for the same reason: an absent engine is a run recorded before the field.
+      ...(header.engine === undefined ? {} : { engine: header.engine }),
       // Defaulted rather than spread, because every run HAS a conversation: one it
       // continues, or one of its own that begins here. A header written before this
       // field folds to a thread of one named after itself, which is what was true of
@@ -665,6 +680,7 @@ export class AgentRunStore {
       ...(input.toolProtocol === undefined ? {} : { toolProtocol: input.toolProtocol }),
       ...(input.statementLanguage === undefined ? {} : { statementLanguage: input.statementLanguage }),
       ...(input.verifier === undefined ? {} : { verifier: input.verifier }),
+      ...(input.engine === undefined ? {} : { engine: input.engine }),
       // Written only when a run CONTINUES a conversation, so a ledger opened before
       // this field and one that starts its own thread are the same bytes.
       ...(input.thread === undefined ? {} : { thread: input.thread }),

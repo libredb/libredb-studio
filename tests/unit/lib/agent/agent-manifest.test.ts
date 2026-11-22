@@ -497,7 +497,10 @@ describe("workflowAvailability", () => {
     });
     if (!open.open) throw new Error("refused");
     // Its verifier is the SQL investigation's, so only the language is written to the header.
-    expect(persistedRunFacts("agent", "investigation", open)).toEqual({ statementLanguage: "kubectl" });
+    expect(persistedRunFacts("agent", "investigation", "kubernetes", open)).toEqual({
+      engine: "kubernetes",
+      statementLanguage: "kubectl",
+    });
   });
 
   test("a kubernetes resource-efficiency run opens in agent mode and persists its language and its own verifier", () => {
@@ -508,14 +511,18 @@ describe("workflowAvailability", () => {
       variant: requiredVariant("kubectl", "query-optimization"),
     });
     if (!open.open) throw new Error("refused");
-    expect(persistedRunFacts("agent", "query-optimization", open)).toEqual({
+    expect(persistedRunFacts("agent", "query-optimization", "kubernetes", open)).toEqual({
+      engine: "kubernetes",
       statementLanguage: "kubectl",
       verifier: "agent-query-optimization-kubectl.1",
     });
     // A plan is judged by the planning rule, so it persists the language and never the verifier.
     const plan = workflowAvailability("planning", "query-optimization", "kubernetes");
     if (!plan.open) throw new Error("refused");
-    expect(persistedRunFacts("planning", "query-optimization", plan)).toEqual({ statementLanguage: "kubectl" });
+    expect(persistedRunFacts("planning", "query-optimization", "kubernetes", plan)).toEqual({
+      engine: "kubernetes",
+      statementLanguage: "kubectl",
+    });
   });
 
   test("a kubernetes cluster-health run opens in agent mode and persists its language and its own verifier", () => {
@@ -526,7 +533,8 @@ describe("workflowAvailability", () => {
       variant: requiredVariant("kubectl", "database-assessment"),
     });
     if (!open.open) throw new Error("refused");
-    expect(persistedRunFacts("agent", "database-assessment", open)).toEqual({
+    expect(persistedRunFacts("agent", "database-assessment", "kubernetes", open)).toEqual({
+      engine: "kubernetes",
       statementLanguage: "kubectl",
       verifier: "agent-database-assessment-kubectl.1",
     });
@@ -721,31 +729,45 @@ describe("workflowAvailability", () => {
     );
   });
 
-  test("an SQL run persists nothing, so its ledger header is the bytes it always was", () => {
+  test("an SQL run persists only its engine, since sql and the SQL verifier are what absence reads as", () => {
     const open = workflowAvailability("agent", "query-optimization", "postgres");
     if (!open.open) throw new Error("refused");
-    expect(persistedRunFacts("agent", "query-optimization", open)).toEqual({});
+    expect(persistedRunFacts("agent", "query-optimization", "postgres", open)).toEqual({ engine: "postgres" });
   });
 
-  test("a run on an engine with no language persists nothing either", () => {
+  test("a run on an engine with no language persists only its engine", () => {
     for (const mode of ["agent", "planning"] as const) {
       const open = workflowAvailability(mode, "operations", "spark");
       if (!open.open) throw new Error("refused");
-      expect(persistedRunFacts(mode, "operations", open), mode).toEqual({});
+      expect(persistedRunFacts(mode, "operations", "spark", open), mode).toEqual({ engine: "spark" });
     }
+  });
+
+  test.each(["agent", "planning"] as const)("persistedRunFacts records the engine in %s mode", (mode) => {
+    const open = workflowAvailability(mode, "operations", "kafka");
+    if (!open.open) throw new Error("refused");
+    expect(persistedRunFacts(mode, "operations", "kafka", open)).toEqual({
+      engine: "kafka",
+      statementLanguage: "kafkaread",
+    });
   });
 
   test("another language persists itself, and an agent run its own verifier where it is not the SQL one", () => {
     const variant = { ...sqlInvestigation, verifier: "agent-database-assessment.1" } as const;
     const open = { open: true, statementLanguage: "kubectl", variant } as const;
-    expect(persistedRunFacts("agent", "investigation", open)).toEqual({
+    expect(persistedRunFacts("agent", "investigation", "kubernetes", open)).toEqual({
+      engine: "kubernetes",
       statementLanguage: "kubectl",
       verifier: "agent-database-assessment.1",
     });
     // A plan is judged by the planning rule whatever the variant says, so no verifier is written for it.
-    expect(persistedRunFacts("planning", "investigation", open)).toEqual({ statementLanguage: "kubectl" });
+    expect(persistedRunFacts("planning", "investigation", "kubernetes", open)).toEqual({
+      engine: "kubernetes",
+      statementLanguage: "kubectl",
+    });
     // The SQL verifier is what an absent field reads as, so it is not written either.
-    expect(persistedRunFacts("agent", "investigation", { ...open, variant: sqlInvestigation })).toEqual({
+    expect(persistedRunFacts("agent", "investigation", "kubernetes", { ...open, variant: sqlInvestigation })).toEqual({
+      engine: "kubernetes",
       statementLanguage: "kubectl",
     });
   });

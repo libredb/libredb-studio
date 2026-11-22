@@ -146,7 +146,7 @@ async function startRun(
   return service.start({
     mode,
     workflowType,
-    ...persistedRunFacts(mode, workflowType, availability),
+    ...persistedRunFacts(mode, workflowType, connection.type, availability),
     actor: { sessionId: "sess_1", role: "user" },
     connectionId: connection.id,
     objective: "How many orders are there?",
@@ -447,7 +447,7 @@ describe("the run read allowance", () => {
     const run = await service.start({
       mode: "agent",
       workflowType: "investigation",
-      ...persistedRunFacts("agent", "investigation", availability),
+      ...persistedRunFacts("agent", "investigation", connection.type, availability),
       actor: { sessionId: "sess_1", role: "user" },
       connectionId: connection.id,
       objective: "And by region?",

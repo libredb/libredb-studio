@@ -1011,12 +1011,13 @@ sweep resumes an interrupted run only EVENTUALLY, and keeps retrying one that di
 bound (B82).
 
 **A ledger is read in the vocabulary its header names.**
-A run's header persists three ids this build resolves against its own vocabulary: the statement language the run writes in, the workflow it was opened for, and the goal rule it is judged by (`runHeaderRefusal` in `src/lib/agent/run-ledger-ids.ts`).
-A header naming a language or workflow this build does not hold, an agent-mode header whose workflow has no variant on its language, or an agent-mode header naming a goal rule this build does not hold, is refused by name; a retired language or goal rule is refused as retired.
+A run's header persists four ids this build resolves against its own vocabulary: the statement language the run writes in, the workflow it was opened for, the goal rule it is judged by, and the engine, the type id of the run's connection when it opened (`runHeaderRefusal` in `src/lib/agent/run-ledger-ids.ts`).
+The engine is written in every mode by `persistedRunFacts`, and tool selection and the curated readings read it from the record, never from the live connection.
+A header naming a language or workflow this build does not hold, an agent-mode header whose workflow has no variant on its language, an agent-mode header naming a goal rule this build does not hold, a header naming an engine that is not a type id, or an agent-mode operations header on an engine that offers agent mode no curated reading, is refused by name; a retired language or goal rule is refused as retired.
 A plan's goal rule is not checked, because a plan is judged by the planning rule whatever its header names.
 The header is checked before any other line of the ledger is parsed, so a ledger written by a newer Studio is named by its language even where its evidence also carries kinds this build cannot parse.
 This build then reads, drives, stops and replays nothing of that run: its owner on the session routes, and the holder of the drive credential that names the run on the drive route, is answered `409` `AGENT_RUN_UNAVAILABLE` with a sentence naming the id, anyone else the `404` of a missing run ([HTTP surface](#http-surface)), and the ledger is kept as it was, for a Studio that has the id.
-Absence keeps its meaning: a header with no language reads as `sql`, one with no workflow as `investigation`, and an agent-mode header with no verifier as its variant's, which the variant check guarantees exists.
+Absence keeps its meaning: a header with no language reads as `sql`, one with no workflow as `investigation`, an agent-mode header with no verifier as its variant's, which the variant check guarantees exists, and a header with no engine, written before the field, as a run offered the six curated readings it was opened with.
 A continued conversation whose predecessor is such a run opens without it, `thread.declined` `"error"` for the owner and `"unavailable"` for anyone else.
 The resume sweep counts such a run as `unavailable`, leaves it as it is, and logs one warn line naming its run id the first time a process meets it, since no history list or rail names a run that never finished.
 It stops at a ledger it cannot parse at all, though, and no run listed after that one is resumed (B174).

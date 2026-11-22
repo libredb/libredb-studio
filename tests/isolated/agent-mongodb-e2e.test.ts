@@ -211,7 +211,7 @@ async function drive(
     runId,
     mode,
     workflowType,
-    ...persistedRunFacts(mode, workflowType, availability),
+    ...persistedRunFacts(mode, workflowType, "mongodb", availability),
     actor: { sessionId: "sess_1", role: "user" },
     connectionId: connection.id,
     objective: "Which customer placed the larger order?",

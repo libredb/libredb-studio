@@ -99,7 +99,7 @@ async function systemPromptOf(
   const run = await service.start({
     mode,
     workflowType,
-    ...persistedRunFacts(mode, workflowType, availability),
+    ...persistedRunFacts(mode, workflowType, engine, availability),
     actor: { sessionId: "sess_1", role: "user" },
     connectionId: connection.id,
     objective: "Which customers ordered most?",

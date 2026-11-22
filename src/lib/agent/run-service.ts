@@ -53,7 +53,7 @@ import type { AgentPackEvidenceRunEvent } from "./languages/client";
 import type { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import type { RunReadAllowance } from "@/lib/db/read-allowance";
 import type { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
-import type { QueryResult } from "@/lib/types";
+import type { DatabaseType, QueryResult } from "@/lib/types";
 import { AgentRunStoreError } from "./run-store";
 import type { AgentLedgerEntry, AgentRunLedgerView, AgentRunStore, AgentSettledStepEvent } from "./run-store";
 import type { AgentOperationId, AgentToolName } from "./tools";
@@ -186,6 +186,8 @@ export interface AgentRunStartInput {
   readonly toolProtocol?: AgentToolProtocol;
   /** Defaults to `sql`; see `AgentRunRecord.statementLanguage`. */
   readonly statementLanguage?: AgentStatementLanguageId;
+  /** The connection's type id; see `AgentRunRecord.engine`. */
+  readonly engine?: DatabaseType;
   /** Defaults to the variant's verifier; see `AgentRunRecord.verifier`. */
   readonly verifier?: AgentGoalVerifierId;
   /** The conversation this run continues; the route derives it, the store persists it. */

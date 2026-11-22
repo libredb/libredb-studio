@@ -1903,6 +1903,19 @@ export interface AgentRunRecord {
    */
   readonly statementLanguage?: AgentStatementLanguageId;
   /**
+   * The type id of the run's connection when it opened, which picks the curated `inspect_operations` readings
+   * the run is offered (its `ENGINE_FACETS` row's `agentReadings`).
+   *
+   * Decided once at open and read by tool selection and the curated reading, never from the live connection,
+   * for the reason `statementLanguage` gives.
+   *
+   * Optional, because a header written before this field records none, and such a run is offered the six
+   * curated readings it was opened with. A header naming a value that is not a type id, or an agent-mode
+   * operations run on an engine that offers agent mode no reading, is refused when the ledger is read
+   * (`runHeaderRefusal`).
+   */
+  readonly engine?: DatabaseType;
+  /**
    * The rule this run is judged against, decided once at open from its workflow variant.
    *
    * On the record for the same reason as `statementLanguage`: the verdict a resumed drive records must be

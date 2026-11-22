@@ -197,7 +197,7 @@ import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 /** Everything a tool call needs EXCEPT what the run's own record decides. */
 export type AgentToolResources = Omit<
   AgentToolContext,
-  "runId" | "modelId" | "mode" | "workflowType" | "statementLanguage" | "actor" | "readAllowance"
+  "runId" | "modelId" | "mode" | "workflowType" | "statementLanguage" | "engine" | "actor" | "readAllowance"
 >;
 
 export interface AgentInvestigationOptions {
@@ -2879,6 +2879,7 @@ export async function runInvestigation(
       mode: record.mode,
       workflowType: record.workflowType,
       ...(record.statementLanguage === undefined ? {} : { statementLanguage: record.statementLanguage }),
+      ...(record.engine === undefined ? {} : { engine: record.engine }),
       actor: record.actor,
       // Created here, with the drive's own context, and never taken from the caller: the allowance is
       // what tells this run's reads from another run's on the same cached provider, so two drives may

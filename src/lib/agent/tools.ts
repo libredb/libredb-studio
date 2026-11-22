@@ -164,7 +164,7 @@ import {
 } from "./agent-manifest";
 import { connectionIdentity, heldSnapshotForConnection } from "./context-snapshot";
 import { offersRefusalExamples } from "./models";
-import type { ColumnSchema, DatabaseConnection, QueryResult } from "@/lib/types";
+import type { ColumnSchema, DatabaseConnection, DatabaseType, QueryResult } from "@/lib/types";
 import { type ProfileTargetResolution, type ResolvedProfileTarget, resolveProfileTarget } from "./inventory-address";
 import { addressableObjects } from "./inventory-objects";
 import type {
@@ -340,6 +340,12 @@ export interface AgentToolContext {
    * can only have come from the run record, never from the live connection.
    */
   readonly statementLanguage?: AgentStatementLanguageId;
+  /**
+   * The run's PERSISTED engine, the type id its connection had when it opened. Like `statementLanguage`, it can only
+   * have come from the run record. Absent for a run recorded before the field, which is offered the six curated
+   * readings it was opened with.
+   */
+  readonly engine?: DatabaseType;
   /** The persisted actor — the sole authority for authorizing this call. */
   readonly actor: AgentRunActor;
   readonly connection: DatabaseConnection;

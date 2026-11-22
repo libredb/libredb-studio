@@ -871,7 +871,16 @@ describe("POST /api/agent/runs", () => {
     expect(mockStart.mock.calls[0]?.[0].statementLanguage).toBe("mongo");
   });
 
-  test("a Postgres run is opened with no statement language and no verifier, so its header is unchanged", async () => {
+  test("the start route records the connection's type on the run header", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:events", name: "Events", type: "kafka" });
+
+    const res = await POST(startRequest({ ...VALID_BODY, workflowType: "operations" }));
+
+    expect(res.status).toBe(202);
+    expect(mockStart.mock.calls[0]?.[0]).toMatchObject({ engine: "kafka", statementLanguage: "kafkaread" });
+  });
+
+  test("a Postgres run is opened with its engine and no statement language or verifier, which absence reads as", async () => {
     for (const mode of ["agent", "planning"]) {
       mockStart.mockClear();
       const res = await POST(startRequest({ ...VALID_BODY, mode, workflowType: "query-optimization" }));
@@ -879,6 +888,7 @@ describe("POST /api/agent/runs", () => {
       const input = mockStart.mock.calls[0]?.[0] as Record<string, unknown>;
       expect(Object.hasOwn(input, "statementLanguage"), mode).toBe(false);
       expect(Object.hasOwn(input, "verifier"), mode).toBe(false);
+      expect(input.engine, mode).toBe("postgres");
     }
   });
 
@@ -1025,6 +1035,7 @@ describe("POST /api/agent/runs", () => {
       mode: "agent",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      engine: "postgres",
       // The database behind that record, fingerprinted by the route (B68). Asserted as a
       // presence here and by value in the re-pointing test below.
       connectionIdentity: expect.any(String),
@@ -1043,6 +1054,7 @@ describe("POST /api/agent/runs", () => {
       workflowType: "query-optimization",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      engine: "postgres",
       // The database behind that record, fingerprinted by the route (B68). Asserted as a
       // presence here and by value in the re-pointing test below.
       connectionIdentity: expect.any(String),
@@ -1075,6 +1087,7 @@ describe("POST /api/agent/runs", () => {
       autoExecute: true,
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      engine: "postgres",
       // The database behind that record, fingerprinted by the route (B68). Asserted as a
       // presence here and by value in the re-pointing test below.
       connectionIdentity: expect.any(String),
@@ -1127,6 +1140,7 @@ describe("POST /api/agent/runs", () => {
       mode: "agent",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      engine: "postgres",
       // The database behind that record, fingerprinted by the route (B68). Asserted as a
       // presence here and by value in the re-pointing test below.
       connectionIdentity: expect.any(String),
@@ -1172,6 +1186,7 @@ describe("POST /api/agent/runs", () => {
       mode: "agent",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      engine: "postgres",
       // The database behind that record, fingerprinted by the route (B68). Asserted as a
       // presence here and by value in the re-pointing test below.
       connectionIdentity: expect.any(String),
@@ -1190,6 +1205,7 @@ describe("POST /api/agent/runs", () => {
       workflowSource: "inferred",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      engine: "postgres",
       // The database behind that record, fingerprinted by the route (B68). Asserted as a
       // presence here and by value in the re-pointing test below.
       connectionIdentity: expect.any(String),
@@ -1229,6 +1245,7 @@ describe("POST /api/agent/runs", () => {
       mode: "agent",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      engine: "postgres",
       // The database behind that record, fingerprinted by the route (B68). Asserted as a
       // presence here and by value in the re-pointing test below.
       connectionIdentity: expect.any(String),
@@ -1252,6 +1269,7 @@ describe("POST /api/agent/runs", () => {
       workflowReading: "unclassified",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      engine: "postgres",
       // The database behind that record, fingerprinted by the route (B68). Asserted as a
       // presence here and by value in the re-pointing test below.
       connectionIdentity: expect.any(String),

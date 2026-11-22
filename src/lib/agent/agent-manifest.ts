@@ -416,19 +416,26 @@ export function workflowAvailability(
 }
 
 /**
- * What a run opened under an availability persists: the language unless it is sql, the verifier unless it is the SQL
- * one. Absence is what both fields read as, so an SQL run writes the header bytes it always wrote. A plan is judged by
- * the planning rule whatever its variant says, so it never persists a verifier.
+ * What a run opened under an availability on an engine persists: the engine's type id, in every mode, because it is a
+ * fact of the run rather than of its tools; the language unless it is sql; the verifier unless it is the SQL one.
+ * Absence is what the last two read as. A plan is judged by the planning rule whatever its variant says, so it never
+ * persists a verifier.
  */
 export function persistedRunFacts(
   mode: AgentRunMode,
   workflow: AgentRunWorkflowType,
+  type: DatabaseType,
   availability: Extract<AgentWorkflowAvailability, { open: true }>,
-): { readonly statementLanguage?: AgentStatementLanguageId; readonly verifier?: AgentGoalVerifierId } {
+): {
+  readonly engine: DatabaseType;
+  readonly statementLanguage?: AgentStatementLanguageId;
+  readonly verifier?: AgentGoalVerifierId;
+} {
   const language = availability.statementLanguage;
   const sqlVerifier = requiredVariant(DEFAULT_STATEMENT_LANGUAGE, workflow).verifier;
   const verifier = mode === "agent" ? availability.variant?.verifier : undefined;
   return {
+    engine: type,
     ...(language === null || language === DEFAULT_STATEMENT_LANGUAGE ? {} : { statementLanguage: language }),
     ...(verifier === undefined || verifier === sqlVerifier ? {} : { verifier }),
   };
