@@ -114,7 +114,7 @@ export async function POST(req: Request, context?: HandoverParams) {
 
   // From here a provider is built and asked, so its text, in a failure's response and log line and in a result's
   // warnings, passes core's scrub of this connection's credential first.
-  const scrub = providerTextScrub(connection);
+  const scrub = providerTextScrub(connection, "profiled");
   try {
     // The run's own actor decides the file-access posture, as it decided the connection above: SQLite
     // opens only for a trusted requester, on this profile as in the editor.

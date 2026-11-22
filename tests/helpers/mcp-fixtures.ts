@@ -226,5 +226,5 @@ export async function resetMcpTestState(): Promise<void> {
  * connection with no Vault reference.
  */
 export async function fakeTextScrub(listed: ManagedConnection): Promise<ProviderTextScrub> {
-  return providerTextScrub(listed);
+  return providerTextScrub(listed, "profiled");
 }

@@ -142,7 +142,7 @@ export async function mongoInspectSchemaTool(
       const handed = readOnlyBudgetFor(context, budget);
       reading = await runReadOnlyReading({
         type: context.connection.type,
-        scrub: providerTextScrub(context.connection),
+        scrub: providerTextScrub(context.connection, "profiled"),
         statement: JSON.stringify(target),
         budget: handed,
         wait: "statement-timeout",

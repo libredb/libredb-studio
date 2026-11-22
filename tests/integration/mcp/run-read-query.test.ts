@@ -1305,6 +1305,33 @@ describe("a provider whose text carries the connection's credential", () => {
   );
 });
 
+describe("a provider's echo of what the caller sent", () => {
+  /** A provider whose engine error quotes the statement, as PostgreSQL quotes a literal it cannot cast. */
+  const echoing = {
+    getCapabilities: () => ({}),
+    prepareQuery: (query: string) => ({ query, wasLimited: true, limit: 101, offset: 0 }),
+    queryReadOnly: async (sql: string) => {
+      throw new Error(`invalid input syntax for type integer: ${sql}`);
+    },
+  } as unknown as Partial<DatabaseProvider>;
+  const own = `${crypto.randomUUID()}/${crypto.randomUUID().slice(0, 8)}`;
+  const agent = `${crypto.randomUUID()}/${crypto.randomUUID().slice(0, 8)}`;
+  const credentialed = () =>
+    fakeContext(echoing, "sqlite", { password: own, agentUser: "agent", agentPassword: agent });
+
+  test("is answered as written when it holds the connection's own password, which the agent's provider never receives", async () => {
+    const result = await direct({ connection_id: "seed:fake", sql: `SELECT '${own}'` }, undefined, credentialed());
+    expect(JSON.stringify(result)).toContain(own);
+    expect(JSON.stringify(result)).not.toContain(PROVIDER_TEXT_WITHHELD);
+  });
+
+  test("is withheld when it holds the agent password the provider holds", async () => {
+    const result = await direct({ connection_id: "seed:fake", sql: `SELECT '${agent}'` }, undefined, credentialed());
+    expect(JSON.stringify(result)).not.toContain(agent);
+    expect(JSON.stringify(result)).toContain(PROVIDER_TEXT_WITHHELD);
+  });
+});
+
 describe("who wrote a refusal", () => {
   const empty = { rows: [], fields: [], rowCount: 0, executionTime: 0 };
   const sentence = "the role may write to the table orders";

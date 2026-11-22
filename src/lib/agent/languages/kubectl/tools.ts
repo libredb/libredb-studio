@@ -74,7 +74,7 @@ async function runClusterUsage(
   const handed = readOnlyBudgetFor(context, budget);
   const reading = await runReadOnlyReading({
     type: context.connection.type,
-    scrub: providerTextScrub(context.connection),
+    scrub: providerTextScrub(context.connection, "profiled"),
     statement: `usage ${input.namespace} ${input.selector ?? ""}`,
     budget: handed,
     wait: "statement-timeout",
@@ -139,7 +139,7 @@ async function runWorkloadProfile(
   const handed = readOnlyBudgetFor(context, budget);
   const reading = await runReadOnlyReading({
     type: context.connection.type,
-    scrub: providerTextScrub(context.connection),
+    scrub: providerTextScrub(context.connection, "profiled"),
     statement: `workloads ${input.namespace}`,
     budget: handed,
     wait: "statement-timeout",

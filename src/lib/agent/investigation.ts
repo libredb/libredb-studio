@@ -1947,7 +1947,7 @@ function describeSettled(event: AgentSettledStepEvent, toolName: string, connect
     // run-loop outcome instead of a refusal.
     return `Step ${event.stepId} (${toolName}) reached the database and its reading was not delivered: ${refusal.reasonCode}. Ask for a different reading rather than repeating this one.`;
   }
-  const message = scrubProviderText(providerTextScrub(connection), refusal.message);
+  const message = scrubProviderText(providerTextScrub(connection, "profiled"), refusal.message);
   if (refusal.sent === false && refusal.refusedBy === "studio") {
     // This server's own sentence, so said in its voice rather than fenced as the database's.
     const reason = /[.!?]$/.test(message) ? message : `${message}.`;

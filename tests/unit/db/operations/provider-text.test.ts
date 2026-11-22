@@ -68,15 +68,47 @@ const generatedJwt = () =>
     base64url(crypto.randomUUID()),
   ].join(".");
 
+/** The secret paths a provider receives: every one but the tunnel's, which `providerConnection` strips. */
+const providerPaths = () => secretPaths().filter((path) => !path.startsWith("sshTunnel."));
+const tunnelPaths = () => secretPaths().filter((path) => path.startsWith("sshTunnel."));
+
 describe("providerTextScrub", () => {
-  test.each(secretPaths())(
-    "withholds a text holding the value of any secret-class field the central walk visits: %s",
-    (path) => {
+  test.each(providerPaths().flatMap((path) => (["profiled", "any"] as const).map((reach) => [path, reach] as const)))(
+    "withholds a text holding the value of any secret-class field a provider receives: %s (%s)",
+    (path, reach) => {
       const value = generated();
-      const scrub = providerTextScrub(connectionWithPath(path, value));
+      const scrub = providerTextScrub(connectionWithPath(path, value), reach);
       expect(scrubProviderText(scrub, `rejected ${value} by the server`)).toBe(PROVIDER_TEXT_WITHHELD);
     },
   );
+
+  test.each(tunnelPaths().flatMap((path) => (["profiled", "any"] as const).map((reach) => [path, reach] as const)))(
+    "leaves out a tunnel secret, which no provider receives: %s (%s)",
+    (path, reach) => {
+      const value = generated();
+      const scrub = providerTextScrub(connectionWithPath(path, value), reach);
+      expect(scrub.forms).toEqual([]);
+      expect(scrubProviderText(scrub, `echoed ${value}`)).toBe(`echoed ${value}`);
+    },
+  );
+
+  test("a profiled scrub leaves out the connection's own password where an agent password replaces it", () => {
+    const own = generated();
+    const agent = generated();
+    const connection = connectionWith({ password: own, agentUser: "agent", agentPassword: agent });
+    const profiled = providerTextScrub(connection, "profiled");
+    expect(scrubProviderText(profiled, `echoed ${own}`)).toBe(`echoed ${own}`);
+    expect(scrubProviderText(profiled, `echoed ${agent}`)).toBe(PROVIDER_TEXT_WITHHELD);
+    const any = providerTextScrub(connection, "any");
+    expect(scrubProviderText(any, `echoed ${own}`)).toBe(PROVIDER_TEXT_WITHHELD);
+    expect(scrubProviderText(any, `echoed ${agent}`)).toBe(PROVIDER_TEXT_WITHHELD);
+  });
+
+  test("a profiled scrub keeps the connection's own password where no agent password replaces it", () => {
+    const own = generated();
+    const scrub = providerTextScrub(connectionWith({ password: own, agentUser: "agent" }), "profiled");
+    expect(scrubProviderText(scrub, `echoed ${own}`)).toBe(PROVIDER_TEXT_WITHHELD);
+  });
 
   const password = generated();
   const token = generatedJwt();
@@ -86,19 +118,19 @@ describe("providerTextScrub", () => {
     ["its padded base64", Buffer.from(password, "utf8").toString("base64")],
     ["its URI-encoded form", encodeURIComponent(password)],
   ])("withholds each form secretForms derives from a value, padded base64 included: %s", (_label, form) => {
-    const scrub = providerTextScrub(connectionWith({ password }));
+    const scrub = providerTextScrub(connectionWith({ password }), "profiled");
     expect(scrubProviderText(scrub, `header ${form}.`)).toBe(PROVIDER_TEXT_WITHHELD);
   });
 
   test("withholds each segment of a JWT-shaped value", () => {
-    const scrub = providerTextScrub(connectionWith({ password: token }));
+    const scrub = providerTextScrub(connectionWith({ password: token }), "profiled");
     for (const segment of token.split(".")) {
       expect(scrubProviderText(scrub, `bad segment ${segment}`)).toBe(PROVIDER_TEXT_WITHHELD);
     }
   });
 
   test("says by name that a text was withheld and echoes none of it", () => {
-    const scrub = providerTextScrub(connectionWith({ password }));
+    const scrub = providerTextScrub(connectionWith({ password }), "profiled");
     const withheld = scrubProviderText(scrub, `rejected ${password}`);
     expect(withheld).toBe(PROVIDER_TEXT_WITHHELD);
     expect(withheld).toContain("withheld");
@@ -107,31 +139,31 @@ describe("providerTextScrub", () => {
   });
 
   test("returns a text holding no form unchanged", () => {
-    const scrub = providerTextScrub(connectionWith({ password }));
+    const scrub = providerTextScrub(connectionWith({ password }), "profiled");
     const raw = 'relation "orders" does not exist';
     expect(scrubProviderText(scrub, raw)).toBe(raw);
   });
 
   test("adds no form for an empty secret", () => {
-    const scrub = providerTextScrub(connectionWith({ password: "" }));
+    const scrub = providerTextScrub(connectionWith({ password: "" }), "any");
     expect(scrub.forms).toEqual([]);
     expect(scrubProviderText(scrub, "any text")).toBe("any text");
   });
 
   test("names the connection's type", () => {
-    expect(providerTextScrub(connectionWith({ type: "mysql" })).type).toBe("mysql");
+    expect(providerTextScrub(connectionWith({ type: "mysql" }), "any").type).toBe("mysql");
   });
 
   test("matches as serverText does, case-sensitively", () => {
     const value = `Upper${crypto.randomUUID()}`;
-    const scrub = providerTextScrub(connectionWith({ password: value }));
+    const scrub = providerTextScrub(connectionWith({ password: value }), "profiled");
     expect(scrubProviderText(scrub, `rejected ${value.toLowerCase()}`)).toBe(`rejected ${value.toLowerCase()}`);
   });
 });
 
 describe("withholdProviderError", () => {
   const password = generated();
-  const scrub = providerTextScrub(connectionWith({ password }));
+  const scrub = providerTextScrub(connectionWith({ password }), "profiled");
 
   test("returns the same error when no text a renderer reads holds a form", () => {
     const error = new QueryError("syntax error at or near SELEC", "postgres", "SELEC 1", 1, "near SELEC");
@@ -185,7 +217,7 @@ describe("withholdProviderError", () => {
 
 describe("scrubProviderWarnings and withScrubbedWarnings", () => {
   const password = generated();
-  const scrub = providerTextScrub(connectionWith({ password }));
+  const scrub = providerTextScrub(connectionWith({ password }), "profiled");
 
   test("scrubs a warning's message, string code and severity", () => {
     const warnings = scrubProviderWarnings(scrub, [

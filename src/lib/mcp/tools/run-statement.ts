@@ -305,7 +305,7 @@ async function execute(
   if (opened.kind === "cancelled") return [ownWordsError(MCP_CANCELLED_TEXT), "mcp_cancelled"];
   if (opened.kind === "timeout") return [ownWordsError(timeoutText(args.timeout_ms)), "mcp_timeout"];
   if (opened.kind === "failed")
-    return acquisitionFailure(call, opened, deadline, record, providerTextScrub(connection));
+    return acquisitionFailure(call, opened, deadline, record, providerTextScrub(connection, "profiled"));
   const scrub = opened.value;
   try {
     return await executeOpened(call, tool, connection, record, deadline, scrub);

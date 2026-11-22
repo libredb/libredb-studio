@@ -219,7 +219,8 @@ export async function POST(req: Request) {
   }
 
   // Set once the connection resolves: from then on a provider may be built (the database the run reads, through
-  // `editorProvider`), so a failure answered below passes core's scrub of that connection's credential first.
+  // `editorProvider`, on the connection's own credential), so a failure answered below passes core's scrub of every
+  // provider of that connection ("any") first.
   let scrub: ProviderTextScrub | undefined;
   try {
     let body: Record<string, unknown>;
@@ -316,7 +317,7 @@ export async function POST(req: Request) {
     }
 
     const connection = await resolveConnection({ connectionId }, guard.session);
-    scrub = providerTextScrub(connection);
+    scrub = providerTextScrub(connection, "any");
 
     /*
       An engine whose provider implements no read-only statement path,

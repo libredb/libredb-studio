@@ -432,7 +432,7 @@ export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall)
 
   // The listed connection's own values until the open has read Vault; then the open's scrub, over its secrets as
   // resolved, which every provider text this call answers with passes.
-  let scrub = providerTextScrub(connection);
+  let scrub = providerTextScrub(connection, "profiled");
   const author = providerAuthor(connection.type);
   try {
     scrub = await step(() => call.context.textScrub(connection));

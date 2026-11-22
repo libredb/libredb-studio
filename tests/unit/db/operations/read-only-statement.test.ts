@@ -356,7 +356,10 @@ describe("runReadOnlyStatement", () => {
     const warned = spyOn(logger, "warn").mockImplementation(() => {});
     try {
       const password = crypto.randomUUID();
-      const scrub = providerTextScrub({ id: "c1", name: "c", type: "postgres", password, createdAt: new Date(0) });
+      const scrub = providerTextScrub(
+        { id: "c1", name: "c", type: "postgres", password, createdAt: new Date(0) },
+        "profiled",
+      );
       await settled(
         runReadOnlyStatement(provider, {
           type: "postgres",

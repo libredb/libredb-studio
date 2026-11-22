@@ -1457,7 +1457,7 @@ async function runStatement(
   // call keeps this execution counted until it settles, also when the time refusal answered the run first.
   return runReadOnlyStatement(provider, {
     type: context.connection.type,
-    scrub: providerTextScrub(context.connection),
+    scrub: providerTextScrub(context.connection, "profiled"),
     statement: sql,
     budget: readOnlyBudgetFor(context, budget),
     mode,
@@ -1852,7 +1852,7 @@ export async function runAuditedAgentCall(
 
   // Every provider text this call can carry to the ledger or the prompt passes core's scrub of the connection's
   // credential first (src/lib/db/operations/provider-text.ts).
-  const scrub = providerTextScrub(context.connection);
+  const scrub = providerTextScrub(context.connection, "profiled");
   let outcome: Awaited<ReturnType<typeof executeAuditedOperation<QueryResult>>>;
   try {
     outcome = guardRefuses(call.guardedStatement)
@@ -2697,7 +2697,7 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
               context.capabilities,
               declared,
               objectReadArguments(context),
-              providerTextScrub(context.connection),
+              providerTextScrub(context.connection, "profiled"),
             ),
             budget.statementTimeoutMs,
             () => new AgentSchemaReadTimeout(budget.statementTimeoutMs),

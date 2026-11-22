@@ -177,8 +177,10 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
 
   // From here a provider may be built, so a failure that leaves the drive passes core's scrub of the run's connection
   // on its way to the callers' log lines and error responses, which do not hold the connection. The ledger still
-  // records the failure from the original error, by its class and code.
-  const scrub = providerTextScrub(connection);
+  // records the failure from the original error, by its class and code. The scrub covers every provider of the
+  // connection ("any"): the capability read below is built from the connection's own credential, the statement
+  // providers from the agent's.
+  const scrub = providerTextScrub(connection, "any");
   try {
     // Capabilities and labels are type-driven and read without connecting, the way
     // /api/db/provider-meta reads them. The live, read-only provider a statement

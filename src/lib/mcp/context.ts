@@ -183,7 +183,7 @@ export class McpConnectionContext {
    * the scrub is taken from the open, which a tool asks for before it acquires. It refuses as the open refuses.
    */
   async textScrub(listed: ManagedConnection): Promise<ProviderTextScrub> {
-    return providerTextScrub(await this.open(listed));
+    return providerTextScrub(await this.open(listed), "profiled");
   }
 
   async acquire(listed: ManagedConnection, profile: ExecutionProfile): Promise<DatabaseProvider> {

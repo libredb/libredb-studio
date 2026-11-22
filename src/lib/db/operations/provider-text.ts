@@ -3,8 +3,9 @@
  *
  * A provider scrubs the server's text at its own entry with `serverText` (src/lib/db/utils/server-text.ts); this is
  * the pass core runs after it, over every error, warning and notice text a provider hands core on those paths,
- * before any fence, prompt, ledger row, response or log line. It reads the calling connection's own secret-class
- * values through the central walk (`secretFieldValues`) and expands them with `secretForms`. A text holding any form is
+ * before any fence, prompt, ledger row, response or log line. It reads the secret-class values of the calling
+ * connection that its providers receive (`ScrubbedProviders`) through the central walk (`secretFieldValues`) and
+ * expands them with `secretForms`. A text holding any form is
  * replaced whole by `PROVIDER_TEXT_WITHHELD`, matched exactly as `serverText` matches (`holdsSecretForm`).
  *
  * What it does not catch, stated in docs/AGENT_DATA_FLOW.md: a secret that is part of a field's value rather than
@@ -35,10 +36,30 @@ export interface ProviderTextScrub {
   readonly forms: readonly string[];
 }
 
-/** The scrub of one connection: its secret-class values and their forms. */
-export function providerTextScrub(connection: SecretFieldRecord): ProviderTextScrub {
+/**
+ * Which providers of a connection a scrub covers, so it holds only the values those providers receive: a value a
+ * provider never received is no credential of its own text, and is left out.
+ * - `"profiled"`: a provider `acquireExecutionProfileProvider` builds, the statement paths' (the agent's tools, the
+ *   hand-over, MCP). Where the connection configures an agent password the factory hands that provider the agent
+ *   password in place of the connection's own (`resolveAgentCredential`), so the connection's own is left out.
+ * - `"any"`: every provider core builds for the connection, the editor's handle and a capability read included, so
+ *   the connection's own password is kept beside the agent's.
+ * Neither covers the SSH tunnel's secrets: `providerConnection` strips them before any provider is built.
+ */
+export type ScrubbedProviders = "profiled" | "any";
+
+/** Whether a secret path holds a value the providers `reach` names receive. */
+function providerReceives(connection: SecretFieldRecord, path: string, reach: ScrubbedProviders): boolean {
+  if (path.startsWith("sshTunnel.")) return false;
+  if (reach === "profiled" && path === "password") return !connection.agentPassword;
+  return true;
+}
+
+/** The scrub of one connection's providers: the secret-class values they receive and their forms. */
+export function providerTextScrub(connection: SecretFieldRecord, reach: ScrubbedProviders): ProviderTextScrub {
   const values: string[] = [];
-  for (const value of Object.values(secretFieldValues(connection))) {
+  for (const [path, value] of Object.entries(secretFieldValues(connection))) {
+    if (!providerReceives(connection, path, reach)) continue;
     values.push(value);
   }
   return { type: connection.type, forms: secretForms(values) };
