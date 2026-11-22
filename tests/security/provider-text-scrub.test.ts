@@ -225,8 +225,8 @@ describe("on MCP", () => {
       type: "s3",
       host: "127.0.0.1",
       port: 9000,
-      user: "own-key",
-      agentUser: "agent-key",
+      user: crypto.randomUUID(),
+      agentUser: crypto.randomUUID(),
       agentPassword: password,
     } as ManagedConnection;
     const provider = {
