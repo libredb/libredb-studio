@@ -133,6 +133,10 @@ describe("a value outside the union is refused by name at every generator call",
     ["SQL", caps()],
     ["JSON", caps({ queryLanguage: "json" })],
     ["declared-quoting", caps({ identifierQuoting: "double" })],
+    // A dialect row and a declaration that offers no count answer before any SQL form is read: the type is still
+    // read first.
+    ["dialect", caps({ queryLanguage: "json", queryDialect: "redis" })],
+    ["no-count", caps({ tablesAreDerivedGroupings: true })],
   ];
   const CALLS: readonly (readonly [string, (type: DatabaseType, c: ProviderCapabilities) => unknown])[] = [
     ["quoteIdentifier", (type, c) => quoteIdentifier("x", type, c)],

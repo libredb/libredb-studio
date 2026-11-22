@@ -396,6 +396,10 @@ export function TestDataGenerator({
   // The comparable spelling of the address, for the memo's dependency list: an array prop is
   // a new identity on every render and would defeat the memo.
   const tablePathKey = pathKey(tablePath);
+  // The declaration's content, for the same list: the statement holds random values, so a host that builds an
+  // equal declaration in a new object on each render would otherwise regenerate every row. Keyed on its JSON, as
+  // `CreateTableModal` keys its draft on the spec's JSON: a declaration arrives as JSON.
+  const capabilitiesKey = capabilities === undefined ? undefined : JSON.stringify(capabilities);
   const [rowCount, setRowCount] = useState(10);
   const [refreshKey, setRefreshKey] = useState(0);
   // Why `databaseType` is refused, or null for a type id and for no type at all (FND-1). The statement checks it
@@ -548,7 +552,7 @@ export function TestDataGenerator({
     columnConfigs,
     rowCount,
     queryLanguage,
-    capabilities,
+    capabilitiesKey,
     tablePathKey,
     databaseType,
     refreshKey,

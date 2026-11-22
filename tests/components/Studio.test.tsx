@@ -3262,6 +3262,12 @@ describe("Studio", () => {
     expect(mockUpdateTabById).toHaveBeenCalledWith("tab-1", { query: "SELECT 2" });
   });
 
+  test("QueryEditor is handed the active connection's type, which picks an SQL engine's completion quoting", () => {
+    connMgrOverride = { activeConnection: { ...pgConn, type: "mysql" } };
+    render(<Studio />);
+    expect(capturedQueryEditorProps.databaseType).toBe("mysql");
+  });
+
   test("QueryEditor onExplain executes explain query", () => {
     render(<Studio />);
     const fn = capturedQueryEditorProps.onExplain as () => void;

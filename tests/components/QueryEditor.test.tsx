@@ -3502,6 +3502,25 @@ describe("QueryEditor completion addresses (#1397)", () => {
     mockUseMonacoReturn = null;
   });
 
+  test("a mounted editor requotes completion when only the connection's type changes", () => {
+    // An embedded host can share one SQL declaration between two connections: the same object arrives with a
+    // new type, and completion must follow the type.
+    mockUseMonacoReturn = { Range: class {} };
+    mockRegisterSQLCompletionProvider.mockClear();
+    const capabilities = { queryLanguage: "sql", defaultPort: 5432 } as unknown as Parameters<
+      typeof QueryEditor
+    >[0]["capabilities"];
+    const calls = mockRegisterSQLCompletionProvider.mock.calls as unknown as [unknown, SchemaCompletionCache][];
+    const view = render(
+      React.createElement(QueryEditor, createDefaultProps({ capabilities, databaseType: "postgres" })),
+    );
+    expect(calls[calls.length - 1][1].quoteSegment!("e2e-other")).toBe('"e2e-other"');
+    view.rerender(React.createElement(QueryEditor, createDefaultProps({ capabilities, databaseType: "mysql" })));
+    expect(calls[calls.length - 1][1].quoteSegment!("e2e-other")).toBe("`e2e-other`");
+    view.unmount();
+    mockUseMonacoReturn = null;
+  });
+
   test("an engine that spells its container names gives completion that spelling, and no other engine does", () => {
     mockUseMonacoReturn = { Range: class {} };
     mockRegisterSQLCompletionProvider.mockClear();

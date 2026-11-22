@@ -244,6 +244,35 @@ describe("TestDataGenerator", () => {
     );
   });
 
+  test("an equal declaration in a new object keeps the statement, and one that quotes differently rewrites it", () => {
+    // The statement holds random values, so a host that builds its declaration in render must not regenerate
+    // every row on each re-render: the memo reads the declaration's content, not its identity.
+    const awkward: DetailedObject = {
+      ...schema,
+      columns: [
+        { name: "order date", type: "VARCHAR(50)", nullable: false, isPrimary: false },
+        { name: "salary", type: "DECIMAL(10,2)", nullable: true, isPrimary: false },
+      ],
+    };
+    const view = (capabilities: ProviderCapabilities) => (
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tablePath={["shop", "employees"]}
+        tableSchema={awkward}
+        capabilities={capabilities}
+        onExecuteQuery={mock(() => {})}
+      />
+    );
+    const { container, rerender } = render(view(capsOf({ defaultPort: 5432 })));
+    const first = container.textContent ?? "";
+    expect(first).toContain('INSERT INTO shop.employees ("order date", salary)');
+    rerender(view(capsOf({ defaultPort: 5432 })));
+    expect(container.textContent ?? "").toBe(first);
+    rerender(view(capsOf({ defaultPort: 5432, identifierQuoting: "backtick" })));
+    expect(container.textContent ?? "").toContain("INSERT INTO shop.employees (`order date`, salary)");
+  });
+
   test("quotes a generated value that does not match its column's numeric type", () => {
     // The generator is chosen by column NAME and the quoting by column TYPE, so
     // the two can disagree: `phone BIGINT` produces `+1-555-…`, which used to be
