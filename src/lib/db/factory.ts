@@ -50,8 +50,8 @@ import * as path from "path";
  * Uses dynamic imports to load providers on-demand, reducing initial memory usage
  *
  * @param connection - Database connection configuration. The provider is built from `providerConnection(connection)`
- *   (./provider-connection): a copy whose `sshTunnel` holds only the fields `SSH_TUNNEL_FIELDS` classifies public, so
- *   the tunnel's password, private key and passphrase stay in the record the caller passed. Core's decision about the
+ *   (./provider-connection): a copy without `sshTunnel`, the tunnel's route under `TUNNEL_ROUTE` instead, so every
+ *   tunnel field, its password, private key and passphrase among them, stays in the record the caller passed. Core's decision about the
  *   tunnel (`decideTunnel` in ./tunnel-decision) is taken before anything is built: a malformed `sshTunnel`, a tunnel
  *   that is on for an engine that takes none or for a connection with no host and port, a tunnel that is on and was not
  *   opened (no `TUNNEL_FAR_END`: build inside `withOneShotTunnel` or use `getOrCreateProvider`), and a far end on a
@@ -351,10 +351,10 @@ async function buildProvider(
   // takes it, whatever its engine, before a later working directory could move it (FND-2 slice 3, docs/SECURITY.md
   // 3.45). On a standalone server the boot took it already, so this reads the kept location.
   storageLocation();
-  // Every provider is built from the connection `providerConnection` answers: the record with its `sshTunnel` reduced to
-  // the public fields, so no provider holds the tunnel's password, private key or passphrase (FND-2,
-  // docs/SECURITY.md 3.41). When core opens a tunnel (getOrCreateProvider, acquireExecutionProfileProvider,
-  // withOneShotTunnel), it dials with those before it calls this function; a tunnel that is on and was not opened was
+  // Every provider is built from the connection `providerConnection` answers: the record without its `sshTunnel`, the
+  // tunnel's route under `TUNNEL_ROUTE` instead, so no provider receives the tunnel or its password, private key or
+  // passphrase (FND-2, docs/SECURITY.md 3.41). When core opens a tunnel (getOrCreateProvider,
+  // acquireExecutionProfileProvider, withOneShotTunnel), it dials with those before it calls this function; a tunnel that is on and was not opened was
   // refused above, except for readProviderDeclarations, which never hands its provider out.
   connection = providerConnection(connection);
   // A SQLite, DuckDB or LibreDB connection (`OPENS_LOCAL_FILE`) is handed the file core admitted, resolved against the

@@ -78,7 +78,7 @@ import { logger } from "@/lib/logger";
 import { resetStorageEncryptionKey } from "@/lib/storage/encryption";
 import { projectSeedConnection } from "@/lib/seed/connection-filter";
 import { closeProviderCaches, resetShutdownHooks } from "@/lib/shutdown";
-import type { SSHTunnelConfig } from "@/lib/types";
+import { TUNNEL_ROUTE, type SSHTunnelConfig, type WithTunnelRoute } from "@/lib/types";
 import { CassandraTransportError } from "@/lib/db/providers/sql/cassandra/transport";
 import { CouchbaseError } from "@/lib/db/providers/document/couchbase/transport";
 import { DruidTransportError } from "@/lib/db/providers/sql/druid/transport";
@@ -5940,10 +5940,11 @@ describe("a tunnelled provider fingerprints the far end (X23)", () => {
     const roundTripped = JSON.parse(JSON.stringify(provider.config)) as DatabaseConnection;
     expect(await connectionFingerprint(roundTripped)).not.toBe(await connectionFingerprint(stored));
     // Fail closed: what a round trip leaves is the LOCAL endpoint, which is what the routes
-    // refuse. The seal never falls back to "equal if we cannot tell".
-    expect(await connectionFingerprint(roundTripped)).toBe(
-      await connectionFingerprint({ ...stored, host: "127.0.0.1", port: 54321 }),
-    );
+    // refuse. The seal never falls back to "equal if we cannot tell". The route marker is a
+    // symbol too and the provider holds no `sshTunnel` (FND-2 slice 5b), so no route is left.
+    const localOnly: DatabaseConnection = { ...stored, host: "127.0.0.1", port: 54321 };
+    delete localOnly.sshTunnel;
+    expect(await connectionFingerprint(roundTripped)).toBe(await connectionFingerprint(localOnly));
   });
 
   test("the execution-profile path carries it too, credential substitution and all", async () => {
@@ -5975,8 +5976,9 @@ describe("a tunnelled provider fingerprints the far end (X23)", () => {
 // The SSH tunnel's secret fields stay in core (FND-2, docs/SECURITY.md 3.41)
 // ----------------------------------------------------------------------------
 // Core dials the bastion with the record's tunnel password, private key and
-// passphrase, and builds the provider from a copy of the connection whose
-// `sshTunnel` holds only the public fields. Each entry point is driven here.
+// passphrase, and builds the provider from a copy of the connection without
+// `sshTunnel`, the tunnel's route under `TUNNEL_ROUTE` in its place (slice 5b).
+// Each entry point is driven here.
 // ============================================================================
 
 describe("the SSH tunnel's secret fields stay in core (FND-2)", () => {
@@ -6005,19 +6007,11 @@ describe("the SSH tunnel's secret fields stay in core (FND-2)", () => {
     });
   }
 
-  /** The tunnel a provider is built with, written out by hand. */
-  const PROVIDER_TUNNEL = {
-    enabled: true,
-    host: "bastion.internal",
-    port: 22,
-    username: "jump",
-    authMethod: "privateKey",
-  };
-
   function expectWithoutTunnelSecrets(provider: DatabaseProvider): void {
     expect(provider.config.host).toBe("127.0.0.1");
-    const tunnel: Record<string, unknown> = { ...provider.config.sshTunnel };
-    expect(tunnel).toEqual(PROVIDER_TUNNEL);
+    expect(Object.hasOwn(provider.config, "sshTunnel")).toBe(false);
+    // The route of the record's tunnel, written out by hand.
+    expect((provider.config as WithTunnelRoute)[TUNNEL_ROUTE]).toBe("4:true16:bastion.internal2:224:jump");
     // The whole provider, not only its config: options and the execution context reach it too.
     expect(markersReachableFrom(provider, [TUNNEL_MARKER_ONE, TUNNEL_MARKER_TWO, TUNNEL_MARKER_THREE])).toEqual([]);
   }
@@ -6028,7 +6022,7 @@ describe("the SSH tunnel's secret fields stay in core (FND-2)", () => {
     expect(stored.sshTunnel?.passphrase).toBe(TUNNEL_MARKER_THREE);
   }
 
-  test("getOrCreateProvider dials the tunnel with the record's secret fields and builds the provider without them", async () => {
+  test("getOrCreateProvider dials the tunnel with the record's secret fields and builds the provider without the tunnel, its route under core's marker", async () => {
     const stored = record("fnd2-cached");
     const provider = await getOrCreateProvider(stored);
     expect(mockCreateSSHTunnel).toHaveBeenCalledTimes(1);
@@ -6038,7 +6032,7 @@ describe("the SSH tunnel's secret fields stay in core (FND-2)", () => {
     expectWithoutTunnelSecrets(provider);
   });
 
-  test("acquireExecutionProfileProvider builds its provider without them", async () => {
+  test("acquireExecutionProfileProvider builds its provider without the tunnel, its route under core's marker", async () => {
     const stored = record("fnd2-profile", { agentUser: "agent_ro", agentPassword: STAND_IN_AGENT_PASSWORD });
     const provider = await acquireExecutionProfileProvider(stored, "agent-read-only");
     expect(mockCreateSSHTunnel.mock.calls[0]?.[1]).toBe(stored.sshTunnel);
@@ -6046,7 +6040,7 @@ describe("the SSH tunnel's secret fields stay in core (FND-2)", () => {
     expectWithoutTunnelSecrets(provider);
   });
 
-  test("a provider built inside withOneShotTunnel holds none of them", async () => {
+  test("a provider built inside withOneShotTunnel holds no tunnel, its route under core's marker", async () => {
     const stored = record("fnd2-one-shot");
     const provider = await withOneShotTunnel(stored, async (effective) => {
       // The callback is core code and still receives the record's whole tunnel (plan Q1).

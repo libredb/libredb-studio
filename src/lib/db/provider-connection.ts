@@ -1,24 +1,14 @@
 import type { ProviderExecutionContext } from "@/lib/db/types";
 import { TUNNEL_ROUTE } from "@/lib/types";
 import type { DatabaseConnection, SSHTunnelConfig, WithTunnelRoute } from "@/lib/types";
-import { SSH_TUNNEL_FIELDS } from "@/lib/storage/secret-fields";
 import { tunnelRoute } from "./connection-fingerprint";
 import { DatabaseConfigError } from "./errors";
 
 /**
- * The tunnel fields a provider receives: the ones `SSH_TUNNEL_FIELDS` does not classify `secret` (`public` and
- * `identity` alike, both readable), derived once from that map so that a second, hand-kept list cannot drift from the
- * classification storage encryption already reads.
- */
-const READABLE_TUNNEL_FIELDS: readonly string[] = Object.entries(SSH_TUNNEL_FIELDS)
-  .filter(([, fieldClass]) => fieldClass !== "secret")
-  .map(([field]) => field);
-
-/**
  * Whether `value` is plain data, as parsed JSON is: its prototype is `Object.prototype` or null, and every own property,
- * string or symbol keyed, is an enumerable data property. A copy of an object (an object spread, or the field-by-field
- * copy of the tunnel below) loses a field defined on the prototype or as not enumerable, and reads an own getter once
- * into a plain value; only for plain data does the copy answer every field exactly as the original does.
+ * string or symbol keyed, is an enumerable data property. A copy of an object (an object spread or rest) loses a field
+ * defined on the prototype or as not enumerable, and reads an own getter once into a plain value; only for plain data
+ * does the copy answer every field exactly as the original does.
  */
 function isPlainData(value: unknown): value is object {
   if (value === null || typeof value !== "object") return false;
@@ -35,8 +25,8 @@ function isPlainData(value: unknown): value is object {
  * carries it, is not plain data (`isPlainData`), with a `DatabaseConfigError` that names the field and never its value.
  * A connection without a tunnel passes whatever its shape.
  *
- * WHY. Every path from a tunnelled record to a provider copies it: `providerConnection` copies the record and the
- * tunnel's readable fields, and the entry points that open the tunnel (`getOrCreateProvider`,
+ * WHY. Every path from a tunnelled record to a provider copies it: `providerConnection` copies the record and frames
+ * the tunnel's route, and the entry points that open the tunnel (`getOrCreateProvider`,
  * `acquireExecutionProfileProvider` and `withOneShotTunnel` in `./factory`) build from a copy with the tunnel's local
  * endpoint in it. A copy of anything but plain data can answer differently from the record core read (a field defined
  * on the prototype or as not enumerable is lost, so a `readOnly` or an `ssl` would reach the provider as undefined), so
@@ -81,23 +71,26 @@ export function assertExecutionContextIsPlainData(execution: ProviderExecutionCo
 }
 
 /**
- * The connection a provider is built from (FND-2, docs/SECURITY.md control 3.41): the caller's record with its
- * `sshTunnel` reduced to the fields `SSH_TUNNEL_FIELDS` does not classify `secret`.
+ * The connection a provider is built from (FND-2, docs/SECURITY.md control 3.41): the caller's record without its
+ * `sshTunnel`, and with the tunnel's route under `TUNNEL_ROUTE` in its place.
  *
- * WHY. When core opens the SSH tunnel (`getOrCreateProvider`, `acquireExecutionProfileProvider` and
- * `withOneShotTunnel` in `./factory`), it dials with the tunnel's password, private key and passphrase itself, and hands
- * the provider the outcome: the local endpoint in `host` and `port` and the far end under `TUNNEL_FAR_END`. A provider
- * therefore needs no tunnel credential, and `createDatabaseProvider` builds every provider from this function's answer,
- * so none holds one, whichever path built it. A connection whose tunnel is on and was not opened by one of those three
- * is refused before it reaches this function (`assertProviderTunnel` in `./tunnel-decision`).
+ * WHY. Core decides every tunnel (`decideTunnel` in `./tunnel-decision`) and opens it (`getOrCreateProvider`,
+ * `acquireExecutionProfileProvider` and `withOneShotTunnel` in `./factory`) with the tunnel's own fields, and hands the
+ * provider the outcome: the local endpoint in `host` and `port` and the far end under `TUNNEL_FAR_END`. A provider
+ * therefore needs nothing of the tunnel's configuration, and `createDatabaseProvider` builds every provider from this
+ * function's answer, so none receives `sshTunnel`, its credentials or its readable fields, whichever path built it.
  *
- * WHAT STAYS. Every readable tunnel field the record holds, each value as the record holds it: Databend frames the
- * route into its sign-in latch key, and the edit-plan seal (`connectionFingerprint`) frames the route from the
- * provider's own config, so the route must be the record's or every tunnelled edit plan is refused. Each value passes
- * through unchanged; no provider decides a tunnel from them, since core decides it before any build (`decideTunnel` in
- * `./tunnel-decision`). A key the
- * classification does not name is left out. The symbol-keyed markers `TUNNEL_FAR_END` and `LITERAL_SEED_FILE` are
- * carried by the object spread.
+ * WHAT A PROVIDER RECEIVES. Every other field as the record holds it, every own symbol key (`TUNNEL_FAR_END` and
+ * `LITERAL_SEED_FILE` among them), and, for a record that carries a tunnel object, on or off, `tunnelRoute` of that
+ * tunnel under `TUNNEL_ROUTE`, replacing any value the caller set. The edit-plan seal (`connectionFingerprint`) frames
+ * the route from the provider's own config, so it must be the record's or every tunnelled edit plan is refused, and
+ * the record side frames an off tunnel's route too; Databend's sign-in latch reads it through `requireTunnelRoute` in
+ * `./utils/require-tunnel-route`.
+ *
+ * PRECONDITION. The tunnel is one core's decision accepted: its only caller, `buildProvider` in `./factory`, runs
+ * `assertProviderTunnel` (hence `decideTunnel`) first, which holds `host` and `username` to text on every present
+ * tunnel, the values `tunnelRoute` measures. The field checks are not repeated here, which would be a second copy of
+ * the decision and an import cycle with `./tunnel-decision`.
  *
  * WHAT IS REFUSED. With `sshTunnel` absent (`undefined` or `null`) the record itself is returned, so a connection
  * without a tunnel is built exactly as it is passed. Any other `sshTunnel` must be plain data, and so must the record
@@ -105,23 +98,15 @@ export function assertExecutionContextIsPlainData(execution: ProviderExecutionCo
  * and reads an own getter once, so only plain data reaches the provider exactly as core read it. A string, a number, an
  * array, a class instance or a getter is refused with a `DatabaseConfigError` that names the field and never
  * its value. It never writes to its argument.
- *
- * Core now owns every tunnel decision (FND-2 slice 5); the provider keeps the readable fields only for the route the
- * seal and Databend's latch frame, until core hands that route on by itself and the field leaves the provider's view.
  */
 export function providerConnection<T extends DatabaseConnection>(connection: T): T & WithTunnelRoute {
   const tunnel: unknown = connection.sshTunnel;
   if (tunnel === undefined || tunnel === null) return connection;
   assertTunnelRecordIsPlainData(connection);
-  const kept: Record<string, unknown> = {};
-  for (const field of READABLE_TUNNEL_FIELDS) {
-    if (Object.hasOwn(tunnel, field)) kept[field] = Reflect.get(tunnel, field);
-  }
-  // The assertions: TypeScript cannot follow the copy of the classified keys above, and the record's values are kept
-  // as they are. The route is framed from the record's own tunnel, which core's decision accepted before this runs.
-  return {
-    ...connection,
-    sshTunnel: kept as unknown as SSHTunnelConfig,
-    [TUNNEL_ROUTE]: tunnelRoute(tunnel as SSHTunnelConfig),
-  };
+  // The spread copies every own property, symbol keys included, and the copy's own `sshTunnel` is then removed, so the
+  // provider's config has no such key at all. The assertion: the route is framed from the record's own tunnel, which
+  // core's decision accepted before this runs.
+  const copy: T & WithTunnelRoute = { ...connection, [TUNNEL_ROUTE]: tunnelRoute(tunnel as SSHTunnelConfig) };
+  delete copy.sshTunnel;
+  return copy;
 }

@@ -295,9 +295,9 @@ export interface SSLConfig {
 }
 
 /**
- * An SSH tunnel to the database through a bastion. Core reads the secret fields (`password`, `privateKey`,
- * `passphrase`) to open the tunnel, and a provider is built with only the public ones (`providerConnection` in
- * `src/lib/db/provider-connection.ts`).
+ * An SSH tunnel to the database through a bastion. Core decides and opens the tunnel with these fields, the secret ones
+ * (`password`, `privateKey`, `passphrase`) included, and a provider receives none of it: Studio hands it the route under
+ * `TUNNEL_ROUTE` (`providerConnection` in `src/lib/db/provider-connection.ts`).
  */
 export interface SSHTunnelConfig {
   enabled: boolean;

@@ -2188,7 +2188,7 @@ export interface DatabaseProvider {
 
   /**
    * The connection this provider was built from, as `providerConnection` (./provider-connection) hands it to a provider:
-   * the caller's record with its `sshTunnel` reduced to the fields `SSH_TUNNEL_FIELDS` classifies public. A local-file
+   * the caller's record without its `sshTunnel`, the tunnel's route under `TUNNEL_ROUTE` (@/lib/types) instead. A local-file
    * engine's connection (`OPENS_LOCAL_FILE`) also carries `ADMITTED_FILE` (@/lib/types), the file the factory admitted.
    */
   readonly config: DatabaseConnection;

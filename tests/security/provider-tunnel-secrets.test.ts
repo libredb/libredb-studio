@@ -1,10 +1,11 @@
 /**
- * No provider holds the SSH tunnel's secret fields (FND-2, docs/SECURITY.md control 3.41).
+ * No provider receives the SSH tunnel (FND-2, docs/SECURITY.md control 3.41).
  *
  * Studio opens the tunnel itself, with the record's tunnel password, private key and passphrase, and builds the provider
- * from the tunnel's outcome: the local endpoint in `host` and `port` and the far end under `TUNNEL_FAR_END`. A provider
- * therefore has no use for a tunnel credential, and the published `createDatabaseProvider` used to hand every one of them
- * on all the same, at `provider.config.sshTunnel`.
+ * from the tunnel's outcome: the local endpoint in `host` and `port`, the far end under `TUNNEL_FAR_END` and the route
+ * under `TUNNEL_ROUTE`. A provider therefore has no use for the tunnel's configuration, and the published
+ * `createDatabaseProvider` used to hand it on all the same, at `provider.config.sshTunnel`, first with every credential
+ * and then with the readable fields (slice 5b took the field out).
  *
  * This census builds every shipped type-id through the real `createDatabaseProvider`, the function an embedder of
  * `@libredb/studio/providers` calls, from a record whose three tunnel secret fields hold markers, and walks the whole
@@ -14,17 +15,19 @@
  */
 import { describe, expect, test } from "bun:test";
 import { SHIPPED_DATABASE_TYPES, SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
-import { connectionFingerprint, tunnelRoute } from "@/lib/db/connection-fingerprint";
+import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import type { DatabaseConnection, DatabaseProvider } from "@/lib/db/types";
 import { SSH_TUNNEL_FIELDS } from "@/lib/storage/secret-fields";
 import {
   LITERAL_SEED_FILE,
   TUNNEL_FAR_END,
+  TUNNEL_ROUTE,
   type DatabaseType,
   type SSHTunnelConfig,
   type WithLiteralSeedFile,
   type WithTunnelFarEnd,
+  type WithTunnelRoute,
 } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../helpers/census-connection";
 import { markersReachableFrom } from "../helpers/reachable-markers";
@@ -53,16 +56,9 @@ function tunnelWithMarkers(enabled: boolean): SSHTunnelConfig & { unclassified: 
   };
 }
 
-/** What a provider's `sshTunnel` must be, written out by hand rather than derived from the classification. */
-function expectedProviderTunnel(enabled: boolean): Record<string, unknown> {
-  return {
-    enabled,
-    host: "bastion.example",
-    port: 22,
-    username: "jump",
-    authMethod: "privateKey",
-    hostKeyFingerprint: BASTION_FINGERPRINT,
-  };
+/** The route a provider must carry under `TUNNEL_ROUTE`, written out by hand rather than derived with `tunnelRoute`. */
+function expectedRoute(enabled: boolean): string {
+  return enabled ? "4:true15:bastion.example2:224:jump" : "5:false15:bastion.example2:224:jump";
 }
 
 /** A stored connection: its tunnel switched off, its credentials still in the record, a literal seed file's marker. */
@@ -88,21 +84,20 @@ function tunnelledRecord(type: DatabaseType): MarkedConnection {
   return record;
 }
 
-type MarkedConnection = DatabaseConnection & WithTunnelFarEnd & WithLiteralSeedFile;
+type MarkedConnection = DatabaseConnection & WithTunnelFarEnd & WithLiteralSeedFile & WithTunnelRoute;
 
-/** The provider's connection, typed with the two core-only markers a spread carries. */
+/** The provider's connection, typed with the core-only markers it may carry. */
 const configOf = (provider: DatabaseProvider): MarkedConnection => provider.config;
 
 /** Everything the census holds of one provider built from `record`. */
 async function expectBuiltWithoutTunnelSecrets(record: MarkedConnection, enabled: boolean): Promise<DatabaseProvider> {
   const provider = await createDatabaseProvider(record);
   expect(markersReachableFrom(provider, MARKERS)).toEqual([]);
-  const tunnel: Record<string, unknown> = { ...provider.config.sshTunnel };
-  expect(tunnel).toEqual(expectedProviderTunnel(enabled));
+  expect(Object.hasOwn(provider.config, "sshTunnel")).toBe(false);
+  expect(configOf(provider)[TUNNEL_ROUTE]).toBe(expectedRoute(enabled));
   expect(configOf(provider)[LITERAL_SEED_FILE]).toBe(true);
-  // The seal and the route the edit plan and Databend's sign-in latch frame are the record's.
+  // The seal the edit plan frames, with the route from core's marker, is the record's.
   expect(await connectionFingerprint(provider.config)).toBe(await connectionFingerprint(record));
-  expect(tunnelRoute(provider.config.sshTunnel)).toBe(tunnelRoute(record.sshTunnel));
   // The caller's record keeps its credentials: core dials the tunnel with them.
   expect(record.sshTunnel?.password).toBe(TUNNEL_MARKER_ONE);
   expect(record.sshTunnel?.privateKey).toBe(TUNNEL_MARKER_TWO);
@@ -110,21 +105,27 @@ async function expectBuiltWithoutTunnelSecrets(record: MarkedConnection, enabled
   return provider;
 }
 
-describe("no provider holds the SSH tunnel's secret fields (FND-2)", () => {
-  test.each(SHIPPED_DATABASE_TYPES)("%s built from a stored connection whose tunnel is switched off", async (type) => {
-    const provider = await expectBuiltWithoutTunnelSecrets(storedRecord(type), false);
-    expect(configOf(provider)[TUNNEL_FAR_END]).toBeUndefined();
-  });
+describe("no provider receives the SSH tunnel: it gets the route under core's marker and never sshTunnel (FND-2 slice 5)", () => {
+  test.each(SHIPPED_DATABASE_TYPES)(
+    "%s built from a stored connection whose tunnel is switched off holds no sshTunnel, and the off route under core's marker",
+    async (type) => {
+      const provider = await expectBuiltWithoutTunnelSecrets(storedRecord(type), false);
+      expect(configOf(provider)[TUNNEL_FAR_END]).toBeUndefined();
+    },
+  );
 
   // Only the engines that take a tunnel: core refuses a tunnel that is on for the others before any build
   // (SSH_TUNNEL_REFUSAL, tests/security/provider-tunnel-decisions.test.ts), so no provider of theirs is ever built
   // from a tunnelled connection.
-  test.each(TAKES_A_TUNNEL)("%s built as the factory builds a tunnelled connection", async (type) => {
-    const provider = await expectBuiltWithoutTunnelSecrets(tunnelledRecord(type), true);
-    expect(configOf(provider)[TUNNEL_FAR_END]).toEqual(FAR_END);
-    expect(provider.config.host).toBe("127.0.0.1");
-    expect(provider.config.port).toBe(40000);
-  });
+  test.each(TAKES_A_TUNNEL)(
+    "%s built as the factory builds a tunnelled connection holds no sshTunnel, and the route under core's marker",
+    async (type) => {
+      const provider = await expectBuiltWithoutTunnelSecrets(tunnelledRecord(type), true);
+      expect(configOf(provider)[TUNNEL_FAR_END]).toEqual(FAR_END);
+      expect(provider.config.host).toBe("127.0.0.1");
+      expect(provider.config.port).toBe(40000);
+    },
+  );
 
   // Neither shape opens a tunnel in core, which reads its `enabled` as absent, so a provider built from it would connect
   // straight to the record's own address; the array would also carry its password to the provider.
