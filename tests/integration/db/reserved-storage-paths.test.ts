@@ -208,7 +208,7 @@ test("SQLite refuses denied file access before it reads the path the connection 
 });
 
 // The provider refuses only an explicit `false`: an absent posture, which the published package's factory takes by
-// default and the agent runtime's operations context carries, opens as before, and so does a granted one.
+// default, opens as before, and so does a granted one, such as the one an administrator's agent run carries.
 for (const [label, execution] of [
   ["absent", {}],
   ["granted", { allowExternalFileAccess: true }],
