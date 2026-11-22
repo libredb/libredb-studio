@@ -49,7 +49,7 @@ export function mcpUrlFor(hostname, port) {
  *
  * - SEED_CONFIG_PATH: src/lib/seed/sources/file.ts
  * - SEED_DISCOVERY_PATH: src/lib/seed/discovery-loader.ts
- * - STORAGE_SQLITE_PATH: src/lib/data-dir.ts and the sqlite storage provider
+ * - STORAGE_SQLITE_PATH: src/lib/data-dir.ts, which the sqlite storage provider reads it through
  * - SQLITE_EMBEDDED_SAMPLE_PATH, LIBREDB_EMBEDDED_SAMPLE_PATH, SEED_ASSETS_DIR: src/lib/seed/samples.ts
  * - VAULT_K8S_TOKEN_PATH: src/lib/seed/vault-client.ts
  * - WORKFLOW_LOCAL_DATA_DIR, AGENT_MODEL_TUNING_PATH: src/lib/agent/config.ts

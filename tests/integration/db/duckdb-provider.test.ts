@@ -40,6 +40,8 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { DuckDBProvider, assertReadOnlyStatementIsBounded } from "@/lib/db/providers/sql/duckdb";
 import type { DatabaseConnection } from "@/lib/types";
+import { admittedFileConnection } from "@/lib/db/provider-files";
+import { ADMITTED_FILE_MISSING } from "@/lib/db/utils/admitted-file";
 import type { ObjectKindSpec, ObjectSourceForm, ProviderCapabilities, ReadOnlyStatementBudget } from "@/lib/db/types";
 import {
   FUNCTION_TYPE_RULES,
@@ -124,15 +126,19 @@ const relativeWorkDir = mkdtempSync(join(RELATIVE_WORK_PARENT, "libredb-duckdb-r
  */
 const BARE_SCAN_CSV = join(workDir, "bare-scan.csv");
 
+/**
+ * A DuckDB connection as Studio's provider factory hands it to the provider: admitted by `admittedFileConnection`, so
+ * it carries the file core decided (FND-2 slice 3).
+ */
 function makeConfig(overrides: Partial<DatabaseConnection> = {}): DatabaseConnection {
-  return {
+  return admittedFileConnection({
     id: "test-duckdb",
     name: "Test DuckDB",
     type: "duckdb",
     database: ":memory:",
     createdAt: new Date(),
     ...overrides,
-  };
+  });
 }
 
 const GENEROUS_BUDGET: ReadOnlyStatementBudget = {
@@ -359,6 +365,8 @@ describe("connect / disconnect", () => {
   // under a hard limit, so a regression fails here instead of hanging the suite.
   describeIf(MISSING_POSIX_SPECIAL_FILES, "a FIFO as the database path", () => {
     const duckdbModule = join(import.meta.dir, "../../../src/lib/db/providers/sql/duckdb/index.ts");
+    // A child builds its provider as the factory does: on the file `admittedFileConnection` admits.
+    const providerFilesModule = join(import.meta.dir, "../../../src/lib/db/provider-files.ts");
 
     test.each([
       ["the editor", {}],
@@ -446,7 +454,8 @@ describe("connect / disconnect", () => {
             `const regular = statSync(${JSON.stringify(standIn)});`,
             `spyOn(fs, "statSync").mockImplementation((target, options) => (target === ${JSON.stringify(fifo)} ? regular : statSync(target, options)));`,
             `const { DuckDBProvider: Provider } = await import(${JSON.stringify(duckdbModule)});`,
-            `const provider = new Provider(${JSON.stringify({ id: "swap", name: "swap", type: "duckdb", database: fifo })}, {}, {});`,
+            `const { admittedFileConnection } = await import(${JSON.stringify(providerFilesModule)});`,
+            `const provider = new Provider(admittedFileConnection(${JSON.stringify({ id: "swap", name: "swap", type: "duckdb", database: fifo })}), {}, {});`,
             "try {",
             "  await provider.connect();",
             "  await provider.disconnect();",
@@ -489,11 +498,17 @@ describe("connect / disconnect", () => {
     await provider.disconnect();
   });
 
-  test("a path carrying a NUL byte is refused as a configuration error", async () => {
-    provider = new DuckDBProvider(makeConfig({ database: "/tmp/bad\0path.duckdb" }));
-
-    await expect(provider.connect()).rejects.toThrow(DatabaseConfigError);
+  test("a provider built without the file Studio's factory admits refuses to connect by name and creates nothing", async () => {
+    const dbPath = join(relativeWorkDir, "never-admitted.duckdb");
+    provider = new DuckDBProvider({ id: "raw", name: "raw", type: "duckdb", database: dbPath, createdAt: new Date() });
+    const error = await provider.connect().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect((error as Error).message).toBe(ADMITTED_FILE_MISSING);
     expect(provider.isConnected()).toBe(false);
+    expect(existsSync(dbPath)).toBe(false);
   });
 
   test("a second handle on the same file inside ONE process is admitted on POSIX and refused on Windows", async () => {

@@ -15,7 +15,7 @@ import {
   type WithTunnelFarEnd,
 } from "@/lib/types";
 import { OPCUA_SCHEME, OPCUA_TYPE } from "./constants";
-import { clientIdentitySource, pkiRoot } from "./pki";
+import { clientIdentitySource } from "./pki";
 import { normaliseThumbprint, readEndpointUrl, type OpcuaIdentityKind, type OpcuaSecurityMode } from "./security";
 
 /** What the session is built from, with nothing left to be decided later. */
@@ -42,12 +42,19 @@ export interface OpcuaConnectionOptions {
   readonly password?: string;
   /** The pinned server certificate's SHA-256 thumbprint, 64 lowercase hex (O-S2). */
   readonly pinnedThumbprint?: string;
-  /** Where the client's own key pair and trust store live (O-S4). */
-  readonly pkiRoot: string;
+  /**
+   * Where the client's own key pair and trust store live (O-S4): the root Studio's provider factory decided
+   * (`opcuaPkiRoot` in `src/lib/db/provider-files.ts`) and handed the provider. Absent on a provider built without the
+   * factory, whose session is refused by name (`openReadOnlySession`).
+   */
+  readonly pkiRoot?: string;
   readonly clientCertificatePath?: string;
   readonly clientPrivateKeyPath?: string;
   readonly tunnelled: boolean;
 }
+
+/** The options a session is opened with: a connection's, with the PKI root it needs. */
+export type OpcuaSessionOptions = OpcuaConnectionOptions & { readonly pkiRoot: string };
 
 const MODES: ReadonlySet<string> = new Set(["None", "Sign", "SignAndEncrypt"]);
 
@@ -74,13 +81,12 @@ function readMode(raw: unknown): OpcuaSecurityMode {
 /**
  * A connection, or the refusal.
  *
- * `environment` is passed rather than read from `process.env` so a test states it, and so both PKI
- * root answers - the default inside the data directory, and the refusal for a RELATIVE override - are
- * reachable without changing the process.
+ * `pkiRoot` is the root the provider was built with, which Studio's provider factory decided; it is carried into the
+ * options as it is, so nothing here reads the process's environment or resolves a path.
  */
 export function readConnection(
   config: DatabaseConnection & { readonly [key: string]: unknown },
-  environment: Readonly<Record<string, string | undefined>>,
+  pkiRoot: string | undefined,
 ): OpcuaConnectionOptions {
   // The endpoint is the whole address: host and port are read FROM it rather than beside it, so
   // there is one place a reader can be wrong and one place to correct.
@@ -175,7 +181,7 @@ export function readConnection(
     ...(user === undefined ? {} : { user }),
     ...(password === undefined ? {} : { password }),
     ...(pinnedThumbprint === undefined ? {} : { pinnedThumbprint }),
-    pkiRoot: pkiRoot(environment),
+    ...(pkiRoot === undefined ? {} : { pkiRoot }),
     ...(certificatePath === undefined ? {} : { clientCertificatePath: certificatePath }),
     ...(privateKeyPath === undefined ? {} : { clientPrivateKeyPath: privateKeyPath }),
     tunnelled,

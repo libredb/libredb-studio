@@ -395,6 +395,27 @@ export interface WithLiteralSeedFile {
   readonly [LITERAL_SEED_FILE]?: true;
 }
 
+/**
+ * The file a SQLite, DuckDB or LibreDB connection opens, as Studio's provider factory admitted it (FND-2 slice 3): an
+ * absolute path, or `:memory:`, resolved against the working directory when the provider was built and checked against
+ * Studio's own storage files there, so the provider opens it and resolves nothing itself.
+ *
+ * Set in one place, `admittedFileConnection` in `src/lib/db/provider-files.ts`, which replaces any value a caller set;
+ * read through `requireAdmittedFile` in `src/lib/db/utils/admitted-file.ts`, which refuses a connection that carries
+ * none, so a provider built without the factory opens nothing.
+ *
+ * A symbol key on the footing of {@link TUNNEL_FAR_END}: `JSON.parse` never produces one, so no seed file, request body
+ * or stored connection can carry it, and `JSON.stringify` drops it from every response. It sits beside the record's
+ * own `database` and `connectionString`, which stay as the record holds them, so neither the connection fingerprint
+ * nor the provider cache key frames it, and both still agree with the record.
+ */
+export const ADMITTED_FILE: unique symbol = Symbol("libredb.admittedFile");
+
+/** Carries {@link ADMITTED_FILE} alongside a connection, deliberately not a field of `DatabaseConnection`. */
+export interface WithAdmittedFile {
+  readonly [ADMITTED_FILE]?: string;
+}
+
 export interface DatabaseConnection {
   id: string;
   name: string;

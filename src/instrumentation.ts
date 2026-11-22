@@ -3,12 +3,13 @@
  * boots its own Next.js server (never when @libredb/studio is imported by
  * libredb-platform). On standalone boot, first install the uncaught-exception
  * exit (docs/DISTRIBUTION.md#uncaught-errors-and-restarts), then the shutdown
- * handler (docs/DISTRIBUTION.md#stopping-the-server), then bootstrap
- * missing auth env (#109), run the boot preflights and the credential
- * re-seal and check when STORAGE_ENCRYPTION_RESEAL or
- * STORAGE_ENCRYPTION_REQUIRE_V2 asks for them, and start copying the
- * built-in samples (src/lib/seed/samples.ts), which boot never waits for: a
- * sample whose copy fails is logged once and listed unavailable.
+ * handler (docs/DISTRIBUTION.md#stopping-the-server), then take Studio's
+ * storage location (src/lib/data-dir.ts), then bootstrap missing auth env
+ * (#109), run the boot preflights and the credential re-seal and check when
+ * STORAGE_ENCRYPTION_RESEAL or STORAGE_ENCRYPTION_REQUIRE_V2 asks for them,
+ * and start copying the built-in samples (src/lib/seed/samples.ts), which
+ * boot never waits for: a sample whose copy fails is logged once and listed
+ * unavailable.
  */
 export async function register(): Promise<void> {
   // Node.js server runtime only (skip the edge runtime).
@@ -27,6 +28,13 @@ export async function register(): Promise<void> {
   const exitOwner = exitOwnerAtBoot();
   if (exitOwner === undefined) return;
   installShutdownHandler(process, exitOwner);
+
+  // Third, Studio's storage location: STORAGE_SQLITE_PATH resolved against the working directory now, kept for the life
+  // of the process and logged once, so the files a connection may never open are the ones this boot writes, whatever
+  // the working directory is later (FND-2 slice 3, docs/SECURITY.md 3.45). Before the auth bootstrap, which writes its
+  // credentials file into that directory.
+  const { storageLocation } = await import("@/lib/data-dir");
+  storageLocation();
 
   // Zero-config first run (#109): fill missing auth env from the persisted
   // bootstrap file BEFORE anything reads process.env secrets. Fail-open inside.

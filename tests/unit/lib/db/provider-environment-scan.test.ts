@@ -215,3 +215,61 @@ describe("the operator's CA bundle is read by core alone, and no provider reache
     expect(reaching).toEqual([]);
   });
 });
+
+// Core owns Studio's storage location and OPC UA's PKI root the same way (FND-2 slice 3, the provider plugins design
+// section 0.1): `src/lib/data-dir.ts` reads STORAGE_SQLITE_PATH, `src/lib/db/provider-files.ts` reads
+// LIBREDB_OPCUA_PKI_ROOT, and the factory hands a provider the file it admitted and the root it decided, so no provider
+// reads either setting or reaches the module that keeps Studio's own files.
+const STORAGE_VARIABLE = "STORAGE_SQLITE_PATH";
+const STORAGE_READER = "src/lib/data-dir.ts";
+const PKI_VARIABLE = "LIBREDB_OPCUA_PKI_ROOT";
+const PKI_READER = "src/lib/db/provider-files.ts";
+
+/** The tracked sources under `src/` and `vscode-extension/src/`, other than `reader`, that read `variable`. */
+function readersOtherThan(reader: string, variable: string): string[] {
+  // Each read shape spells the name, so only a file whose text names the variable is parsed.
+  return trackedSources("src", "vscode-extension/src").filter((name) => {
+    if (name === reader) return false;
+    const source = readFileSync(join(process.cwd(), name), "utf8");
+    return source.includes(variable) && readsTheSetting(source, name, variable);
+  });
+}
+
+describe("Studio's storage location and OPC UA's PKI root are read by core alone, and no provider reaches the module that reads them (FND-2 slice 3)", () => {
+  test("the read detector finds STORAGE_SQLITE_PATH and LIBREDB_OPCUA_PKI_ROOT in a property, an element, a destructuring and the name as a string literal, and ignores a sentence that names them", () => {
+    for (const variable of [STORAGE_VARIABLE, PKI_VARIABLE]) {
+      expect(readsTheSetting(`const a = process.env.${variable};`, "probe.ts", variable)).toBe(true);
+      expect(readsTheSetting(`const a = process.env["${variable}"];`, "probe.ts", variable)).toBe(true);
+      expect(readsTheSetting(`const { ${variable} } = process.env;`, "probe.ts", variable)).toBe(true);
+      expect(readsTheSetting(`const { ${variable}: value = "x" } = process.env;`, "probe.ts", variable)).toBe(true);
+      expect(readsTheSetting(`const KEY = "${variable}";`, "probe.ts", variable)).toBe(true);
+      expect(readsTheSetting(`// process.env.${variable}`, "probe.ts", variable)).toBe(false);
+      expect(readsTheSetting(`const SENTENCE = "Point ${variable} at a directory";`, "probe.ts", variable)).toBe(false);
+      // The default variable is the egress one, so a read of another is not a read of it.
+      expect(readsTheSetting(`const a = process.env.${variable};`)).toBe(false);
+    }
+  });
+
+  test("no source file under src/ or vscode-extension/src/ other than src/lib/data-dir.ts reads STORAGE_SQLITE_PATH", () => {
+    expect(readersOtherThan(STORAGE_READER, STORAGE_VARIABLE)).toEqual([]);
+  });
+
+  test("src/lib/data-dir.ts reads STORAGE_SQLITE_PATH", () => {
+    const source = readFileSync(join(process.cwd(), STORAGE_READER), "utf8");
+    expect(readsTheSetting(source, STORAGE_READER, STORAGE_VARIABLE)).toBe(true);
+  });
+
+  test("no source file under src/ or vscode-extension/src/ other than src/lib/db/provider-files.ts reads LIBREDB_OPCUA_PKI_ROOT", () => {
+    expect(readersOtherThan(PKI_READER, PKI_VARIABLE)).toEqual([]);
+  });
+
+  test("src/lib/db/provider-files.ts reads LIBREDB_OPCUA_PKI_ROOT", () => {
+    const source = readFileSync(join(process.cwd(), PKI_READER), "utf8");
+    expect(readsTheSetting(source, PKI_READER, PKI_VARIABLE)).toBe(true);
+  });
+
+  test("no module under src/lib/db/providers/ reaches src/lib/data-dir.ts through its imports", () => {
+    const reaching = providerModules().filter((name) => valueImportClosure(name).modules.includes(STORAGE_READER));
+    expect(reaching).toEqual([]);
+  });
+});

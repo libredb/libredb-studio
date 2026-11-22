@@ -24,6 +24,7 @@ import {
 } from "./provider-connection";
 import { egressDecision } from "./egress-decision";
 import { trustMaterial } from "./trust-material";
+import { admittedFileConnection, opcuaPkiRoot } from "./provider-files";
 import { registerOwnerRemoval } from "./owner-removal";
 import { READ_ONLY_ENFORCED, READS_FILE_ACCESS_POSTURE, READS_TRUST_MATERIAL } from "./compatibility";
 import { assertStatementsReviewed } from "./statement-review";
@@ -48,7 +49,11 @@ import * as path from "path";
  *   plain data, or a connection carrying one that is not, is refused with a `DatabaseConfigError` before anything is
  *   built. The process's egress decision is taken first too, where the other entry points call assertEgressDecided: the
  *   first call of a process with no boot hook reads `DB_HTTP_BLOCK_PRIVATE_HOSTS` and keeps it, and an invalid value is
- *   refused on every call.
+ *   refused on every call. A SQLite, DuckDB or LibreDB connection is then admitted (`admittedFileConnection` in
+ *   ./provider-files): the provider is handed, under `ADMITTED_FILE`, the file the connection names resolved against
+ *   the working directory of this call, and opens that; `database` and `connectionString` stay as passed. The first
+ *   such call, or the first OPC UA build, of a process with no boot hook takes Studio's storage location
+ *   (`storageLocation` in @/lib/data-dir) and keeps it.
  * @param options - Optional provider options (pooling, timeout, etc.)
  * @param execution - Server-injected execution context (#328, non-admin DuckDB file access). Never built
  *   from caller-supplied options. `acquireExecutionProfileProvider` passes the agent
@@ -83,6 +88,9 @@ import * as path from "path";
  *   (`Invalid NODE_EXTRA_CA_CERTS: <reason>`, see trustMaterial in
  *   ./trust-material): the first such build of a process with no boot hook reads the file and keeps the outcome, and an
  *   invalid file refuses every such build, before the log line, while every other engine is built as before
+ * @throws DatabaseConfigError if a SQLite, DuckDB or LibreDB connection names one of Studio's own storage files, a
+ *   path holding a NUL byte or a file name that is not text, before the provider is built (see admittedFileConnection),
+ *   or if an OPC UA connection is built while `LIBREDB_OPCUA_PKI_ROOT` is relative (see opcuaPkiRoot)
  *
  * @example
  * // SQL Database
@@ -265,6 +273,10 @@ export async function createDatabaseProvider(
   // withOneShotTunnel), it dials with those before it calls this function; a caller that builds an unconnected provider
   // opens none. A tunnel or record that is not plain data is refused here, by name, before the log line below.
   connection = providerConnection(connection);
+  // A SQLite, DuckDB or LibreDB connection (`OPENS_LOCAL_FILE`) is handed the file core admitted, resolved against the
+  // working directory now; one of Studio's own storage files, a NUL byte or a name that is not text is refused here, by
+  // name, before any provider exists (FND-2 slice 3, docs/SECURITY.md 3.45). Every other connection passes unchanged.
+  connection = admittedFileConnection(connection);
   // What every provider that takes a context is handed: a copy of the caller's execution context, plain data as checked
   // above, the process's egress decision, which a guarded provider hands its guard, and, for an engine whose
   // `READS_TRUST_MATERIAL` row is true, the trust material core read from the file NODE_EXTRA_CA_CERTS names, which that
@@ -549,10 +561,20 @@ export async function createDatabaseProvider(
       // under Bun 1.4.2 it resolved to a zone-indexed link-local address
       // (`fe80::…%15`) and the error surfaced as an uncaught one. Constructing a provider must not
       // depend on that, so the import happens when a session is actually opened.
-      return new OpcuaProvider(connection, options, context, async (read) => {
-        const { openLibrarySession } = await import("./providers/industrial/opcua/library");
-        return openLibrarySession(read);
-      });
+      //
+      // The PKI root is core's decision (FND-2 slice 3): `LIBREDB_OPCUA_PKI_ROOT`, or `opcua-pki` under Studio's data
+      // directory, read now and handed over, so nothing the environment says at connect reaches the provider; a relative
+      // variable is refused here, before the provider is built.
+      return new OpcuaProvider(
+        connection,
+        options,
+        context,
+        async (read) => {
+          const { openLibrarySession } = await import("./providers/industrial/opcua/library");
+          return openLibrarySession(read);
+        },
+        opcuaPkiRoot(connection.type),
+      );
     }
 
     // MTConnect: an agent in front of machine tools, read over HTTP, read-only by its closed table of nine GET routes.

@@ -56,6 +56,8 @@ import type { SQLiteDatabase, SQLiteStatement } from "@/lib/db/providers/sql/sql
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { rowBudgetIn } from "@/lib/agent/context-snapshot";
 import type { DatabaseConnection } from "@/lib/types";
+import { admittedFileConnection } from "@/lib/db/provider-files";
+import { ADMITTED_FILE_MISSING } from "@/lib/db/utils/admitted-file";
 import type { ObjectKindSpec, ReadOnlyStatementBudget } from "@/lib/db/types";
 import {
   ConnectionError,
@@ -83,15 +85,19 @@ import {
 // Helpers
 // ============================================================================
 
+/**
+ * A SQLite connection as Studio's provider factory hands it to the provider: admitted by `admittedFileConnection`, so
+ * it carries the file core decided (FND-2 slice 3).
+ */
 function makeSQLiteConfig(overrides: Partial<DatabaseConnection> = {}): DatabaseConnection {
-  return {
+  return admittedFileConnection({
     id: "test-sqlite",
     name: "Test SQLite",
     type: "sqlite",
     database: ":memory:",
     createdAt: new Date(),
     ...overrides,
-  };
+  });
 }
 
 /**
@@ -214,18 +220,23 @@ describe("SQLiteProvider", () => {
       rmSync(sameVolumeTmpDir, { recursive: true });
     });
 
-    test("a path containing a NUL byte throws DatabaseConfigError without claiming traversal protection", async () => {
-      provider = new SQLiteProvider(makeSQLiteConfig({ database: "data/evil\0.db" }));
+    test("a provider built without the file Studio's factory admits refuses to connect by name and creates nothing", async () => {
+      const dbPath = join(pathTmpDir, "never-admitted.db");
+      provider = new SQLiteProvider({
+        id: "raw",
+        name: "raw",
+        type: "sqlite",
+        database: dbPath,
+        createdAt: new Date(),
+      });
       const error = await provider.connect().then(
         () => null,
         (e: unknown) => e,
       );
       expect(error).toBeInstanceOf(DatabaseConfigError);
-      const message = (error as Error).message;
-      expect(message).toContain("NUL");
-      // The only path validation is NUL rejection; the message must not promise
-      // traversal protection the code does not provide.
-      expect(message.toLowerCase()).not.toContain("traversal");
+      expect((error as Error).message).toBe(ADMITTED_FILE_MISSING);
+      expect(provider.isConnected()).toBe(false);
+      expect(existsSync(dbPath)).toBe(false);
     });
 
     test("a relative path with '..' segments is accepted and resolves to an absolute location", async () => {
@@ -356,6 +367,8 @@ describe("SQLiteProvider", () => {
     // case connects in a child under a hard limit, so a regression fails here instead of hanging.
     describeIf(MISSING_POSIX_SPECIAL_FILES, "a FIFO", () => {
       const sqliteModule = join(REPO_ROOT, "src/lib/db/providers/sql/sqlite.ts");
+      // The child builds its provider as the factory does: on the file `admittedFileConnection` admits.
+      const providerFilesModule = join(REPO_ROOT, "src/lib/db/provider-files.ts");
 
       test.each([
         ["the editor", "644", {}],
@@ -443,7 +456,8 @@ describe("SQLiteProvider", () => {
               'process.env.LIBREDB_SQLITE_WORKER = "1";',
               'const fs = await import("node:fs");',
               `const { SQLiteProvider: Provider } = await import(${JSON.stringify(sqliteModule)});`,
-              `const provider = new Provider(${JSON.stringify({ id: "r", name: "r", type: "sqlite", database: dbPath })}, {}, ${JSON.stringify(execution)});`,
+              `const { admittedFileConnection } = await import(${JSON.stringify(providerFilesModule)});`,
+              `const provider = new Provider(admittedFileConnection(${JSON.stringify({ id: "r", name: "r", type: "sqlite", database: dbPath })}), {}, ${JSON.stringify(execution)});`,
               "await provider.connect();",
               `fs.renameSync(${JSON.stringify(fifo)}, ${JSON.stringify(dbPath)});`,
               "provider.worker.terminate();",
@@ -633,6 +647,25 @@ describe("SQLiteProvider", () => {
       });
       expect(Object.keys(caps.maintenanceOperationSpecs ?? {}).sort()).toEqual([...caps.maintenanceOperations].sort());
     });
+    test("an admitted :memory: keeps the in-process capabilities, and one admitted to a file keeps the worker answers", () => {
+      const driver = process.env.LIBREDB_SQLITE_DRIVER;
+      const worker = process.env.LIBREDB_SQLITE_WORKER;
+      delete process.env.LIBREDB_SQLITE_DRIVER;
+      delete process.env.LIBREDB_SQLITE_WORKER;
+      try {
+        const raw = { id: "caps", name: "caps", type: "sqlite" as const, createdAt: new Date() };
+        const memory = new SQLiteProvider(admittedFileConnection({ ...raw, database: ":memory:" })).getCapabilities();
+        expect([memory.blocksServerWhileRunning, memory.supportsQueryCancel]).toEqual([true, false]);
+        const file = new SQLiteProvider(
+          admittedFileConnection({ ...raw, database: join(tmpdir(), "caps-never-opened.db") }),
+        ).getCapabilities();
+        expect([file.blocksServerWhileRunning, file.supportsQueryCancel]).toEqual([false, true]);
+      } finally {
+        if (driver !== undefined) process.env.LIBREDB_SQLITE_DRIVER = driver;
+        if (worker !== undefined) process.env.LIBREDB_SQLITE_WORKER = worker;
+      }
+    });
+
     test("returns correct SQLite capabilities", () => {
       provider = new SQLiteProvider(makeSQLiteConfig());
       const caps = provider.getCapabilities();
@@ -4214,13 +4247,9 @@ describe("resolveSQLiteDriverName()", () => {
 
   test("provider connects and queries with an explicit LIBREDB_SQLITE_DRIVER=bun override", async () => {
     process.env.LIBREDB_SQLITE_DRIVER = "bun";
-    const provider = new SQLiteProvider({
-      id: "override-bun",
-      name: "Override Bun",
-      type: "sqlite",
-      database: ":memory:",
-      createdAt: new Date(),
-    });
+    const provider = new SQLiteProvider(
+      makeSQLiteConfig({ id: "override-bun", name: "Override Bun", database: ":memory:" }),
+    );
     try {
       await provider.connect();
       const result = await provider.query("SELECT 1 AS one");
@@ -4590,7 +4619,9 @@ describe.skipIf(!nodeDriverTestable)("SQLiteProvider with LIBREDB_SQLITE_DRIVER=
       throw new Error(`node harness ${howItFailed(run)}: ${run.stderr?.toString()}`);
     }
 
-    const report = JSON.parse(run.stdout.toString()) as Record<string, unknown>;
+    // The report is the last line; the logger writes to stdout too (the storage location the harness's first admission
+    // takes is logged once, at info).
+    const report = JSON.parse(run.stdout.toString().trim().split("\n").pop()!) as Record<string, unknown>;
 
     // Runtime and connection lifecycle
     expect(report.runtime).toBe("node");

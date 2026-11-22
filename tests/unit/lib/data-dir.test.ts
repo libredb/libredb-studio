@@ -1,15 +1,18 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import * as path from "path";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import {
   DEFAULT_STORAGE_SQLITE_PATH,
   foldPathKey,
+  forgetStorageLocation,
   getDataDir,
   getStorageSqlitePath,
   isReservedStoragePath,
   reservedStoragePaths,
+  storageLocation,
 } from "@/lib/data-dir";
+import { logger } from "@/lib/logger";
 
 describe("data-dir getDataDir()", () => {
   let origStoragePath: string | undefined;
@@ -42,13 +45,17 @@ describe("data-dir getDataDir()", () => {
 describe("data-dir reserved storage paths", () => {
   let origStoragePath: string | undefined;
 
+  // Each test sets STORAGE_SQLITE_PATH before its first check, so the location this process keeps is forgotten around
+  // it and taken again by that check.
   beforeEach(() => {
     origStoragePath = process.env.STORAGE_SQLITE_PATH;
+    forgetStorageLocation();
   });
 
   afterEach(() => {
     if (origStoragePath === undefined) delete process.env.STORAGE_SQLITE_PATH;
     else process.env.STORAGE_SQLITE_PATH = origStoragePath;
+    forgetStorageLocation();
   });
 
   test("getStorageSqlitePath returns the default when unset", () => {
@@ -170,5 +177,97 @@ describe("data-dir foldPathKey()", () => {
     expect(foldPathKey("\u03bf\u03b4\u03bf\u03c3.db")).toBe(foldPathKey("\u039f\u0394\u039f\u03a3.DB"));
     expect(foldPathKey("stra\u00dfe.db")).toBe(foldPathKey("STRA\u1e9eE.db"));
     expect(foldPathKey("stra\u00dfe.db")).not.toBe(foldPathKey("STRASSE.db"));
+  });
+});
+
+/**
+ * Studio's storage location is taken once per process (FND-2 slice 3): `STORAGE_SQLITE_PATH` resolved against the
+ * working directory when the location is first read, and the directory that holds it. The reserved set is derived from
+ * it, so a later setting or working directory moves neither.
+ */
+describe("Studio's storage location is taken once per process (FND-2 slice 3)", () => {
+  const originalPath = process.env.STORAGE_SQLITE_PATH;
+  const originalDirectory = process.cwd();
+  let info: ReturnType<typeof spyOn>;
+  let scratch: string;
+
+  beforeEach(() => {
+    forgetStorageLocation();
+    info = spyOn(logger, "info").mockImplementation(() => {});
+    scratch = fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(), "libredb-storage-location-")));
+  });
+
+  afterEach(() => {
+    info.mockRestore();
+    process.chdir(originalDirectory);
+    if (originalPath === undefined) delete process.env.STORAGE_SQLITE_PATH;
+    else process.env.STORAGE_SQLITE_PATH = originalPath;
+    forgetStorageLocation();
+    fs.rmSync(scratch, { recursive: true, force: true });
+  });
+
+  test("the location is the storage file STORAGE_SQLITE_PATH names, resolved against the working directory when it is first read, and the directory that holds it", () => {
+    process.chdir(scratch);
+    process.env.STORAGE_SQLITE_PATH = "state/own.db";
+    expect(storageLocation()).toEqual({
+      storageFile: path.join(scratch, "state", "own.db"),
+      dataDirectory: path.join(scratch, "state"),
+    });
+    for (const unset of [undefined, ""]) {
+      forgetStorageLocation();
+      if (unset === undefined) delete process.env.STORAGE_SQLITE_PATH;
+      else process.env.STORAGE_SQLITE_PATH = unset;
+      expect(storageLocation()).toEqual({
+        storageFile: path.join(scratch, "data", "libredb-storage.db"),
+        dataDirectory: path.join(scratch, "data"),
+      });
+    }
+  });
+
+  test("neither a later STORAGE_SQLITE_PATH nor a later working directory moves the location or the reserved set", () => {
+    process.chdir(scratch);
+    process.env.STORAGE_SQLITE_PATH = "data/own.db";
+    const first = storageLocation();
+    const storageFile = path.join(scratch, "data", "own.db");
+    expect(isReservedStoragePath(storageFile)).toBe(true);
+    expect(isReservedStoragePath(path.join(scratch, "data", "auth-bootstrap.json"))).toBe(true);
+
+    process.env.STORAGE_SQLITE_PATH = "elsewhere/other.db";
+    const other = fs.mkdtempSync(path.join(scratch, "other-"));
+    process.chdir(other);
+
+    expect(storageLocation()).toEqual(first);
+    expect(isReservedStoragePath(storageFile)).toBe(true);
+    expect(isReservedStoragePath(`${storageFile}-wal`)).toBe(true);
+    expect(isReservedStoragePath(path.join(scratch, "data", "auth-bootstrap.json"))).toBe(true);
+    // Neither the new setting nor the old relative spelling at the new working directory names a reserved file.
+    expect(isReservedStoragePath(path.join(other, "elsewhere", "other.db"))).toBe(false);
+    expect(isReservedStoragePath(path.join(other, "data", "own.db"))).toBe(false);
+    expect(reservedStoragePaths()).toEqual([storageFile, `${storageFile}-wal`, `${storageFile}-shm`]);
+  });
+
+  test("the first read logs the location once, at info", () => {
+    process.env.STORAGE_SQLITE_PATH = path.join(scratch, "own.db");
+    storageLocation();
+    storageLocation();
+    isReservedStoragePath(path.join(scratch, "user.db"));
+    const lines = info.mock.calls.filter(
+      (call: unknown[]) => (call[1] as { route?: string })?.route === "storage-location",
+    );
+    expect(lines).toHaveLength(1);
+    expect(lines[0][1]).toEqual({
+      route: "storage-location",
+      storageFile: path.join(scratch, "own.db"),
+      dataDirectory: scratch,
+    });
+  });
+
+  test("forgetStorageLocation makes the next read take it again", () => {
+    process.env.STORAGE_SQLITE_PATH = path.join(scratch, "first.db");
+    expect(storageLocation().storageFile).toBe(path.join(scratch, "first.db"));
+    process.env.STORAGE_SQLITE_PATH = path.join(scratch, "second.db");
+    expect(storageLocation().storageFile).toBe(path.join(scratch, "first.db"));
+    forgetStorageLocation();
+    expect(storageLocation().storageFile).toBe(path.join(scratch, "second.db"));
   });
 });

@@ -85,7 +85,8 @@ import { assertRegularFilesOrMissing, readRegularFileStart } from "@/lib/db/util
 import { isUnwritableExistingFile } from "@/lib/db/utils/unwritable-file";
 import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import { keyRowsByPosition } from "@/lib/db/utils/positional-rows";
-import { isReservedStoragePath } from "@/lib/data-dir";
+import { requireAdmittedFile } from "@/lib/db/utils/admitted-file";
+import { ADMITTED_FILE, type WithAdmittedFile } from "@/lib/types";
 
 /**
  * SQLite's identity for the shared container-path renderer.
@@ -1304,7 +1305,7 @@ export class SQLiteProvider extends SQLBaseProvider {
     }
 
     try {
-      const dbPath = this.getDatabasePath(true);
+      const dbPath = this.getDatabasePath();
 
       // Before any of the three opens below: a read-only open of a FIFO waits for a writer that
       // never comes, and SQLite reported a connection to a character device. Its sidecars too:
@@ -1523,7 +1524,7 @@ export class SQLiteProvider extends SQLBaseProvider {
 
   /** Whether this connection targets an in-memory database, which a child process cannot share. */
   private isMemoryDatabase(): boolean {
-    return this.getDatabasePath() === ":memory:";
+    return (this.config as WithAdmittedFile)[ADMITTED_FILE] === ":memory:";
   }
 
   /**
@@ -1543,40 +1544,16 @@ export class SQLiteProvider extends SQLBaseProvider {
     return true;
   }
 
-  private getDatabasePath(checkReserved = false): string {
-    let dbPath: string;
-    if (this.config.connectionString) {
-      dbPath = this.config.connectionString.startsWith("file:")
-        ? this.config.connectionString.replace("file:", "")
-        : this.config.connectionString;
-    } else {
-      dbPath = this.config.database || ":memory:";
-    }
-
-    // Allow :memory: without path validation
-    if (dbPath === ":memory:") return dbPath;
-
-    // Reject NUL bytes (never valid in a filesystem path), then resolve to an
-    // absolute path. ".." segments are accepted by design: sqlite paths are
-    // trusted server-side paths (docs/providers/sqlite.md).
-    if (dbPath.includes("\0")) {
-      throw new DatabaseConfigError("Invalid database path: NUL bytes are not allowed", "sqlite");
-    }
-
-    const resolved = path.resolve(dbPath);
-
-    // The server's own storage database is reserved: it is Studio's to manage, not a
-    // target a connection may open. A connection whose path resolves to it is refused
-    // here on connect, before any handle is opened. Metadata reads reuse the
-    // resolved path without repeating filesystem identity checks.
-    if (checkReserved && isReservedStoragePath(resolved)) {
-      throw new DatabaseConfigError(
-        "This path is reserved for the server's own storage and cannot be opened as a connection",
-        "sqlite",
-      );
-    }
-
-    return resolved;
+  /**
+   * The file this connection opens: `:memory:` or an absolute path, as Studio's provider factory admitted it
+   * (`admittedFileConnection` in `src/lib/db/provider-files.ts`), which read the connection string with a leading
+   * `file:` removed, otherwise `database`, resolved it against the working directory when the provider was built, and
+   * refused a NUL byte and Studio's own storage files there. `..` segments are accepted by design: sqlite paths are
+   * trusted server-side paths (docs/providers/sqlite.md). A provider built without the factory holds no admitted file
+   * and is refused by name.
+   */
+  private getDatabasePath(): string {
+    return requireAdmittedFile(this.config, "sqlite");
   }
 
   // ============================================================================

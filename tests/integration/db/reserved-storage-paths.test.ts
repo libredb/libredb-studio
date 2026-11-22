@@ -2,31 +2,56 @@ import { afterEach, beforeEach, describe, expect, test, spyOn } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { tmpdir } from "node:os";
-import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
-import { DuckDBProvider } from "@/lib/db/providers/sql/duckdb";
-import { LibreDBProvider } from "@/lib/db/providers/embedded/libredb";
+import { createDatabaseProvider } from "@/lib/db/factory";
 import { editorExecutionContext } from "@/lib/api/execution-context";
-import { isReservedStoragePath } from "@/lib/data-dir";
+import { forgetStorageLocation, isReservedStoragePath } from "@/lib/data-dir";
+import { RESERVED_STORAGE_PATH } from "@/lib/db/provider-files";
 import type { DatabaseConnection } from "@/lib/types";
 
+/**
+ * Studio's own storage files are refused by name when a SQLite, DuckDB or LibreDB provider is built, before any provider
+ * exists to connect (FND-2 slice 3, docs/SECURITY.md control 3.45): `createDatabaseProvider` admits the file a
+ * connection names against the storage location this process keeps. Each test sets STORAGE_SQLITE_PATH to its own
+ * scratch directory and takes the location again (`forgetStorageLocation`), and one that sets it later takes it again
+ * there too.
+ */
 let dir: string;
 let original: string | undefined;
 beforeEach(() => {
   original = process.env.STORAGE_SQLITE_PATH;
   dir = fs.mkdtempSync(path.join(tmpdir(), "libredb-reserved-"));
   process.env.STORAGE_SQLITE_PATH = path.join(dir, "storage.db");
+  forgetStorageLocation();
 });
 afterEach(() => {
   if (original === undefined) delete process.env.STORAGE_SQLITE_PATH;
   else process.env.STORAGE_SQLITE_PATH = original;
+  forgetStorageLocation();
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-for (const [type, Provider] of [
-  ["sqlite", SQLiteProvider],
-  ["duckdb", DuckDBProvider],
-  ["libredb", LibreDBProvider],
-] as const) {
+const FILE_TYPES = ["sqlite", "duckdb", "libredb"] as const;
+
+function fileConnection(type: (typeof FILE_TYPES)[number], fields: Partial<DatabaseConnection>): DatabaseConnection {
+  return { id: "reserved", name: "reserved", type, createdAt: new Date(), ...fields } as DatabaseConnection;
+}
+
+/** What `createDatabaseProvider` settles to for `connection`: the refusal it threw, or null when it built a provider. */
+async function buildRefusal(connection: DatabaseConnection): Promise<unknown> {
+  return createDatabaseProvider(connection).then(
+    () => null,
+    (error: unknown) => error,
+  );
+}
+
+async function expectRefusedAtBuild(connection: DatabaseConnection, created: string): Promise<void> {
+  const refused = await buildRefusal(connection);
+  expect(refused).toBeInstanceOf(Error);
+  expect((refused as Error).message).toBe(RESERVED_STORAGE_PATH);
+  expect(fs.existsSync(created)).toBe(false);
+}
+
+for (const type of FILE_TYPES) {
   describe(`${type} reserved server files`, () => {
     for (const name of [
       "storage.db",
@@ -36,51 +61,59 @@ for (const [type, Provider] of [
       "auth-bootstrap.json.bak",
       "auth-bootstrap.json.123.tmp",
     ]) {
-      test(`refuses ${name} before opening or creating it`, async () => {
+      test(`createDatabaseProvider refuses ${name} before the provider is built, and creates nothing`, async () => {
         const target = path.join(dir, name);
-        const config: DatabaseConnection = {
-          id: "reserved",
-          name: "reserved",
-          type,
-          database: target,
-          createdAt: new Date(),
-        };
-        const provider = new Provider(config);
-        await expect(provider.connect()).rejects.toThrow("reserved");
-        expect(provider.isConnected()).toBe(false);
-        expect(fs.existsSync(target)).toBe(false);
+        await expectRefusedAtBuild(fileConnection(type, { database: target }), target);
       });
     }
 
     // On macOS and Windows each of these spellings names the reserved file itself.
     for (const name of ["STORAGE.DB", "Storage.db-WAL", "AUTH-BOOTSTRAP.JSON.BAK", "Auth-Bootstrap.json.123.TMP"]) {
-      test(`refuses ${name}, another letter case of a reserved file, before opening or creating it`, async () => {
+      test(`createDatabaseProvider refuses ${name}, another letter case of a reserved file, before the provider is built, and creates nothing`, async () => {
         const target = path.join(dir, name);
-        const provider = new Provider({
-          id: "reserved",
-          name: "reserved",
-          type,
-          database: target,
-          createdAt: new Date(),
-        });
-        await expect(provider.connect()).rejects.toThrow("reserved");
-        expect(provider.isConnected()).toBe(false);
-        expect(fs.existsSync(target)).toBe(false);
+        await expectRefusedAtBuild(fileConnection(type, { database: target }), target);
       });
     }
+
+    // On macOS (APFS) a name in NFD and the same name in NFC are one file.
+    test("createDatabaseProvider refuses a reserved file in another Unicode normalization form before the provider is built, and creates nothing", async () => {
+      const composed = path.join(dir, "Stud\u00fco");
+      fs.mkdirSync(composed);
+      process.env.STORAGE_SQLITE_PATH = path.join(composed, "storage.db");
+      forgetStorageLocation();
+      const decomposed = path.join(dir, "Studu\u0308o");
+      for (const name of ["storage.db", "storage.db-wal", "auth-bootstrap.json.bak"]) {
+        const target = path.join(decomposed, name);
+        await expectRefusedAtBuild(fileConnection(type, { database: target }), target);
+      }
+    });
+
+    test("a relative spelling, a symbolic link to the storage file, a directory alias and a hard link are refused before the provider is built", async () => {
+      const storage = process.env.STORAGE_SQLITE_PATH!;
+      fs.writeFileSync(storage, "server state");
+      fs.symlinkSync(storage, path.join(dir, "alias.db"));
+      fs.symlinkSync(dir, path.join(dir, "directory-alias"), "junction");
+      fs.linkSync(storage, path.join(dir, "hardlink.db"));
+      const relative = path.relative(process.cwd(), storage);
+      for (const database of [
+        relative,
+        path.join(dir, "alias.db"),
+        path.join(dir, "directory-alias", "storage.db-wal"),
+        path.join(dir, "hardlink.db"),
+      ]) {
+        const refused = await buildRefusal(fileConnection(type, { database }));
+        expect([database, (refused as Error | null)?.message]).toEqual([database, RESERVED_STORAGE_PATH]);
+      }
+      expect(fs.existsSync(path.join(dir, "storage.db-wal"))).toBe(false);
+    });
   });
 }
 
-test("SQLite file: connection strings are refused too", async () => {
-  const provider = new SQLiteProvider({
-    id: "reserved",
-    name: "reserved",
-    type: "sqlite",
-    database: ":memory:",
-    connectionString: `file:${process.env.STORAGE_SQLITE_PATH}`,
-    createdAt: new Date(),
-  });
-  await expect(provider.connect()).rejects.toThrow("reserved");
+test("SQLite's file: connection string naming the storage file is refused before the provider is built", async () => {
+  await expectRefusedAtBuild(
+    fileConnection("sqlite", { database: ":memory:", connectionString: `file:${process.env.STORAGE_SQLITE_PATH}` }),
+    process.env.STORAGE_SQLITE_PATH!,
+  );
 });
 
 test("resolves existing file and parent directory symlinks, including missing sidecars", () => {
@@ -100,13 +133,14 @@ test("a symlink in the configured storage path is canonicalized", () => {
   fs.mkdirSync(path.join(dir, "real"));
   fs.symlinkSync(path.join(dir, "real"), path.join(dir, "alias"), "junction");
   process.env.STORAGE_SQLITE_PATH = path.join(dir, "alias", "storage.db");
+  forgetStorageLocation();
   expect(isReservedStoragePath(path.join(dir, "real", "storage.db"))).toBe(true);
   expect(isReservedStoragePath(path.join(dir, "real", "storage.db-shm"))).toBe(true);
 });
 
 for (const readOnly of [false, true]) {
   test(`SQLite refuses denied file access before opening, readOnly=${readOnly}`, async () => {
-    const provider = new SQLiteProvider(
+    const provider = await createDatabaseProvider(
       { id: "denied", name: "denied", type: "sqlite", database: ":memory:", createdAt: new Date() },
       {},
       { allowExternalFileAccess: false, readOnly },
@@ -139,7 +173,7 @@ test("filesystem identity failures fail closed", () => {
 
 test("administrator SQLite connections to user data remain writable", async () => {
   const target = path.join(dir, "user.db");
-  const provider = new SQLiteProvider(
+  const provider = await createDatabaseProvider(
     { id: "user-data", name: "User data", type: "sqlite", database: target, createdAt: new Date() },
     {},
     { allowExternalFileAccess: true },
@@ -169,7 +203,7 @@ for (const [role, id, roles] of [
       createdAt: new Date(),
     };
     const context = editorExecutionContext({ role }, connection);
-    const provider = new SQLiteProvider(connection, {}, context);
+    const provider = await createDatabaseProvider(connection, {}, context);
     await expect(provider.connect()).rejects.toThrow("require an administrator");
   });
 }
@@ -207,6 +241,7 @@ test("under a symlinked data directory, the bootstrap file is reserved by its re
   fs.mkdirSync(path.join(base, "real"));
   fs.symlinkSync(path.join(base, "real"), path.join(base, "alias"), "junction");
   process.env.STORAGE_SQLITE_PATH = path.join(base, "alias", "storage.db");
+  forgetStorageLocation();
   for (const name of ["auth-bootstrap.json", "auth-bootstrap.json.bak", "auth-bootstrap.json.123.tmp"]) {
     expect([name, isReservedStoragePath(path.join(base, "real", name))]).toEqual([name, true]);
     // On Linux ALIAS is not the symlink, so only the configured spelling, folded, names the file.

@@ -1354,8 +1354,9 @@ export const CONNECTION_STRING_ACCEPTED: Readonly<Record<DatabaseType, boolean>>
   snowflake: false,
   spark: false,
   mysql: true,
-  // The provider's supportsConnectionString flag is false, yet it opens this field as the database file path:
-  // sqlite.ts getDatabasePath, docs/providers/sqlite.md.
+  // The provider's supportsConnectionString flag is false, yet this field names the database file it opens: the
+  // provider factory reads it, a leading `file:` removed, as the file it admits (`admittedFileConnection` in
+  // provider-files.ts), docs/providers/sqlite.md.
   sqlite: true,
   libsql: true,
   duckdb: false,
@@ -1412,6 +1413,10 @@ export const CONNECTION_STRING_ACCEPTED: Readonly<Record<DatabaseType, boolean>>
  * id. Kept here because the governance layer must not load `src/lib/db-ui-config.ts`, which value-imports the React
  * icon components; `tests/unit/db/compatibility.test.ts` holds every entry equal to that file's `isFileBased()`, the
  * connection form's own answer. An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records above it.
+ *
+ * The provider factory reads it too: it admits the file such a connection names before the provider is built
+ * (`admittedFileConnection` in `./provider-files`), refusing Studio's own storage files there, and hands the provider
+ * the absolute path it admitted.
  */
 export const OPENS_LOCAL_FILE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   postgres: false,

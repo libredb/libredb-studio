@@ -94,15 +94,17 @@ export class OpcuaProvider extends BaseDatabaseProvider {
   private agentOpen = false;
 
   /**
-   * The execution context third and the session opener fourth: the context decides whether this handle answers agent
-   * reads, and a test substitutes its own opener and environment as before.
+   * The execution context third, the session opener fourth and the PKI root fifth: the context decides whether this
+   * handle answers agent reads, a test substitutes its own opener, and the root is the one Studio's provider factory
+   * decided (`opcuaPkiRoot` in `src/lib/db/provider-files.ts`), carried into every session's options as it is. A
+   * provider built without one opens no session through the library (`openReadOnlySession` refuses it by name).
    */
   public constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
     private readonly execution: ProviderExecutionContext = {},
     private readonly openSession?: OpcuaSessionOpener,
-    private readonly environment: Readonly<Record<string, string | undefined>> = process.env,
+    private readonly pkiRoot?: string,
   ) {
     super(config, options);
     // The seed load holds the roots to the same grammar; this holds a connection built in memory past the schema to it.
@@ -188,18 +190,15 @@ export class OpcuaProvider extends BaseDatabaseProvider {
    *
    * Every refusal the connection can make happens before a socket exists, which is why this reads
    * the options first: an endpoint in the wrong scheme, a password with no username, a pin that is
-   * not a thumbprint, a relative PKI root. A root that cannot be WRITTEN is not among them: the
-   * certificate manager creates its directories lazily, so that one arrives from the dial and is
-   * translated there (`session.ts`).
+   * not a thumbprint. A relative PKI root is refused earlier, by the provider factory, and a root that
+   * cannot be WRITTEN is not among them either: the certificate manager creates its directories lazily,
+   * so that one arrives from the dial and is translated there (`session.ts`).
    */
   public async connect(): Promise<void> {
     // Before anything is read or dialled: a statement-sending agent profile reads only beneath declared read roots.
     if (this.readOnlyProfile && this.config.agentReadRoots === undefined)
       throw new ExecutionProfileError(OPCUA_READ_ROOTS_REQUIRED_SENTENCE, "READ_ROOTS_REQUIRED");
-    this.connectionOptions = readConnection(
-      this.config as DatabaseConnection & Record<string, unknown>,
-      this.environment,
-    );
+    this.connectionOptions = readConnection(this.config as DatabaseConnection & Record<string, unknown>, this.pkiRoot);
     /*
      * AN AGENT-MODE HANDLE HOLDS NO SESSION. Every agent read opens its own and closes it, so nothing of one read
      * reaches the next; the connect proves the server answers by opening one session and closing it at once.
