@@ -293,6 +293,9 @@ Create the file under the right family folder, named by the canonical **type-id*
 `src/lib/db/providers/sql/<type-id>.ts` for SQL, `src/lib/db/providers/<family>/<type-id>.ts`
 (e.g. `document/`, `keyvalue/`) for non-SQL.
 
+A new provider is written in this legacy layout, because the factory imports providers from `src/lib/db/providers/` only.
+The workspace package layout a provider can later move to is in `packages/README.md`, "Provider packages", and in CLAUDE.md's provider triad rule.
+
 **Start from the closest existing provider — it is the authoritative, code-verified template** (and
 is kept in sync with its per-provider doc). Don't copy a skeleton from this guide; copy a real file:
 
@@ -1144,6 +1147,7 @@ The integration points, all of which need an entry. This is the list the Strateg
 
 - [ ] `src/lib/types.ts` — add to the `DatabaseType` union
 - [ ] `src/lib/db/providers/<family>/<type-id>.ts` (or a directory) — **new:** the provider class
+- [ ] `docs/providers/<type-id>.md` and `tests/integration/db/<type-id>-provider.test.ts`: **new:** the other two legs of the provider triad, which `tests/unit/db/provider-triad.test.ts` requires for every type-id
 - [ ] `src/lib/db/factory.ts` — add a `case` with a **dynamic** import
 - [ ] `src/lib/db/connection-form.ts`: the type's `CONNECTION_FORM` entry, with its label, default port and fields
 - [ ] `src/lib/db-ui-config.ts`: the icon and colour, as `branded(CONNECTION_FORM.<type>, <Icon>, "<colour>")`

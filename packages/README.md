@@ -13,6 +13,15 @@ A file such as this README is not a package, and a directory without a `package.
 
 `scripts/workspace-packages.mjs` states this rule once, and the gates below read it from there.
 
+## Provider packages
+
+A database provider can live as a workspace package named for its type-id, `packages/provider-<type-id>/`.
+It holds the three legs of the provider triad: its code under `src/`, its doc as `docs/<type-id>.md`, and its integration test as `tests/integration/<type-id>-provider.test.ts`.
+A type-id lives in exactly one layout, so the change that moves a provider here deletes its legacy code under `src/lib/db/providers/`, its `docs/providers/<type-id>.md` and its `tests/integration/db/<type-id>-provider.test.ts`.
+A package serves only the type-id its directory names, until the provider manifest can declare several, so a doc or an integration test for another type-id in any package is refused.
+The agent leg has no place in a package yet, so a type-id with a non-null `AGENT_STATEMENT_LANGUAGE` row stays in the legacy layout until the change that moves it gives its package one.
+`tests/unit/db/provider-triad.test.ts` holds these rules for every shipped type-id, and `tests/helpers/provider-layout.ts` is how a test finds a provider's files in either layout.
+
 ## Install
 
 `bunfig.toml` sets `[install] linker = "hoisted"`.

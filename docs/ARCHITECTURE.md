@@ -559,6 +559,10 @@ src/
         └── providers/       # SQLite + PostgreSQL backends
 ```
 
+The tree shows each database provider in its legacy place, under `src/lib/db/providers/`.
+A provider can instead live as a workspace package `packages/provider-<type-id>/`, with its code under `src/`, its doc under `docs/` and its integration test under `tests/integration/`, never in both places.
+`tests/helpers/provider-layout.ts` says which layout a type-id is in, and `packages/README.md` holds the package layout.
+
 ## 6. Deployment
 
 - **Docker / Helm**: Multi-stage Bun build with standalone Next.js output; these channels resolve their bind address in the container entrypoint, preferring a dual-stack `::` that they verify by connecting an IPv4 client to a throwaway listener, and falling back to `0.0.0.0` where the namespace has no usable IPv6. `HOSTNAME` (chart: `config.bindAddress`) overrules that and is honoured verbatim. Canonical image `ghcr.io/libredb/libredb-studio`.
