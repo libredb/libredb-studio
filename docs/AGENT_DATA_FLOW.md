@@ -385,7 +385,8 @@ rendered characters — a bound in characters, because a count of edges is not a
 | Outcome | What is sent back to the model | Call site |
 | --- | --- | --- |
 | A completed read | A server sentence naming the artifact id, then the **rows**: one `JSON.stringify` per row, newline separated, inside a fence labelled `<what it was>, N row(s)` | `runAuditedAgentCall` (`tools.ts`), rendering by `renderRows` (`tools.ts`) |
-| A statement that failed at the database | The **engine's own message**, fenced, referenced by the statement's fingerprint | `runAuditedAgentCall` (`tools.ts`) |
+| A statement that failed at the database | The **engine's own message**, fenced, referenced by the statement's fingerprint. A message that holds a credential of the run's connection, or any form of one, is withheld whole and the fence carries Studio's sentence saying so | `runAuditedAgentCall` (`tools.ts`) |
+| A statement the provider refused before sending it | The **provider's own sentence**, inside a fence of its own whose header names the provider that wrote it ("PostgreSQL provider, bundled with Studio"), referenced by the statement's fingerprint, then Studio's advice outside the fence. The database was not asked. The run's read allowance is Studio's own refusal and stays unfenced, in Studio's words. Either text is withheld whole when it holds a credential of the connection | `runAuditedAgentCall` (`tools.ts`), `fenceProviderText` (`untrusted-content.ts`) |
 | A policy denial | Server text only: the deny code, the policy version, and advice that a boundary decided this. There is no engine text because a denial produced none | `denialText` (`tools.ts`) |
 | An approval requirement | Server text naming the operation id | `approvalText` (`tools.ts`) |
 | A table profile (Assess) | Counts, the number of findings, the covered column range, plus the **table name** and the **finding lines** (each the column name, the finding code and its detail, as `describeFindings` writes them), both fenced. No value from any column | `profileTableTool` (`tools.ts`) and, on MongoDB, `runMongoProfile` (`languages/mongo/tools.ts`); `describeFindings` (`tool-contracts.ts`) |
@@ -425,6 +426,8 @@ the model drafted and their stated rationales**, the artifact ids and row counts
 (**not the rows** — "The rows themselves are not delivered again"), a recorded recommendation's
 statement, a recorded comparison's two statements and access kinds, and a profile's depth, row count
 and artifact id with the table name fenced.
+A recorded refusal's message is scrubbed of the connection's credential again, since a ledger written before the scrub existed holds the raw text.
+A statement refused before sending is restated in Studio's words when the ledger says Studio refused it, and fenced as the provider's text naming the provider otherwise, a refusal recorded before the ledger said who refused included.
 
 ---
 
@@ -518,6 +521,10 @@ result would make what the model reads disagree with the rows the artifact store
 sampling**: a transcript holds exactly as many closing markers as the server opened, whatever the
 database returned.
 
+A sentence a provider wrote refusing a statement before the database was asked is neither database content nor this server's words, so it has a fence of its own (`fenceProviderText` in `untrusted-content.ts`).
+Its header names the provider that wrote it, for example "PostgreSQL provider, bundled with Studio", and its markers say provider text rather than database content.
+The neutraliser defangs all four markers, both fences' pairs, everywhere it is applied, so neither fence can be closed from inside either.
+
 Two limits stated as plainly as the property:
 
 - **This is a labelling boundary, not a sanitiser.** It makes no claim about what the content MEANS
@@ -601,6 +608,11 @@ output cap, and what it sends is one objective — see
   port, a user or a password — the message array is built only from the sources listed above
   (`runInvestigation` in `investigation.ts`).
 
+  A provider's own text is the one place a credential could still slip in, for example a driver error that echoes the password it was given.
+  So Studio withholds whole any provider error, warning or notice text that holds a credential of the run's own connection, or any form of one (its base64 and URL-encoded forms, each segment of a token), before it reaches a prompt, the run's ledger, a response or a log line (`src/lib/db/operations/provider-text.ts`).
+  The same pass runs on the hand-over and on MCP.
+  What it does not catch: a secret that is only part of a field's value (a password inside a connection string, a key inside a credentials document), an echo in a different case, and database rows, which are never scrubbed; each provider scrubs its own server's text at its entry as well.
+
   **One credential does leave, necessarily: your `LLM_API_KEY`.** It is not in a prompt — it is in
   the request's authentication metadata, because that is how the provider authenticates you. The
   OpenAI-compatible kinds send it as the `Authorization` header
@@ -653,6 +665,7 @@ output cap, and what it sends is one objective — see
 - **Not into the browser as provider text.** A drive failure crosses to the rail as a *label*; the
   provider's or driver's own message stays in the server log, because none of them promises to keep
   a credential or a host name out of it (`docs/AGENT.md`, "A drive that dies before the loop").
+  That log line is withheld the same way: once the run's connection is resolved, a failure leaving the drive whose text holds a credential of that connection is replaced by Studio's withheld sentence (`driveAgentRun` in `runtime.ts`).
 
 ---
 
@@ -702,6 +715,9 @@ grep -n "messages.push\|toolResultMessage" src/lib/agent/investigation.ts
 
 # Every place database-derived text is wrapped before it can reach a prompt
 grep -rn "fenceUntrustedContent(" src/lib/agent/ src/lib/ai/
+
+# Every place a provider's text passes the scrub of the connection's credential
+grep -rn "scrubProviderText(\|withScrubbedWarnings(\|withholdProviderError(\|engineMessage(" src/lib/agent/ src/lib/mcp/ src/app/api/agent/
 
 # Every request that leaves for a model provider
 grep -rn "streamText(" src/lib/agent/

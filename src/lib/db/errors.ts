@@ -204,8 +204,8 @@ export class QueryError extends DatabaseError {
 /**
  * What `prepareQuery()` raises for a positive offset on an engine whose SQL cannot page a result: Cassandra's CQL and
  * Elasticsearch SQL have no OFFSET clause. A `QueryError`, so the query route answers it as before; its own class, so
- * MCP `run_read_query` answers exactly this refusal as `mcp_offset_unsupported`, in the provider's own sentence, and
- * every other failure of `prepareQuery()` as the engine's.
+ * MCP `run_read_query` answers exactly this refusal as `mcp_offset_unsupported`, in the provider's own sentence behind a
+ * notice naming the provider, and every other failure of `prepareQuery()` as the engine's.
  */
 export class OffsetUnsupportedError extends QueryError {
   constructor(message: string, provider?: DatabaseType, query?: string) {
@@ -219,8 +219,9 @@ export class OffsetUnsupportedError extends QueryError {
  * A statement this repository refused before sending it, so the database never saw it: a provider's own fence on what
  * the read-only profile may run, or a charge the run's read allowance cannot pay. A QueryError, so every caller that
  * settles a statement failure still settles this one, and a statement that avoids what the sentence names is the
- * repair; its own class, so the agent and MCP say the statement was refused before it was sent, in this server's
- * voice, rather than presenting the sentence as the database's error.
+ * repair; its own class, so the agent and MCP say the statement was refused before it was sent rather than presenting
+ * the sentence as the database's error: a provider's sentence as its own text, fenced or behind a notice naming the
+ * provider, and the read allowance's (`ReadAllowanceExceededError`, which only core constructs) in Studio's words.
  */
 export class RefusedBeforeSendError extends QueryError {
   constructor(message: string, provider?: DatabaseType, query?: string) {

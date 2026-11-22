@@ -26,7 +26,11 @@ import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { MCP_TOKEN_ENV_NAME, mcpClientConfigs } from "@/lib/mcp/client-config";
 import { MCP_CONNECTIONS_UNREADABLE_TEXT } from "@/lib/mcp/context";
-import { MCP_ENGINE_ERROR_PREFIX, MCP_RESULT_CAP_BYTES } from "@/lib/mcp/output";
+import {
+  MCP_ENGINE_ERROR_PREFIX,
+  MCP_RESULT_CAP_BYTES,
+  providerTextNotice,
+} from "@/lib/mcp/output";
 import { fenceRefusalText, profileRefusalText } from "@/lib/mcp/tools/read-query-limits";
 import { MCP_STATEMENT_TOOLS } from "@/lib/mcp/tools/statement-arms";
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
@@ -271,6 +275,12 @@ describe("the skill's text", () => {
     expect(BODY).toContain(`"${MCP_ENGINE_ERROR_PREFIX.trimEnd()}"`);
     expect(MCP_CONNECTIONS_UNREADABLE_TEXT).toContain("The connection configuration could not be read");
     expect(BODY).toContain("the connection configuration could not be read");
+  });
+
+  test("says a refusal a provider wrote comes after a notice naming that provider, and is untrusted too", () => {
+    expect(providerTextNotice("author")).toContain("text written by the author, not by Studio");
+    expect(BODY).toContain("A refusal a provider wrote comes after a notice naming that provider");
+    expect(BODY).toMatch(/notice naming that provider[^\n]*untrusted/);
   });
 
   test("names only HTTP statuses that docs/MCP.md's Troubleshooting table explains", () => {
