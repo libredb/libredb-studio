@@ -647,6 +647,10 @@ async function exerciseReseal(url: string, superuser: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  // The envelope settings are cleared: each step decides the store's state, and a checkout's .env, which bun loads in
+  // script runs, may set either.
+  delete process.env.STORAGE_ENCRYPTION_REQUIRE_V2;
+  delete process.env.STORAGE_ENCRYPTION_RESEAL;
   const admin = superuserUrl();
   const suffix = randomBytes(4).toString("hex");
   const database = `storage_schema_${suffix}`;
