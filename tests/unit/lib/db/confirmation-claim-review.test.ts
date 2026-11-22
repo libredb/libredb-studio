@@ -41,6 +41,15 @@ describe("the review record of the claims that loosen the confirmation gate", ()
     expect(recorded("exempt-form")).toEqual(declared);
   });
 
+  test("lists every text-not-sql claim a shipped grammar row makes, and no other", () => {
+    const declared = Object.entries(SQL_GRAMMAR)
+      .filter(([, spec]) => !spec.readsSqlText)
+      .map(([type]) => type)
+      .sort();
+    expect(declared.length).toBeGreaterThan(0);
+    expect(recorded("text-not-sql")).toEqual(declared);
+  });
+
   test("gives each entry its reason", () => {
     for (const { claim, reason } of CONFIRMATION_CLAIM_REVIEW) {
       // One sentence that says why the claim holds: it starts with a capital and ends with a full stop, once.
@@ -86,10 +95,13 @@ describe("isReviewedConfirmationClaim", () => {
     expect(isReviewedConfirmationClaim({ kind: "decides-alone", type: "mongodb" })).toBe(false);
     // A decides-alone claim is not an exempt form of the same type.
     expect(isReviewedConfirmationClaim({ kind: "exempt-form", type: "prometheus", form: ["UPDATE"] })).toBe(false);
+    // MongoDB's text is a JSON document, and Druid's is SQL.
+    expect(isReviewedConfirmationClaim({ kind: "text-not-sql", type: "mongodb" })).toBe(true);
+    expect(isReviewedConfirmationClaim({ kind: "text-not-sql", type: "druid" })).toBe(false);
   });
 
   test("lists no claim for no type", () => {
-    for (const kind of ["decides-alone", "exempt-form"] as const) {
+    for (const kind of ["decides-alone", "exempt-form", "text-not-sql"] as const) {
       expect(isReviewedConfirmationClaim({ kind, type: undefined, form: ["ALTER", "SESSION", "SET"] })).toBe(false);
     }
     const anyType: DatabaseType | undefined = undefined;

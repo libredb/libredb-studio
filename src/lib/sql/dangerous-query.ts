@@ -663,6 +663,22 @@ function gateGrammar(databaseType: DatabaseType | undefined): SqlGrammar {
 }
 
 /**
+ * Whether the gate reads this connection type's text as not SQL: its grammar row declares `readsSqlText: false` and
+ * Studio's review record lists that claim (`CONFIRMATION_CLAIM_REVIEW` in `@/lib/db/confirmation-claim-review`).
+ *
+ * A claim the record does not list is read as if the row had not made it, so the text is read as SQL. No type at all
+ * reads as SQL, as `readsSqlText` answers. The other readers of `readsSqlText`, which are not the confirmation gate,
+ * read the row as declared.
+ */
+function gateReadsTextAsNotSql(databaseType: DatabaseType | undefined): boolean {
+  return (
+    databaseType !== undefined &&
+    !readsSqlText(databaseType) &&
+    isReviewedConfirmationClaim({ kind: "text-not-sql", type: databaseType })
+  );
+}
+
+/**
  * Whether part of this text could not be read: a run that never closes, or a line comment that holds a lone carriage
  * return (#297).
  *
@@ -675,10 +691,11 @@ function gateGrammar(databaseType: DatabaseType | undefined): SqlGrammar {
  * documents, Redis commands, PromQL expressions, Kafka read requests and etcdctl commands as well, and an escaped quote
  * that a SQL span reader cannot resolve closes perfectly in the grammar those are written in: a SQL span reader's
  * verdict about text that is not SQL is not evidence of anything, and saying "could not be read" about a Mongo
- * document that reads fine is the false alarm the dialog's notice exists to avoid. No type at all reads as SQL.
+ * document that reads fine is the false alarm the dialog's notice exists to avoid. No type at all reads as SQL, and
+ * neither does a type whose text-not-SQL claim Studio's review record does not list (`gateReadsTextAsNotSql`).
  */
 export function hasUnreadableRun(text: string, databaseType?: DatabaseType): boolean {
-  if (!readsSqlText(databaseType)) return false;
+  if (gateReadsTextAsNotSql(databaseType)) return false;
   const grammar = resolveSqlGrammar(databaseType);
   return hasUnterminatedSpan(text, grammar) || hasLoneCarriageReturnInLineComment(text, grammar);
 }
@@ -735,7 +752,7 @@ export function hasUnreadableRun(text: string, databaseType?: DatabaseType): boo
  * confirmation at all. Omitting it keeps the dialect-less reading.
  *
  * A row's claim that would spare a statement, that its vocabulary is the whole answer or that a form led by a shared
- * keyword does not ask, counts only where Studio's review record lists it (`CONFIRMATION_CLAIM_REVIEW` in
+ * keyword does not ask, or that its text is not SQL, counts only where Studio's review record lists it (`CONFIRMATION_CLAIM_REVIEW` in
  * `@/lib/db/confirmation-claim-review`, E21-Q1). Any other such claim is read as if the row had not made it: the
  * statement is read as SQL, and the row's own vocabulary is read beside that reading, so the gate asks wherever
  * either asks.
@@ -794,8 +811,9 @@ export function isDangerousQuery(query: string, databaseType?: DatabaseType): bo
   // no confirmation at all while a `DELETE FROM` on every SQL engine asked (S8). The
   // facts are a table in `@/lib/db/destructive-commands`, not a type test written
   // here: this file already learned that lesson for the span rule above, and the row
-  // was read just above.
-  if (!readsSqlText(databaseType)) return false;
+  // was read just above. A text-not-SQL claim the review record does not list is read as
+  // SQL, so its statements are split and read below.
+  if (gateReadsTextAsNotSql(databaseType)) return false;
   // One exception to "exactly what the runner will run": a procedural body is ONE
   // statement to the runner (#1312), and its operative keyword is `BEGIN`, `DECLARE` or
   // `CREATE`, none of which asks. The writes inside it are still writes, so the gate keeps

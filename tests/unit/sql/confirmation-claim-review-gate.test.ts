@@ -4,7 +4,8 @@
  * wherever the SQL reading or the row's own vocabulary asks.
  *
  * The unlisted claims are planted, since no shipped row makes one: a decides-alone row is the stand-in vocabulary row
- * under Trino, and an exempt form is Trino's real grammar row with `DELETE FROM` added, mocked before anything that
+ * under Trino, an exempt form is Trino's real grammar row with `DELETE FROM` added, and a text-not-SQL claim is
+ * Druid's real grammar row with `readsSqlText: false`, each row mocked before anything that
  * reaches the grammar registry is imported, because `SQL_GRAMMAR` is built from the row objects when it loads. So
  * this file imports only `bun:test` statically.
  */
@@ -19,7 +20,13 @@ mock.module("@/lib/db/providers/sql/trino/sql-grammar", () => ({
   },
 }));
 
-const { isDangerousQuery } = await import("@/lib/sql/dangerous-query");
+const realDruid = await import("@/lib/db/providers/sql/druid/sql-grammar");
+mock.module("@/lib/db/providers/sql/druid/sql-grammar", () => ({
+  ...realDruid,
+  DRUID_SQL_GRAMMAR: { ...realDruid.DRUID_SQL_GRAMMAR, readsSqlText: false },
+}));
+
+const { hasUnreadableRun, isDangerousQuery } = await import("@/lib/sql/dangerous-query");
 const editorGate = await import("@/components/QuerySafetyDialog");
 const { analyzeStatement, confirmationVerdict } = await import("@/lib/editor/statement-analysis");
 const { createDatabaseProvider } = await import("@/lib/db/factory");
@@ -60,6 +67,19 @@ describe("an exempt form the record does not list", () => {
   });
 });
 
+describe("a text-not-sql claim the record does not list", () => {
+  test("asks about a write in a later statement", () => {
+    expect(isDangerousQuery("SELECT 1; DROP TABLE t", "druid")).toBe(true);
+    expect(isDangerousQuery("SELECT 1; SELECT 2", "druid")).toBe(false);
+  });
+
+  test("asks about a run it cannot read, and says so", () => {
+    const hidden = "SELECT '\\'; DELETE FROM t";
+    expect(hasUnreadableRun(hidden, "druid")).toBe(true);
+    expect(isDangerousQuery(hidden, "druid")).toBe(true);
+  });
+});
+
 describe("a listed claim", () => {
   test("prometheus and kafka rows are the whole answer", () => {
     expect(isDangerousQuery("update", "prometheus")).toBe(false);
@@ -72,6 +92,13 @@ describe("a listed claim", () => {
     expect(isDangerousQuery("BEGIN ALTER SESSION SET TIMEZONE = 'UTC'; END", "snowflake")).toBe(false);
     // An account object outlives the statement, so this form was never exempt.
     expect(isDangerousQuery("ALTER SESSION POLICY p", "snowflake")).toBe(true);
+  });
+
+  test("mongodb and redis text is not read as SQL", () => {
+    const find = '{"collection":"t","operation":"find","filter":{"msg":"say \\"hi\\""}}';
+    expect(hasUnreadableRun(find, "mongodb")).toBe(false);
+    expect(isDangerousQuery(find, "mongodb")).toBe(false);
+    expect(isDangerousQuery("MGET a b", "redis")).toBe(false);
   });
 });
 
@@ -102,5 +129,13 @@ describe("the readers of the verdict", () => {
     remove = installStandInVocabulary({});
     expect(confirmationVerdict("DROP TABLE t", STAND_IN_TYPE, "census")).toEqual(confirm);
     expect(analyze("DROP TABLE t")).toMatchObject(confirm);
+    remove();
+    remove = undefined;
+
+    expect(confirmationVerdict("SELECT 1; DROP TABLE t", "druid", "census")).toEqual(confirm);
+    expect(confirmationVerdict("SELECT '\\'; DELETE FROM t", "druid", "census")).toEqual({
+      ...confirm,
+      unreadable: true,
+    });
   });
 });

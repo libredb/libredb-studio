@@ -9,7 +9,9 @@ import type { DatabaseType } from "@/lib/types";
  * - `decides-alone`: a vocabulary row's `decidesAlone: true`, which makes the row's reader the gate's whole answer, so
  *   the SQL keyword test and the per-statement reading never run;
  * - `exempt-form`: one form of a grammar row's `confirmExemptForms`, a keyword sequence led by a shared dangerous
- *   keyword that does not ask on that dialect.
+ *   keyword that does not ask on that dialect;
+ * - `text-not-sql`: a grammar row's `readsSqlText: false`, which spares the ask about a run the SQL reader cannot
+ *   read and the reading of each statement the text splits into.
  *
  * The gate counts a claim only where this record lists it. Any other claim is read as if the row had not made it, so
  * the gate asks wherever the SQL reading or the row's own vocabulary asks. An entry is added in the same change as the
@@ -26,7 +28,8 @@ import type { DatabaseType } from "@/lib/types";
 /** One claim a row makes that would spare a statement the gate asks about. */
 export type ConfirmationClaim =
   | { readonly kind: "decides-alone"; readonly type: DatabaseType }
-  | { readonly kind: "exempt-form"; readonly type: DatabaseType; readonly form: readonly string[] };
+  | { readonly kind: "exempt-form"; readonly type: DatabaseType; readonly form: readonly string[] }
+  | { readonly kind: "text-not-sql"; readonly type: DatabaseType };
 
 /** A claim on the record, with the reason it holds. */
 export interface ReviewedConfirmationClaim {
@@ -141,6 +144,109 @@ const ENTRIES: readonly ReviewedConfirmationClaim[] = [
     claim: { kind: "exempt-form", type: "snowflake", form: ["ALTER", "SESSION", "UNSET"] },
     reason:
       "Each Snowflake statement runs in its own session, so a session setting cannot outlive the statement that unsets it (SF-030).",
+  },
+  {
+    claim: { kind: "text-not-sql", type: "etcd" },
+    reason:
+      "An etcdctl command line is split by the shell's quoting rules and read by the provider's own parser (#1089).",
+  },
+  {
+    claim: { kind: "text-not-sql", type: "firestore" },
+    reason:
+      "A Firestore console statement is read by the console's own guard with the parser the provider runs (spec 3.2).",
+  },
+  {
+    claim: { kind: "text-not-sql", type: "influxdb" },
+    reason:
+      "An InfluxQL statement escapes with a backslash and is read by the provider's own lexer, which refuses every write (InfluxDB spec 5.7).",
+  },
+  {
+    claim: { kind: "text-not-sql", type: "kafka" },
+    reason: "A Kafka read request is one JSON object naming a topic, whose strings escape with a backslash (#1088).",
+  },
+  {
+    claim: { kind: "text-not-sql", type: "kubernetes" },
+    reason:
+      "A kubectl subset statement is split by POSIX shell rules, so a SQL span reader would misread its quoting (docs/providers/kubernetes.md, section 5.1).",
+  },
+  {
+    claim: { kind: "text-not-sql", type: "milvus" },
+    reason:
+      "A Milvus console request is a request line and one JSON body, parsed by the provider itself (vector-family spec 5.4).",
+  },
+  {
+    claim: { kind: "text-not-sql", type: "modbus" },
+    reason: "A Modbus read request is one JSON object against a register map, so no span of it is SQL (#1723).",
+  },
+  {
+    claim: { kind: "text-not-sql", type: "mongodb" },
+    reason:
+      "A MongoDB command is a JSON document the provider parses, and it never reaches the SQL readers on the query path (#297).",
+  },
+  {
+    claim: { kind: "text-not-sql", type: "mqtt" },
+    reason: "The MQTT provider has no console and takes no statement text at all (#1635).",
+  },
+  {
+    claim: { kind: "text-not-sql", type: "mtconnect" },
+    reason: "An MTConnect request line is written in the agent's own URL grammar, so no span of it is SQL (#1722).",
+  },
+  {
+    claim: { kind: "text-not-sql", type: "neo4j" },
+    reason:
+      "A Cypher statement escapes with a backslash and is read by the provider's graph lexer, which refuses every write (Neo4j spec 5.5).",
+  },
+  {
+    claim: { kind: "text-not-sql", type: "netconf" },
+    reason: "A NETCONF read request is one JSON object naming a datastore and a path, so no span of it is SQL (#1724).",
+  },
+  {
+    claim: { kind: "text-not-sql", type: "opcua" },
+    reason: "An OPC UA read request is one JSON object naming node ids, so no span of it is SQL (#1677).",
+  },
+  {
+    claim: { kind: "text-not-sql", type: "oxia" },
+    reason:
+      "An oxia client read command is split by POSIX shell rules, so a SQL span reader would misread its quoting (O10).",
+  },
+  {
+    claim: { kind: "text-not-sql", type: "prometheus" },
+    reason:
+      "A PromQL expression escapes with a backslash, and it only reaches a query endpoint that cannot write (#1085).",
+  },
+  {
+    claim: { kind: "text-not-sql", type: "qdrant" },
+    reason:
+      "A Qdrant console request is a request line and one JSON body, parsed by the shared console parser (vector-family spec 6.4).",
+  },
+  {
+    claim: { kind: "text-not-sql", type: "rabbitmq" },
+    reason: "A RabbitMQ read request names a stream to read and nothing else (#1656).",
+  },
+  {
+    claim: { kind: "text-not-sql", type: "redis" },
+    reason:
+      "A Redis command line is read by the provider's own command reader, and it never reaches the SQL readers on the query path (#297).",
+  },
+  {
+    claim: { kind: "text-not-sql", type: "s3" },
+    reason:
+      "An S3 read command is split by POSIX shell rules, so a SQL span reader would misread its quoting (docs/providers/s3.md, section 5.9).",
+  },
+  {
+    claim: { kind: "text-not-sql", type: "snmp" },
+    reason:
+      "An SNMP read request names objects to read and no verb, so no span of it is SQL (docs/providers/snmp.md, section 1.1).",
+  },
+  {
+    claim: { kind: "text-not-sql", type: "sparkplug" },
+    reason:
+      "A Sparkplug read request is one JSON object naming a group, an edge node and a window, so no span of it is SQL (#1720).",
+  },
+  {
+    claim: { kind: "text-not-sql", type: "weaviate" },
+    reason:
+      "A Weaviate console request is a request line and one JSON body, parsed by the shared console parser (#1566, spec 5.1).",
   },
 ];
 

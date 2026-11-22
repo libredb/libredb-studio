@@ -4,7 +4,8 @@
  * `POST /api/db/transaction` with `action: "query"`.
  *
  * The claims are planted, since no shipped row makes an unlisted one: a decides-alone row is the stand-in vocabulary
- * row under Trino, and an exempt form is Trino's real grammar row with `DELETE FROM` added. A grammar row is mocked
+ * row under Trino, an exempt form is Trino's real grammar row with `DELETE FROM` added, and a text-not-SQL claim is
+ * Druid's real grammar row with `readsSqlText: false`. A grammar row is mocked
  * before anything that reaches the grammar registry is imported, because `SQL_GRAMMAR` is built from the row objects
  * when it loads, so this file imports only `bun:test` statically. Only what answers before a provider is replaced:
  * the session, the connection resolution, the provider cache and the query event insert.
@@ -18,6 +19,12 @@ mock.module("@/lib/db/providers/sql/trino/sql-grammar", () => ({
     ...realTrino.TRINO_SQL_GRAMMAR,
     grammar: { ...realTrino.TRINO_SQL_GRAMMAR.grammar, confirmExemptForms: [["DELETE", "FROM"]] },
   },
+}));
+
+const realDruid = await import("@/lib/db/providers/sql/druid/sql-grammar");
+mock.module("@/lib/db/providers/sql/druid/sql-grammar", () => ({
+  ...realDruid,
+  DRUID_SQL_GRAMMAR: { ...realDruid.DRUID_SQL_GRAMMAR, readsSqlText: false },
 }));
 
 const { createMockProvider } = await import("../../helpers/mock-provider");
@@ -121,9 +128,18 @@ describe.each(ROUTES)("POST %s", (path, post, extra) => {
     await expectAsked(await run("trino", "DELETE FROM t", "ask"));
   });
 
+  test("a text-not-sql claim the record does not list is answered 428 when asked, before any provider", async () => {
+    await expectAsked(await run("druid", "SELECT 1; DROP TABLE t", "ask"));
+  });
+
+  test("an unreadable run under a text-not-sql plant says unreadable", async () => {
+    await expectAsked(await run("druid", "SELECT '\\'; DELETE FROM t", "ask"), true);
+  });
+
   test("required mode answers 428 for each planted claim without the field", async () => {
     process.env.LIBREDB_RUN_CONFIRMATION = "required";
     await expectAsked(await run("trino", "DELETE FROM t"));
+    await expectAsked(await run("druid", "SELECT 1; DROP TABLE t"));
     remove = installStandInVocabulary({});
     await expectAsked(await run(STAND_IN_TYPE, "DROP TABLE t"));
   });
