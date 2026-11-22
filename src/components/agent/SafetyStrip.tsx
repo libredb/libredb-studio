@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils";
  *
  *  - **The qualifier sits BESIDE the pill, never behind the ⓘ.** A bare "Executes nothing
  *    it drafts" overclaims: on the dialects that supply a `catalogCapture`, plan mode's grounding
- *    capture IS a catalog read, and `engine-support.ts` says in its own header that copy
+ *    capture IS a catalog read, and the review record's docblock in `src/lib/db/compatibility.ts` says that copy
  *    compressing these facts overclaims. Both halves are on one line, and the row
  *    flex-WRAPS rather than truncating, because a qualifier cut off mid-clause is the same
  *    overclaim with an ellipsis on the end.

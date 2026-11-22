@@ -3,8 +3,8 @@
  * browser bundle may hold.
  *
  * Client-safe on purpose, like `engine-support.ts`: besides types it imports only the language packs' and the engines'
- * client facets (`languages/client.ts`, `languages/engines/client.ts`), the leaf `workflow-tool-sets.ts` and the type id
- * check `@/lib/db/type-id.ts`, which are client-safe themselves, because the rail, the safety strip and the posture read it, and a provider module or
+ * client facets (`languages/client.ts`, `languages/engines/client.ts`), the leaf `workflow-tool-sets.ts`, the type id
+ * check `@/lib/db/type-id.ts` and the review record in `@/lib/db/compatibility.ts`, which are client-safe themselves, because the rail, the safety strip and the posture read it, and a provider module or
  * `node:crypto` here would reach a browser bundle. What a language DOES (its fingerprint, its advice, its admission) is
  * server code and lives in `languages/server.ts`.
  *
@@ -12,6 +12,7 @@
  * comparison is written anywhere. `tests/unit/lib/agent/agent-manifest.test.ts` holds it to every provider: an engine
  * has a language exactly when its provider has `queryReadOnly`.
  */
+import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
 import { assertDatabaseType } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
 import type { AgentGoalVerifierId } from "./goal-verifier";
@@ -303,9 +304,10 @@ export function planObjectiveOf(
 /**
  * Whether a run of one workflow opens on one engine in one mode, and under what.
  *
- * Read by the start route, which refuses before a run id or a model turn is spent, and by the rail and the strip,
- * which say the same thing before Start is pressed. One function rather than three readings of the tables, so the
- * notice and the refusal cannot disagree about an engine.
+ * Read by the start route, which refuses before a run id or a model turn is spent. The rail and the strip read
+ * `AGENT_STATEMENT_LANGUAGE` directly to say the same thing before Start is pressed, and an engine has a language
+ * exactly when the review record lists it (`tests/unit/lib/agent/agent-manifest.test.ts`), so the notice and the
+ * refusal cannot disagree about a shipped engine.
  */
 export type AgentWorkflowAvailability =
   | {
@@ -316,6 +318,8 @@ export type AgentWorkflowAvailability =
       readonly variant: AgentWorkflowVariant | null;
     }
   | { readonly open: false; readonly cause: "no-adapter" }
+  /** The language would open the run, and Studio's review record does not list the engine. */
+  | { readonly open: false; readonly cause: "not-reviewed" }
   | { readonly open: false; readonly cause: "no-variant" | "requirement-unmet"; readonly sentence: string };
 
 /**
@@ -329,16 +333,27 @@ interface AgentAvailabilityTables {
     Record<AgentStatementLanguageId, Readonly<Partial<Record<AgentRunWorkflowType, AgentWorkflowVariant>>>>
   >;
   readonly requirementEngines: Readonly<Record<AgentVariantRequirement, readonly DatabaseType[]>>;
+  /** Studio's review record of the engines agent statements run on (`AGENT_EXECUTION_ENGINES`). */
+  readonly reviewed: readonly DatabaseType[];
 }
 
 const MANIFEST_TABLES: AgentAvailabilityTables = Object.freeze({
   languages: AGENT_STATEMENT_LANGUAGE,
   variants: AGENT_WORKFLOW_VARIANTS,
   requirementEngines: AGENT_REQUIREMENT_ENGINES,
+  reviewed: AGENT_EXECUTION_ENGINES,
 });
 
 const NO_VARIANT_SENTENCE =
   "Agent mode does not offer this workflow on this engine. The operations workflow runs here, and plan mode drafts here.";
+
+/**
+ * The refusal of a statement-sending run on an engine whose language would open it but which Studio's review record
+ * does not list, naming the engine and the ways forward that remain on it.
+ */
+export function notReviewedSentence(engineLabel: string): string {
+  return `Agent mode runs statements only on the engines whose read-only statement path Studio has reviewed, and ${engineLabel} is not one of them, so a run whose workflow sends a statement is not opened on it. The operations workflow runs here, and plan mode drafts here.`;
+}
 
 /**
  * Each requirement's refusal names what the engine lacks, and the ways forward that remain on every engine it can be
@@ -366,7 +381,10 @@ function variantIn(
 /**
  * The arms in the order they exclude each other. Plan mode first, because it executes nothing it drafts and so no
  * adapter gates it. Then operations, which sends no statement and opens on every engine, language or not. Only then
- * does the language matter, then whether it has the workflow, then whether the engine holds what the variant needs.
+ * does the language matter, then whether Studio's review record lists the engine (the record the provider factory
+ * and the core read path read again at run time), then whether the language has the workflow, then whether the engine
+ * holds what the variant needs. The record is read after the language, so an engine with neither keeps the
+ * `no-adapter` answer.
  * Before all of them, a type that is not a type id is refused by name (FND-1), so no table answers for it.
  *
  * @throws {UnknownProviderError} When `type` is absent, not text, or names no provider.
@@ -388,6 +406,7 @@ export function workflowAvailability(
   }
   if (workflow === "operations") return { open: true, statementLanguage: language, variant: OPERATIONS_VARIANT };
   if (language === null) return { open: false, cause: "no-adapter" };
+  if (!tables.reviewed.includes(type)) return { open: false, cause: "not-reviewed" };
   const variant = variantIn(tables, language, workflow);
   if (variant === undefined) return { open: false, cause: "no-variant", sentence: NO_VARIANT_SENTENCE };
   const unmet = variant.requires.find((requirement) => !tables.requirementEngines[requirement].includes(type));

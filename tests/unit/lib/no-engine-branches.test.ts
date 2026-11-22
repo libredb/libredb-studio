@@ -219,7 +219,12 @@ export const REGISTRIES: readonly Listed[] = [
     count: 1,
     reason: "the type of the agent-leg tables above, which availability is decided from",
   },
-  { path: "src/lib/agent/engine-support.ts", declaration: "AGENT_EXECUTION_ENGINES", count: 1, reason: AGENT_LEG },
+  {
+    path: "src/lib/db/compatibility.ts",
+    declaration: "AGENT_EXECUTION_ENGINES",
+    count: 1,
+    reason: "the review record of the engines agent and MCP statements run on, read by every statement gate",
+  },
   {
     path: "src/lib/governance/config.ts",
     declaration: "ALLOWED_ENGINES_DEFAULT",

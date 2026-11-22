@@ -4,7 +4,7 @@ import React from "react";
 import { afterEach, describe, expect, test } from "bun:test";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { SafetyStrip } from "@/components/agent/SafetyStrip";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
+import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
 import { type AgentPosture, type AgentPostureTone, agentPosture } from "@/lib/agent/posture";
 import { getDBConfig } from "@/lib/db-ui-config";
 import type { DatabaseType } from "@/lib/types";

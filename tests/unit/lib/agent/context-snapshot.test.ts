@@ -1073,6 +1073,22 @@ describe("captureContextSnapshot — an environment failure on the composed path
     );
   });
 
+  test("an engine off the review record is told so, naming no missing read path", async () => {
+    const h = harness("postgres");
+
+    const capture = await captureContextSnapshot({
+      ...h.context,
+      acquireProvider: async () => {
+        throw new ExecutionProfileError("not on the review record", "PROFILE_ENGINE_NOT_REVIEWED");
+      },
+    });
+
+    if (capture.kind !== "unavailable") throw new Error("unreachable");
+    expect(capture.detail.split("so its schema was not read for this run. ")[1]).toBe(
+      "Studio has not reviewed this engine's read-only statement path, so the profile is not granted on it, whatever its provider implements. Plan mode drafts here, and the operations workflow still runs.",
+    );
+  });
+
   test("a principal that lacks a privilege is told to grant it, or to connect with a credential that holds it", async () => {
     // The same code is raised for a connection that authenticated no user, whose repair is a user and not a grant.
     const h = harness("postgres");

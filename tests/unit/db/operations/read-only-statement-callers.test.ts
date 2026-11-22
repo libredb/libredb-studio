@@ -388,3 +388,254 @@ describe("the protected read path", () => {
     ]);
   });
 });
+
+/** The function declared as `name` in `file`, parsed from the source. */
+function declaredFunction(file: string, name: string): ts.FunctionDeclaration {
+  const source = parse(file, readFileSync(join(ROOT, file), "utf8"));
+  let found: ts.FunctionDeclaration | undefined;
+  const visit = (node: ts.Node) => {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === name) found = node;
+    else ts.forEachChild(node, visit);
+  };
+  visit(source);
+  if (found === undefined) throw new Error(`${file} declares no function ${name}`);
+  return found;
+}
+
+/**
+ * The source position of the first call in `node` whose callee is `callee`: a bare name (`f(...)`) or a member of a
+ * named object (`object.f(...)`, written `object.f`), with any transparent wrapper stepped over; `-1` when there is none.
+ */
+function firstCall(node: ts.Node, callee: string): number {
+  const [object, member] = callee.includes(".") ? callee.split(".") : [undefined, callee];
+  let first = -1;
+  const visit = (at: ts.Node) => {
+    if (first !== -1) return;
+    if (ts.isCallExpression(at)) {
+      const target = inner(at.expression);
+      const matches =
+        object === undefined
+          ? ts.isIdentifier(target) && target.text === member
+          : ts.isPropertyAccessExpression(target) &&
+            target.name.text === member &&
+            ts.isIdentifier(inner(target.expression)) &&
+            (inner(target.expression) as ts.Identifier).text === object;
+      if (matches) {
+        first = at.getStart();
+        return;
+      }
+    }
+    ts.forEachChild(at, visit);
+  };
+  visit(node);
+  return first;
+}
+
+/** Whether, in `node`, the first call of `gate` comes before the first call of every one of `reaches`, each present. */
+function gatedBefore(node: ts.Node, gate: string, reaches: readonly string[]): Record<string, string> {
+  const gateAt = firstCall(node, gate);
+  return Object.fromEntries(
+    reaches.map((reach) => {
+      const reachAt = firstCall(node, reach);
+      if (gateAt === -1) return [reach, `${gate} is never called`];
+      if (reachAt === -1) return [reach, `${reach} is never called`];
+      return [reach, gateAt < reachAt ? "gated" : `${reach} comes before ${gate}`];
+    }),
+  );
+}
+
+/**
+ * How `statement`, the then-branch of an absence test, refuses: `"throw"` when it is a `throw` or a block whose last
+ * statement is one, `"returned-refusal"` when it is (or a block ends in) `return [ownWordsError(...), "<reason>"]`,
+ * the shape a tool that answers its refusal as a value returns, and `null` for anything else. A bare `return`, a
+ * default result, a `query()` fallback or any other value is not a refusal, whatever the branch logs first.
+ */
+function refusalOf(statement: ts.Statement): PresenceTest["refusal"] {
+  const last = ts.isBlock(statement) ? statement.statements.at(-1) : statement;
+  if (last === undefined) return null;
+  if (ts.isThrowStatement(last)) return "throw";
+  if (!ts.isReturnStatement(last) || last.expression === undefined) return null;
+  const returned = inner(last.expression);
+  if (!ts.isArrayLiteralExpression(returned) || returned.elements.length !== 2) return null;
+  const [error, reason] = returned.elements.map(inner);
+  return ts.isCallExpression(error) &&
+    ts.isIdentifier(error.expression) &&
+    error.expression.text === "ownWordsError" &&
+    ts.isStringLiteralLike(reason)
+    ? "returned-refusal"
+    : null;
+}
+
+/**
+ * How the `typeof` test `test` refuses the method's absence, or `null` where it does not only refuse it: it is one
+ * operand of a `!==` or `!=` comparison with the string `"function"`, that comparison reaches an `if` condition only
+ * through parentheses, `&&` and `||`, and the `if`'s then-branch refuses (`refusalOf`). Anything else (a `===` test, a
+ * negation, a ternary, a value kept in a name) is a presence test that could open a path.
+ */
+function absenceRefusal(test: ts.TypeOfExpression): PresenceTest["refusal"] {
+  const comparison = outer(test);
+  if (
+    comparison === undefined ||
+    !ts.isBinaryExpression(comparison) ||
+    ![ts.SyntaxKind.ExclamationEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsToken].includes(
+      comparison.operatorToken.kind,
+    )
+  ) {
+    return null;
+  }
+  const other = inner(comparison.left) === test ? comparison.right : comparison.left;
+  if (!ts.isStringLiteralLike(inner(other)) || (inner(other) as ts.StringLiteralLike).text !== "function") return null;
+  let at: ts.Node = comparison;
+  let parent = at.parent;
+  while (
+    parent !== undefined &&
+    (ts.isParenthesizedExpression(parent) ||
+      (ts.isBinaryExpression(parent) &&
+        [ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.BarBarToken].includes(parent.operatorToken.kind)))
+  ) {
+    at = parent;
+    parent = at.parent;
+  }
+  return parent !== undefined && ts.isIfStatement(parent) && parent.expression === at
+    ? refusalOf(parent.thenStatement)
+    : null;
+}
+
+interface PresenceTest {
+  readonly file: string;
+  readonly declaration: string;
+  readonly refusal: "throw" | "returned-refusal" | null;
+}
+
+/** Every `typeof` test of a member called `queryReadOnly` in `text`, with how it refuses the absence. */
+function presenceTests(file: string, text: string): PresenceTest[] {
+  const source = parse(file, text);
+  const found: PresenceTest[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isTypeOfExpression(node) && readsMember(inner(node.expression), "queryReadOnly")) {
+      found.push({ file, declaration: enclosingDeclaration(node), refusal: absenceRefusal(node) });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
+}
+
+const REVIEW_GATE = "assertStatementsReviewed";
+/** The presence tests outside provider code today, each refusing the absence: none opens a path. */
+const FACTORY = join("src", "lib", "db", "factory.ts");
+const KNOWN_PRESENCE_TESTS: readonly string[] = [
+  `${join("src", "app", "api", "agent", "runs", "[runId]", "handover", "route.ts")} in POST`,
+  `${join("src", "lib", "agent", "tools.ts")} in runStatement`,
+  `${FACTORY} in acquireExecutionProfileProvider`,
+  `${CORE_CALLER} in read`,
+  `${join("src", "lib", "mcp", "tools", "run-statement.ts")} in execute`,
+];
+/** The presence tests that return their refusal as a value: MCP's statement tool answers every refusal that way. */
+const RETURNED_REFUSALS: readonly string[] = [`${join("src", "lib", "mcp", "tools", "run-statement.ts")} in execute`];
+
+describe("the review record gates the protected read path", () => {
+  test("the scan finds a presence test that opens, and not one that refuses the absence", () => {
+    const planted = [
+      "function opens(p) { if (typeof p.queryReadOnly === 'function') run(); }",
+      "function ternary(p) { return typeof p.queryReadOnly === 'function' ? run() : refuse(); }",
+      "function kept(p) { const has = typeof p.queryReadOnly === 'function'; return has; }",
+      "function negated(p) { if (!(typeof p.queryReadOnly !== 'function')) run(); }",
+      "function throws(p) { if (typeof p.queryReadOnly !== 'function') throw new Error('no path'); }",
+      "async function cleans(p, gate) { if (gate && typeof p.queryReadOnly !== 'function') { await cleanup(); throw new Error('no path'); } }",
+      "function returnsName(p) { if (typeof p.queryReadOnly !== 'function') return refusal; }",
+      "function returnsNothing(p) { if (typeof p.queryReadOnly !== 'function') return; }",
+      "function fallsBack(p, sql) { if (typeof p.queryReadOnly !== 'function') return p.query(sql); }",
+      "function defaults(p) { if (typeof p.queryReadOnly !== 'function') return { rows: [], fields: [], rowCount: 0 }; }",
+      "function warns(p) { if (typeof p.queryReadOnly !== 'function') { logger.warn('no path'); return null; } }",
+      "function otherTuple(p) { if (typeof p.queryReadOnly !== 'function') return [result, 'mcp_execution_failed']; }",
+      "function tuple(p) { if (typeof p.queryReadOnly !== 'function') { const refusal = text(); return [ownWordsError(refusal), 'mcp_execution_failed']; } }",
+    ].join("\n");
+    expect(
+      presenceTests("planted.ts", planted)
+        .filter((found) => found.refusal === null)
+        .map((found) => found.declaration),
+    ).toEqual([
+      "opens",
+      "ternary",
+      "kept",
+      "negated",
+      "returnsName",
+      "returnsNothing",
+      "fallsBack",
+      "defaults",
+      "warns",
+      "otherTuple",
+    ]);
+    expect(
+      presenceTests("planted.ts", planted)
+        .filter((found) => found.refusal !== null)
+        .map((found) => [found.declaration, found.refusal]),
+    ).toEqual([
+      ["throws", "throw"],
+      ["cleans", "throw"],
+      ["tuple", "returned-refusal"],
+    ]);
+  });
+
+  test("no module outside the providers decides from the presence of queryReadOnly", () => {
+    const outside = SOURCE_ROOTS.flatMap(sourceFiles).filter((file) => !file.startsWith(PROVIDER_CODE));
+    expect(outside.length).toBeGreaterThan(0);
+    const found = outside.flatMap((file) => presenceTests(file, readFileSync(join(ROOT, file), "utf8")));
+    expect(found.filter((test) => test.refusal === null).map((test) => `${test.file} in ${test.declaration}`)).toEqual(
+      [],
+    );
+    // A refusal returned as a value is admitted only where the tool answers its refusal as a value.
+    expect(
+      found.filter((test) => test.refusal === "returned-refusal").map((test) => `${test.file} in ${test.declaration}`),
+    ).toEqual([...RETURNED_REFUSALS]);
+    // Not vacuous: the known presence tests are found, each one a refusal of the absence.
+    expect(found.map((test) => `${test.file} in ${test.declaration}`).sort()).toEqual([...KNOWN_PRESENCE_TESTS]);
+  }, 60_000);
+
+  test("the scan finds a choke point that reaches the provider before the record is read", () => {
+    const file = "planted.ts";
+    const planted = parse(
+      file,
+      [
+        "async function late(c) { const p = await createDatabaseProvider(c); assertStatementsReviewed(c.type); return p; }",
+        "async function early(c) { assertStatementsReviewed(c.type); return createDatabaseProvider(c); }",
+        "async function never(c) { return createDatabaseProvider(c); }",
+        "async function read(call) { assertStatementsReviewed(call.type); return call.read(); }",
+      ].join("\n"),
+    );
+    const named = (name: string) =>
+      planted.statements.find(
+        (statement): statement is ts.FunctionDeclaration =>
+          ts.isFunctionDeclaration(statement) && statement.name?.text === name,
+      ) as ts.FunctionDeclaration;
+    expect(gatedBefore(named("late"), REVIEW_GATE, ["createDatabaseProvider"])).toEqual({
+      createDatabaseProvider: `createDatabaseProvider comes before ${REVIEW_GATE}`,
+    });
+    expect(gatedBefore(named("early"), REVIEW_GATE, ["createDatabaseProvider"])).toEqual({
+      createDatabaseProvider: "gated",
+    });
+    expect(gatedBefore(named("never"), REVIEW_GATE, ["createDatabaseProvider"])).toEqual({
+      createDatabaseProvider: `${REVIEW_GATE} is never called`,
+    });
+    expect(gatedBefore(named("read"), REVIEW_GATE, ["call.read"])).toEqual({ "call.read": "gated" });
+  });
+
+  test("acquireExecutionProfileProvider reads the review record before it builds a provider", () => {
+    const body = declaredFunction(FACTORY, "acquireExecutionProfileProvider");
+    expect(gatedBefore(body, REVIEW_GATE, ["profiledCacheKey", "createSSHTunnel", "createDatabaseProvider"])).toEqual({
+      profiledCacheKey: "gated",
+      createSSHTunnel: "gated",
+      createDatabaseProvider: "gated",
+    });
+  });
+
+  test("runReadOnlyReading reads the review record before it makes the read", () => {
+    const body = declaredFunction(CORE_CALLER, CORE_READING);
+    expect(gatedBefore(body, REVIEW_GATE, ["assertReadOnlyBudget", "call.read", "call.holdUntilSettled"])).toEqual({
+      assertReadOnlyBudget: "gated",
+      "call.read": "gated",
+      "call.holdUntilSettled": "gated",
+    });
+  });
+});

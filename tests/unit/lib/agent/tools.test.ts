@@ -7563,3 +7563,19 @@ describe("a provider that answers past the run's budget", () => {
     expect(h.tracker.usage("run-1").activeExecutions).toBe(1);
   });
 });
+
+describe("an engine the review record does not list", () => {
+  test("a statement on it is refused by core with PROFILE_ENGINE_NOT_REVIEWED for a connection of that type whatever acquirer hands its provider over, and the provider's queryReadOnly is never called", async () => {
+    const h = harness({ connection: { ...connection, type: "snowflake" } });
+
+    const error = await runReadQueryTool(h.context, { sql: "SELECT 1" }).then(
+      () => null,
+      (thrown: unknown) => thrown,
+    );
+
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_ENGINE_NOT_REVIEWED");
+    expect(h.queryReadOnly).not.toHaveBeenCalled();
+    expect(h.repairs.attemptsUsed).toBe(0);
+  });
+});

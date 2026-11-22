@@ -426,6 +426,25 @@ describe("a drive that fails before the loop", () => {
     });
   });
 
+  test("records an engine off the review record as an unsupported engine", async () => {
+    // The repair is the same as for an engine with no read-only statement path until an operator grant exists:
+    // another engine, or plan mode and the operations workflow on this one.
+    await openRun("arun_notreviewed");
+    mockResolveConnection.mockImplementationOnce(async () => {
+      throw new ExecutionProfileError(
+        'Provider type "snowflake" is not on the review record of engines that run agent and MCP statements (AGENT_EXECUTION_ENGINES), so no statement is sent on it, whatever its provider implements',
+        "PROFILE_ENGINE_NOT_REVIEWED",
+      );
+    });
+
+    await expect(driveAgentRun("arun_notreviewed")).rejects.toThrow(ExecutionProfileError);
+
+    expect(await finishedEvent("arun_notreviewed")).toMatchObject({
+      status: "failed",
+      reason: "engine-unsupported",
+    });
+  });
+
   test("records a misconfigured agent credential as itself, not as an unsupported engine", async () => {
     // `resolveAgentCredential` throws the SAME error type as an engine with no
     // read-only profile, on ANY engine (#459). Classified by type
@@ -523,6 +542,7 @@ describe("a drive that fails before the loop", () => {
   const REASON_OF_DENY_CODE = {
     UNSUPPORTED_PROFILE: "engine-unsupported",
     PROFILE_UNSUPPORTED_BY_PROVIDER: "engine-unsupported",
+    PROFILE_ENGINE_NOT_REVIEWED: "engine-unsupported",
     PROFILE_UNSUPPORTED_TARGET: "profile-target-unsupported",
     PROFILE_PRIVILEGES_TOO_BROAD: "agent-principal-refused",
     PROFILE_PRIVILEGES_TOO_NARROW: "agent-principal-underprivileged",

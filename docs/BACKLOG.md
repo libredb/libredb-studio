@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B172 · 83
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B173 · 84
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP27 · 24
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV34 · 33
@@ -6220,7 +6220,7 @@ Found 2026-10-08 by the browser verification of the Databend provider (#1593); p
 
 ### U101. Agent mode asks consent for an Analyze run that the server then refuses on the engine
 
-On an engine outside `AGENT_EXECUTION_ENGINES` (`src/lib/agent/engine-support.ts`), the rail's amber notice says that a run whose workflow sends a statement is refused at start, yet a start that resolves to Analyze (`data-analysis`) first raises the consent step.
+On an engine outside `AGENT_EXECUTION_ENGINES` (`src/lib/db/compatibility.ts`), the rail's amber notice says that a run whose workflow sends a statement is refused at start, yet a start that resolves to Analyze (`data-analysis`) first raises the consent step.
 The step is headed "Start this run" with a "read-only" pill, says "This run will open as Analyze on <connection>, which answers with a result.", and its checkbox note promises "the same database-enforced read-only session either way".
 Its "Start run" then sends `POST /api/agent/runs`, which answers 400 `{"refused":"engine-unsupported"}`, and the rail says "No run was opened. The notice above says why, and what still runs on this engine."
 `hold` in `src/components/agent/AgentRail.tsx` raises the step whenever `canHandOver` holds, and `canHandOver` reads the mode, `AGENT_WORKFLOW_PRESENTS_ANSWER` and the hand-over runner but never the engine, while the route refuses on `AGENT_WORKFLOW_SENDS_STATEMENTS` and the engine (`src/app/api/agent/runs/route.ts`).
@@ -9943,6 +9943,17 @@ The read-only statement path measures with `measureRowBytes` in `src/lib/db/prov
 Found 2026-11-21 while reviewing the read-only statement re-check.
 
 **Done when:** both sites measure their rows with `measureRowBytes`, summed per row and stopping at the row that crosses the budget, a test pins a multibyte reading past the budget refused as `READING_OVER_BUDGET` and a bigint cell measured as its text, for the curated readings and for the statistics read; cited in `docs/AGENT.md`.
+
+### B173. The hand-over route answers an execution-profile refusal as an unhandled server error
+
+`POST /api/agent/runs/{runId}/handover` (`src/app/api/agent/runs/[runId]/handover/route.ts`) passes every error from `acquireExecutionProfileProvider` and `runReadOnlyStatement` to `createErrorResponse` (`src/lib/api/errors.ts`).
+`createErrorResponse` has no branch for `ExecutionProfileError` (`src/lib/db/errors.ts`), which is a plain `Error` and not a `DatabaseError`, so it falls through to the generic branch.
+Measured 2026-11-22 by calling `createErrorResponse` with an `ExecutionProfileError` under the route's name: for `PROFILE_ENGINE_NOT_REVIEWED`, `PROFILE_PRIVILEGES_TOO_BROAD` and `PROFILE_UNSUPPORTED_BY_PROVIDER` alike it answered `500` `{"code":"INTERNAL_ERROR"}` and logged `Unhandled error` at error level with the stack.
+So a principal or engine the profile refuses at replay reads to the user as a server fault, and to the operator as a defect, although the refusal is the boundary working and its `reasonCode` already says why.
+It is not new with the review record: every deny code has taken this path since the route existed.
+Found 2026-11-22 while rebasing the agent statement review record (FND-7 slice 2).
+
+**Done when:** an `ExecutionProfileError` reaching the hand-over route is answered with a client-error status and its `reasonCode` in the body, logged below error level, and a route test pins that answer for a refused profile, with the deny codes that are a server fault, if any, named and kept apart.
 
 ## Passkey deferrals (#785)
 

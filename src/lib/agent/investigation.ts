@@ -4081,10 +4081,12 @@ export async function runInvestigation(
           // equivalence is the thing a future set would break silently, so it is asserted
           // rather than relied on.
           // `operations` is the one agent set built on a different four, because the
-          // read-class tools need `queryReadOnly`, which only the engines
-          // `AGENT_EXECUTION_ENGINES` (`src/lib/agent/engine-support.ts`) names implement -
+          // read-class tools send statements, which only the engines
+          // `AGENT_EXECUTION_ENGINES` (`src/lib/db/compatibility.ts`) names may do -
           // named rather than counted here, because the count is what went stale: the rule
-          // that decides is the factory's probe of that method, not a number. Told to
+          // that decides is the review record that the factory and the core read path read
+          // (`assertStatementsReviewed`), with the provider's `queryReadOnly` a second
+          // precondition, not a number. Told to
           // call a tool it has not got, a run calls it, is answered "there is no such tool",
           // and spends the very turn this retry bought: the #350/#356 defect, paid for once.
           holdsTool("inspect_schema") &&

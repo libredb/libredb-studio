@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { AGENT_STATEMENT_LANGUAGE, workflowAvailability } from "@/lib/agent/agent-manifest";
 import type { AgentCatalogKind, AgentCatalogRead, AgentCatalogSelector } from "@/lib/agent/composed-sql-primitives";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
+import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { verifyRunGoal } from "@/lib/agent/goal-verifier";
 import { agentEnginePack } from "@/lib/agent/languages/engines/index";

@@ -30,14 +30,14 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { operatorCopyViolations } from "../../scripts/sync-chart-version.mjs";
 import { AGENT_LANGUAGE_COPY, AGENT_STATEMENT_LANGUAGE, AGENT_WORKFLOW_VARIANTS } from "@/lib/agent/agent-manifest";
-import { AGENT_EXECUTION_ENGINES, namedList } from "@/lib/agent/engine-support";
+import { namedList } from "@/lib/agent/engine-support";
 import { AGENT_HISTORY_MAX_CONVERSATIONS, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import * as engineClientResolvers from "@/lib/agent/languages/engines/client";
 import * as enginePackResolvers from "@/lib/agent/languages/engines/index";
 import * as engineServerResolvers from "@/lib/agent/languages/engines/server";
 import { agentPosture } from "@/lib/agent/posture";
 import { getDBConfig } from "@/lib/db-ui-config";
-import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { AGENT_EXECUTION_ENGINES, EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { AGENT_PRINCIPAL_STATEMENTS } from "@/lib/db/providers/sql/oracle/agent-read";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import type { DatabaseType } from "@/lib/types";
@@ -716,15 +716,17 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
     );
   });
 
-  test.each([...ENGINE_CLAIM_FILES, ...ENGINE_CLAIM_SCANNED, "src/lib/agent/engine-support.ts"])(
-    "%s counts no engines",
-    (file) => {
-      // The Rancher file's editorial notes date old copy by its engine count, so only its submitted copy is held.
-      const text = file === "deploy/rancher/CATALOG_LISTING.md" ? rancherSubmittedCopy() : read(file);
-      // The READMEs and listings wrap their lines, so a count split by a line break is matched too.
-      expect(text.replace(/\s+/g, " ")).not.toMatch(ENGINE_COUNT);
-    },
-  );
+  test.each([
+    ...ENGINE_CLAIM_FILES,
+    ...ENGINE_CLAIM_SCANNED,
+    "src/lib/agent/engine-support.ts",
+    "src/lib/db/compatibility.ts",
+  ])("%s counts no engines", (file) => {
+    // The Rancher file's editorial notes date old copy by its engine count, so only its submitted copy is held.
+    const text = file === "deploy/rancher/CATALOG_LISTING.md" ? rancherSubmittedCopy() : read(file);
+    // The READMEs and listings wrap their lines, so a count split by a line break is matched too.
+    expect(text.replace(/\s+/g, " ")).not.toMatch(ENGINE_COUNT);
+  });
 
   test("docs/API_DOCS.md quotes the refusal the posture writes for an engine outside the list", () => {
     const body = agentPosture({ mode: "agent", engine: "spark", engineLabel: "Apache Spark", handover: false }).body;

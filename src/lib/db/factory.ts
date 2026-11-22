@@ -25,6 +25,7 @@ import {
 import { egressDecision } from "./egress-decision";
 import { registerOwnerRemoval } from "./owner-removal";
 import { READ_ONLY_ENFORCED, READS_FILE_ACCESS_POSTURE } from "./compatibility";
+import { assertStatementsReviewed } from "./statement-review";
 import { assertDatabaseType, typeIdRow } from "./type-id";
 import { enabledProviderTypes } from "./enabled-providers";
 import { TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
@@ -1436,12 +1437,16 @@ export type ExecutionProfile = "agent-read-only" | "agent-operations" | "agent-h
  * Single source of truth for the profile list, so a new profile cannot be accepted
  * without stating both. The second field is the engine gate, and it is a PROPERTY OF
  * THE PROFILE rather than of the factory: `agent-read-only` sends model-authored
- * statements, so it is served only where the provider can bound one (in one of the three
+ * statements, so it is served only on an engine Studio's review record lists
+ * (`AGENT_EXECUTION_ENGINES`, read through `assertStatementsReviewed` before anything is
+ * built, which refuses any other engine with `PROFILE_ENGINE_NOT_REVIEWED`), and only where
+ * the provider can also bound one (in one of the three
  * forms the `queryReadOnly` docblock in `src/lib/db/types.ts` names: the engine's own read-only
  * handle or transaction, a least-privilege principal the server's own answers prove, or a
- * Studio-enforced request allowlist plus the identity's own authorization), and only the
- * providers of AGENT_EXECUTION_ENGINES implement that: PostgreSQL, SQLite,
- * DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino (`src/lib/agent/engine-support.ts`). `agent-operations` sends no statement
+ * Studio-enforced request allowlist plus the identity's own authorization), which a provider
+ * without `queryReadOnly` is refused for with `PROFILE_UNSUPPORTED_BY_PROVIDER`. The method is
+ * required and never enough. The engines of AGENT_EXECUTION_ENGINES implement that: PostgreSQL, SQLite,
+ * DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino (`src/lib/db/compatibility.ts`). `agent-operations` sends no statement
  * at all — it calls the curated reporting methods every provider implements — so
  * requiring a read-only STATEMENT path of it would refuse an engine over a capability
  * the profile never uses. `agent-handover` sends a statement too — the one a run
@@ -1463,8 +1468,9 @@ export type ExecutionProfile = "agent-read-only" | "agent-operations" | "agent-h
 interface ProfileAcquisition {
   readonly context: ProviderExecutionContext;
   /**
-   * Refuse the provider unless it implements a read-only statement path (`queryReadOnly`). Also
-   * the source of the context's `sendsStatements`.
+   * Refuse the engine unless Studio's review record lists it (`PROFILE_ENGINE_NOT_REVIEWED`, before anything is
+   * built), and the provider unless it implements a read-only statement path (`queryReadOnly`,
+   * `PROFILE_UNSUPPORTED_BY_PROVIDER`). Also the source of the context's `sendsStatements`.
    */
   readonly requiresReadOnlyStatements: boolean;
 }
@@ -1629,11 +1635,17 @@ function sameUser(agentUser: string | undefined, user: string | undefined): bool
  * editor's fully-privileged pool, and an editor request can never be handed a
  * read-only one.
  *
- * Whether a provider without a read-only statement path is refused is the
- * PROFILE's decision, not this function's: under `agent-read-only` it is refused
- * rather than silently served `query()` (fail closed), and under `agent-operations`
- * it is served, because that profile sends no statement for a read-only wrapper to
- * bound. See `PROFILE_ACQUISITION` for the whole of that argument.
+ * Whether an engine is refused is the PROFILE's decision, not this function's. Under
+ * `agent-read-only` and `agent-handover` an engine Studio's review record does not list is
+ * refused by name with `PROFILE_ENGINE_NOT_REVIEWED`, even when its provider implements
+ * `queryReadOnly`, and one the record lists whose provider has no read-only statement path is
+ * refused with `PROFILE_UNSUPPORTED_BY_PROVIDER` rather than silently served `query()` (fail
+ * closed). Under `agent-operations` neither is asked, because that profile sends no statement
+ * for a read-only wrapper to bound. See `PROFILE_ACQUISITION` for the whole of that argument.
+ *
+ * The refusals come in a fixed order, so a connection with several faults is refused with the
+ * earliest: the type and record checks at the top, an unknown profile, then the review record,
+ * then the agent credential, then the provider's own refusals once it is built.
  *
  * `requester` is the editor posture of the caller this acquisition serves, as
  * `editorExecutionContext` derives it (non-admin DuckDB file access). It reaches the profiled
@@ -1664,6 +1676,10 @@ export async function acquireExecutionProfileProvider(
   assertEgressDecided();
   // Refuses an unknown profile ahead of the cache key, which frames the profile.
   const execution = executionContextFor(profile, requester);
+  // A profile that sends statements is granted only on an engine Studio's review record lists, whatever the provider
+  // implements: read here, ahead of the cache key, the credential, the tunnel and the provider build, so an engine
+  // off the record is refused by name with nothing built or dialled.
+  if (execution.sendsStatements) assertStatementsReviewed(connection.type);
 
   // The requester's own provider under governance (docs/GOVERNANCE.md#per-user-providers), as in the writable cache:
   // `profiledCacheKey` frames the same owner, and the provider and its entry take it from here.

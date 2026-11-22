@@ -338,7 +338,9 @@ export type AgentRunFailureReason =
   | "model-unauthorized"
   /**
    * The connection's engine has no read-only statement path under a declared boundary,
-   * so this run could never have been permitted on it. A property of the connection the
+   * or is not on Studio's review record of the engines agent statements run on
+   * (`AGENT_EXECUTION_ENGINES`, `PROFILE_ENGINE_NOT_REVIEWED`), so this run could never
+   * have been permitted on it. A property of the connection the
    * user chose, not a fault of the server — which is why it is not `internal`.
    *
    * NARROWER for the `operations` workflow (#325), and narrower is all it is. That
@@ -353,7 +355,10 @@ export type AgentRunFailureReason =
    * acquisition IS attempted on all nine — the sentence here used to say none was, which
    * was true only until the second reading existed. What survives is the conclusion: the
    * profile whose acquisition would be refused is never the profile that capture asks for
-   * on an engine that would refuse it.
+   * on an engine that would refuse it, while every engine whose overlay supplies a
+   * `catalogCapture` is on the review record, which the shipped record is and the language
+   * census holds. On such an engine off the record the capture is refused
+   * `PROFILE_ENGINE_NOT_REVIEWED` and a plan or operations run begins ungrounded.
    *
    * ONLY the engine's own refusal, since B47: the other causes of the same error type
    * are `agent-credential-unusable`, the three principal and server reasons and

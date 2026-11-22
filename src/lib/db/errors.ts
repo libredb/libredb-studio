@@ -311,6 +311,15 @@ export class QueryCancelledError extends DatabaseError {
 export type ExecutionProfileDenyCode =
   | "UNSUPPORTED_PROFILE"
   | "PROFILE_UNSUPPORTED_BY_PROVIDER"
+  /**
+   * The engine is not on Studio's review record of the engines agent and MCP statements run on (`AGENT_EXECUTION_ENGINES`
+   * in src/lib/db/compatibility.ts), so no statement profile is granted and no statement or budgeted read is made on it,
+   * even when its provider implements `queryReadOnly`.
+   *
+   * Its own code, apart from `PROFILE_UNSUPPORTED_BY_PROVIDER`, which says the provider has no such path and would be
+   * false of one that has it. No operator grant widens the record in this version.
+   */
+  | "PROFILE_ENGINE_NOT_REVIEWED"
   | "PROFILE_UNSUPPORTED_TARGET"
   /** The role the profile would run as holds privileges no read-only boundary can contain. */
   | "PROFILE_PRIVILEGES_TOO_BROAD"

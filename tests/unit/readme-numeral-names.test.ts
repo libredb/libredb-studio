@@ -27,9 +27,8 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { DB_UI_CONFIG } from "@/lib/db-ui-config";
-import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { AGENT_EXECUTION_ENGINES, EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 
 const ROOT = join(import.meta.dir, "..", "..");
 const read = (name: string): string => readFileSync(join(ROOT, name), "utf8");

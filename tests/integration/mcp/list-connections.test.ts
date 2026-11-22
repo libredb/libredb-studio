@@ -14,8 +14,7 @@ import { MCP_CONNECTIONS_UNREADABLE, type McpCaller, McpConnectionContext } from
 import { MCP_RESULT_CAP_BYTES, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
 import { AGENT_LANGUAGE_MCP_FACETS } from "@/lib/agent/languages/mcp";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
-import { MCP_EXPOSABLE, MCP_STATEMENT_READ } from "@/lib/db/compatibility";
+import { AGENT_EXECUTION_ENGINES, MCP_EXPOSABLE, MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { LIST_CONNECTIONS_DESCRIPTION } from "@/lib/mcp/tools/list-connections";
 import { mcpStatementToolFor, servingStatementArms } from "@/lib/mcp/tools/statement-arms";
 import { resetCache } from "@/lib/seed";

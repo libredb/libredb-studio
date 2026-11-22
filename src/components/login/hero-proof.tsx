@@ -1,5 +1,4 @@
-import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
-import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { AGENT_EXECUTION_ENGINES, EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { LIVE_CHANNELS, LIVE_PLATFORMS } from "@/lib/distribution/channels.generated";
 import { DEPLOY_GROUP_LABELS, DEPLOY_GROUP_ORDER } from "@/lib/distribution/deploy-groups";
 
@@ -7,10 +6,10 @@ import { DEPLOY_GROUP_LABELS, DEPLOY_GROUP_ORDER } from "@/lib/distribution/depl
  * The two agent modes, in the order a user meets them.
  *
  * The descriptions are pinned to `docs/AGENT.md` and the split is load-bearing: plan mode
- * executes nothing on any engine, agent mode executes read-only and only where the provider
- * implements `queryReadOnly`. The engine count in the second line is the length of
- * `AGENT_EXECUTION_ENGINES`, so an engine that gains that method updates this claim without
- * a copy edit - and the mode count below is this array's length, never a typed "2".
+ * executes nothing on any engine, agent mode executes read-only and only on an engine Studio's
+ * review record lists, each of whose providers implements `queryReadOnly`. The engine count in
+ * the second line is the length of `AGENT_EXECUTION_ENGINES`, that record, so an engine added to
+ * it updates this claim without a copy edit - and the mode count below is this array's length, never a typed "2".
  *
  * A count rather than the engine names: the names used to be listed here, and each engine
  * that joined agent mode added a word until the hero no longer fit a 1280x800 screen

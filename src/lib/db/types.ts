@@ -2291,6 +2291,11 @@ export interface DatabaseProvider {
    * Optional on purpose: only providers with a verified boundary implement it, and
    * execution-profile acquisition (`acquireExecutionProfileProvider` in factory.ts) refuses
    * provider types that lack it rather than falling back to `query()` (fail closed).
+   *
+   * Implementing it is required and never sufficient: the acquisition and the core read path
+   * (`runReadOnlyReading`) also require the engine on Studio's review record
+   * (`AGENT_EXECUTION_ENGINES` in compatibility.ts), and refuse one off it by name with
+   * `PROFILE_ENGINE_NOT_REVIEWED` before this method is reached.
    */
   queryReadOnly?(
     statement: string,

@@ -15,7 +15,6 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import {
   connectionFieldHint,
   DB_UI_CONFIG,
@@ -23,7 +22,13 @@ import {
   offersSshTunnel,
   READ_ONLY_FIXED_HINT,
 } from "@/lib/db-ui-config";
-import { MCP_EXPOSABLE, MCP_STATEMENT_READ, READ_ONLY_ENFORCED, WRITE_REACH } from "@/lib/db/compatibility";
+import {
+  AGENT_EXECUTION_ENGINES,
+  MCP_EXPOSABLE,
+  MCP_STATEMENT_READ,
+  READ_ONLY_ENFORCED,
+  WRITE_REACH,
+} from "@/lib/db/compatibility";
 import { summarizeWriteReach } from "@/lib/db/write-reach";
 import { CREDENTIAL_WARNINGS, credentialWarningFor, readOnlySeedRefusal } from "@/lib/db/credential-warnings";
 import { createDatabaseProvider } from "@/lib/db/factory";

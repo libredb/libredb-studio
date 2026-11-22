@@ -925,6 +925,20 @@ describe("POST /api/agent/runs", () => {
     },
   );
 
+  test("a statement-sending run on an engine the review record does not list is refused by name before a run, a provider or a model probe exists", async () => {
+    mockWorkflowAvailability.mockReturnValueOnce({ open: false, cause: "not-reviewed" });
+
+    const res = await POST(startRequest({ ...VALID_BODY, workflowType: "investigation" }));
+    const body = await parseResponseJSON<{ error: string; refused?: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(body.error).toBe(realManifest.notReviewedSentence(getDBConfig("postgres").label));
+    expect(body.refused).toBe("engine-unsupported");
+    expect(mockStart).not.toHaveBeenCalled();
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockAdmitAgentModel).not.toHaveBeenCalled();
+  });
+
   test("an engine that HAS a read-only statement path opens every workflow", async () => {
     // The negative control: without it the refusal above could be refusing everything.
     for (const workflowType of ["investigation", "operations", "data-analysis"]) {

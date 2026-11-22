@@ -14,7 +14,6 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { engineServerDialect } from "@/lib/agent/languages/engines/server";
 import {
   connectionFieldHint,
@@ -24,6 +23,7 @@ import {
   READ_ONLY_FIXED_HINT,
 } from "@/lib/db-ui-config";
 import {
+  AGENT_EXECUTION_ENGINES,
   connectableProductCount,
   EXTERNAL_DATABASE_TYPES,
   MCP_AGENT_CREDENTIAL_REQUIRED,

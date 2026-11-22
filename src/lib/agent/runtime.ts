@@ -262,11 +262,14 @@ async function recordDriveFailure(service: AgentRunService, runId: string, error
  * Total over `ExecutionProfileDenyCode`, so a code added there does not compile until it
  * is given the reason whose sentence names its repair. Two codes share a reason only
  * where their repair is the same: the two credential faults are both the credential
- * field, and the two engine refusals are both the engine.
+ * field, and the three engine refusals are both the engine. An engine off Studio's
+ * review record is one of them: until an operator grant exists, its repair is the same
+ * as for an engine with no read-only statement path.
  */
 const PROFILE_REFUSAL_REASON: Readonly<Record<ExecutionProfileDenyCode, AgentRunFailureReason>> = Object.freeze({
   UNSUPPORTED_PROFILE: "engine-unsupported",
   PROFILE_UNSUPPORTED_BY_PROVIDER: "engine-unsupported",
+  PROFILE_ENGINE_NOT_REVIEWED: "engine-unsupported",
   PROFILE_UNSUPPORTED_TARGET: "profile-target-unsupported",
   PROFILE_PRIVILEGES_TOO_BROAD: "agent-principal-refused",
   PROFILE_PRIVILEGES_TOO_NARROW: "agent-principal-underprivileged",

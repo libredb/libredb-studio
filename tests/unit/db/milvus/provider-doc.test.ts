@@ -9,9 +9,8 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { DB_UI_CONFIG } from "@/lib/db-ui-config";
-import { MCP_EXPOSABLE, MCP_STATEMENT_READ, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import { AGENT_EXECUTION_ENGINES, MCP_EXPOSABLE, MCP_STATEMENT_READ, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import { CREDENTIAL_WARNINGS, credentialWarningFor } from "@/lib/db/credential-warnings";
 import { MilvusError } from "@/lib/db/providers/vector/milvus/client";
 import {

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { persistedRunFacts, workflowAvailability } from "@/lib/agent/agent-manifest";
+import { notReviewedSentence, persistedRunFacts, workflowAvailability } from "@/lib/agent/agent-manifest";
 import { admitAgentModel } from "@/lib/agent/capability-gate";
 import { isAgentRuntimeEnabled, isThreadContextEnabled } from "@/lib/agent/config";
 import { connectionIdentity } from "@/lib/agent/context-snapshot";
@@ -338,12 +338,17 @@ export async function POST(req: Request) {
          request, so the refusal lands after the classify call and before the open.
        - **The ENGINE'S LANGUAGE**, from `AGENT_STATEMENT_LANGUAGE`, keyed by type-id
          and held by `tests/unit/lib/agent/agent-manifest.test.ts` to every provider
-         that has `queryReadOnly`, the factory's own gate. Read here rather than probed
+         that has `queryReadOnly`. Read here rather than probed
          off a constructed provider, because a construction is not free on the engines
          this refusal is about: on a single-writer file the second handle throws rather
          than opening (B49), and it is the same record the rail and the safety strip
          read, so the notice and the refusal cannot disagree about which engines they
          are talking about.
+       - **The REVIEW RECORD**, `AGENT_EXECUTION_ENGINES`, the record the provider
+         factory's statement profiles and the core read path read again at run time. An
+         engine whose language would open the run but which the record does not list is
+         answered with `notReviewedSentence`, naming it. Read after the language, so an
+         engine with neither keeps the posture's sentence below.
        - **The VARIANT and what it requires.** A language may have no variant of the
          workflow, or a variant whose tools need a reading this engine does not serve;
          either is refused with the manifest's own sentence.
@@ -352,7 +357,7 @@ export async function POST(req: Request) {
       the rail's own amber card shows as its reason: it names the engines that DO have
       such a path, that `operations` runs here, and that plan mode drafts here, so a
       refused user is told both ways forward rather than a third phrasing of the same
-      fact. The other two refusals carry the same marker, because they are the same kind
+      fact. The other three refusals carry the same marker, because they are the same kind
       of fact: the request has to change its workflow, its mode or its connection.
 
       Ahead of `admitAgentModel` on purpose: that gate probes the configured model,
@@ -376,7 +381,9 @@ export async function POST(req: Request) {
               engineLabel: getDBConfig(connection.type).label,
               handover: false,
             }).body
-          : availability.sentence,
+          : availability.cause === "not-reviewed"
+            ? notReviewedSentence(getDBConfig(connection.type).label)
+            : availability.sentence,
         // The only refusal here that a client can already be explaining for itself, so
         // the only one that carries a code (#513).
         "engine-unsupported",
