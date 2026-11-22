@@ -3455,6 +3455,56 @@ describe("OperationsTab", () => {
     expect(view!.queryByText("Global Operations")).toBeNull();
   });
 
+  test("says the same of SNMP, whose rows are derived groupings and which offers no table statistics", async () => {
+    expect(ENGINE_FACETS.snmp.monitoring.tables).toBe("not-offered");
+    expect(ENGINE_FACETS.snmp.monitoring.activeSessions).toBe("not-offered");
+    mockConnectionsList = [connectionOfType("snmp")];
+    mockActiveConnectionId = "c-facets";
+    mockMetadata = {
+      capabilities: { supportsMaintenance: false, maintenanceOperations: [], tablesAreDerivedGroupings: true },
+    };
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<OperationsTab />);
+    });
+    expect(view!.getByTestId("operations-nothing-offered").textContent).toBe(
+      "This engine offers no maintenance, no session list and no table statistics in LibreDB Studio.",
+    );
+  });
+
+  test("never says an engine whose rows are derived groupings offers no table statistics", async () => {
+    expect(ENGINE_FACETS.libredb.monitoring.tables).toBe("offered");
+    expect(ENGINE_FACETS.libredb.monitoring.activeSessions).toBe("not-offered");
+    mockConnectionsList = [connectionOfType("libredb")];
+    mockActiveConnectionId = "c-facets";
+    mockMetadata = {
+      capabilities: { supportsMaintenance: false, maintenanceOperations: [], tablesAreDerivedGroupings: true },
+    };
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<OperationsTab />);
+    });
+    expect(view!.queryByTestId("operations-nothing-offered")).toBeNull();
+    expect(view!.queryByText(/no table statistics/)).toBeNull();
+    expect(view!.getByTestId("operations-derived-tables-only").textContent).toBe(
+      "This engine offers no maintenance and no session list in LibreDB Studio. Its table statistics group keys rather than name tables, so they are drawn on the Monitoring dashboard's Tables tab and not here.",
+    );
+    expect(view!.queryByText(/^Tables/)).toBeNull();
+    expect(view!.queryByText(/^Sessions/)).toBeNull();
+  });
+
+  test("claims nothing while the engine's capabilities are unknown", async () => {
+    mockConnectionsList = [connectionOfType("kafka")];
+    mockActiveConnectionId = "c-facets";
+    mockMetadata = null;
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<OperationsTab />);
+    });
+    expect(view!.queryByTestId("operations-nothing-offered")).toBeNull();
+    expect(view!.queryByTestId("operations-derived-tables-only")).toBeNull();
+  });
+
   test("draws no nothing-offered sentence where the engine offers maintenance", async () => {
     mockConnectionsList = [connectionOfType("kafka")];
     mockActiveConnectionId = "c-facets";

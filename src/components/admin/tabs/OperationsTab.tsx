@@ -497,8 +497,14 @@ export function OperationsTab() {
   const anyMaintenance = globalAnalyze || globalVacuum || globalReindex || declaredCards.length > 0;
   const drawsTablesCard = rowsAreAddressable && monitoringOffer?.tables === "offered";
   const drawsSessionsCard = monitoringOffer?.activeSessions === "offered";
-  // With no maintenance and neither card the page would hold only the connection picker, so it says why.
-  const nothingOffered = !anyMaintenance && !drawsTablesCard && !drawsSessionsCard;
+  // With no maintenance and neither card the page would hold only the connection picker, so it says why. Each claim is
+  // read from what decides it: "no maintenance" from known capabilities (`metadata` is null while provider-meta is in
+  // flight or has failed, and then nothing is claimed), "no session list" and "no table statistics" from the engine's
+  // offer. An engine that offers table statistics whose rows are derived groupings gets its own sentence, because the
+  // Tables card is withheld there for that reason and not because the engine offers none.
+  const noMaintenanceKnown = metadata !== null && !anyMaintenance && !drawsSessionsCard;
+  const nothingOffered = noMaintenanceKnown && monitoringOffer?.tables === "not-offered";
+  const derivedTablesOnly = noMaintenanceKnown && monitoringOffer?.tables === "offered" && !rowsAreAddressable;
 
   // The per-row controls, in the provider's own words: the tab's own candidates, then every declared operation outside
   // `MaintenanceType` that runs on one row, in declaration order and under a generic icon (spec 3.11).
@@ -984,6 +990,13 @@ export function OperationsTab() {
       {nothingOffered && (
         <p className="text-sm text-fg-muted" data-testid="operations-nothing-offered">
           This engine offers no maintenance, no session list and no table statistics in LibreDB Studio.
+        </p>
+      )}
+
+      {derivedTablesOnly && (
+        <p className="text-sm text-fg-muted" data-testid="operations-derived-tables-only">
+          This engine offers no maintenance and no session list in LibreDB Studio. Its table statistics group keys
+          rather than name tables, so they are drawn on the Monitoring dashboard&apos;s Tables tab and not here.
         </p>
       )}
 
