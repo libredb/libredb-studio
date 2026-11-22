@@ -40,7 +40,7 @@ export interface AuthLatchIdentity {
   /** The far end: the tunnel's when one carries the connection, else the connection's own host. */
   readonly host: string;
   readonly port: number;
-  /** `tunnelRoute` of the connection's SSH tunnel, empty without one. */
+  /** The SSH tunnel's route as Studio hands it under `TUNNEL_ROUTE`, empty without a tunnel far end. */
   readonly route: string;
   readonly user: string;
   /** Empty when none is set, which Studio still sends as Basic (I10). */

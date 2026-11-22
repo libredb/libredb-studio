@@ -590,22 +590,15 @@ describe("a gateway's sign-in refusal over HTTP 200 on a close (REV-T-2)", () =>
 describe("the key (X03)", () => {
   test("two transports through two tunnels to one far end share it: the second sends nothing", async () => {
     const shared = sharedLatch();
-    const bastion = {
-      enabled: true,
-      host: "bastion.test",
-      port: 22,
-      username: "jump",
-      authMethod: "password",
-      password: "tunnel-password",
-    };
-    const farEnd = { host: "databend.internal", port: 8000 };
+    // The far end and the bastion route, as Studio's provider factory hands them to a tunnelled provider.
+    const tunnel = { farEnd: { host: "databend.internal", port: 8000 }, route: "4:true12:bastion.test2:224:jump" };
     const first = transportHarness([{ method: "POST", path: "/v1/query", reply: WRONG_PASSWORD }], {
       latch: shared.latch,
-      options: testOptions({ port: 41001, sshTunnel: bastion }, { farEnd }),
+      options: testOptions({ port: 41001 }, { tunnel }),
     });
     const second = transportHarness([], {
       latch: shared.latch,
-      options: testOptions({ port: 41002, sshTunnel: bastion }, { farEnd }),
+      options: testOptions({ port: 41002 }, { tunnel }),
     });
     expect(first.options.origin.port).not.toBe(second.options.origin.port);
     await failure(first.transport.run(statement("SELECT 1")));

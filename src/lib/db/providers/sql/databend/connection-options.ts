@@ -16,13 +16,13 @@
  *
  * Through an SSH tunnel the origin dialled is the local forward, while the endpoint a sentence names, the host the
  * plaintext rule judges, the identity a certificate is checked against and the latch key are the tunnel's far end
- * (X03).
+ * (X03). The latch key also frames the bastion route, the one Studio hands the provider under `TUNNEL_ROUTE`
+ * (`requireTunnelRoute`); a connection with a far end and no route is refused, and `sshTunnel` is never read.
  *
  * The parameter is named `config` on purpose: tests/unit/lib/db-ui-config.test.ts finds which addressing fields a
  * provider reads by the `config.<field>` pattern.
  */
 import { getAppVersion } from "@/lib/app-version";
-import { tunnelRoute } from "@/lib/db/connection-fingerprint";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import {
   type HttpOrigin,
@@ -33,8 +33,9 @@ import {
 } from "@/lib/db/http/endpoint";
 import { type NodeTlsMaterial, nodeTlsMaterial } from "@/lib/db/http/node-transport";
 import type { EgressDecision } from "@/lib/db/types";
+import { requireTunnelRoute } from "@/lib/db/utils/require-tunnel-route";
 import { secretForms } from "@/lib/db/utils/server-text";
-import { type DatabaseConnection, TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
+import { type DatabaseConnection, TUNNEL_FAR_END, type WithTunnelFarEnd, type WithTunnelRoute } from "@/lib/types";
 import { authLatchKey } from "./auth-latch";
 
 export interface DatabendConnectionOptions {
@@ -139,7 +140,7 @@ export const DATABEND_CONNECTION_SENTENCES = Object.freeze({
 
 /** Throws DatabaseConfigError for every refusal of design 6.3; never echoes a value. */
 export function buildDatabendConnectionOptions(
-  config: DatabaseConnection & WithTunnelFarEnd,
+  config: DatabaseConnection & WithTunnelFarEnd & WithTunnelRoute,
   context: { readonly queryTimeout: number; readonly appVersion?: string | null; readonly egress: EgressDecision },
 ): DatabendConnectionOptions {
   const farEnd = config[TUNNEL_FAR_END];
@@ -189,7 +190,7 @@ export function buildDatabendConnectionOptions(
       scheme,
       host: endpoint.host,
       port: endpoint.port,
-      route: tunnelRoute(farEnd === undefined ? undefined : config.sshTunnel),
+      route: farEnd === undefined ? "" : shared(() => requireTunnelRoute(config, "databend")),
       user,
       password,
     }),

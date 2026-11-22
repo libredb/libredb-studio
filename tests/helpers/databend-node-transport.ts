@@ -35,7 +35,7 @@ import {
   type DatabendHttpTransportDeps,
 } from "@/lib/db/providers/sql/databend/http-transport";
 import type { DatabendTransport, StatementOrigin, StatementRequest } from "@/lib/db/providers/sql/databend/transport";
-import { type DatabaseConnection, TUNNEL_FAR_END, type TunnelFarEnd } from "@/lib/types";
+import { type DatabaseConnection, TUNNEL_FAR_END, TUNNEL_ROUTE, type TunnelFarEnd } from "@/lib/types";
 import { ALLOWS_PRIVATE_HOSTS } from "./egress-decisions";
 
 const CAPTURES = join(import.meta.dir, "..", "fixtures", "databend", "local-2026-10-08-v1.2.951-nightly");
@@ -346,14 +346,25 @@ export function testConnection(overrides: Record<string, unknown> = {}): Databas
   } as unknown as DatabaseConnection;
 }
 
-/** The validated options of `testConnection(overrides)`, through an SSH tunnel to `farEnd` when one is given. */
+/**
+ * The validated options of `testConnection(overrides)`, through an SSH tunnel when `tunnel` is given: its far end under
+ * `TUNNEL_FAR_END` and its route under `TUNNEL_ROUTE`, as Studio's provider factory hands a tunnelled provider both.
+ */
 export function testOptions(
   overrides: Record<string, unknown> = {},
-  { queryTimeout = 60_000, farEnd }: { readonly queryTimeout?: number; readonly farEnd?: TunnelFarEnd } = {},
+  {
+    queryTimeout = 60_000,
+    tunnel,
+  }: {
+    readonly queryTimeout?: number;
+    readonly tunnel?: { readonly farEnd: TunnelFarEnd; readonly route: string };
+  } = {},
 ): DatabendConnectionOptions {
   const connection = testConnection(overrides);
   return buildDatabendConnectionOptions(
-    farEnd === undefined ? connection : Object.assign(connection, { [TUNNEL_FAR_END]: farEnd }),
+    tunnel === undefined
+      ? connection
+      : Object.assign(connection, { [TUNNEL_FAR_END]: tunnel.farEnd, [TUNNEL_ROUTE]: tunnel.route }),
     { queryTimeout, appVersion: TEST_VERSION, egress: ALLOWS_PRIVATE_HOSTS },
   );
 }
