@@ -4460,6 +4460,15 @@ describe("PostgresProvider", () => {
       expect(labels.entityName).toBe("Table");
       expect(labels.analyzeGlobalLabel).toBe("Run Analyze");
     });
+
+    // The Queries tab used to show this sentence as its default on every engine, which
+    // told BigQuery users to install a PostgreSQL extension. It is PostgreSQL's advice,
+    // so PostgreSQL declares it, and the tab's default is neutral.
+    test("declares the pg_stat_statements advice as its slow-query empty state", () => {
+      const labels = new PostgresProvider(makePgConfig()).getLabels();
+
+      expect(labels.slowQueriesEmptyState).toBe("Enable pg_stat_statements extension to see query stats.");
+    });
   });
 
   // --------------------------------------------------------------------------

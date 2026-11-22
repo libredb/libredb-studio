@@ -16,7 +16,7 @@ interface QueriesTabProps {
   loading: boolean;
   /**
    * The connected provider's own labels. Absent while /api/db/provider-meta is in
-   * flight and when it failed, which is why every read below falls back.
+   * flight and when it failed, which is why the one read below is optional.
    */
   labels?: ProviderLabels;
 }
@@ -177,20 +177,6 @@ export function QueriesTab({ data, loading, labels }: QueriesTabProps) {
           <CardTitle className="text-xs sm:text-xs font-medium flex items-center gap-2">
             <Clock strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4" />
             Slowest Queries
-            {/* The badge and the sentence below were PostgreSQL's advice shown on every
-                engine (#U12, the #427 defect in another panel) - measured
-                2026-08-19 in Chrome telling an OpenSearch cluster to install a
-                PostgreSQL extension. The engine's own answer comes off
-                `ProviderLabels.slowQueriesEmptyState`, the way the Operations tab reads
-                the analyze/vacuum triads. The badge names an EXTENSION rather than a
-                category, so an engine with its own answer would need a second label to
-                fill it; it is dropped there instead, and the sentence carries the
-                answer. Absent label = today's wording, so `postgres` is unchanged. */}
-            {slowQueries.length === 0 && !slowQueriesUnavailable && !labels?.slowQueriesEmptyState && (
-              <Badge variant="secondary" className="ml-2 text-xs sm:text-xs">
-                pg_stat_statements required
-              </Badge>
-            )}
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0 sm:p-4 sm:pt-0">
@@ -200,9 +186,11 @@ export function QueriesTab({ data, loading, labels }: QueriesTabProps) {
             <div className="text-center py-8 text-muted-foreground">
               <Search strokeWidth={1.5} className="h-8 w-8 mx-auto mb-2 opacity-50" />
               <p className="text-xs">No query statistics available.</p>
-              <p className="text-xs mt-1">
-                {labels?.slowQueriesEmptyState ?? "Enable pg_stat_statements extension to see query stats."}
-              </p>
+              {/* Only the engine knows why its list is empty, so the sentence below is its
+                  own (`ProviderLabels.slowQueriesEmptyState`, for example PostgreSQL's
+                  pg_stat_statements advice). Without one, while labels are in flight or on an
+                  engine that declares none, the line above is the whole answer. */}
+              {labels?.slowQueriesEmptyState && <p className="text-xs mt-1">{labels.slowQueriesEmptyState}</p>}
             </div>
           ) : (
             <div className="overflow-x-auto">

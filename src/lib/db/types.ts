@@ -1898,21 +1898,16 @@ export interface ProviderLabels {
    */
   statementLanguage?: string;
   /**
-   * Why the monitoring Queries tab's "Slowest Queries" panel is empty on this
-   * engine, in that engine's own terms.
+   * Why an offered "Slowest Queries" list is empty on this engine, in that engine's own
+   * terms.
    *
-   * Read by `QueriesTab`, which defaults to PostgreSQL's "Enable
-   * pg_stat_statements extension to see query stats." — the sentence it hardcoded
-   * for every engine until #U12, measured 2026-08-19 in Chrome telling an
-   * OpenSearch cluster to install a PostgreSQL extension. `postgres` therefore
-   * declares nothing, and so does any engine whose statement store really is an
-   * extension away.
+   * Read by the monitoring `QueriesTab`, which renders it under "No query statistics
+   * available."; absent, the tab says only that line. PostgreSQL declares its
+   * `pg_stat_statements` advice here, so the extension is named only on the engine that
+   * has it.
    *
-   * A provider sets this when the Postgres sentence is actively false for it:
-   * either the engine keeps no aggregate of finished statements at all, or the
-   * one it keeps is switched on somewhere else entirely. One field, not one per
-   * sentence — the panel's badge names an extension rather than a category, so it
-   * is dropped where this label is set instead of being re-worded from it.
+   * An engine whose `ENGINE_FACETS` row does not offer `slowQueries` declares none,
+   * because nothing draws the panel there; the monitoring panels census holds that.
    */
   slowQueriesEmptyState?: string;
 
