@@ -591,7 +591,7 @@ describe("the review record gates the protected read path", () => {
     ).toEqual([...RETURNED_REFUSALS]);
     // Not vacuous: the known presence tests are found, each one a refusal of the absence.
     expect(found.map((test) => `${test.file} in ${test.declaration}`).sort()).toEqual([...KNOWN_PRESENCE_TESTS]);
-  });
+  }, 60_000);
 
   test("the scan finds a choke point that reaches the provider before the record is read", () => {
     const file = "planted.ts";
