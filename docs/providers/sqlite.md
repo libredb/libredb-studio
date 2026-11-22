@@ -149,9 +149,10 @@ Every cached path passes the server-derived `allowExternalFileAccess` posture, a
 
 ### 3.1 File path resolution & the admin-trusted path model
 
-`getDatabasePath()` ([`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)) resolves the target:
-`connectionString` (stripping a `file:` prefix) → else `database` → else `:memory:`. Non-`:memory:`
-paths are `path.resolve()`-d to an absolute path and **rejected if they contain a NUL byte**.
+Studio's provider factory decides the target before the provider is built (`admittedFileConnection` in [`provider-files.ts`](../../src/lib/db/provider-files.ts)): `connectionString` with a leading `file:` removed, else `database`; a connection that names neither is refused by `validate()`.
+Exactly `:memory:` is kept as it is; any other name is resolved with `path.resolve()` against the working directory when the provider is built.
+A name holding a NUL byte, or naming one of Studio's own storage files, is **refused there with a `DatabaseConfigError`**, so no provider exists to connect.
+The provider opens the absolute path it is handed (`getDatabasePath()` in [`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)) and resolves nothing itself, so a later change of the working directory does not move the file a built provider opens; a provider built without the factory holds no admitted file, and its connect is refused by name.
 
 A missing parent folder is created on connect, one level at a time, by `createMissingDirectories` ([`create-directory.ts`](../../src/lib/db/utils/create-directory.ts)), shared with the DuckDB provider.
 It walks up to the nearest existing folder and makes each missing one in order, never with a recursive mkdir: Node's recursive mkdir never returns for a path under `/proc`, because procfs answers ENOENT for a parent that exists and Node retries it forever (measured on Node v24.14.0), so one Test Connection hung the whole server.
@@ -166,13 +167,11 @@ The header read that explains a refused WAL-mode file (`isWalModeFile`) opens wi
 The answer is the open failure in [§10](#10-error-handling), for example `Failed to open SQLite database: /data/app.db is a named pipe (FIFO), not a regular file`, or `a socket`, `a character device`, `a block device` or `a directory` in place of the FIFO.
 A regular file and a symlink to one open as before, and a missing path is left to the open as before: the editor creates the file, and the agent profile refuses it.
 
-> **NUL rejection and reserved server files are checked on connect.** `../` segments are legal and simply
-> resolve into the absolute path. This follows the feature's trust model: a connection's
-> `database`/`connectionString` path is set by whoever configures the connection (an
-> authenticated user of this Studio instance) — pointing Studio at an arbitrary server-side file is
-> the intended capability, not attacker-controlled input from an untrusted client. There is
-> currently **no** option to sandbox resolvable paths to a base directory. See
-> [Known limitations](#14-known-limitations--future-work).
+> **NUL rejection and reserved server files are checked by the provider factory before the provider is built.**
+> `../` segments are legal and simply resolve into the absolute path.
+> This follows the feature's trust model: a connection's `database`/`connectionString` path is set by whoever configures the connection (an authenticated user of this Studio instance), and pointing Studio at an arbitrary server-side file is the intended capability, not attacker-controlled input from an untrusted client.
+> There is currently **no** option to sandbox resolvable paths to a base directory.
+> See [Known limitations](#14-known-limitations--future-work).
 
 ### 3.2 PRAGMAs on connect
 
@@ -466,11 +465,8 @@ const c = { id: 'lite-3', name: 'App', type: 'sqlite',
   connectionString: 'file:/data/app.db', createdAt: new Date() };
 ```
 
-`validate()` ([`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)) requires either `database`
-or `connectionString` (else "Database file path is required … or `:memory:`"). Note
-`getCapabilities().supportsConnectionString` is `false`, yet `connectionString` *is* honoured as a
-path by `getDatabasePath()` — the flag reflects that there is no network DSN, not that the field is
-ignored.
+`validate()` ([`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)) requires either `database` or `connectionString` (else "Database file path is required … or `:memory:`").
+Note `getCapabilities().supportsConnectionString` is `false`, yet `connectionString` *is* read as the file path by the provider factory: the flag reflects that there is no network DSN, not that the field is ignored.
 
 **From the UI.** SQLite is offered in the connection modal's type picker
 ([`src/hooks/use-connection-form.ts`](../../src/hooks/use-connection-form.ts)). Because its
@@ -479,10 +475,9 @@ ignored.
 **"Database File Path"** input — no host, port, user, or password. Two things to be clear about with
 users:
 
-- **The path is resolved on the server, not in the browser.** It is passed through to
-  `getDatabasePath()` in the Studio process, so `/data/app.db` means that path on the machine
-  running Studio. A remote user of a hosted deployment cannot reach a file on their own laptop —
-  see [Deployment constraint](#deployment-constraint-the-strategic-bit).
+- **The path is resolved on the server, not in the browser.**
+  Studio's provider factory resolves it in the Studio process, so `/data/app.db` means that path on the machine running Studio.
+  A remote user of a hosted deployment cannot reach a file on their own laptop: see [Deployment constraint](#deployment-constraint-the-strategic-bit).
 - **`:memory:` is accepted here too**, which makes the modal a zero-setup way to get a scratch
   database for trying out the editor.
 
@@ -1449,7 +1444,7 @@ the result codes of a refused statement from the `sqlite` row of `DRIVER_ERROR_C
 | Situation | Error |
 |-----------|-------|
 | Missing `database` and `connectionString` | `DatabaseConfigError` |
-| NUL byte in path | `DatabaseConfigError` ("Invalid database path: NUL bytes are not allowed") |
+| NUL byte in path | `DatabaseConfigError` ("Invalid database path: NUL bytes are not allowed"), raised by the provider factory before the provider is built |
 | Selected driver unavailable (no `bun:sqlite` / `node:sqlite` on this runtime) | `DatabaseConfigError` ("SQLite driver … is not available…") |
 | Open failure, a missing folder the filesystem refuses to create and a path or a file beside it that is not a regular file included, on connect and on a worker restart | `ConnectionError` |
 | Write check on an existing file fails with anything but `EACCES` / `EPERM` / `EROFS` | `ConnectionError` with the filesystem's message |
@@ -1494,23 +1489,10 @@ SQL execution, schema PRAGMAs, maintenance, and monitoring end-to-end.
 
 ### 11.2 Coverage
 
-Validation, connect/disconnect, path handling (NUL rejection, `..` acceptance), query (read +
-write), 64-bit integers past 2^53 (both ids read whole, the `UPDATE` landing on the row that was
-read, no `BigInt` on any public path, ordinary integers and PRAGMA columns unchanged, and the same
-on the agent read-only path), declared column types (the computed column that declares nothing, the
-empty result, the write, two columns of one name, the storage-class trap, and what the SQL export and
-the row editor read off them), capabilities, health, maintenance
-(vacuum/analyze/reindex/check), overview, performance, active sessions, slow queries,
-table/index/storage stats, `getMonitoringData`, `prepareQuery`, and labels. For the object surface
-([§6.1](#61-the-object-surface-789)): the declared kinds, the conformance contract, the tree's root
-rows, the `table_list` vocabulary guard, shadow and virtual tables, reserved names, `temp` and
-ATTACH exclusion, count-versus-listing agreement, trigger nesting, ordering, the detail reads, and
-the refusals. For the agent profile
-([§12](#12-agent-read-only-execution-profile-328)): rejected write / schema change / file create,
-`query_only` read-back, the pragma-bypass case, row/byte/time budgets, multi-statement tail
-suppression, `:memory:` refusal, and the refusal to run `queryReadOnly` on a writable handle — each
-asserted behaviorally (did the write land? does the file exist?) rather than by driver error code,
-since bun and node report read-only violations differently.
+Validation, connect/disconnect, path handling (`..` acceptance, and the refusal of a provider built without the file the factory admits), query (read + write), 64-bit integers past 2^53 (both ids read whole, the `UPDATE` landing on the row that was read, no `BigInt` on any public path, ordinary integers and PRAGMA columns unchanged, and the same on the agent read-only path), declared column types (the computed column that declares nothing, the empty result, the write, two columns of one name, the storage-class trap, and what the SQL export and the row editor read off them), capabilities, health, maintenance (vacuum/analyze/reindex/check), overview, performance, active sessions, slow queries, table/index/storage stats, `getMonitoringData`, `prepareQuery`, and labels.
+NUL rejection and Studio's own storage files are the provider factory's, held by [`tests/unit/lib/db/provider-files.test.ts`](../../tests/unit/lib/db/provider-files.test.ts) and [`tests/integration/db/reserved-storage-paths.test.ts`](../../tests/integration/db/reserved-storage-paths.test.ts).
+For the object surface ([§6.1](#61-the-object-surface-789)): the declared kinds, the conformance contract, the tree's root rows, the `table_list` vocabulary guard, shadow and virtual tables, reserved names, `temp` and ATTACH exclusion, count-versus-listing agreement, trigger nesting, ordering, the detail reads, and the refusals.
+For the agent profile ([§12](#12-agent-read-only-execution-profile-328)): rejected write / schema change / file create, `query_only` read-back, the pragma-bypass case, row/byte/time budgets, multi-statement tail suppression, `:memory:` refusal, and the refusal to run `queryReadOnly` on a writable handle, each asserted behaviorally (did the write land? does the file exist?) rather than by driver error code, since bun and node report read-only violations differently.
 
 ### 11.3 Run it
 
@@ -1741,18 +1723,12 @@ not apply to SQLite ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
   repairs the INTEGER case only).
 - **`:memory:` is ephemeral** — data is lost on disconnect; intended for trials/tests.
 - **Single schema (`main`)** — `ATTACH`ed databases are not surfaced.
-- **No path sandboxing (by design).** `getDatabasePath()` rejects NUL bytes and reserved server files; the resolved absolute path — `..` segments included — is used as-is. This grants an
-  *unauthenticated* client no access: the path comes from an authenticated user's connection config,
-  and reading arbitrary server-side files by path is the feature. The distinction that matters for
-  multi-user installs is the next one down: **authenticated does not imply trusted with the host
-  filesystem.** Since the type became selectable in the connection modal (#127), that path field is
-  directly discoverable by every logged-in user — the reachable set of files did not grow, but the
-  effort needed to reach it dropped from an API call to typing in a form. On a single-operator
-  install this is the intended feature; on a shared instance it is a deployment decision, and until
-  #125 lands the controls are OS-level (process user, container mounts). *Future:* an optional
-  base-dir allowlist restricting resolvable paths (proposed in
-  [issue #125](https://github.com/libredb/libredb-studio/issues/125)) was deliberately left out of
-  this honesty fix — new security-configuration surface needs its own issue.
+- **No path sandboxing (by design).** The provider factory rejects NUL bytes and reserved server files; the resolved absolute path, `..` segments included, is used as-is.
+  This grants an *unauthenticated* client no access: the path comes from an authenticated user's connection config, and reading arbitrary server-side files by path is the feature.
+  The distinction that matters for multi-user installs is the next one down: **authenticated does not imply trusted with the host filesystem.**
+  Since the type became selectable in the connection modal (#127), that path field is directly discoverable by every logged-in user: the reachable set of files did not grow, but the effort needed to reach it dropped from an API call to typing in a form.
+  On a single-operator install this is the intended feature; on a shared instance it is a deployment decision, and until #125 lands the controls are OS-level (process user, container mounts).
+  *Future:* an optional base-dir allowlist restricting resolvable paths (proposed in [issue #125](https://github.com/libredb/libredb-studio/issues/125)) was deliberately left out of this honesty fix, since new security-configuration surface needs its own issue.
 
 ---
 
@@ -1791,10 +1767,11 @@ Every refusal reason it can print, verbatim:
 - Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [Trino](./trino.md) · [Redis](./redis.md)
 
 
-Connection targets reserve Studio's storage database, its WAL/SHM files and bootstrap
-credentials (including backups and temporary files). This applies to every role.
-Checks normalize paths, resolve symbolic links and compare existing file identities
-so hard links cannot alias reserved files. Other user database files beside them remain usable.
+Connection targets reserve Studio's storage database, its WAL/SHM files and bootstrap credentials (including backups and temporary files).
+This applies to every role.
+Studio's provider factory makes the check when it builds the provider, before any provider exists to connect, against the storage location the process took once (at boot, or at the first provider built where no boot runs), so a later change of the working directory or of `STORAGE_SQLITE_PATH` moves nothing ([SECURITY.md](../SECURITY.md) control 3.45).
+Checks normalize paths, resolve symbolic links and compare existing file identities so hard links cannot alias reserved files.
+Other user database files beside them remain usable.
 Names are compared with letter case and Unicode normalization (NFC against NFD) folded, on every OS, whether or not the file exists yet.
 macOS treats two spellings that differ only in letter case or only in normalization form as one file, and Windows treats two spellings that differ only in letter case as one file.
 

@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D490, U17 · 363
+- [Drivers and connections](#drivers-and-connections) — D1-D491, U17 · 364
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -1208,6 +1208,7 @@ The count moved from 58 to 59 on 2026-11-04 with `tests/api/db/inline-connection
 The count moved from 59 to 60 on 2026-11-15 with `tests/api/db/demoted-seed.test.ts`, which demotes a BigQuery seed from `managed: true` to `managed: false` through `POST /api/db/query`: it spreads the real module and replaces only `getSession` and `readSession`, so it adds no copy of the five-key stub.
 The count moved from 60 to 61 on 2026-11-15 with `tests/api/db/literal-seed-server-identity.test.ts`, which opens the BigQuery and Firestore rows of a seed file read in literal mode through `POST /api/db/query`: it spreads the real module and replaces only `getSession` and `readSession`, so it adds no copy of the five-key stub.
 The count moved from 61 to 62 on 2026-11-20 with `tests/api/seed/unavailable-seed-entry.test.ts`, which sends every connection route and the agent run and classify routes a seed whose type names no provider: it spreads the real module and replaces only `getSession` and `readSession`, so it adds no copy of the five-key stub.
+The count moved from 62 to 63 on 2026-11-22 with `tests/api/db/reserved-storage-routes.test.ts`, which sends Test Connection and provider-meta an inline SQLite connection to Studio's own storage database: it spreads the real module and replaces only `getSession` and `readSession`, so it adds no copy of the five-key stub.
 
 `src/lib/auth.ts` re-exports three names from `src/lib/auth-cookies.ts` that every hand-written stub lacks:
 `resetCookieSecurityWarning`, `readCookieSecureOverride` and `isLoopbackHost`, re-measured 2026-10-30.
@@ -3459,6 +3460,18 @@ That slice left the wording unchanged on purpose, as outside its goal.
 Found 2026-11-22 while handing the socket dials the egress decision their provider was built with.
 
 **Done when:** Sparkplug B and NETCONF both refuse a host name at the checked lookup with the same error class and sentence as a refused literal, each held by a test.
+
+### D491. Studio's own writers resolve `STORAGE_SQLITE_PATH` when they run, not from the storage location taken at boot
+
+Since FND-2 slice 3 the files a connection may never open are derived from Studio's storage location, which `storageLocation` in `src/lib/data-dir.ts` takes once per process: `STORAGE_SQLITE_PATH` resolved against the working directory at boot.
+Studio's own writers do not read it.
+The SQLite storage provider (`SQLiteStorageProvider` in `src/lib/storage/providers/sqlite.ts`) opens `getStorageSqlitePath()` when it is built, and the bootstrap credentials writer (`src/lib/auth-bootstrap.ts`) resolves `getDataDir()` when it runs, each against the working directory of that moment.
+They name the same files as the location unless the working directory changes after boot, which nothing in Studio does.
+The slice left them as they were because the storage encryption branch reworks the storage provider, and both branches' tests set `STORAGE_SQLITE_PATH` per test.
+
+Found 2026-11-22 while planning FND-2 slice 3.
+
+**Done when:** the storage provider and the bootstrap credentials writer both read the storage location, their tests take it again after they set the variable, and a test changes the working directory after the location is taken and finds both files where the reserved set says they are.
 
 ### D332. The seed plaintext warning knows only `password`
 
