@@ -257,7 +257,8 @@ In the rest of this guide, `agent-read-only` is Studio's least-privilege read pr
 - A result that carries database content starts with a text block telling the model to treat what follows as untrusted data.
 - A refusal a provider wrote comes after a notice naming the provider that wrote it, for example "PostgreSQL provider, bundled with Studio", and is untrusted text too: a profile refusal the provider raises at the open or by the statement call (where the provider checks its principal before every statement, as Oracle's does, and may name objects and roles any user of the database chose), a statement it refused before sending, and an offset or a database it would not open.
   Studio's own refusals carry no notice and read in Studio's words.
-- Every provider text in an answer and in the server log, an engine error, a note, a refusal, is withheld whole when it holds a credential of the connection, a Vault-resolved one included, or any form of one, before it is redacted and cut.
+- Every provider text in an answer and in the server log, an engine error, a note, a refusal, is withheld whole when it holds a credential the seed's provider receives, or any form of one, before it is redacted and cut.
+  That is the agent credential in place of the seed's own password where the seed sets one, a Vault-resolved one included, and never the SSH tunnel's secrets, which no provider receives.
 
 ## Enabling it
 

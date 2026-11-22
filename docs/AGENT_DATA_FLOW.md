@@ -427,7 +427,7 @@ the model drafted and their stated rationales**, the artifact ids and row counts
 statement, a recorded comparison's two statements and access kinds, and a profile's depth, row count
 and artifact id with the table name fenced.
 A recorded refusal's message is scrubbed of the connection's credential again, since a ledger written before the scrub existed holds the raw text.
-So is a recorded inventory snapshot's provider sentences (a count or an index read refused, a parent the walk could not list, a sampled count, a bounded description) before a prompt carries the snapshot.
+So are a recorded inventory snapshot's provider sentences (a count or an index read refused, a parent the walk could not list, a sampled count, a bounded description) before a prompt carries the snapshot.
 The ledger itself keeps what it recorded: a run recorded before the scrub existed still shows its raw text on its own page and stream.
 A statement refused before sending is restated in Studio's words when the ledger says Studio refused it, and fenced as the provider's text naming the provider otherwise, a refusal recorded before the ledger said who refused included.
 
