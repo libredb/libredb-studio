@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D483, U17 · 356
+- [Drivers and connections](#drivers-and-connections) — D1-D485, U17 · 357
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U221 · 206
@@ -3442,6 +3442,23 @@ Smaller examples: `tests/integration/mcp/run-read-query.test.ts` (`"stand-in-tok
 Found 2026-11-22 while reviewing FND-1 slice 5, which adds no such literal.
 
 **Done when:** every fabricated credential in a test is generated at run time, and a census test over `tests/` fails on a new credential literal, with a vacuity case that shows its pattern sees each shape it bans.
+
+### D485. Sparkplug B and NETCONF report a host name refused at the checked lookup in their own words, not the guard's
+
+With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, the shared egress guard refuses a non-public destination at one of two points: an IP literal before any socket opens, and a host name at the checked lookup the socket dials through.
+MQTT, RabbitMQ and Modbus pass the guard's `DatabaseConfigError` through for both, so the user reads the same class and sentence (`BLOCKED_HOST`) either way.
+Two providers do not for the name.
+
+- Sparkplug B reports it as a `ConnectionError` that says it could not open a connection, that nothing was read, and that the user should check the address, the port and whether the broker accepts a connection: the socket's `error` handler in `session.ts` ends the read as a failed dial with no code, so the guard's refusal is lost.
+- NETCONF reports it as a `ConnectionError` whose message is the host, the port and the guard's sentence: `dialNetconf` in `dial.ts` turns the socket port's rejection into a transport `DialError`.
+  A literal address is refused as a `DatabaseConfigError`, so the same refusal changes class with the address form.
+
+Measured 2026-11-22 during FND-2 slice 2b-2 with the flag on and the host `localhost`.
+That slice left the wording unchanged on purpose, as outside its goal.
+
+Found 2026-11-22 while handing the socket dials the egress decision their provider was built with.
+
+**Done when:** Sparkplug B and NETCONF both refuse a host name at the checked lookup with the same error class and sentence as a refused literal, each held by a test.
 
 ### D332. The seed plaintext warning knows only `password`
 
