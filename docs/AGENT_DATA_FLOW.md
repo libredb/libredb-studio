@@ -616,7 +616,8 @@ output cap, and what it sends is one objective — see
   (`runInvestigation` in `investigation.ts`).
 
   A provider's own text is the one place a credential could still slip in, for example a driver error that echoes the password it was given.
-  So Studio withholds whole any provider error, warning or notice text that holds a credential of the run's own connection, or any form of one (its base64 and URL-encoded forms, each segment of a token), before it reaches a prompt, the run's ledger, a response or a log line (`src/lib/db/operations/provider-text.ts`).
+  So Studio withholds whole any provider error, warning or notice text that holds a credential of the run's own connection, or any form of one, before it reaches a prompt, the run's ledger, a response or a log line (`src/lib/db/operations/provider-text.ts`).
+  The forms are its base64, including at each byte offset as inside an HTTP Basic header, its URL-encoded form and each segment of a token, and any of those written with JSON string escapes or with the control characters the logger drops between its characters.
   The credentials it looks for are the ones the connection's providers receive: on a statement path the agent credential in place of the connection's own password where one is set, and never the SSH tunnel's secrets, which no provider receives.
   A failure that leaves a drive or a route whose text held one is answered by a sentence that names the failure's class and says its text was withheld.
   The same pass runs on the hand-over and on MCP.

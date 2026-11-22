@@ -565,7 +565,7 @@ Milvus's RBAC hides neither the topology nor other databases' row counts from an
 - REST `entities/get` and `entities/delete` by a VarChar id holding a quote differ from Studio's template on 3.0.2.
 - A vendor address pasted into the connection-string box instead of the Host box still selects ClickHouse.
 - Zilliz users should prefer a cluster-scoped user or key to a project-wide key; Zilliz Cloud is not tested (section 4.9).
-- A hostile or impersonated endpoint holds the password it receives and can return it in an encoding Studio does not list, so Studio withholds only the forms it sends.
+- A hostile or impersonated endpoint holds the password it receives and can return it in an encoding Studio does not list, so Studio withholds only the forms it lists.
 - The management port 9091 answers without authentication on 3.0.2, so the operator keeps it off the network.
 - A load the server continues after Load's 10-second poll is not covered by the one-load lock.
 - Clusters, Milvus Lite and 2.6 and older are not claimed.

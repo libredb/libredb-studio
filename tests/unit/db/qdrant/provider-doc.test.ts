@@ -142,7 +142,7 @@ const LIMIT_FRAGMENTS: readonly string[] = [
   "TLS mode `require` sends the API key to an unverified peer.",
   "An empty tree is what a scoped token, an alias-only token and an empty server all produce.",
   "A vendor address pasted into the connection-string box instead of the Host box still selects ClickHouse.",
-  "Studio withholds only the forms it sends.",
+  "Studio withholds only the forms it lists.",
 ];
 
 describe("docs/providers/qdrant.md quotes what the code says", () => {

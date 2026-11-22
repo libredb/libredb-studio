@@ -1034,7 +1034,7 @@ A seed takes the same fields, as [SEED_CONNECTIONS.md](../SEED_CONNECTIONS.md) s
 - Every user's running statements on the server or warehouse are in the Sessions panel, and a running `CREATE USER` or `ALTER USER` with `IDENTIFIED BY` shows its password unmasked there, because Databend masks only `PASSWORD = '...'`.
 - Studio's client-chosen session ids mean Databend writes no `login_history` row for a successful sign-in; failed sign-ins and every statement in `query_history` are still recorded.
 - A cluster that forwards a request to another node (a sticky node or a warehouse route) forwards it, `Authorization` included, over plain HTTP unless that node's HTTP handler has TLS.
-- A hostile or impersonated endpoint holds the password it receives and can return it transformed, in an encoding Studio does not list, so Studio withholds only the forms it sends.
+- A hostile or impersonated endpoint holds the password it receives and can return it transformed, in an encoding Studio does not list, so Studio withholds only the forms it lists.
 - A `Timestamp` is shown in the server's global time zone without an offset (a session `SET timezone` does not carry over), and a `Timestamp_Tz` with its offset.
 - A DML statement's row count, an object's row count or size and a monitoring figure from 2^53 up are the nearest number, not the exact one; a result cell keeps such an integer exact, as text (section 5.4).
 - No path-prefixed reverse proxy: Databend's links are origin-relative, so the server must answer at the root of its host and port, with no path prefix.
