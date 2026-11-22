@@ -396,6 +396,17 @@ describe("vocabularyDecidesAlone", () => {
   test("is false with no type at all", () => {
     expect(vocabularyDecidesAlone()).toBe(false);
   });
+
+  // The row is the gate's whole answer only where Studio's review record lists its claim (`CONFIRMATION_CLAIM_REVIEW`).
+  test("is false for a row whose claim the review record does not list", () => {
+    const remove = installStandInVocabulary({});
+    try {
+      expect(NON_SQL_DESTRUCTIVE_VOCABULARY[STAND_IN_TYPE]?.decidesAlone).toBe(true);
+      expect(vocabularyDecidesAlone(STAND_IN_TYPE)).toBe(false);
+    } finally {
+      remove();
+    }
+  });
 });
 
 describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {

@@ -37,6 +37,10 @@ export interface DestructiveVocabulary {
    * any of those names too, in text that can only ever read that topic. An etcd command
    * names its keys, which can be spelled like any SQL keyword, and `guard.ts` reads it with
    * the parser the provider runs, so what asks and what runs are one parse (#1089).
+   *
+   * True is a claim that loosens the gate, so the gate counts it only where Studio's review record lists it
+   * (`CONFIRMATION_CLAIM_REVIEW` in `./confirmation-claim-review.ts`). An unlisted `true` is read as if the row had
+   * not declared it: the SQL keyword test stays in front, and this row is read beside it.
    */
   readonly decidesAlone: boolean;
   /**

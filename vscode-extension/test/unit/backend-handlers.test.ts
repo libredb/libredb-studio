@@ -10,7 +10,11 @@ import {
 } from "vscode-jsonrpc/node";
 import { runEditorQuery } from "@/lib/api/editor-query";
 import { databaseErrorBody, internalErrorBody, TIMEOUT_SENTENCE } from "@/lib/api/error-body";
-import { consoleTextByteLimit, consoleTextOverLimit } from "@/lib/db/destructive-commands";
+import {
+  consoleTextByteLimit,
+  consoleTextOverLimit,
+  NON_SQL_DESTRUCTIVE_VOCABULARY,
+} from "@/lib/db/destructive-commands";
 import { executionUiFor } from "@/lib/db/execution-ui";
 import { generateTableQuery } from "@/lib/query-generators";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
@@ -1029,6 +1033,31 @@ describe("query/target", () => {
     assert.deepEqual(await target(mongo.handlers, drop, 0), { statement: drop, dangerous: true });
     const find = '{ "collection": "orders", "operation": "find" }';
     assert.deepEqual(await target(mongo.handlers, find, 0), { statement: find, dangerous: false });
+  });
+
+  it("flags a statement a row's claim would spare when Studio's review record does not list the claim", async () => {
+    // A row that decides alone is the gate's whole answer only where the record lists its claim
+    // (`CONFIRMATION_CLAIM_REVIEW`); this one is planted under trino, whose text is SQL, so the DROP is read as SQL.
+    const table = NON_SQL_DESTRUCTIVE_VOCABULARY as unknown as Record<string, unknown>;
+    assert.equal(Object.hasOwn(table, "trino"), false);
+    table.trino = { operations: new Set<string>(), read: () => [], decidesAlone: true };
+    try {
+      const trino = await openedOn(fakeProvider({ getCapabilities: () => SQL_CAPS }), { ...WIRE, type: "trino" });
+      const drop = "DROP TABLE t";
+      assert.deepEqual(await target(trino.handlers, drop, 0), {
+        statement: drop,
+        range: { start: 0, end: drop.length },
+        dangerous: true,
+      });
+    } finally {
+      delete table.trino;
+    }
+  });
+
+  it("reads a listed exempt form as exempt", async () => {
+    const snowflake = await openedOn(fakeProvider({ getCapabilities: () => SQL_CAPS }), { ...WIRE, type: "snowflake" });
+    const session = "ALTER SESSION SET QUERY_TAG = 'x'";
+    assert.equal((await target(snowflake.handlers, session, 0)).dangerous, false);
   });
 
   it("answers runTarget's RangeError as InvalidParams with its sentence", async () => {

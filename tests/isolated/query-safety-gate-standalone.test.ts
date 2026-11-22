@@ -5,6 +5,7 @@ import "../helpers/mock-navigation";
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import { renderHook, act } from "@testing-library/react";
 import { mockGlobalFetch, restoreGlobalFetch } from "../helpers/mock-fetch";
+import { installStandInVocabulary, STAND_IN_TYPE } from "../helpers/stand-in-vocabulary";
 import { storage } from "@/lib/storage";
 
 import { useQueryExecution } from "@/hooks/use-query-execution";
@@ -158,5 +159,28 @@ describe("useQueryExecution: the real safety gate", () => {
 
     expect(result.current.safetyCheckQuery).toBe(annotated);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A row's loosening claim counts only where Studio's review record lists it (`CONFIRMATION_CLAIM_REVIEW`). The
+   * stand-in row decides alone and the record does not list it, so its statements are still read as SQL under
+   * Trino's grammar: the editor stops a `DROP` at the dialog and sends nothing.
+   */
+  test("a row's claim Studio's review record does not list stops the run at the dialog", async () => {
+    const remove = installStandInVocabulary({});
+    try {
+      const fetchMock = mockGlobalFetch({});
+      const standIn = { ...params(), activeConnection: { ...connection, id: "gate-stand-in-1", type: STAND_IN_TYPE } };
+      const { result } = renderHook(() => useQueryExecution(standIn));
+
+      await act(async () => {
+        await result.current.executeQuery("DROP TABLE t");
+      });
+
+      expect(result.current.safetyCheckQuery).toBe("DROP TABLE t");
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      remove();
+    }
   });
 });

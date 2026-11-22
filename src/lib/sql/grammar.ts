@@ -356,7 +356,10 @@ export interface SqlGrammar {
    * Keyword sequences led by a shared dangerous keyword that do NOT ask on this dialect, read where that keyword is
    * read: at the operative keyword and inside a control-flow block. For a form whose effect cannot outlive the
    * statement on this engine: Snowflake runs each statement in its own session, so `ALTER SESSION SET` changes nothing
-   * a later statement sees. Absent means none, and every shared keyword asks.
+   * a later statement sees. Absent means none, and every shared keyword asks. Each form is a claim that loosens the
+   * confirmation gate, so the gate counts a form only where Studio's review record lists it
+   * (`CONFIRMATION_CLAIM_REVIEW` in `@/lib/db/confirmation-claim-review`), and reads any other form as if it were not
+   * declared.
    */
   readonly confirmExemptForms?: readonly (readonly string[])[];
   /**

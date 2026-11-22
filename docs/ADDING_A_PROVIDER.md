@@ -1200,6 +1200,7 @@ Those three reach code and tests only; the four prose greps of the published blo
 - [ ] `src/lib/db/destructive-commands.ts`: `NON_SQL_DESTRUCTIVE_VOCABULARY`, a row for every id whose grammar module declares `readsSqlText: false`, which `tests/unit/db/destructive-commands.test.ts` holds to exactly those ids.
       The row is declared beside the provider, in its own `destructive.ts` module, and the table only imports it; the same test fails on a row written inline.
       A text that cannot write takes the row that names no operation and decides alone, the Prometheus and Kafka shape.
+      A row that decides alone needs its claim in `CONFIRMATION_CLAIM_REVIEW` (`src/lib/db/confirmation-claim-review.ts`), with the reason it holds, in the same PR: the gate reads an unlisted claim as if it were not made, and `tests/unit/lib/db/confirmation-claim-review.test.ts` fails until the entry is written.
 - [ ] `src/lib/db/migration-ddl/index.ts`: the new id's row in `MIGRATION_DDL`, which the compiler holds complete.
       Write the row's module beside the provider at the placement rule, `<family>/<id>-migration-ddl.ts` for a flat provider or `<family>/<id>/migration-ddl.ts` for a directory one, as a `MigrationDdlSpec`: `tableDdl: "refused"` with its one `refusal` line for an engine whose diff gets no table DDL at all, or `"written"` with every statement kind and a `transactionWrapper` decision (#284), sharing PostgreSQL's spelling only by importing a named building block from `shared.ts` (#269).
       Give the provider doc its `Migration DDL` section, which `tests/unit/db/migration-ddl/docs.test.ts` holds to the module, then run `UPDATE_GOLDEN=1 bun tests/run-tests.ts tests/unit/db/migration-ddl/golden.test.ts` and read the new golden file before committing it.
@@ -1276,7 +1277,8 @@ Those three reach code and tests only; the four prose greps of the published blo
       the literal; `tests/unit/db/sql-grammar/census.test.ts` holds it. Then regenerate the golden file with
       `UPDATE_GOLDEN=1 bun tests/run-tests.ts tests/unit/db/sql-grammar/golden.test.ts`, commit it,
       and add the `SQL grammar` subsection to your provider doc, which
-      `tests/unit/db/sql-grammar/docs.test.ts` holds to the module
+      `tests/unit/db/sql-grammar/docs.test.ts` holds to the module.
+      `readsSqlText: false` and each `confirmExemptForms` form loosen the confirmation gate, so each needs its claim in `CONFIRMATION_CLAIM_REVIEW` (`src/lib/db/confirmation-claim-review.ts`), with the reason it holds, in the same PR: the gate reads an unlisted claim as if it were not made, and `tests/unit/lib/db/confirmation-claim-review.test.ts` fails until the entry is written
 - [ ] `src/lib/db/types.ts`: `queryLanguage`, only when the engine's query text is neither SQL nor JSON.
       A new member is not neutral: a reader written `=== "json"` sends it into its SQL branch and one written `!== "sql"` into its MongoDB branch, so every reader needs an explicit arm or a test pinning that its branch is right.
       `grep -rn queryLanguage src` is not the whole population: `src/components/agent/AnswerCard.tsx` reads it through `editorLanguageForTabType`.

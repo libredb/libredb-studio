@@ -724,6 +724,7 @@ That answer carries `outcome` `not-sent` ([Error kind and outcome](#error-kind-a
 `POST /api/db/query`, `POST /api/db/multi-query` and the `query` action of `POST /api/db/transaction` classify every statement they are sent, on the server, with the confirmation gate's readers: the ones the web editor's safety dialog and [`POST /api/db/statement/analyze`](#post-apidbstatementanalyze) read.
 A statement the gate asks about needs a confirmation before it runs.
 Whether a request without one is refused is the request's own choice in the default mode, and every caller's in `required` mode (`LIBREDB_RUN_CONFIRMATION`, see [Environment Variables](#environment-variables)).
+A connection type's claim that would spare a statement, that its own vocabulary is the whole answer, that a form led by a shared keyword does not ask, or that its text is not SQL, counts only where Studio's review record of such claims lists it (`CONFIRMATION_CLAIM_REVIEW` in `src/lib/db/confirmation-claim-review.ts`); any other such claim is read as if it were not made, so the statement needs a confirmation wherever its SQL reading or the type's own vocabulary asks.
 
 The request's `confirmation` field:
 
