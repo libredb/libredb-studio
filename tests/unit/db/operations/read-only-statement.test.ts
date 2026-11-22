@@ -622,12 +622,14 @@ describe("the review record", () => {
   });
 
   test("reads every engine on the review record", async () => {
-    for (const type of AGENT_EXECUTION_ENGINES) {
-      const served = answer([{ id: 1 }]);
-      const { provider } = providerAnswering(async () => served);
-      expect(
-        await runReadOnlyStatement(provider, { type, statement: "SELECT 1", budget, wait: "caller-deadline" }),
-      ).toBe(served);
-    }
+    const served = answer([{ id: 1 }]);
+    const { provider } = providerAnswering(async () => served);
+    const answers = await Promise.all(
+      AGENT_EXECUTION_ENGINES.map((type) =>
+        runReadOnlyStatement(provider, { type, statement: "SELECT 1", budget, wait: "caller-deadline" }),
+      ),
+    );
+    expect(answers.every((answered) => answered === served)).toBe(true);
+    expect(answers).toHaveLength(AGENT_EXECUTION_ENGINES.length);
   });
 });

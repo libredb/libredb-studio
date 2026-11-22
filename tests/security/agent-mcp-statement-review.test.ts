@@ -114,9 +114,12 @@ describe("an engine the review record does not list, though its provider impleme
     const connect = spyOn(SQLiteProvider.prototype, "connect");
     const queryReadOnly = spyOn(SQLiteProvider.prototype, "queryReadOnly");
     try {
-      for (const profile of ["agent-read-only", "agent-handover"] as const) {
-        expectNotReviewed(await settled(acquireExecutionProfileProvider(connection, profile, {}, admin)), "sqlite");
-      }
+      const refusals = await Promise.all(
+        (["agent-read-only", "agent-handover"] as const).map((profile) =>
+          settled(acquireExecutionProfileProvider(connection, profile, {}, admin)),
+        ),
+      );
+      for (const refusal of refusals) expectNotReviewed(refusal, "sqlite");
       expect(connect).not.toHaveBeenCalled();
       expect(queryReadOnly).not.toHaveBeenCalled();
 

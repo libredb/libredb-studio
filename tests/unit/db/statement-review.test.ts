@@ -87,24 +87,22 @@ describe("the acquisition reads the review record", () => {
    * the profiled cache stays empty throughout.
    */
   test("under each profile that sends statements the acquisition admits exactly the engines on the record, and under agent-operations the record is never asked", async () => {
-    const answers: string[] = [];
-    const expected: string[] = [];
-    for (const profile of PROFILES) {
-      const sendsStatements = executionContextFor(profile).sendsStatements;
-      for (const type of SHIPPED_DATABASE_TYPES) {
+    const cases = PROFILES.flatMap((profile) => SHIPPED_DATABASE_TYPES.map((type) => ({ profile, type })));
+    const answers = await Promise.all(
+      cases.map(async ({ profile, type }) => {
         const connection = {
           ...CENSUS_CONNECTION[type],
           id: `census-${type}-${profile}`,
           connectionString: `census://${crypto.randomUUID()}`,
           agentUser: crypto.randomUUID(),
         };
-        answers.push(`${profile} ${type}: ${await refusalOf(acquireExecutionProfileProvider(connection, profile))}`);
-        const refusedByRecord = sendsStatements && !AGENT_EXECUTION_ENGINES.includes(type);
-        expected.push(
-          `${profile} ${type}: ${refusedByRecord ? "PROFILE_ENGINE_NOT_REVIEWED" : "AGENT_CREDENTIAL_WITH_CONNECTION_STRING"}`,
-        );
-      }
-    }
+        return `${profile} ${type}: ${await refusalOf(acquireExecutionProfileProvider(connection, profile))}`;
+      }),
+    );
+    const expected = cases.map(({ profile, type }) => {
+      const refusedByRecord = executionContextFor(profile).sendsStatements && !AGENT_EXECUTION_ENGINES.includes(type);
+      return `${profile} ${type}: ${refusedByRecord ? "PROFILE_ENGINE_NOT_REVIEWED" : "AGENT_CREDENTIAL_WITH_CONNECTION_STRING"}`;
+    });
     expect(PROFILES.some((profile) => executionContextFor(profile).sendsStatements)).toBe(true);
     expect(PROFILES.some((profile) => !executionContextFor(profile).sendsStatements)).toBe(true);
     expect(answers).toEqual(expected);
