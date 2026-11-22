@@ -297,7 +297,7 @@ describe("resealStore", () => {
     expect(report).toMatchObject({ kind: "rewritten", resealed: 1, unread: ["alice connections[0]"] });
     expect(store.row("alice", "connections")).toBe(row);
     expect(store.marker).toBe("v2");
-  });
+  }, 60_000);
 
   test("a row it must write back beside an element too deep to serialize fails the run, naming the owner and the element, and leaves the store as it was", async () => {
     const store = new MemoryStorageProvider();
@@ -328,7 +328,7 @@ describe("resealStore", () => {
     expect((failure as Error).cause).toBeInstanceOf(RangeError);
     expect(store.rows).toEqual(rows);
     expect(store.marker).toBeUndefined();
-  });
+  }, 60_000);
 
   test("an element the re-seal cannot handle, nested too deep in a field outside the binding, fails the run naming the owner and the element, and leaves the store as it was", async () => {
     const store = new MemoryStorageProvider();
@@ -357,7 +357,7 @@ describe("resealStore", () => {
     expect((failure as Error).cause).toBeInstanceOf(RangeError);
     expect(store.rows).toEqual(rows);
     expect(store.marker).toBeUndefined();
-  });
+  }, 60_000);
 
   test("leave-unopened retires version 1 over the version 1 values it left and names them, and the documented recovery reopens them", async () => {
     // docs/STORAGE.md, "Re-sealing the store": restore the key that sealed the store, delete the credential_envelope

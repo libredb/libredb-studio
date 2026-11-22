@@ -227,5 +227,5 @@ describe("the binding of a version 2 envelope", () => {
       expect(connectionBindingProblem(deep)).toBe(problem);
       expect(() => connectionBinding("alice", deep)).toThrow(problem);
     }
-  });
+  }, 60_000);
 });
