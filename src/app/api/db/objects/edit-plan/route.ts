@@ -15,6 +15,7 @@ import {
   planExecutableLength,
 } from "@/lib/db/object-edit";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
+import { providerConnection } from "@/lib/db/provider-connection";
 import { requireEditableKind } from "@/lib/db/object-kinds";
 
 export const dynamic = "force-dynamic";
@@ -151,8 +152,9 @@ export async function POST(req: NextRequest) {
       //    fingerprint the route did not verify would seal a value nobody checked, and the apply
       //    route's different-server refusal would be comparing two numbers that came from the same
       //    unverified source. `context.connection` and never a second `resolveConnection`: a second
-      //    resolution can answer a different connection.
-      if (plan.connectionFingerprint !== (await connectionFingerprint(context.connection))) {
+      //    resolution can answer a different connection. Framed on `providerConnection` of it, the
+      //    copy the provider was built from, so both sides digest the same fields (FND-2 slice 6).
+      if (plan.connectionFingerprint !== (await connectionFingerprint(providerConnection(context.connection)))) {
         throw new ObjectRouteError(
           "the build answered a plan sealed against a different server than this request resolved",
           400,

@@ -321,7 +321,9 @@ See the [non-Azure trust caveat](#15-known-limitations--future-work).
 `getCapabilities().supportsConnectionString` is `true` and the UI parser accepts both `mssql://` and
 `sqlserver://` URLs — but it **decomposes them into discrete fields** (`host`/`port`/`user`/`password`/
 `database`) before they reach the provider. `buildConfig()` itself **never reads
-`config.connectionString`**; it always builds from the discrete fields, and `validate()` requires
+`config.connectionString`**, and the provider factory never hands it one: SQL Server does not
+accept a connection string (`CONNECTION_STRING_ACCEPTED`), so the field is not among those the
+provider receives. It always builds from the discrete fields, and `validate()` requires
 `host` and `database`. So a config carrying *only* a raw `connectionString` is refused by name
 (`Host is required for SQL Server`) when the provider is built, and nothing is dialled.
 In practice the connection always has discrete fields because the UI populates them.

@@ -498,6 +498,13 @@ An embedder that read `provider.config.sshTunnel` reads the connection it passed
 A copy loses a field defined on the prototype or as not enumerable, and reads an own getter once, so a connection with an `sshTunnel`, and the tunnel itself, must be plain data, as parsed JSON is.
 A non-object `sshTunnel`, a class instance, a getter or a field that is not enumerable is refused with a `DatabaseConfigError` and nothing is built, by `createDatabaseProvider` and by `getOrCreateProvider`, `acquireExecutionProfileProvider` and `withOneShotTunnel` before they dial the tunnel.
 
+`provider.config` is always a new object, never the connection passed in, so a later change to that connection does not reach a built provider.
+It holds only the fields the engine declares (`providerFields` in `src/lib/db/provider-connection.ts`): its connection fields, its seed-only fields, `connectionString` where the engine accepts one, `ssl` where the engine takes the TLS panel, `host` and `port` where it takes an SSH tunnel, the fields it refuses by name, and Studio's own `id`, `name`, `type`, `queryTimeout`, `readOnly`, `managed` and `seedId`.
+So it carries no `agentUser`, `agentPassword`, `createdAt`, `color`, `environment`, `group` or `skipObjectScan`, no field of another engine such as `schema` on a PostgreSQL connection or `database` on Kafka, and no symbol key of the embedder's own.
+A field the engine does not declare is dropped, never refused.
+Every connection must be plain data, with or without a tunnel: a class instance, an inherited field, an accessor or a field that is not enumerable is refused with a `DatabaseConfigError` and nothing is built.
+An MSSQL connection that names only a connection string is refused by name, because SQL Server builds from its host and database fields.
+
 `createDatabaseProvider`, `getOrCreateProvider`, `acquireExecutionProfileProvider` and `withOneShotTunnel` take the process's egress decision before they look in a cache, dial a tunnel or build a provider.
 The first call reads `DB_HTTP_BLOCK_PRIVATE_HOSTS`, logs which way it decided and whether that is the default in one info line, which a `LOG_LEVEL` of `warn` or `error` hides, and keeps the decision for the life of the process, so set the variable before the first call: a later change takes effect when the process restarts.
 A value other than `true`, `on`, `1`, `false`, `off`, `0` or empty (trimmed, any case) is refused with a `DatabaseConfigError` naming the variable, on that call and every later one, and nothing is built.

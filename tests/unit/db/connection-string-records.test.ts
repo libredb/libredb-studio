@@ -134,6 +134,12 @@ describe("CONNECTION_STRING_ACCEPTED against each provider's own declaration (Sp
         createdAt: new Date(0),
       }),
     ).rejects.toThrow("Host is required for SQL Server");
+    // With its fields set, the provider is built from them, and the string is not among the fields it receives.
+    const provider = await createDatabaseProvider({
+      ...CENSUS_CONNECTION.mssql,
+      connectionString: "mssql://db.example/app",
+    });
+    expect(Object.hasOwn(provider.config, "connectionString")).toBe(false);
   });
 
   test.each([...SHIPPED_DATABASE_TYPES])("%s declares supportsConnectionString as a boolean", async (type) => {

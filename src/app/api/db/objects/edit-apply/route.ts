@@ -16,6 +16,7 @@ import {
   planExecutableLength,
 } from "@/lib/db/object-edit";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
+import { providerConnection } from "@/lib/db/provider-connection";
 import { requireEditableKind } from "@/lib/db/object-kinds";
 import { emitAuditEvent } from "@/lib/audit";
 import { logger } from "@/lib/logger";
@@ -103,8 +104,14 @@ export async function POST(req: NextRequest) {
       //    fingerprint is recomputed here and never taken from the plan, which is the whole of the
       //    different-server check: a plan is bound to a SERVER and never to `connection.id`, and
       //    MEASURED, `resolveConnection` returns an inline connection object verbatim, id included,
-      //    so an id check is satisfied by a caller typing the id it wants.
-      const verdict = await verifyPlanToken(planToken, plan, await connectionFingerprint(context.connection));
+      //    so an id check is satisfied by a caller typing the id it wants. Framed on `providerConnection`
+      //    of it, the copy the provider was built from, so the plan's seal and this one digest the same
+      //    fields (FND-2 slice 6).
+      const verdict = await verifyPlanToken(
+        planToken,
+        plan,
+        await connectionFingerprint(providerConnection(context.connection)),
+      );
       if (!verdict.valid) {
         // ONE event, and no provider call. A refused plan is a decision this route made about a
         // write that never happened, and it is the one an operator most needs to see.

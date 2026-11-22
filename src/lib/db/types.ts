@@ -2183,7 +2183,8 @@ export interface DatabaseProvider {
 
   /**
    * The connection this provider was built from, as `providerConnection` (./provider-connection) hands it to a provider:
-   * the caller's record without its `sshTunnel`, the tunnel's route under `TUNNEL_ROUTE` (@/lib/types) instead. A local-file
+   * a copy of the caller's record holding only the fields its engine declares (`providerFields`) and core's markers, the
+   * tunnel's route under `TUNNEL_ROUTE` (@/lib/types) for a record that carries a tunnel. A local-file
    * engine's connection (`OPENS_LOCAL_FILE`) also carries `ADMITTED_FILE` (@/lib/types), the file the factory admitted,
    * and an engine whose `HOST_PATH_FIELDS` row names fields carries `ADMITTED_HOST_PATHS`, the files it admitted for them.
    */
