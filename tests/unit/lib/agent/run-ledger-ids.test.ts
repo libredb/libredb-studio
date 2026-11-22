@@ -7,9 +7,11 @@ import { AGENT_WORKFLOW_PRESENTS_ANSWER, type AgentRunMode, type AgentRunWorkflo
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 
 /**
- * A run header persists two engine-bound ids, the statement language the run is written in and the goal rule it is
- * judged by (FND-1). These tests pin the one check of both, and the census that keeps every id a header can carry
- * either live or retired by name.
+ * A run header persists three ids this build resolves (FND-1): the statement language the run is written in, the
+ * workflow it was opened for, and the goal rule it is judged by. An agent-mode header also needs its workflow's variant
+ * on its language, so the pair of the two is resolved too. These tests pin the one check of all of them, and the census
+ * that keeps every language and verifier a header can carry either live or retired by name, and every agent-mode
+ * language and workflow pair a header can carry still resolvable.
  */
 
 /* Total over the language ids, so the compiler fails here when a language is added without a row. */
@@ -101,12 +103,90 @@ const PERSISTED_GOAL_VERIFIERS: readonly string[] = [
 ];
 
 /**
+ * Every agent-mode pair of statement language and workflow a header has ever been able to carry, measured the same way
+ * (`sql` stands for the absent language). Frozen and append-only for the same reason: a header that names a pair is
+ * read only while the pair has a variant, so a variant a header can name is never dropped.
+ */
+const PERSISTED_AGENT_PAIRS: readonly (readonly [language: string, workflow: string])[] = [
+  ["cypher", "data-analysis"],
+  ["cypher", "investigation"],
+  ["cypher", "operations"],
+  ["etcdctl", "investigation"],
+  ["etcdctl", "operations"],
+  ["fsquery", "investigation"],
+  ["fsquery", "operations"],
+  ["influxql", "data-analysis"],
+  ["influxql", "investigation"],
+  ["influxql", "operations"],
+  ["kafkaread", "investigation"],
+  ["kafkaread", "operations"],
+  ["kubectl", "data-analysis"],
+  ["kubectl", "database-assessment"],
+  ["kubectl", "investigation"],
+  ["kubectl", "operations"],
+  ["kubectl", "query-optimization"],
+  ["libredbkv", "data-analysis"],
+  ["libredbkv", "investigation"],
+  ["libredbkv", "operations"],
+  ["milvusrpc", "investigation"],
+  ["milvusrpc", "operations"],
+  ["modbusread", "investigation"],
+  ["modbusread", "operations"],
+  ["mongo", "data-analysis"],
+  ["mongo", "database-assessment"],
+  ["mongo", "investigation"],
+  ["mongo", "operations"],
+  ["mongo", "query-optimization"],
+  ["mqttread", "investigation"],
+  ["mqttread", "operations"],
+  ["mtconnectread", "investigation"],
+  ["mtconnectread", "operations"],
+  ["netconfrpc", "investigation"],
+  ["netconfrpc", "operations"],
+  ["opcuaread", "investigation"],
+  ["opcuaread", "operations"],
+  ["oxiacli", "investigation"],
+  ["oxiacli", "operations"],
+  ["promql", "data-analysis"],
+  ["promql", "investigation"],
+  ["promql", "operations"],
+  ["qdrantapi", "investigation"],
+  ["qdrantapi", "operations"],
+  ["rabbitread", "investigation"],
+  ["rabbitread", "operations"],
+  ["rediscli", "investigation"],
+  ["rediscli", "operations"],
+  ["s3api", "investigation"],
+  ["s3api", "operations"],
+  ["snmpget", "investigation"],
+  ["snmpget", "operations"],
+  ["sparkplugread", "investigation"],
+  ["sparkplugread", "operations"],
+  ["sql", "data-analysis"],
+  ["sql", "database-assessment"],
+  ["sql", "investigation"],
+  ["sql", "operations"],
+  ["sql", "query-optimization"],
+  ["weaviateapi", "investigation"],
+  ["weaviateapi", "operations"],
+];
+
+function pairKey(language: string, workflow: string): string {
+  return `${language}/${workflow}`;
+}
+
+/**
  * What `persistedRunFacts` can write today, through the availability production opens a run under: every shipped
  * engine, every workflow, both modes, keeping only the availabilities that open.
  */
-function persistableIds(): { readonly languages: ReadonlySet<string>; readonly verifiers: ReadonlySet<string> } {
+function persistableIds(): {
+  readonly languages: ReadonlySet<string>;
+  readonly verifiers: ReadonlySet<string>;
+  readonly agentPairs: ReadonlySet<string>;
+} {
   const languages = new Set<string>();
   const verifiers = new Set<string>();
+  const agentPairs = new Set<string>();
   const workflows = Object.keys(AGENT_WORKFLOW_PRESENTS_ANSWER) as AgentRunWorkflowType[];
   for (const type of SHIPPED_DATABASE_TYPES) {
     for (const mode of ["agent", "planning"] as const satisfies readonly AgentRunMode[]) {
@@ -116,10 +196,11 @@ function persistableIds(): { readonly languages: ReadonlySet<string>; readonly v
         const facts = persistedRunFacts(mode, workflow, availability);
         if (facts.statementLanguage !== undefined) languages.add(facts.statementLanguage);
         if (facts.verifier !== undefined) verifiers.add(facts.verifier);
+        if (mode === "agent") agentPairs.add(pairKey(facts.statementLanguage ?? "sql", workflow));
       }
     }
   }
-  return { languages, verifiers };
+  return { languages, verifiers, agentPairs };
 }
 
 const AGENT = { mode: "agent" } as const;
@@ -317,6 +398,26 @@ describe("the ids a run header can carry", () => {
   test("the retired verifiers are the three retired before any header carried a verifier, and none has a rule", () => {
     expect([...RETIRED_GOAL_VERIFIERS].sort()).toEqual([...RETIRED_VERIFIERS].sort());
     expect(RETIRED_VERIFIERS.filter((id) => hasGoalRule(id))).toEqual([]);
+  });
+
+  test("every agent-mode pair persistedRunFacts can write is on the persisted list", () => {
+    const listed = new Set(PERSISTED_AGENT_PAIRS.map(([language, workflow]) => pairKey(language, workflow)));
+    const missing = [...persistable.agentPairs].filter((pair) => !listed.has(pair));
+    // A new variant is appended to PERSISTED_AGENT_PAIRS, which then holds the header that names it readable.
+    expect(missing).toEqual([]);
+  });
+
+  test("every persisted agent-mode pair is still read by the header check", () => {
+    const lost = PERSISTED_AGENT_PAIRS.filter(
+      ([language, workflow]) =>
+        runHeaderRefusal({
+          mode: "agent",
+          ...(language === "sql" ? {} : { statementLanguage: language }),
+          workflowType: workflow,
+        }) !== null,
+    ).map(([language, workflow]) => pairKey(language, workflow));
+    // A variant a header can name keeps existing; dropping it would refuse every ledger that names the pair.
+    expect(lost).toEqual([]);
   });
 
   test("no id is both live and retired", () => {

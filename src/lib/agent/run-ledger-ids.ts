@@ -27,6 +27,12 @@ export type AgentRunHeaderField = "statementLanguage" | "workflowType" | "verifi
 /** Why a run header cannot be read by this build: which field, whether its id is unknown or retired, and the sentence. */
 export interface AgentRunHeaderRefusal {
   readonly field: AgentRunHeaderField;
+  /**
+   * `unknown` also covers an agent-mode `workflowType` this build holds whose variant is missing on the run's language:
+   * `id` is then a workflow this build has, and the language that makes the pair unresolvable is carried in `named`
+   * and in the sentence, not in `field`, `reason` or `id`. A log line that gives only the field and the reason is
+   * resolved by reading the ledger's header, which names both.
+   */
   readonly reason: "unknown" | "retired";
   /** The id as the header holds it, unquoted. */
   readonly id: string;
