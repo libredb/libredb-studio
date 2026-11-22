@@ -3625,8 +3625,11 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
       TimeBudgetRefusal: "repairable",
       CutValueRefusal: "repairable",
       SerialisedResultRefusal: "repairable",
-      // Core's own row, byte or time refusal of an answer, a QueryError: narrowing the statement is the repair.
-      StudioBudgetRefusal: "repairable",
+      // Core's own refusal of the row (byte, time) budget, a subclass of the provider's class of that budget: narrowing
+      // the statement is the repair.
+      StudioRowBudgetRefusal: "repairable",
+      StudioByteBudgetRefusal: "repairable",
+      StudioTimeBudgetRefusal: "repairable",
       // The statistics read outlasting the time Studio gave it, a TimeoutError: a narrower read is the repair.
       StudioTimeoutRefusal: "repairable",
       QueryCancelledError: "repairable",

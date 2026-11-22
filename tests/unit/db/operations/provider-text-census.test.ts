@@ -258,8 +258,13 @@ describe("who wrote a refusal", () => {
     expect(constructed("OffsetUnsupportedError", (file) => !file.provider)).toEqual([]);
   });
 
-  test("no provider module constructs StudioBudgetRefusal or StudioTimeoutRefusal", () => {
-    for (const className of ["StudioBudgetRefusal", "StudioTimeoutRefusal"]) {
+  test("no provider module constructs a Studio budget refusal or StudioTimeoutRefusal", () => {
+    for (const className of [
+      "StudioRowBudgetRefusal",
+      "StudioByteBudgetRefusal",
+      "StudioTimeBudgetRefusal",
+      "StudioTimeoutRefusal",
+    ]) {
       expect(constructed(className, (file) => file.provider)).toEqual([]);
     }
   });
@@ -279,9 +284,9 @@ describe("who wrote a refusal", () => {
   test("the core read path constructs no plain QueryError, and its row, byte and time refusals are Studio's own", () => {
     const corePath = (file: { file: string }) => file.file === READ_ONLY_STATEMENT;
     expect(constructed("QueryError", corePath)).toEqual([]);
-    expect(constructed("StudioBudgetRefusal", corePath)).toEqual([
-      `${READ_ONLY_STATEMENT}: sharedRowRefusal`,
-      `${READ_ONLY_STATEMENT}: sharedByteRefusal`,
+    expect(constructed("StudioRowBudgetRefusal", corePath)).toEqual([`${READ_ONLY_STATEMENT}: sharedRowRefusal`]);
+    expect(constructed("StudioByteBudgetRefusal", corePath)).toEqual([`${READ_ONLY_STATEMENT}: sharedByteRefusal`]);
+    expect(constructed("StudioTimeBudgetRefusal", corePath)).toEqual([
       `${READ_ONLY_STATEMENT}: withinStatementTimeout`,
     ]);
   });

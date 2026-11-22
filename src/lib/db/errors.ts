@@ -282,8 +282,8 @@ export class ReadAllowanceExceededError extends RefusedBeforeSendError {
  * was handed, raised after the read began, in `rowBudgetSentence`'s words. Its own class, so its error record answers
  * kind `row-budget-refusal` and a reader can tell it from any other statement failure without reading the sentence.
  * A `QueryError`, so the route answers 400 `QUERY_ERROR` and every caller that settles a statement failure settles it;
- * its `name` stays `QueryError`, as `StudioBudgetRefusal`'s does. Only providers construct it: core raises
- * `StudioBudgetRefusal`, and a refusal raised before anything was sent stays a `RefusedBeforeSendError`.
+ * its `name` stays `QueryError`. Providers construct it; core raises its subclass `StudioRowBudgetRefusal`, and a
+ * refusal raised before anything was sent stays a `RefusedBeforeSendError`.
  */
 export class RowBudgetRefusal extends QueryError {
   constructor(message: string, provider?: DatabaseType, query?: string) {
@@ -296,7 +296,7 @@ export class RowBudgetRefusal extends QueryError {
 /**
  * A provider's refusal of a read whose answer held more bytes than the byte field of its `ReadOnlyStatementBudget`,
  * in `byteBudgetSentence`'s words or an engine's own words for the same budget (SQL Server's estimated plan). Kind
- * `byte-budget-refusal`; otherwise as `RowBudgetRefusal`.
+ * `byte-budget-refusal`; otherwise as `RowBudgetRefusal`, core raising its subclass `StudioByteBudgetRefusal`.
  */
 export class ByteBudgetRefusal extends QueryError {
   constructor(message: string, provider?: DatabaseType, query?: string) {
@@ -308,7 +308,8 @@ export class ByteBudgetRefusal extends QueryError {
 
 /**
  * A provider's refusal of a read that outlasted the time field of its `ReadOnlyStatementBudget`, in words that open
- * with a time budget prefix or the statement deadline. Kind `time-budget-refusal`; otherwise as `RowBudgetRefusal`.
+ * with a time budget prefix or the statement deadline. Kind `time-budget-refusal`; otherwise as `RowBudgetRefusal`,
+ * core raising its subclass `StudioTimeBudgetRefusal`.
  * A `QueryError` rather than a `TimeoutError`, so its answer's code and `retryable` stay what they were; a provider
  * that raises its time refusal as a `TimeoutError` keeps that class and kind `timeout`.
  */
@@ -345,18 +346,41 @@ export class SerialisedResultRefusal extends QueryError {
 }
 
 /**
- * A row or byte budget refusal, or the core read path's time refusal, that Studio's core raised over a provider's
- * answer (`runReadOnlyStatement` and `runReadOnlyReading`). It exists only to mark Studio's sentence apart from a
- * provider's, which raises the same sentences as a class of its own (`RowBudgetRefusal` and its siblings), so the
- * agent says this one in Studio's voice and fences a provider's as database content. Its `name` stays `QueryError`, so
- * a log line, an error body and a reader of the name see no difference. No provider constructs it;
- * tests/unit/db/operations/provider-text-census.test.ts holds that.
+ * Core's refusal of a provider's answer that held more rows than the read's row budget (`runReadOnlyStatement` and
+ * `runReadOnlyReading`). A `RowBudgetRefusal`, so a reader of the row budget sees it whoever raised it; its own class,
+ * so its error record answers kind `studio-row-budget-refusal` and the agent says it in Studio's voice where it fences
+ * a provider's as database content. Its `name` stays `QueryError`, so a log line, an error body and a reader of the
+ * name see no difference. No provider constructs it; tests/unit/db/operations/provider-text-census.test.ts holds that.
  */
-export class StudioBudgetRefusal extends QueryError {
+export class StudioRowBudgetRefusal extends RowBudgetRefusal {
   constructor(message: string, provider?: DatabaseType, query?: string) {
     super(message, provider, query);
     this.name = "QueryError";
-    Object.setPrototypeOf(this, StudioBudgetRefusal.prototype);
+    Object.setPrototypeOf(this, StudioRowBudgetRefusal.prototype);
+  }
+}
+
+/**
+ * Core's refusal of a provider's answer that held more bytes than the read's byte budget. A `ByteBudgetRefusal` with
+ * kind `studio-byte-budget-refusal`; otherwise as `StudioRowBudgetRefusal`.
+ */
+export class StudioByteBudgetRefusal extends ByteBudgetRefusal {
+  constructor(message: string, provider?: DatabaseType, query?: string) {
+    super(message, provider, query);
+    this.name = "QueryError";
+    Object.setPrototypeOf(this, StudioByteBudgetRefusal.prototype);
+  }
+}
+
+/**
+ * Core's refusal of a provider's call it stopped waiting for at the read's time budget. A `TimeBudgetRefusal` with
+ * kind `studio-time-budget-refusal`; otherwise as `StudioRowBudgetRefusal`.
+ */
+export class StudioTimeBudgetRefusal extends TimeBudgetRefusal {
+  constructor(message: string, provider?: DatabaseType, query?: string) {
+    super(message, provider, query);
+    this.name = "QueryError";
+    Object.setPrototypeOf(this, StudioTimeBudgetRefusal.prototype);
   }
 }
 

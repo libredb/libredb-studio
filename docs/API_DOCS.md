@@ -2941,7 +2941,9 @@ Both are closed vocabularies and never hold the error's text.
 | `time-budget-refusal` | A provider refused a read that outlasted the read's time budget, on the agent, hand-over or MCP read path |
 | `cut-value-refusal` | A provider refused a value the server cut at the byte ceiling, which the byte budget cannot measure whole (SQL Server) |
 | `serialised-result-refusal` | A provider refused a FOR JSON or FOR XML result, one serialised value the row budget cannot bound (SQL Server) |
-| `studio-budget-refusal` | Studio's own row, byte or time budget refused a provider's answer on the agent, hand-over or MCP read path |
+| `studio-row-budget-refusal` | Studio's own row budget refused a provider's answer for holding more rows than the read's row budget, on the agent, hand-over or MCP read path |
+| `studio-byte-budget-refusal` | Studio's own byte budget refused a provider's answer for holding more bytes than the read's byte budget, on the agent, hand-over or MCP read path |
+| `studio-time-budget-refusal` | Studio stopped waiting for a provider's answer at the read's time budget, on the agent, hand-over or MCP read path |
 | `timeout` | The statement reached its time limit |
 | `studio-timeout-refusal` | A time limit Studio set on its own read ran out, such as the agent's statistics read |
 | `cancelled` | The statement was cancelled |

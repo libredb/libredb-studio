@@ -45,8 +45,10 @@ import {
   RefusedBeforeSendError,
   RowBudgetRefusal,
   SerialisedResultRefusal,
-  StudioBudgetRefusal,
+  StudioByteBudgetRefusal,
   StudioProfileRefusal,
+  StudioRowBudgetRefusal,
+  StudioTimeBudgetRefusal,
   StudioTimeoutRefusal,
   TimeBudgetRefusal,
   TimeoutError,
@@ -120,7 +122,17 @@ const CLASSES: readonly (readonly [ErrorClass, ErrorKind, (text: string) => Erro
   [TimeBudgetRefusal, "time-budget-refusal", (text) => new TimeBudgetRefusal(text, "postgres", text)],
   [CutValueRefusal, "cut-value-refusal", (text) => new CutValueRefusal(text, "mssql", text)],
   [SerialisedResultRefusal, "serialised-result-refusal", (text) => new SerialisedResultRefusal(text, "mssql", text)],
-  [StudioBudgetRefusal, "studio-budget-refusal", (text) => new StudioBudgetRefusal(text, "postgres", text)],
+  [StudioRowBudgetRefusal, "studio-row-budget-refusal", (text) => new StudioRowBudgetRefusal(text, "postgres", text)],
+  [
+    StudioByteBudgetRefusal,
+    "studio-byte-budget-refusal",
+    (text) => new StudioByteBudgetRefusal(text, "postgres", text),
+  ],
+  [
+    StudioTimeBudgetRefusal,
+    "studio-time-budget-refusal",
+    (text) => new StudioTimeBudgetRefusal(text, "postgres", text),
+  ],
   [TimeoutError, "timeout", (text) => new TimeoutError(text, "postgres", 1000, text)],
   [StudioTimeoutRefusal, "studio-timeout-refusal", (text) => new StudioTimeoutRefusal(text, "postgres", 1000)],
   [QueryCancelledError, "cancelled", (text) => new QueryCancelledError(text, "postgres", text)],
@@ -379,7 +391,9 @@ describe("carries what today's branches read", () => {
       const kind = errorRecord(scrub, error).kind;
       const studio = [
         "read-allowance-exceeded",
-        "studio-budget-refusal",
+        "studio-row-budget-refusal",
+        "studio-byte-budget-refusal",
+        "studio-time-budget-refusal",
         "studio-timeout-refusal",
         "studio-profile-refusal",
       ];
@@ -426,13 +440,15 @@ describe("carries what today's branches read", () => {
 });
 
 describe("docs", () => {
-  test("docs/API_DOCS.md names every kind and both outcomes", () => {
+  test("docs/API_DOCS.md names every kind, no other, and both outcomes", () => {
     const doc = readFileSync(join(import.meta.dir, "../../../../docs/API_DOCS.md"), "utf8");
     const start = doc.indexOf("\n### Error kind and outcome\n");
     expect(start).toBeGreaterThan(-1);
     const end = doc.indexOf("\n#", start + 1);
     const section = doc.slice(start, end === -1 ? undefined : end);
     for (const kind of ERROR_KINDS) expect(section, kind).toContain(`| \`${kind}\` |`);
+    const kinds: readonly string[] = ERROR_KINDS;
+    for (const [, row] of section.matchAll(/^\| `([^`]+)` \|/gm)) expect(kinds, row).toContain(row);
     for (const outcome of EXECUTE_OUTCOMES) expect(section, outcome).toContain(`\`${outcome}\``);
   });
 });

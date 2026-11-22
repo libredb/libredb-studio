@@ -26,7 +26,9 @@ import {
   RefusedBeforeSendError,
   RowBudgetRefusal,
   SerialisedResultRefusal,
-  StudioBudgetRefusal,
+  StudioByteBudgetRefusal,
+  StudioRowBudgetRefusal,
+  StudioTimeBudgetRefusal,
   StudioTimeoutRefusal,
   TimeBudgetRefusal,
   TimeoutError,
@@ -298,13 +300,15 @@ describe("databaseErrorBody", () => {
       new TimeBudgetRefusal("over the time budget", "postgres"),
       new CutValueRefusal("a cut value", "mssql"),
       new SerialisedResultRefusal("a serialised result", "mssql"),
-      new StudioBudgetRefusal("over Studio's budget", "postgres"),
+      new StudioRowBudgetRefusal("over Studio's row budget", "postgres"),
+      new StudioByteBudgetRefusal("over Studio's byte budget", "postgres"),
+      new StudioTimeBudgetRefusal("over Studio's time budget", "postgres"),
       new TimeoutError("timed out", "postgres", 1000),
       new StudioTimeoutRefusal("Studio's time limit", "postgres", 1000),
       new QueryCancelledError("cancelled", "postgres"),
       new ProviderTextWithheldError("withheld", "postgres"),
     ];
-    expect(new Set(errors.map((error) => errorKind(error))).size).toBe(23);
+    expect(new Set(errors.map((error) => errorKind(error))).size).toBe(25);
     for (const error of errors) {
       const record = errorRecord(scrub, error);
       const body = databaseErrorBody(error)!.body;

@@ -20,6 +20,9 @@ import {
   TimeBudgetRefusal,
   CutValueRefusal,
   SerialisedResultRefusal,
+  StudioRowBudgetRefusal,
+  StudioByteBudgetRefusal,
+  StudioTimeBudgetRefusal,
   isDatabaseError,
   isConnectionError,
   isQueryError,
@@ -28,6 +31,8 @@ import {
   waitedSeconds,
   connectPhase,
 } from "@/lib/db/errors";
+import * as errorsModule from "@/lib/db/errors";
+import { errorKind } from "@/lib/db/error-record";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import {
   describeOracleClientLoadFailure,
@@ -321,6 +326,44 @@ describe("budget refusal classes", () => {
       expect(err.outcome, Class.name).toBeUndefined();
       expect(Object.hasOwn(err, "outcome"), Class.name).toBe(false);
     }
+  });
+
+  const STUDIO_BUDGET_REFUSALS = [
+    [StudioRowBudgetRefusal, RowBudgetRefusal, "studio-row-budget-refusal"],
+    [StudioByteBudgetRefusal, ByteBudgetRefusal, "studio-byte-budget-refusal"],
+    [StudioTimeBudgetRefusal, TimeBudgetRefusal, "studio-time-budget-refusal"],
+  ] as const;
+
+  test.each(
+    STUDIO_BUDGET_REFUSALS.map(([Studio, Parent, kind]) => [Studio.name, Parent.name, Studio, Parent, kind] as const),
+  )(
+    "Studio's %s is a %s named QueryError, with its provider and statement, and is neither other budget",
+    (_studio, _parent, Studio, Parent, kind) => {
+      const sentence = `refused ${crypto.randomUUID()}`;
+      const err = new Studio(sentence, "postgres", "SELECT 1");
+      expect(err).toBeInstanceOf(Parent);
+      expect(err).toBeInstanceOf(QueryError);
+      expect(err).toBeInstanceOf(DatabaseError);
+      expect(err).not.toBeInstanceOf(RefusedBeforeSendError);
+      expect(err).not.toBeInstanceOf(TimeoutError);
+      for (const [OtherStudio, OtherParent] of STUDIO_BUDGET_REFUSALS) {
+        if (OtherStudio === Studio) continue;
+        expect(err).not.toBeInstanceOf(OtherStudio);
+        expect(err).not.toBeInstanceOf(OtherParent);
+      }
+      expect(err.name).toBe("QueryError");
+      expect(err.message).toBe(sentence);
+      expect(err.code).toBe("QUERY_ERROR");
+      expect(err.provider).toBe("postgres");
+      expect(err.query).toBe("SELECT 1");
+      expect(err.outcome).toBeUndefined();
+      expect(Object.hasOwn(err, "outcome")).toBe(false);
+      expect(errorKind(err)).toBe(kind);
+    },
+  );
+
+  test("no class holds all three budgets: StudioBudgetRefusal is no export", () => {
+    expect(Object.keys(errorsModule)).not.toContain("StudioBudgetRefusal");
   });
 });
 
