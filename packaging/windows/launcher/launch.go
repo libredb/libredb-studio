@@ -85,7 +85,9 @@ func resolveLocalAppData(environ []string) string {
 //     letter case, so Studio's shutdown handler ends the bundled Node.js
 //     server (docs/DISTRIBUTION.md, "Stopping the server"). Presence, not
 //     emptiness: an operator's value is kept as given, and an empty one
-//     leaves the exit to Next.js's handler.
+//     leaves the exit to Next.js's handler. cmd.exe and Windows PowerShell
+//     remove a variable set to the empty string, so an empty one arrives
+//     only from a parent that keeps it, such as PowerShell 7.5 or later.
 func launcherEnv(environ []string, seedAssets string) []string {
 	env := append([]string(nil), environ...)
 

@@ -10403,7 +10403,7 @@ This is an enhancement rather than a defect: the skip is reported, and nothing i
 The flush's first batch takes its client before the pool closes, and `pool.end()` waits for it.
 A later batch, when more than 500 events are queued or when the flush first waits for one already in flight, finds the pool gone, and `governancePool()` in the same file builds a new one that nothing closes, connecting again inside the flush's 4 seconds.
 `docs/GOVERNANCE.md` says Studio first inserts the query events and then closes the pool, and nothing in the code orders the two.
-Alone this rarely loses a row (a connect queued on a full pool when `end()` runs is never served, so that batch dies at the deadline); the larger loss is where Next.js's handler owns the exit, on Bun or with `NEXT_MANUAL_SIG_HANDLE` set to the empty string, since its exit cuts the flush (`docs/DISTRIBUTION.md`, "Stopping the server").
+Alone this rarely loses a row (a connect queued on a full pool when `end()` runs is never served, so that batch dies at the deadline); the larger loss is where Next.js's handler owns the exit, where `NEXT_MANUAL_SIG_HANDLE` is unset or empty, as on Bun or for a `server.js` no launcher starts, since its exit cuts the flush (`docs/DISTRIBUTION.md`, "Stopping the server").
 
 **Done when:** the governance pool closes only after the query event hook has settled, `governancePool()` refuses to build a pool once shutdown has begun, and a test with more than 500 queued events shows every batch inserted through the original pool before it closes.
 

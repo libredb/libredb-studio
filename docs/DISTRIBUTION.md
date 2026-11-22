@@ -272,10 +272,12 @@ Every launcher that starts the standalone server sets it too, where the server r
 
 Every launcher but the desktop app sets it only when it is absent and keeps a value the operator set, the empty one included.
 So `NEXT_MANUAL_SIG_HANDLE=` where the server is started, a line in `/etc/libredb-studio/env` for the .deb, .rpm and AUR service or in the unit's drop-in for the Snap, leaves the exit to Next.js's handler, as the empty value does for a container.
+`brew services` takes the service's environment from the formula alone, so there the empty value applies only to the wrapper run directly, `NEXT_MANUAL_SIG_HANDLE= libredb-studio`.
+On Windows the empty value has to come from a parent that keeps an empty variable, such as PowerShell 7.5 or later: cmd.exe's `set NEXT_MANUAL_SIG_HANDLE=` and Windows PowerShell's `$env:NEXT_MANUAL_SIG_HANDLE = ''` remove the variable, and the launchers then set `true`.
 The desktop app sets it on every start, as it does its storage path.
 npx and `bun start` start the server on their own runtime (`process.execPath`), so on Bun they add nothing and pass on a value the operator set, which the server refuses at boot when it is `true`.
-`bun start` stops with exit code 1, before it starts the Next.js CLI, when the variable is absent from its environment and a `.env` file Next.js loads for `start` sets it, since its own `true` would otherwise replace that value unseen.
-Bun loads the working directory's `.env` files into its own environment before the launcher runs, so under `bun --bun run start` the launcher takes a value from such a file as the operator's and passes it on.
+`bun start` stops with exit code 1, before it starts the Next.js CLI, when the variable is absent from its environment and a `.env` file Next.js loads for `start` sets it, since its own `true` would otherwise replace that value unseen; it names each such file.
+It does so on Bun as on Node.js: Bun loads no `.env` file into the environment of the `start` script it runs.
 A `server.js` that no launcher starts, such as the standalone tarball extracted and run by hand, gets it only from whoever starts it: `NEXT_MANUAL_SIG_HANDLE=true node server.js` on Node.js.
 The variable needs the first Studio release after 1.3.0: 1.3.0 and earlier register their handler only once a route loads the provider factory, so with `NEXT_MANUAL_SIG_HANDLE=true` they have no SIGTERM listener until then and, as PID 1 in a container, ignore the signal until the platform's SIGKILL.
 Next.js 16.4.6 documents the variable only for the Pages Router, in its self-hosting guide's "Manual Graceful Shutdowns", while Studio uses the App Router.
@@ -302,11 +304,11 @@ It does not see a request that reached the server before `register()` subscribed
 The drain learns the servers and the requests in flight from node:diagnostics_channel's `http.server.request.start` channel ([`src/lib/shutdown-drain.ts`](../src/lib/shutdown-drain.ts)), which Node.js 24 and 26 document as Stability 1 Experimental.
 [`tests/unit/lib/shutdown-drain-runtimes.test.ts`](../tests/unit/lib/shutdown-drain-runtimes.test.ts) holds the channel on Node 24 and on the images' Node release in the required CI job, so a Node release that changes it fails there by name.
 A release whose channel delivers another shape ends the process with 70 at its first request, naming the channel; a server whose start line shows `servers=0` after it has served requests has a channel that delivers nothing.
-npx and `bun start` run the server on the Node.js that runs them, any release from 24 on, so such a release reaches them before CI sees it.
+npx and `bun start` run the server on the Node.js that runs them, any release from 24 on, and Homebrew and the AUR package on the newest 24.x their package manager installs, so such a release reaches them before CI sees it.
 `NEXT_MANUAL_SIG_HANDLE=` there leaves the exit to Next.js's handler, and then nothing reads the channel.
 Bun publishes nothing on the channel, so there the drain would see no server and no request.
 `bun start` and `bunx @libredb/studio` on a host without Node.js, and `bun --bun run start` or `bunx --bun` anywhere, run the server on Bun, and with `NEXT_MANUAL_SIG_HANDLE=true` it refuses to start there.
-npx and `bun start` set nothing there, so Next.js's handler ends the server unless the operator sets the variable.
+npx and `bun start` set nothing there, so Next.js's handler ends the server; a value the operator sets is passed on, and the server refuses `true` at boot.
 A second SIGTERM or SIGINT during the shutdown starts nothing, does not cut it and does not change its exit code; npx delivers every Ctrl+C twice, once from the terminal and once from the launcher.
 In a source checkout, `bun dev` and `bun start` deliver it twice too, since `scripts/next-with-seed-assets.mjs` forwards SIGINT and SIGTERM to the Next.js CLI, which the terminal's Ctrl+C has already reached.
 On Windows neither forward is a second signal: Node.js ends the process it forwards to at once (child_process `subprocess.kill()` on Windows), so a Ctrl+C under npx, `bun dev` or `bun start` cuts the shutdown part way.
@@ -349,7 +351,7 @@ What each platform waits for before it kills the process, against the 25 s Studi
 | Render (`render.yaml`) | 30 s, the default `maxShutdownDelaySeconds` |
 | systemd (.deb, .rpm, AUR) | The default `TimeoutStopSec`: 90 s on Ubuntu and Arch Linux, 45 s on Fedora 45 |
 | Snap | 30 s, snapd's default stop timeout |
-| Homebrew service | 30 s: `stop_timeout 30`, which `brew services` writes as launchd's `ExitTimeOut` and systemd's `TimeoutStopSec`; it needs Homebrew 6.0.13 or later |
+| Homebrew service | 30 s: `stop_timeout 30`, which `brew services` writes as launchd's `ExitTimeOut` and systemd's `TimeoutStopSec`; the formula needs Homebrew 6.0.13 or later, the first with `stop_timeout` |
 | Desktop app | 30 s |
 | npx, `bun start`, the Windows launcher | None: the launcher waits for the server |
 
@@ -957,9 +959,8 @@ The formula tracks the latest release (it is rendered and pushed to
 
 ```bash
 # One-time: Homebrew's untrusted-tap policy requires trusting third-party
-# taps. `brew trust` needs Homebrew 6+ - if it prints "Unknown command",
-# run `brew update` first (pre-6 Homebrew installs the tap without a trust
-# step, but the command below would stop the chain).
+# taps. The formula needs Homebrew 6.0.13 or later, which also has
+# `brew trust`: if `brew --version` is older, run `brew update` first.
 brew trust libredb/tap
 
 brew install libredb/tap/libredb-studio
@@ -1259,6 +1260,7 @@ The launcher mirrors the Linux packages' contract:
 - **Configuration:** environment variables only — the same set as Docker and the Linux packages
   (`PORT`, `LIBREDB_BIND`, `JWT_SECRET`, `ADMIN_PASSWORD`, `LLM_*`, `OIDC_*`, `STORAGE_*`, ...).
   See [Configuration](#configuration) above and [`.env.example`](../.env.example).
+  cmd.exe and Windows PowerShell remove a variable set to the empty string, so `NEXT_MANUAL_SIG_HANDLE=` reaches the launcher only from a parent that keeps an empty variable, such as PowerShell 7.5 or later ([Stopping the server](#stopping-the-server)).
 
 ### Portable zip (no package manager)
 
