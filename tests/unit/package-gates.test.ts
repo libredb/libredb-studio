@@ -10,7 +10,7 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, statSync } from "node:fs";
 import path from "node:path";
 import { plantedRoot, removePlantedRoot, runTool } from "../helpers/planted-package";
 
@@ -51,7 +51,11 @@ describe("the gates see a workspace package", () => {
       isolatedStore: existsSync(path.join(made, "node_modules/.bun")),
       hoistedLink: existsSync(link) && lstatSync(link).isSymbolicLink(),
     }).toEqual({ isolatedStore: false, hoistedLink: true });
-    expect(realpathSync(link)).toBe(realpathSync(path.join(made, "packages/planted")));
+    // The same directory by identity, not by spelling: a temporary directory on Windows can be
+    // spelled with an 8.3 short name that realpath keeps on one path and expands through a link.
+    const linked = statSync(link, { bigint: true });
+    const planted = statSync(path.join(made, "packages/planted"), { bigint: true });
+    expect({ dev: linked.dev, ino: linked.ino }).toEqual({ dev: planted.dev, ino: planted.ino });
   }, 30_000);
 
   test("Biome formats a workspace package's files", () => {
@@ -68,7 +72,7 @@ describe("the gates see a workspace package", () => {
     const run = runTool(made, "@biomejs/biome/bin/biome", ["format", "."]);
 
     expect(run.exitCode).toBe(1);
-    expect(run.output).toContain("packages/planted/src/fmt.ts");
+    expect(run.output).toContain(path.join("packages", "planted", "src", "fmt.ts"));
   }, 30_000);
 
   test("the type-aware ESLint block reports a floating promise in a workspace package", () => {
