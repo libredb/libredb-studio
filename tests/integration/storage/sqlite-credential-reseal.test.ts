@@ -20,7 +20,15 @@ import type { ServerStorageProvider } from "@/lib/storage/types";
 import { sealVersionOne } from "../../helpers/storage-envelope-v1";
 
 const NOW = new Date("2026-11-22T05:30:00.000Z");
-const SAVED = ["JWT_SECRET", "STORAGE_ENCRYPTION_KEY", "NODE_ENV"] as const;
+// The envelope settings are cleared too: each test decides the store's state, and a checkout's .env, which bun loads
+// in test runs, may set either.
+const SAVED = [
+  "JWT_SECRET",
+  "STORAGE_ENCRYPTION_KEY",
+  "NODE_ENV",
+  "STORAGE_ENCRYPTION_REQUIRE_V2",
+  "STORAGE_ENCRYPTION_RESEAL",
+] as const;
 
 describe("re-sealing a real SQLite store", () => {
   const saved: Record<string, string | undefined> = {};
@@ -33,6 +41,8 @@ describe("re-sealing a real SQLite store", () => {
     for (const key of SAVED) saved[key] = process.env[key];
     process.env.JWT_SECRET = randomBytes(32).toString("base64url");
     delete process.env.STORAGE_ENCRYPTION_KEY;
+    delete process.env.STORAGE_ENCRYPTION_REQUIRE_V2;
+    delete process.env.STORAGE_ENCRYPTION_RESEAL;
     resetStorageEncryptionKey();
     dir = mkdtempSync(join(tmpdir(), "libredb-sqlite-reseal-"));
     path = join(dir, "store.db");

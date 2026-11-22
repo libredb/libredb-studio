@@ -140,19 +140,29 @@ class CaptureProvider implements ServerStorageProvider {
 
 const snapshot: Record<string, string | undefined> = {};
 
+// The envelope settings are cleared too: these stores were written before the re-seal, and a checkout's .env, which
+// bun loads in test runs, may set either.
+const SAVED = [
+  "JWT_SECRET",
+  "STORAGE_ENCRYPTION_KEY",
+  "STORAGE_ENCRYPTION_REQUIRE_V2",
+  "STORAGE_ENCRYPTION_RESEAL",
+] as const;
+
 beforeEach(() => {
-  snapshot.JWT_SECRET = process.env.JWT_SECRET;
-  snapshot.STORAGE_ENCRYPTION_KEY = process.env.STORAGE_ENCRYPTION_KEY;
+  for (const key of SAVED) snapshot[key] = process.env[key];
   process.env.JWT_SECRET = "credential-at-rest-test-jwt-secret-32";
   delete process.env.STORAGE_ENCRYPTION_KEY;
+  delete process.env.STORAGE_ENCRYPTION_REQUIRE_V2;
+  delete process.env.STORAGE_ENCRYPTION_RESEAL;
   resetStorageEncryptionKey();
 });
 
 afterEach(() => {
-  if (snapshot.JWT_SECRET === undefined) delete process.env.JWT_SECRET;
-  else process.env.JWT_SECRET = snapshot.JWT_SECRET;
-  if (snapshot.STORAGE_ENCRYPTION_KEY === undefined) delete process.env.STORAGE_ENCRYPTION_KEY;
-  else process.env.STORAGE_ENCRYPTION_KEY = snapshot.STORAGE_ENCRYPTION_KEY;
+  for (const key of SAVED) {
+    if (snapshot[key] === undefined) delete process.env[key];
+    else process.env[key] = snapshot[key];
+  }
   resetStorageEncryptionKey();
 });
 
