@@ -505,6 +505,10 @@ export function OperationsTab() {
   const noMaintenanceKnown = metadata !== null && !anyMaintenance && !drawsSessionsCard;
   const nothingOffered = noMaintenanceKnown && monitoringOffer?.tables === "not-offered";
   const derivedTablesOnly = noMaintenanceKnown && monitoringOffer?.tables === "offered" && !rowsAreAddressable;
+  // A failed provider-meta read (`metadata` is then null) withholds every maintenance control, so the page names that
+  // failure; what the engine's row says it does not offer still holds, because the row is read by type id.
+  const capabilitiesFailed = metadataError !== null;
+  const noPanelsOffered = !drawsSessionsCard && monitoringOffer?.tables === "not-offered";
 
   // The per-row controls, in the provider's own words: the tab's own candidates, then every declared operation outside
   // `MaintenanceType` that runs on one row, in declaration order and under a generic icon (spec 3.11).
@@ -990,6 +994,21 @@ export function OperationsTab() {
       {nothingOffered && (
         <p className="text-sm text-fg-muted" data-testid="operations-nothing-offered">
           This engine offers no maintenance, no session list and no table statistics in LibreDB Studio.
+        </p>
+      )}
+
+      {capabilitiesFailed && (
+        <div className="text-sm text-fg-muted" data-testid="operations-capabilities-unavailable">
+          <p>Maintenance is withheld because this engine&apos;s capabilities could not be read.</p>
+          <p className="text-xs break-words" data-testid="operations-capabilities-unavailable-message">
+            {metadataError}
+          </p>
+        </div>
+      )}
+
+      {capabilitiesFailed && noPanelsOffered && (
+        <p className="text-sm text-fg-muted" data-testid="operations-no-panels-offered">
+          This engine offers no session list and no table statistics in LibreDB Studio.
         </p>
       )}
 

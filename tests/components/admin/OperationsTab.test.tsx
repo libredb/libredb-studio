@@ -3505,6 +3505,56 @@ describe("OperationsTab", () => {
     expect(view!.queryByTestId("operations-derived-tables-only")).toBeNull();
   });
 
+  test("draws the Tables card and no sentence for an engine that offers table statistics on addressable rows", async () => {
+    expect(ENGINE_FACETS.elasticsearch.monitoring.tables).toBe("offered");
+    expect(ENGINE_FACETS.elasticsearch.monitoring.activeSessions).toBe("not-offered");
+    mockConnectionsList = [connectionOfType("elasticsearch")];
+    mockActiveConnectionId = "c-facets";
+    mockMetadata = {
+      capabilities: { supportsMaintenance: false, maintenanceOperations: [], tablesAreDerivedGroupings: false },
+    };
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<OperationsTab />);
+    });
+    expect(view!.queryByText("Tables (1)")).not.toBeNull();
+    expect(view!.queryByTestId("operations-derived-tables-only")).toBeNull();
+    expect(view!.queryByTestId("operations-nothing-offered")).toBeNull();
+  });
+
+  test("names a failed capabilities read, and what the engine's row says it does not offer", async () => {
+    mockConnectionsList = [connectionOfType("kafka")];
+    mockActiveConnectionId = "c-facets";
+    mockMetadata = null;
+    mockMetadataError = "provider-meta refused";
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<OperationsTab />);
+    });
+    expect(view!.getByTestId("operations-capabilities-unavailable").textContent).toBe(
+      "Maintenance is withheld because this engine's capabilities could not be read.provider-meta refused",
+    );
+    expect(view!.getByTestId("operations-capabilities-unavailable-message").textContent).toBe("provider-meta refused");
+    expect(view!.getByTestId("operations-no-panels-offered").textContent).toBe(
+      "This engine offers no session list and no table statistics in LibreDB Studio.",
+    );
+    expect(view!.queryByTestId("operations-nothing-offered")).toBeNull();
+  });
+
+  test("names a failed capabilities read beside the panels an engine offers, and claims no absent panel", async () => {
+    mockConnectionsList = [connectionOfType("postgres")];
+    mockActiveConnectionId = "c-facets";
+    mockMetadata = null;
+    mockMetadataError = "provider-meta refused";
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<OperationsTab />);
+    });
+    expect(view!.getByTestId("operations-capabilities-unavailable-message").textContent).toBe("provider-meta refused");
+    expect(view!.queryByTestId("operations-no-panels-offered")).toBeNull();
+    expect(view!.queryByText("Tables (1)")).not.toBeNull();
+  });
+
   test("draws no nothing-offered sentence where the engine offers maintenance", async () => {
     mockConnectionsList = [connectionOfType("kafka")];
     mockActiveConnectionId = "c-facets";
