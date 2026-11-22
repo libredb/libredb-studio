@@ -43,7 +43,7 @@ None of it is a GitHub issue.
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B173 · 84
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP27 · 24
-- [Governance follow-ups](#governance-follow-ups) — GOV1-GOV34 · 32
+- [Governance follow-ups](#governance-follow-ups) — GOV1-GOV35 · 33
 
 ---
 
@@ -10628,3 +10628,15 @@ The fix may be upstream in Next.js's dev server; that is recorded as an option, 
 Found 2026-11-21 when the dev server exited after a cancelled Query Safety dialog; measured the same day against a production build.
 
 **Done when:** an aborted first request to a route that is still compiling no longer ends the dev server, no change hides an uncaught exception in a production build, and a test or a recorded measurement shows both.
+
+### GOV35. Under npx, `bun start` and `bun dev` on Windows, a Ctrl+C ends the server part way through its shutdown
+
+`startServer` in `bin/studio.js` and the signal forward in `scripts/next-with-seed-assets.mjs` pass SIGINT on to the server with `child.kill(signal)`.
+On Windows Node.js ends the process it forwards to at once (child_process `subprocess.kill()`), while the console has already delivered the same Ctrl+C to the server.
+So the server's own shutdown, the request drain and the query event insert among it, is cut part way, and under npx on Node.js, where Studio's handler now owns the exit, that cut is new in effect (`docs/DISTRIBUTION.md`, "Stopping the server").
+The Windows launcher, `libredb-studio.exe`, forwards nothing and waits for the server, so it does not reach this.
+The "Repeated signals" bullet of the docblock in `src/lib/shutdown-handler.ts` still says that npx delivers every Ctrl+C twice and that on Windows only the `scripts/next-with-seed-assets.mjs` forward ends the Next.js CLI at once.
+
+Found 2026-11-22 while reviewing the change that starts the server with `NEXT_MANUAL_SIG_HANDLE=true` from every launcher on Node.js.
+
+**Done when:** on Windows neither launcher forwards SIGINT, both wait for the server and exit with its code, a Windows test shows the server's own shutdown completing, and the npx sentence in the "Repeated signals" bullet of the `src/lib/shutdown-handler.ts` docblock says what the launchers then do.
