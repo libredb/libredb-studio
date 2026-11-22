@@ -67,15 +67,31 @@ export function removePlantedRoot(root: string): void {
   rmSync(root, { recursive: true, force: true });
 }
 
+export interface ToolRunOptions {
+  /** How long the tool may run, in milliseconds, before the run fails naming it. */
+  readonly timeoutMs: number;
+}
+
 /**
  * Runs a tool's JavaScript entry (a path under node_modules) under node in the root, and
  * returns its exit code, its stdout, and its stdout and stderr together.
+ *
+ * The run is bounded by `timeoutMs`: a blocking spawn cannot be pre-empted by bun's own
+ * per-test timeout, so without a bound a tool that hangs would hang the test file. A run
+ * that outlives the bound is killed and throws, naming the entry and the bound, with the
+ * spawn error as its cause; any other spawn error is thrown as it is.
  */
-export function runTool(root: string, entry: string, args: readonly string[]): ToolRun {
+export function runTool(root: string, entry: string, args: readonly string[], options: ToolRunOptions): ToolRun {
   const result = spawnSync("node", [path.join(root, "node_modules", entry), ...args], {
     cwd: root,
     encoding: "utf8",
+    timeout: options.timeoutMs,
   });
-  if (result.error) throw result.error;
+  if (result.error) {
+    if ((result.error as NodeJS.ErrnoException).code === "ETIMEDOUT") {
+      throw new Error(`${entry} did not finish within ${options.timeoutMs} ms`, { cause: result.error });
+    }
+    throw result.error;
+  }
   return { exitCode: result.status, stdout: result.stdout, output: `${result.stdout}${result.stderr}` };
 }

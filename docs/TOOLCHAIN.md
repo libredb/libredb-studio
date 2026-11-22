@@ -276,6 +276,14 @@ reason its own docblock gives: a finding is printed as a file and a line for an 
 rule id. Its scope is `tests/` and `e2e/`, enumerated with `git ls-files` rather than a glob, so an untracked
 draft cannot red a check that CI, which checks out tracked files only, cannot reproduce (#980).
 
+### Golden files
+
+`UPDATE_GOLDEN=1` makes a golden test write its files from the current tree, and the test then throws, so a rewrite is never a silent pass and a CI run with the variable set fails.
+No file under `.github/` and no root `package.json` script sets the variable.
+`tests/unit/golden-update-guard.test.ts` holds both: it parses every tracked code file that names `UPDATE_GOLDEN` and accepts a read only in the condition of an `if`, directly or through a `const` alias used only in `if` conditions, whose then-branch always ends in a `throw` and holds no `return`, `break` or `continue`.
+It names by file and line a read anywhere else, a branch that does not end in a throw or can leave before it, a destructured variable and one set for a child process.
+A dynamic name such as `process.env[name]` is out of a static guard's reach, and so is a throw a surrounding `try` catches and drops; the scan of `.github/` and the package scripts is the second line for both.
+
 ### `bun run test` and the process-wide `mock.module()`, and where isolation has to sit
 
 `mock.module()` is process-wide with no undo, so a mock one layer installs reaches every file that
@@ -641,6 +649,7 @@ The builder asserts that `.next/standalone/packages` does not exist, and `script
 
 - Format: `biome.json` `files.includes` has `packages/**`; without it Biome skips a misformatted package file and reports nothing.
 - Lint: oxlint and ESLint lint the whole tree; the type-aware block (Phase 3) covers `packages/*/src/**/*.ts`, the sources only, as its `src/` scopes are; package tests get the untyped rules root tests get.
+  A provider package's source also gets the coupling rules below.
 - knip: it reads the root `package.json` `workspaces` and analyses each package with its defaults, so `knip.json` names no `packages/*` workspace; one there before any package exists only adds a "Remove from knip.json" hint.
 - Tests: the runner (`tests/runner/discover.ts`) collects `packages/<name>/tests/` beside `tests/`, excluding `live/` in each, and accepts a selector under either; the focused-test guard reads the tracked files under `packages/<name>/tests/`.
 - Coverage: `scripts/merge-lcov.mjs` keeps `packages/<name>/src/` records, so an uncovered package line fails the 100% gate; before, the merge dropped every record outside `src/`.
@@ -657,6 +666,34 @@ Tests resolve source: `tests/unit/source-plane.test.ts` holds every package's en
 
 `tests/unit/package-gates.test.ts` proves the install, Biome, ESLint and knip rows on a throwaway root that carries the repository's own configuration file and one planted violation, so a tool upgrade that changes one of these behaviours fails a named test.
 The other rows are held by the tests of the script that implements them.
+
+### Provider source coupling lint
+
+A block in `eslint.config.mjs` covers `packages/provider-*/src/**`, every JavaScript and TypeScript extension, except `packages/provider-kit/**`.
+The kit is outside because it is the tool that checks providers: its CLI reads its own environment, working directory and console by design, and the half of it that runs inside Studio is host code.
+The SDK, `packages/provider-sdk`, is inside, because it is loaded into Studio's process with every provider.
+A new `provider-*` package is covered by default, and excluding one is a change to that block, reviewed with its own reason.
+
+Every rule is an error, so `bun run lint` fails on a violation, and each message names this section:
+
+- `no-restricted-properties` refuses `process.env` and `process.cwd`, in member, computed, destructured and default-parameter form.
+- `no-restricted-globals` refuses `globalThis`, `global` and `console`.
+- `no-restricted-imports` refuses `process`, `node:process`, `console` and `node:console`, which are the same objects under another name.
+
+There is no exception list, and the block sets `linterOptions.noInlineConfig`, because a per-line exception is an exception list too: an `eslint-disable` comment there gets a warning that it has no effect, and the error stands.
+Every value reference to `globalThis` and `global` is refused, not only an assignment to one of their properties.
+The one provider that writes process-global state today, `processLanes` in the modbus agent pacing, writes through an alias (`const holder = globalThis as LanesHolder;` then `holder[LANES_KEY] ??= new Map();`), which a rule on the left-hand side of an assignment cannot see.
+A type-only `typeof globalThis` is not a value reference and is not reported.
+`console` goes through `no-restricted-globals` rather than core `no-console`, which reports `console.warn(...)` but not `const { warn } = console`, `const c = console; c.log(...)` or `globalThis.console.log(...)` (measured on ESLint 10.14.0).
+
+It is a lint-time coupling check, not a security control.
+It cannot see a driver under `node_modules` reading a proxy variable, `const p = process; p.env`, a `require` with a computed name, `createRequire(import.meta.url)("process")`, a dynamic `import("node:process")` or `Function("return this")()`; the kit's run under a poisoned environment is the run-time check.
+
+The cost falls on the provider moves.
+Spark's heartbeat takes `= globalThis` as the default for its timers, which becomes an error in a package, so its move passes `{ setInterval, clearInterval }` instead.
+The providers' `eslint-disable-next-line` comments stop suppressing their warnings once the provider is in a package, so the move types the value or accepts the warning.
+
+`tests/unit/provider-source-coupling-lint.test.ts` proves each rule on a throwaway root that carries the repository's `eslint.config.mjs`, with planted lines copied from today's providers and named by file and enclosing symbol, the scope boundaries above, and a probe in every provider package the repository has.
 
 ## VS Code extension (vscode-extension/)
 

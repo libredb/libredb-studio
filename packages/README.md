@@ -58,6 +58,7 @@ Every gate that finds its files by a `src/` or `tests/` path also reads a packag
 - SonarCloud (`sonar-project.properties`) reads a package's `src/` as source and its `tests/` as tests.
 - Biome (`biome.json` `files.includes`) formats `packages/**`.
 - oxlint and ESLint lint the whole tree, and the type-aware ESLint block also covers `packages/*/src/**/*.ts`.
+- ESLint refuses `process.env`, `process.cwd()`, `globalThis`, `global` and `console` in `packages/provider-*/src/` (the kit excepted), with no inline disable (`docs/TOOLCHAIN.md`, "Provider source coupling lint").
 - knip analyses each package as a workspace, through the root `package.json` `workspaces`.
 - The root `tsc` checks every `.ts` file under the root, packages included.
 - The packed library check (`bun run lib:load`) fails on a dist or a packed manifest that names a package, and on a package dependency the root does not declare.
