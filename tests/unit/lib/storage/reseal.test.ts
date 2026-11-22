@@ -12,7 +12,7 @@ import {
   STORAGE_ENCRYPTION_KEY_MISSING_MESSAGE,
 } from "@/lib/storage/encryption";
 import { accountBinding, connectionBinding } from "@/lib/storage/envelope-binding";
-import { ResealRefused, resealBackupLabel, resealStore } from "@/lib/storage/reseal";
+import { ResealRefused, ResealRowUnwritable, resealBackupLabel, resealStore } from "@/lib/storage/reseal";
 import type { StoredAccount } from "@/lib/storage/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { MemoryStorageProvider } from "../../../helpers/memory-storage-provider";
@@ -295,6 +295,37 @@ describe("resealStore", () => {
     expect(report).toMatchObject({ kind: "rewritten", resealed: 1, unread: ["alice connections[0]"] });
     expect(store.row("alice", "connections")).toBe(row);
     expect(store.marker).toBe("v2");
+  });
+
+  test("a row it must write back beside an element too deep to serialize fails the run, naming the owner and the element, and leaves the store as it was", async () => {
+    const store = new MemoryStorageProvider();
+    const depth = 200_000;
+    const deep = JSON.stringify(connection("c1", { host: "HOST" })).replace(
+      '"HOST"',
+      `${"[".repeat(depth)}"c1.internal"${"]".repeat(depth)}`,
+    );
+    const row = `[${deep},${JSON.stringify(connection("c2", { password: randomUUID() }))}]`;
+    // The precondition: this runtime's serializer cannot write the element back.
+    expect(() => JSON.stringify(JSON.parse(row))).toThrow(RangeError);
+    store.putRow("alice", "connections", row);
+    store.putRow("bob", "connections", JSON.stringify([connection("c3", { password: sealVersionOne(randomUUID()) })]));
+    const rows = new Map(store.rows);
+
+    let failure: unknown;
+    try {
+      await resealStore(store, NOW);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(ResealRowUnwritable);
+    expect(failure).toMatchObject({ name: "ResealRowUnwritable", owner: "alice", elements: [0] });
+    expect((failure as Error).message).toContain("the connections row of alice");
+    expect((failure as Error).message).toContain("connections[0]");
+    expect((failure as Error).message).toContain("remove or repair that element and start again");
+    expect((failure as Error).cause).toBeInstanceOf(RangeError);
+    expect(store.rows).toEqual(rows);
+    expect(store.marker).toBeUndefined();
   });
 
   test("leave-unopened retires version 1 over the version 1 values it left and names them, and the documented recovery reopens them", async () => {

@@ -272,6 +272,27 @@ describe("re-sealing a real SQLite store", () => {
     expect(dump().marker).toEqual([{ value: "v2" }]);
   });
 
+  test("a row it must write back beside an element too deep to serialize fails the run by name and leaves the store as it was", async () => {
+    await previousVersionStore();
+    const depth = 200_000;
+    const deep = `{"id":"c0","name":"c0","type":"postgres","host":${"[".repeat(depth)}"a.internal"${"]".repeat(depth)}}`;
+    raw((db) => {
+      const row = db
+        .prepare("SELECT data FROM user_storage WHERE user_id = 'alice' AND collection = 'connections'")
+        .get() as { data: string };
+      db.prepare("UPDATE user_storage SET data = ? WHERE user_id = 'alice' AND collection = 'connections'").run(
+        `[${deep},${row.data.slice(1)}`,
+      );
+    });
+    const before = dump();
+    const store = await provider();
+
+    await expect(resealStore(store, NOW)).rejects.toThrow(
+      "The re-seal cannot write the connections row of alice back: connections[0] nest too deep to serialize",
+    );
+    expect(dump()).toEqual(before);
+  });
+
   test("a value that does not open is left as it is and named", async () => {
     await previousVersionStore();
     const foreign = `v2:${randomBytes(12).toString("base64url")}:${randomBytes(32).toString("base64url")}`;

@@ -19,8 +19,9 @@ import type { DatabaseConnection } from "@/lib/types";
  * by retirement, so they are always left as they are and named. A value that is not text, or a
  * version 1 or unsealed value beside a v2 value of its record, is left as it is and named
  * (./connection-secrets.ts). A row whose data is not a JSON list, a list element that is not an
- * object, and a connection that has no binding are left as they are and named. Once the provider
- * commits, the store records that version 1 is retired.
+ * object, and a connection that has no binding are left as they are and named; a row that must be
+ * written back beside such an element and that the serializer cannot write fails the run by name
+ * (`ResealRowUnwritable`). Once the provider commits, the store records that version 1 is retired.
  *
  * The key is derived before anything is read: without usable key material every value would read
  * as unopenable and be retired unopened, so the run throws by name instead.
@@ -84,9 +85,40 @@ export class ResealRefused extends Error {
   }
 }
 
+/**
+ * The re-seal could not write a connections row back: its rewritten list holds elements this runtime's serializer
+ * cannot write (they nest too deep, so the re-seal left them unread beside an element it re-sealed). It threw inside the
+ * provider's transaction, so the store is as it was. `elements` are their indexes in the row, and `cause` is the
+ * serializer's error.
+ */
+export class ResealRowUnwritable extends Error {
+  constructor(
+    readonly owner: string,
+    readonly elements: number[],
+    cause: unknown,
+  ) {
+    const names = elements.map((index) => `connections[${index}]`).join(", ");
+    super(
+      `The re-seal cannot write the connections row of ${owner} back: ${names} nest too deep to serialize, and the re-seal left them unread beside an element it re-sealed. The re-seal rolled back and version 1 is not retired: remove or repair that element and start again.`,
+      { cause },
+    );
+    this.name = "ResealRowUnwritable";
+  }
+}
+
 export interface ResealOptions {
   /** Retire version 1 over version 1 values the key in use does not open, leaving and naming them, instead of refusing. */
   leaveUnopened: boolean;
+}
+
+/** Whether this runtime's serializer writes `value`; a value nested deeper than it goes throws a RangeError. */
+function serializes(value: unknown): boolean {
+  try {
+    JSON.stringify(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Re-seals every stored credential of `provider` after a complete backup, and retires version 1. */
@@ -130,7 +162,14 @@ export async function resealStore(
       if (result.resealed > 0) changed = true;
       return result.connections[0];
     });
-    return changed ? JSON.stringify(next) : null;
+    if (!changed) return null;
+    try {
+      return JSON.stringify(next);
+    } catch (error) {
+      // Each element is tried at the depth it has inside the list.
+      const unwritable = next.flatMap((element, index) => (serializes([element]) ? [] : [index]));
+      throw new ResealRowUnwritable(owner, unwritable, error);
+    }
   };
 
   const factors = (row: StoredFactorRow): Pick<StoredFactorRow, "totpSecret" | "totpPending"> | null => {
