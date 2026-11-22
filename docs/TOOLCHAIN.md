@@ -93,7 +93,7 @@ Scripts:
 ```
 
 As implemented, scope is not passed on the command line: `biome.json`'s `files.includes`
-(`src/**`, `tests/**`, `e2e/**`, `scripts/**`, `bin/**`, `*.ts`, `*.mts`, `*.mjs`) does the filtering, so the
+(`src/**`, `tests/**`, `packages/**`, `e2e/**`, `scripts/**`, `bin/**`, `*.ts`, `*.mts`, `*.mjs`) does the filtering, so the
 scripts can stay a plain `biome format .` / `biome format --write .`.
 
 Notes:
@@ -164,6 +164,7 @@ enabling `@typescript-eslint/no-floating-promises`, `no-misused-promises`, `awai
 immediately caught five genuine fire-and-forget bugs (async functions invoked in setInterval/setTimeout/process
 signal handlers without handling the promise, in `factory.ts`, `mysql.ts`, `postgres.ts`), fixed with the
 `void` operator. Scoping keeps lint fast; eslint-config-next still owns everything else.
+The block also covers a workspace package's source, `packages/*/src/**/*.ts` ("Workspace packages (`packages/`)" below).
 
 Rejected for Studio: the database-style reduction of ESLint to type-aware-only with React/Next rules moved
 to oxlint. For a shipping Next app the risk of losing `eslint-config-next`'s curated coverage outweighs the
@@ -545,7 +546,8 @@ seconds, and the merged report is 100% of 57157 lines. Two mechanics of that mer
 Windows: the report list is handed over as a manifest (`--inputs-from=<file>`) because 500-odd paths
 do not fit in a Windows command line, and `merge-lcov.mjs` normalises a backslash `SF:` path, so
 coverage produced on Windows merges as the same file as coverage produced on Linux instead of as a
-second file the `src/` filter then drops.
+second file the source filter then drops.
+The source filter keeps `src/` (minus `src/components/ui/`) and each workspace package's `packages/<name>/src/` ("Workspace packages (`packages/`)" below).
 
 Holding 100% honestly requires knowing how bun measures:
 
@@ -583,6 +585,42 @@ Holding 100% honestly requires knowing how bun measures:
 `src/exports/index.js` (one-line CJS shim) is the single `sonar.coverage.exclusions` entry — it is
 smoke-tested functionally in `tests/isolated/exports-shim.test.ts`.
 
+## Workspace packages (`packages/`)
+
+The root `package.json` declares `"workspaces": ["packages/*"]`, and [`packages/README.md`](../packages/README.md) states the layout: a package is `packages/<name>/` with a `package.json`, its source under `src/` and its tests under `tests/`.
+`scripts/workspace-packages.mjs` lists the packages for every gate that needs the list, and refuses by name a directory under `packages/` without a `package.json` and a link there.
+No package exists yet; the gates were widened first, so the first package cannot fall silently out of any of them.
+
+### The linker
+
+`bunfig.toml` sets `[install] linker = "hoisted"`.
+Measured on bun 1.4.4 (2026-11-22): declaring the workspaces with no package, or with only `packages/README.md`, leaves `bun install --frozen-lockfile`, `bun.lock` and the whole `node_modules` layout byte for byte as they were.
+One package with no dependencies switches bun to its isolated linker: the top level drops from 933 entries to 85 and every package moves under `node_modules/.bun`.
+With the hoisted linker the layout is the same as without packages, plus a link `node_modules/@libredb/<name>` to the package, and `bun.lock` is identical to the isolated one, because the linker is not recorded in it.
+The VS Code extension's `npm ci --ignore-scripts` is unaffected: its `npm prefix` stays `vscode-extension/` and its `node_modules` is unchanged.
+
+### The images
+
+The three Dockerfiles install from a partial file set, where two omissions change the install without failing it (measured 2026-11-22): without `bunfig.toml` the image installs with the isolated linker, and with a `bun.lock` naming a package whose `package.json` is absent, `bun install --frozen-lockfile` exits 0 and does not link the package.
+So the deps stage copies `package.json bun.lock bunfig.toml`, then `patches/`, then one `COPY packages/<name>/package.json ./packages/<name>/` line per package, which `tests/unit/docker-workspace-install.test.ts` holds to the package list.
+The builder asserts that `.next/standalone/packages` does not exist, and `scripts/lib/prune-standalone-payload.sh` removes `packages/` from every standalone payload.
+
+### How each gate covers a package
+
+- Format: `biome.json` `files.includes` has `packages/**`; without it Biome skips a misformatted package file and reports nothing.
+- Lint: oxlint and ESLint lint the whole tree; the type-aware block (Phase 3) covers `packages/*/src/**/*.ts`, the sources only, as its `src/` scopes are; package tests get the untyped rules root tests get.
+- knip: it reads the root `package.json` `workspaces` and analyses each package with its defaults, so `knip.json` names no `packages/*` workspace; one there before any package exists only adds a "Remove from knip.json" hint.
+- Tests: the runner (`tests/runner/discover.ts`) collects `packages/<name>/tests/` beside `tests/`, excluding `live/` in each, and accepts a selector under either; the focused-test guard reads the tracked files under `packages/<name>/tests/`.
+- Coverage: `scripts/merge-lcov.mjs` keeps `packages/<name>/src/` records, so an uncovered package line fails the 100% gate; before, the merge dropped every record outside `src/`.
+  `bun run coverage:check` passes `--packages-from=.`, which fails naming any package that has a `src/` directory and no record in the report, since a package no test loads has no record and so no gap to report.
+  The check sits in the gate rather than in the merge, because the merge also serves partial runs, where a package the selection never loads rightly contributes nothing, and the VS Code extension's gate calls the same script without the option.
+- SonarCloud: `sonar.sources` and `sonar.tests` both name `packages`, kept apart by patterns: package tests are `sonar.test.inclusions` and `sonar.exclusions`, and out of duplication detection.
+- The VS Code extension: the host bundle refuses any `packages/` input, and the webview bundles a package file only when a sql-grammar row reaches it, as it does a file under `src/lib/db/providers/`.
+- The standalone payload: pruned, as above.
+
+`tests/unit/package-gates.test.ts` proves the install, Biome, ESLint and knip rows on a throwaway root that carries the repository's own configuration file and one planted violation, so a tool upgrade that changes one of these behaviours fails a named test.
+The other rows are held by the tests of the script that implements them.
+
 ## VS Code extension (vscode-extension/)
 
 `vscode-extension/` is a second package beside the Bun root, with its own toolchain and its own CI job.
@@ -609,7 +647,7 @@ React and `@testing-library/react` resolve from the root's install.
 ### The extension's own 100% gate
 
 c8 measures the unit leg only (`.c8rc.json`: `all: true` over `src/**`), and the root's `scripts/check-coverage.mjs` holds `coverage/lcov.info` to 100% lines: `npm run test:unit && npm run coverage:check`.
-The root gate, Sonar and Codecov never see these lines, because `scripts/merge-lcov.mjs` keeps the root's `src/` records only.
+The root gate, Sonar and Codecov never see these lines, because `scripts/merge-lcov.mjs` keeps only the root's `src/` records and its workspace packages' `packages/<name>/src/` records.
 The gate is line-granular: a callback written on the line that registers it counts as covered once the registration runs, so its test alone holds it.
 A callback whose behaviour the gate must hold keeps its body on its own line, as `startBackend` in `src/backend/start.ts` does for its `disconnect` listener; without the case that closes the channel, the gate names that line.
 
