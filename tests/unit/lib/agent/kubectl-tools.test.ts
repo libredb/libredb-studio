@@ -22,6 +22,7 @@ import { createTargetScope } from "@/lib/db/operations/policy";
 import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes";
 import { AGENT_PAGING_SENTENCE } from "@/lib/db/providers/platform/kubernetes/console/paging";
 import { CLUSTER_USAGE_FIELDS, WORKLOAD_PROFILE_FIELDS } from "@/lib/db/providers/platform/kubernetes/agent-readings";
+import { measureRowBytes, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import type {
   ClusterUsageReading,
@@ -295,11 +296,12 @@ describe("inspect_usage", () => {
     result: { rows: [USAGE_ROW], fields: [...CLUSTER_USAGE_FIELDS], rowCount: 1, executionTime: 3 },
   };
 
-  function usageHarness(answer: () => Promise<ClusterUsageReading>) {
+  function usageHarness(answer: () => Promise<ClusterUsageReading>, overrides: Partial<AgentToolContext> = {}) {
     const readClusterUsage = mock(answer);
     const h = harness({
       workflowType: "query-optimization",
       acquireProvider: mock(async () => ({ readClusterUsage }) as unknown as DatabaseProvider),
+      ...overrides,
     });
     return { ...h, readClusterUsage };
   }
@@ -352,7 +354,7 @@ describe("inspect_usage", () => {
     expect(outcome.modelText).not.toContain("smaller limit");
   });
 
-  test("rows past the byte budget are READING_OVER_BUDGET with a byte sentence, never the generic limit advice", async () => {
+  test("rows past the byte budget are READING_OVER_BUDGET with advice naming the budget and not the part measured before the refusal", async () => {
     const wide = { ...USAGE_ROW, ownerName: "w".repeat(4_000) };
     const maxResultBytes = AGENT_WORKFLOW_BUDGETS["query-optimization"].policy.budgets.maxResultBytes;
     // Few enough rows to sit under the 500-row ceiling, wide enough to pass the byte budget.
@@ -367,9 +369,74 @@ describe("inspect_usage", () => {
 
     if (outcome.kind !== "refused") throw new Error(`expected a refusal, got ${outcome.kind}`);
     expect(outcome.refusal).toMatchObject({ class: "reading-refused", reasonCode: "READING_OVER_BUDGET" });
-    expect(outcome.modelText).toContain(`${maxResultBytes} bytes`);
-    expect(outcome.modelText).toContain("selector");
-    expect(outcome.modelText).not.toContain("smaller limit");
+    expect(outcome.modelText).toBe(
+      `That reading holds more than the ${maxResultBytes} bytes this run may carry, so none of it was kept. Ask again narrowed by a label selector, or for a smaller namespace.`,
+    );
+  });
+
+  test("rows a provider answered past the 500-row ceiling are refused with the ceiling's advice, and none reaches the model", async () => {
+    const rows = Array.from({ length: 501 }, (_, index) => ({ ...USAGE_ROW, pod: `marker-${index}` }));
+    const h = usageHarness(async () => ({
+      kind: "rows",
+      result: { rows, fields: [...CLUSTER_USAGE_FIELDS], rowCount: rows.length, executionTime: 3 },
+    }));
+
+    const outcome = await inspectUsageTool(h.context, { namespace: "shop" });
+
+    if (outcome.kind !== "refused") throw new Error(`expected a refusal, got ${outcome.kind}`);
+    expect(outcome.refusal).toMatchObject({ class: "reading-refused", reasonCode: "READING_OVER_BUDGET" });
+    expect(outcome.modelText).toContain("500 rows");
+    expect(outcome.modelText).not.toContain("marker-");
+  });
+
+  test("a reading of more rows than the run's row budget and within its 500-row ceiling is served whole", async () => {
+    const maxResultRows = AGENT_WORKFLOW_BUDGETS["query-optimization"].policy.budgets.maxResultRows;
+    const rows = Array.from({ length: maxResultRows + 100 }, (_, index) => ({ ...USAGE_ROW, pod: `web-${index}` }));
+    const h = usageHarness(async () => ({
+      kind: "rows",
+      result: { rows, fields: [...CLUSTER_USAGE_FIELDS], rowCount: rows.length, executionTime: 3 },
+    }));
+
+    const outcome = await inspectUsageTool(h.context, { namespace: "shop" });
+
+    expect(outcome).toMatchObject({ kind: "completed", artifact: { summary: { rowCount: maxResultRows + 100 } } });
+  });
+
+  test("the byte budget is the served rows' UTF-8 JSON summed per row, so the array's brackets and commas are not counted", async () => {
+    const maxResultBytes = AGENT_WORKFLOW_BUDGETS["query-optimization"].policy.budgets.maxResultBytes;
+    const padding = maxResultBytes / 2 - measureRowBytes({ ...USAGE_ROW, ownerName: "" });
+    const row = { ...USAGE_ROW, ownerName: "w".repeat(padding) };
+    expect(measureRowBytes(row) * 2).toBe(maxResultBytes);
+    const h = usageHarness(async () => ({
+      kind: "rows",
+      result: { rows: [row, row], fields: [...CLUSTER_USAGE_FIELDS], rowCount: 2, executionTime: 3 },
+    }));
+
+    const outcome = await inspectUsageTool(h.context, { namespace: "shop" });
+
+    expect(outcome).toMatchObject({ kind: "completed", artifact: { summary: { rowCount: 2 } } });
+  });
+
+  test("a reading that does not answer within the statement timeout is refused in the time sentence, and counted until its provider call settles", async () => {
+    let settle: () => void = () => {};
+    const late = new Promise<ClusterUsageReading>((resolve) => {
+      settle = () => resolve(ROWS);
+    });
+    // 300 ms left on the run clamps the statement timeout to 300 ms.
+    const h = usageHarness(() => late, { deadline: new AgentRunDeadline(300, frozenClock) });
+
+    const outcome = await inspectUsageTool(h.context, { namespace: "shop" });
+
+    if (outcome.kind !== "refused") throw new Error(`expected a refusal, got ${outcome.kind}`);
+    expect(outcome.refusal).toMatchObject({
+      class: "database-error",
+      message: `${TIME_BUDGET_PREFIX}: no answer within 300ms`,
+    });
+    expect(h.context.tracker.usage(h.context.runId).activeExecutions).toBe(1);
+    settle();
+    await late;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(h.context.tracker.usage(h.context.runId).activeExecutions).toBe(0);
   });
 
   test("a provider without readClusterUsage is KIND_UNSUPPORTED_BY_PROVIDER", async () => {
@@ -439,11 +506,12 @@ describe("profile_workloads", () => {
     result: { rows: [WORKLOAD_ROW], fields: [...WORKLOAD_PROFILE_FIELDS], rowCount: 1, executionTime: 3 },
   };
 
-  function profileHarness(answer: () => Promise<WorkloadProfileReading>) {
+  function profileHarness(answer: () => Promise<WorkloadProfileReading>, overrides: Partial<AgentToolContext> = {}) {
     const readWorkloadProfile = mock(answer);
     const h = harness({
       workflowType: "database-assessment",
       acquireProvider: mock(async () => ({ readWorkloadProfile }) as unknown as DatabaseProvider),
+      ...overrides,
     });
     return { ...h, readWorkloadProfile };
   }
@@ -494,7 +562,7 @@ describe("profile_workloads", () => {
     expect(h.context.tracker.usage(h.context.runId).executedStatements).toBe(1);
   });
 
-  test("rows past the byte budget are READING_OVER_BUDGET with a byte sentence", async () => {
+  test("rows past the byte budget are READING_OVER_BUDGET with advice naming the budget and not the part measured before the refusal", async () => {
     const wide = { ...WORKLOAD_ROW, name: "w".repeat(4_000) };
     const maxResultBytes = AGENT_WORKFLOW_BUDGETS["database-assessment"].policy.budgets.maxResultBytes;
     const count = Math.ceil(maxResultBytes / JSON.stringify(wide).length) + 1;
@@ -513,9 +581,45 @@ describe("profile_workloads", () => {
 
     if (outcome.kind !== "refused") throw new Error(`expected a refusal, got ${outcome.kind}`);
     expect(outcome.refusal).toMatchObject({ class: "reading-refused", reasonCode: "READING_OVER_BUDGET" });
-    expect(outcome.modelText).toContain(`${maxResultBytes} bytes`);
-    expect(outcome.modelText).toContain("namespace");
-    expect(outcome.modelText).not.toContain("smaller limit");
+    expect(outcome.modelText).toBe(
+      `That profile holds more than the ${maxResultBytes} bytes this run may carry, so none of it was kept. Profile a smaller namespace, or read the workloads in question with run_read_query.`,
+    );
+  });
+
+  test("rows a provider answered past the 500-workload ceiling are refused with the ceiling's advice, and none reaches the model", async () => {
+    const rows = Array.from({ length: 501 }, (_, index) => ({ ...WORKLOAD_ROW, name: `marker-${index}` }));
+    const h = profileHarness(async () => ({
+      kind: "rows",
+      result: { rows, fields: [...WORKLOAD_PROFILE_FIELDS], rowCount: rows.length, executionTime: 3 },
+    }));
+
+    const outcome = await profileWorkloadsTool(h.context, { namespace: "shop" });
+
+    if (outcome.kind !== "refused") throw new Error(`expected a refusal, got ${outcome.kind}`);
+    expect(outcome.refusal).toMatchObject({ class: "reading-refused", reasonCode: "READING_OVER_BUDGET" });
+    expect(outcome.modelText).toContain("500 workloads");
+    expect(outcome.modelText).not.toContain("marker-");
+  });
+
+  test("a profile that does not answer within the statement timeout is refused in the time sentence, and counted until its provider call settles", async () => {
+    let settle: () => void = () => {};
+    const late = new Promise<WorkloadProfileReading>((resolve) => {
+      settle = () => resolve(ROWS);
+    });
+    const h = profileHarness(() => late, { deadline: new AgentRunDeadline(300, frozenClock) });
+
+    const outcome = await profileWorkloadsTool(h.context, { namespace: "shop" });
+
+    if (outcome.kind !== "refused") throw new Error(`expected a refusal, got ${outcome.kind}`);
+    expect(outcome.refusal).toMatchObject({
+      class: "database-error",
+      message: `${TIME_BUDGET_PREFIX}: no answer within 300ms`,
+    });
+    expect(h.context.tracker.usage(h.context.runId).activeExecutions).toBe(1);
+    settle();
+    await late;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(h.context.tracker.usage(h.context.runId).activeExecutions).toBe(0);
   });
 
   test("a provider without readWorkloadProfile is KIND_UNSUPPORTED_BY_PROVIDER", async () => {

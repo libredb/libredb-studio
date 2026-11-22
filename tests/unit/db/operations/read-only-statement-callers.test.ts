@@ -13,6 +13,10 @@ import ts from "typescript";
  * function is the one exception. Any read counts, not only a call: a read is how a call, a `.bind`, a `.call`, an
  * `.apply` or an alias begins.
  *
+ * The agent's other budgeted reads, the catalog read `readCatalogReadOnly` and the cluster readings `readClusterUsage`
+ * and `readWorkloadProfile`, are held the same way: each is read once outside provider code, in the one agent function
+ * that hands it to `runReadOnlyReading`, so a second caller cannot skip core's row, byte and time check either.
+ *
  * The same paths never fall back to the writable path: under the agent, hand-over and MCP sources the only call of a
  * method named `query` is the operations-profile statistics read, which sends a statement the statement guard has
  * admitted. There the rule counts calls, since other objects on those paths carry a plain `query` field.
@@ -32,6 +36,25 @@ const AGENT_AND_MCP_SOURCES = [
   join("src", "app", "api", "mcp"),
 ];
 const STATISTICS_READ = "readStatisticsForGrounding";
+const CORE_READING = "runReadOnlyReading";
+/** Each budgeted read that is not a statement, and the one function outside provider code that reads it. */
+const BUDGETED_READS = [
+  {
+    method: "readCatalogReadOnly",
+    file: join("src", "lib", "agent", "languages", "mongo", "tools.ts"),
+    caller: "mongoInspectSchemaTool",
+  },
+  {
+    method: "readClusterUsage",
+    file: join("src", "lib", "agent", "languages", "kubectl", "tools.ts"),
+    caller: "runClusterUsage",
+  },
+  {
+    method: "readWorkloadProfile",
+    file: join("src", "lib", "agent", "languages", "kubectl", "tools.ts"),
+    caller: "runWorkloadProfile",
+  },
+] as const;
 
 function sourceFiles(directory: string): string[] {
   const found: string[] = [];
@@ -196,6 +219,57 @@ function queryReadOnlyUses(file: string, text: string): Finding[] {
   return memberReads(file, text, "queryReadOnly").filter((finding) => !finding.typeofTest);
 }
 
+/** Whether `node` is a function: a declaration, an expression, an arrow or a method. */
+function isFunctionLike(node: ts.Node): boolean {
+  return (
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isMethodDeclaration(node)
+  );
+}
+
+/** Whether `node` contains a call of the function named `name`. */
+function callsFunction(node: ts.Node, name: string): boolean {
+  if (
+    ts.isCallExpression(node) &&
+    ts.isIdentifier(inner(node.expression)) &&
+    (inner(node.expression) as ts.Identifier).text === name
+  ) {
+    return true;
+  }
+  return ts.forEachChild(node, (child) => callsFunction(child, name) || undefined) === true;
+}
+
+interface BudgetedReadUse {
+  readonly file: string;
+  readonly declaration: string;
+  readonly functions: readonly string[];
+  /** Whether the innermost function around the read also calls `runReadOnlyReading`. */
+  readonly heldByCore: boolean;
+}
+
+/** The reads of a member called `name` that are more than a test of whether it exists. */
+function budgetedReadUses(file: string, text: string, name: string): BudgetedReadUse[] {
+  const source = parse(file, text);
+  const found: BudgetedReadUse[] = [];
+  const visit = (node: ts.Node) => {
+    if (readsMember(node, name) && !ts.isTypeOfExpression(outer(node))) {
+      let scope: ts.Node | undefined = node.parent;
+      while (scope !== undefined && !isFunctionLike(scope)) scope = scope.parent;
+      found.push({
+        file,
+        declaration: enclosingDeclaration(node),
+        functions: enclosingFunctions(node),
+        heldByCore: scope !== undefined && callsFunction(scope, CORE_READING),
+      });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
+}
+
 /** The calls of a method named `query`. */
 function queryCalls(file: string, text: string): Finding[] {
   return memberReads(file, text, "query").filter((finding) => finding.called);
@@ -238,10 +312,38 @@ describe("the protected read path", () => {
     expect(outside.length).toBeGreaterThan(0);
     const uses = outside.flatMap((file) => queryReadOnlyUses(file, readFileSync(join(ROOT, file), "utf8")));
     expect(uses.map(label)).toEqual([]);
-    // The one caller is still there, so the rule above is not vacuous.
-    expect(queryReadOnlyUses(CORE_CALLER, readFileSync(join(ROOT, CORE_CALLER), "utf8")).map(label)).toEqual([
+    // The one caller is still there, so the rule above is not vacuous: inside `runReadOnlyStatement`, in the read it
+    // hands `runReadOnlyReading`.
+    const core = queryReadOnlyUses(CORE_CALLER, readFileSync(join(ROOT, CORE_CALLER), "utf8"));
+    expect(core.map((use) => `${use.file} in ${use.functions.at(-1)}`)).toEqual([
       `${CORE_CALLER} in runReadOnlyStatement`,
     ]);
+  });
+
+  test("the scan finds a budgeted read outside the function that hands it to runReadOnlyReading", () => {
+    const planted = [
+      "function held(p) { const read = p.readClusterUsage; return runReadOnlyReading({ read: () => read.call(p) }); }",
+      "function direct(p) { return p.readClusterUsage(input, budget); }",
+      "function tested(p) { return typeof p.readClusterUsage === 'function'; }",
+      "/** p.readClusterUsage(input, budget) */",
+    ].join("\n");
+    expect(
+      budgetedReadUses("planted.ts", planted, "readClusterUsage").map((use) => [use.declaration, use.heldByCore]),
+    ).toEqual([
+      ["held", true],
+      ["direct", false],
+    ]);
+  });
+
+  test("no module outside the providers reads readCatalogReadOnly, readClusterUsage or readWorkloadProfile except to hand it to runReadOnlyReading", () => {
+    const outside = SOURCE_ROOTS.flatMap(sourceFiles).filter((file) => !file.startsWith(PROVIDER_CODE));
+    expect(outside.length).toBeGreaterThan(0);
+    for (const { method, file, caller } of BUDGETED_READS) {
+      const uses = outside.flatMap((each) => budgetedReadUses(each, readFileSync(join(ROOT, each), "utf8"), method));
+      expect(uses.map((use) => `${use.file} in ${use.functions.at(-1)}, held by core: ${use.heldByCore}`)).toEqual([
+        `${file} in ${caller}, held by core: true`,
+      ]);
+    }
   });
 
   test("the scan finds a query() call, and not a comment that names one", () => {

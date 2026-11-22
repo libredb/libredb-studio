@@ -1757,7 +1757,7 @@ export async function runAuditedAgentCall(
 
   const actor: ExecutionActor = { sessionId: context.actor.sessionId, role: context.actor.role, mode: "agent" };
 
-  // A statement this run stopped waiting for at its timeout keeps the run's one execution live until its provider call
+  // A read this run stopped waiting for at its timeout keeps the run's one execution live until its provider call
   // settles (`holdUntilSettled` in `executeAuditedOperation`). The loop is sequential, so the next call waits for that
   // call, as a run waits on its statement, within the time the run has left; the deadline admission below then reads
   // what the wait cost.
@@ -2470,9 +2470,17 @@ export async function readCatalogForGrounding(
  * `work`, or `overrun()` once `grantedMs` has passed, whichever comes first.
  *
  * For a provider call that takes no budget of its own, so what this bounds is THE RUN and not the database: the call
- * is not cancelled, and this run simply stops waiting for it.
+ * is not cancelled, and this run simply stops waiting for it. `work` is handed to `holdUntilSettled` first, so the
+ * run's `maxConcurrentExecutions` counts it until the provider's call settles, as it counts a read-only statement
+ * (`runReadOnlyStatement`), and the run's next call and its end wait for it.
  */
-async function withinGrantedTime<T>(work: Promise<T>, grantedMs: number, overrun: () => Error): Promise<T> {
+async function withinGrantedTime<T>(
+  work: Promise<T>,
+  grantedMs: number,
+  overrun: () => Error,
+  holdUntilSettled: AuditedInvocation["holdUntilSettled"],
+): Promise<T> {
+  holdUntilSettled(work);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const overran = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => reject(overrun()), grantedMs);
@@ -2631,7 +2639,7 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
       input: {},
       label: "provider object inventory",
       grounding: true,
-      invoke: async (_validatedInput, budget, phase) => {
+      invoke: async (_validatedInput, budget, phase, holdUntilSettled) => {
         // Which profile grounds the run, decided by what the run is (`groundsUnderExecutionProfile`): a
         // statement-sending agent run on an engine with a statement language grounds under ITS OWN boundary, so the
         // acquisition opens the execution profile, whose connect proves the engine and the principal, and a run
@@ -2652,13 +2660,15 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
         // THE HONEST LIMIT, stated because the alternative reading of this race is wrong: no
         // provider method here takes a budget, so what this bounds is THE RUN and not the
         // database. The walk is not cancelled - it goes on reading until the engine or the
-        // driver ends it - and this run simply stops waiting for it. Without the race there is
+        // driver ends it - and this run simply stops waiting for it, while the walk still
+        // counts against the run's concurrency until it settles. Without the race there is
         // no bound at all, which is the only worse answer.
         try {
           const walked = await withinGrantedTime(
             walkObjectInventory(provider, context.capabilities, declared, objectReadArguments(context)),
             budget.statementTimeoutMs,
             () => new AgentSchemaReadTimeout(budget.statementTimeoutMs),
+            holdUntilSettled,
           );
           inventory = walked.inventory;
           defaultContainer = walked.defaultContainer;
@@ -3063,7 +3073,8 @@ export type AgentStatisticsStatement = "availability" | "estimates";
  * is the pipeline's audited input denial, and nothing is acquired or sent), and it is bounded the way the curated
  * reads are: a result over the run's row or byte budget is refused rather than cut, and a read that
  * outlasts the time the call was granted is refused as a timeout, which `readSchemaStatistics` reports like any other
- * read that did not complete.
+ * read that did not complete. The read counts against the run's concurrency until its provider call settles, as a
+ * read-only statement does (`withinGrantedTime`).
  */
 export async function readStatisticsForGrounding(
   context: AgentToolContext,
@@ -3091,7 +3102,7 @@ export async function readStatisticsForGrounding(
     guardedStatement: { sql, ...admission },
     label: statement === "availability" ? STATISTICS_AVAILABILITY_LABEL : CATALOG_LABELS.statistics,
     grounding: true,
-    invoke: async (_validatedInput, budget, phase) => {
+    invoke: async (_validatedInput, budget, phase, holdUntilSettled) => {
       const provider = await context.acquireProvider(context.connection, AGENT_OPERATIONS_PROFILE);
       const startedAtMs = context.clock?.() ?? Date.now();
       phase.statementSent = true;
@@ -3101,6 +3112,7 @@ export async function readStatisticsForGrounding(
           provider.query(sql),
           budget.statementTimeoutMs,
           () => new TimeoutError("the statistics read did not answer in time", dialect, budget.statementTimeoutMs),
+          holdUntilSettled,
         );
       } catch (error) {
         throw asReadingFailure(error, dialect);

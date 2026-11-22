@@ -12,7 +12,8 @@
  *
  * - `mongoInspectSchemaTool`: a SCOPED catalog read through the provider's catalog read for the agent
  *   (`readCatalogReadOnly`) - a collection listing, or one collection's fields and indexes - on the profiled
- *   connection, under the run's own budget, audited as `mongo.schema.read`. A collection the run's captured inventory
+ *   connection, under the run's own budget, which core holds the rows it serves to (`runReadOnlyReading`), audited as
+ *   `mongo.schema.read`. A collection the run's captured inventory
  *   holds is read where the inventory read it; any other name is passed whole. The `relations` kind is refused rather
  *   than answered empty, because MongoDB declares no foreign keys and an empty block would read as an absence the
  *   engine never stated. The `indexes` kind is answered from the same description the columns kind reads - one
@@ -29,6 +30,7 @@
  *   one-statement-per-table contract is not something to trade silently.
  */
 import type { z } from "zod";
+import { runReadOnlyReading } from "@/lib/db/operations/read-only-statement";
 import type { ReadOnlyCatalogReading, ReadOnlyCatalogSelector } from "@/lib/db/types";
 import type { ColumnSchema } from "@/lib/types";
 import { AGENT_EXECUTION_PROFILE } from "../../execution-policy";
@@ -116,9 +118,10 @@ export async function mongoInspectSchemaTool(
     fingerprintSource: `mongo-objects:${JSON.stringify(selector)}`,
     input: selector,
     label: `catalog read of ${scope}`,
-    invoke: async (_validatedInput, budget, phase) => {
+    invoke: async (_validatedInput, budget, phase, holdUntilSettled) => {
       const provider = await context.acquireProvider(context.connection, AGENT_EXECUTION_PROFILE);
-      if (typeof provider.readCatalogReadOnly !== "function") {
+      const readCatalogReadOnly = provider.readCatalogReadOnly;
+      if (typeof readCatalogReadOnly !== "function") {
         // A server fault, never a model-visible outcome and never a fallback to the editor's object surface, which
         // carries no deadline of the agent's: the acquisition refuses a provider without the read-only path, so
         // reaching here means the acquirer is not the profile seam.
@@ -131,10 +134,21 @@ export async function mongoInspectSchemaTool(
       // pipeline settles as a refusal the model can act on (a database the principal cannot read, a collection
       // name the engine refuses) rather than an error that ends the run.
       phase.statementSent = true;
-      reading = await provider.readCatalogReadOnly(
-        catalogTarget(snapshot, schema, table),
-        readOnlyBudgetFor(context, budget),
-      );
+      // Through core's hold of a budgeted read, which refuses the rows this arm serves past the run's row or byte budget
+      // in the providers' sentences, and stops waiting at the statement timeout in the time sentence; the provider's
+      // call counts against the run's concurrency until it settles.
+      const target = catalogTarget(snapshot, schema, table);
+      const handed = readOnlyBudgetFor(context, budget);
+      reading = await runReadOnlyReading({
+        type: context.connection.type,
+        statement: JSON.stringify(target),
+        budget: handed,
+        wait: "statement-timeout",
+        holdUntilSettled,
+        read: () => readCatalogReadOnly.call(provider, target, handed),
+        servedRows: (answer) => catalogRows(answer, kind).rows,
+        maxRows: handed.maxResultRows,
+      });
       return { ...catalogRows(reading, kind), executionTime: (context.clock?.() ?? Date.now()) - startedAtMs };
     },
   });

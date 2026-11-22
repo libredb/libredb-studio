@@ -577,6 +577,7 @@ An oversized read is **refused, not truncated**, so a result that reached the mo
 one. Note the honest edge: the comparison happens after the driver has materialised the rows, so an
 oversized read is refused but still paid for at the database.
 The comparison is made by the provider and again by Studio on the rows it receives, each row's UTF-8 JSON bytes summed (`runReadOnlyStatement` in `src/lib/db/operations/read-only-statement.ts`), so 256 KiB of served rows is the most one statement read can send on every engine, MongoDB included, whose own budget counts BSON bytes on the wire.
+The MongoDB catalog read and the two Kubernetes cluster readings are checked the same way on the rows the run keeps (`runReadOnlyReading` in the same module).
 
 **Some of these bound the run and some bound one drive.** `maxStatementsPerRun` and the
 database-time figure bound the run: since #999 a drive is seeded with what the run's ledger says

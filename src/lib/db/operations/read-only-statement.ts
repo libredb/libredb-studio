@@ -1,11 +1,16 @@
 /**
- * The one core call of a provider's read-only statement path (`DatabaseProvider.queryReadOnly`).
+ * The one core call of a provider's read-only statement path (`DatabaseProvider.queryReadOnly`), and of the other
+ * provider reads the agent hands the same budget.
  *
  * The agent's statement path, the editor's hand-over replay and every MCP statement tool reach a provider's
  * `queryReadOnly` through `runReadOnlyStatement` and nothing else, which `tests/unit/db/operations/read-only-statement-callers.test.ts`
  * holds. Each provider already refuses a result past the row or byte budget it is handed, and bounds the statement by
  * the budget's timeout as its engine allows; this function holds the provider's answer to the same budget again, so
- * the caps are Studio's and not only a claim each provider makes:
+ * the caps are Studio's and not only a claim each provider makes. The agent's other budgeted reads, its catalog read
+ * on an engine whose catalog is not a composed statement (`readCatalogReadOnly`) and the two cluster readings
+ * (`readClusterUsage`, `readWorkloadProfile`), go through `runReadOnlyReading`, the same check over the rows the caller
+ * serves from an answer that is not a `QueryResult`, and the same test holds each to its one agent caller;
+ * `runReadOnlyStatement` is that function over `queryReadOnly`:
  *
  * - **Rows.** An answer with more rows than `maxResultRows` is refused in the row sentence every provider raises
  *   (`rowBudgetSentence`). An estimating plan (`mode: "estimate-plan"`) is held to the byte budget only: its rows are
@@ -13,7 +18,9 @@
  *   union of one view with itself), and SQL Server's provider exempts them from its row budget the same way. The mode
  *   is the caller's own choice (`composeEstimatingExplain`, `mongoInspectPlanTool`), not a provider's claim, and the
  *   exemption rests on the obligation `ReadOnlyStatementMode` states: a provider handed `"estimate-plan"` answers a
- *   plan or refuses, so the byte budget is then the only cap core holds that answer to.
+ *   plan or refuses, so the byte budget is then the only cap core holds that answer to. A reading documented with a
+ *   row ceiling of its own is held to that ceiling instead (the cluster readings carry up to 500 rows, above the run's
+ *   200).
  * - **Bytes.** The UTF-8 JSON bytes of each served row are summed (`measureRowBytes`, a bigint cell counting as its
  *   decimal text), stopping at the row that carries the sum past `maxResultBytes`, which is refused in the byte
  *   sentence (`byteBudgetSentence`); a row after that one is never serialised. The per-row sum is never more than the
@@ -29,7 +36,7 @@
  *   engine table in `docs/MCP.md` "Limits"); on a provider that runs its statements on one connection, as DuckDB does,
  *   a later statement on that connection waits behind it and can itself be refused in the time sentence without
  *   having run. The provider's call is handed to the caller's `holdUntilSettled` as soon as it is made, so an agent
- *   run's `maxConcurrentExecutions` counts the statement until its provider call settles, whenever this function
+ *   run's `maxConcurrentExecutions` counts each read until its provider call settles, whenever this function
  *   answers. The abandoned call keeps a handler, so its late failure is never an
  *   unhandled rejection, and how it settled (answered or failed, the failure's class, and when) is written to the
  *   server log. A provider that runs a statement synchronously on the event loop (LibreDB, SQLite without its worker)
@@ -38,7 +45,9 @@
  *   call (MCP's `raceDeadline`), so no second timer is set.
  *
  * The refusals are the sentences the providers raise (`read-only-budget.ts`), so every reader that classifies a
- * provider's refusal by its opening (`READ_ONLY_REFUSAL_OPENINGS`) reads this function's the same way.
+ * provider's refusal by its opening (`READ_ONLY_REFUSAL_OPENINGS`) reads this function's the same way. A reading that
+ * already refuses past its rows or bytes in sentences of its own (the cluster readings' advice to narrow) hands them
+ * in, and core raises those.
  *
  * A provider with no `queryReadOnly` is refused by name, in the words the execution-profile acquisition uses; `query()`
  * is never the fallback.
@@ -76,42 +85,102 @@ export interface ReadOnlyStatementCall {
   readonly holdUntilSettled?: (call: PromiseLike<unknown>) => void;
 }
 
+/**
+ * One budgeted provider read that is not a statement (`readCatalogReadOnly`, `readClusterUsage`,
+ * `readWorkloadProfile`), with the budget core holds the rows it serves to. Its answer is the provider's own shape, so
+ * the caller names the rows it serves from it, and those rows, the ones a prompt carries, are what is measured.
+ */
+export interface ReadOnlyReadingCall<T> {
+  /** The connection's type, named in a refusal. */
+  readonly type: DatabaseType;
+  /** The read's own label, named in a refusal where a statement would be. */
+  readonly statement: string;
+  /** The budget the provider is handed; checked before `read` is made. */
+  readonly budget: ReadOnlyStatementBudget;
+  /** As `ReadOnlyStatementCall.wait`. */
+  readonly wait: "statement-timeout" | "caller-deadline";
+  /** As `ReadOnlyStatementCall.holdUntilSettled`. */
+  readonly holdUntilSettled?: (call: PromiseLike<unknown>) => void;
+  /** The provider's call, made once, after the budget is checked. */
+  readonly read: () => Promise<T>;
+  /** The rows the caller serves from the answer: none for an answer that carries no rows. */
+  readonly servedRows: (answer: T) => readonly Record<string, unknown>[];
+  /**
+   * The most rows the read may serve: `budget.maxResultRows`, or a ceiling of the read's own where it has one, or
+   * `null` for an answer held to the byte budget only (an estimating plan, whose rows are not data rows).
+   */
+  readonly maxRows: number | null;
+  /** The refusal past `maxRows`, where the read raises one of its own; otherwise the row sentence. */
+  readonly refuseRows?: (rows: number, allowed: number) => Error;
+  /** The refusal past `maxResultBytes`, where the read raises one of its own; otherwise the byte sentence. */
+  readonly refuseBytes?: (bytes: number, allowed: number) => Error;
+}
+
 /** Runs `call.statement` on the provider's read-only statement path and holds the answer to `call.budget`. */
 export async function runReadOnlyStatement(
   provider: DatabaseProvider,
   call: ReadOnlyStatementCall,
 ): Promise<QueryResult> {
   const { type, statement, budget, mode } = call;
+  return runReadOnlyReading({
+    type,
+    statement,
+    budget,
+    wait: call.wait,
+    ...(call.holdUntilSettled === undefined ? {} : { holdUntilSettled: call.holdUntilSettled }),
+    read: () => {
+      if (typeof provider.queryReadOnly !== "function") {
+        throw new ExecutionProfileError(
+          `Provider type "${type}" implements no read-only statement path (queryReadOnly)`,
+          "PROFILE_UNSUPPORTED_BY_PROVIDER",
+        );
+      }
+      return provider.queryReadOnly(statement, budget, mode);
+    },
+    servedRows: (result) => result.rows,
+    // A plan's rows are the optimizer's operators, not data rows (SQL Server's SHOWPLAN answers one per operator), so
+    // an estimating plan is held to the byte budget only, as SQL Server's provider holds it.
+    maxRows: mode === "estimate-plan" ? null : budget.maxResultRows,
+  });
+}
+
+/** Makes `call.read` and holds the rows it serves to `call.maxRows`, `call.budget.maxResultBytes` and its timeout. */
+export async function runReadOnlyReading<T>(call: ReadOnlyReadingCall<T>): Promise<T> {
+  const { type, statement, budget, maxRows } = call;
   assertReadOnlyBudget(budget, type);
-  if (typeof provider.queryReadOnly !== "function") {
-    throw new ExecutionProfileError(
-      `Provider type "${type}" implements no read-only statement path (queryReadOnly)`,
-      "PROFILE_UNSUPPORTED_BY_PROVIDER",
-    );
-  }
-  const answered = provider.queryReadOnly(statement, budget, mode);
+  const answered = call.read();
   call.holdUntilSettled?.(answered);
-  const result = call.wait === "statement-timeout" ? await withinStatementTimeout(answered, call) : await answered;
-  // A plan's rows are the optimizer's operators, not data rows (SQL Server's SHOWPLAN answers one per operator), so an
-  // estimating plan is held to the byte budget only, as SQL Server's provider holds it.
-  if (mode !== "estimate-plan" && result.rows.length > budget.maxResultRows) {
-    throw new QueryError(rowBudgetSentence(result.rows.length, budget.maxResultRows), type, statement);
+  const answer = call.wait === "statement-timeout" ? await withinStatementTimeout(answered, call) : await answered;
+  const rows = call.servedRows(answer);
+  if (maxRows !== null && rows.length > maxRows) {
+    throw (call.refuseRows ?? sharedRowRefusal(type, statement))(rows.length, maxRows);
   }
   let bytes = 0;
-  for (const row of result.rows) {
+  for (const row of rows) {
     bytes += measureRowBytes(row);
     if (bytes > budget.maxResultBytes) {
-      throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), type, statement);
+      throw (call.refuseBytes ?? sharedByteRefusal(type, statement))(bytes, budget.maxResultBytes);
     }
   }
-  return result;
+  return answer;
+}
+
+function sharedRowRefusal(type: DatabaseType, statement: string): (rows: number, allowed: number) => Error {
+  return (rows, allowed) => new QueryError(rowBudgetSentence(rows, allowed), type, statement);
+}
+
+function sharedByteRefusal(type: DatabaseType, statement: string): (bytes: number, allowed: number) => Error {
+  return (bytes, allowed) => new QueryError(byteBudgetSentence(bytes, allowed), type, statement);
 }
 
 /**
  * `answered`, or the time refusal once `statementTimeoutMs` has passed; the timer is cleared on every path. When the
  * timer wins, how the abandoned call settles later is written to the server log (`logLateSettlement`).
  */
-function withinStatementTimeout(answered: Promise<QueryResult>, call: ReadOnlyStatementCall): Promise<QueryResult> {
+function withinStatementTimeout<T>(
+  answered: Promise<T>,
+  call: Pick<ReadOnlyReadingCall<T>, "type" | "statement" | "budget">,
+): Promise<T> {
   const { statementTimeoutMs } = call.budget;
   const startedAt = Date.now();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -128,14 +197,14 @@ function withinStatementTimeout(answered: Promise<QueryResult>, call: ReadOnlySt
 }
 
 /**
- * One server log line for a call this module stopped waiting for, once it settles: the connection type, whether it
- * answered or failed, the failure's class and how long after the call started it settled. A late failure can be the
- * real cause the time refusal stood in for (a connection that never opened, a pool with no free client), so it is
- * recorded rather than dropped. The statement and the error's message are never written: core has no redaction of its
- * own, and the class names the kind of failure.
+ * One server log line for a call this module stopped waiting for, once it settles, worded for a statement and a
+ * reading alike: the connection type, whether it answered or failed, the failure's class and how long after the call
+ * started it settled. A late failure can be the real cause the time refusal stood in for (a connection that never
+ * opened, a pool with no free client), so it is recorded rather than dropped. The statement, a reading's label and the
+ * error's message are never written: core has no redaction of its own, and the class names the kind of failure.
  */
-function logLateSettlement(answered: Promise<QueryResult>, type: DatabaseType, startedAt: number): void {
-  const line = "A read-only statement settled after Studio stopped waiting for it";
+function logLateSettlement(answered: Promise<unknown>, type: DatabaseType, startedAt: number): void {
+  const line = "A read-only call settled after Studio stopped waiting for it";
   answered.then(
     () => logger.warn(line, { provider: type, outcome: "answered", settledAfterMs: Date.now() - startedAt }),
     (error: unknown) =>

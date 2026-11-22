@@ -1524,6 +1524,23 @@ describe("captureContextSnapshot — the provider's own inventory", () => {
     // Said of the RUN, not of the database: the driver call was never cancelled.
     expect(capture.detail).toContain("this run granted");
   });
+
+  test("a reading that overruns its grant counts against the run's concurrency until its provider call settles", async () => {
+    let settle: () => void = () => {};
+    const late = new Promise<GroundedObject[]>((resolve) => {
+      settle = () => resolve(structuredClone(MONGO_TABLES));
+    });
+    const h = providerHarness({ runDeadlineMs: 250, schema: () => late });
+
+    const capture = await captureContextSnapshot(h.context);
+
+    expect(capture).toMatchObject({ kind: "unavailable", reasonCode: "PROVIDER_INVENTORY_TIMED_OUT" });
+    expect(h.context.tracker.usage(h.context.runId)).toMatchObject({ activeExecutions: 1, executedStatements: 1 });
+    settle();
+    await late;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(h.context.tracker.usage(h.context.runId)).toMatchObject({ activeExecutions: 0, executedStatements: 1 });
+  });
 });
 
 describe("packContextForTask", () => {
