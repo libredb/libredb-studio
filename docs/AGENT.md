@@ -114,7 +114,8 @@ Three properties frame everything below, and each of them is load-bearing rather
   A run reaching the drive another way, one opened by an earlier build included, ends `engine-unsupported` inside `driveAgentRun()` ([`runtime.ts`](../src/lib/agent/runtime.ts)) on either refusal.
   `tests/unit/lib/agent/engine-support.test.ts` holds the shipped providers to the record in both directions, and `tests/security/agent-mcp-statement-review.test.ts` drops one engine from it and shows every gate refusing that engine.
   Surfaces that must *state* that reach, the login hero among them since #425, read the same record.
-  It is client-safe by construction (its module imports only types), and it deliberately says nothing about plan mode, which executes nothing anywhere, or about `operations`, which runs everywhere.
+  It is client-safe by construction (its module imports only types), and it does not decide whether plan mode, which runs no statement of the model's anywhere, or `operations`, which sends none, opens: both open on every engine.
+  It does reach their grounding: on an engine whose catalog read is a composed statement (its overlay's `catalogCapture`), that read is sent under `agent-read-only`, so on such an engine off the record the acquisition is refused `PROFILE_ENGINE_NOT_REVIEWED` and both run ungrounded, rather than the statement being sent under `agent-operations`.
   The restriction is a property of the **execution profile**, not
   of the factory: `agent-read-only` sends model-authored statements and is served only where the
   engine can bound one, `agent-handover` sends the statement a run already answered with and takes
@@ -3041,7 +3042,7 @@ An engine with no statement language, and a connection re-typed after its run op
 Every member an overlay cannot override stays keyed by the persisted family, so the tool offer and the dispatch agree.
 `CURATED_CALL_LANGUAGE` is the language a curated call is fingerprinted and refused in, because its `operations:` or `objects:` key is no statement in any language.
 
-**A pack never opens execution.** Whether agent mode executes on an engine is decided by `AGENT_EXECUTION_ENGINES` and the execution-profile check; a pack only says how a statement in its language is read, refused and narrated.
+**A pack never opens execution.** Whether agent mode executes on an engine is decided by `AGENT_EXECUTION_ENGINES` in `src/lib/db/compatibility.ts` and the execution-profile check; a pack only says how a statement in its language is read, refused and narrated.
 
 **What a statement workflow requires of the dialect.**
 Each SQL statement workflow requires of an engine only the dialect members it cannot run without, as the `requires` of its variant in `languages/sql/client.ts`, read against `AGENT_REQUIREMENT_ENGINES` in `agent-manifest.ts`.
@@ -3054,10 +3055,11 @@ An engine in `AGENT_EXECUTION_ENGINES` must open at least one workflow that send
 **How to add an engine to a statement-language family.**
 
 1. Map the type-id onto its statement language in `AGENT_STATEMENT_LANGUAGE` in `agent-manifest.ts`.
-2. Write `languages/<statement-language>/engines/<type-id>.ts`, its server overlay declared `satisfies AgentEngineServerOverlay<...>`, with every dialect-bound member supplied or `"unsupported"`.
-3. Add its client row to `languages/<statement-language>/engines/client.ts`, and register both overlays in `languages/engines/server.ts` and `languages/engines/client.ts`; both registries are total, so the build fails until they hold the engine.
-4. Add the `Agent language pack` subsection to `docs/providers/<type-id>.md`, which `tests/unit/lib/agent/engine-docs.test.ts` holds to the overlay row for row.
-5. Run `engine-overlays.test.ts` and `engine-pack-contract.test.ts` under `tests/unit/lib/agent/`, which read the engine list from the manifest, so the new engine joins every case.
+2. Add the engine's review row to `AGENT_EXECUTION_ENGINES` in `src/lib/db/compatibility.ts` once its read-only statement path is reviewed; every agent and MCP statement gate reads that record, and `agent-manifest.test.ts` fails while an engine has a language the record does not list.
+3. Write `languages/<statement-language>/engines/<type-id>.ts`, its server overlay declared `satisfies AgentEngineServerOverlay<...>`, with every dialect-bound member supplied or `"unsupported"`.
+4. Add its client row to `languages/<statement-language>/engines/client.ts`, and register both overlays in `languages/engines/server.ts` and `languages/engines/client.ts`; both registries are total, so the build fails until they hold the engine.
+5. Add the `Agent language pack` subsection to `docs/providers/<type-id>.md`, which `tests/unit/lib/agent/engine-docs.test.ts` holds to the overlay row for row.
+6. Run `engine-overlays.test.ts` and `engine-pack-contract.test.ts` under `tests/unit/lib/agent/`, which read the engine list from the manifest, so the new engine joins every case.
 
 **Where a new statement language's MCP tool lives.** In its own pack, at `languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS` in `languages/mcp.ts`.
 That registry is total over `AgentStatementLanguageId`, so a new language does not compile until it declares its facet, or `null` while it has no MCP tool.

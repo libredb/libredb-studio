@@ -2046,14 +2046,13 @@ could arrive twice.
 }
 ```
 
-> **The engine refusal is a `400`, and it changed this contract.** Since #512 an `agent` run whose
-> `workflowType` sends a statement — every workflow but `operations` — is refused here when the
-> connection's engine is not on Studio's review record (`AGENT_EXECUTION_ENGINES`), and `error` carries the
-> posture's whole paragraph. It is refused **before a run id exists**: a client that used to receive
+> **The engine refusal is a `400`, and it changed this contract.**
+> Since #512 an `agent` run whose `workflowType` sends a statement, which is every workflow but `operations`, is refused here when the connection's engine is not on Studio's review record (`AGENT_EXECUTION_ENGINES` in `src/lib/db/compatibility.ts`), and `error` carries the posture's whole paragraph.
+> It is refused **before a run id exists**: a client that used to receive
 > `202` for `investigation` on Oracle and then read `engine-unsupported` off the run receives `400`
 > and no run. `operations` is admitted on every engine because it sends no statement at all, and a
-> `planning` run is never refused this way — it executes nothing anywhere. The refusal reads the
-> same record the provider factory does, not `typeof provider.queryReadOnly`, so the two cannot disagree.
+> `planning` run is never refused this way: it executes nothing anywhere.
+> The refusal reads the same record the provider factory does, not `typeof provider.queryReadOnly`, so the two cannot disagree.
 > An engine with a statement language that the record does not list is answered in a sentence of its own naming it, under the same `refused` value.
 >
 > **It is the only `400` here that carries `refused`**, and the value is `"engine-unsupported"` —

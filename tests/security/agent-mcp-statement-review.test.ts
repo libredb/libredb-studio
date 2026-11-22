@@ -33,6 +33,7 @@ const { SQLiteProvider } = await import("@/lib/db/providers/sql/sqlite");
 const { ExecutionProfileError } = await import("@/lib/db/errors");
 const { runReadOnlyReading, runReadOnlyStatement } = await import("@/lib/db/operations/read-only-statement");
 const { runReadQueryTool } = await import("@/lib/agent/tools");
+const { captureContextSnapshot } = await import("@/lib/agent/context-snapshot");
 const { AGENT_WORKFLOW_BUDGETS } = await import("@/lib/agent/execution-policy");
 const { AgentRunDeadline } = await import("@/lib/agent/deadline");
 const { AgentRepairLedger } = await import("@/lib/agent/repair-ledger");
@@ -100,6 +101,60 @@ describe("an engine the review record does not list, though its provider impleme
     expect(workflowAvailability("planning", "investigation", "sqlite").open).toBe(true);
     expect(workflowAvailability("agent", "operations", "sqlite").open).toBe(true);
     expect(workflowAvailability("agent", "investigation", "postgres").open).toBe(true);
+  });
+
+  test("plan mode and the operations workflow open on SQLite but run ungrounded: their composed catalog read is a statement, so its agent-read-only acquisition is refused by name", async () => {
+    const connection: DatabaseConnection = {
+      id: "review-grounding",
+      name: "Shop",
+      type: "sqlite",
+      database: sqliteFile,
+      createdAt: new Date(0),
+    };
+    const capabilities = new SQLiteProvider(connection).getCapabilities();
+    try {
+      for (const [mode, workflowType] of [
+        ["planning", "investigation"],
+        ["agent", "operations"],
+      ] as const) {
+        expect(workflowAvailability(mode, workflowType, "sqlite").open).toBe(true);
+        const profiles: string[] = [];
+        const context: AgentToolContext = {
+          runId: `run-grounding-${mode}`,
+          modelId: "unmeasured-model-for-tests",
+          mode,
+          workflowType,
+          actor: { sessionId: "session-grounding", role: "admin" },
+          connection,
+          capabilities,
+          labels: TABLE_LABELS,
+          registry: createCanonicalOperationRegistry(),
+          scope: createTargetScope(connection.id),
+          tracker: new ExecutionBudgetTracker(),
+          artifacts: new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 }),
+          deadline: new AgentRunDeadline(
+            AGENT_WORKFLOW_BUDGETS[workflowType].policy.budgets.maxTotalRunMs,
+            () => 1_000,
+          ),
+          repairs: new AgentRepairLedger(),
+          acquireProvider: (target, profile) => {
+            profiles.push(profile);
+            return acquireExecutionProfileProvider(target, profile, {}, { allowExternalFileAccess: true });
+          },
+          clock: () => 1_000,
+        };
+
+        const capture = await captureContextSnapshot(context);
+        expect([mode, profiles]).toEqual([mode, ["agent-read-only"]]);
+        expect([
+          mode,
+          capture.kind,
+          capture.kind === "unavailable" ? capture.profileRefusal?.reasonCode : "not refused",
+        ]).toEqual([mode, "unavailable", "PROFILE_ENGINE_NOT_REVIEWED"]);
+      }
+    } finally {
+      await clearProviderCache();
+    }
   });
 
   test("the agent-read-only and agent-handover acquisitions of a SQLite file are refused by name though its provider implements queryReadOnly, and nothing is connected; agent-operations still opens it", async () => {
@@ -171,7 +226,7 @@ describe("an engine the review record does not list, though its provider impleme
     expect(served.rows).toEqual([{ id: 1 }]);
   });
 
-  test("the agent's statement tool refuses a SQLite statement through any acquirer, and nothing reaches the provider", async () => {
+  test("the agent's statement tool refuses a statement on a SQLite connection whatever acquirer hands its provider over, and nothing reaches the provider", async () => {
     const queryReadOnly = mock(async () => answer());
     const acquireProvider = mock(async () => ({ queryReadOnly }) as unknown as DatabaseProvider);
     const capabilities: ProviderCapabilities = {

@@ -1008,10 +1008,8 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   server-side row bound, and a transaction that is always rolled back.
   MongoDB has no read-only session or transaction either, so there the boundary is the connection's user: before a run that sends commands reaches its first model turn, the server must report that the user holds only read privileges on the bound database and must refuse a write from it, and a user that can write, a server without authorization or a server that is not MongoDB ends the run there.
   To give agent mode a MongoDB connection, seed one whose own user holds `read` on one database, on a server with authorization on ([`docs/providers/mongodb.md`](./providers/mongodb.md#setting-up-the-agents-user)).
-  Acquiring a profiled provider for any other engine raises `PROFILE_ENGINE_NOT_REVIEWED` before anything is built, because Studio's review record (`AGENT_EXECUTION_ENGINES` in `src/lib/db/compatibility.ts`) does not list it, whatever its provider implements
-  (`src/lib/db/factory.ts`), which the runtime reports as `engine-unsupported`
-  (`src/lib/agent/runtime.ts`) — the rail says so in as many words
-  (`src/components/agent/timeline.ts`).
+  Acquiring the `agent-read-only` or `agent-handover` profile for any other engine raises `PROFILE_ENGINE_NOT_REVIEWED` (`src/lib/db/factory.ts`) before anything is built, because Studio's review record (`AGENT_EXECUTION_ENGINES` in `src/lib/db/compatibility.ts`) does not list it, whatever its provider implements.
+  The runtime reports that refusal as `engine-unsupported` (`src/lib/agent/runtime.ts`), and the rail says so in as many words (`src/components/agent/timeline.ts`).
   So on every other id in the `DatabaseType` union (`src/lib/types.ts`) an Agent-mode run cannot read anything.
   The bundled **LibreDB sample** connection runs the investigation and data-analysis workflows on its own command language (`src/lib/db/providers/embedded/libredb.ts`), and the bundled **SQLite sample** is the seeded connection to try every workflow against (`src/lib/seed/samples.ts`).
   **Plan** mode still opens on

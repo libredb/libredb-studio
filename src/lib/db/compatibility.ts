@@ -686,10 +686,16 @@ export const SINGLE_WRITER_FILE: Readonly<Record<DatabaseType, boolean>> = Objec
  *
  * Two things it deliberately does NOT say, because user-facing copy that compresses them
  * overclaims (docs/AGENT.md, the "Agent mode requires" paragraph that opens it):
- * - **Plan mode executes nothing, on any engine.** This list has no bearing on it; since #414
- *   a plan run is grounded everywhere and still runs no statement anywhere.
- * - **The `operations` workflow runs on every engine, in both modes**, because it composes no
+ * - **Plan mode opens on every engine and runs no statement of the model's anywhere.** Since #414
+ *   a plan run is grounded, and this list reaches only that grounding: see below.
+ * - **The `operations` workflow opens on every engine, in both modes**, because it composes no
  *   SQL: its `agent-operations` acquisition sets `requiresReadOnlyStatements: false`.
+ *
+ * Both are grounded before their first turn, and on an engine whose catalog read is a composed
+ * statement (its overlay's `catalogCapture`) that read is sent under `agent-read-only`, so it passes
+ * this list like any other statement. On such an engine off the list the acquisition is refused
+ * `PROFILE_ENGINE_NOT_REVIEWED` and plan mode and the operations workflow run ungrounded; it is not
+ * routed to `agent-operations` instead, because a composed statement is a statement.
  *
  * Held in this module, which imports nothing but types on purpose: it is read by the unauthenticated login hero,
  * and a provider module here would drag `oracledb`/`mssql` toward that bundle. Frozen like the records beside it, so

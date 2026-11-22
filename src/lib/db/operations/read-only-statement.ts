@@ -51,9 +51,15 @@
  *
  * Before anything else, an engine Studio's review record does not list (`AGENT_EXECUTION_ENGINES` in
  * src/lib/db/compatibility.ts) is refused by name with `PROFILE_ENGINE_NOT_REVIEWED` (`assertStatementsReviewed`), for a
- * statement and for every budgeted reading, whatever acquirer handed the provider over and whatever the provider
- * implements, so no budget is read, no provider call is made and nothing is held. This is the one choke point every
- * agent, hand-over and MCP statement passes, beside the acquisition's own reading of the record.
+ * statement and for every budgeted reading, whatever the provider implements, so no budget is read, no provider call
+ * is made and nothing is held. The gate keys on the connection type the caller declares (`type`), not on the provider
+ * handed over, so it holds whatever acquirer handed the provider over only while every caller declares the type of
+ * the connection that provider was acquired for, which every caller does today. This is the one choke point every
+ * agent, hand-over and MCP read-only statement passes, beside the acquisition's own reading of the record. The one
+ * composed statement that does not pass it is plan mode's statistics read on an engine whose catalog read is not a
+ * composed statement (`readStatisticsForGrounding` under `agent-operations`, through `query()`), which stays on
+ * reviewed engines only because its composer belongs to an engine overlay, an overlay needs a statement language, and
+ * the language census ties every language to the record.
  *
  * A provider with no `queryReadOnly` on an engine the record lists is refused by name, in the words the
  * execution-profile acquisition uses; `query()` is never the fallback.
@@ -74,7 +80,10 @@ import type { DatabaseType, QueryResult } from "@/lib/types";
 
 /** One statement for a provider's read-only statement path, with the budget core holds its answer to. */
 export interface ReadOnlyStatementCall {
-  /** The connection's type, named in a refusal. */
+  /**
+   * The connection's type, named in a refusal. It decides the review-record gate, so it must be the type of the
+   * connection the provider was acquired for.
+   */
   readonly type: DatabaseType;
   readonly statement: string;
   readonly budget: ReadOnlyStatementBudget;
@@ -98,7 +107,10 @@ export interface ReadOnlyStatementCall {
  * the caller names the rows it serves from it, and those rows, the ones a prompt carries, are what is measured.
  */
 export interface ReadOnlyReadingCall<T> {
-  /** The connection's type, named in a refusal. */
+  /**
+   * The connection's type, named in a refusal. It decides the review-record gate, so it must be the type of the
+   * connection the read's provider was acquired for.
+   */
   readonly type: DatabaseType;
   /** The read's own label, named in a refusal where a statement would be. */
   readonly statement: string;
@@ -154,8 +166,8 @@ export async function runReadOnlyStatement(
 /** Makes `call.read` and holds the rows it serves to `call.maxRows`, `call.budget.maxResultBytes` and its timeout. */
 export async function runReadOnlyReading<T>(call: ReadOnlyReadingCall<T>): Promise<T> {
   const { type, statement, budget, maxRows } = call;
-  // First, before the budget is read, the provider's read is made or the call is held: an engine off the review
-  // record is refused by name here whatever acquirer handed the provider over.
+  // First, before the budget is read, the provider's read is made or the call is held: the connection type the caller
+  // declares is refused by name here when it is off the review record, whatever acquirer handed the provider over.
   assertStatementsReviewed(type);
   assertReadOnlyBudget(budget, type);
   const answered = call.read();

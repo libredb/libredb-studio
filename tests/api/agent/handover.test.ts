@@ -417,7 +417,8 @@ describe("POST /api/agent/runs/[runId]/handover", () => {
   });
 
   test("refuses to replay on an engine the review record does not list, naming it, and never calls queryReadOnly", async () => {
-    // Any acquirer: the refusal is core's, in the read path every replay passes, not the factory's alone.
+    // Whatever acquirer hands the provider over: the refusal is core's, keyed on the resolved connection's type, in
+    // the read path every replay passes, not the factory's alone.
     mockResolveConnection.mockResolvedValueOnce({ id: "seed:sales", name: "Sales", type: "snowflake" });
     const errorLog = spyOn(logger, "error").mockImplementation(() => {});
     try {

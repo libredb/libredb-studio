@@ -7565,7 +7565,7 @@ describe("a provider that answers past the run's budget", () => {
 });
 
 describe("an engine the review record does not list", () => {
-  test("a statement on it is refused by core with PROFILE_ENGINE_NOT_REVIEWED through any acquirer, and the provider's queryReadOnly is never called", async () => {
+  test("a statement on it is refused by core with PROFILE_ENGINE_NOT_REVIEWED for a connection of that type whatever acquirer hands its provider over, and the provider's queryReadOnly is never called", async () => {
     const h = harness({ connection: { ...connection, type: "snowflake" } });
 
     const error = await runReadQueryTool(h.context, { sql: "SELECT 1" }).then(
