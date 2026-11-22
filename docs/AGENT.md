@@ -3278,6 +3278,7 @@ the role's own grants are the whole boundary (A3).
 - **B170**: OPC UA proves its read roots on every agent and MCP read, with nothing held between reads, so a read of one value repeats the walk down from the roots; a cache keyed by seed id, identity and root list waits for a fixture where the walk dominates a read.
 - **B171**: an OPC UA operator cannot exclude one node beneath a read root, so a vendor identity or credential node that no prune table names is answered inside a declared root until the roots are moved below it.
 - **B172**: an operational reading and the plan-mode statistics read are held to the byte budget by the length of their JSON text, not its UTF-8 bytes, so a reading of text outside ASCII can pass at up to three times the budget, and a bigint cell in one fails the call instead of being measured.
+- **B173**: the hand-over route answers an execution-profile refusal at replay, an engine off the review record or a principal whose privileges are too broad among them, as a `500` `INTERNAL_ERROR` logged as an unhandled error, because `createErrorResponse` has no branch for `ExecutionProfileError`, so a refusal that is the boundary working reads as a server fault.
 - **B146**: database assessment opens on every engine with a catalog read, an engine with no table profile composition included, where its verdict can never be met: measured on OpenSearch 3.8.0, the run ends with "No table was profiled", and Elasticsearch, Oracle and Db2 open it by the same requirement.
 
 **What machine redaction leaves unmasked on Kubernetes.**
