@@ -1768,7 +1768,7 @@ Every refusal reason it can print, verbatim:
 - [`docs/providers/postgres.md`](postgres.md) — the canonical SQL-family walkthrough
 
 
-Connection targets reserve Studio's storage database, its WAL/SHM files and bootstrap credentials (including backups and temporary files).
+Connection targets reserve Studio's storage database, its WAL/SHM files, the credential re-seal's backups of it (`<store file>.pre-reseal-<stamp>`) and bootstrap credentials (including backups and temporary files).
 This applies to every role.
 Studio's provider factory makes the check when it builds the provider, before any provider exists to connect, against the storage location the process took once (at boot, or at the first provider built where no boot runs), so a later change of the working directory or of `STORAGE_SQLITE_PATH` moves nothing ([SECURITY.md](../SECURITY.md) control 3.45).
 Checks normalize paths, resolve symbolic links and compare existing file identities so hard links cannot alias reserved files.

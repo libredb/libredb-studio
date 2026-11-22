@@ -132,10 +132,36 @@ export function foldPathKey(file: string): string {
 export const BOOTSTRAP_FILE_NAME = "auth-bootstrap.json";
 
 /**
+ * The start of the label the credential re-seal gives the backup of the store it writes beside the store file, as
+ * `<store file>.<label>` (`resealBackupLabel` in `src/lib/storage/reseal.ts`, docs/STORAGE.md).
+ */
+export const STORE_BACKUP_LABEL_PREFIX = "pre-reseal-";
+
+/**
+ * The re-seal backups of the store that exist now: every entry of the data directory whose name, letter case and
+ * Unicode normalization folded, starts with the store file's name and `.pre-reseal-`. None when the data directory does
+ * not exist; any other error reading it is thrown.
+ */
+function storeBackups(location: StorageLocation): string[] {
+  const prefix = foldPathKey(`${path.basename(location.storageFile)}.${STORE_BACKUP_LABEL_PREFIX}`);
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(location.dataDirectory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return [];
+  }
+  return entries
+    .filter((entry) => foldPathKey(entry).startsWith(prefix))
+    .map((entry) => path.join(location.dataDirectory, entry));
+}
+
+/**
  * Whether a folded path (`foldPathKey`) names one of the server's own storage files: the storage database, its `-wal`
- * and `-shm` files, and the bootstrap credentials file with its `.bak` and temporary (`<file>.<id>.tmp`) names, as
- * configured and as real paths, each name also resolved on its own, so a symbolic link at a sidecar or backup name
- * reserves the file it points to. The names are those of the storage location this process took (`storageLocation`),
+ * and `-shm` files, every name that starts with the store file's name and `.pre-reseal-` (the re-seal's backups of the
+ * store and their sidecars, `STORE_BACKUP_LABEL_PREFIX`), and the bootstrap credentials file with its `.bak` and
+ * temporary (`<file>.<id>.tmp`) names, as configured and as real paths, each name also resolved on its own, so a
+ * symbolic link at a sidecar or backup name reserves the file it points to. The names are those of the storage location this process took (`storageLocation`),
  * and their real paths are read at each call. Two spellings that differ only in letter case, or only in Unicode
  * normalization form (NFC against NFD), are one file here on every OS, because on macOS (both) and Windows (letter
  * case) they name one file, whether or not it exists yet. Throws what the path check throws.
@@ -151,26 +177,34 @@ export function reservedStorageKey(): (key: string) => boolean {
     `${storage}-wal`,
     `${storage}-shm`,
     ...bootstraps.flatMap((file) => [file, `${file}.bak`]),
+    ...storeBackups(location),
   ];
   const files = new Set([...named, ...named.map(canonicalPath)].map(foldPathKey));
   const temps = bootstraps.map((file) => foldPathKey(`${file}.`));
   const tmp = foldPathKey(".tmp");
-  return (key) => files.has(key) || temps.some((prefix) => key.startsWith(prefix) && key.endsWith(tmp));
+  // The backups sit beside the store's configured name, so its directory's real path is the other spelling of them.
+  const stores = [storage, path.join(canonicalPath(location.dataDirectory), path.basename(storage))];
+  const backups = stores.map((file) => foldPathKey(`${file}.${STORE_BACKUP_LABEL_PREFIX}`));
+  return (key) =>
+    files.has(key) ||
+    backups.some((prefix) => key.startsWith(prefix)) ||
+    temps.some((prefix) => key.startsWith(prefix) && key.endsWith(tmp));
 }
 
 /**
  * Studio state and credentials are reserved for all connection roles and file providers. A path is reserved when its
  * real path names one of the server's own storage files with letter case and Unicode normalization folded
- * (`reservedStorageKey`), or, for a file that exists, when it is the same file (device and inode) as one of them, so a
- * hard link is refused too.
+ * (`reservedStorageKey`), or, for a file that exists, when it is the same file (device and inode) as one of them or as
+ * a re-seal backup of the store that exists now, so a hard link is refused too.
  *
  * Studio's own files are read here, and anything reading them throws is thrown here; the check this returns reads only
  * the candidate, so what it throws is about the candidate's path.
  */
 export function reservedStorageCheck(): (candidate: string) => boolean {
   const isReservedKey = reservedStorageKey();
-  const bootstrap = canonicalPath(path.join(storageLocation().dataDirectory, BOOTSTRAP_FILE_NAME));
-  const identities = [...reservedStoragePaths(), bootstrap, `${bootstrap}.bak`]
+  const location = storageLocation();
+  const bootstrap = canonicalPath(path.join(location.dataDirectory, BOOTSTRAP_FILE_NAME));
+  const identities = [...reservedStoragePaths(), bootstrap, `${bootstrap}.bak`, ...storeBackups(location)]
     .map(fileIdentity)
     .filter((identity) => identity !== undefined);
   return (candidate) => {

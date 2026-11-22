@@ -6,6 +6,7 @@ import { createDatabaseProvider } from "@/lib/db/factory";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { forgetStorageLocation, isReservedStoragePath } from "@/lib/data-dir";
 import { RESERVED_STORAGE_PATH } from "@/lib/db/provider-files";
+import { resealBackupLabel } from "@/lib/storage/reseal";
 import type { DatabaseConnection } from "@/lib/types";
 
 /**
@@ -31,6 +32,9 @@ afterEach(() => {
 });
 
 const FILE_TYPES = ["sqlite", "duckdb", "libredb"] as const;
+
+/** The backup the credential re-seal writes beside the store, named as its writer names it: `<store file>.<label>`. */
+const BACKUP = `storage.db.${resealBackupLabel(new Date("2026-11-22T05:30:00Z"))}`;
 
 function fileConnection(type: (typeof FILE_TYPES)[number], fields: Partial<DatabaseConnection>): DatabaseConnection {
   return { id: "reserved", name: "reserved", type, createdAt: new Date(), ...fields } as DatabaseConnection;
@@ -60,6 +64,8 @@ for (const type of FILE_TYPES) {
       "auth-bootstrap.json",
       "auth-bootstrap.json.bak",
       "auth-bootstrap.json.123.tmp",
+      BACKUP,
+      `${BACKUP}-wal`,
     ]) {
       test(`createDatabaseProvider refuses ${name} before the provider is built, and creates nothing`, async () => {
         const target = path.join(dir, name);
@@ -68,7 +74,13 @@ for (const type of FILE_TYPES) {
     }
 
     // On macOS and Windows each of these spellings names the reserved file itself.
-    for (const name of ["STORAGE.DB", "Storage.db-WAL", "AUTH-BOOTSTRAP.JSON.BAK", "Auth-Bootstrap.json.123.TMP"]) {
+    for (const name of [
+      "STORAGE.DB",
+      "Storage.db-WAL",
+      "AUTH-BOOTSTRAP.JSON.BAK",
+      "Auth-Bootstrap.json.123.TMP",
+      BACKUP.toUpperCase(),
+    ]) {
       test(`createDatabaseProvider refuses ${name}, another letter case of a reserved file, before the provider is built, and creates nothing`, async () => {
         const target = path.join(dir, name);
         await expectRefusedAtBuild(fileConnection(type, { database: target }), target);
@@ -82,7 +94,7 @@ for (const type of FILE_TYPES) {
       process.env.STORAGE_SQLITE_PATH = path.join(composed, "storage.db");
       forgetStorageLocation();
       const decomposed = path.join(dir, "Studu\u0308o");
-      for (const name of ["storage.db", "storage.db-wal", "auth-bootstrap.json.bak"]) {
+      for (const name of ["storage.db", "storage.db-wal", "auth-bootstrap.json.bak", BACKUP]) {
         const target = path.join(decomposed, name);
         await expectRefusedAtBuild(fileConnection(type, { database: target }), target);
       }
@@ -105,6 +117,25 @@ for (const type of FILE_TYPES) {
         expect([database, (refused as Error | null)?.message]).toEqual([database, RESERVED_STORAGE_PATH]);
       }
       expect(fs.existsSync(path.join(dir, "storage.db-wal"))).toBe(false);
+    });
+
+    test("the re-seal's backup of the store is refused by a relative spelling, a symbolic link, a directory alias and a hard link before the provider is built", async () => {
+      const backup = path.join(dir, BACKUP);
+      fs.writeFileSync(backup, "server state");
+      fs.symlinkSync(backup, path.join(dir, "backup-alias.db"));
+      fs.symlinkSync(dir, path.join(dir, "directory-alias"), "junction");
+      fs.linkSync(backup, path.join(dir, "backup-hardlink.db"));
+      for (const database of [
+        path.relative(process.cwd(), backup),
+        path.join(dir, "backup-alias.db"),
+        path.join(dir, "directory-alias", BACKUP),
+        path.join(dir, "backup-hardlink.db"),
+      ]) {
+        // oxlint-disable-next-line no-await-in-loop -- each refusal is read before the next build.
+        const refused = await buildRefusal(fileConnection(type, { database }));
+        expect([database, (refused as Error | null)?.message]).toEqual([database, RESERVED_STORAGE_PATH]);
+      }
+      expect(fs.existsSync(`${backup}-wal`)).toBe(false);
     });
   });
 }
@@ -224,7 +255,7 @@ test("sidecars follow the canonical storage file when its configured name is a s
 
 test("a dangling symbolic link at a sidecar or backup name is reserved, and so is the file it points to", () => {
   const elsewhere = path.join(dir, "elsewhere");
-  for (const name of ["storage.db-wal", "storage.db-shm", "auth-bootstrap.json.bak"]) {
+  for (const name of ["storage.db-wal", "storage.db-shm", "auth-bootstrap.json.bak", BACKUP]) {
     const target = path.join(elsewhere, `${name}.target`);
     fs.symlinkSync(target, path.join(dir, name));
     expect([name, isReservedStoragePath(path.join(dir, name)), isReservedStoragePath(target)]).toEqual([
@@ -242,7 +273,7 @@ test("under a symlinked data directory, the bootstrap file is reserved by its re
   fs.symlinkSync(path.join(base, "real"), path.join(base, "alias"), "junction");
   process.env.STORAGE_SQLITE_PATH = path.join(base, "alias", "storage.db");
   forgetStorageLocation();
-  for (const name of ["auth-bootstrap.json", "auth-bootstrap.json.bak", "auth-bootstrap.json.123.tmp"]) {
+  for (const name of ["auth-bootstrap.json", "auth-bootstrap.json.bak", "auth-bootstrap.json.123.tmp", BACKUP]) {
     expect([name, isReservedStoragePath(path.join(base, "real", name))]).toEqual([name, true]);
     // On Linux ALIAS is not the symlink, so only the configured spelling, folded, names the file.
     expect([name, isReservedStoragePath(path.join(base, "ALIAS", name))]).toEqual([name, true]);

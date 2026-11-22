@@ -159,10 +159,39 @@ describe("data-dir reserved storage paths", () => {
       "auth-bootstrap.json.1234.tmp2",
       "auth-bootstrap.jsonx.tmp",
       "auth-bootstrap.tmp",
+      "storage.db.pre-reseal",
+      "storage.dbx.pre-reseal-20261122T053000Z",
+      "other.db.pre-reseal-20261122T053000Z",
     ]) {
       expect([name, isReservedStoragePath(`/var/lib/libredb/${name}`)]).toEqual([name, false]);
     }
     expect(isReservedStoragePath("/var/lib/libredb-other/STORAGE.DB")).toBe(false);
+  });
+
+  test("isReservedStoragePath matches every name the re-seal's backup of the store takes, none of them existing", () => {
+    process.env.STORAGE_SQLITE_PATH = "/var/lib/libredb/storage.db";
+    for (const name of [
+      "storage.db.pre-reseal-20261122T053000Z",
+      "storage.db.pre-reseal-20261122T053000Z-wal",
+      "STORAGE.DB.PRE-RESEAL-20261122T053000Z",
+    ]) {
+      expect([name, isReservedStoragePath(`/var/lib/libredb/${name}`)]).toEqual([name, true]);
+    }
+  });
+
+  test("an error reading the data directory for the re-seal's backups, other than its absence, is raised", () => {
+    const dir = fs.mkdtempSync(path.join(tmpdir(), "libredb-data-dir-backups-"));
+    process.env.STORAGE_SQLITE_PATH = path.join(dir, "storage.db");
+    const error = Object.assign(new Error("unreadable"), { code: "EACCES" });
+    const readdir = spyOn(fs, "readdirSync").mockImplementation(() => {
+      throw error;
+    });
+    try {
+      expect(() => isReservedStoragePath(path.join(dir, "user.db"))).toThrow("unreadable");
+    } finally {
+      readdir.mockRestore();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
