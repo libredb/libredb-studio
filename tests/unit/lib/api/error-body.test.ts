@@ -13,6 +13,7 @@ import {
   ConnectionError,
   DatabaseConfigError,
   DatabaseError,
+  FacetNotOfferedError,
   PermissionDeniedError,
   PoolExhaustedError,
   QueryCancelledError,
@@ -101,6 +102,21 @@ const ROWS: readonly Row[] = [
       statusCode: 400,
     },
     log: { level: "warn", message: "Unknown provider", context: { reason: "malformed" } },
+  },
+  {
+    name: "a FacetNotOfferedError answers 400 FACET_NOT_OFFERED with its sentence and a warn line naming the provider",
+    error: new FacetNotOfferedError(
+      '"vacuum" is not a maintenance operation LibreDB Studio offers on Apache Kafka, which offers none.',
+      "kafka",
+      "maintenance",
+      "vacuum",
+    ),
+    body: {
+      error: '"vacuum" is not a maintenance operation LibreDB Studio offers on Apache Kafka, which offers none.',
+      code: ApiErrorCode.FACET_NOT_OFFERED,
+      statusCode: 400,
+    },
+    log: { level: "warn", message: "Facet not offered", context: { provider: "kafka" } },
   },
   {
     name: "AuthenticationError with a fix statement",

@@ -557,10 +557,16 @@ describe("POST /api/db/maintenance", () => {
     });
 
     const res = await POST(req as never);
-    const data = await parseResponseJSON<{ error: string }>(res);
+    const data = await parseResponseJSON<{ error: string; code: string }>(res);
 
+    // The row offers vacuum on PostgreSQL, so the refusal comes from the connected server, after connect.
     expect(res.status).toBe(400);
-    expect(data.error).toContain("not supported");
+    expect(data.code).toBe("FACET_NOT_OFFERED");
+    expect(data.error).toBe(
+      '"vacuum" is not a maintenance operation the PostgreSQL server this connection reaches accepts, which accepts none; nothing was run.',
+    );
+    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
+    expect(mockProvider.runMaintenance).not.toHaveBeenCalled();
   });
 
   test("unsupported operation type returns 400", async () => {
@@ -570,10 +576,127 @@ describe("POST /api/db/maintenance", () => {
     });
 
     const res = await POST(req as never);
-    const data = await parseResponseJSON<{ error: string }>(res);
+    const data = await parseResponseJSON<{ error: string; code: string }>(res);
 
     expect(res.status).toBe(400);
-    expect(data.error).toContain("not supported");
+    expect(data.code).toBe("FACET_NOT_OFFERED");
+    expect(data.error).toBe(
+      '"optimize" is not a maintenance operation LibreDB Studio offers on PostgreSQL, which offers vacuum, analyze, reindex, kill; no connection was opened and nothing was run.',
+    );
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+  });
+
+  // FND-4: the engine facets row is read before any provider is built, so an operation the engine does not offer
+  // opens no provider, no SSH tunnel and no connection, and is refused by name.
+  test("an operation the engine does not offer is refused FACET_NOT_OFFERED by name before any provider is built", async () => {
+    const res = await POST(
+      createMockRequest("/api/db/maintenance", {
+        method: "POST",
+        body: { type: "vacuum", connection: { ...validConnection, type: "kafka", port: 9092 } },
+      }) as never,
+    );
+    const data = await parseResponseJSON<{ error: string; code: string; statusCode: number }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data).toEqual({
+      error:
+        '"vacuum" is not a maintenance operation LibreDB Studio offers on Apache Kafka, which offers none; no connection was opened and nothing was run.',
+      code: "FACET_NOT_OFFERED",
+      statusCode: 400,
+    });
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockProvider.runMaintenance).not.toHaveBeenCalled();
+    expect(mockAuditPush).not.toHaveBeenCalled();
+    expect(mockRecordQueryEvent).not.toHaveBeenCalled();
+  });
+
+  test("an operation outside the engine's set is refused the same way, naming the operations it offers", async () => {
+    const res = await POST(
+      createMockRequest("/api/db/maintenance", {
+        method: "POST",
+        body: { type: "vacuum", target: "users", connection: { ...validConnection, type: "mysql", port: 3306 } },
+      }) as never,
+    );
+    const data = await parseResponseJSON<{ error: string; code: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data.code).toBe("FACET_NOT_OFFERED");
+    expect(data.error).toBe(
+      '"vacuum" is not a maintenance operation LibreDB Studio offers on MySQL, which offers analyze, optimize, check, kill; no connection was opened and nothing was run.',
+    );
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockProvider.runMaintenance).not.toHaveBeenCalled();
+    expect(mockAuditPush).not.toHaveBeenCalled();
+  });
+
+  test("an operation the connected server does not accept is refused FACET_NOT_OFFERED after connect, naming what it accepts", async () => {
+    // YugabyteDB's shape: a PostgreSQL wire server that accepts no REINDEX, narrowed at connect.
+    (mockProvider.getCapabilities as ReturnType<typeof mock>).mockImplementation(() => ({
+      queryLanguage: "sql",
+      supportsExplain: true,
+      supportsExternalQueryLimiting: true,
+      supportsMaintenance: true,
+      maintenanceOperations: ["vacuum", "analyze", "kill"],
+      supportsConnectionString: true,
+      defaultPort: 5432,
+      schemaRefreshPattern: "",
+    }));
+
+    const res = await POST(
+      createMockRequest("/api/db/maintenance", {
+        method: "POST",
+        body: { type: "reindex", target: "users", connection: validConnection },
+      }) as never,
+    );
+    const data = await parseResponseJSON<{ error: string; code: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data.code).toBe("FACET_NOT_OFFERED");
+    expect(data.error).toBe(
+      '"reindex" is not a maintenance operation the PostgreSQL server this connection reaches accepts, which accepts vacuum, analyze, kill; nothing was run.',
+    );
+    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
+    expect(mockProvider.runMaintenance).not.toHaveBeenCalled();
+    expect(mockAuditPush).not.toHaveBeenCalled();
+  });
+
+  test.each<[string, unknown]>([
+    ["the number 5", 5],
+    ["true", true],
+    ["an object", {}],
+    ["an array", []],
+  ])(
+    "a type that is not text is refused with a fixed sentence before any provider is built: %s",
+    async (_label, type) => {
+      const res = await POST(
+        createMockRequest("/api/db/maintenance", {
+          method: "POST",
+          body: { type, target: "users", connection: validConnection },
+        }) as never,
+      );
+
+      expect(res.status).toBe(400);
+      expect(await parseResponseJSON<{ error: string }>(res)).toEqual({
+        error: '"type" must be a string naming a maintenance operation',
+      });
+      expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+      expect(mockProvider.runMaintenance).not.toHaveBeenCalled();
+    },
+  );
+
+  test("a connection whose type names no provider is refused PROVIDER_UNKNOWN before any provider is built", async () => {
+    const res = await POST(
+      createMockRequest("/api/db/maintenance", {
+        method: "POST",
+        body: { type: "vacuum", connection: { ...validConnection, type: "acmefoo" } },
+      }) as never,
+    );
+    const data = await parseResponseJSON<{ error: string; code: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data.code).toBe("PROVIDER_UNKNOWN");
+    expect(data.error).toBe('No provider for the connection type "acmefoo" is installed in this LibreDB Studio.');
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
   });
 
   // ─── U20: the route gates on WHAT an operation can be pointed at ──────────

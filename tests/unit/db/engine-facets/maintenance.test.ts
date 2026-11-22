@@ -1,0 +1,120 @@
+import { describe, expect, test } from "bun:test";
+import { CONNECTION_FORM } from "@/lib/db/connection-form";
+import {
+  assertMaintenanceAccepted,
+  assertMaintenanceOffered,
+  maintenanceNotAcceptedSentence,
+  maintenanceNotOfferedSentence,
+} from "@/lib/db/engine-facets/maintenance";
+import { FacetNotOfferedError } from "@/lib/db/errors";
+import { ApiErrorCode } from "@/lib/api/error-codes";
+import { quoteTypeId } from "@/lib/db/type-id";
+import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../../../helpers/outside-the-union";
+
+/** The error `run` throws, failing the test when it throws nothing. */
+function thrownBy(run: () => void): unknown {
+  try {
+    run();
+  } catch (error) {
+    return error;
+  }
+  throw new Error("expected a refusal, and nothing was thrown");
+}
+
+describe("assertMaintenanceOffered: the engine facets row before any provider", () => {
+  test("a declared operation passes for its engine", () => {
+    expect(() => assertMaintenanceOffered("postgres", "vacuum")).not.toThrow();
+    expect(() => assertMaintenanceOffered("trino", "kill")).not.toThrow();
+  });
+
+  test("an operation the engine does not offer is refused by name, with the operations it offers", () => {
+    const error = thrownBy(() => assertMaintenanceOffered("mysql", "vacuum"));
+    expect(error).toBeInstanceOf(FacetNotOfferedError);
+    const refusal = error as FacetNotOfferedError;
+    expect(refusal.code).toBe(ApiErrorCode.FACET_NOT_OFFERED);
+    expect(refusal.provider).toBe("mysql");
+    expect(refusal.facet).toBe("maintenance");
+    expect(refusal.operation).toBe("vacuum");
+    expect(refusal.message).toBe(
+      maintenanceNotOfferedSentence(CONNECTION_FORM.mysql.label, '"vacuum"', ["analyze", "optimize", "check", "kill"]),
+    );
+    expect(refusal.message).toBe(
+      '"vacuum" is not a maintenance operation LibreDB Studio offers on MySQL, which offers analyze, optimize, check, kill; no connection was opened and nothing was run.',
+    );
+  });
+
+  test("an engine that offers no maintenance refuses every operation and says it offers none", () => {
+    const error = thrownBy(() => assertMaintenanceOffered("kafka", "vacuum")) as FacetNotOfferedError;
+    expect(error).toBeInstanceOf(FacetNotOfferedError);
+    expect(error.provider).toBe("kafka");
+    expect(error.message).toBe(
+      '"vacuum" is not a maintenance operation LibreDB Studio offers on Apache Kafka, which offers none; no connection was opened and nothing was run.',
+    );
+  });
+
+  test.each(["constructor", "__proto__", "toString"])(
+    "a prototype key is not an operation any engine offers: %s",
+    (key) => {
+      const error = thrownBy(() => assertMaintenanceOffered("postgres", key)) as FacetNotOfferedError;
+      expect(error).toBeInstanceOf(FacetNotOfferedError);
+      expect(error.operation).toBe(key);
+      expect(error.message.startsWith(`${JSON.stringify(key)} is not a maintenance operation`)).toBe(true);
+    },
+  );
+
+  test("a refused operation is quoted on one line", () => {
+    const operation = "va\u2028cuum\n";
+    const error = thrownBy(() => assertMaintenanceOffered("postgres", operation)) as FacetNotOfferedError;
+    expect(error.operation).toBe(operation);
+    expect(error.message.startsWith(`${quoteTypeId(operation)} is not a maintenance operation`)).toBe(true);
+    expect(error.message).not.toMatch(/[\n\u2028]/);
+  });
+
+  test.each(OUTSIDE_THE_UNION)("a type that is not a type id is refused by name: %s", (_label, value) => {
+    expect(refusalThrownBy(() => assertMaintenanceOffered(value, "vacuum"))).toEqual(refusalOf(value));
+  });
+});
+
+describe("assertMaintenanceAccepted: the connected server's declaration", () => {
+  test("after connect, an operation the server accepts passes", () => {
+    expect(() =>
+      assertMaintenanceAccepted("postgres", "vacuum", {
+        supportsMaintenance: true,
+        maintenanceOperations: ["vacuum", "analyze", "kill"],
+      }),
+    ).not.toThrow();
+  });
+
+  test("after connect, an operation the server does not accept is refused with what it accepts", () => {
+    const error = thrownBy(() =>
+      assertMaintenanceAccepted("postgres", "reindex", {
+        supportsMaintenance: true,
+        maintenanceOperations: ["vacuum", "analyze", "kill"],
+      }),
+    ) as FacetNotOfferedError;
+    expect(error).toBeInstanceOf(FacetNotOfferedError);
+    expect(error.code).toBe(ApiErrorCode.FACET_NOT_OFFERED);
+    expect(error.provider).toBe("postgres");
+    expect(error.facet).toBe("maintenance");
+    expect(error.operation).toBe("reindex");
+    expect(error.message).toBe(
+      maintenanceNotAcceptedSentence(CONNECTION_FORM.postgres.label, '"reindex"', ["vacuum", "analyze", "kill"]),
+    );
+    expect(error.message).toBe(
+      '"reindex" is not a maintenance operation the PostgreSQL server this connection reaches accepts, which accepts vacuum, analyze, kill; nothing was run.',
+    );
+  });
+
+  test("after connect, a server that accepts no maintenance is refused saying it accepts none", () => {
+    const error = thrownBy(() =>
+      assertMaintenanceAccepted("postgres", "vacuum", {
+        supportsMaintenance: false,
+        maintenanceOperations: ["vacuum"],
+      }),
+    ) as FacetNotOfferedError;
+    expect(error).toBeInstanceOf(FacetNotOfferedError);
+    expect(error.message).toBe(
+      '"vacuum" is not a maintenance operation the PostgreSQL server this connection reaches accepts, which accepts none; nothing was run.',
+    );
+  });
+});

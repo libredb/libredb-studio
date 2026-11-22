@@ -47,8 +47,8 @@ import type { EngineFacets } from "./types";
 
 /**
  * What each engine offers, one row per type id, each declared beside its provider (FND-4). A missing id is a compile
- * error here, and a row missing a panel is a compile error in its own module, so a new engine cannot ship without
- * stating each monitoring panel as offered or not.
+ * error here, and a row missing a panel or its maintenance list is a compile error in its own module, so a new engine
+ * cannot ship without stating each monitoring panel as offered or not and the maintenance operations it offers.
  */
 export const ENGINE_FACETS: Readonly<Record<DatabaseType, EngineFacets>> = Object.freeze({
   bigquery: BIGQUERY_ENGINE_FACETS,

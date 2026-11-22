@@ -8,6 +8,7 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
+import { assertMaintenanceAccepted, assertMaintenanceOffered } from "@/lib/db/engine-facets/maintenance";
 import { clientAddress } from "@/lib/api/client-address";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import type { UserPayload } from "@/lib/auth";
@@ -19,6 +20,13 @@ import type { QueryEventInput, QueryEventStatus } from "@/lib/query-events/types
 import type { DatabaseConnection } from "@/lib/types";
 import { logger } from "@/lib/logger";
 
+/**
+ * Runs one maintenance operation, for an admin. The request is checked in this order, and nothing is run or recorded
+ * for a request refused on the way: the guard and the admin check; a JSON object body; the connection; `type`
+ * present and text; `container` and `target` text or absent; the operation listed in the `maintenance` of the
+ * engine's `ENGINE_FACETS` row, before any provider is built (`400 FACET_NOT_OFFERED`); then, on the connected
+ * provider, the operation the server accepts (the same code) and the placement its spec declares.
+ */
 export async function POST(request: Request) {
   // Session, rate limit and denial audit share the same door as every other provider-reaching
   // route, on the "query" bucket: an admin session is still one identity, and a stolen or
@@ -47,6 +55,12 @@ export async function POST(request: Request) {
 
     if (!type) {
       return NextResponse.json({ error: "Maintenance type is required" }, { status: 400 });
+    }
+
+    // A `type` that is not text names no operation, and the refusal below quotes the operation, so it is answered here
+    // in a fixed sentence that repeats nothing of the value.
+    if (typeof type !== "string") {
+      return NextResponse.json({ error: `"type" must be a string naming a maintenance operation` }, { status: 400 });
     }
 
     // `container` is the row's `schemaName`: a string naming the container the target lives in,
@@ -79,21 +93,16 @@ export async function POST(request: Request) {
     // falsy test would have refused anyway, because the audit row below records what arrived.
     const requestedContainer: string | undefined = container || undefined;
 
+    // The engine facets row (FND-4), read before any provider is built: an operation the engine does not offer is
+    // refused 400 FACET_NOT_OFFERED by name, and no provider, SSH tunnel or connection is opened for it.
+    assertMaintenanceOffered(connection.type, type);
+
     const provider = await editorProvider(guard.session, connection, requestCatalog(body));
     const capabilities = provider.getCapabilities();
 
-    if (!capabilities.supportsMaintenance) {
-      return NextResponse.json({ error: `Maintenance operations not supported for this database` }, { status: 400 });
-    }
-
-    if (!capabilities.maintenanceOperations.includes(type as MaintenanceOperation)) {
-      return NextResponse.json(
-        {
-          error: `Operation '${type}' not supported for this database. Supported: ${capabilities.maintenanceOperations.join(", ")}`,
-        },
-        { status: 400 },
-      );
-    }
+    // The connected server may accept fewer operations than its engine's row (PostgreSQL and MySQL narrow at
+    // connect), so the provider's own declaration is read again, and a refusal answers the same code.
+    assertMaintenanceAccepted(connection.type, type, capabilities);
 
     // `maintenanceOperations` above says only that the operation EXISTS here. What KIND of
     // target it takes is a separate declaration - `maintenanceOperationSpecs` - and until
@@ -122,7 +131,7 @@ export async function POST(request: Request) {
     // callers (`TableItem`, `OperationsTab`) resolve it before sending - the request carries
     // the resolved operation id, never the literal `vacuum`. Rewriting a caller's stated
     // operation into a different one is the opposite of what a gate does, and it would make
-    // the existing "operation not supported" 400 unreachable for exactly the four providers
+    // the `FACET_NOT_OFFERED` refusal above unreachable for exactly the four providers
     // whose vacuum wording names something else.
     const placement: MaintenancePlacement = target ? "perEntity" : "global";
     const perEntityControl = maintenanceControl(capabilities, type as MaintenanceOperation, "perEntity");

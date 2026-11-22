@@ -1,12 +1,15 @@
 /**
  * The engine facets contract (FND-4): what each engine offers, declared in one row beside its provider and collected
  * by `ENGINE_FACETS` in `./index.ts`. `getMonitoringData`, the dashboard, the admin Operations page and fleet health
- * read a row before they call a provider member, so none of them calls a member the engine does not offer. The
- * agent's `inspect_operations` tool does not read the row yet: it still calls `getActiveSessions`, `getSlowQueries`,
- * `getTableStats`, `getIndexStats` and `getStorageStats` on every engine.
+ * read a row before they call a provider member, so none of them calls a member the engine does not offer, and the two
+ * maintenance routes read it before they build a provider, so neither opens a connection for an operation the engine
+ * does not offer. The agent's `inspect_operations` tool does not read the row yet: it still calls `getActiveSessions`,
+ * `getSlowQueries`, `getTableStats`, `getIndexStats` and `getStorageStats` on every engine.
  *
  * This module loads nothing: a row module imports it only as types, and the one value here is the panel vocabulary.
  */
+
+import type { MaintenanceOperation } from "@/lib/db/types";
 
 /**
  * The seven monitoring panels, in the order the dashboard draws them. Each is the key of `MonitoringData` its read
@@ -41,4 +44,10 @@ export type MonitoringPanelOffer = Readonly<Record<MonitoringPanel, FacetOffer>>
 export interface EngineFacets {
   /** The monitoring panels the engine offers, read by `getMonitoringData`, the dashboard and fleet health. */
   readonly monitoring: MonitoringPanelOffer;
+  /**
+   * The maintenance operations the engine offers before Studio connects, in the provider's declaration order.
+   * `POST /api/db/maintenance` and its preview refuse any other operation by name before a provider is built. A
+   * connected server may accept fewer (PostgreSQL and MySQL, through `narrowMaintenance`), never more.
+   */
+  readonly maintenance: readonly MaintenanceOperation[];
 }

@@ -11,6 +11,8 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `tables`: `getTableStats` refuses with `OPCUA_NO_TABLE_STATISTICS` without asking the engine.
  * - `indexes`: `getIndexStats` refuses with `OPCUA_NO_TABLE_STATISTICS` without asking the engine.
  * - `storage`: `getStorageStats` refuses with `OPCUA_NO_TABLE_STATISTICS` without asking the engine.
+ *
+ * Maintenance: `opcua` offers no maintenance operation.
  */
 export const OPCUA_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -22,4 +24,5 @@ export const OPCUA_ENGINE_FACETS: EngineFacets = {
     indexes: "not-offered",
     storage: "not-offered",
   },
+  maintenance: [],
 };

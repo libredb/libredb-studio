@@ -8,7 +8,8 @@ import type { DatabaseType } from "@/lib/types";
 /**
  * The provider triad's engine facets leg: every provider document carries one `Engine facets` subsection, at whatever
  * level the document's own scheme gives it, which links the module that declares the engine's `ENGINE_FACETS` row and
- * states, in a table, each of the seven monitoring panels as offered (`Yes`) or not (`No`) exactly as the row does.
+ * states, in a table, each of the seven monitoring panels as offered (`Yes`) or not (`No`) exactly as the row does,
+ * and in one `Maintenance operations offered:` line the maintenance operations the row offers, in the row's order.
  */
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
@@ -117,5 +118,16 @@ describe("each provider document's Engine facets subsection", () => {
         ENGINE_FACETS[type].monitoring[panel] === "offered" ? "Yes" : "No",
       ]),
     );
+  });
+
+  test.each(ENGINES)("docs/providers/%s.md states the maintenance operations its engine offers", (type) => {
+    const [section] = engineFacetsSections(docOf(type));
+    const operations = ENGINE_FACETS[type].maintenance;
+    const stated = section.split("\n").filter((line) => line.startsWith("Maintenance operations offered: "));
+    expect(stated).toEqual([
+      operations.length === 0
+        ? "Maintenance operations offered: none."
+        : `Maintenance operations offered: ${operations.map((operation) => `\`${operation}\``).join(", ")}.`,
+    ]);
   });
 });

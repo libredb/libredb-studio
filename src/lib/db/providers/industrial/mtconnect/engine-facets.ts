@@ -11,6 +11,8 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `tables`: `getTableStats` answers `[]` without asking the engine.
  * - `indexes`: `getIndexStats` answers `[]` without asking the engine.
  * - `storage`: `getStorageStats` answers `[]` without asking the engine.
+ *
+ * Maintenance: `mtconnect` offers no maintenance operation.
  */
 export const MTCONNECT_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -22,4 +24,5 @@ export const MTCONNECT_ENGINE_FACETS: EngineFacets = {
     indexes: "not-offered",
     storage: "not-offered",
   },
+  maintenance: [],
 };

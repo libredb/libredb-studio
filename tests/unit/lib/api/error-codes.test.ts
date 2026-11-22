@@ -24,6 +24,7 @@ const GROUPS = {
     "QUERY_ERROR",
     "CONFIG_ERROR",
     "PROVIDER_UNKNOWN",
+    "FACET_NOT_OFFERED",
     "AUTH_ERROR",
     "PERMISSION_DENIED",
     "TIMEOUT_ERROR",
@@ -90,6 +91,12 @@ describe("ApiErrorCode", () => {
   test("contains the unknown-provider refusal, distinct from CONFIG_ERROR", () => {
     expect(ApiErrorCode.PROVIDER_UNKNOWN).toBe("PROVIDER_UNKNOWN");
     expect(ApiErrorCode.PROVIDER_UNKNOWN).not.toBe(ApiErrorCode.CONFIG_ERROR);
+  });
+
+  test("contains the refusal of a facet the engine does not offer, distinct from CONFIG_ERROR and QUERY_ERROR", () => {
+    expect(ApiErrorCode.FACET_NOT_OFFERED).toBe("FACET_NOT_OFFERED");
+    expect(ApiErrorCode.FACET_NOT_OFFERED).not.toBe(ApiErrorCode.CONFIG_ERROR);
+    expect(ApiErrorCode.FACET_NOT_OFFERED).not.toBe(ApiErrorCode.QUERY_ERROR);
   });
 
   test("contains the database's privilege refusal code, distinct from its refused credential's AUTH_ERROR", () => {

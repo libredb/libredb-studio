@@ -15,6 +15,13 @@ export const ApiErrorCode = {
    * non-empty string.
    */
   PROVIDER_UNKNOWN: "PROVIDER_UNKNOWN",
+  /**
+   * The request names a facet member the connection's engine does not offer in this Studio, or one the connected
+   * server does not accept (400, `FacetNotOfferedError`). The first is answered before any provider is built; the
+   * sentence names the member and the engine. Distinct from CONFIG_ERROR and QUERY_ERROR: no setting or statement is
+   * at fault, and no retry on this engine succeeds.
+   */
+  FACET_NOT_OFFERED: "FACET_NOT_OFFERED",
   AUTH_ERROR: "AUTH_ERROR",
   /**
    * A database accepted the credential and refused the statement for a privilege that credential lacks (403), such as

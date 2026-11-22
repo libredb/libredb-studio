@@ -1056,7 +1056,7 @@ fields on a failed read — a required-field limitation, not an oversight.
 
 ### Engine facets
 
-Which of the seven monitoring panels `libredb` offers is its row in `ENGINE_FACETS`, declared in [`libredb-engine-facets.ts`](../../src/lib/db/providers/embedded/libredb-engine-facets.ts).
+Which of the seven monitoring panels and which maintenance operations `libredb` offers is its row in `ENGINE_FACETS`, declared in [`libredb-engine-facets.ts`](../../src/lib/db/providers/embedded/libredb-engine-facets.ts).
 `getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
 The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
 
@@ -1069,6 +1069,9 @@ The agent's `inspect_operations` tool does not read this row yet: it still calls
 | `tables` | Yes | `getTableStats` asks the engine |
 | `indexes` | No | `getIndexStats` refuses with `LIBREDB_INDEX_STATS_REFUSAL` without asking the engine |
 | `storage` | Yes | `getStorageStats` asks the engine |
+
+Maintenance operations offered: none.
+`POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
 
 ---
 

@@ -9,6 +9,8 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `slowQueries`: `getSlowQueries` answers `[]` without asking the engine.
  * - `activeSessions`: `getActiveSessions` answers `[]` without asking the engine.
  * - `indexes`: `getIndexStats` answers `[]` without asking the engine.
+ *
+ * Maintenance: `etcd` offers `compact`, `defragment` and `disarm`, in its provider's declaration order.
  */
 export const ETCD_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -20,4 +22,5 @@ export const ETCD_ENGINE_FACETS: EngineFacets = {
     indexes: "not-offered",
     storage: "offered",
   },
+  maintenance: ["compact", "defragment", "disarm"],
 };

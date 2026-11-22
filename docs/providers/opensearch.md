@@ -1539,7 +1539,7 @@ bytes.
 
 ### Engine facets
 
-Which of the seven monitoring panels `opensearch` offers is its row in `ENGINE_FACETS`, declared in [`opensearch-engine-facets.ts`](../../src/lib/db/providers/sql/search/opensearch-engine-facets.ts).
+Which of the seven monitoring panels and which maintenance operations `opensearch` offers is its row in `ENGINE_FACETS`, declared in [`opensearch-engine-facets.ts`](../../src/lib/db/providers/sql/search/opensearch-engine-facets.ts).
 `getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
 The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
 
@@ -1552,6 +1552,9 @@ The agent's `inspect_operations` tool does not read this row yet: it still calls
 | `tables` | Yes | `getTableStats` asks the engine |
 | `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
 | `storage` | Yes | `getStorageStats` asks the engine |
+
+Maintenance operations offered: none.
+`POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
 
 ---
 
@@ -1580,7 +1583,9 @@ altogether:
 
 `runMaintenance(type)` ([`search/index.ts`](../../src/lib/db/providers/sql/search/index.ts)) exists because
 the `DatabaseProvider` interface obliges every provider to implement it, and **not** because a request
-reaches it: `/api/db/maintenance` checks `supportsMaintenance` and answers 400 first. So the message
+reaches it: `/api/db/maintenance` reads the engine facets row, which offers no maintenance operation
+([Engine facets](#engine-facets)), and refuses every operation by name with `400 FACET_NOT_OFFERED`
+before it builds a provider. So the message
 below is what a *programmatic* caller of `@libredb/studio` sees:
 
 > OpenSearch has no SQL-reachable maintenance operation, so "\<type\>" cannot run here. Refreshing,
@@ -1915,7 +1920,7 @@ a string literal here, and in a projection it silently returns the name itself r
 ### 12.2 Over the API
 
 `POST /api/db/query` with the statement in the `sql` field — the same contract every SQL provider uses.
-`POST /api/db/maintenance` answers 400 before reaching the provider ([§8](#8-maintenance)). The
+`POST /api/db/maintenance` refuses every operation by name with `400 FACET_NOT_OFFERED` before it builds a provider ([§8](#8-maintenance)). The
 transaction and cancel routes do not apply: `/api/db/cancel` reports cancellation as unsupported
 because the provider exposes no `cancelQuery`
 ([§3.8](#38-the-deadline-is-the-clients-and-only-the-clients)).

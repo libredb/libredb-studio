@@ -3632,6 +3632,9 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
       // Core's stand-in for a provider error whose text held a credential, built only where an error leaves a path for a
       // renderer without the connection, never inside a statement's call, so the funnel never sees one: the default.
       ProviderTextWithheldError: "repairable",
+      // Core's refusal of a maintenance operation the engine does not offer, raised only by the two maintenance routes
+      // before and after their provider call, never inside a statement's call, so the funnel never sees one: the default.
+      FacetNotOfferedError: "repairable",
     };
 
     type ErrorConstructor = new (message: string, provider?: string) => Error;

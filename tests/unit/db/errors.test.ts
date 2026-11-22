@@ -11,6 +11,7 @@ import {
   TimeoutError,
   QueryCancelledError,
   UnknownProviderError,
+  FacetNotOfferedError,
   TransactionLostError,
   isDatabaseError,
   isConnectionError,
@@ -144,6 +145,28 @@ describe("UnknownProviderError", () => {
 
   test("it is not retryable", () => {
     expect(isRetryableError(new UnknownProviderError({ reason: "unknown", typeId: "acmefoo", sentence }))).toBe(false);
+  });
+});
+
+describe("FacetNotOfferedError", () => {
+  const sentence = '"vacuum" is not a maintenance operation LibreDB Studio offers on MySQL, which offers analyze.';
+
+  test("FacetNotOfferedError is a DatabaseError carrying FACET_NOT_OFFERED, its engine, facet and operation", () => {
+    const err = new FacetNotOfferedError(sentence, "mysql", "maintenance", "vacuum");
+    expect(err.name).toBe("FacetNotOfferedError");
+    expect(err.code).toBe(ApiErrorCode.FACET_NOT_OFFERED);
+    expect(err.provider).toBe("mysql");
+    expect(err.facet).toBe("maintenance");
+    expect(err.operation).toBe("vacuum");
+    expect(err.message).toBe(sentence);
+    expect(err.toJSON().code).toBe("FACET_NOT_OFFERED");
+    expect(err).toBeInstanceOf(FacetNotOfferedError);
+    expect(err).toBeInstanceOf(DatabaseError);
+    expect(err).not.toBeInstanceOf(DatabaseConfigError);
+  });
+
+  test("isRetryableError: a facet not offered is not retryable", () => {
+    expect(isRetryableError(new FacetNotOfferedError(sentence, "mysql", "maintenance", "vacuum"))).toBe(false);
   });
 });
 
