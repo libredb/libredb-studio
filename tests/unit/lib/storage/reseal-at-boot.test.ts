@@ -139,6 +139,7 @@ describe("resealStoreAtBoot", () => {
     expect(banner).toContain("STORAGE_ENCRYPTION_RESEAL is invalid");
     expect(banner).toContain('Got "yes\\"\\n"');
     expect(banner).toContain("true, on or 1");
+    expect(banner).toContain("leave-unopened");
     expect(existsSync(path)).toBe(false);
   });
 
@@ -198,7 +199,7 @@ describe("resealStoreAtBoot", () => {
     );
     expect(UNOPENED_ADVICE).toContain("a second re-seal finds nothing to do");
     expect(UNOPENED_ADVICE).toContain(
-      "stop every server, restore that key, delete the store's storage_meta row credential_envelope and start again with STORAGE_ENCRYPTION_RESEAL set, or restore the backup above",
+      "comes back only by stopping every server, restoring the key that sealed it, deleting the store's storage_meta row credential_envelope and starting again with STORAGE_ENCRYPTION_RESEAL set, or from the backup above",
     );
     expect(warned).toContain(
       "STORAGE_ENCRYPTION_RESEAL: left 1 value(s) as they were, because they are not text or sit beside a value sealed as v2: carol c9 apiKeyId (not-text).",
@@ -206,6 +207,38 @@ describe("resealStoreAtBoot", () => {
     expect(warned).toContain(
       "STORAGE_ENCRYPTION_RESEAL: left 1 row(s) or element(s) unread, because they are not connections or nest too deep to bind: bob connections.",
     );
+  });
+
+  test("refuses the boot naming the version 1 values the key in use does not open, and changes nothing", async () => {
+    previousVersionStore();
+    process.env.STORAGE_ENCRYPTION_RESEAL = "true";
+    process.env.JWT_SECRET = randomBytes(32).toString("base64url");
+    resetStorageEncryptionKey();
+
+    const { result, exits, banner } = await run();
+
+    expect(result).toBe(false);
+    expect(exits).toEqual([1]);
+    expect(banner).toContain("the credential re-seal did not complete");
+    expect(banner).toContain("1 version 1 value(s) do not open under the key in use: alice c1 password");
+    expect(banner).toContain("STORAGE_ENCRYPTION_RESEAL=leave-unopened");
+    expect(markerOf()).toBeUndefined();
+  });
+
+  test("with leave-unopened, re-seals, retires version 1 and names the version 1 values it left", async () => {
+    previousVersionStore();
+    process.env.STORAGE_ENCRYPTION_RESEAL = "Leave-Unopened";
+    process.env.JWT_SECRET = randomBytes(32).toString("base64url");
+    resetStorageEncryptionKey();
+
+    const { result, exits, warned } = await run();
+
+    expect(result).toBe(true);
+    expect(exits).toEqual([]);
+    expect(warned).toContain(
+      `STORAGE_ENCRYPTION_RESEAL: left 1 value(s) as they were, because they open nowhere here: alice c1 password. ${UNOPENED_ADVICE}`,
+    );
+    expect(markerOf()).toBe("v2");
   });
 
   test("says there was nothing to do on a retired store", async () => {

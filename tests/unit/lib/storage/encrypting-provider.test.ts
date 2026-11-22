@@ -407,7 +407,7 @@ describe("the envelope state", () => {
     const provider = await ready(store);
     expect(((await provider.getCollection("u", "connections")) ?? [])[0].password).toBeDefined();
 
-    const rewrite = { connections: () => null, factors: () => null };
+    const rewrite = { connections: () => null, factors: () => null, beforeRetire: () => {} };
     const result = await provider.rewriteStoredCredentials(rewrite, "pre-reseal-x");
 
     expect(result).toEqual({ kind: "rewritten", backup: "memory:pre-reseal-x" });

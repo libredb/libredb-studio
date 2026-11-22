@@ -212,7 +212,7 @@ describe("SQLiteStorageProvider", () => {
       run: mockRun,
     });
 
-    const txFn = mock((fn: () => void) => fn);
+    const txFn = transactionMock();
     mockDbInstance.transaction = txFn;
 
     await provider.mergeData("admin@test.com", {
@@ -246,7 +246,7 @@ describe("SQLiteStorageProvider", () => {
       get: mock(() => undefined),
       run: mockRun,
     });
-    mockDbInstance.transaction = mock((fn: () => void) => fn);
+    mockDbInstance.transaction = transactionMock();
 
     await provider.mergeData("admin@test.com", {
       connections: [

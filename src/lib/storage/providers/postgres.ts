@@ -658,6 +658,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
           row.email,
         ]);
       }
+      rewrite.beforeRetire();
       await client.query(
         `INSERT INTO ${this.tables.storageMeta} (key, value, updated_at) VALUES ($1, $2, NOW())
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,

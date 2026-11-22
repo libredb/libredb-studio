@@ -126,8 +126,9 @@ export interface ServerStorageProvider extends PasskeyStore {
    * The operator re-seal (docs/STORAGE.md, "Re-sealing the store"), in one transaction holding the
    * store's write lock: on a store already retired, nothing is read, written or backed up;
    * otherwise a complete backup named with `backupLabel` is written first, every `connections` row
-   * and every account's factors are passed to `rewrite`, the rows it changes are written, and the
-   * state becomes `v1-retired`. Any error rolls every change back and is rethrown.
+   * and every account's factors are passed to `rewrite`, the rows it changes are written,
+   * `rewrite.beforeRetire` runs, and the state becomes `v1-retired`. Any error rolls every change
+   * back and is rethrown.
    */
   rewriteStoredCredentials(
     rewrite: StoredCredentialRewrite,
@@ -177,6 +178,11 @@ export interface StoredCredentialRewrite {
   connections(userId: string, data: string): string | null;
   /** One account's factor columns as stored. */
   factors(row: StoredFactorRow): Pick<StoredFactorRow, "totpSecret" | "totpPending"> | null;
+  /**
+   * Called once after every row and account, before the state becomes `v1-retired`, inside the same transaction: a
+   * throw rolls every change back, so the re-seal can refuse to retire version 1 over what the rows held.
+   */
+  beforeRetire(): void;
 }
 
 export type StoredCredentialRewriteResult =

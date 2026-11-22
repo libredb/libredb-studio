@@ -1043,6 +1043,7 @@ describe("PostgresStorageProvider", () => {
       {
         connections: (owner, data) => (owner === "alice" ? `${data}!` : null),
         factors: (row) => ({ totpSecret: `${row.totpSecret}!`, totpPending: row.totpPending }),
+        beforeRetire: () => {},
       },
       LABEL,
     );
@@ -1094,6 +1095,7 @@ describe("PostgresStorageProvider", () => {
             throw failure;
           },
           factors: () => null,
+          beforeRetire: () => {},
         },
         LABEL,
       ),
@@ -1103,13 +1105,51 @@ describe("PostgresStorageProvider", () => {
     expect(client.sql()).not.toContain("COMMIT");
   });
 
+  test("beforeRetire runs after every row and account and before the marker, and its throw rolls the transaction back", async () => {
+    await provider.initialize();
+    const order: string[] = [];
+    const client = scriptedClient((sql) => {
+      order.push(sql.split(/\s+/).slice(0, 3).join(" "));
+      if (sql.includes("FROM user_storage WHERE collection")) return { rows: [{ user_id: "alice", data: "[]" }] };
+      if (sql.includes("SELECT email, totp_secret")) {
+        return { rows: [{ email: "ada@example.com", totp_secret: null, totp_pending: null }] };
+      }
+      return { rows: [] };
+    });
+    const refusal = new Error("refused before retiring");
+
+    await expect(
+      provider.rewriteStoredCredentials(
+        {
+          connections: () => "[1]",
+          factors: () => ({ totpSecret: "x", totpPending: null }),
+          beforeRetire: () => {
+            order.push("beforeRetire");
+            throw refusal;
+          },
+        },
+        LABEL,
+      ),
+    ).rejects.toBe(refusal);
+
+    const sql = client.sql();
+    expect(sql.some((statement) => statement.includes("INSERT INTO storage_meta"))).toBe(false);
+    expect(sql.at(-1)).toBe("ROLLBACK");
+    const retire = order.indexOf("beforeRetire");
+    expect(retire).toBe(order.length - 2);
+    expect(order[retire - 1]).toStartWith("UPDATE accounts SET");
+  });
+
   test("a retired store commits with no backup", async () => {
     await provider.initialize();
     const client = scriptedClient((sql) =>
       sql.startsWith("SELECT value FROM storage_meta") ? { rows: [{ value: "v2" }] } : {},
     );
 
-    const result = await provider.rewriteStoredCredentials({ connections: () => null, factors: () => null }, LABEL);
+    const result = await provider.rewriteStoredCredentials(
+      { connections: () => null, factors: () => null, beforeRetire: () => {} },
+      LABEL,
+    );
 
     expect(result).toEqual({ kind: "already-retired" });
     expect(client.sql()).toEqual([
@@ -1125,7 +1165,10 @@ describe("PostgresStorageProvider", () => {
     const client = scriptedClient();
 
     await expect(
-      provider.rewriteStoredCredentials({ connections: () => null, factors: () => null }, "pre-reseal; DROP"),
+      provider.rewriteStoredCredentials(
+        { connections: () => null, factors: () => null, beforeRetire: () => {} },
+        "pre-reseal; DROP",
+      ),
     ).rejects.toThrow("backup label");
     expect(client.statements).toEqual([]);
   });
@@ -1528,7 +1571,10 @@ describe("PostgresStorageProvider", () => {
       await qualified.renamePasskey(ACCOUNT.email, PASSKEY.id, "Laptop");
       await qualified.readEnvelopeState();
       expect(
-        await qualified.rewriteStoredCredentials({ connections: () => null, factors: () => null }, "pre-reseal-x"),
+        await qualified.rewriteStoredCredentials(
+          { connections: () => null, factors: () => null, beforeRetire: () => {} },
+          "pre-reseal-x",
+        ),
       ).toEqual({
         kind: "rewritten",
         backup: STORAGE_TABLES.map((table) => `"studio".${table}_pre_reseal_x`).join(", "),

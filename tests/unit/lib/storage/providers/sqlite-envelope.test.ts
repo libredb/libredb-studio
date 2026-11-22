@@ -141,6 +141,7 @@ describe("SQLiteStorageProvider credential envelope", () => {
         return data.replace(before, after);
       },
       factors: (row) => ({ totpSecret: `${row.totpSecret}-after`, totpPending: row.totpPending }),
+      beforeRetire: () => {},
     };
 
     const result = await provider.rewriteStoredCredentials(rewrite, LABEL);
@@ -180,6 +181,7 @@ describe("SQLiteStorageProvider credential envelope", () => {
         return data.replace("c1", "changed");
       },
       factors: () => null,
+      beforeRetire: () => {},
     };
 
     await expect(provider.rewriteStoredCredentials(rewrite, LABEL)).rejects.toBe(failure);
@@ -189,9 +191,38 @@ describe("SQLiteStorageProvider credential envelope", () => {
     expect(existsSync(`${path}.${LABEL}`)).toBe(true);
   });
 
+  test("beforeRetire runs inside the transaction after every row and account and before the marker, and its throw rolls everything back", async () => {
+    await provider.setCollection("alice", "connections", [{ id: "c1" }] as never);
+    await provider.insertAccount(account("ada@example.com", randomUUID()));
+    const order: string[] = [];
+    const refusal = new Error("refused before retiring");
+    const rewrite: StoredCredentialRewrite = {
+      connections: (owner) => {
+        order.push(`connections ${owner}`);
+        return '[{"id":"changed"}]';
+      },
+      factors: (row) => {
+        order.push(`factors ${row.email}`);
+        return { totpSecret: "changed", totpPending: null };
+      },
+      beforeRetire: () => {
+        order.push("beforeRetire");
+        expect(raw((db) => db.prepare("SELECT value FROM storage_meta").all())).toEqual([]);
+        throw refusal;
+      },
+    };
+
+    await expect(provider.rewriteStoredCredentials(rewrite, LABEL)).rejects.toBe(refusal);
+
+    expect(order).toEqual(["connections alice", "factors ada@example.com", "beforeRetire"]);
+    expect(await provider.getCollection("alice", "connections")).toEqual([{ id: "c1" }] as never);
+    expect((await provider.getAccount("ada@example.com"))?.totpSecret).not.toBe("changed");
+    expect(await provider.readEnvelopeState()).toBe("v1-accepted");
+  });
+
   test("a backup that cannot be written refuses the run and leaves the store unchanged", async () => {
     await provider.setCollection("alice", "connections", [{ id: "c1" }] as never);
-    const rewrite: StoredCredentialRewrite = { connections: () => "[]", factors: () => null };
+    const rewrite: StoredCredentialRewrite = { connections: () => "[]", factors: () => null, beforeRetire: () => {} };
     raw((db) => db.prepare("VACUUM INTO ?").run(`${path}.${LABEL}`));
 
     await expect(provider.rewriteStoredCredentials(rewrite, LABEL)).rejects.toThrow("EEXIST");
@@ -205,7 +236,7 @@ describe("SQLiteStorageProvider credential envelope", () => {
     async () => {
       await provider.setCollection("alice", "connections", [{ id: "c1", password: randomUUID() }] as never);
       chmodSync(path, 0o600);
-      const rewrite: StoredCredentialRewrite = { connections: () => null, factors: () => null };
+      const rewrite: StoredCredentialRewrite = { connections: () => null, factors: () => null, beforeRetire: () => {} };
       const umask = process.umask(0o022);
       try {
         await provider.rewriteStoredCredentials(rewrite, LABEL);
@@ -223,7 +254,10 @@ describe("SQLiteStorageProvider credential envelope", () => {
     await memory.initialize();
     try {
       await expect(
-        memory.rewriteStoredCredentials({ connections: () => null, factors: () => null }, LABEL),
+        memory.rewriteStoredCredentials(
+          { connections: () => null, factors: () => null, beforeRetire: () => {} },
+          LABEL,
+        ),
       ).rejects.toThrow("in-memory");
       // Created from nothing, so it records version 1 as retired from the start.
       expect(await memory.readEnvelopeState()).toBe("v1-retired");
@@ -240,6 +274,9 @@ describe("SQLiteStorageProvider credential envelope", () => {
         throw new Error("read a retired store");
       },
       factors: () => {
+        throw new Error("read a retired store");
+      },
+      beforeRetire: () => {
         throw new Error("read a retired store");
       },
     };

@@ -37,9 +37,9 @@ import {
 import { getStorageProviderType } from "./provider-type";
 import { resealStore } from "./reseal";
 
-/** Why the values the re-seal left unopened stay out of reach once version 1 is retired, and the only way back. */
+/** Why the values the re-seal left unopened stay out of reach once version 1 is retired, and the only ways back. */
 export const UNOPENED_ADVICE =
-  "Version 1 is retired now, so a version 1 value among them is refused as retired even once the key that sealed it is back, and a second re-seal finds nothing to do. If the key in use is not the one that sealed them, stop every server, restore that key, delete the store's storage_meta row credential_envelope and start again with STORAGE_ENCRYPTION_RESEAL set, or restore the backup above (docs/STORAGE.md, Re-sealing the store).";
+  "Version 1 is retired now, so a version 1 value among them, left because STORAGE_ENCRYPTION_RESEAL is leave-unopened, is refused as retired even once the key that sealed it is back, and a second re-seal finds nothing to do. Such a value comes back only by stopping every server, restoring the key that sealed it, deleting the store's storage_meta row credential_envelope and starting again with STORAGE_ENCRYPTION_RESEAL set, or from the backup above (docs/STORAGE.md, Re-sealing the store).";
 
 function refuse(lines: string[]): false {
   console.error(
@@ -94,7 +94,7 @@ export async function resealStoreAtBoot(): Promise<boolean> {
       " to sqlite or postgres.",
     ]);
   }
-  if (reseal !== "off" && !(await resealAtBoot())) return false;
+  if (reseal !== "off" && !(await resealAtBoot(reseal === "leave-unopened"))) return false;
   return requireV2 ? checkVersionTwoAtBoot() : true;
 }
 
@@ -114,11 +114,11 @@ async function checkVersionTwoAtBoot(): Promise<boolean> {
 }
 
 /** The re-seal itself; true when it succeeded or the store was retired already. */
-async function resealAtBoot(): Promise<boolean> {
+async function resealAtBoot(leaveUnopened: boolean): Promise<boolean> {
   try {
     // Not null: the provider type is sqlite or postgres here.
     const provider = (await getStorageProvider())!;
-    const report = await resealStore(provider, new Date());
+    const report = await resealStore(provider, new Date(), { leaveUnopened });
     if (report.kind === "already-retired") {
       logger.warn(
         "STORAGE_ENCRYPTION_RESEAL: this store retired version 1 already, so nothing was read, written or backed up. Remove STORAGE_ENCRYPTION_RESEAL now.",

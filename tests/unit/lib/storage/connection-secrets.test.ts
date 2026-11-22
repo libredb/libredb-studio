@@ -714,6 +714,7 @@ describe("the binding", () => {
     expect(result.resealed).toBe(SECRET_PATHS.length - 1);
     expect(result.kept).toBe(SECRET_PATHS.length);
     expect(result.unopened).toEqual([{ id: "c1", path: "apiKeyId", reason: "unopenable" }]);
+    expect(result.unopenedVersionOne).toEqual([]);
     expect(result.refused).toEqual([]);
     const [after, kept] = result.connections;
     expect(after.apiKeyId).toBe(unopenable);
@@ -724,6 +725,22 @@ describe("the binding", () => {
     expect(read.connections[0].password).toBe(values.password);
     expect(read.connections[0].agentPassword).toBe(values.agentPassword);
     expect(read.omitted).toEqual([{ id: "c1", path: "apiKeyId", reason: "unopenable" }]);
+  });
+
+  test("resealConnections names a well-formed version 1 envelope the key in use does not open apart from a malformed claim, and leaves both as they are", () => {
+    const { connection, values } = generatedConnection();
+    const foreign = sealVersionOne(values.password);
+    process.env.JWT_SECRET = randomBytes(32).toString("base64url");
+    resetStorageEncryptionKey();
+    const malformed = `v1:${randomUUID()}`;
+    const stored = { ...connection, password: foreign, agentPassword: malformed } as DatabaseConnection;
+
+    const result = resealConnections(OWNER, [stored]);
+
+    expect(result.unopenedVersionOne).toEqual([{ id: "c1", path: "password", reason: "unopenable" }]);
+    expect(result.unopened).toEqual([{ id: "c1", path: "agentPassword", reason: "unopenable" }]);
+    expect(result.connections[0].password).toBe(foreign);
+    expect(result.connections[0].agentPassword).toBe(malformed);
   });
 
   test("resealConnections leaves and names a value beside a v2 value of its record, and a value that is not text, without sealing either", () => {

@@ -19,8 +19,8 @@
  * that the transaction rejects with 57P01 and the provider keeps serving.
  * Last, the credential re-seal (docs/STORAGE.md, "Re-sealing the store") as the same role: rows the
  * previous version wrote are re-sealed as version 2 after a backup of every store table in `studio`;
- * a rewrite that throws part way and a run terminated while it waits for the lock leave the store as
- * it was; two runs at once serialize, one re-sealing and one finding nothing to do; and the documented
+ * a rewrite that throws part way, a run terminated while it waits for the lock, and a run under a key that opens none of
+ * the version 1 values, which is refused by name, leave the store as it was; two runs at once serialize, one re-sealing and one finding nothing to do; and the documented
  * restore SQL brings every table back as the backup holds it, an account created after the re-seal
  * removed, with the version 1 rows a fresh provider opens again. Before the re-seal, six replicas
  * initialize at once on a store without storage_meta, which all must survive and none of which may record version 1
@@ -40,7 +40,7 @@ import { Client } from "pg";
 import { withCredentialEncryption } from "../../src/lib/storage/encrypting-provider";
 import { resetStorageEncryptionKey } from "../../src/lib/storage/encryption";
 import { PostgresStorageProvider } from "../../src/lib/storage/providers/postgres";
-import { resealStore } from "../../src/lib/storage/reseal";
+import { ResealRefused, resealStore } from "../../src/lib/storage/reseal";
 import type { ServerStorageProvider } from "../../src/lib/storage/types";
 import { sealVersionOne } from "../helpers/storage-envelope-v1";
 
@@ -401,6 +401,7 @@ async function exerciseReseal(url: string, superuser: string): Promise<void> {
             return data.replace('"v1:', '"changed:');
           },
           factors: () => null,
+          beforeRetire: () => {},
         },
         "pre-reseal-20261122T050000Z",
       )
@@ -428,7 +429,10 @@ async function exerciseReseal(url: string, superuser: string): Promise<void> {
     await holder.query("BEGIN");
     await holder.query(`LOCK TABLE ${SCHEMA}.storage_meta IN EXCLUSIVE MODE`);
     const pending = waiting
-      .rewriteStoredCredentials({ connections: () => null, factors: () => null }, "pre-reseal-20261122T051000Z")
+      .rewriteStoredCredentials(
+        { connections: () => null, factors: () => null, beforeRetire: () => {} },
+        "pre-reseal-20261122T051000Z",
+      )
       .then(
         () => null,
         (error: unknown) => error as { code?: string },
@@ -458,6 +462,35 @@ async function exerciseReseal(url: string, superuser: string): Promise<void> {
     "a terminated re-seal changed the store",
   );
   console.log("ok   a re-seal terminated while it waits for the lock leaves the store as it was");
+
+  // Under a key other than the one that sealed the store, every version 1 value fails to open: the run is refused by
+  // name and rolls back, its backup tables included.
+  const sealingKey = process.env.JWT_SECRET;
+  process.env.JWT_SECRET = randomBytes(32).toString("base64url");
+  resetStorageEncryptionKey();
+  const wrongKey = await sealingProvider(url);
+  try {
+    const refusal = await resealStore(wrongKey, new Date("2026-11-22T05:15:00.000Z")).then(
+      () => null,
+      (error: unknown) => error as Error,
+    );
+    check(
+      refusal instanceof ResealRefused &&
+        refusal.message.includes(`alice alice-c1 password, bob bob-c1 password, ${email} totpSecret`),
+      `a re-seal under another key should be refused naming every version 1 value, got: ${refusal?.message ?? "no error"}`,
+    );
+  } finally {
+    await wrongKey.close();
+    process.env.JWT_SECRET = sealingKey;
+    resetStorageEncryptionKey();
+  }
+  check(
+    JSON.stringify(await storeState(superuser)) === JSON.stringify(original),
+    "a refused re-seal changed the store",
+  );
+  console.log(
+    "ok   a re-seal under another key is refused naming the version 1 values, and leaves the store as it was",
+  );
 
   // Two runs at once: one re-seals after the backup, the other waits on the lock and finds nothing to do.
   const first = await sealingProvider(url);

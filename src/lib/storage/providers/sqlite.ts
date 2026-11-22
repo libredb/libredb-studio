@@ -547,6 +547,7 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
         const next = rewrite.factors({ email: row.email, totpSecret: row.totp_secret, totpPending: row.totp_pending });
         if (next !== null) updateFactors.run(next.totpSecret, next.totpPending, row.email);
       }
+      rewrite.beforeRetire();
       this.db!.prepare(
         `INSERT INTO storage_meta (key, value, updated_at) VALUES (?, ?, datetime('now'))
          ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,

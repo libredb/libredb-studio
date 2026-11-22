@@ -192,6 +192,21 @@ export function openSecret(stored: string, binding: EnvelopeBinding): StoredSecr
   return { kind: "unopenable" };
 }
 
+const BASE64URL = /^[A-Za-z0-9_-]+$/;
+
+/**
+ * Whether `stored` is a well-formed version 1 envelope: `v1`, a base64url IV of 12 bytes and a base64url body of at least
+ * the 16-byte tag, the shape `openSecret` opens, whether or not the key in use opens it. Such a value that does not open
+ * was sealed under another key; the re-seal refuses to retire version 1 over it (./reseal.ts).
+ */
+export function isVersionOneEnvelope(stored: string): boolean {
+  const parts = stored.split(":");
+  if (parts.length !== 3 || parts[0] !== PREVIOUS_VERSION) return false;
+  const [, iv64, body64] = parts;
+  if (!BASE64URL.test(iv64) || !BASE64URL.test(body64)) return false;
+  return Buffer.from(iv64, "base64url").length === IV_BYTES && Buffer.from(body64, "base64url").length >= TAG_BYTES;
+}
+
 /** Why a stored value was not handed back: it does not open here, or it is version 1 or unsealed after retirement. */
 export type RefusalReason = "unopenable" | "retired";
 

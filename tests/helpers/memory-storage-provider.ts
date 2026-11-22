@@ -137,6 +137,7 @@ export class MemoryStorageProvider implements ServerStorageProvider {
         });
         if (next !== null) this.accounts.set(account.email, { ...account, ...next });
       }
+      rewrite.beforeRetire();
       this.marker = "v2";
       return { kind: "rewritten", backup: `memory:${backupLabel}` };
     } catch (error) {

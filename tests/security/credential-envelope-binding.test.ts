@@ -332,12 +332,13 @@ describe("no seal or open site bypasses the binding", () => {
     expect(carriers).toEqual(["src/lib/storage/encryption.ts"]);
   }, 60_000);
 
-  test("encryption.ts exports exactly the version, the binding-taking seal and opens, the read rule, the key check and reset, and its messages", () => {
+  test("encryption.ts exports exactly the version, the binding-taking seal and opens, the version 1 shape check, the read rule, the key check and reset, and its messages", () => {
     expect(Object.keys(encryption).sort()).toEqual(
       [
         "ENVELOPE_VERSION",
         "STORAGE_ENCRYPTION_KEY_MISSING_MESSAGE",
         "STORAGE_ENCRYPTION_KEY_TOO_SHORT_MESSAGE",
+        "isVersionOneEnvelope",
         "openSecret",
         "readStoredSecret",
         "requireStorageEncryptionKey",

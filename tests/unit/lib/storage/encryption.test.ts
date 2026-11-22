@@ -3,6 +3,7 @@ import { createCipheriv, createHash, hkdfSync, randomBytes, randomUUID } from "n
 import { accountBinding, connectionBinding, type EnvelopeBinding } from "@/lib/storage/envelope-binding";
 import {
   ENVELOPE_VERSION,
+  isVersionOneEnvelope,
   openSecret,
   readStoredSecret,
   requireStorageEncryptionKey,
@@ -255,6 +256,37 @@ describe("openSecret: what a stored value is", () => {
     resetStorageEncryptionKey();
 
     expect(openSecret(sealed, HERE())).toEqual({ kind: "unopenable" });
+  });
+});
+
+describe("isVersionOneEnvelope: a well-formed version 1 envelope, whether or not this key opens it", () => {
+  test("a version 1 envelope is one under the key that sealed it and under any other", () => {
+    const sealed = sealVersionOne(randomUUID());
+    expect(isVersionOneEnvelope(sealed)).toBe(true);
+
+    process.env.JWT_SECRET = generated();
+    resetStorageEncryptionKey();
+    expect(openSecret(sealed, HERE())).toEqual({ kind: "unopenable" });
+    expect(isVersionOneEnvelope(sealed)).toBe(true);
+  });
+
+  test("a malformed claim, a v2 value and a plaintext are not", () => {
+    const iv = randomBytes(12).toString("base64url");
+    const body = randomBytes(32).toString("base64url");
+    for (const value of [
+      `v1:${randomUUID()}`,
+      `v1:${iv}:${body}:extra`,
+      `v1:${randomBytes(8).toString("base64url")}:${body}`,
+      `v1:${iv}:${randomBytes(15).toString("base64url")}`,
+      `v1:${iv}:${body.slice(0, -2)}!!`,
+      `v1:${iv}:`,
+      `v1::${body}`,
+      sealSecret(randomUUID(), HERE()),
+      `v2:${iv}:${body}`,
+      randomUUID(),
+    ]) {
+      expect({ value, versionOne: isVersionOneEnvelope(value) }).toEqual({ value, versionOne: false });
+    }
   });
 });
 

@@ -15,7 +15,7 @@ import { logger } from "@/lib/logger";
 import { UNDECRYPTABLE_WARNING_PREFIX, withCredentialEncryption } from "@/lib/storage/encrypting-provider";
 import { resetStorageEncryptionKey, STORAGE_ENCRYPTION_KEY_MISSING_MESSAGE } from "@/lib/storage/encryption";
 import { SQLiteStorageProvider } from "@/lib/storage/providers/sqlite";
-import { resealBackupLabel, resealStore } from "@/lib/storage/reseal";
+import { ResealRefused, resealBackupLabel, resealStore } from "@/lib/storage/reseal";
 import type { ServerStorageProvider } from "@/lib/storage/types";
 import { sealVersionOne } from "../../helpers/storage-envelope-v1";
 
@@ -233,6 +233,43 @@ describe("re-sealing a real SQLite store", () => {
 
     expect(dump()).toEqual(before);
     expect(existsSync(`${path}.${resealBackupLabel(NOW)}`)).toBe(false);
+  });
+
+  test("a version 1 value the key in use does not open refuses the run by name and leaves the store as it was", async () => {
+    await previousVersionStore();
+    const before = dump();
+    const store = await provider();
+    process.env.JWT_SECRET = randomBytes(32).toString("base64url");
+    resetStorageEncryptionKey();
+
+    let refusal: unknown;
+    try {
+      await resealStore(store, NOW);
+    } catch (error) {
+      refusal = error;
+    }
+
+    expect(refusal).toBeInstanceOf(ResealRefused);
+    expect((refusal as Error).message).toContain(
+      "3 version 1 value(s) do not open under the key in use: alice c1 password, bob c2 password, ada@example.com totpSecret",
+    );
+    expect(dump()).toEqual(before);
+  });
+
+  test("with leave-unopened, version 1 values the key in use does not open are left, named and retired", async () => {
+    await previousVersionStore();
+    const store = await provider();
+    process.env.JWT_SECRET = randomBytes(32).toString("base64url");
+    resetStorageEncryptionKey();
+
+    const report = await resealStore(store, NOW, { leaveUnopened: true });
+
+    expect(report).toMatchObject({
+      kind: "rewritten",
+      resealed: 1,
+      unopened: ["alice c1 password", "bob c2 password", "ada@example.com totpSecret"],
+    });
+    expect(dump().marker).toEqual([{ value: "v2" }]);
   });
 
   test("a value that does not open is left as it is and named", async () => {

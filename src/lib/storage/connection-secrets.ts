@@ -1,4 +1,11 @@
-import { openSecret, type RefusalReason, sealSecret, type StoredSecret, storedSecretRead } from "./encryption";
+import {
+  isVersionOneEnvelope,
+  openSecret,
+  type RefusalReason,
+  sealSecret,
+  type StoredSecret,
+  storedSecretRead,
+} from "./encryption";
 import { connectionBinding, connectionBindingProblem, type EnvelopeBinding } from "./envelope-binding";
 import { nonTextSecretPaths, walkSecretFields, withoutSecretPaths } from "./secret-fields";
 import { ConnectionWriteRefused, type CredentialEnvelopeState } from "./types";
@@ -157,8 +164,10 @@ export interface ConnectionResealResult {
   resealed: number;
   /** v2 values that already open for their place, left as they are. */
   kept: number;
-  /** Values that open nowhere here, left as they are. */
+  /** Values that open nowhere here and are not well-formed version 1 envelopes, left as they are. */
   unopened: OmittedSecret[];
+  /** Well-formed version 1 envelopes the key in use does not open, left as they are: likely sealed under another key. */
+  unopenedVersionOne: OmittedSecret[];
   /** Values left as they are under the rules above: `not-text`, or `mixed` beside a v2 value of their record. */
   refused: OmittedSecret[];
 }
@@ -167,12 +176,13 @@ export interface ConnectionResealResult {
  * The operator re-seal of one row (./reseal.ts): each secret of the record as stored, for `owner`,
  * is kept when it is a v2 value that opens for its place, sealed as v2 under that place when it is a
  * version 1 envelope that opens or an unsealed value, and left exactly as it is, and named, when it
- * opens as neither: it is already unreadable, and the backup keeps it for a restored key. A value the rules above
- * refuse is left exactly as it is and named too. Throws for a record that has no binding (`connectionBindingProblem`),
- * which the caller checks first.
+ * opens as neither: a well-formed version 1 envelope apart (`unopenedVersionOne`), since the key that sealed it may be
+ * another one, every other value in `unopened`. A value the rules above refuse is left exactly as it is and named too.
+ * Throws for a record that has no binding (`connectionBindingProblem`), which the caller checks first.
  */
 export function resealConnections(owner: string, connections: DatabaseConnection[]): ConnectionResealResult {
   const unopened: OmittedSecret[] = [];
+  const unopenedVersionOne: OmittedSecret[] = [];
   const refused: OmittedSecret[] = [];
   let resealed = 0;
   let kept = 0;
@@ -188,7 +198,7 @@ export function resealConnections(owner: string, connections: DatabaseConnection
         return value;
       }
       if (read.kind === "unopenable") {
-        unopened.push({ id, path, reason: "unopenable" });
+        (isVersionOneEnvelope(value) ? unopenedVersionOne : unopened).push({ id, path, reason: "unopenable" });
         return value;
       }
       if (holdsV2) {
@@ -199,5 +209,5 @@ export function resealConnections(owner: string, connections: DatabaseConnection
       return sealSecret(read.value, binding.field(path));
     }).connection;
   });
-  return { connections: rewritten, resealed, kept, unopened, refused };
+  return { connections: rewritten, resealed, kept, unopened, unopenedVersionOne, refused };
 }

@@ -12,7 +12,7 @@ import {
   STORAGE_ENCRYPTION_KEY_MISSING_MESSAGE,
 } from "@/lib/storage/encryption";
 import { accountBinding, connectionBinding } from "@/lib/storage/envelope-binding";
-import { resealBackupLabel, resealStore } from "@/lib/storage/reseal";
+import { ResealRefused, resealBackupLabel, resealStore } from "@/lib/storage/reseal";
 import type { StoredAccount } from "@/lib/storage/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { MemoryStorageProvider } from "../../../helpers/memory-storage-provider";
@@ -110,7 +110,7 @@ describe("resealStore", () => {
     expect(store.accounts.get("bob@example.com")).toEqual(account("bob@example.com", null));
   });
 
-  test("keeps a v2 value that opens and leaves and names a value that does not", async () => {
+  test("keeps a v2 value that opens, and leaves and names a malformed claim or a v2 value that does not, without blocking the run", async () => {
     const store = new MemoryStorageProvider();
     const record = connection("c1", { agentUser: "ro" });
     const bound = sealSecret(randomUUID(), connectionBinding("alice", record).field("password"));
@@ -130,6 +130,38 @@ describe("resealStore", () => {
     });
     expect(rowOf(store, "alice")[0]).toMatchObject({ password: bound, agentPassword: elsewhere });
     expect(store.accounts.get("ada@example.com")).toMatchObject({ totpSecret: factor, totpPending: broken });
+    expect(store.marker).toBe("v2");
+  });
+
+  test("a version 1 value the key in use does not open refuses the run by name and leaves the store as it was", async () => {
+    const store = new MemoryStorageProvider();
+    const record = connection("c1");
+    store.putRow("alice", "connections", JSON.stringify([{ ...record, password: sealVersionOne(randomUUID()) }]));
+    store.putRow("bob", "connections", JSON.stringify([connection("c2", { password: randomUUID() })]));
+    store.accounts.set("ada@example.com", account("ada@example.com", sealVersionOne(randomUUID())));
+    const rows = new Map(store.rows);
+    const accounts = structuredClone(store.accounts);
+    process.env.JWT_SECRET = randomBytes(32).toString("base64url");
+    resetStorageEncryptionKey();
+
+    let refusal: unknown;
+    try {
+      await resealStore(store, NOW);
+    } catch (error) {
+      refusal = error;
+    }
+
+    expect(refusal).toBeInstanceOf(ResealRefused);
+    expect(refusal).toMatchObject({ unopened: ["alice c1 password", "ada@example.com totpSecret"] });
+    const message = (refusal as Error).message;
+    expect(message).toContain(
+      "2 version 1 value(s) do not open under the key in use: alice c1 password, ada@example.com totpSecret",
+    );
+    expect(message).toContain("the key in use is likely not the one that sealed them");
+    expect(message).toContain("STORAGE_ENCRYPTION_RESEAL=leave-unopened");
+    expect(store.rows).toEqual(rows);
+    expect(store.accounts).toEqual(accounts);
+    expect(store.marker).toBeUndefined();
   });
 
   test("leaves and names a row whose connections are not a JSON list", async () => {
@@ -265,7 +297,7 @@ describe("resealStore", () => {
     expect(store.marker).toBe("v2");
   });
 
-  test("a re-seal under the wrong key retires version 1 over values it left, and the documented recovery reopens them", async () => {
+  test("leave-unopened retires version 1 over the version 1 values it left and names them, and the documented recovery reopens them", async () => {
     // docs/STORAGE.md, "Re-sealing the store": restore the key that sealed the store, delete the credential_envelope
     // row with every server stopped, and re-seal again.
     const store = new MemoryStorageProvider();
@@ -275,7 +307,10 @@ describe("resealStore", () => {
     process.env.JWT_SECRET = randomBytes(32).toString("base64url");
     resetStorageEncryptionKey();
 
-    expect(await resealStore(store, NOW)).toMatchObject({ resealed: 0, unopened: ["alice c1 password"] });
+    expect(await resealStore(store, NOW, { leaveUnopened: true })).toMatchObject({
+      resealed: 0,
+      unopened: ["alice c1 password"],
+    });
     expect(store.marker).toBe("v2");
 
     process.env.JWT_SECRET = sealingKey;
