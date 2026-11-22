@@ -1191,6 +1191,7 @@ A seed entry whose type is absent, not text, or text of any other shape fails th
 A type `LIBREDB_ENABLED_PROVIDERS` leaves out, or a `readOnly` its provider does not enforce, is refused after the field checks, when the provider is built.
 So is a connection whose engine refuses a denied file-access posture when the caller's posture is denied, SQLite for every role but `admin` and on any seed a non-admin role can use, `400 CONFIG_ERROR` with that engine's own sentence, before Studio reads the path the connection names.
 So is a file connection that names one of Studio's own storage files, or whose file Studio cannot check against them, and an OPC UA connection whose client certificate or private key path does, `400 CONFIG_ERROR`.
+An inline connection that sets a field only the operator's seed file sets (`securityPolicyUri`, `clientCertificatePath`, `clientPrivateKeyPath` or `agentReadRoots`) is refused when the connection resolves, `400`, in a sentence naming the field ([DatabaseConnection](#databaseconnection)).
 
 | Status | When |
 |--------|------|
@@ -2594,9 +2595,10 @@ The object is one shape on the wire. Fields the server reads from a request body
 change how a connection is opened — are the coordinates and credentials (`id`, `name`, `type`,
 `host`, `port`, `user`, `password`, `database`, `schema`, `connectionString`), plus `ssl`,
 `sshTunnel`, `serviceName` (Oracle), `instanceName` (MSSQL), `localDataCenter` (Cassandra),
-`authSource` (MongoDB), `saslMechanism` (Kafka), `allowInsecureAuth` (Db2, InfluxDB, InfluxDB 3, Oxia, Databend, S3, MQTT, RabbitMQ, SNMP), `dataServers` (Oxia), `warehouse` (Databend, Snowflake), `region` (S3), `apiPath` (Kubernetes, RabbitMQ), `namespaces` and `tlsServerName` (Kubernetes), `location` (BigQuery), `amqpPort` (RabbitMQ), `securityMode`, `serverCertificateThumbprint`, `securityPolicyUri`, `clientCertificatePath` and `clientPrivateKeyPath` (OPC UA), `authMethod` and `role` (Snowflake), `privateKey` and `privateKeyPassphrase` (Snowflake, NETCONF), `hostKeyFingerprint` (NETCONF), `queryTimeout`, `agentUser`, `agentPassword`, `apiKeyId`/`apiKeySecret`
+`authSource` (MongoDB), `saslMechanism` (Kafka), `allowInsecureAuth` (Db2, InfluxDB, InfluxDB 3, Oxia, Databend, S3, MQTT, RabbitMQ, SNMP), `dataServers` (Oxia), `warehouse` (Databend, Snowflake), `region` (S3), `apiPath` (Kubernetes, RabbitMQ), `namespaces` and `tlsServerName` (Kubernetes), `location` (BigQuery), `amqpPort` (RabbitMQ), `securityMode` and `serverCertificateThumbprint` (OPC UA), `authMethod` and `role` (Snowflake), `privateKey` and `privateKeyPassphrase` (Snowflake, NETCONF), `hostKeyFingerprint` (NETCONF), `queryTimeout`, `agentUser`, `agentPassword`, `apiKeyId`/`apiKeySecret`
 (Elasticsearch, #708), and `readOnly` (#1089). `color`, `environment`, `group`,
 `managed`, `seedId`, and `createdAt` are client-side bookkeeping that travel in the same object.
+OPC UA's `securityPolicyUri`, `clientCertificatePath` and `clientPrivateKeyPath`, and `agentReadRoots`, are set only by the operator's seed file: a connection a request body supplies inline that sets one is refused with `400`, naming the field, and `GET /api/connections/managed` never lists them.
 
 ```typescript
 interface DatabaseConnection {
@@ -2631,9 +2633,9 @@ interface DatabaseConnection {
   tlsServerName?: string; // Kubernetes only: the host name the API server's certificate is checked against and sent as SNI (kubeconfig tls-server-name)
   securityMode?: string;  // OPC UA only: the security mode asked of the server, None, Sign or SignAndEncrypt. Studio's own SSLMode does not map onto these, so the field carries OPC UA's own name; a mode the server does not offer is refused rather than quietly weakened
   serverCertificateThumbprint?: string; // OPC UA only: the SHA-256 thumbprint the server's certificate must present, 64 hexadecimal characters (colons and spaces ignored). Without it any certificate the trust list accepts is accepted, and the library's default trust list accepts a server on first sight
-  securityPolicyUri?: string; // OPC UA only, seed file only (no dialog field): the security policy to insist on. An endpoint is a mode AND a policy, so naming one narrows the choice to that pair and is refused when the server offers no such pair
-  clientCertificatePath?: string; // OPC UA only, seed file only (no dialog field): the client certificate to present, as a path on the host. Supplied with clientPrivateKeyPath or not at all; absent, the library generates one under the PKI root
-  clientPrivateKeyPath?: string;  // OPC UA only, seed file only (no dialog field): the private key for clientCertificatePath. A path and never a key, so the key itself never enters a connection record
+  securityPolicyUri?: string; // OPC UA only, seed file only (no dialog field): the security policy to insist on. An endpoint is a mode AND a policy, so naming one narrows the choice to that pair and is refused when the server offers no such pair; never listed to the browser, refused inline
+  clientCertificatePath?: string; // OPC UA only, seed file only (no dialog field): the client certificate to present, as a path on the host. Supplied with clientPrivateKeyPath or not at all; absent, the library generates one under the PKI root; refused when it names one of Studio's own storage files, never listed to the browser, refused inline
+  clientPrivateKeyPath?: string;  // OPC UA only, seed file only (no dialog field): the private key for clientCertificatePath. A path and never a key, so the key itself never enters a connection record; refused when it names one of Studio's own storage files, never listed to the browser, refused inline
   location?: string;    // BigQuery only: where jobs run (EU, US, europe-west3, ...); absent, the provider detects it from the datasets. Not a secret
   amqpPort?: string;    // RabbitMQ only: the AMQP 0-9-1 port of stream reads; empty means browse only.
   authMethod?: 'keypair' | 'pat'; // Snowflake only: the sign-in method, a key-pair JWT signed with privateKey or a programmatic access token in password; absent means keypair. Not the SSH tunnel's sshTunnel.authMethod. Not a secret

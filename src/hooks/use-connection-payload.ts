@@ -174,11 +174,13 @@ const CONNECTION_RELEVANCE: Record<keyof DatabaseConnection, FieldRelevance> = {
   securityMode: "resolution",
   serverCertificateThumbprint: "resolution",
   hostKeyFingerprint: "resolution",
-  // Each one changes which channel is opened and which identity it is opened with, so each travels
-  // to the server with the request, as the mode and the pin do.
-  securityPolicyUri: "resolution",
-  clientCertificatePath: "resolution",
-  clientPrivateKeyPath: "resolution",
+  // Each one changes which channel is opened and which identity it is opened with, and the browser never holds them:
+  // only the operator's seed file sets them, the managed listing strips them, an inline connection that sets one is
+  // refused, and a run on a seed resolves the seed's own on the server. So, as for `agentReadRoots`, an editable copy
+  // saved while the listing still carried them is still the seed.
+  securityPolicyUri: "cosmetic",
+  clientCertificatePath: "cosmetic",
+  clientPrivateKeyPath: "cosmetic",
   namespaces: "cosmetic",
   // An AMQP port: the listener a read is sent to, which can be another server than host and port reach, so a copy
   // differing here does not resolve to the seed's connection.

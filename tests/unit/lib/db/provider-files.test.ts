@@ -5,6 +5,7 @@ import * as path from "node:path";
 import * as dataDir from "@/lib/data-dir";
 import { BOOTSTRAP_FILE_NAME, forgetStorageLocation, LINKS_FOLLOWED_LIMIT, storageLocation } from "@/lib/data-dir";
 import { HOST_PATH_FIELDS, OPENS_LOCAL_FILE } from "@/lib/db/compatibility";
+import { SEED_ONLY_FIELD_NAMES } from "@/lib/db/connection-fields";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import {
@@ -526,6 +527,13 @@ describe("core admits OPC UA's certificate and key paths like a database file", 
     expect(unmarked).not.toBe(marked);
     expect(ADMITTED_HOST_PATHS in unmarked).toBe(false);
     expect(hostPaths(marked)).toEqual({ clientCertificatePath: "/caller/chose.pem" });
+  });
+
+  test("every field HOST_PATH_FIELDS names is a seed-only field, so only an operator's seed file or an embedder's own code names one", () => {
+    const named = new Set(Object.values(HOST_PATH_FIELDS).flat());
+    expect(named.size).toBeGreaterThan(0);
+    for (const field of named)
+      expect([field, (SEED_ONLY_FIELD_NAMES as readonly string[]).includes(field)]).toEqual([field, true]);
   });
 
   test("every engine HOST_PATH_FIELDS names, built from its census connection with both paths set, holds absolute admitted paths, and no other engine holds any", async () => {

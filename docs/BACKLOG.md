@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D493, U17 · 364
+- [Drivers and connections](#drivers-and-connections) — D1-D493, U17 · 363
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -1195,7 +1195,7 @@ test pins the behaviour that was chosen.
 
 ### D85. The `@/lib/auth` mock is hand-copied across a layer, untyped, and already misses four exports
 
-`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 66 hits, re-measured on 2026-11-22.
+`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 67 hits, re-measured on 2026-11-22.
 The breakdown below is the one measured at 54 on 2026-10-17.
 Twenty of them spread the real module and replace one function (`{ ...realAuth, getSession: mockGetSession }`, the agent routes' pattern).
 Thirty-one write out the same five-key object - `getSession`, `signJWT`, `verifyJWT`, `login`, `logout` - down to the same `mock(async () => "mock-token")` for a token nothing reads, and one of those thirty-one is `tests/helpers/object-edit-route-harness.ts`, a shared harness that could have been the factory and copied the stub instead.
@@ -3939,16 +3939,6 @@ The file passed alone on 2026-10-20 on `main` at `6e611bf73` (12 tests, 3.3 s).
 Found on #1818, whose change does not touch the HTTP transport.
 
 **Done when:** the test bounds the named wait by the time it measured itself between sending the request and the deadline, not by the sleep's nominal length, and the file passes repeated runs at the CI job's concurrency.
-
-### D380. An inline connection is not held to `SEED_ONLY_FIELDS`
-
-`SEED_ONLY_FIELDS` in `src/lib/db/connection-fields.ts` names the fields only a seed file may set, but `resolveConnection` in `src/lib/seed/resolve-connection.ts` does not check an inline connection against it.
-For example, OPC UA's `clientCertificatePath` and `clientPrivateKeyPath` are seed-only, and the provider reads them from any config it is given, so a request that carries them inline reaches the provider with them.
-One seed-only field is refused already: `resolveConnection` answers an inline connection that carries OPC UA's `agentReadRoots` with `400`, and the other seed-only fields are still not checked.
-
-Found 2026-10-20 during the VS Code extension work, and deferred because it does not block that work.
-
-**Done when:** `resolveConnection` refuses an inline connection that carries a seed-only field with `400`, with a route test.
 
 ### D381. A broken seed file's path reaches the answer to a request by seed id
 
