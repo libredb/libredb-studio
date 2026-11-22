@@ -719,7 +719,7 @@ So the re-seal refuses: it rolls back, the store is as it was, and the start sto
 Start again with the key that sealed them, `STORAGE_ENCRYPTION_KEY`, or `JWT_SECRET` when it is unset.
 
 To retire version 1 anyway, start with `STORAGE_ENCRYPTION_RESEAL=leave-unopened` (any letter case).
-The re-seal then leaves those values exactly as they are, names them on the `open nowhere here` line, and retires version 1.
+The re-seal then leaves those values exactly as they are, names them on a line of their own, and retires version 1.
 They stay unreadable: a version 1 value among them is refused as `retired` from then on, even once the key that sealed it is back, and a second re-seal finds nothing to do, because the store is already retired.
 Such a value comes back only in one of two ways:
 
@@ -756,16 +756,17 @@ The log lines, at warning level:
 
 ```
 STORAGE_ENCRYPTION_RESEAL: backed up the store to <backup>, re-sealed N value(s) and kept M already sealed for their place; version 1 is retired.
-STORAGE_ENCRYPTION_RESEAL: left N value(s) as they were, because they open nowhere here: <entry>, ... <what to do>
+STORAGE_ENCRYPTION_RESEAL: left N value(s) as they were, because they open nowhere here: <entry>, ... They are malformed, or sealed as v2 for another place or under another key, which retiring version 1 does not change.
+STORAGE_ENCRYPTION_RESEAL: left N version 1 value(s) as they were, because they do not open under the key in use and STORAGE_ENCRYPTION_RESEAL is leave-unopened: <entry>, ... <what to do>
 STORAGE_ENCRYPTION_RESEAL: left N value(s) as they were, because they are not text or sit beside a value sealed as v2: <entry> (<reason>), ...
 STORAGE_ENCRYPTION_RESEAL: left N row(s) or element(s) unread, because they are not connections or nest too deep to bind: <entry>, ...
 STORAGE_ENCRYPTION_RESEAL: remove it now; every start re-checks the store while it is set.
 ```
 
-The second, third and fourth lines appear only when they have something to name.
-On the second line an entry is `<owner> <connection id> <field>` for a connection value, or `<email> <field>` for an account's second factor (`totpSecret` or `totpPending`).
-On the third an entry is always a connection value, `<owner> <connection id> <field>`, and its reason is `not-text` or `mixed`.
-On the fourth an entry is `<owner> connections` for a row whose data is not a JSON list, or `<owner> connections[<index>]` for one element of the list.
+The second to fifth lines appear only when they have something to name, and the third only with `leave-unopened`.
+On the second and third lines an entry is `<owner> <connection id> <field>` for a connection value, or `<email> <field>` for an account's second factor (`totpSecret` or `totpPending`).
+On the fourth an entry is always a connection value, `<owner> <connection id> <field>`, and its reason is `not-text` or `mixed`.
+On the fifth an entry is `<owner> connections` for a row whose data is not a JSON list, or `<owner> connections[<index>]` for one element of the list.
 
 How to set it:
 
@@ -1056,7 +1057,7 @@ The warning line names a value with the reason `retired`, or an account's second
 The value is a version 1 envelope or an unsealed value, which the store refuses since `STORAGE_ENCRYPTION_RESEAL` retired version 1, or because `STORAGE_ENCRYPTION_REQUIRE_V2` is set.
 It is one of these:
 
-- A value a re-seal run with `leave-unopened` left because the key then in use did not open it: its `open nowhere here` line named it.
+- A value a re-seal run with `leave-unopened` left because the key then in use did not open it: its `leave-unopened` line named it.
 - A value an older server wrote after a downgrade that kept the store's `credential_envelope` row ([Downgrading](#downgrading)).
 - A value written after the re-seal by a server of an older version during a mixed rollout, or by an edit outside Studio.
 

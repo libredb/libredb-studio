@@ -39,10 +39,12 @@ export type ResealReport =
       /** v2 values that already opened for their place. */
       kept: number;
       /**
-       * Values left as they are because they open nowhere here: `<owner> <connection id> <field>` or `<email> <field>`.
-       * Version 1 values among them only with `leaveUnopened`.
+       * Values left as they are because they open nowhere here, malformed claims and v2 values, which retiring version 1
+       * does not change: `<owner> <connection id> <field>` or `<email> <field>`.
        */
       unopened: string[];
+      /** Version 1 values left as they are because they do not open under the key in use; only with `leaveUnopened`. */
+      unopenedVersionOne: string[];
       /** Values left as they are because they are not text, or sit beside a v2 value: `<owner> <connection id> <field> (<reason>)`. */
       refused: string[];
       /**
@@ -201,9 +203,7 @@ export async function resealStore(
   };
 
   const beforeRetire = (): void => {
-    if (unopenedVersionOne.length === 0) return;
-    if (!options.leaveUnopened) throw new ResealRefused(unopenedVersionOne);
-    unopened.push(...unopenedVersionOne);
+    if (unopenedVersionOne.length > 0 && !options.leaveUnopened) throw new ResealRefused(unopenedVersionOne);
   };
 
   const result = await provider.rewriteStoredCredentials(
@@ -211,5 +211,5 @@ export async function resealStore(
     resealBackupLabel(now),
   );
   if (result.kind === "already-retired") return result;
-  return { kind: "rewritten", backup: result.backup, resealed, kept, unopened, refused, unread };
+  return { kind: "rewritten", backup: result.backup, resealed, kept, unopened, unopenedVersionOne, refused, unread };
 }

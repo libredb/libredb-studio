@@ -37,9 +37,12 @@ import {
 import { getStorageProviderType } from "./provider-type";
 import { resealStore } from "./reseal";
 
-/** Why the values the re-seal left unopened stay out of reach once version 1 is retired, and the only ways back. */
+/**
+ * Why the version 1 values a leave-unopened re-seal left stay out of reach once version 1 is retired, and the only ways
+ * back.
+ */
 export const UNOPENED_ADVICE =
-  "Version 1 is retired now, so a version 1 value among them, left because STORAGE_ENCRYPTION_RESEAL is leave-unopened, is refused as retired even once the key that sealed it is back, and a second re-seal finds nothing to do. Such a value comes back only by stopping every server, restoring the key that sealed it, deleting the store's storage_meta row credential_envelope and starting again with STORAGE_ENCRYPTION_RESEAL set, or from the backup above (docs/STORAGE.md, Re-sealing the store).";
+  "Version 1 is retired now, so they are refused as retired even once the key that sealed them is back, and a second re-seal finds nothing to do. Such a value comes back only by stopping every server, restoring the key that sealed it, deleting the store's storage_meta row credential_envelope and starting again with STORAGE_ENCRYPTION_RESEAL set, or from the backup above (docs/STORAGE.md, Re-sealing the store).";
 
 function refuse(lines: string[]): false {
   console.error(
@@ -132,7 +135,13 @@ async function resealAtBoot(leaveUnopened: boolean): Promise<boolean> {
     );
     if (report.unopened.length > 0) {
       logger.warn(
-        `STORAGE_ENCRYPTION_RESEAL: left ${report.unopened.length} value(s) as they were, because they open nowhere here: ${report.unopened.join(", ")}. ${UNOPENED_ADVICE}`,
+        `STORAGE_ENCRYPTION_RESEAL: left ${report.unopened.length} value(s) as they were, because they open nowhere here: ${report.unopened.join(", ")}. They are malformed, or sealed as v2 for another place or under another key, which retiring version 1 does not change.`,
+        { route: "storage-reseal" },
+      );
+    }
+    if (report.unopenedVersionOne.length > 0) {
+      logger.warn(
+        `STORAGE_ENCRYPTION_RESEAL: left ${report.unopenedVersionOne.length} version 1 value(s) as they were, because they do not open under the key in use and STORAGE_ENCRYPTION_RESEAL is leave-unopened: ${report.unopenedVersionOne.join(", ")}. ${UNOPENED_ADVICE}`,
         { route: "storage-reseal" },
       );
     }

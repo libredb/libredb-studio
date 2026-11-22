@@ -127,6 +127,7 @@ describe("resealStore", () => {
       resealed: 0,
       kept: 2,
       unopened: ["alice c1 agentPassword", "ada@example.com totpPending"],
+      unopenedVersionOne: [],
     });
     expect(rowOf(store, "alice")[0]).toMatchObject({ password: bound, agentPassword: elsewhere });
     expect(store.accounts.get("ada@example.com")).toMatchObject({ totpSecret: factor, totpPending: broken });
@@ -206,6 +207,7 @@ describe("resealStore", () => {
       resealed: 0,
       kept: 0,
       unopened: [],
+      unopenedVersionOne: [],
       refused: [],
       unread: [],
     });
@@ -367,9 +369,11 @@ describe("resealStore", () => {
     process.env.JWT_SECRET = randomBytes(32).toString("base64url");
     resetStorageEncryptionKey();
 
+    // Reported apart from the values retirement does not change, so the advice to recover them names only them.
     expect(await resealStore(store, NOW, { leaveUnopened: true })).toMatchObject({
       resealed: 0,
-      unopened: ["alice c1 password"],
+      unopened: [],
+      unopenedVersionOne: ["alice c1 password"],
     });
     expect(store.marker).toBe("v2");
 
@@ -383,7 +387,11 @@ describe("resealStore", () => {
     expect(await resealStore(store, NOW)).toEqual({ kind: "already-retired" });
 
     store.marker = undefined;
-    expect(await resealStore(store, new Date("2026-11-22T06:00:00Z"))).toMatchObject({ resealed: 1, unopened: [] });
+    expect(await resealStore(store, new Date("2026-11-22T06:00:00Z"))).toMatchObject({
+      resealed: 1,
+      unopened: [],
+      unopenedVersionOne: [],
+    });
     const [after] = rowOf(store, "alice");
     expect(decryptConnections("alice", [after], "v1-retired").connections[0].password).toBe(secret);
   });

@@ -194,13 +194,12 @@ describe("resealStoreAtBoot", () => {
 
     const { warned } = await run();
 
+    // Only a malformed or v2 value can be left without leave-unopened, and retirement does not change those, so the
+    // line carries no advice about version 1.
     expect(warned).toContain(
-      `STORAGE_ENCRYPTION_RESEAL: left 1 value(s) as they were, because they open nowhere here: carol c9 password. ${UNOPENED_ADVICE}`,
+      "STORAGE_ENCRYPTION_RESEAL: left 1 value(s) as they were, because they open nowhere here: carol c9 password. They are malformed, or sealed as v2 for another place or under another key, which retiring version 1 does not change.",
     );
-    expect(UNOPENED_ADVICE).toContain("a second re-seal finds nothing to do");
-    expect(UNOPENED_ADVICE).toContain(
-      "comes back only by stopping every server, restoring the key that sealed it, deleting the store's storage_meta row credential_envelope and starting again with STORAGE_ENCRYPTION_RESEAL set, or from the backup above",
-    );
+    expect(warned.filter((line) => line.includes(UNOPENED_ADVICE))).toEqual([]);
     expect(warned).toContain(
       "STORAGE_ENCRYPTION_RESEAL: left 1 value(s) as they were, because they are not text or sit beside a value sealed as v2: carol c9 apiKeyId (not-text).",
     );
@@ -236,7 +235,12 @@ describe("resealStoreAtBoot", () => {
     expect(result).toBe(true);
     expect(exits).toEqual([]);
     expect(warned).toContain(
-      `STORAGE_ENCRYPTION_RESEAL: left 1 value(s) as they were, because they open nowhere here: alice c1 password. ${UNOPENED_ADVICE}`,
+      `STORAGE_ENCRYPTION_RESEAL: left 1 version 1 value(s) as they were, because they do not open under the key in use and STORAGE_ENCRYPTION_RESEAL is leave-unopened: alice c1 password. ${UNOPENED_ADVICE}`,
+    );
+    expect(warned.filter((line) => line.includes("open nowhere here"))).toEqual([]);
+    expect(UNOPENED_ADVICE).toContain("a second re-seal finds nothing to do");
+    expect(UNOPENED_ADVICE).toContain(
+      "comes back only by stopping every server, restoring the key that sealed it, deleting the store's storage_meta row credential_envelope and starting again with STORAGE_ENCRYPTION_RESEAL set, or from the backup above",
     );
     expect(markerOf()).toBe("v2");
   });

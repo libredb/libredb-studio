@@ -279,7 +279,8 @@ describe("re-sealing a real SQLite store", () => {
     expect(report).toMatchObject({
       kind: "rewritten",
       resealed: 1,
-      unopened: ["alice c1 password", "bob c2 password", "ada@example.com totpSecret"],
+      unopened: [],
+      unopenedVersionOne: ["alice c1 password", "bob c2 password", "ada@example.com totpSecret"],
     });
     expect(dump().marker).toEqual([{ value: "v2" }]);
   });
