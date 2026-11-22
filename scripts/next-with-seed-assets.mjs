@@ -38,10 +38,14 @@
  * next or an @next/env installed only in a parent directory, through NODE_PATH or in a global folder is never used, a
  * missing one is an error, exit 1, and a link among them, as `bun link` makes, is followed.
  *
- * SIGINT and SIGTERM are forwarded to the Next.js CLI; this process exits with its exit code, or ends itself with the
- * signal that ended it. On Windows, Node.js forwards a signal by ending the process at once: the console delivers a
- * Ctrl+C to the server too, which starts its own graceful stop, and the forwarded one ends it part way through, under
- * `bun start` as under `bun dev`, cutting in-flight requests and the closes of its pools.
+ * SIGINT and SIGTERM are forwarded to the Next.js CLI from the moment it exists; this process exits with its exit code,
+ * or ends itself with the signal that ended it. The forwarding is installed right before the spawn, in the same
+ * synchronous step, and Node.js runs a signal listener only from its event loop, so a signal that reaches this process
+ * while the spawn runs is held and forwarded as soon as the CLI exists. One that reaches it earlier, while it finds the
+ * Next.js CLI or reads the .env files, takes its default action and ends this process, which has started nothing to
+ * forward it to. On Windows, Node.js forwards a signal by ending the process at once: the console delivers a Ctrl+C to
+ * the server too, which starts its own graceful stop, and the forwarded one ends it part way through, under `bun start`
+ * as under `bun dev`, cutting in-flight requests and the closes of its pools.
  *
  * An inspector set in NODE_OPTIONS, such as --inspect or --inspect-brk, is taken by this process, which starts first,
  * and --inspect-brk waits for a debugger on this process before anything is spawned. The Next.js CLI's own attempt
@@ -130,9 +134,11 @@ const env = {
   ...seedAssetsEnv(CHECKOUT, combinedEnv.SEED_ASSETS_DIR),
   ...(start ? manualSignalHandlingEnv(process.versions, callerManualSignalHandling) : {}),
 };
-const child = spawn(process.execPath, [cli, ...process.argv.slice(2)], { env, stdio: "inherit" });
+// Installed before the spawn, so no signal falls between the server existing and its forwarding; the listener cannot
+// run before `child` is set, since Node.js runs it only from the event loop, after this synchronous step.
 const forward = (signal) => child.kill(signal);
 for (const signal of FORWARDED_SIGNALS) process.on(signal, forward);
+const child = spawn(process.execPath, [cli, ...process.argv.slice(2)], { env, stdio: "inherit" });
 child.on("error", (error) => {
   console.error(`Could not start the Next.js CLI: ${error.message}`);
   process.exit(1);

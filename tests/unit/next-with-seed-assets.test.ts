@@ -14,6 +14,7 @@ import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
+import { spawnProbe, untilPrinted } from "../helpers/launcher-spawn-probe";
 import { testIf } from "../helpers/posix-tools";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
@@ -27,7 +28,8 @@ afterAll(() => fs.rmSync(tempDir, { recursive: true, force: true }));
  * The stub Next.js CLI. With no mode it prints `{ seedAssets, manualSignalHandling, runtime, argv, cwd, keys }`, where
  * runtime is `bun` or `node` and keys are its environment's names. `exit <code>` exits with that code;
  * `die <signal>` ends itself with that signal; `wait` prints `ready` once its SIGINT and SIGTERM handlers are
- * installed and exits 130 or 143 on them. Each mode that waits exits 99 by itself after five seconds.
+ * installed and exits 130 or 143 on them; `sleep` installs no handler, so either signal ends it. Each mode that waits
+ * exits 99 by itself after five seconds.
  */
 const STUB = `
 const [mode, value] = process.argv.slice(2);
@@ -41,6 +43,8 @@ if (mode === "exit") {
   process.on("SIGTERM", () => process.exit(143));
   setTimeout(() => process.exit(99), 5000);
   console.log("ready");
+} else if (mode === "sleep") {
+  setTimeout(() => process.exit(99), 5000);
 } else {
   console.log(JSON.stringify({ seedAssets: process.env.SEED_ASSETS_DIR ?? null, manualSignalHandling: process.env.NEXT_MANUAL_SIG_HANDLE ?? null, runtime: typeof process.versions.bun === "string" ? "bun" : "node", argv: process.argv.slice(2), cwd: process.cwd(), keys: Object.keys(process.env) }));
 }
@@ -473,25 +477,45 @@ describe("scripts/next-with-seed-assets.mjs on a checkout fixture with a stub Ne
       ? "POSIX signals: Windows has no SIGINT or SIGTERM to forward, and kill() there ends a process at once"
       : null;
 
-  /** Starts the launcher on the stub's `wait` mode and resolves once the stub has its handlers installed. */
+  /** Runs the launcher on Node.js with the spawn probe preloaded, `node --import`, from a new checkout fixture. */
+  function probed(args: string[], { signal }: { signal?: "SIGINT" | "SIGTERM" } = {}) {
+    const probe = spawnProbe(fs.mkdtempSync(path.join(tempDir, "probe-")), { signal });
+    const command = [node(), "--import", probe.importUrl, path.join(checkout(), LAUNCHER), ...args];
+    return { probe, command };
+  }
+
+  test("installs its SIGINT and SIGTERM forwarding before it spawns the Next.js CLI", () => {
+    const { probe, command } = probed([]);
+    const proc = Bun.spawnSync(command, { cwd: tempDir, env: envWith(), stdout: "pipe", stderr: "pipe" });
+    expect(proc.exitCode, `launcher stderr: ${proc.stderr.toString()}`).toBe(0);
+    expect(probe.listenersAtSpawn()).toEqual({ SIGINT: 1, SIGTERM: 1 });
+  });
+
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    testIf(
+      NO_POSIX_SIGNALS,
+      `forwards a ${signal} that reaches it as it spawns the Next.js CLI to the CLI once it exists, and ends itself with it`,
+      () => {
+        // The probe sends the signal before the real spawn runs; the stub's sleep mode has no handler, so the
+        // forwarded signal ends it, and only a forwarded one does: it would otherwise exit 99 after five seconds.
+        const { probe, command } = probed(["sleep"], { signal });
+        const proc = Bun.spawnSync(command, { cwd: tempDir, env: envWith(), stdout: "pipe", stderr: "pipe" });
+        expect(probe.childEnd()).toEqual([null, signal]);
+        expect([proc.exitCode, proc.signalCode ?? null]).toEqual([null, signal]);
+      },
+    );
+  }
+
+  /**
+   * Starts the launcher on the stub's `wait` mode and resolves once the stub has its handlers installed. The launcher
+   * has its own by then because it installs them before it spawns the stub, which each case asserts from the probe:
+   * `ready` only says the stub is waiting.
+   */
   async function startWaiting() {
-    const proc = Bun.spawn([node(), path.join(checkout(), LAUNCHER), "wait"], {
-      cwd: tempDir,
-      env: envWith(),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const reader = proc.stdout.getReader();
-    const decoder = new TextDecoder();
-    let seen = "";
-    while (!seen.includes("ready")) {
-      // oxlint-disable-next-line no-await-in-loop -- a stream is read one chunk after the other.
-      const { value, done } = await reader.read();
-      if (done) throw new Error(`the stub ended before it was ready: ${seen}`);
-      seen += decoder.decode(value);
-    }
-    reader.releaseLock();
-    return proc;
+    const { probe, command } = probed(["wait"]);
+    const proc = Bun.spawn(command, { cwd: tempDir, env: envWith(), stdout: "pipe", stderr: "pipe" });
+    await untilPrinted(proc.stdout, "ready");
+    return { proc, probe };
   }
 
   for (const [signal, code] of [
@@ -502,7 +526,8 @@ describe("scripts/next-with-seed-assets.mjs on a checkout fixture with a stub Ne
       NO_POSIX_SIGNALS,
       `forwards ${signal} to the Next.js CLI and exits with the code it then exits with`,
       async () => {
-        const proc = await startWaiting();
+        const { proc, probe } = await startWaiting();
+        expect(probe.listenersAtSpawn()).toEqual({ SIGINT: 1, SIGTERM: 1 });
         proc.kill(signal);
         await proc.exited;
         expect([proc.exitCode, proc.signalCode ?? null]).toEqual([code, null]);
