@@ -746,7 +746,8 @@ STORAGE_ENCRYPTION_RESEAL: remove it now; every start re-checks the store while 
 ```
 
 The second, third and fourth lines appear only when they have something to name.
-On the second and third lines an entry is `<owner> <connection id> <field>` for a connection value, or `<email> <field>` for an account's second factor (`totpSecret` or `totpPending`); the reason on the third is `not-text` or `mixed`.
+On the second line an entry is `<owner> <connection id> <field>` for a connection value, or `<email> <field>` for an account's second factor (`totpSecret` or `totpPending`).
+On the third an entry is always a connection value, `<owner> <connection id> <field>`, and its reason is `not-text` or `mixed`.
 On the fourth an entry is `<owner> connections` for a row whose data is not a JSON list, or `<owner> connections[<index>]` for one element of the list.
 
 How to set it:
@@ -766,10 +767,13 @@ extraEnv:
     value: "true"
 ```
 
-Do not set it with `--set 'extraEnv[0]...'`: an index overwrites the entry at that index of a values file's list, which is where the chart README puts `STORAGE_ENCRYPTION_KEY`.
+A release installed with `--set`, as the chart README installs `STORAGE_ENCRYPTION_KEY` at `--set 'extraEnv[0]...'`, keeps its values in the release and has no values file.
+Write them to one with `helm get values <release> -o yaml > values.yaml`, add the entry to its `extraEnv` list, and upgrade with `-f values.yaml`.
+Do not set it with `--set 'extraEnv[0]...'`: an index overwrites the entry at that index, which is where the chart README's install puts `STORAGE_ENCRYPTION_KEY`.
 With `--reuse-values`, any `--set` of an `extraEnv` index replaces the whole stored list, because Helm replaces a list whole when it merges values, so every earlier entry is dropped.
 Either way the re-sealing start can run without `STORAGE_ENCRYPTION_KEY`, under a key derived from `JWT_SECRET`, which opens none of the stored values.
-Before that start, check that the rendered Deployment still carries every entry you set, for example with `helm template` or `helm get manifest`.
+Before that start, check that the Deployment the upgrade renders still carries every entry you set: run the same `helm upgrade` with `--dry-run`, or `helm template` with the same values, and read the container's `env`.
+`helm get manifest` shows only what is already deployed, so it cannot check a start before it begins.
 
 ### Upgrading to envelope v2
 
@@ -807,6 +811,7 @@ The re-seal's backup is not: a save seals every secret of the connections it wri
 To downgrade, stop every server, then choose:
 
 - Restore the step 1 backup: every change made since the upgrade is lost, and the older version reads everything the backup holds.
+  On PostgreSQL, unless the database is recreated, delete the `credential_envelope` row before the older version serves, with the command under "Restore nothing": a dump taken before the upgrade has no `storage_meta`, and restoring it into the existing database keeps the row, `pg_restore --clean` included, which drops only the objects the dump holds.
 - Restore the re-seal's backup: every change made since the re-seal is lost, and the older version omits what this version wrote as `v2` before the re-seal.
 - Restore nothing: the older version omits every `v2` value.
   The store's `storage_meta` still records that version 1 is retired, and the older version does not read that table, so delete the row before it serves: `DELETE FROM storage_meta WHERE key = 'credential_envelope'`, schema-qualified when `STORAGE_POSTGRES_SCHEMA` is set, or `sqlite3 <store file> "DELETE FROM storage_meta WHERE key = 'credential_envelope'"`.
@@ -816,7 +821,8 @@ Then start the older version.
 
 For SQLite, the store runs in WAL mode and Studio does not close it at shutdown, so a stopped server leaves `<store file>-wal` and `<store file>-shm` beside the store file, and the `-wal` file holds committed changes.
 They belong to the store being replaced: delete both before you put a backup in place of the store file, or SQLite replays them onto the restored file.
-Pointing `STORAGE_SQLITE_PATH` at the backup file instead needs no deletion, because a `VACUUM INTO` copy has no such files.
+A step 1 copy taken together with its `-wal` file is restored with that file too, as `<store file>-wal`, after the live `-wal` and `-shm` are deleted: without it the restored store lacks the committed changes the file holds, possibly its tables, and Studio starts on empty tables.
+Pointing `STORAGE_SQLITE_PATH` at a backup instead needs no deletion: the re-seal's `VACUUM INTO` copy and a `sqlite3 .backup` copy are single files, and a copy taken with its `-wal` file needs that file beside it, as `<backup>-wal`.
 
 For PostgreSQL, restore every store table from the re-seal's backup in one transaction, as the role that owns the tables: children are emptied before their parents, and parents filled before their children.
 With `<stamp>` the backup's suffix and every name schema-qualified when `STORAGE_POSTGRES_SCHEMA` is set:
