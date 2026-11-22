@@ -97,8 +97,8 @@ function updateGoldenReads(file: ts.SourceFile): ts.Node[] {
  * The violations in one source file, each naming the file, the line and the rule broken,
  * empty when the file reads UPDATE_GOLDEN only in the condition of an if (directly or
  * through a const alias used only in if conditions) whose then-branch always ends in a
- * throw and cannot leave early. Destructuring the variable or setting it in an object
- * literal (a child process's environment) is always a violation.
+ * throw and cannot leave early. Exporting such an alias, destructuring the variable or
+ * setting it in an object literal (a child process's environment) is always a violation.
  */
 function goldenWriteViolations(source: string, fileName: string): string[] {
   const file = parse(source, fileName);
@@ -123,6 +123,10 @@ function goldenWriteViolations(source: string, fileName: string): string[] {
       return;
     }
     const aliasName = alias.name as ts.Identifier;
+    // A file that imports the alias never names UPDATE_GOLDEN, so git grep never checks it.
+    if ((ts.getCombinedModifierFlags(alias) & ts.ModifierFlags.Export) !== 0) {
+      report(alias, `${aliasName.text}, which holds ${VARIABLE}, is exported`);
+    }
     const visitAlias = (node: ts.Node): void => {
       const isReference =
         ts.isIdentifier(node) &&
@@ -253,6 +257,14 @@ describe("golden files are never rewritten silently or under CI", () => {
     ].join("\n");
     expect(goldenWriteViolations(source, "planted.test.ts")).toEqual([
       'planted.test.ts:2: UPDATE, which holds UPDATE_GOLDEN, is read outside the condition of an if: write it as `if (process.env.UPDATE_GOLDEN === "1") { write; throw }`',
+    ]);
+  });
+
+  test("a planted golden that exports its alias is named", () => {
+    // An importer of the alias never names UPDATE_GOLDEN, so git grep would never check it.
+    const source = 'export const UPDATE = process.env.UPDATE_GOLDEN === "1";\n';
+    expect(goldenWriteViolations(source, "planted.ts")).toEqual([
+      'planted.ts:1: UPDATE, which holds UPDATE_GOLDEN, is exported: write it as `if (process.env.UPDATE_GOLDEN === "1") { write; throw }`',
     ]);
   });
 
