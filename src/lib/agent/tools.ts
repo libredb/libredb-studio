@@ -3903,7 +3903,8 @@ export function planTableProfile(
   // qualifier is not unknown, the object is not un-profilable and the table is not missing.
   // The run read every candidate and cannot say which the caller meant, and the candidates
   // are the only thing that repairs it, so they are what is said. They are this inventory's
-  // own addresses, so a model can copy one back verbatim.
+  // own addresses, quoted where they are not plain names, and `resolveProfileTarget` reads
+  // that quoting back, so a model can copy one back verbatim.
   if (resolution.kind === "ambiguous") {
     return unavailable(
       "TABLE_SPELLING_AMBIGUOUS",

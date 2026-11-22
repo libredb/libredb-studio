@@ -253,4 +253,15 @@ describe("a name the sentence takes from the inventory or the command", () => {
     expect(sentence).toContain(`Write the value as {"$date": ${shown("2026")}}.`);
     expectOneInertLine(sentence);
   });
+
+  test("an ObjectId comparison's sentence quotes the value it says to write", () => {
+    const sentence = mongoInventoryProblem(
+      { collection: "events", operation: "find", filter: { _id: hostile("abc") } },
+      inventory([EVENTS]),
+    );
+
+    expect(sentence).toContain(`"_id" holds an ObjectId in every sampled document`);
+    expect(sentence).toContain(`Write the value as {"$oid": ${shown("abc")}}.`);
+    expectOneInertLine(sentence);
+  });
 });

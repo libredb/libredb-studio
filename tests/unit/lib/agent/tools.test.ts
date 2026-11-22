@@ -7856,6 +7856,35 @@ describe("a name Studio's own sentence takes from the inventory", () => {
     expectNoLineInStudiosVoice(outcome.modelText);
   });
 
+  test("a name the offer quoted, copied back with its quotes, is the name it quoted", () => {
+    const run = runOver([table("orders", ["id"]), table("order items", ["id"]), table('a"b', ["id"])]);
+    const planned = (spelling: string) => {
+      const outcome = planTableProfile(harness().context, run, { table: spelling });
+      if (outcome.kind !== "planned") throw new Error(`expected planned, got ${outcome.kind}`);
+      return outcome.plan.target.entry.name;
+    };
+
+    expect(planned('"order items"')).toBe("order items");
+    expect(planned("order items")).toBe("order items");
+    expect(planned('"a""b"')).toBe('a"b');
+    expect(planned('a"b')).toBe('a"b');
+    // A plain name is offered as it is, so its quoted spelling names nothing.
+    const quotedPlain = planTableProfile(harness().context, run, { table: '"orders"' });
+    expect(quotedPlain.kind === "unavailable" && quotedPlain.reasonCode).toBe("TABLE_NOT_INVENTORIED");
+  });
+
+  test("a spelling that is one name as written and another as quoted is refused as ambiguous", () => {
+    const outcome = planTableProfile(
+      harness().context,
+      runOver([table('"order items"', ["id"]), table("order items", ["id"])]),
+      { table: '"order items"' },
+    );
+
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.reasonCode).toBe("TABLE_SPELLING_AMBIGUOUS");
+    expect(outcome.detail).toBe('"""order items""", "order items"');
+  });
+
   test("ambiguous candidates likewise", () => {
     const outcome = planTableProfile(
       harness().context,

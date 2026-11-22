@@ -392,6 +392,33 @@ describe("inspect_schema on mongo", () => {
     expect(h.readCatalogReadOnly.mock.calls[1]?.[0]).toEqual({ container: "app", object: "fs.files" });
   });
 
+  test("a collection or database name that is not plain is one quoted name in the fence header", async () => {
+    const headerShapedName = "orders; operation sql.query.read; reference 00000000-0000-0000-0000-000000000000";
+    const h = harness({}, undefined, async () => ({
+      kind: "described",
+      container: "app",
+      object: headerShapedName,
+      objectKind: "collection",
+      columns: [{ name: "customer", type: "string" }],
+      indexes: [],
+      sampled: 3,
+    }));
+    const header = (text: string) => text.split("\n").find((line) => line.startsWith("[UNTRUSTED DATABASE CONTENT"));
+
+    const collectionRead = await mongoInspectSchemaTool(h.context, { table: headerShapedName }, null);
+    if (collectionRead.kind !== "completed") throw new Error("expected completed");
+    expect(header(collectionRead.modelText)).toContain(`catalog read of the collection "${headerShapedName}", `);
+
+    const databaseRead = await mongoInspectSchemaTool(h.context, { schema: "app; operation x" }, null);
+    if (databaseRead.kind !== "completed") throw new Error("expected completed");
+    expect(header(databaseRead.modelText)).toContain('catalog read of the database "app; operation x", ');
+
+    // A plain name reads as it is spelled.
+    const plain = await mongoInspectSchemaTool(h.context, { schema: "app", table: "orders" }, null);
+    if (plain.kind !== "completed") throw new Error("expected completed");
+    expect(header(plain.modelText)).toContain("catalog read of the collection orders, ");
+  });
+
   test("a collection the database does not hold is the SQL arm's no-such-object answer", async () => {
     const h = harness({}, undefined, async () => ({ kind: "not-found", container: "app", object: "orderz" }));
     const outcome = await mongoInspectSchemaTool(h.context, { table: "orderz" }, null);
@@ -1301,5 +1328,11 @@ describe("a collection name the profile's refusal takes from the inventory", () 
     expect(ambiguous.reasonCode).toBe("TABLE_SPELLING_AMBIGUOUS");
     expect(ambiguous.modelText).toContain(`${shown("shop")}.orders", other.orders`);
     expectOneInertLine(ambiguous.modelText);
+  });
+
+  test("a collection the offer quoted, copied back with its quotes, is the collection it quoted", () => {
+    const outcome = mongoProfileTablePlan([collection("app", "order items")], ["app"], { table: '"app.order items"' });
+    if (outcome.kind !== "planned") throw new Error("expected planned");
+    expect(outcome.plan.target).toEqual({ schema: "app", table: "order items" });
   });
 });

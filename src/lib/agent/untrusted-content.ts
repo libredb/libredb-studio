@@ -140,17 +140,18 @@ const PLAIN_NAME = /^[\p{L}\p{M}\p{N}_$.-]+$/u;
  * A name as Studio's own sentence writes it: as it is when it is a plain name, and
  * through `quoteIdentifierForPrompt` otherwise (the empty name included).
  *
- * A plain name holds only letters, marks, digits, `_`, `$`, `.` and `-`. It reads as
- * the inventory spells it, which is how the schema inventory shows it and what a model
- * copies into a statement. A name with a space, a comma, a quote, a bracket, a line
+ * A plain name holds only letters, marks, numbers (`\p{N}`, so `x²` too), `_`, `$`, `.`
+ * and `-`. It reads as the inventory spells it, which is how the schema inventory shows it
+ * and what a model copies into a statement. A name with a space, a comma, a quote, a bracket, a line
  * break or a fence marker reads as one quoted name instead, so it cannot end a line or
  * a fence. Quoting only when needed is the rule SQL's own `quote_ident` follows.
  */
 export const nameForPrompt = (name: string): string => (PLAIN_NAME.test(name) ? name : quoteIdentifierForPrompt(name));
 
 /**
- * One character of an identifier: the doubled quote, every control character as a
- * visible escape, and anything else unchanged.
+ * One character of an identifier: the doubled quote, every control character and every
+ * Unicode line or paragraph separator as a visible escape (`escapeLineBreaking`), and
+ * anything else unchanged.
  *
  * Doubling alone was not enough, and the gap was found by review on #347: both
  * reference engines permit a LINE BREAK inside a quoted identifier, so a table named
@@ -188,6 +189,14 @@ function escapeLineBreaking(character: string): string {
 
 /** A fence header kept on one line whatever its label, operation or reference holds. */
 const oneLine = (header: string): string => [...header].map(escapeLineBreaking).join("");
+
+/**
+ * A sentence Studio restates from a record as one inert line: every control character and
+ * line or paragraph separator escaped, and any fence marker neutralised. For a sentence whose
+ * names cannot be quoted one by one any more, such as a refusal detail an earlier Studio
+ * recorded with an inventory name written as it was.
+ */
+export const oneLineForPrompt = (sentence: string): string => neutraliseUntrustedMarkers(oneLine(sentence));
 
 /**
  * Wraps database-derived text for a prompt. The header is neutralised too: a

@@ -106,8 +106,8 @@ export async function mongoInspectSchemaTool(
     table === undefined
       ? schema === undefined
         ? "the database this connection is bound to"
-        : `the database ${schema}`
-      : `the collection ${table}`;
+        : `the database ${nameForPrompt(schema)}`
+      : `the collection ${nameForPrompt(table)}`;
   // The provider's answer, kept beside the rows the pipeline stores: whether the object exists, and whether its
   // sample held anything, is read off it below, the way `inspectSchemaTool` reads a composed read's row count.
   let reading: ReadOnlyCatalogReading | undefined;
@@ -301,7 +301,8 @@ export function mongoProfileTablePlan(
   if (!parsed.success) return unavailable("INVALID_TOOL_INPUT", issueText(parsed.error));
   const { schema, table, depth, fromColumn } = parsed.data;
   const resolution = resolveProfileTarget(objects, schema, table, defaultContainer);
-  // The candidates are this inventory's own addresses, so a model can copy one back verbatim.
+  // The candidates are this inventory's own addresses, quoted where they are not plain names, and
+  // `resolveProfileTarget` reads that quoting back, so a model can copy one back verbatim.
   if (resolution.kind === "ambiguous") {
     return unavailable(
       "TABLE_SPELLING_AMBIGUOUS",

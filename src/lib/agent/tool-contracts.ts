@@ -253,6 +253,8 @@ const CORE_UNAVAILABLE_TEXT: Readonly<Record<CoreUnavailableCode, string>> = Obj
   // narrowed out of `inspect_schema`, and this one does not need it anyway, since the objects
   // are already inventoried. What it needs is the spellings, and they arrive as the `detail`
   // because they are this inventory's own addresses and this sentence may not invent them.
+  // One that is not a plain name arrives quoted (`nameForPrompt`), and `resolveProfileTarget`
+  // takes it back quoted as well, so "spelled in full" holds for the copy as the model reads it.
   TABLE_SPELLING_AMBIGUOUS:
     "More than one object in this run's inventory is spelled that way, so nothing was profiled: this run cannot say which one you meant. Call profile_table again with one of the addresses below, spelled in full.",
   // Says what to change, which is the whole of it: the call this replaces was repeated
