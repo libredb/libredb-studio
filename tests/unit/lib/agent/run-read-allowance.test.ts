@@ -389,6 +389,7 @@ describe("the run read allowance", () => {
       { class: "database-error", statementFingerprint: "fp_old", message: `refused for ${password}`, sent: false },
       { class: "database-error", statementFingerprint: "fp_old", message: `login failed: ${password}` },
     ]) {
+      // oxlint-disable-next-line no-await-in-loop -- each resumed run resets the module's held snapshots and boots its own store, so one must finish before the next starts.
       const text = await resumedOver(refusal, credentialed);
       expect(text).toContain(PROVIDER_TEXT_WITHHELD);
       for (const form of secretForms([password])) expect(text).not.toContain(form);

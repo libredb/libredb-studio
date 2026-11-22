@@ -1377,33 +1377,35 @@ describe("who wrote a refusal", () => {
   });
 
   test("a profile refusal Studio raises keeps Studio's words and carries no notice", async () => {
-    for (const failing of ["acquire", "statement"] as const) {
-      const refusal = new StudioProfileRefusal(`Studio refused: ${sentence}`, "AGENT_CREDENTIAL_REQUIRED");
-      const provider = {
-        getCapabilities: () => ({}),
-        prepareQuery: (query: string) => ({ query, wasLimited: true, limit: 101, offset: 0 }),
-        queryReadOnly: async () => {
-          throw refusal;
-        },
-      } as unknown as DatabaseProvider;
-      const result = await direct(
-        { connection_id: "seed:fake", sql: "SELECT 1" },
-        undefined,
-        fakeContext(provider, "sqlite", {}, async () => {
-          if (failing === "acquire") throw refusal;
-          return provider;
-        }),
-      );
-      expect(result).toEqual({
-        isError: true,
-        content: [
-          {
-            type: "text",
-            text: `run_read_query cannot run on this connection: Studio refused: ${sentence}. It runs on ${RUN_READ_QUERY_ENGINES}.`,
+    await Promise.all(
+      (["acquire", "statement"] as const).map(async (failing) => {
+        const refusal = new StudioProfileRefusal(`Studio refused: ${sentence}`, "AGENT_CREDENTIAL_REQUIRED");
+        const provider = {
+          getCapabilities: () => ({}),
+          prepareQuery: (query: string) => ({ query, wasLimited: true, limit: 101, offset: 0 }),
+          queryReadOnly: async () => {
+            throw refusal;
           },
-        ],
-      });
-    }
+        } as unknown as DatabaseProvider;
+        const result = await direct(
+          { connection_id: "seed:fake", sql: "SELECT 1" },
+          undefined,
+          fakeContext(provider, "sqlite", {}, async () => {
+            if (failing === "acquire") throw refusal;
+            return provider;
+          }),
+        );
+        expect(result).toEqual({
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: `run_read_query cannot run on this connection: Studio refused: ${sentence}. It runs on ${RUN_READ_QUERY_ENGINES}.`,
+            },
+          ],
+        });
+      }),
+    );
   });
 
   test("a database the provider refuses to open is answered behind a notice naming it", async () => {
