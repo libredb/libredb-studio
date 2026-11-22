@@ -1880,7 +1880,9 @@ export interface AgentRunRecord {
    * selection, narrowing, the prompt, the verifier and a resumed drive all read it from the record, never
    * from the live connection, so a run is the same run in a process that cannot reach its database.
    *
-   * Optional, and absent reads as `sql`: every ledger written before this field was an SQL run.
+   * Optional, and absent reads as `sql`: every ledger written before this field was an SQL run. A header
+   * naming a language this build does not hold is refused when the ledger is read (`runHeaderRefusal`),
+   * so a folded record only ever carries an id this build holds.
    */
   readonly statementLanguage?: AgentStatementLanguageId;
   /**
@@ -1891,7 +1893,9 @@ export interface AgentRunRecord {
    * manifest that may have changed since.
    *
    * Optional, and absent reads as the verifier of the run's variant (for a ledger written before this field,
-   * the SQL workflow's verifier), which is what judged every run written then.
+   * the SQL workflow's verifier), which is what judged every run written then. A header naming a verifier
+   * with no rule, or a retired one, is refused when the ledger is read (`runHeaderRefusal`), so a folded
+   * record only ever carries an id `goalOf` judges.
    */
   readonly verifier?: AgentGoalVerifierId;
   /**

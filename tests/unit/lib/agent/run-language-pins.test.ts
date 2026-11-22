@@ -10,7 +10,7 @@ import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { runInvestigation } from "@/lib/agent/investigation";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import { AgentRunService } from "@/lib/agent/run-service";
-import { AgentRunStore } from "@/lib/agent/run-store";
+import { AgentRunStore, AgentRunUnavailableError } from "@/lib/agent/run-store";
 import { type AgentToolContext, groundsUnderExecutionProfile, recommendChangeTool } from "@/lib/agent/tools";
 import type { AgentRunEvent, AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
@@ -24,8 +24,8 @@ import { answersProse, modelOver, scriptedModel } from "../../../isolated/fixtur
 
 /**
  * What a run reads off its persisted statement language, pinned as it was before the run resolver: the truth table of
- * `groundsUnderExecutionProfile`, the first error of a run whose record persists a language no pack serves, in agent
- * and in planning mode, and every refusal of the SQL statement card in the order it gives them, with and without the
+ * `groundsUnderExecutionProfile`, the refusal a run whose header persists a language no pack serves meets when its ledger
+ * is read, in agent and in planning mode, and every refusal of the SQL statement card in the order it gives them, with and without the
  * worked call a model may be given.
  */
 
@@ -154,21 +154,22 @@ async function firstError(
   return { error: undefined, turns: script.turns.length };
 }
 
-describe("a run whose record persists a statement language no pack serves", () => {
+describe("a run whose header persists a statement language no pack serves", () => {
   test.each([
     ["agent", "investigation"],
     ["agent", "operations"],
     ["planning", "investigation"],
     ["planning", "operations"],
-  ] as const)("in %s mode, %s, fails first where it fails today, before any model turn", async (mode, workflowType) => {
-    const { error, turns } = await firstError(mode, workflowType, "cobol");
+  ] as const)(
+    "in %s mode, %s, is refused when its ledger is read, before any model turn",
+    async (mode, workflowType) => {
+      const { error, turns } = await firstError(mode, workflowType, "cobol");
 
-    if (!(error instanceof Error)) throw new Error(`expected an error, got ${String(error)}`);
-    expect(`${error.constructor.name}: ${error.message}`).toBe(
-      mode === "agent" ? "AgentManifestError: unknown statement language cobol" : "Error: no server adapter for cobol",
-    );
-    expect(turns).toBe(0);
-  });
+      if (!(error instanceof AgentRunUnavailableError)) throw new Error(`expected the read's refusal, got ${String(error)}`);
+      expect(error.refusal).toMatchObject({ field: "statementLanguage", reason: "unknown", id: "cobol" });
+      expect(turns).toBe(0);
+    },
+  );
 });
 
 /** A context on PostgreSQL, whose record persists no language, for `modelId`. */

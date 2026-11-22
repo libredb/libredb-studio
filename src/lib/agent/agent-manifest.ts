@@ -251,7 +251,8 @@ export const AGENT_WORKFLOW_VARIANTS: Readonly<
 /**
  * The variant of one workflow on one language, or undefined when the language has none. An absent language reads as
  * `sql`, which is what a run recorded before languages existed was. A language the manifest does not hold is an
- * error rather than an absent variant: it can only be a ledger or a caller this file has never heard of.
+ * error rather than an absent variant. A ledger naming one is refused when it is read (`runHeaderRefusal`), so the
+ * throw here is a caller's error.
  */
 export function agentVariant(
   language: AgentStatementLanguageId | undefined,

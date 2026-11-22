@@ -63,14 +63,14 @@ export type AgentGoalVerifierId =
    * ledgers that outlive the rule, and this is the type a reader of one holds. What
    * a versioned id must never do is mean something else later, so `.1` still means
    * what it meant — a run judged to need a before/after comparison whatever it
-   * recommended.
+   * recommended. Listed in `RETIRED_GOAL_VERIFIERS`.
    */
   | "agent-query-optimization.1"
   /**
    * Released, and kept for the reason `.1` is kept: it shipped on `main`, real runs
    * were measured against it, and a reader of one of those ledgers holds this type.
    * `.2` still means what it meant — the two-arm rule, with a plan judged by the
-   * baseline's emptiness census like any other artifact.
+   * baseline's emptiness census like any other artifact. Listed in `RETIRED_GOAL_VERIFIERS`.
    */
   | "agent-query-optimization.2"
   /**
@@ -88,7 +88,8 @@ export type AgentGoalVerifierId =
    * Kept for the reason `agent-query-optimization.1` is kept: it shipped on `main` and
    * real runs were measured against it, so a reader of one of those ledgers holds this
    * type and `.1` still means what it meant — a composed report, with no arm asking
-   * what the report rested on, because at the time nothing else was citable.
+   * what the report rested on, because at the time nothing else was citable. Listed in
+   * `RETIRED_GOAL_VERIFIERS`.
    */
   | "agent-operations.1"
   /** #411: the same rule plus the reading arm, once the inventory became citable. */
@@ -520,11 +521,36 @@ const CORE_GOAL_RULES: Readonly<Partial<Record<AgentGoalVerifierId, AgentGoalRul
  * under, and a resumed drive must apply THAT rule. Partial on purpose: a retired id
  * stays in the union for the ledgers that carry it, but no new verdict is ever
  * measured against it, so it has no entry here and asking for one is an error.
+ * Each retired id is in `RETIRED_GOAL_VERIFIERS`. An id a run header can carry is
+ * never removed from here: a changed rule takes a new id instead.
  */
 const AGENT_GOAL_RULES: Readonly<Partial<Record<AgentGoalVerifierId, AgentGoalRule>>> = mergeDisjoint(
   [CORE_GOAL_RULES, LANGUAGE_GOAL_RULES],
   "AGENT_GOAL_RULES",
 );
+
+/**
+ * The verifier ids Studio has retired: their rules are gone and no run is judged by them again. Verdicts recorded under
+ * them stay on old ledgers (`run-finished.goalVerdict.verifier`), which nothing interprets; a run header naming one is
+ * refused when its ledger is read, as retired (`runHeaderRefusal` in `run-ledger-ids.ts`).
+ *
+ * All three were retired before a header could carry a verifier, so no header ever named one. A verifier a header can
+ * carry is never retired: its rule stays in `AGENT_GOAL_RULES`, and a changed rule takes a new id, so a run opened under
+ * one keeps that rule to its end. The census in `tests/unit/lib/agent/run-ledger-ids.test.ts` holds both.
+ */
+export const RETIRED_GOAL_VERIFIERS: ReadonlySet<AgentGoalVerifierId> = new Set<AgentGoalVerifierId>([
+  "agent-query-optimization.1",
+  "agent-query-optimization.2",
+  "agent-operations.1",
+]);
+
+/**
+ * Whether `goalOf` judges a run by `value`. `Object.hasOwn`, for the reason `goalOf` gives: a prototype key is not a
+ * rule.
+ */
+export function hasGoalRule(value: string): value is AgentGoalVerifierId {
+  return Object.hasOwn(AGENT_GOAL_RULES, value);
+}
 
 /** A verifier id with no rule: a retired id, or a ledger this build never wrote. */
 class AgentGoalVerifierError extends Error {

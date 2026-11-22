@@ -54,10 +54,16 @@
  *    stream name can be a prefix of another's chunk file, because a match would
  *    require the other id to contain the delimiter. The parser re-checks the
  *    header's own run id as a second line of defence.
+ *  - **A ledger is read in the vocabulary its header names.** The header's
+ *    statement language and goal verifier are checked before any other line is
+ *    parsed; a header naming one this build does not hold, or holds as retired,
+ *    is refused by name (`AgentRunUnavailableError`), and the ledger is left as it
+ *    was for a Studio that has the id.
  */
 
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { quoteTypeId } from "@/lib/db/type-id";
 import { logger } from "@/lib/logger";
 import { getAgentRuntimeConfig } from "./config";
 import { AGENT_RUN_ID_PATTERN } from "./run-id";
@@ -74,6 +80,12 @@ import type { AgentStatementLanguageId } from "./agent-manifest";
 import type { AgentGoalVerifierId } from "./goal-verifier";
 import { AGENT_EVIDENCE_EVENTS } from "./languages/client";
 import type { AgentPackEvidenceEvent } from "./languages/pack";
+import {
+  type AgentRunHeaderRefusal,
+  RUN_HEADER_FIELD_NOUN,
+  RUN_HEADER_REASON_VERB,
+  runHeaderRefusal,
+} from "./run-ledger-ids";
 import { assertPersistableState } from "./state-guard";
 import {
   type AgentThreadHeader,
@@ -262,7 +274,8 @@ export type AgentRunStoreReason =
   | "RUN_ALREADY_CLOSED"
   | "MALFORMED_LEDGER"
   | "LEDGER_WRITE_FAILED"
-  | "RUNTIME_DISABLED";
+  | "RUNTIME_DISABLED"
+  | "RUN_UNAVAILABLE";
 
 export class AgentRunStoreError extends Error {
   readonly reasonCode: AgentRunStoreReason;
@@ -272,6 +285,30 @@ export class AgentRunStoreError extends Error {
     this.name = "AgentRunStoreError";
     this.reasonCode = reasonCode;
     Object.setPrototypeOf(this, AgentRunStoreError.prototype);
+  }
+}
+
+/**
+ * A run whose header names a statement language or goal rule this build does not hold, or holds only as retired
+ * (`runHeaderRefusal`). Thrown by `read` before any other line of the ledger is parsed, so nothing of such a run is
+ * folded, resolved or driven here; the ledger itself is left as it was, for a Studio that has the id.
+ */
+export class AgentRunUnavailableError extends AgentRunStoreError {
+  readonly runId: string;
+  /** The actor the header persists, so a caller can answer someone else's run as one that does not exist. */
+  readonly actor: AgentRunActor;
+  readonly refusal: AgentRunHeaderRefusal;
+
+  constructor(runId: string, actor: AgentRunActor, refusal: AgentRunHeaderRefusal) {
+    super(
+      "RUN_UNAVAILABLE",
+      `agent run "${runId}" names the ${RUN_HEADER_FIELD_NOUN[refusal.field]} ${quoteTypeId(refusal.id)}, which this LibreDB Studio ${RUN_HEADER_REASON_VERB[refusal.reason]}`,
+    );
+    this.name = "AgentRunUnavailableError";
+    this.runId = runId;
+    this.actor = actor;
+    this.refusal = refusal;
+    Object.setPrototypeOf(this, AgentRunUnavailableError.prototype);
   }
 }
 
@@ -363,7 +400,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * Reads one ledger line back. The ledger is written only by this module's own
  * server code, so this is a corruption tripwire rather than a parser for hostile
  * input: it establishes that the line is one of the three known entry kinds and
- * that a header belongs to the run being read, then trusts the contract.
+ * that a header belongs to the run being read, then trusts the contract. The two
+ * engine-bound ids a header persists are the exception, checked by
+ * `assertReadableHeader`, because a ledger outlives the build that wrote it.
  */
 function parseEntry(runId: string, line: string): AgentLedgerEntry {
   let parsed: unknown;
@@ -385,6 +424,24 @@ function parseEntry(runId: string, line: string): AgentLedgerEntry {
     return parsed as unknown as AgentLedgerEntry;
   }
   throw malformed(runId, `a ledger line carries the unknown kind "${String(parsed.kind)}"`);
+}
+
+/**
+ * The header's two persisted ids, checked before any other line is parsed: a present id that is not text is corruption,
+ * and an id this build does not hold, or holds as retired, makes the run unavailable here.
+ *
+ * @throws {AgentRunStoreError} `MALFORMED_LEDGER` for an id that is not text.
+ * @throws {AgentRunUnavailableError} For an id `runHeaderRefusal` refuses.
+ */
+function assertReadableHeader(runId: string, header: Extract<AgentLedgerEntry, { kind: "run-opened" }>): void {
+  const raw: { readonly statementLanguage?: unknown; readonly verifier?: unknown } = header;
+  for (const field of ["statementLanguage", "verifier"] as const) {
+    if (raw[field] !== undefined && typeof raw[field] !== "string") {
+      throw malformed(runId, `its header's ${field} is not text`);
+    }
+  }
+  const refusal = runHeaderRefusal(header);
+  if (refusal !== null) throw new AgentRunUnavailableError(runId, header.actor, refusal);
 }
 
 function entryAtMs(entry: AgentLedgerEntry): number {
@@ -824,9 +881,17 @@ export class AgentRunStore {
     }
   }
 
+  /**
+   * The run's entries. The first line is parsed alone and, when it is a header, its ids are checked before any other
+   * line is parsed, so a ledger written in a vocabulary this build does not have is named by that vocabulary rather
+   * than by the first line of it this build cannot parse.
+   */
   private async readEntries(runId: string): Promise<readonly AgentLedgerEntry[]> {
-    const lines = await this.readStreamLines(ledgerStreamName(runId));
-    return lines.map((line) => parseEntry(runId, line));
+    const [first, ...rest] = await this.readStreamLines(ledgerStreamName(runId));
+    if (first === undefined) return [];
+    const head = parseEntry(runId, first);
+    if (head.kind === "run-opened") assertReadableHeader(runId, head);
+    return [head, ...rest.map((line) => parseEntry(runId, line))];
   }
 
   /**
