@@ -53,7 +53,8 @@ interface MonitoringDashboardProps {
 
 /**
  * The dashboard's tabs in display order, each with the monitoring panel it draws. Pool has no panel: it reads the
- * connection pool, not `getMonitoringData`, so it is drawn for every engine. A tab whose panel the connection's engine
+ * connection pool, not `getMonitoringData`, so it is drawn for every engine that offers at least one panel; an engine
+ * that offers none gets the "No Monitoring Panels" body and no tab at all. A tab whose panel the connection's engine
  * does not offer is not drawn. The index panel has no tab.
  */
 const TABS: readonly { value: string; panel: MonitoringPanel | null; title: string; Icon: typeof Activity }[] = [

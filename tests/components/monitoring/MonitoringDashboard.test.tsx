@@ -112,8 +112,10 @@ mock.module("@/components/ui/select", () => ({
 }));
 
 // Mock all 7 monitoring tab sub-components
+const overviewTabProps: Array<Record<string, unknown>> = [];
 mock.module("@/components/monitoring/tabs/OverviewTab", () => ({
-  OverviewTab: () => {
+  OverviewTab: (props: Record<string, unknown>) => {
+    overviewTabProps.push(props);
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
     return React.createElement("div", { "data-testid": "monitoring-overviewtab" }, "OverviewTab");
@@ -223,8 +225,10 @@ mock.module("@/hooks/use-provider-metadata", () => ({
   }),
 }));
 
+const storageTabProps: Array<Record<string, unknown>> = [];
 mock.module("@/components/monitoring/tabs/StorageTab", () => ({
-  StorageTab: () => {
+  StorageTab: (props: Record<string, unknown>) => {
+    storageTabProps.push(props);
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
     return React.createElement("div", { "data-testid": "monitoring-storagetab" }, "StorageTab");
@@ -247,6 +251,8 @@ import React from "react";
 import { mockRouterPush } from "../../helpers/mock-navigation";
 import { mockGlobalFetch, restoreGlobalFetch } from "../../helpers/mock-fetch";
 import { ENGINE_FACETS } from "@/lib/db/engine-facets";
+import type { MonitoringPanel } from "@/lib/db/engine-facets/types";
+import type { DatabaseType } from "@/lib/types";
 
 // Dynamic import AFTER the mock.module() calls above: a static import would be
 // hoisted and evaluate the real tab modules, poisoning coverage with all-zero
@@ -759,6 +765,51 @@ describe("MonitoringDashboard draws only the panels an engine offers", () => {
     expect(view.getByTestId("monitoring-not-offered").textContent).toBe(
       "Not offered by this engine: Performance, Queries, Sessions, Tables.",
     );
+  });
+
+  test("hands a Kafka connection's own offer to the Overview and Storage tabs", async () => {
+    const user = userEvent.setup();
+    overviewTabProps.length = 0;
+    storageTabProps.length = 0;
+    const view = await openOn([ofType("k1", "kafka")], "k1");
+    expect(overviewTabProps.at(-1)?.offer).toEqual(ENGINE_FACETS.kafka.monitoring);
+
+    const storage = Array.from(view.container.querySelectorAll('[role="tab"]')).find(
+      (tab) => tab.getAttribute("title") === "Storage",
+    ) as HTMLElement;
+    await user.click(storage);
+    await waitFor(() => {
+      expect(view.queryByTestId("monitoring-storagetab")).not.toBeNull();
+    });
+    expect(storageTabProps.at(-1)?.offer).toEqual(ENGINE_FACETS.kafka.monitoring);
+  });
+
+  /** The panel each tab draws, written out here so a tab wired to another panel fails on the engines that tell them apart. */
+  const PANEL_OF_TAB: readonly [string, MonitoringPanel][] = [
+    ["Overview", "overview"],
+    ["Performance", "performance"],
+    ["Queries", "slowQueries"],
+    ["Sessions", "activeSessions"],
+    ["Tables", "tables"],
+    ["Storage", "storage"],
+  ];
+
+  test.each(Object.keys(ENGINE_FACETS) as DatabaseType[])(
+    "a %s connection draws a tab for exactly the panels its engine offers",
+    async (type) => {
+      const offer = ENGINE_FACETS[type].monitoring;
+      const offered = PANEL_OF_TAB.filter(([, panel]) => offer[panel] === "offered").map(([title]) => title);
+      const view = await openOn([ofType("e1", type)], "e1");
+
+      expect(tabTitles(view)).toEqual(Object.values(offer).includes("offered") ? [...offered, "Pool"] : []);
+    },
+  );
+
+  test("the engines above include Cassandra and Druid, whose offers tell the tabs apart", () => {
+    const titles = (type: DatabaseType) =>
+      PANEL_OF_TAB.filter(([, panel]) => ENGINE_FACETS[type].monitoring[panel] === "offered").map(([title]) => title);
+    expect(titles("cassandra")).toEqual(["Overview", "Performance", "Sessions"]);
+    expect(titles("druid")).toEqual(["Overview", "Sessions", "Tables", "Storage"]);
   });
 
   test("draws every tab and no not-offered line for an engine that offers every panel", async () => {

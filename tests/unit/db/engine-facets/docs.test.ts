@@ -19,9 +19,19 @@ const ENGINES = Object.keys(ENGINE_FACETS) as DatabaseType[];
 
 const HEADING = /^#{2,4}( [0-9.]+)? Engine facets$/;
 
+/**
+ * The row modules among paths relative to the provider layer, each written with "/" whatever separator the platform
+ * gave it: `readdirSync` separates with a backslash on Windows, and both the lookup below and the doc link it builds
+ * are written with "/".
+ */
+function rowModulesAmong(files: readonly string[], separator: string): string[] {
+  return files.filter((file) => file.endsWith("engine-facets.ts")).map((file) => file.split(separator).join("/"));
+}
+
 /** Every row module under the provider layer, by its path relative to the provider layer. */
-const ROW_MODULES: readonly string[] = (readdirSync(PROVIDERS, { recursive: true }) as string[]).filter((file) =>
-  file.endsWith("engine-facets.ts"),
+const ROW_MODULES: readonly string[] = rowModulesAmong(
+  readdirSync(PROVIDERS, { recursive: true }) as string[],
+  path.sep,
 );
 
 /** The provider-layer path of the module that declares a type's row. */
@@ -72,6 +82,20 @@ function panelRows(section: string): [string, string][] {
   }
   return rows;
 }
+
+describe("the row module lookup", () => {
+  test('reads a Windows directory listing with the same "/" paths the doc links use', () => {
+    const listing = [
+      path.win32.join("stream", "kafka", "engine-facets.ts"),
+      path.win32.join("sql", "postgres-engine-facets.ts"),
+      path.win32.join("sql", "postgres.ts"),
+    ];
+    expect(rowModulesAmong(listing, path.win32.sep)).toEqual([
+      "stream/kafka/engine-facets.ts",
+      "sql/postgres-engine-facets.ts",
+    ]);
+  });
+});
 
 describe("each provider document's Engine facets subsection", () => {
   test("covers every engine the registry has a row for", () => {
