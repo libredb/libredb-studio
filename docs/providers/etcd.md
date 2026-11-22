@@ -467,6 +467,9 @@ The agent's `inspect_operations` tool does not read this row yet: it still calls
 Maintenance operations offered: `compact`, `defragment`, `disarm`.
 `POST /api/db/maintenance` and its preview refuse any other operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
 
+Agent readings offered: `storage`, `health`.
+`table-stats` is not offered to agent mode although the panel is: the agent handle refuses it with `KEY_NAMES_WITHHELD`, since key names count as stored values.
+
 ## 8. Maintenance
 
 Three cards of Admin > Operations, each for an admin, each audited, and each confirmed by typing the connection's name:

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { ENGINE_FACETS, engineFacetsFor } from "@/lib/db/engine-facets";
 import { MONITORING_PANELS, type MonitoringPanel } from "@/lib/db/engine-facets/types";
+import { CURATED_OPERATION_KINDS, type CuratedOperationKind } from "@/lib/db/operations/descriptors";
 import type { MonitoringData } from "@/lib/db/types";
 import type { DatabaseType } from "@/lib/types";
 import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../../../helpers/outside-the-union";
@@ -126,6 +127,86 @@ const EXPECTED_OFFERED: Readonly<Record<DatabaseType, readonly MonitoringPanel[]
   weaviate: VECTOR,
 };
 
+const SIX_READINGS: readonly CuratedOperationKind[] = [
+  "sessions",
+  "slow-queries",
+  "table-stats",
+  "index-stats",
+  "storage",
+  "health",
+];
+const HEALTH_ONLY: readonly CuratedOperationKind[] = ["health"];
+const EMBEDDED_READINGS: readonly CuratedOperationKind[] = ["table-stats", "index-stats", "storage", "health"];
+const CATALOG_AND_STORAGE_READINGS: readonly CuratedOperationKind[] = ["table-stats", "storage", "health"];
+const VECTOR_READINGS: readonly CuratedOperationKind[] = ["table-stats", "index-stats", "health"];
+
+/**
+ * The curated `inspect_operations` readings each engine answers on the agent handle (`{ readOnly: true,
+ * sendsStatements: false }`), as measured when the agent first read the registry (FND-4 slice 3): every provider built
+ * through the real factory, each of the six curated methods called on an editor handle and on the agent handle. A
+ * reading is offered when it is the kind of a panel the row offers and the agent handle answers it, and `health`
+ * (the mandatory core, no panel) unless the agent handle withholds it. Kafka withholds `storage`
+ * (`KAFKA_AGENT_WITHHELD.storage`), etcd withholds `table-stats`, and MQTT, Sparkplug, OPC UA and MTConnect withhold
+ * `health`.
+ *
+ * Transcribed from that measurement, never derived from `ENGINE_FACETS`, for the reason `EXPECTED_OFFERED` gives.
+ */
+const EXPECTED_AGENT_READINGS: Readonly<Record<DatabaseType, readonly CuratedOperationKind[]>> = {
+  bigquery: ["sessions", "slow-queries", "table-stats", "storage", "health"],
+  cassandra: ["sessions", "health"],
+  clickhouse: SIX_READINGS,
+  couchbase: SIX_READINGS,
+  databend: SIX_READINGS,
+  db2: ["table-stats", "health"],
+  druid: ["sessions", "table-stats", "storage", "health"],
+  duckdb: EMBEDDED_READINGS,
+  elasticsearch: CATALOG_AND_STORAGE_READINGS,
+  etcd: ["storage", "health"],
+  firestore: HEALTH_ONLY,
+  influxdb: HEALTH_ONLY,
+  influxdb3: HEALTH_ONLY,
+  kafka: HEALTH_ONLY,
+  kubernetes: HEALTH_ONLY,
+  libredb: CATALOG_AND_STORAGE_READINGS,
+  libsql: EMBEDDED_READINGS,
+  milvus: VECTOR_READINGS,
+  modbus: HEALTH_ONLY,
+  mongodb: SIX_READINGS,
+  mqtt: [],
+  mssql: SIX_READINGS,
+  mtconnect: [],
+  mysql: SIX_READINGS,
+  neo4j: ["sessions", "table-stats", "index-stats", "health"],
+  netconf: HEALTH_ONLY,
+  opcua: [],
+  opensearch: CATALOG_AND_STORAGE_READINGS,
+  oracle: SIX_READINGS,
+  oxia: HEALTH_ONLY,
+  postgres: SIX_READINGS,
+  prometheus: CATALOG_AND_STORAGE_READINGS,
+  qdrant: VECTOR_READINGS,
+  rabbitmq: HEALTH_ONLY,
+  redis: ["sessions", "slow-queries", "storage", "health"],
+  s3: HEALTH_ONLY,
+  snmp: HEALTH_ONLY,
+  snowflake: SIX_READINGS,
+  spark: HEALTH_ONLY,
+  sparkplug: [],
+  sqlite: EMBEDDED_READINGS,
+  trino: ["sessions", "slow-queries", "table-stats", "storage", "health"],
+  weaviate: VECTOR_READINGS,
+};
+
+/** The monitoring panel whose read answers each curated reading; `health` is the mandatory core and has none. */
+const PANEL_OF_READING: Readonly<Record<CuratedOperationKind, MonitoringPanel | null>> = {
+  sessions: "activeSessions",
+  "slow-queries": "slowQueries",
+  "table-stats": "tables",
+  "index-stats": "indexes",
+  storage: "storage",
+  health: null,
+};
+
 const offeredBy = (id: DatabaseType): MonitoringPanel[] =>
   MONITORING_PANELS.filter((panel) => ENGINE_FACETS[id].monitoring[panel] === "offered");
 
@@ -157,6 +238,31 @@ describe("engine facets registry census", () => {
   test("each engine offers the monitoring panels measured when the registry landed", () => {
     const measured = Object.fromEntries(ALL.map((id) => [id, offeredBy(id)]));
     expect(measured).toEqual(Object.fromEntries(ALL.map((id) => [id, [...EXPECTED_OFFERED[id]]])));
+  });
+
+  test("each engine offers the agent readings measured on the agent handle", () => {
+    const declared = Object.fromEntries(ALL.map((id) => [id, [...ENGINE_FACETS[id].agentReadings]]));
+    expect(declared).toEqual(Object.fromEntries(ALL.map((id) => [id, [...EXPECTED_AGENT_READINGS[id]]])));
+  });
+
+  test("every agent reading is the kind of a panel the row offers, or health", () => {
+    const stray = ALL.flatMap((id) =>
+      ENGINE_FACETS[id].agentReadings
+        .filter((kind) => {
+          const panel = PANEL_OF_READING[kind];
+          return panel !== null && ENGINE_FACETS[id].monitoring[panel] !== "offered";
+        })
+        .map((kind) => `${id} ${kind}`),
+    );
+    expect(stray).toEqual([]);
+  });
+
+  test("agent readings are listed once each, in CURATED_OPERATION_KINDS order", () => {
+    const misordered = ALL.filter((id) => {
+      const readings = ENGINE_FACETS[id].agentReadings;
+      return readings.join() !== CURATED_OPERATION_KINDS.filter((kind) => readings.includes(kind)).join();
+    });
+    expect(misordered).toEqual([]);
   });
 
   test("no row lists a maintenance operation twice", () => {

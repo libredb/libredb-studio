@@ -9,7 +9,9 @@ import type { DatabaseType } from "@/lib/types";
  * The provider triad's engine facets leg: every provider document carries one `Engine facets` subsection, at whatever
  * level the document's own scheme gives it, which links the module that declares the engine's `ENGINE_FACETS` row and
  * states, in a table, each of the seven monitoring panels as offered (`Yes`) or not (`No`) exactly as the row does,
- * and in one `Maintenance operations offered:` line the maintenance operations the row offers, in the row's order.
+ * in one `Maintenance operations offered:` line the maintenance operations the row offers, in the row's order, and in
+ * one `Agent readings offered:` line the curated `inspect_operations` readings the row offers agent mode, in the row's
+ * order.
  */
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
@@ -128,6 +130,17 @@ describe("each provider document's Engine facets subsection", () => {
       operations.length === 0
         ? "Maintenance operations offered: none."
         : `Maintenance operations offered: ${operations.map((operation) => `\`${operation}\``).join(", ")}.`,
+    ]);
+  });
+
+  test.each(ENGINES)("docs/providers/%s.md states the agent readings its engine offers", (type) => {
+    const [section] = engineFacetsSections(docOf(type));
+    const readings = ENGINE_FACETS[type].agentReadings;
+    const stated = section.split("\n").filter((line) => line.startsWith("Agent readings offered: "));
+    expect(stated).toEqual([
+      readings.length === 0
+        ? "Agent readings offered: none."
+        : `Agent readings offered: ${readings.map((kind) => `\`${kind}\``).join(", ")}.`,
     ]);
   });
 });

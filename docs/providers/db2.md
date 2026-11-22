@@ -522,6 +522,8 @@ The agent's `inspect_operations` tool does not read this row yet: it still calls
 Maintenance operations offered: `analyze`, `optimize`.
 `POST /api/db/maintenance` and its preview refuse any other operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
 
+Agent readings offered: `table-stats`, `health`.
+
 ## 10. Agent and MCP
 
 Plan mode drafts SQL for Db2 and `inspect_schema` reads its schema through the provider's object surface on any connection, whatever its user, from the value-free sources section 6.4 names.

@@ -782,6 +782,8 @@ The agent's `inspect_operations` tool does not read this row yet: it still calls
 Maintenance operations offered: `kill`.
 `POST /api/db/maintenance` and its preview refuse any other operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
 
+Agent readings offered: `sessions`, `slow-queries`, `table-stats`, `index-stats`, `storage`, `health`.
+
 ## 8. Maintenance
 
 The one operation is "Kill Query": `KILL QUERY '<session id>'` on a session the Sessions panel lists, which stops that session's current statement and needs the global SUPER privilege.

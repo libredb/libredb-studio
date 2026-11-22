@@ -580,6 +580,9 @@ The agent's `inspect_operations` tool does not read this row yet: it still calls
 Maintenance operations offered: none.
 `POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
 
+Agent readings offered: `health`.
+`storage` is not offered to agent mode although the panel is: the agent handle refuses it with `KAFKA_AGENT_WITHHELD.storage`.
+
 ---
 
 ## 8. Maintenance

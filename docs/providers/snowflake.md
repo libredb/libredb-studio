@@ -603,6 +603,8 @@ The agent's `inspect_operations` tool does not read this row yet: it still calls
 Maintenance operations offered: none.
 `POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
 
+Agent readings offered: `sessions`, `slow-queries`, `table-stats`, `index-stats`, `storage`, `health`.
+
 ### 8.3 Plan mode and agent operations
 
 Plan mode grounds through `SHOW` only, under its 10 s timer, and drafts SQL without running it; the draft reaches the editor, where the gate applies.

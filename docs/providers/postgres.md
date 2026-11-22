@@ -2082,6 +2082,8 @@ Maintenance operations offered: `vacuum`, `analyze`, `reindex`, `kill`.
 `POST /api/db/maintenance` and its preview refuse any other operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
 The connected server may accept fewer ([section 9.1](#91-what-the-connected-server-accepts-measured-at-connect)), and an operation it does not accept is refused with the same code after connect.
 
+Agent readings offered: `sessions`, `slow-queries`, `table-stats`, `index-stats`, `storage`, `health`.
+
 ---
 
 ## 8. Transactions

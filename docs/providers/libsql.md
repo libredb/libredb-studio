@@ -1094,6 +1094,8 @@ The agent's `inspect_operations` tool does not read this row yet: it still calls
 Maintenance operations offered: `reindex`, `check`.
 `POST /api/db/maintenance` and its preview refuse any other operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
 
+Agent readings offered: `table-stats`, `index-stats`, `storage`, `health`.
+
 ---
 
 ## 8. Maintenance
