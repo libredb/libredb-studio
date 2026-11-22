@@ -21,8 +21,11 @@ export type { DialectGenerators, GeneratorScope } from "@/lib/db/query-generator
  * a row declared beside its provider and collected by the registry in `src/lib/db/query-generators/index.ts`, read
  * here by what the declaration says, its query dialect or its query language, or, for an SQL engine's own forms, by the
  * connection's type id.
- * Each exported generator takes that type and reads it once, as it is called, so a value outside the union is refused
- * by name whatever the declaration says; `undefined` is no connection, and no SQL engine's own forms are read for it.
+ * Each of the seven that can read an SQL engine's forms (`quoteIdentifier`, `quoteTypedName`, `quoteObjectPath`,
+ * `containerSpellingOf`, `generateTableQuery`, `generateSelectQuery`, `generateCountQuery`) takes that type and reads
+ * it once, as it is called, so a value outside the union is refused by name whatever the declaration says; `undefined`
+ * is no connection, and no SQL engine's own forms are read for it. `generateRowActionQuery` reads only a dialect row
+ * and `requestAddress` only a language row, so neither takes a type.
  * The declared `defaultPort` is never read. Nothing here names an engine;
  * `tests/unit/lib/query-generators-isolation.test.ts` holds that.
  */

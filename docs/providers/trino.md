@@ -484,8 +484,7 @@ Where the statement ends comes from `lib/sql/statement-end` — the same reader 
 comment never closes.
 
 `identifierQuoting: "double"` is declared explicitly, so a later edit of the generators' default cannot move Trino's quoting: Trino has no row of its own in `SQL_ENGINE_GENERATORS`.
-Trino quotes with `"`, and a backtick is not a
-quote character in its grammar at all.
+Trino quotes with `"`, and a backtick is not a quote character in its grammar at all.
 
 ### 3.14 `endOpenQueryTransaction()` is not implemented, and the honest reason is that nobody has measured it yet
 

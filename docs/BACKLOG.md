@@ -3855,7 +3855,7 @@ Found on #1847, #1849 and #1850, none of which touches these tests.
 
 `SqlWritingSpec.quoteIdentifier`, declared beside each provider and read through `sqlWritingFor` (`src/lib/db/sql-writing/index.ts`), answers for all 42 type-ids; `quoteIdentifier` in `src/lib/sql/identifier.ts` reads it for inline editing, result export, the pivot table, table profiles, migration DDL and Databend's objects.
 `quoteIdentifier` in `src/lib/query-generators.ts` answers from the capabilities instead: `ProviderCapabilities.identifierQuoting` through `DECLARED_QUOTING` where an engine declares one (BigQuery and OpenSearch `backtick`, Db2, DuckDB, Elasticsearch and Trino `double`, InfluxDB 3 and Snowflake `double-always`, Databend and Spark `backtick-always`), the query language for the JSON, Cypher and InfluxQL engines, and the default port for the rest.
-Since FND-1 PR C that last answer comes from the engine's row in `SQL_ENGINE_GENERATORS`, read by type id, not from the default port.
+Since the change that reads an SQL engine's generator forms by its type id, that last answer is the engine's row in `SQL_ENGINE_GENERATORS`, or the shared default where it has none, never the default port.
 Probed on 2026-10-20 on `main` at `6e611bf73` with eight names through both answers for every type-id, comparing the spec with the generators' `always` form, since the spec always quotes:
 
 - BigQuery: the spec writes a backtick inside a name as a backslash and a backtick, the generators double it, and the spec module says a doubled backtick ends the name in GoogleSQL.
