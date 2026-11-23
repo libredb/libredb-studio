@@ -255,11 +255,99 @@ The accessor that returns a declared name and refuses any other is a later part 
 ajv compiles a schema into a JavaScript function, built with `new Function`.
 The validator runs on the server and in the kit, never in a browser, so a content security policy there does not apply to it.
 
+### M-24 (normative): A field's label, hint and placeholder
+
+An engine may give any field it takes a label, a hint and a placeholder, each in `connection.dialog`, in a list of entries that each name their field.
+A field with no entry keeps Studio's own word: its own label, no hint, and its own example.
+An empty placeholder means the field shows no example, which is not the same as having no entry.
+Each entry names a field the engine takes, and a list names a field at most once.
+
+- schema `/$defs/connectionDialog`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an empty placeholder is admitted: it means the field shows no example"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "%s for a field the engine does not take is refused as field-undeclared"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "two entries of one list naming one field are refused as dialog-entry-duplicate at the second"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's dialog is held to the rules the schema cannot state, at pointers into it"
+- test `tests/unit/db/engine-declarations.test.ts` "connection.dialog.labels, hints and placeholders are the form's"
+
+### M-25 (normative): A field shown under a condition
+
+A field may be drawn only while one other field equals one value, never a list of values or a combination of conditions.
+The field a condition reads has no condition of its own, so whether a field is shown never depends on another hidden field.
+Where the field read is a select, the value is one of its choices.
+A field hidden by its condition is neither drawn nor saved, and core does not require it.
+A connection that leaves the field a condition reads absent is read as that field's absent value, which every select a condition reads declares, and an absent value is declared only for a field a condition reads.
+
+- schema `/$defs/fieldCondition`
+- schema `/$defs/fieldAbsentValue`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a condition with a second key is refused as unknown-key"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a condition on, or reading, a field the engine does not take is refused as field-undeclared"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a condition reading a field that has a condition of its own is refused as shown-when-chained"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a condition on a select naming a value none of its choices is refused as shown-when-value-not-an-option"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an absent value that is none of its field's choices is refused as absent-value-not-an-option"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an absent value for a field no condition reads is refused as absent-value-unread"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a select field a condition reads with no absent value is refused as absent-value-missing"
+- test `tests/unit/db/engine-declarations.test.ts` "a form read from the declaration shows the same fields as the connection form for every value of each controlling field"
+- test `tests/unit/lib/db-ui-config.test.ts` "the dialog refuses exactly what core refuses of a required secret"
+
+### M-26 (normative): Where a placeable field is drawn
+
+Every placeable field an engine takes is placed, `open` with the other fields or `advanced` behind Advanced, and only a placeable field is placed.
+The placeable fields are the contract's vocabulary, `placeableFieldName` in the schema.
+
+- schema `/$defs/placeableFieldName`
+- schema `/$defs/fieldPlacement`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a placement for a field that is not placeable is refused as value-not-allowed"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a placeable field the engine takes with no placement is refused as placement-missing"
+- test `tests/unit/db/engine-declarations.test.ts` "the placeable fields are PLACEABLE_FIELDS and the select fields are those the descriptors draw as a select"
+
+### M-27 (normative): A select's choices
+
+Every select field an engine takes declares its choices, in the order the dialog lists them, each with the value saved and the label drawn, and no two choices of a field share a value.
+Only a select field declares choices, and the select fields are the contract's vocabulary, `selectFieldName` in the schema.
+
+- schema `/$defs/selectFieldName`
+- schema `/$defs/fieldOptions`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "choices for a field that is not a select are refused as value-not-allowed"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a select field the engine takes with no options is refused as options-missing"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "two choices of one field with one value are refused as option-value-duplicate at the second"
+- test `tests/unit/db/engine-declarations.test.ts` "the placeable fields are PLACEABLE_FIELDS and the select fields are those the descriptors draw as a select"
+
+### M-28 (normative): The dialog's order
+
+An engine may state the order the dialog draws its fields in, naming each field once and only fields it takes.
+The fields the order leaves out are drawn after it, and `null` keeps the dialog's own order.
+
+- schema `/$defs/connectionDialog/properties/order`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an order item naming a field the engine does not take is refused as field-undeclared"
+- test `tests/unit/db/engine-declarations.test.ts` "connection.dialog.order is the form's dialogOrder"
+
+### M-29 (normative): The Host box's URI schemes
+
+An engine may let its Host box take a pasted `http` or `https` address, which the dialog splits into its host and port.
+`connection.hostUriSchemes` lists the schemes in the order the box's refusal names them, and only an engine that takes a `host` field lists any.
+
+- schema `/$defs/hostUriScheme`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "URI schemes on an engine without a host field are refused as host-uri-schemes-without-host"
+- test `tests/unit/db/engine-declarations.test.ts` "connection.hostUriSchemes is the form's hostAcceptsUri, in order"
+
+### M-30 (normative): Credential warnings
+
+An engine may warn about a credential in three kinds: `pair`, a published default user and password; `jwt`, a token in the password field that declares no expiry or an access claim named; and `no-secret`, a server that accepts a connection with no password.
+Studio frames each warning's sentence with its own words, and reads one record of them both in the connection dialog and when it loads a seed file, where a read-only seed with a declared pair, or without a password where a `no-secret` warning is declared, is refused.
+An engine declares at most one `no-secret` warning, and each warning reads only fields the engine takes.
+
+- schema `/$defs/credentialWarning`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "the three credential warning kinds are admitted, a pair with an empty password among them"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a credential warning on a field the engine does not take is refused as credential-warning-field-undeclared"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a second no-secret warning is refused as no-secret-warning-duplicate"
+- test `tests/unit/db/engine-declarations.test.ts` "connection.credentialWarnings is the engine's CREDENTIAL_WARNINGS row, and the form reads that same row"
+- test `tests/unit/lib/db/credential-warnings.test.ts` "refuses the declared pair with the dialog's own sentence"
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:
 
-- Connection presentation: the dialog's labels, hints, placeholders, placement, field rules and options, the connection string schemes and their paste readers, and credential warnings.
+- Connection rules and connection string rows: field rules as bounded patterns and named server checks, the host hint and identity readers, the connection import, the refusal sentence of each refused field, and the connection string rows with their schemes, URL TLS and paste readers and seed checks.
 - Editor and SQL text: execution UI, SQL grammar, SQL writing, migration DDL, generators, editor languages, explain formats and discovery fence tags.
 - Policy and MCP claims, each a request a provider makes that only Studio's review record grants, the agent overlay, and presentation (an icon and a colour).
 - Values and errors: the value tags of results and the error kinds a provider raises.
@@ -278,3 +366,5 @@ Against the manifest sketch the design started from:
 - A required `compatibility` list replaces the `upstream` segment, M-14.
 - Field names and their classes are the contract's, not a manifest's, M-9.
 - Facet names keep Studio's own vocabulary, the seven monitoring panels, the maintenance operations and the curated agent readings, rather than new dotted names.
+- The connection dialog's per-field facts, its labels, hints, placeholders, placement, choices, conditions and absent values, are lists of entries that each name their field, rather than maps keyed by field, M-24.
+- A condition is one field equal to one value, with no list of values and no combination of conditions in this contract, M-25.
