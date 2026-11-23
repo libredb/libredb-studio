@@ -683,7 +683,12 @@ summary all read.
 | `INTERVAL DAY TO SECOND` | `IntervalDS` | `"+05 06:07:08.9"` | its Oracle literal — [§5.5](#55-an-interval-is-normalized-to-its-oracle-literal-a-time-zone-cannot-be) |
 | `XMLTYPE` | `string` | `"<r>\n  <a>1</a>\n</r>\n"` | the serialized document |
 | `JSON` | plain object | `{"k":[1,2]}` | that object, as JSON |
+| `VECTOR` of `FLOAT32`, `FLOAT64` or `INT8`, and a flexible `VECTOR(*, *)` row stored in one of them | array of numbers (see below) | `[0.10000000149011612,1.5,-2.25]` | that array, as JSON |
+| `VECTOR(n, ..., SPARSE)` | `{ numDimensions, indices, values }`, two arrays of numbers (see below) | `{"numDimensions":5,"indices":[0,3],"values":[1.5,2.5]}` | that object, as JSON |
+| `VECTOR(n, BINARY)`, and a flexible row stored as `BINARY` | `Uint8Array` (see below) | `{"0":255,"1":1}` | that object, as JSON |
 | any of the above, `NULL` | `null` | `null` | empty |
+
+The `VECTOR` rows were measured on 2026-11-23 through this provider against Oracle 23.26.3 Free with oracledb 26.0.0 in Thin mode, by [`tests/live/oracle-vector-values.ts`](../../tests/live/oracle-vector-values.ts) ([§12.4](#124-optional-verifying-against-a-live-oracle)).
 
 #### A LOB used to fail the whole query, not just the cell
 
@@ -691,6 +696,7 @@ summary all read.
 ([oracle/index.ts](../../src/lib/db/providers/sql/oracle/index.ts)) that maps `CLOB` and `NCLOB` to
 `oracledb.STRING` and `BLOB` to `oracledb.BUFFER`. Apart from `DATE` and `TIMESTAMP`, which it gives a
 converter ([below](#a-date-and-a-timestamp-read-as-the-stored-wall-clock-in-every-server-time-zone-1131)),
+and `VECTOR`, which it gives one too ([below](#a-vector-arrives-as-an-array-of-numbers)),
 every other column keeps the driver's own default:
 `RAW` is already a `Buffer` and `VARCHAR2` already a string, and restating them would put this
 provider in charge of types it has no reason to touch.
@@ -807,6 +813,24 @@ script ([§12.4](#124-optional-verifying-against-a-live-oracle)) holds it agains
 - **Library surface:** an in-process consumer now receives strings, not `Date` objects, for these two
   types. The SQL export reads the text back into an Oracle literal, and inline row editing binds `:n`
   through the same conversion functions ([§5.5](#the-sql-export-writes-an-oracle-date-literal-not-an-iso-string)).
+
+#### A VECTOR arrives as an array of numbers
+
+node-oracledb decodes a `VECTOR` value into a typed array: a `Float32Array`, `Float64Array` or `Int8Array` for a `FLOAT32`, `FLOAT64` or `INT8` vector, a `Uint8Array` for a `BINARY` one, and its own `SparseVector` class, a dimension count with a `Uint32Array` of positions and a typed array of values, for a sparse one.
+A flexible `VECTOR(*, *)` column carries neither a format nor a dimension count in its metadata, and each of its rows arrives in the format it was stored in.
+Before, the editor route wrote each typed array as an index-keyed object (`{"0":0.10000000149011612,"1":1.5,"2":-2.25}`), which nothing in the product reads and Oracle refuses back (`ORA-51804`), and MCP refused the whole answer, since its value codec does not take a typed array of numbers or the driver's class: `The result holds a value this server cannot answer: The value codec cannot encode a Float32Array, at "/0/F32".`
+Now the per-call handler of `query()`, `queryInTransaction()` and `queryReadOnly()` gives a `VECTOR` column a converter, `vectorValue` in [oracle/index.ts](../../src/lib/db/providers/sql/oracle/index.ts), which reads the form from each value, never from the column, so a flexible column is read row by row.
+A dense vector of numbers becomes a plain array of the driver's numbers, nothing rounded: a `FLOAT32` element is its float32 value widened to a double, so `0.1` reads `0.10000000149011612`, which Oracle stores back as the same float32.
+A vector cannot hold NaN or an infinity (`ORA-51805` on insert), so every element is a finite JSON number.
+A sparse vector becomes `{ numDimensions, indices, values }`, the three fields the driver's own `SparseVector.toJSON` names, with both arrays plain.
+A binary vector stays the driver's `Uint8Array`: its elements are bits, and MCP answers it as the value codec's `bytes` tag (`{"$":"bytes","v":"/wE="}`); the editor route still writes it as an index-keyed object until that route answers through the value codec too.
+A `NULL` stays `null`.
+Any other value is refused with a `QueryError` naming its form (`Oracle handed a VECTOR value as a Uint16Array, which this provider does not read`): the pinned driver makes no other form, so this is the answer to a driver upgrade that adds one, never a silent pass-through.
+A fetch type of `oracledb.STRING` was the alternative not taken: it answers Oracle's own text, `[1.00000001E-001,1.5E+000,-2.25E+000]`, which every reader would have to parse back into numbers.
+The SQL INSERT export writes the array as its quoted JSON, `'[0.10000000149011612,1.5,-2.25]'`, which Oracle reads back into a `FLOAT32`, `FLOAT64` or `INT8` column as the same values; before, the export of any vector row was refused on replay (`ORA-51804`).
+A flexible column's rows replay their numbers too, but Oracle stores a text literal there as `FLOAT32`, so a row stored as `INT8` or `FLOAT64` comes back as `FLOAT32`.
+The export of a sparse or a binary vector is still refused on replay (`ORA-51804`): Oracle reads a sparse literal as `[5,[0,3],[1.5,2.5]]` and a binary one as `[255,1]`, and refuses `HEXTORAW` into a `VECTOR` (`ORA-00932`).
+A `JSON` value that carries a vector, such as `JSON_OBJECT('v' VALUE f32 RETURNING JSON)`, is not a `VECTOR` column and is not converted: it arrives with typed arrays inside, and MCP refuses that answer.
 
 #### `NUMBER` still loses digits, and that is a separate defect
 
@@ -1348,6 +1372,7 @@ Those refusals name Oracle's own clauses, `FETCH FIRST n ROWS ONLY` to add and `
 A read past `timeout_ms` is answered as the timeout: the driver's `callTimeout`, set to the time left, ends the statement's session, which stops it on the server.
 A client that closes its request stops the wait only: the statement runs on until that call timeout.
 Measured on 2026-11-02 by watching `V$SESSION` as SYSTEM: two seconds after a three-second `timeout_ms` the statement's session was gone, and after a cancel 1.5 seconds into a 12-second `timeout_ms` a three-way join of `ALL_OBJECTS` was still active at 11.5 seconds and gone at 14.
+A `VECTOR` column answers as the array of numbers or the sparse object [§5.3](#a-vector-arrives-as-an-array-of-numbers) describes, and a binary one as the value codec's `bytes` tag.
 `inspect_schema` opens under the operations profile, which sends no statement, so the check does not run there: it lists what the seed's user may see in the `ALL_*` views, as the editor does.
 
 [`tests/live/oracle-mcp-boundary.ts`](../../tests/live/oracle-mcp-boundary.ts) replays the boundary record above through the tool's handler with its statement fence removed, against the 26ai Free 23.26.3 container `run.sh` names, and passed on 2026-11-02 (83 checks).
@@ -2752,7 +2777,9 @@ left alone and that a `BLOB` reaches `asBytes` in both its live and its serializ
 precision, `NULL`, both query paths, and that a result with no interval column keeps the driver's own
 rows array), **the `DATE`/`TIMESTAMP` wall clock** (#1131: the same row read under `UTC`,
 `Europe/Istanbul` and `America/Los_Angeles`, the fraction, padding and a BC year, `NULL`, both query
-paths, the two zoned types as untouched controls, and the SQL INSERT export of the read), error mapping,
+paths, the two zoned types as untouched controls, and the SQL INSERT export of the read), **the `VECTOR`
+converter** (the dense, flexible, sparse and binary forms, `NULL`, the refusal of an unknown form, all
+three row paths, the SQL INSERT export of the read, and MCP's answer), error mapping,
 and **every `ssl.mode` branch** (the TCPS switch, the
 DN-match flag, the concatenated `walletContent`, and a pasted connect string keeping its own
 protocol) asserted against the attributes `createPool` received.
@@ -2791,6 +2818,15 @@ the container:
 
 ```bash
 ORACLE_TEST_PORT=1521 ORACLE_TEST_PASSWORD="$PROBE_PASSWORD" bun tests/live/oracle-zoneless-values.ts
+```
+
+`tests/live/oracle-vector-values.ts` ([§5.3](#a-vector-arrives-as-an-array-of-numbers)) holds the `VECTOR` reading against the server.
+It checks that the raw driver still hands the typed arrays and `SparseVector`, reads every form through `query()`, flexible rows included, replays the SQL INSERT export of the dense columns into an empty copy and lets the server compare it, and reads every vector column through MCP's `run_read_query` as a READ ONLY user.
+MCP's first read of the freshly created table is refused with `ORA-01466` (`unable to read data - table definition has changed`), a read-only transaction meeting fresh DDL, so the script calls it again every two seconds while that is the answer, and prints how long it waited: measured, the first read was refused in nine of twelve runs, and the script with that retry answered after one refusal and about 5.6 seconds in each of its three runs.
+It runs against the container `tests/fixtures/oracle/23.26.3-free/agent-boundary/run.sh` pins, and passed on 2026-11-23 (52 checks):
+
+```sh
+LIBREDB_LIVE_ORACLE_PORT=15299 LIBREDB_LIVE_ORACLE_PASSWORD="$PROBE_PASSWORD" bun tests/live/oracle-vector-values.ts
 ```
 
 For the object surface, use the compose service instead, which mounts the fixture

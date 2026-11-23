@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D499, U17 · 367
+- [Drivers and connections](#drivers-and-connections) — D1-D504, U17 · 371
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -4907,17 +4907,42 @@ Found 2026-11-23 in the review of FND-6 slice 5c3, probed under Bun.
 
 **Done when:** such a secret is refused with a sentence that names its field, or its scrub states why the form that cannot be URI-encoded is absent, with a test either way.
 
-### D499. Over MCP, an Oracle VECTOR of numbers and a MongoDB undefined inside an array refuse the whole answer
+### D500. An Oracle JSON value that carries a vector reaches MCP with typed arrays inside, and is refused
 
-MCP answers every cell through the value codec, which refuses a value outside its domain by name.
-node-oracledb hands a `VECTOR` column of `FLOAT32`, `FLOAT64` or `INT8` values as a `Float32Array`, `Float64Array` or `Int8Array`, which the codec refuses, so a statement that selects one answers "The result holds a value this server cannot answer:" in place of its rows; a `BINARY` vector is a `Uint8Array` and crosses as bytes.
-The Oracle provider sets no fetch type handler for `VECTOR` (`src/lib/db/providers/sql/oracle/index.ts`).
-MongoDB can hand BSON `undefined` inside an array, where the codec refuses `undefined`, while an object member whose value is `undefined` is left out (clause V-9 in `docs/providers/CONTRACT.md`).
-Selecting the column as text, or leaving it out, answers.
+A `JSON` value built with `JSON_OBJECT('v' VALUE <vector> RETURNING JSON)`, `JSON_SCALAR(<vector>)` or `JSON_ARRAY(<vector>, ... RETURNING JSON)` decodes with the vector inside it as a `Float32Array`, `Float64Array` or `Int8Array`, which the value codec refuses, so an MCP answer that selects it is refused by name.
+The Oracle provider's `VECTOR` fetch converter (`src/lib/db/providers/sql/oracle/index.ts`) reaches a `VECTOR` column, not a vector inside a JSON value.
+Measured on Oracle AI Database 26ai Free 23.26.3 with oracledb 26.0.0 in Thin mode, while fixing D499 on 2026-11-23.
 
-Found 2026-11-23 while planning FND-6 slice 5e, by reading the code, not measured against a server.
+**Done when:** a vector inside an Oracle JSON value reaches the editor and MCP as an array of numbers, held by a test.
 
-**Done when:** the Oracle provider hands a numeric `VECTOR` as an array of numbers and the MongoDB provider hands an array's `undefined` as `null`, each held by an integration test, and an MCP answer that selects them carries their rows.
+### D501. The SQL INSERT export of an Oracle sparse vector writes a form Oracle refuses
+
+The export writes a sparse vector as its object's JSON, `numDimensions`, `indices` and `values`, which Oracle refuses with `ORA-51804`; Oracle reads a sparse vector literal as `[dimensions, [indices], [values]]`.
+Measured on Oracle AI Database 26ai Free 23.26.3 with oracledb 26.0.0 in Thin mode, while fixing D499 on 2026-11-23.
+
+**Done when:** the export writes a sparse vector in the literal Oracle reads, and a replay test inserts it back equal.
+
+### D502. The SQL INSERT export of an Oracle binary vector writes a form Oracle refuses
+
+The export writes a binary vector as an index-keyed JSON object, which Oracle refuses with `ORA-51804`, and a `HEXTORAW` literal of its bytes is refused into a `VECTOR` with `ORA-00932`; Oracle reads a binary vector literal as an array of byte values, such as `[255,1]`.
+Measured on Oracle AI Database 26ai Free 23.26.3 with oracledb 26.0.0 in Thin mode, while fixing D499 on 2026-11-23.
+
+**Done when:** the export writes a binary vector as the array of its byte values, and a replay test inserts it back equal.
+
+### D503. The Oracle provider declares no vector columns, so the grid draws an Oracle vector as JSON
+
+The results grid draws a column through its vector renderer only when `QueryResult.vectorColumns` names it, and the Oracle provider names none, so an Oracle `VECTOR` column shows as JSON text.
+The dense array and the sparse object the provider hands since D499's fix are the forms such a declaration reads.
+Found by reading the code while fixing D499 on 2026-11-23.
+
+**Done when:** the Oracle provider names its `VECTOR` columns in `vectorColumns` and the grid draws them through the vector renderer, held by a test.
+
+### D504. The SQL INSERT export of a flexible Oracle VECTOR column replays every row as FLOAT32
+
+A text literal inserted into a `VECTOR(*, *)` column is stored as `FLOAT32`, so an exported `INT8` or `FLOAT64` row replays as `FLOAT32`, keeping small integers and losing a `FLOAT64` value's precision beyond float32.
+Measured on Oracle AI Database 26ai Free 23.26.3 with oracledb 26.0.0 in Thin mode, while fixing D499 on 2026-11-23.
+
+**Done when:** the export of a flexible column writes each row with its own format, for example through `TO_VECTOR` with the row's format, and a replay test inserts every format back equal.
 
 ## Value interpolation
 

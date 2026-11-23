@@ -26,7 +26,13 @@ import type { DatabaseType } from "@/lib/types";
 import { fakeTextScrub, pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
 import { listedMcpToolNames } from "../../helpers/mcp-tool-names";
-import { mongoDriver, mongoDriverModule, resetMongoDriver } from "../../helpers/mongodb-driver";
+import {
+  bsonDocumentBytes,
+  bsonUndefinedFor,
+  mongoDriver,
+  mongoDriverModule,
+  resetMongoDriver,
+} from "../../helpers/mongodb-driver";
 import readWriteStatus from "../../unit/db/mongodb/fixtures/connection-status-read-plus-insert-one-collection-9.0.4.json";
 
 /** The notice an answer carrying database content opens with on this file's mongodb connections. */
@@ -204,6 +210,19 @@ describe("a read", () => {
       pagination: { offset: 0, limit: 100, hasMore: true, nextOffset: null, wasLimited: false },
       hint: `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice(JSON.stringify(find), "100")} To read past the 100 rows returned, skip them with a find's "skip" or a $skip stage.`,
     });
+  });
+
+  // BSON's deprecated undefined (type 6) decodes to `undefined`, which the value codec does not take, and that
+  // refusal took the whole answer: "The value codec cannot encode undefined, at "/0/list/1"."
+  test("a document holding BSON undefined inside an array answers its row, the entry as null", async () => {
+    mongoDriver.documentsByNs["app.notes"] = [bsonDocumentBytes(bsonUndefinedFor({ _id: 1, list: [1, null, 3] }))];
+    const result = await command({
+      connection_id: "seed:mongo",
+      command: { collection: "notes", operation: "find", filter: {} },
+    });
+    expect(result.isError ?? false).toBe(false);
+    expect(result.content[0]).toEqual({ type: "text", text: DATABASE_CONTENT_NOTICE });
+    expect(result.structuredContent?.rows).toEqual([{ _id: 1, list: [1, null, 3] }]);
   });
 });
 

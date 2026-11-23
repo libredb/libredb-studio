@@ -14,7 +14,7 @@ declare module "mssql" {
 
 /**
  * `oracledb` ships NO type declarations of its own, and there is no `@types/oracledb`
- * in this project's dependency tree. Verified against the installed 6.10.0:
+ * in this project's dependency tree. Verified against the installed 26.0.0 (2026-11-23):
  * `node_modules/oracledb/package.json` has neither a `types` nor a `typings` field, and
  * `find node_modules/oracledb -name '*.d.ts'` matches nothing. So the driver's own types
  * cannot be imported, and this declaration is the only thing that can check the calls -
@@ -36,6 +36,14 @@ declare module "oracledb" {
     readonly DB_TYPE_BFILE: oracledb.DbType;
     readonly DB_TYPE_CURSOR: oracledb.DbType;
     readonly DB_TYPE_OBJECT: oracledb.DbType;
+    /** A `VECTOR` column, dense, sparse or flexible alike; read from node-oracledb 26.0.0 (`lib/types.js`). */
+    readonly DB_TYPE_VECTOR: oracledb.DbType;
+    /**
+     * The class the driver decodes a sparse `VECTOR` value into, read from node-oracledb 26.0.0
+     * (`lib/types.js` `SparseVector`, built by `lib/impl/datahandlers/vector.js` `decode()`).
+     * Abstract here because this repo only narrows with `instanceof` and never builds one.
+     */
+    readonly SparseVector: abstract new () => oracledb.SparseVector;
     /** Fetch-target identities, the value side of a `fetchTypeHandler` answer. */
     readonly STRING: number;
     readonly BUFFER: number;
@@ -113,6 +121,16 @@ declare module "oracledb" {
       rowsAffected?: number;
       /** Present, in place of `rows`, when the execute asked for `resultSet`. */
       resultSet?: ResultSet;
+    }
+
+    /**
+     * A sparse `VECTOR` value as the driver decodes it, read from node-oracledb 26.0.0: the
+     * dimension count, the positions of the stored elements, and their values in the column's format.
+     */
+    interface SparseVector {
+      readonly numDimensions: number;
+      readonly indices: Uint32Array;
+      readonly values: Float32Array | Float64Array | Int8Array;
     }
 
     /** `INTERVAL YEAR TO MONTH` as the driver builds it. Both fields carry the sign. */

@@ -1576,12 +1576,69 @@ const formatZonelessDate = (value: Date, withFraction: boolean): string => {
   return `${day} ${clock}${fraction === "" ? "" : `.${fraction}`}`;
 };
 
+/** A value of a form `vectorValue` does not read, named by its kind and never by its contents. */
+const vectorFormOf = (value: unknown): string => {
+  if (ArrayBuffer.isView(value)) return `a ${value.constructor.name}`;
+  if (typeof value === "object") {
+    // `vectorValue` has already answered a NULL, so this is an object, and one made with no prototype has no class.
+    const name = (value as object).constructor?.name;
+    return name ? `an instance of the class ${name}` : "an object with no class";
+  }
+  return `a ${typeof value}`;
+};
+
 /**
- * The per-call handler of the two row paths, `query()` and `queryInTransaction()`: the LOB
- * mapping, plus DATE and TIMESTAMP read as their wall clock (`formatZonelessDate`).
+ * A `VECTOR` value as plain JSON numbers, so the editor, the export and MCP's value codec all
+ * read it.
  *
- * A converter rather than a fetch type, because the fetch type is `Date.toString()`. The
- * two zoned types are left alone: each names an instant, the driver hands over that
+ * Measured 2026-11-23 against Oracle 23.26.3 Free with node-oracledb 26.0.0 Thin
+ * (`tests/live/oracle-vector-values.ts`), the driver decodes a vector into one of five forms
+ * (`decode()` in oracledb/lib/impl/datahandlers/vector.js): a `Float32Array`, `Float64Array` or
+ * `Int8Array` for a FLOAT32, FLOAT64 or INT8 one, a `Uint8Array` for a BINARY one, and its own
+ * `SparseVector` class for a sparse one. A flexible `VECTOR(*, *)` column carries neither a format
+ * nor a dimension count in its metadata and each row arrives in its own stored format, so the form
+ * is read from the value, never from the column.
+ *
+ * Before, a typed array reached JSON as an index-keyed object (`{"0":0.1,"1":1.5}`), which Oracle
+ * refuses back (ORA-51804) and nothing in the product reads, and MCP's value codec refused it and
+ * with it the whole answer. Now:
+ * - a dense vector of numbers is `Array.from` of the driver's array, nothing rounded: a FLOAT32
+ *   element is its float32 value widened to a double (`0.1` reads `0.10000000149011612`), which
+ *   Oracle stores back as the same float32. A vector cannot hold NaN or an infinity (ORA-51805 on
+ *   insert), so every element is a finite JSON number, and the SQL INSERT export's quoted JSON
+ *   (`'[0.10000000149011612,1.5,-2.25]'`) is accepted back into the column;
+ * - a sparse vector is `{ numDimensions, indices, values }`, the three fields the driver's own
+ *   `SparseVector.toJSON` names, with its typed arrays made plain;
+ * - a binary vector stays the driver's bytes: its elements are bits, and the value codec answers
+ *   bytes with its own tag;
+ * - a NULL is `null`, since the driver calls a converter for every value.
+ *
+ * Any other value is refused with a `QueryError` naming its form. The pinned driver makes no
+ * other form, so this is the answer to a driver upgrade that adds one, never a silent pass-through.
+ */
+const vectorValue = (value: unknown): unknown => {
+  if (value === null || value instanceof Uint8Array) return value;
+  if (value instanceof Float32Array || value instanceof Float64Array || value instanceof Int8Array) {
+    return Array.from(value);
+  }
+  if (value instanceof oracledb.SparseVector) {
+    return { numDimensions: value.numDimensions, indices: Array.from(value.indices), values: Array.from(value.values) };
+  }
+  throw new QueryError(
+    `Oracle handed a VECTOR value as ${vectorFormOf(value)}, which this provider does not read`,
+    "oracle",
+  );
+};
+
+/**
+ * The per-call handler of the three row paths, `query()`, `queryInTransaction()` and
+ * `queryReadOnly()`: the LOB mapping, DATE and TIMESTAMP read as their wall clock
+ * (`formatZonelessDate`), and a VECTOR read as plain numbers (`vectorValue`).
+ *
+ * Converters rather than fetch types. For DATE and TIMESTAMP the fetch type is `Date.toString()`.
+ * For VECTOR the fetch type `oracledb.STRING` answers Oracle's own text
+ * (`[1.00000001E-001,1.5E+000,-2.25E+000]`), which a reader would have to parse back into numbers.
+ * The two zoned types are left alone: each names an instant, the driver hands over that
  * instant, and its ISO form is the same in every TZ.
  */
 const rowFetchTypeHandler: oracledb.FetchTypeHandler = (metaData) => {
@@ -1590,6 +1647,9 @@ const rowFetchTypeHandler: oracledb.FetchTypeHandler = (metaData) => {
     // The driver calls a converter for every value, a NULL as `null`, so anything that is
     // not a `Date` is handed on as it came.
     return { converter: (value) => (value instanceof Date ? formatZonelessDate(value, withFraction) : value) };
+  }
+  if (metaData.dbType === oracledb.DB_TYPE_VECTOR) {
+    return { converter: vectorValue };
   }
   return lobFetchTypeHandler(metaData);
 };

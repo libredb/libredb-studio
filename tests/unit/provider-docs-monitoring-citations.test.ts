@@ -203,6 +203,7 @@ const NAMED_CITATIONS = [
       "disconnect",
       "buildQueryResult",
       "query",
+      "queryReadOnly",
       "cancelQuery",
       "prepareQuery",
       "expireTransaction",
