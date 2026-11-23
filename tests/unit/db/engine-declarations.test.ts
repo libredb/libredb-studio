@@ -33,6 +33,7 @@ import {
   buildEditor,
   buildEngineDeclaration,
   buildFieldRules,
+  CAPABILITY_READ_ENVIRONMENT,
   declarationDirectoryProblems,
   EDITOR_TABLES,
   ENGINE_DECLARATIONS_DIRECTORY,
@@ -40,6 +41,7 @@ import {
   refuseUndeclaredDialects,
   renderEngineDeclaration,
 } from "../../../scripts/generate-engine-declarations";
+import { refuseInexactJson } from "../../../scripts/read-engine-capabilities";
 import { AGENT_STATEMENT_LANGUAGE, type AgentStatementLanguageId } from "@/lib/agent/agent-manifest";
 import type { HostUriScheme } from "@/lib/connection-host-uri";
 import { PASTE_FORMATS_TEXT } from "@/lib/connection-paste-formats";
@@ -120,6 +122,7 @@ import { importKubeconfig } from "@/lib/kubernetes/kubeconfig-import";
 import { ALIAS_ENGINES, fenceTagEngine, isQueryFenceTag, QUERY_FENCE_ALIASES } from "@/lib/sql/fence-tags";
 import { CONNECTION_FIELDS as FIELD_CLASSES } from "@/lib/storage/secret-fields";
 import type { DatabaseConnection, DatabaseType, HostPathField } from "@/lib/types";
+import { readCensusCapabilities } from "../../helpers/census-capabilities";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
@@ -132,19 +135,14 @@ const SCHEMA = JSON.parse(readFileSync(SCHEMA_FILE, "utf8")) as {
 
 /**
  * Each engine's capabilities as its provider declares them before it connects, read once through
- * `createDatabaseProvider` with the engine's census connection, the read the other provider censuses take; the generator
- * reads them through `readProviderDeclarations` instead, so the two reads share only the connection record.
+ * `createDatabaseProvider` with the engine's census connection, the read the other provider censuses take, in a child
+ * process with the generator's stated environment (tests/helpers/census-capabilities.ts); the generator reads them
+ * through `readProviderDeclarations` instead, so the two reads share the connection record and the environment.
  */
-const CAPABILITIES: Readonly<Record<DatabaseType, ProviderCapabilities>> = Object.freeze(
-  Object.fromEntries(
-    await Promise.all(
-      SHIPPED_DATABASE_TYPES.map(async (type) => {
-        const provider = await createDatabaseProvider(CENSUS_CONNECTION[type]);
-        return [type, provider.getCapabilities()] as const;
-      }),
-    ),
-  ) as Record<DatabaseType, ProviderCapabilities>,
-);
+const CAPABILITIES = await readCensusCapabilities();
+
+/** A variable the Firestore provider reads when it is built, which turns its explain support off. */
+const FIRESTORE_EMULATOR_VARIABLE = "FIRESTORE_EMULATOR_HOST";
 
 /** The committed declaration of one type-id, parsed. */
 function declared(type: DatabaseType): EngineDeclaration {
@@ -463,6 +461,42 @@ describe("the committed declarations", () => {
     }
     // Four of the runs build every provider to read its capabilities, about 2 s with coverage on; ten times that.
   }, 20000);
+
+  test("a variable a provider reads before it connects, set where the generator runs, changes no declaration", () => {
+    const planted = Bun.spawnSync([process.execPath, SCRIPT, "--check"], {
+      cwd: ROOT,
+      env: { ...process.env, [FIRESTORE_EMULATOR_VARIABLE]: "127.0.0.1:1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(planted.stderr.toString()).toBe("");
+    expect(planted.exitCode).toBe(0);
+    // One run builds every provider to read its capabilities, about 2 s with coverage on; ten times that.
+  }, 20000);
+
+  test("the capability read runs in the environment it is given, and a child that fails rejects it with its exit code", async () => {
+    expect(CAPABILITY_READ_ENVIRONMENT).toEqual({});
+    // Vacuity: a variable handed to the read reaches the providers it builds, so the stated environment is the one read.
+    await expect(readEngineCapabilities({ LIBREDB_ENABLED_PROVIDERS: "postgres" })).rejects.toThrow(
+      "the capability read (scripts/read-engine-capabilities.ts) exited with code 1",
+    );
+  });
+
+  test("the capability read refuses, by name, a capability JSON cannot carry exactly", () => {
+    const undefinedMember: ProviderCapabilities = { ...CAPABILITIES.postgres, explainFormat: undefined };
+    const functionMember = {
+      ...CAPABILITIES.postgres,
+      createTable: () => undefined,
+    } as unknown as ProviderCapabilities;
+
+    expect(() => refuseInexactJson("postgres", CAPABILITIES.postgres)).not.toThrow();
+    for (const capabilities of [undefinedMember, functionMember]) {
+      expect(() => refuseInexactJson("postgres", capabilities)).toThrow(
+        "postgres: the provider's capabilities hold a value JSON cannot carry exactly",
+      );
+    }
+  });
 });
 
 describe("the census", () => {
@@ -1320,6 +1354,24 @@ describe("the census", () => {
         );
       }),
     ).toEqual([]);
+  });
+
+  test("the census reads each provider's capabilities in its stated environment, so a variable set where it runs changes none", async () => {
+    const ambient = process.env[FIRESTORE_EMULATOR_VARIABLE];
+    process.env[FIRESTORE_EMULATOR_VARIABLE] = "127.0.0.1:1";
+    try {
+      const inProcess = (await createDatabaseProvider(CENSUS_CONNECTION.firestore)).getCapabilities();
+      const census = await readCensusCapabilities();
+
+      // Vacuity: the variable changes what the provider declares when it is read in this process.
+      expect(inProcess.explainFormat).toBeUndefined();
+      expect(census.firestore.explainFormat).toBeDefined();
+      expect(census.firestore.explainFormat).toBe(declared("firestore").editor.explainFormat ?? undefined);
+      expect(census).toEqual(CAPABILITIES);
+    } finally {
+      if (ambient === undefined) delete process.env[FIRESTORE_EMULATOR_VARIABLE];
+      else process.env[FIRESTORE_EMULATOR_VARIABLE] = ambient;
+    }
   });
 
   test("every declared explain format has Studio's strategy for it", () => {

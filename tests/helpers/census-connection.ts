@@ -18,8 +18,8 @@ import { rabbitmqConnection } from "./rabbitmq-connection";
  * only one of them, and the record exists so that a new member of the union is a COMPILE error
  * rather than a missing row. Two records defeat exactly that.
  *
- * `scripts/generate-engine-declarations.ts` reads it too, so an engine's census connection is also the connection its
- * committed declaration's explain format and query dialect are read with.
+ * `scripts/read-engine-capabilities.ts` reads it too, for `scripts/generate-engine-declarations.ts`, so an engine's
+ * census connection is also the connection its committed declaration's explain format and query dialect are read with.
  */
 
 /**

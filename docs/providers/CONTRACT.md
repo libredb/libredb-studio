@@ -593,11 +593,14 @@ An alias another package declares, or one equal to another package's engine id, 
 
 An engine states, in `editor.explainFormat`, the format of its query plans, one of Studio's explain strategies, or null where it offers no explain.
 The format stated is the one the provider declares for a connection it has not connected, the one Studio reads before it connects.
+Studio's generator reads it in an empty environment with no `.env` file loaded, so a variable that changes what a provider declares, such as `FIRESTORE_EMULATOR_HOST`, never changes a committed declaration.
 Studio reads a plan with that format's strategy.
 
 - schema `/$defs/explainFormat`
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "an explain format outside Studio's strategies is one refusal at the editor's explain format"
 - test `tests/unit/db/engine-declarations.test.ts` "editor.explainFormat is the format the engine's unconnected provider declares, null exactly where it supports no explain"
+- test `tests/unit/db/engine-declarations.test.ts` "a variable a provider reads before it connects, set where the generator runs, changes no declaration"
+- test `tests/unit/db/engine-declarations.test.ts` "the census reads each provider's capabilities in its stated environment, so a variable set where it runs changes none"
 - test `tests/unit/db/engine-declarations.test.ts` "every declared explain format has Studio's strategy for it"
 - test `tests/unit/db/engine-declarations.test.ts` "the explain formats, the query dialects and the generic fence tags are Studio's"
 - test `tests/unit/lib/explain/registry.test.ts` "returns null for undefined (provider without explain support)"

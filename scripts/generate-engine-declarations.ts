@@ -30,9 +30,11 @@
  * `QUERY_DIALECTS` and each engine's capabilities. The capabilities are read as Studio reads a provider it never
  * connects, `readProviderDeclarations` with the engine's census connection (tests/helpers/census-connection.ts), so the
  * declaration states the explain format and the query dialect the provider declares before it connects. That read
- * builds every provider once: it loads each provider module, logs one line per engine, and refuses by name a provider
- * `LIBREDB_ENABLED_PROVIDERS` disables. The generator refuses by name, rather than write a declaration that drops or
- * misstates it: an explain format the provider's explain support contradicts, a dialect `QUERY_DIALECTS` has no row
+ * builds every provider once, in a child process (scripts/read-engine-capabilities.ts) whose environment is
+ * `CAPABILITY_READ_ENVIRONMENT`, empty, with no `.env` file loaded: a provider reads variables when it is built, and
+ * one set where the generator runs, exported or in a `.env` file, never changes a declaration. The child loads each
+ * provider module and logs one line per engine. The generator refuses by name, rather than write a declaration that
+ * drops or misstates it: an explain format the provider's explain support contradicts, a dialect `QUERY_DIALECTS` has no row
  * for, a dialect row whose tab type is not the dialect's name, a dialect row no engine declares, and a fence alias that
  * is not a query fence tag.
  *
@@ -41,7 +43,8 @@
  * declaration that differs, is missing or is not a shipped id, and --out names another directory for either, resolved
  * against the working directory. Both refuse, by name, an entry of the directory that is not a `.json` file.
  */
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import type {
   BoundedPattern,
@@ -84,12 +87,10 @@ import { CREDENTIAL_WARNINGS } from "../src/lib/db/credential-warnings";
 import { ENGINE_FACETS } from "../src/lib/db/engine-facets";
 import { EXECUTION_UI } from "../src/lib/db/execution-ui";
 import type { ExecutionUiSpec } from "../src/lib/db/execution-ui/types";
-import { readProviderDeclarations } from "../src/lib/db/factory";
 import { type DialectSpec, QUERY_DIALECTS, type QueryDialect } from "../src/lib/db/query-dialects";
 import type { ProviderCapabilities } from "../src/lib/db/types";
 import { ALIAS_ENGINES, QUERY_FENCE_ALIASES } from "../src/lib/sql/fence-tags";
 import type { DatabaseType } from "../src/lib/types";
-import { CENSUS_CONNECTION } from "../tests/helpers/census-connection";
 
 /** The declarations' directory in the repository. */
 export const ENGINE_DECLARATIONS_DIRECTORY = "src/lib/db/engine-declarations";
@@ -310,19 +311,47 @@ export const EDITOR_TABLES: EditorTables = Object.freeze({
 });
 
 /**
- * Every shipped engine's capabilities as its provider declares them before it connects: each provider built once with
- * the engine's census connection through `readProviderDeclarations`, the read Studio takes of a provider it never
- * connects. A provider that fails to build rejects the whole read with its own error.
+ * The environment the capability read runs in: none of the variables of the environment the generator runs in, so a
+ * variable a provider reads when it is built (the Firestore provider declares no explain format when
+ * `FIRESTORE_EMULATOR_HOST` is set) can never change a declaration, whether it was exported or loaded from a `.env`
+ * file.
  */
-export async function readEngineCapabilities(): Promise<Readonly<Record<DatabaseType, ProviderCapabilities>>> {
-  const read = await Promise.all(
-    SHIPPED_DATABASE_TYPES.map(async (type) => {
-      const declarations = await readProviderDeclarations(CENSUS_CONNECTION[type]);
-      return [type, declarations.capabilities] as const;
-    }),
-  );
-  // SHIPPED_DATABASE_TYPES lists every member of DatabaseType, so the entries are the whole record.
-  return Object.freeze(Object.fromEntries(read) as Record<DatabaseType, ProviderCapabilities>);
+export const CAPABILITY_READ_ENVIRONMENT: Readonly<Record<string, string>> = Object.freeze({});
+
+/** The script that reads every engine's capabilities in a child process of its own. */
+const CAPABILITY_READER = path.join(import.meta.dir, "read-engine-capabilities.ts");
+/** The reader as the repository names it, with `/` on every platform, for the sentence a failed read answers. */
+const READER_IN_REPOSITORY = path.relative(REPO_ROOT, CAPABILITY_READER).replaceAll(path.sep, "/");
+
+/**
+ * Every shipped engine's capabilities as its provider declares them before it connects, read by
+ * scripts/read-engine-capabilities.ts in a child process with `environment` as its whole environment and no `.env` file
+ * loaded: each provider built once with the engine's census connection through `readProviderDeclarations`, the read
+ * Studio takes of a provider it never connects. The child's output is this process's; a child that fails, such as one
+ * whose provider fails to build, rejects the whole read with its exit code, after its own error.
+ */
+export async function readEngineCapabilities(
+  environment: Readonly<Record<string, string>> = CAPABILITY_READ_ENVIRONMENT,
+): Promise<Readonly<Record<DatabaseType, ProviderCapabilities>>> {
+  const directory = mkdtempSync(path.join(tmpdir(), "engine-capabilities-"));
+  try {
+    const file = path.join(directory, "capabilities.json");
+    const child = Bun.spawn([process.execPath, "--no-env-file", CAPABILITY_READER, file], {
+      cwd: REPO_ROOT,
+      env: { ...environment },
+      stdin: "ignore",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    const exitCode = await child.exited;
+    if (exitCode !== 0) {
+      throw new Error(`the capability read (${READER_IN_REPOSITORY}) exited with code ${exitCode}`);
+    }
+    // The child writes one entry per member of SHIPPED_DATABASE_TYPES, which lists every member of DatabaseType.
+    return Object.freeze(JSON.parse(readFileSync(file, "utf8")) as Record<DatabaseType, ProviderCapabilities>);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 }
 
 /**
