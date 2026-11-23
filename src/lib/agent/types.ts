@@ -44,6 +44,7 @@
 import type { Role } from "@/lib/auth";
 import type { LLMProviderType } from "@/lib/llm/types";
 
+import type { ErrorRecord } from "@/lib/db/error-record";
 import type { ExecutionProfileDenyCode } from "@/lib/db/errors";
 import type { PolicyDenyCode } from "@/lib/db/operations/policy";
 import type { AgentStatementViolation } from "@/lib/db/operations/statement-guard";
@@ -910,6 +911,14 @@ export type AgentToolRefusal =
        * refusal recorded before this field existed, read as the provider's, the conservative reading.
        */
       readonly refusedBy?: "studio" | "provider";
+      /**
+       * The failure's error record (src/lib/db/error-record.ts): its kind, code, outcome and, where its text was not
+       * withheld, its SQLSTATE, as closed fields with no text of the error. Built by `errorRecord` with the call's own
+       * scrub, and what the tool layer decides a failure by; `message` stays beside it for the model's repair and
+       * decides nothing. Absent on every refusal recorded before this field existed, which a reader treats as an
+       * unknown class, never as any kind.
+       */
+      readonly record?: ErrorRecord;
     }
   | { readonly class: "reading-refused"; readonly reasonCode: AgentReadingDenyCode; readonly elapsedMs?: number }
   /**

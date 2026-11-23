@@ -37,7 +37,7 @@ import { guardRoute } from "@/lib/api/require-session";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { logger } from "@/lib/logger";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
-import { type ProviderTextScrub, providerTextScrub, withholdProviderError } from "@/lib/db/operations/provider-text";
+import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
 import type { DatabaseConnection } from "@/lib/types";
 
 /**
@@ -224,7 +224,8 @@ export async function POST(req: Request) {
 
   // Set once the connection resolves: from then on a provider may be built (the database the run reads, through
   // `editorProvider`, on the connection's own credential), so a failure answered below passes core's scrub of every
-  // provider of that connection ("any") first.
+  // provider of that connection ("any") to `createErrorResponse`, which keeps the failure's own status, code, kind and
+  // outcome when its text is withheld.
   let scrub: ProviderTextScrub | undefined;
   try {
     let body: Record<string, unknown>;
@@ -637,8 +638,6 @@ export async function POST(req: Request) {
       { status: 202 },
     );
   } catch (error) {
-    return createErrorResponse(scrub === undefined ? error : withholdProviderError(scrub, error), {
-      route: "api/agent/runs",
-    });
+    return createErrorResponse(error, { route: "api/agent/runs", scrub });
   }
 }

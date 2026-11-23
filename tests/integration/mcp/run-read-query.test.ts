@@ -15,11 +15,14 @@ import {
   ExecutionProfileError,
   OffsetUnsupportedError,
   ReadAllowanceExceededError,
+  QueryError,
   RefusedBeforeSendError,
+  RowBudgetRefusal,
   StudioProfileRefusal,
+  TimeBudgetRefusal,
 } from "@/lib/db/errors";
 import { PROVIDER_TEXT_WITHHELD, providerAuthor } from "@/lib/db/operations/provider-text";
-import { TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { rowBudgetSentence, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
 import { secretForms } from "@/lib/db/utils/server-text";
 import { LibreDBProvider } from "@/lib/db/providers/embedded/libredb";
 import { DuckDBProvider } from "@/lib/db/providers/sql/duckdb";
@@ -381,6 +384,40 @@ describe("a provider that answers past the read budget", () => {
     expect(result.isError).toBe(true);
     expect(result.content).toEqual([{ type: "text", text: BYTES }]);
     expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_result_too_large" });
+  });
+});
+
+describe("a provider's refusal is answered by its class", () => {
+  test("a provider's row budget refusal is answered as too large, whatever its words", async () => {
+    const failing = failNextCall(
+      SQLiteProvider.prototype,
+      "queryReadOnly",
+      new RowBudgetRefusal(`${crypto.randomUUID()} ${crypto.randomUUID()}`, "sqlite"),
+    );
+    try {
+      const result = await direct({ connection_id: "seed:shop", sql: "SELECT id FROM numbers" });
+      expect(result.isError).toBe(true);
+      expect(result.content).toEqual([{ type: "text", text: ROWS }]);
+      expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_result_too_large" });
+    } finally {
+      failing.restore();
+    }
+  });
+
+  test("an engine error holding the row budget sentence is answered as the engine's", async () => {
+    const sentence = rowBudgetSentence(1001, 1000);
+    const failing = failNextCall(SQLiteProvider.prototype, "queryReadOnly", new QueryError(sentence, "sqlite"));
+    try {
+      const result = await direct({ connection_id: "seed:shop", sql: "SELECT id FROM numbers" });
+      expect(result.isError).toBe(true);
+      expect(result.content).toEqual([
+        { type: "text", text: DATABASE_CONTENT_NOTICE },
+        { type: "text", text: `The database refused or failed the call: ${sentence}` },
+      ]);
+      expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_execution_failed" });
+    } finally {
+      failing.restore();
+    }
   });
 });
 
@@ -1336,7 +1373,11 @@ describe("a provider whose text carries the connection's credential", () => {
       (text) => new ExecutionProfileError(text, "PROFILE_PRIVILEGES_TOO_BROAD"),
       "statement",
     ],
-    ["a failure answered as the timeout", (text) => new Error(`${TIME_BUDGET_PREFIX}: ${text}`), "statement"],
+    [
+      "a failure answered as the timeout",
+      (text) => new TimeBudgetRefusal(`${TIME_BUDGET_PREFIX}: ${text}`, "sqlite"),
+      "statement",
+    ],
   ];
 
   test.each(cases.flatMap(([label, make, failing]) => forms.map((form) => [label, form, make, failing] as const)))(

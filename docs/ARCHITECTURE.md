@@ -446,9 +446,10 @@ Every other failure answers `unknown`, since the statement may have run.
 The record holds no text of the error: no message, detail, statement or identifier.
 The full record is built only by `errorRecord` in `src/lib/db/operations/provider-text.ts`, which applies the core scrub first, so a credential of the connection in the SQLSTATE withholds the error's text whole, as one in the message does.
 A withheld error's record keeps the error's own kind, code and outcome and leaves out its SQLSTATE.
-The editor routes' error body and the VS Code backend child's `data` follow the same rule: only the texts are replaced.
+The error body of the editor routes and of the agent runs and hand-over routes, and the VS Code backend child's `data`, follow the same rule: only the texts are replaced.
 `readErrorRecord` reads a record strictly and refuses anything else with an `ErrorRecordError` that names the field, never its value.
 Every database error body the API routes answer (`databaseErrorBody` in `src/lib/api/error-body.ts`), and the `data` of the VS Code extension's error answers, carry `kind` and `outcome` ([`docs/API_DOCS.md`](API_DOCS.md#error-kind-and-outcome)).
+A body a route builds with the connection's scrub also carries the record's `sqlState`, and the agent's ledger refusal of a failed statement carries the whole record (`record`), which the agent and MCP decide a failure by.
 The module uses no Node-only global.
 
 ## 5. Directory Structure

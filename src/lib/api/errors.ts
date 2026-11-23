@@ -7,7 +7,7 @@ import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import { ApiErrorCode } from "./error-codes";
 import { databaseErrorBody, internalErrorBody, withWithheldText, type ApiErrorResponse } from "./error-body";
-import { type ProviderTextScrub, withheldProviderError } from "@/lib/db/operations/provider-text";
+import { type ProviderTextScrub, errorRecord, withheldProviderError } from "@/lib/db/operations/provider-text";
 import {
   LLMError,
   LLMAuthError,
@@ -36,7 +36,10 @@ export type { ApiErrorResponse } from "./error-body";
  * The answer and the log line for a thrown value. `scrub` is the calling connection's core scrub, passed by a route
  * once its connection is resolved: on the two branches a provider's error reaches (every database error class and the
  * generic one) an error whose text holds a credential of the connection answers its own status, code, kind, outcome
- * and `retryable` with only its texts replaced (`withWithheldText`), and its log line carries the withheld error. The
+ * and `retryable` with only its texts replaced (`withWithheldText`), and its log line carries the withheld error.
+ * Given a scrub, a database error's body also carries the `sqlState` of its error record (`errorRecord`), which the
+ * record holds only when the error's text was not withheld, so the body is the record's fields beside its texts;
+ * without a scrub no body carries one, because the record's string fields are only built through the scrub. The
  * other branches answer Studio's own classes, raised before any provider exists.
  */
 export function createErrorResponse(
@@ -93,7 +96,9 @@ export function createErrorResponse(
     const { level, message, context: logContext } = answer.log;
     if (level === "error") logger.error(message, withheld ?? error, { route, ...logContext });
     else logger[level](message, { route, ...logContext });
-    const body = withheld === null ? answer.body : withWithheldText(answer.body, withheld.message);
+    const texts = withheld === null ? answer.body : withWithheldText(answer.body, withheld.message);
+    const sqlState = context?.scrub === undefined ? undefined : errorRecord(context.scrub, error).sqlState;
+    const body = sqlState === undefined ? texts : { ...texts, sqlState };
     return NextResponse.json(body, { status: body.statusCode });
   }
 

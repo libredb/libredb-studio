@@ -2,25 +2,15 @@ import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
-import {
-  MSSQL_CUT_VALUE_PREFIX,
-  MSSQL_SERIALISED_PREFIX,
-  MSSQL_TIME_BUDGET_PREFIX,
-} from "@/lib/db/providers/sql/mssql-read-only-refusals";
-import {
-  BYTE_BUDGET_PREFIX,
-  byteBudgetSentence,
-  ROW_BUDGET_PREFIX,
-  rowBudgetSentence,
-  TIME_BUDGET_PREFIX,
-} from "@/lib/db/providers/sql/read-only-budget";
-import { READ_ONLY_REFUSAL_OPENINGS, type ReadOnlyRefusalKind } from "@/lib/db/providers/sql/read-only-refusals";
+import * as mssqlReadOnlyRefusals from "@/lib/db/providers/sql/mssql-read-only-refusals";
+import * as readOnlyBudget from "@/lib/db/providers/sql/read-only-budget";
 
 /**
  * A provider's own budget refusal is constructed as the class of its budget, held by the syntax tree.
  *
  * A provider refuses a read whose answer or wait passed the row, byte or time field of the `ReadOnlyStatementBudget`
- * it was handed in one of the sentences `READ_ONLY_REFUSAL_OPENINGS` lists, and raises it as the class of that budget
+ * it was handed in one of the sentences src/lib/db/providers/sql/read-only-budget.ts and
+ * src/lib/db/providers/sql/mssql-read-only-refusals.ts build, and raises it as the class of that budget
  * (`RowBudgetRefusal`, `ByteBudgetRefusal`, `TimeBudgetRefusal`, `CutValueRefusal`, `SerialisedResultRefusal` in
  * src/lib/db/errors.ts), so its error record answers a kind of its own. A refusal it raises before anything was sent
  * stays a `RefusedBeforeSendError`, and one it raises as a timeout a `TimeoutError`: the same refusal, which every
@@ -42,14 +32,22 @@ import { READ_ONLY_REFUSAL_OPENINGS, type ReadOnlyRefusalKind } from "@/lib/db/p
  * (MySQL's and MongoDB's "exceeded the statement deadline", SQL Server's "could not hold this query plan"). The tests
  * that provoke each such refusal in its provider's own test file assert its kind, and hold those.
  *
+ * Every reader decides a budget refusal by its class, never by its words, so this census is what turns a provider's
+ * budget sentence into its answer: a budget sentence raised as a plain `QueryError` would be answered as the engine's
+ * error. It is complete over the sentences: every export of those two modules whose name ends in `_PREFIX` or
+ * `BudgetSentence` is one of `BUDGET_IDENTIFIERS`, or is named in `NON_BUDGET_EXPORTS` with the reason it is none.
+ *
  * A finding names its file and innermost declaration, never a line.
  */
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const PROVIDERS = join("src", "lib", "db", "providers");
 
-/** The class each budget kind is raised as. Typed by the kind, so a kind added to the openings fails typecheck here. */
-const CLASS_OF_KIND: Readonly<Record<ReadOnlyRefusalKind, string>> = {
+/** The budgets a provider refuses a read by. */
+type BudgetKind = "rows" | "bytes" | "time" | "cut-value" | "serialised";
+
+/** The class each budget kind is raised as. Typed by the kind, so a kind added to `BudgetKind` fails typecheck here. */
+const CLASS_OF_KIND: Readonly<Record<BudgetKind, string>> = {
   rows: "RowBudgetRefusal",
   bytes: "ByteBudgetRefusal",
   time: "TimeBudgetRefusal",
@@ -60,17 +58,32 @@ const CLASS_OF_KIND: Readonly<Record<ReadOnlyRefusalKind, string>> = {
 /** The classes a budget refusal may also keep: the same refusal raised before sending, or raised as a timeout. */
 const KEPT_CLASSES: ReadonlySet<string> = new Set(["RefusedBeforeSendError", "TimeoutError"]);
 
-/** Every identifier a budget sentence is built from, the opening its sentence starts with, and its kind. */
-const BUDGET_IDENTIFIERS: Readonly<Record<string, { readonly opening: string; readonly kind: ReadOnlyRefusalKind }>> = {
-  rowBudgetSentence: { opening: rowBudgetSentence(2, 1), kind: "rows" },
-  ROW_BUDGET_PREFIX: { opening: ROW_BUDGET_PREFIX, kind: "rows" },
-  byteBudgetSentence: { opening: byteBudgetSentence(2, 1), kind: "bytes" },
-  BYTE_BUDGET_PREFIX: { opening: BYTE_BUDGET_PREFIX, kind: "bytes" },
-  TIME_BUDGET_PREFIX: { opening: TIME_BUDGET_PREFIX, kind: "time" },
-  MSSQL_TIME_BUDGET_PREFIX: { opening: MSSQL_TIME_BUDGET_PREFIX, kind: "time" },
-  MSSQL_CUT_VALUE_PREFIX: { opening: MSSQL_CUT_VALUE_PREFIX, kind: "cut-value" },
-  MSSQL_SERIALISED_PREFIX: { opening: MSSQL_SERIALISED_PREFIX, kind: "serialised" },
+/** Every identifier a budget sentence is built from, and the kind of its budget. */
+const BUDGET_IDENTIFIERS: Readonly<Record<string, { readonly kind: BudgetKind }>> = {
+  rowBudgetSentence: { kind: "rows" },
+  ROW_BUDGET_PREFIX: { kind: "rows" },
+  byteBudgetSentence: { kind: "bytes" },
+  BYTE_BUDGET_PREFIX: { kind: "bytes" },
+  TIME_BUDGET_PREFIX: { kind: "time" },
+  MSSQL_TIME_BUDGET_PREFIX: { kind: "time" },
+  MSSQL_CUT_VALUE_PREFIX: { kind: "cut-value" },
+  MSSQL_SERIALISED_PREFIX: { kind: "serialised" },
 };
+
+/**
+ * The exports of the two sentence modules whose name reads as a budget sentence's and which build none, each with the
+ * reason. None today.
+ */
+const NON_BUDGET_EXPORTS: Readonly<Record<string, string>> = {};
+
+/** The exports of `modules` named as a budget sentence's (`_PREFIX`, `BudgetSentence`) that this census does not list. */
+function unlistedBudgetExports(modules: readonly Readonly<Record<string, unknown>>[]): string[] {
+  return modules
+    .flatMap((module) => Object.keys(module))
+    .filter((name) => /(_PREFIX|BudgetSentence)$/.test(name))
+    .filter((name) => !Object.hasOwn(BUDGET_IDENTIFIERS, name) && !Object.hasOwn(NON_BUDGET_EXPORTS, name))
+    .sort();
+}
 
 function sourceFiles(directory: string): string[] {
   const found: string[] = [];
@@ -155,7 +168,7 @@ function scopesAround(node: ts.Node): ts.Node[] {
 }
 
 /** What one expression holds: the budget kinds it references, and whether it is a conditional with a branch of none. */
-type Holding = { readonly kinds: Set<ReadOnlyRefusalKind>; mixed: boolean };
+type Holding = { readonly kinds: Set<BudgetKind>; mixed: boolean };
 
 /**
  * A construction of `className` whose first argument holds `holding`, in the declaration it was found in; `readAs` is
@@ -342,16 +355,15 @@ describe("a provider's budget refusal is constructed as its budget's class", () 
     ]);
   });
 
-  test("the budget identifiers are exactly the openings and kinds MCP reads", () => {
-    const pairs = (rows: readonly { readonly prefix: string; readonly kind: string }[]) =>
-      [...new Set(rows.map(({ prefix, kind }) => `${kind}: ${prefix}`))].sort();
-    const openings = READ_ONLY_REFUSAL_OPENINGS.map(({ prefix, kind }) => ({ prefix, kind }));
-    const mapped = Object.values(BUDGET_IDENTIFIERS).map(({ opening, kind }) => ({
-      prefix: openings.find(({ prefix }) => opening.startsWith(prefix))?.prefix ?? opening,
-      kind,
-    }));
-    expect(pairs(mapped)).toEqual(pairs(openings));
-    expect(Object.keys(CLASS_OF_KIND).sort()).toEqual([...new Set(openings.map(({ kind }) => kind))].sort());
+  test("every budget sentence export is a budget identifier", () => {
+    // The self-test: a sentence export the census does not list is named.
+    expect(unlistedBudgetExports([{ ...readOnlyBudget, NEW_BUDGET_PREFIX: "Read-only execution exceeded" }])).toEqual([
+      "NEW_BUDGET_PREFIX",
+    ]);
+    expect(unlistedBudgetExports([{ ...mssqlReadOnlyRefusals, otherBudgetSentence: () => "" }])).toEqual([
+      "otherBudgetSentence",
+    ]);
+    expect(unlistedBudgetExports([readOnlyBudget, mssqlReadOnlyRefusals])).toEqual([]);
   });
 
   test("every budget construction in provider code names one budget and constructs its class, a refusal before send or a timeout", () => {

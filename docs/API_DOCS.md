@@ -2292,6 +2292,7 @@ and the auto-execute gate declined it (`handover` is `applied` or `none`), with 
 warning in the message — the statement belongs in the editor unrun, and this route will not do what
 the run decided against. A row or byte budget overrun **refuses** rather than truncating, exactly as
 the agent's own read path does.
+A failure whose text held a credential of the connection keeps its own status, `code`, `kind` and `outcome`, with only its text replaced, as [Error Response Format](#error-response-format) describes.
 
 #### POST /api/agent/drive
 
@@ -2887,7 +2888,7 @@ interface ActiveSession {
 }
 ```
 
-On `POST /api/db/query`, `POST /api/db/multi-query`, `POST /api/db/transaction` and `POST /api/db/test-connection`, a database error whose text holds a credential of the request's connection, in any form Studio derives from it, answers Studio's own sentence in `error`, naming the error's class and saying its text was withheld.
+On `POST /api/db/query`, `POST /api/db/multi-query`, `POST /api/db/transaction`, `POST /api/db/test-connection`, `POST /api/agent/runs` and `POST /api/agent/runs/{runId}/handover`, a database error whose text holds a credential of the request's connection, in any form Studio derives from it, answers Studio's own sentence in `error`, naming the error's class and saying its text was withheld.
 `details` then keeps only `position`, and `fixStatement` is left out, while the HTTP status, `code`, `kind`, `outcome` and `retryable` are the error's own.
 A script statement's `error` and every warning's `message`, string `code` and `severity` follow the same rule, and a warning field that holds such a form answers `(Studio withheld this text because it contained a credential of this connection)`.
 
@@ -2958,6 +2959,7 @@ directly by the request middleware (`src/proxy.ts`), before a request ever reach
 Every database error body `createErrorResponse` answers carries `kind` and `outcome` beside `code`.
 An answer without them is not a database error's: an unhandled error (`INTERNAL_ERROR`) and the codes a route or the middleware answers itself carry neither.
 Both are closed vocabularies and never hold the error's text.
+A route that resolves the calling connection (the editor's query, script and transaction routes, the connection test, the agent runs route and the hand-over route) also answers `sqlState`, the SQLSTATE the driver reported, when there is one and the error's text was not withheld.
 
 `kind` names the class of failure, so a client can branch on it without reading the sentence:
 

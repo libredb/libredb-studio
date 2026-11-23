@@ -76,8 +76,10 @@ import {
   RefusedBeforeSendError,
   StudioTimeoutRefusal,
 } from "@/lib/db/errors";
+import type { ErrorKind } from "@/lib/db/error-record";
 import type { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import {
+  errorRecord,
   isStudioRefusal,
   providerAuthor,
   type ProviderTextScrub,
@@ -166,7 +168,7 @@ import {
   PLAN_ESTIMATE_OPERATIONS,
   requiredVariant,
 } from "./agent-manifest";
-import { connectionIdentity, heldSnapshotForConnection } from "./context-snapshot";
+import { connectionIdentity, heldSnapshotForConnection, rowBudgetIn } from "./context-snapshot";
 import { offersRefusalExamples } from "./models";
 import type { ColumnSchema, DatabaseConnection, DatabaseType, QueryResult } from "@/lib/types";
 import { type ProfileTargetResolution, type ResolvedProfileTarget, resolveProfileTarget } from "./inventory-address";
@@ -1780,8 +1782,13 @@ function columnsThatExist(message: string, connection: DatabaseConnection): stri
  * model has to author: a narrower query, or a different way of asking for the catalog. The
  * inventory branch is not, which is the whole distinction.
  *
- * Takes no connection: neither branch reads our own state. They are derived from the shape of the
- * engine's message and from the engine this connection IS, which is why neither can be free.
+ * Takes no connection: neither branch reads our own state, which is why neither can be free. The row
+ * branch is decided by the failure's error kind, a row budget refusal of the provider's or of Studio's
+ * own, and names the bound that refusal's own sentence states (`rowBudgetIn`), never the run's row
+ * budget: a provider may refuse at a lower bound of its own (InfluxQL's cell cut, a search engine's
+ * result limit), and a LIMIT it refuses again costs another repair attempt. A row budget refusal whose
+ * sentence states no bound gets no row advice, since no LIMIT is known to pass. The catalog branch is
+ * derived from the engine's message and from the engine this connection IS.
  *
  * The row-budget sentence is the statement language's own, since the way to ask for fewer rows is
  * written in that language. The catalog branch is the language's own too, and only SQL has one (its pack's
@@ -1795,14 +1802,25 @@ const REFUSED_BEFORE_SEND_ADVICE =
   "That statement was refused by the provider above before it was sent; the database was not asked, so this is not a database error. Draft a statement that does not do what the refusal names, or answer from what you have already read.";
 
 function otherStatementAdvice(
+  kind: ErrorKind,
   message: string,
   engine: string,
   statement: string,
   language: AgentStatementLanguageId,
 ): string | undefined {
-  const overBudget = /row budget: \d+ rows > (\d+) allowed/.exec(message);
-  if (overBudget !== null) return languageServer(language).rowCapAdvice(statement, overBudget[1]);
+  const rowBudget = rowBudgetIn(kind, message);
+  if (rowBudget !== undefined) return languageServer(language).rowCapAdvice(statement, String(rowBudget.allowed));
+  if (kind === "row-budget-refusal" || kind === "studio-row-budget-refusal") return undefined;
   return languageServerPack(language).catalogAdvice?.(message, engine);
+}
+
+/**
+ * The error kind of a refused tool outcome's failure, from its ledger refusal's record: `undefined` for any other
+ * outcome, and for a `database-error` refusal that carries no record.
+ */
+export function refusedErrorKind(outcome: AgentToolOutcome): ErrorKind | undefined {
+  if (outcome.kind !== "refused" || outcome.refusal.class !== "database-error") return undefined;
+  return outcome.refusal.record?.kind;
 }
 
 /** Whether the statement guard refuses a call's guarded statement; a call with none has nothing to refuse. */
@@ -2031,6 +2049,9 @@ export async function runAuditedAgentCall(
     // budget is this server's sentence too, said in its voice and recorded as Studio's; any other failure of a sent
     // statement is the database's text, fenced naming the provider that relayed it. Every one of them still costs a
     // repair attempt, because the repair is a statement the model has to author.
+    // The failure's class as its error record, built with the same scrub: the row advice and the ledger decide what
+    // the failure is by it, never by `message`, which stays beside it for the model's repair.
+    const record = errorRecord(scrub, error);
     const notSent = error instanceof RefusedBeforeSendError;
     const studioRefused = isStudioRefusal(error);
     const columns = notSent ? undefined : columnsThatExist(message, context.connection);
@@ -2040,6 +2061,7 @@ export async function runAuditedAgentCall(
         : REFUSED_BEFORE_SEND_ADVICE
       : (columns ??
         otherStatementAdvice(
+          record.kind,
           message,
           context.connection.type,
           call.fingerprintSource,
@@ -2067,6 +2089,8 @@ export async function runAuditedAgentCall(
           : studioRefused
             ? { refusedBy: "studio" as const }
             : {}),
+        // Closed fields only, so a failure whose text was withheld still records its kind, code and outcome.
+        record,
       },
       // The engine's own words: untrusted, so fenced. The fingerprint stands in for
       // a correlation id, which a failed execution never produced.
@@ -2659,7 +2683,8 @@ export type AgentObjectInventoryRead =
     }
   /** This engine declares no object kinds, so there is nothing to tag and nothing was read. */
   | { readonly kind: "unsupported" }
-  | { readonly kind: "unavailable"; readonly modelText: string }
+  /** `errorKind`: the kind of the failure that refused the read, when a database error's record names one. */
+  | { readonly kind: "unavailable"; readonly modelText: string; readonly errorKind?: ErrorKind }
   | { readonly kind: "timed-out"; readonly grantedMs: number };
 
 /**
@@ -2826,7 +2851,12 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
     throw error;
   }
 
-  if (outcome.kind !== "completed") return { kind: "unavailable", modelText: outcome.modelText };
+  if (outcome.kind !== "completed") {
+    const errorKind = refusedErrorKind(outcome);
+    return errorKind === undefined
+      ? { kind: "unavailable", modelText: outcome.modelText }
+      : { kind: "unavailable", modelText: outcome.modelText, errorKind };
+  }
   return defaultContainer === undefined
     ? { kind: "completed", inventory }
     : { kind: "completed", inventory, defaultContainer };

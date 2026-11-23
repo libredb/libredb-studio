@@ -625,6 +625,8 @@ output cap, and what it sends is one objective — see
   The forms are its base64, including at each byte offset as inside an HTTP Basic header, its URL-encoded form and each segment of a token, and any of those written with JSON string escapes or with the control characters the logger drops between its characters.
   The credentials it looks for are the ones the connection's providers receive: on a statement path the agent credential in place of the connection's own password where one is set, and never the SSH tunnel's secrets, which no provider receives.
   A failure that leaves a drive or a route whose text held one is answered by a sentence that names the failure's class and says its text was withheld.
+  The agent runs route and the hand-over route answer such a failure with its own status, code, kind and outcome, and only its text replaced by that sentence.
+  A drive's failure is still replaced by the withheld sentence before it leaves the runtime.
   The same pass runs on the hand-over and on MCP.
   What it does not catch: a secret that is only part of a field's value (a password inside a connection string, a key inside a credentials document), an echo in a different case, and database rows, which are never scrubbed; each provider scrubs its own server's text at its entry as well.
 

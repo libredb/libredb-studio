@@ -16,7 +16,7 @@ import {
 } from "@/lib/agent/languages/mcp";
 import { languageServer } from "@/lib/agent/languages/server";
 import { MCP_STATEMENT_READ, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
-import { UnknownProviderError } from "@/lib/db/errors";
+import { ByteBudgetRefusal, RowBudgetRefusal, UnknownProviderError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { typeIdRefusal, unknownTypeSentence } from "@/lib/db/type-id";
 import { relationKindIds } from "@/lib/db/object-kinds";
@@ -351,7 +351,7 @@ describe("the MongoDB arm", () => {
 
   test("answers a row refusal with the language's row-cap advice for the operation", () => {
     const rows = classifyReadQueryFailure(
-      new Error("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
+      new RowBudgetRefusal("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
       1,
       2,
       RUN_MONGO_COMMAND_ARM.tooLarge(find, "mongodb"),
@@ -361,7 +361,7 @@ describe("the MongoDB arm", () => {
       text: `The result has more than 1000 rows, the most this server reads for one call. ${server.rowCapAdvice(find, "1000")}`,
     });
     const bytes = classifyReadQueryFailure(
-      new Error("Read-only execution exceeded the byte budget: 2 > 1"),
+      new ByteBudgetRefusal("Read-only execution exceeded the byte budget: 2 > 1"),
       1,
       2,
       RUN_MONGO_COMMAND_ARM.tooLarge(find, "mongodb"),
@@ -442,7 +442,7 @@ describe("the kubectl arm", () => {
 
   test("answers a row refusal with the command's own row-cap advice", () => {
     const rows = classifyReadQueryFailure(
-      new Error("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
+      new RowBudgetRefusal("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
       1,
       2,
       RUN_KUBECTL_READ_ARM.tooLarge("get pods -A", "kubernetes"),
@@ -546,7 +546,7 @@ describe("the Weaviate arm", () => {
   test("answers a row refusal with the request's own row-cap advice", () => {
     const statement = "GET /v1/schema/Tenanted/tenants";
     const rows = classifyReadQueryFailure(
-      new Error("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
+      new RowBudgetRefusal("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
       1,
       2,
       RUN_WEAVIATE_READ_ARM.tooLarge(statement, "weaviate"),
@@ -635,7 +635,7 @@ describe("the qdrantapi arm", () => {
 
   test("answers a row refusal with the request's own row-cap advice", () => {
     const rows = classifyReadQueryFailure(
-      new Error("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
+      new RowBudgetRefusal("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
       1,
       2,
       RUN_QDRANT_READ_ARM.tooLarge("GET /aliases", "qdrant"),
@@ -746,7 +746,7 @@ describe("the etcdctl arm", () => {
 
   test("answers a row refusal with the command's own row-cap advice", () => {
     const rows = classifyReadQueryFailure(
-      new Error("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
+      new RowBudgetRefusal("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
       1,
       2,
       RUN_ETCD_READ_ARM.tooLarge("lease list", "etcd"),
@@ -837,7 +837,7 @@ describe("the Kafka arm", () => {
 
   test("answers a row refusal with the read's own row-cap advice", () => {
     const rows = classifyReadQueryFailure(
-      new Error("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
+      new RowBudgetRefusal("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
       1,
       2,
       RUN_KAFKA_READ_ARM.tooLarge(topics, "kafka"),
@@ -924,7 +924,7 @@ describe("the Cypher arm", () => {
 
   test("answers a row refusal with the language's own row-cap advice", () => {
     const rows = classifyReadQueryFailure(
-      new Error("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
+      new RowBudgetRefusal("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
       1,
       2,
       RUN_CYPHER_READ_ARM.tooLarge(read, "neo4j"),
@@ -1037,7 +1037,7 @@ describe("the Redis arm", () => {
 
   test("answers a row refusal with the command's own row-cap advice", () => {
     const rows = classifyReadQueryFailure(
-      new Error("Read-only execution exceeded the row budget: 2 rows > 1 allowed"),
+      new RowBudgetRefusal("Read-only execution exceeded the row budget: 2 rows > 1 allowed"),
       1,
       2,
       RUN_REDIS_READ_ARM.tooLarge("DBSIZE", "redis"),
@@ -1127,7 +1127,7 @@ describe("the mtconnectread arm", () => {
 
   test("answers a row refusal with the request language's own row-cap advice", () => {
     const rows = classifyReadQueryFailure(
-      new Error("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
+      new RowBudgetRefusal("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
       1,
       2,
       RUN_MTCONNECT_READ_ARM.tooLarge("/current", "mtconnect"),
@@ -1344,7 +1344,7 @@ describe("the Milvus arm", () => {
 
   test("answers a row refusal with the read's own row-cap advice", () => {
     const rows = classifyReadQueryFailure(
-      new Error("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
+      new RowBudgetRefusal("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
       1,
       2,
       RUN_MILVUS_READ_ARM.tooLarge(collections, "milvus"),
@@ -1600,7 +1600,7 @@ describe("the libredbkv arm", () => {
 
   test("answers a row refusal with the command's own row-cap advice", () => {
     const rows = classifyReadQueryFailure(
-      new Error("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
+      new RowBudgetRefusal("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
       1,
       2,
       RUN_LIBREDB_READ_ARM.tooLarge("range a b", "libredb"),
@@ -1690,7 +1690,7 @@ describe("the rabbitread arm", () => {
 
   test("answers a row refusal with the read's own row-cap advice", () => {
     const rows = classifyReadQueryFailure(
-      new Error("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
+      new RowBudgetRefusal("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
       1,
       2,
       RUN_RABBITMQ_READ_ARM.tooLarge(read, "rabbitmq"),

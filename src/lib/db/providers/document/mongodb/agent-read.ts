@@ -156,8 +156,9 @@ function rowBound(budget: ReadOnlyStatementBudget): number {
  *
  * `stoppedAtBound` is a cursor read, which the server ends one row past the budget: its count is that bound, not the
  * number of documents that match, and the sentence says so. Without it a live run on 2026-10-17 read "201 rows > 200
- * allowed", retried with a limit of 200 and reported that the collection held 200 orders, of 8000. The opening is
- * unchanged, so `rowBudgetIn` and MCP's limit reader still read it.
+ * allowed", retried with a limit of 200 and reported that the collection held 200 orders, of 8000. It is a
+ * `RowBudgetRefusal`, which every reader decides by its class, and its opening is unchanged, so `rowBudgetIn` still
+ * reads the two numbers from it.
  */
 export function rowBudgetRefusal(
   rows: number,

@@ -10,6 +10,7 @@ import {
   packContextForTask,
   packOperationsInventory,
   reusableSnapshot,
+  rowBudgetIn,
   scrubSnapshotSentences,
 } from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
@@ -23,9 +24,10 @@ import type { AgentContextSnapshot, AgentRunEvent } from "@/lib/agent/types";
 import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
-import { ConnectionError, ExecutionProfileError, QueryError } from "@/lib/db/errors";
+import { ConnectionError, ExecutionProfileError, QueryError, RowBudgetRefusal } from "@/lib/db/errors";
+import { ERROR_KINDS, type ErrorKind } from "@/lib/db/error-record";
 import { createDatabaseProvider } from "@/lib/db/factory";
-import { measureResultBytes } from "@/lib/db/providers/sql/read-only-budget";
+import { measureResultBytes, rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import {
@@ -868,6 +870,43 @@ describe("captureContextSnapshot — when no honest inventory can be built", () 
   });
 });
 
+describe("the row budget pair", () => {
+  const ROW_KINDS: ReadonlySet<ErrorKind | undefined> = new Set(["row-budget-refusal", "studio-row-budget-refusal"]);
+
+  test.each([...ERROR_KINDS, undefined].map((kind) => [kind]))(
+    "rowBudgetIn with kind %s reads a pair only for a row budget kind",
+    (kind) => {
+      const pair = rowBudgetIn(kind, rowBudgetSentence(536, 200));
+      expect(pair).toEqual(ROW_KINDS.has(kind) ? { projected: 536, allowed: 200 } : undefined);
+    },
+  );
+
+  test("a capture refused by a row budget class records the pair", async () => {
+    const h = harness("postgres", async () => {
+      throw new RowBudgetRefusal(rowBudgetSentence(536, 200), "postgres");
+    });
+
+    const capture = await captureContextSnapshot(h.context);
+
+    if (capture.kind !== "unavailable") throw new Error(`expected unavailable, got ${capture.kind}`);
+    expect(capture.reasonCode).toBe("CATALOG_READ_REFUSED");
+    expect(capture.rowBudget).toEqual({ projected: 536, allowed: 200 });
+  });
+
+  test("a capture refused by a failure whose class is no row budget's records none, whatever its words", async () => {
+    const h = harness("postgres", async () => {
+      throw new QueryError(rowBudgetSentence(536, 200), "postgres");
+    });
+
+    const capture = await captureContextSnapshot(h.context);
+
+    if (capture.kind !== "unavailable") throw new Error(`expected unavailable, got ${capture.kind}`);
+    expect(capture.reasonCode).toBe("CATALOG_READ_REFUSED");
+    expect(capture.detail).toContain(rowBudgetSentence(536, 200));
+    expect(capture).not.toHaveProperty("rowBudget");
+  });
+});
+
 /**
  * An environment failure on the COMPOSED path, which used to end the run (B48).
  *
@@ -1416,6 +1455,36 @@ describe("captureContextSnapshot — the provider's own inventory", () => {
 
     if (capture.kind !== "captured") throw new Error("unreachable");
     expect(capture.snapshot.objects.map((table) => table.foreignKeys)).toEqual([[], []]);
+  });
+
+  describe("the row budget pair", () => {
+    test("a capture refused by a row budget class records the pair", async () => {
+      const h = providerHarness({
+        schema: async () => {
+          throw new RowBudgetRefusal(rowBudgetSentence(536, 200), "mongodb");
+        },
+      });
+
+      const capture = await captureContextSnapshot(h.context);
+
+      if (capture.kind !== "unavailable") throw new Error(`expected unavailable, got ${capture.kind}`);
+      expect(capture.reasonCode).toBe("CATALOG_READ_REFUSED");
+      expect(capture.rowBudget).toEqual({ projected: 536, allowed: 200 });
+    });
+
+    test("a capture refused by a failure whose class is no row budget's records none, whatever its words", async () => {
+      const h = providerHarness({
+        schema: async () => {
+          throw new QueryError(rowBudgetSentence(536, 200), "mongodb");
+        },
+      });
+
+      const capture = await captureContextSnapshot(h.context);
+
+      if (capture.kind !== "unavailable") throw new Error(`expected unavailable, got ${capture.kind}`);
+      expect(capture.detail).toContain(rowBudgetSentence(536, 200));
+      expect(capture).not.toHaveProperty("rowBudget");
+    });
   });
 
   test("a provider that throws loses the whole snapshot rather than yielding part of one", async () => {

@@ -10,7 +10,7 @@ import { createErrorResponse } from "@/lib/api/errors";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { catalogSessionConnection } from "@/lib/db/catalog-scope";
 import { acquireExecutionProfileProvider } from "@/lib/db/factory";
-import { providerTextScrub, withholdProviderError, withScrubbedWarnings } from "@/lib/db/operations/provider-text";
+import { providerTextScrub, withScrubbedWarnings } from "@/lib/db/operations/provider-text";
 import { runReadOnlyStatement } from "@/lib/db/operations/read-only-statement";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import { logger } from "@/lib/logger";
@@ -113,7 +113,8 @@ export async function POST(req: Request, context?: HandoverParams) {
   }
 
   // From here a provider is built and asked, so its text, in a failure's response and log line and in a result's
-  // warnings, passes core's scrub of this connection's credential first.
+  // warnings, passes core's scrub of this connection's credential first; a failure whose text is withheld keeps its
+  // own status, code, kind and outcome (`createErrorResponse`).
   const scrub = providerTextScrub(connection, "profiled");
   try {
     // The run's own actor decides the file-access posture, as it decided the connection above: SQLite
@@ -164,6 +165,6 @@ export async function POST(req: Request, context?: HandoverParams) {
       result: { ...withScrubbedWarnings(scrub, result), rows: rowsWithNonFiniteWords(result.rows) },
     });
   } catch (error) {
-    return createErrorResponse(withholdProviderError(scrub, error), { route: ROUTE });
+    return createErrorResponse(error, { route: ROUTE, scrub });
   }
 }

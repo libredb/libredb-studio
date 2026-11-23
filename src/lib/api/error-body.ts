@@ -40,6 +40,11 @@ export interface ApiErrorResponse {
    */
   kind?: ErrorKind;
   outcome?: ExecuteOutcome;
+  /**
+   * On a database error answered with the connection's scrub only: the SQLSTATE its error record carries, which it
+   * carries only when the driver reported one and the error's text was not withheld.
+   */
+  sqlState?: string;
 }
 
 /** The log line a caller writes for a database error: `error` lines also carry the error itself. */

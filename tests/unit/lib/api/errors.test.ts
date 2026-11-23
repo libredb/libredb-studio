@@ -27,7 +27,7 @@ import {
   TransactionLostError,
   UnknownProviderError,
 } from "@/lib/db/errors";
-import { providerTextScrub, withheldErrorMessage } from "@/lib/db/operations/provider-text";
+import { errorRecord, providerTextScrub, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import { logger } from "@/lib/logger";
 import type { DatabaseConnection } from "@/lib/types";
 
@@ -187,5 +187,81 @@ describe("createErrorResponse with the connection's scrub", () => {
       expect(await scrubbed.json()).toEqual(await plain.json());
       mock.restore();
     }
+  });
+
+  describe("a body with a scrub carries the error's record", () => {
+    /** The classes of the list above that are database errors, each built with a SQLSTATE. */
+    function databaseErrors(text: string, sqlstate: string): DatabaseError[] {
+      const errors: DatabaseError[] = [];
+      for (const [, make] of classes) {
+        const error = make(text);
+        if (!(error instanceof DatabaseError)) continue;
+        error.sqlstate = sqlstate;
+        errors.push(error);
+      }
+      return errors;
+    }
+
+    test("a database error's body carries the SQLSTATE its record carries", async () => {
+      const errors = databaseErrors("a provider's sentence", "42P01");
+      expect(errors.length).toBeGreaterThan(20);
+      for (const error of errors) {
+        quietLogger();
+        // oxlint-disable-next-line no-await-in-loop -- each error is answered between its own logger mock and that mock's restore.
+        const body = await createErrorResponse(error, { route, scrub }).json();
+        expect(body.sqlState).toBe("42P01");
+        expect(body.sqlState).toBe(errorRecord(scrub, error).sqlState);
+        mock.restore();
+      }
+    });
+
+    test("a withheld error's body carries no SQLSTATE, as its record carries none", async () => {
+      const inSqlstate = new QueryError("relation does not exist", "postgres");
+      inSqlstate.sqlstate = password;
+      const inMessage = new QueryError(`relation ${password} does not exist`, "postgres");
+      inMessage.sqlstate = "42P01";
+      for (const error of [inSqlstate, inMessage]) {
+        quietLogger();
+        // oxlint-disable-next-line no-await-in-loop -- each error is answered between its own logger mock and that mock's restore.
+        const body = await createErrorResponse(error, { route, scrub }).json();
+        expect(Object.hasOwn(body, "sqlState")).toBe(false);
+        expect(errorRecord(scrub, error).sqlState).toBeUndefined();
+        expect(body.kind).toBe("query");
+        mock.restore();
+      }
+    });
+
+    test("a body without a scrub carries no SQLSTATE", async () => {
+      for (const error of databaseErrors("a provider's sentence", "42P01")) {
+        quietLogger();
+        // oxlint-disable-next-line no-await-in-loop -- each error is answered between its own logger mock and that mock's restore.
+        const body = await createErrorResponse(error, { route }).json();
+        expect(Object.hasOwn(body, "sqlState")).toBe(false);
+        mock.restore();
+      }
+    });
+
+    test("an error no database class answers carries no SQLSTATE", async () => {
+      quietLogger();
+      const error = Object.assign(new Error("a provider's sentence"), { sqlstate: "42P01" });
+      const body = await createErrorResponse(error, { route, scrub }).json();
+      expect(body.code).toBe("INTERNAL_ERROR");
+      expect(Object.hasOwn(body, "sqlState")).toBe(false);
+    });
+
+    test("the body's kind, code and outcome are the record's for every database error class", async () => {
+      for (const error of databaseErrors("a provider's sentence", "42P01")) {
+        quietLogger();
+        // oxlint-disable-next-line no-await-in-loop -- each error is answered between its own logger mock and that mock's restore.
+        const body = await createErrorResponse(error, { route, scrub }).json();
+        const record = errorRecord(scrub, error);
+        expect({ kind: body.kind, code: body.code, outcome: body.outcome }).toEqual({
+          kind: record.kind,
+          code: record.code,
+          outcome: record.outcome,
+        });
+        mock.restore();
+      }
+    });
   });
 });

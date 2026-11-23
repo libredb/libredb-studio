@@ -3972,12 +3972,13 @@ describe("SQLiteProvider agent read-only execution profile (#328)", () => {
       );
 
     expect(thrown).toBeInstanceOf(QueryError);
-    expect(rowBudgetIn((thrown as QueryError).message)).toEqual({ projected: 3, allowed: 2 });
+    expect(errorKind(thrown)).toBe("row-budget-refusal");
+    expect(rowBudgetIn(errorKind(thrown), (thrown as QueryError).message)).toEqual({ projected: 3, allowed: 2 });
 
     /*
       PostgreSQL raises the same sentence and cannot be driven from here without a
       server, so its call is pinned against the SOURCE: it builds the refusal with the
-      constructor SQLite's run above went through (D367). Weaker than the live arm above,
+      constructor SQLite's run above went through. Weaker than the live arm above,
       since it proves the call is there and not that a running engine reaches it, and
       still red if PostgreSQL types its own copy again.
     */
@@ -3998,7 +3999,7 @@ describe("SQLiteProvider agent read-only execution profile (#328)", () => {
         (error: unknown) => error,
       );
     expect(thrown).toBeInstanceOf(QueryError);
-    // The whole sentence, numbers in order: [{"big":"<30 a>"}] is 42 bytes as JSON (D367).
+    // The whole sentence, numbers in order: [{"big":"<30 a>"}] is 42 bytes as JSON.
     expect((thrown as QueryError).message).toBe("Read-only execution exceeded the byte budget: 42 bytes > 8 allowed");
     expect(errorKind(thrown)).toBe("byte-budget-refusal");
 

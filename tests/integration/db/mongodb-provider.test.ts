@@ -2636,7 +2636,7 @@ describe("MongoDBProvider", () => {
         );
         expect(errorKind(error)).toBe("row-budget-refusal");
         // The sentence is the one the run reads its row-budget advice from.
-        expect(rowBudgetIn((error as Error).message)).toEqual({ projected: 11, allowed: 10 });
+        expect(rowBudgetIn(errorKind(error), (error as Error).message)).toEqual({ projected: 11, allowed: 10 });
         expect(lastCursor()).toMatchObject({ pulled: 11, closes: 1 });
         expect(lastCursor().options.limit).toBe(11);
         // The command's own limit is sent when it is the smaller.
