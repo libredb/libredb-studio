@@ -7,10 +7,10 @@ import ts from "typescript";
  * The one scrub of provider text, and who wrote a refusal, held by the syntax tree.
  *
  * On the paths the census covers (`PROVIDER_TEXT_PATHS`: the agent, hand-over and MCP paths, every database route, the
- * object routes, the fleet health check, the query events those routes record and the VS Code extension's backend
- * child) every text a provider hands core (an error's message, name, stack, detail or fix statement, a result's
- * warnings, an object read's sentences, the sentences a success answer carries in the provider's words) passes core's
- * one scrub
+ * object routes, the fleet health check, the query events those routes record, the provider factory's log lines and the
+ * VS Code extension's backend child) every text a provider hands core (an error's message, name, stack, detail or fix
+ * statement, a result's warnings, an object read's sentences, the sentences a success answer carries in the provider's
+ * words) passes core's one scrub
  * (src/lib/db/operations/provider-text.ts) before it reaches a prompt, the ledger, a response, a query event or a log
  * line. The census below records each crossing and the core function it calls, and every other read of such a text on
  * those paths is classified, with its reason, as not provider text. A read of a provider method whose answer carries
@@ -20,6 +20,9 @@ import ts from "typescript";
  * response rendered there without the connection's scrub is a finding unless it is classified. The scan is
  * syntactic and keyed on names (`error`, `refusal`, `warnings`, `logger.error`, `createErrorResponse`); a provider
  * text carried under another name escapes it, which tests/security/provider-text-scrub.test.ts catches by behaviour.
+ * Every log line of the provider factory that renders a value the code around it caught renders it through
+ * `withholdProviderError`, or is classified as rendering no provider text (`FACTORY_LOG_NOT_PROVIDER_TEXT`); which scrub
+ * it is given is held by behaviour, in tests/isolated/factory.test.ts.
  *
  * Who wrote a refusal, held by class.
  *
@@ -169,9 +172,50 @@ type Census = {
    * names the connection's scrub.
    */
   providerTextReads: string[];
+  /**
+   * Every log line (`logger.<level>` or `console.<method>`) that renders a value the code around it caught: a catch
+   * clause's binding, a `.catch` or `.then` rejection handler's parameter, or a settled rejection's `reason`; marked
+   * `, scrub` when it is the error `withholdProviderError` withholds. As "file: declaration: callee(value)".
+   */
+  caughtLogs: string[];
   /** The functions and methods each named function or method calls, as a function or as a method. */
   calls: Map<string, Set<string>>;
 };
+
+/** Whether `node` is the error a call of `withholdProviderError` is given, its second argument. */
+function withheldArgument(node: ts.Node): boolean {
+  const call = node.parent;
+  return (
+    ts.isCallExpression(call) &&
+    ts.isIdentifier(call.expression) &&
+    call.expression.text === "withholdProviderError" &&
+    call.arguments[1] === node
+  );
+}
+
+/**
+ * The caught values a log call renders, each found once: an identifier a rejection is bound to around the call that is
+ * not a member's name (`x.error`) or a property's name (`{ error: ... }`; a shorthand `{ error }` renders it), and a
+ * settled rejection's `reason`. A value found is not walked further.
+ */
+function caughtValues(call: ts.CallExpression, source: ts.SourceFile): string[] {
+  const caught = caughtNames(call);
+  const values: string[] = [];
+  const visit = (node: ts.Node) => {
+    const memberName = ts.isPropertyAccessExpression(node.parent) && node.parent.name === node;
+    const propertyName = ts.isPropertyAssignment(node.parent) && node.parent.name === node;
+    if (
+      (ts.isIdentifier(node) && caught.has(node.text) && !memberName && !propertyName) ||
+      (ts.isPropertyAccessExpression(node) && node.name.text === "reason")
+    ) {
+      values.push(`${node.getText(source)}${withheldArgument(node) ? ", scrub" : ""}`);
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  for (const argument of call.arguments) visit(argument);
+  return values;
+}
 
 /** Whether a `createErrorResponse` context is an object literal that names a `scrub`, assigned or shorthand. */
 function givenScrub(context: ts.Expression | undefined): boolean {
@@ -189,7 +233,13 @@ function givenScrub(context: ts.Expression | undefined): boolean {
 
 function scan(file: string, text: string): Census {
   const source = parse(file, text);
-  const found: Census = { constructions: new Map(), identifiers: new Set(), providerTextReads: [], calls: new Map() };
+  const found: Census = {
+    constructions: new Map(),
+    identifiers: new Set(),
+    providerTextReads: [],
+    caughtLogs: [],
+    calls: new Map(),
+  };
   const at = (node: ts.Node, read: string) => found.providerTextReads.push(`${file}: ${functionAround(node)}: ${read}`);
   const visit = (node: ts.Node) => {
     if (ts.isNewExpression(node) && ts.isIdentifier(node.expression)) {
@@ -232,6 +282,12 @@ function scan(file: string, text: string): Census {
         node.arguments[1] !== undefined
       ) {
         at(node, `logger.error(${node.arguments[1].getText(source)})`);
+      }
+      if (ts.isPropertyAccessExpression(callee) && ["logger", "console"].includes(callee.expression.getText(source))) {
+        const line = callee.getText(source);
+        for (const value of caughtValues(node, source)) {
+          found.caughtLogs.push(`${file}: ${functionAround(node)}: ${line}(${value})`);
+        }
       }
       if (ts.isIdentifier(callee) && callee.text === "createErrorResponse" && node.arguments[0] !== undefined) {
         at(
@@ -358,7 +414,7 @@ describe("who wrote a refusal", () => {
 /**
  * The paths the census covers: the agent, the hand-over and MCP, and the core read path they share; every database
  * route, the object routes' shared handler, the fleet health check and the shared steps behind them, the query events
- * those routes record, and the VS Code extension's backend child.
+ * those routes record, the provider factory's log lines, and the VS Code extension's backend child.
  */
 const PROVIDER_TEXT_PATHS = [
   join("src", "lib", "agent"),
@@ -372,6 +428,7 @@ const PROVIDER_TEXT_PATHS = [
   join("src", "lib", "api", "editor-query.ts"),
   join("src", "lib", "api", "test-connection.ts"),
   join("src", "lib", "query-events"),
+  join("src", "lib", "db", "factory.ts"),
   join("vscode-extension", "src", "backend", "handlers.ts"),
 ];
 
@@ -390,6 +447,7 @@ const editorQuery = join("src", "lib", "api", "editor-query.ts");
 const testConnectionCore = join("src", "lib", "api", "test-connection.ts");
 const routeEvents = join("src", "lib", "query-events", "route-events.ts");
 const childHandlers = join("vscode-extension", "src", "backend", "handlers.ts");
+const factory = join("src", "lib", "db", "factory.ts");
 
 /** Every crossing of provider text on the covered paths, and the core function each calls: one row per call. */
 const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: string])[] = [
@@ -483,6 +541,18 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   [childHandlers, "describeObject", "scrubObjectDetail"],
   [childHandlers, "toResponseError", "withheldProviderError"],
   [childHandlers, "toResponseError", "withWithheldText"],
+  [factory, "releaseTunnelOfUnopenedProvider", "withholdProviderError"],
+  [factory, "withOneShotTunnel", "providerTextScrub"],
+  [factory, "withOneShotTunnel", "withholdProviderError"],
+  [factory, "teardownProvider", "withholdProviderError"],
+  [factory, "keepsRunInFlight", "withholdProviderError"],
+  [factory, "evictIdleProviders", "withholdProviderError"],
+  [factory, "getOrCreateProvider", "providerTextScrub"],
+  [factory, "getOrCreateProvider", "withholdProviderError"],
+  [factory, "acquireExecutionProfileProvider", "providerTextScrub"],
+  [factory, "acquireExecutionProfileProvider", "withholdProviderError"],
+  [factory, "removeProvider", "withholdProviderError"],
+  [factory, "closeCaches", "withholdProviderError"],
 ];
 
 /** The reason a read of an inventory snapshot's provider sentence is no crossing of its own. */
@@ -572,6 +642,15 @@ const NOT_PROVIDER_TEXT: Readonly<Record<string, string>> = {
     "the source reader, whose document the source route answers through scrubSourceDocument",
   [`${childHandlers}: selectStatement: provider.describeObject`]:
     "a description of which selectStatement reads only the columns, database content",
+};
+
+/**
+ * Every factory log line that renders a caught value without `withholdProviderError`, with the reason it is no provider
+ * text. A key names one line, so a second line that renders the same value in the same declaration is a finding.
+ */
+const FACTORY_LOG_NOT_PROVIDER_TEXT: Readonly<Record<string, string>> = {
+  [`${factory}: removeProvider: logger.warn(error)`]:
+    "closeSSHTunnel's AggregateError, whose name and message are Studio's (the count of forwards that failed to close and the connection id); String renders none of its inner errors",
 };
 
 describe("the one scrub of provider text", () => {
@@ -664,6 +743,40 @@ describe("the one scrub of provider text", () => {
       return !SENTENCE_ANSWERS[member].every((scrub) => calls?.has(scrub));
     });
     expect(withoutTheirScrubs).toEqual([]);
+  });
+
+  test("the scan finds a log line that renders a caught failure, marked when withholdProviderError withholds it", () => {
+    const planted = [
+      "function closeAll(entry, settled) {",
+      "  try { run(); } catch (error) {",
+      '    logger.warn("x", { connectionId, error: String(error) });',
+      '    logger.warn("y", { error: String(withholdProviderError(entry.scrub, error)) });',
+      '    logger.error("z", error, { connectionId });',
+      "  }",
+      '  promise.catch((failure) => console.error("w", id, failure));',
+      '  settled.forEach((close) => logger.warn("v", { error: String(close.reason) }));',
+      '  logger.info("u", { error: other.error });',
+      "}",
+    ].join("\n");
+    expect(scan("planted.ts", planted).caughtLogs).toEqual([
+      "planted.ts: closeAll: logger.warn(error)",
+      "planted.ts: closeAll: logger.warn(error, scrub)",
+      "planted.ts: closeAll: logger.error(error)",
+      "planted.ts: closeAll: console.error(failure)",
+      "planted.ts: closeAll: logger.warn(close.reason)",
+    ]);
+  });
+
+  test("every log line of the provider factory renders a failure it caught only through withholdProviderError, or is classified", () => {
+    const lines = censusOf(factory).caughtLogs;
+    expect(
+      lines.filter((line) => !line.endsWith(", scrub)") && !Object.hasOwn(FACTORY_LOG_NOT_PROVIDER_TEXT, line)),
+    ).toEqual([]);
+    // Each classification names exactly one line: one that is gone keeps no reason, and a second line of the same
+    // declaration, callee and value is a line of its own, which needs its own reason.
+    expect(
+      Object.keys(FACTORY_LOG_NOT_PROVIDER_TEXT).filter((key) => lines.filter((line) => line === key).length !== 1),
+    ).toEqual([]);
   });
 
   test("every route that resolves a connection is on the paths the census covers", () => {
