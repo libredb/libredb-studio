@@ -7,8 +7,8 @@
  * package's own and which the host never reads.
  *
  * The SDK declares each shape the contexts share with Studio's own source (`TlsSettings`, `EgressDecision`,
- * `TrustMaterial`, `PoolSettings`) itself, because a package imports nothing from Studio; a census in Studio's tests
- * holds each one mutually assignable with Studio's type.
+ * `TrustMaterial`, `PoolSettings`, `TunnelFarEnd`, `AdmittedHostPaths`) itself, because a package imports nothing from
+ * Studio; a census in Studio's tests holds each one mutually assignable with Studio's type.
  */
 import type {
   ConsoleCalls,
@@ -83,6 +83,21 @@ export interface PoolSettings {
   readonly acquireTimeout: number;
 }
 
+/** Where core's SSH tunnel forwards to: the address the connection named before core rewrote `host` and `port`. */
+export interface TunnelFarEnd {
+  readonly host: string;
+  readonly port: number;
+}
+
+/**
+ * The files on the host the connection's host path fields name, as core admitted them: an absolute path per field the
+ * connection sets.
+ */
+export interface AdmittedHostPaths {
+  readonly clientCertificatePath?: string;
+  readonly clientPrivateKeyPath?: string;
+}
+
 /** One value of a connection field, as the connection holds it. */
 export type ConnectionFieldValue = string | number | boolean | readonly string[];
 
@@ -99,17 +114,42 @@ export interface OpenPolicy {
   readonly allowExternalFileAccess: boolean;
   /** The connection's read-only mode: refuse every write before anything is sent. */
   readonly refuseWrites: boolean;
+  /**
+   * The connection is an operator's seed, its `managed` flag exactly true. With `literalSeedFile` false the server side
+   * wrote its credential text, the one case a provider may sign in with the server's own identity.
+   */
+  readonly managed: boolean;
+  /**
+   * The connection is a row of a seed file read in literal mode, which a platform writes from data its users control,
+   * so it is never server-written, whatever `managed` says.
+   */
+  readonly literalSeedFile: boolean;
 }
 
 /** What `open` is given. */
 export interface OpenContext extends CallContext {
   /** The engine, of those the manifest declares, the connection is opened as. */
   readonly engine: EngineId;
+  /** The connection's id, the same across every session the host opens for it. */
+  readonly connectionId: string;
+  /** The id of the operator seed the connection came from, where it came from one. */
+  readonly seedId?: string;
   /**
    * The connection's fields as the host rewrote them: a tunnel's local endpoint replaces `host` and `port`, and an
    * agent credential replaces `user` and `password`.
    */
   readonly connection: ConnectionFieldValues;
+  /** Where the tunnel core opened forwards to; present only when the session runs through one. */
+  readonly tunnelFarEnd?: TunnelFarEnd;
+  /** The route of the connection's SSH tunnel, its switch, bastion and user length-framed; present when it has one. */
+  readonly tunnelRoute?: string;
+  /**
+   * The file a local-file engine opens, as core admitted it: an absolute path, or `:memory:`. The provider opens it and
+   * resolves nothing itself; the `database` and `connectionString` fields stay as the connection holds them.
+   */
+  readonly admittedFile?: string;
+  /** The files the connection's host path fields name, as core admitted them. */
+  readonly admittedHostPaths?: AdmittedHostPaths;
   readonly tls?: TlsSettings;
   readonly egress: EgressDecision;
   readonly trust: TrustMaterial;

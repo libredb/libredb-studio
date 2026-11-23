@@ -3,6 +3,11 @@
  * the provider contract's calls, or a stated reason it stays with the host (docs/providers/CONTRACT.md, clause C-7).
  * So a provider moves onto the contract without a behaviour change.
  *
+ * A provider is built from the connection's fields and from the marks core sets beside them under symbol keys: the
+ * tunnel's far end and route, the literal seed-file mark (`ProviderConnection` in src/lib/db/provider-connection.ts),
+ * and the files core admitted (`admittedFileConnection` and `admittedHostPathConnection` in
+ * src/lib/db/provider-files.ts). The connection census covers the fields and the mark census covers the marks.
+ *
  * The census is exhaustive by type. Each record below is a `Record` over the keys of a Studio type, so a new key fails
  * `bun run typecheck` here until it is placed, and every placement names its contract member as a key of the SDK's own
  * type, so a placement naming a member the SDK does not have fails typecheck too. The tests read the records at run
@@ -25,10 +30,12 @@ import type {
   ResultSource,
   TlsSettings,
   TrustMaterial as SdkTrustMaterial,
+  TunnelFarEnd as SdkTunnelFarEnd,
   VectorColumnShape,
   Warning,
 } from "@libredb/provider-sdk/calls";
 import type { FieldName } from "@libredb/provider-sdk/manifest";
+import type { ProviderConnection } from "@/lib/db/provider-connection";
 import type { QueryCancelProvider } from "@/lib/db/query-cancel";
 import type {
   DatabaseProvider,
@@ -42,7 +49,17 @@ import type {
   TrustMaterial,
 } from "@/lib/db/types";
 import type { VectorColumn } from "@/lib/db/vector/types";
-import type { DatabaseConnection, QueryResult, QueryResultSet, QueryWarning, SSLConfig } from "@/lib/types";
+import type {
+  DatabaseConnection,
+  QueryResult,
+  QueryResultSet,
+  QueryWarning,
+  SSLConfig,
+  TunnelFarEnd,
+  WithAdmittedFile,
+  WithAdmittedHostPaths,
+} from "@/lib/types";
+import { ADMITTED_FILE, ADMITTED_HOST_PATHS, LITERAL_SEED_FILE, TUNNEL_FAR_END, TUNNEL_ROUTE } from "@/lib/types";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 const SCHEMA = JSON.parse(
@@ -75,7 +92,10 @@ type ConsolePlacement =
   | { readonly where: "console-call"; readonly call: "execute" | ConsoleFacet; readonly note?: string }
   | HostOnly;
 
-const CONNECTION_FIELD: ConnectionField = { where: "connection" };
+/** The placement of a key the open context carries as a connection field. */
+function connectionField(): ConnectionField {
+  return { where: "connection" };
+}
 
 /** Only a key that is a contract field name may be carried as a connection field. */
 type ConnectionCensus = {
@@ -83,16 +103,20 @@ type ConnectionCensus = {
 };
 
 const CONNECTION_CENSUS = {
-  id: { where: "host", reason: "The connection's id is core's record key; a provider never names its connection." },
+  id: {
+    where: "open-context",
+    member: "connectionId",
+    note: "the same across every session of the connection, so a provider keys state it keeps between sessions on it",
+  },
   name: { where: "host", reason: "The connection's name is presentation core draws, never read by a provider." },
   type: { where: "open-context", member: "engine", note: "the engine id the package serves the connection as" },
-  host: CONNECTION_FIELD,
-  port: CONNECTION_FIELD,
-  user: CONNECTION_FIELD,
-  password: CONNECTION_FIELD,
-  database: CONNECTION_FIELD,
-  schema: CONNECTION_FIELD,
-  connectionString: CONNECTION_FIELD,
+  host: connectionField(),
+  port: connectionField(),
+  user: connectionField(),
+  password: connectionField(),
+  database: connectionField(),
+  schema: connectionField(),
+  connectionString: connectionField(),
   queryTimeout: {
     where: "host",
     reason: "The host turns the connection's statement timeout into the deadline of each call it makes.",
@@ -107,37 +131,41 @@ const CONNECTION_CENSUS = {
     reason:
       "Core opens the SSH tunnel itself and hands the provider the tunnel's local endpoint as the host and port fields.",
   },
-  serviceName: CONNECTION_FIELD,
-  instanceName: CONNECTION_FIELD,
-  localDataCenter: CONNECTION_FIELD,
-  authSource: CONNECTION_FIELD,
-  saslMechanism: CONNECTION_FIELD,
-  allowInsecureAuth: CONNECTION_FIELD,
-  dataServers: CONNECTION_FIELD,
-  warehouse: CONNECTION_FIELD,
-  region: CONNECTION_FIELD,
-  apiPath: CONNECTION_FIELD,
-  namespaces: CONNECTION_FIELD,
-  tlsServerName: CONNECTION_FIELD,
-  securityMode: CONNECTION_FIELD,
-  serverCertificateThumbprint: CONNECTION_FIELD,
-  securityPolicyUri: CONNECTION_FIELD,
-  clientCertificatePath: CONNECTION_FIELD,
-  clientPrivateKeyPath: CONNECTION_FIELD,
-  location: CONNECTION_FIELD,
-  amqpPort: CONNECTION_FIELD,
-  authMethod: CONNECTION_FIELD,
-  privateKey: CONNECTION_FIELD,
-  privateKeyPassphrase: CONNECTION_FIELD,
-  hostKeyFingerprint: CONNECTION_FIELD,
-  role: CONNECTION_FIELD,
+  serviceName: connectionField(),
+  instanceName: connectionField(),
+  localDataCenter: connectionField(),
+  authSource: connectionField(),
+  saslMechanism: connectionField(),
+  allowInsecureAuth: connectionField(),
+  dataServers: connectionField(),
+  warehouse: connectionField(),
+  region: connectionField(),
+  apiPath: connectionField(),
+  namespaces: connectionField(),
+  tlsServerName: connectionField(),
+  securityMode: connectionField(),
+  serverCertificateThumbprint: connectionField(),
+  securityPolicyUri: connectionField(),
+  clientCertificatePath: connectionField(),
+  clientPrivateKeyPath: connectionField(),
+  location: connectionField(),
+  amqpPort: connectionField(),
+  authMethod: connectionField(),
+  privateKey: connectionField(),
+  privateKeyPassphrase: connectionField(),
+  hostKeyFingerprint: connectionField(),
+  role: connectionField(),
   skipObjectScan: {
     where: "host",
     reason: "Whether the object panel scans on open is the editor's choice; no provider reads it.",
   },
   readOnly: { where: "policy", member: "refuseWrites" },
-  managed: { where: "host", reason: "Whether an admin manages the connection is core's record, drawn by the UI." },
-  seedId: { where: "host", reason: "The seed the connection came from is core's record key." },
+  managed: { where: "policy", member: "managed" },
+  seedId: {
+    where: "open-context",
+    member: "seedId",
+    note: "a read-only source names a seed's refusal by it, and InfluxDB runs its read-only seed stage on it",
+  },
   agentUser: {
     where: "host",
     reason: "Core resolves the agent credential and hands it to the provider as the user and password fields.",
@@ -146,11 +174,25 @@ const CONNECTION_CENSUS = {
     where: "host",
     reason: "Core resolves the agent credential and hands it to the provider as the user and password fields.",
   },
-  agentReadRoots: CONNECTION_FIELD,
-  apiKeyId: CONNECTION_FIELD,
-  apiKeySecret: CONNECTION_FIELD,
-  registerMap: CONNECTION_FIELD,
+  agentReadRoots: connectionField(),
+  apiKeyId: connectionField(),
+  apiKeySecret: connectionField(),
+  registerMap: connectionField(),
 } as const satisfies ConnectionCensus;
+
+/** The marks core sets on the connection a provider is built from, beside its fields: its symbol keys. */
+type ConnectionMark = Exclude<
+  keyof (ProviderConnection & WithAdmittedFile & WithAdmittedHostPaths),
+  keyof DatabaseConnection
+>;
+
+const MARK_CENSUS = {
+  [TUNNEL_FAR_END]: { where: "open-context", member: "tunnelFarEnd" },
+  [TUNNEL_ROUTE]: { where: "open-context", member: "tunnelRoute" },
+  [LITERAL_SEED_FILE]: { where: "policy", member: "literalSeedFile" },
+  [ADMITTED_FILE]: { where: "open-context", member: "admittedFile" },
+  [ADMITTED_HOST_PATHS]: { where: "open-context", member: "admittedHostPaths" },
+} as const satisfies { readonly [K in ConnectionMark]: InputPlacement };
 
 const OPTIONS_CENSUS = {
   pool: { where: "open-context", member: "pool", note: "with core's defaults filled in" },
@@ -249,8 +291,9 @@ type Mutual<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 
 /** Every placement of every census, by census name and key. */
 function placements(): [string, string, InputPlacement | ConsolePlacement | ConnectionField][] {
-  const censuses: Record<string, Record<string, InputPlacement | ConsolePlacement | ConnectionField>> = {
+  const censuses: Record<string, Record<PropertyKey, InputPlacement | ConsolePlacement | ConnectionField>> = {
     DatabaseConnection: CONNECTION_CENSUS,
+    "connection marks": MARK_CENSUS,
     ProviderOptions: OPTIONS_CENSUS,
     ProviderBuildContext: BUILD_CONTEXT_CENSUS,
     QueryResult: RESULT_CENSUS,
@@ -261,10 +304,10 @@ function placements(): [string, string, InputPlacement | ConsolePlacement | Conn
     "query arguments": QUERY_ARGUMENT_CENSUS,
   };
   return Object.entries(censuses).flatMap(([census, entries]) =>
-    Object.entries(entries).map(([key, placement]): [string, string, (typeof entries)[string]] => [
+    Reflect.ownKeys(entries).map((key): [string, string, (typeof entries)[PropertyKey]] => [
       census,
-      key,
-      placement,
+      typeof key === "symbol" ? String(key.description) : key,
+      entries[key],
     ]),
   );
 }
@@ -281,6 +324,14 @@ describe("the call surface census", () => {
     expect([...fieldNames].filter((name) => !connectionFields.includes(name))).toEqual([]);
     expect(Object.keys(BUILD_CONTEXT_CENSUS)).toContain("egress");
     expect(Object.keys(OPTIONS_CENSUS)).toEqual(["pool", "queryTimeout", "ssl", "timezone"]);
+    expect(Reflect.ownKeys(MARK_CENSUS)).toEqual([
+      TUNNEL_FAR_END,
+      TUNNEL_ROUTE,
+      LITERAL_SEED_FILE,
+      ADMITTED_FILE,
+      ADMITTED_HOST_PATHS,
+    ]);
+    expect(placements().filter(([census]) => census === "connection marks")).toHaveLength(5);
   });
 
   test("every member of today's console answer and request has a place in the console calls", () => {
@@ -305,11 +356,16 @@ describe("the call surface census", () => {
       Mutual<SdkEgressDecision, EgressDecision>,
       Mutual<SdkTrustMaterial, TrustMaterial>,
       Mutual<PoolSettings, PoolConfig>,
+      Mutual<SdkTunnelFarEnd, TunnelFarEnd>,
+      Mutual<
+        NonNullable<OpenContext["admittedHostPaths"]>,
+        NonNullable<WithAdmittedHostPaths[typeof ADMITTED_HOST_PATHS]>
+      >,
       Mutual<Warning, QueryWarning>,
       Mutual<VectorColumnShape, VectorColumn>,
       Mutual<EndScopeAnswer["openTransaction"], OpenQueryTransactionOutcome>,
       Mutual<CancelAnswer["cancelled"], Awaited<ReturnType<QueryCancelProvider["cancelQuery"]>>>,
-    ] = [true, true, true, true, true, true, true, true];
+    ] = [true, true, true, true, true, true, true, true, true, true];
 
     // A sample of each shape crosses both ways, so the types above are not only declared but used.
     const tls: SSLConfig = { mode: "verify-full", caCert: "ca", rejectUnauthorized: true };
@@ -322,7 +378,12 @@ describe("the call surface census", () => {
     const sdkPool: PoolSettings = pool;
     const back: [SSLConfig, EgressDecision, TrustMaterial, PoolConfig] = [sdkTls, sdkEgress, sdkTrust, sdkPool];
 
-    expect(parity).toEqual([true, true, true, true, true, true, true, true]);
+    const farEnd: TunnelFarEnd = { host: "db.internal", port: 5432 };
+    const sdkFarEnd: SdkTunnelFarEnd = farEnd;
+    const farEndBack: TunnelFarEnd = sdkFarEnd;
+
+    expect(parity).toEqual([true, true, true, true, true, true, true, true, true, true]);
     expect(back).toEqual([tls, egress, trust, pool]);
+    expect(farEndBack).toEqual(farEnd);
   });
 });

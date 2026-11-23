@@ -554,9 +554,7 @@ An engine facet for which this contract has no call yet, a monitoring panel, a m
 ### C-5 (normative): A package declares the request fields its execute honours
 
 A package lists in `calls.console.execute.honours` the optional request fields, of `EXECUTE_REQUEST_FIELDS`, its execute honours.
-The host sends no other, and sends `scope` only to a package that offers `console.endScope`.
-A provider that receives a field it does not honour answers a named error and never ignores it.
-The host's refusal of an undeclared field before the call, and the kit's check of a provider's answer, come with the test transport and the kit; until then those two sentences are stated, not checked.
+How the host and a provider use that list is C-8, which no test checks yet.
 
 - schema `/$defs/executeCall/properties/honours`
 - schema `/$defs/executeRequestField`
@@ -577,11 +575,18 @@ A later check of the kit runs each package in an environment poisoned with proxy
 
 Every input a provider is built with today, and every member of today's console request and answer, has a place in the calls, or a stated reason it stays with the host.
 So a provider moves onto the contract without a behaviour change.
-A census over Studio's own types holds this, and the shapes the open context shares with Studio, the TLS settings, the egress decision, the trust material and the pool settings, are each mutually assignable with Studio's own.
+A provider is built from the connection's fields and from the marks core sets beside them under symbol keys: the tunnel's far end and route, the literal seed-file mark, the file core admitted and the host paths core admitted.
+A census over Studio's own types holds this, one record over the connection's fields and one over its marks, and the shapes the open context shares with Studio, the TLS settings, the egress decision, the trust material, the pool settings, the tunnel's far end and the admitted host paths, are each mutually assignable with Studio's own.
 
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every input a provider is built with has a place in the open context or a reason it stays with the host"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's console answer and request has a place in the console calls"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "the context's shared shapes are Studio's own"
+
+### C-8 (informative): The host sends only the request fields a package honours
+
+The host sends a package no optional request field outside its `honours` list, and sends `scope` only to a package that offers `console.endScope`.
+A provider that receives a field it does not honour answers a named error and never ignores it.
+The host's refusal of an undeclared field arrives with the test transport, and the check of a provider's answer with the kit; until then this clause is informative.
 
 ## Not yet in this contract
 
