@@ -261,11 +261,11 @@ export async function POST(req: NextRequest) {
     // The DuckDB editor file-access posture rides on the server-derived execution context: an
     // admin keeps the full editor reach, every other role opens with external access off, and so
     // does every role on a seed a non-admin role can use, whose one handle they share (non-admin DuckDB file access).
-    // The open is waited for within the call's open allowance and while the request stays (`openWithinCall`): a wait
+    // The open is waited for within its engine's connect budget and while the request stays (`openWithinCall`): a wait
     // that ends answers 504 or 499, not-sent, and the open goes on for the next request.
     // `resolved` holds the connection narrowed for the callback, which TypeScript does not narrow `connection` in.
     const resolved = connection;
-    const provider = await openWithinCall(req.signal, (wait) =>
+    const provider = await openWithinCall(req.signal, resolved.type, (wait) =>
       editorProvider(guard.session, resolved, requestCatalog(body), wait),
     );
 

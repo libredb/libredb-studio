@@ -148,6 +148,12 @@ describe("the query route's open wait, with the real factory", () => {
       database: "studio",
     };
     budgetOverride = 40;
+    // Each open dials on its own schedule, which may be after its request was answered: the case waits for two dials.
+    const twoDials = new Promise<void>((resolve) => {
+      dialed = () => {
+        if (accepted.length === 2) resolve();
+      };
+    });
     const warn = spyOn(logger, "warn").mockImplementation(() => {});
     try {
       const ask = async () => {
@@ -162,6 +168,10 @@ describe("the query route's open wait, with the real factory", () => {
       };
 
       const first = await ask();
+      // The request's own wait starts before the open's and ends a few milliseconds earlier, so a request sent at once
+      // could still join the first open. That open started before the first answer, so its deadline passed at most
+      // one budget after it: the second request is sent after twice that, with a plain await.
+      await new Promise<void>((resolve) => setTimeout(resolve, 80));
       const second = await ask();
 
       for (const answer of [first, second]) {
@@ -172,6 +182,7 @@ describe("the query route's open wait, with the real factory", () => {
           outcome: "not-sent",
         });
       }
+      await twoDials;
       expect(accepted).toHaveLength(2);
     } finally {
       warn.mockRestore();

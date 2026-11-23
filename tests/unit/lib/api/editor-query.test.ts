@@ -5,7 +5,6 @@ import {
   type EditorQueryRefusal,
   EXECUTE_SLACK_MS,
   executeDeadline,
-  OPEN_WAIT_MS,
   openWithinCall,
   runEditorQuery,
 } from "@/lib/api/editor-query";
@@ -24,14 +23,9 @@ import {
 } from "@/lib/db/errors";
 import { logger } from "@/lib/logger";
 import { PROVIDER_TEXT_WITHHELD, providerTextScrub } from "@/lib/db/operations/provider-text";
-import {
-  DEFAULT_POOL_CONFIG,
-  type DatabaseProvider,
-  type PreparedQuery,
-  type QueryPrepareOptions,
-} from "@/lib/db/types";
+import type { DatabaseProvider, PreparedQuery, QueryPrepareOptions } from "@/lib/db/types";
 import { appendedBoundNote, applyQueryLimit } from "@/lib/db/utils/query-limiter";
-import type { DatabaseConnection, QueryResult } from "@/lib/types";
+import type { DatabaseConnection, DatabaseType, QueryResult } from "@/lib/types";
 import { createMockProvider } from "../../../helpers/mock-provider";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../../../helpers/stand-in-vocabulary";
 import { serverOnlyReach, valueImportClosure } from "../../../helpers/value-import-closure";
@@ -815,8 +809,9 @@ describe("runEditorQuery on the host core", () => {
 });
 
 describe("the editor call's open wait", () => {
-  const OPEN_SENTENCE =
-    "The connection did not open within 70 seconds, so Studio stopped waiting for it and sent nothing.";
+  /** Studio's sentence for an open its engine's budget of `seconds` ended. */
+  const OPEN_SENTENCE = (seconds: number) =>
+    `The connection did not open within ${seconds} seconds, so Studio stopped waiting for it and sent nothing.`;
   /** An open that settles only when its wait ends, rejecting with the wait's reason, as `openOnce` does. */
   const openUntilWaitEnds = (seen: OpenWait[]) => (wait: OpenWait) => {
     seen.push(wait);
@@ -825,18 +820,42 @@ describe("the editor call's open wait", () => {
       else wait.signal.addEventListener("abort", () => reject(wait.signal.reason), { once: true });
     });
   };
-  /** A `now` far enough back that the call's open allowance has already passed. */
-  const allowancePassed = () => Date.now() - OPEN_WAIT_MS - 1_000;
+  /** A `now` far enough back that the open allowance of `budgetMs` has already passed. */
+  const allowancePassed = (budgetMs = 70_000) => Date.now() - budgetMs - 1_000;
 
-  test("the open allowance is the pools' acquire bound plus ten seconds", () => {
-    expect(OPEN_WAIT_MS).toBe(DEFAULT_POOL_CONFIG.acquireTimeout + 10_000);
-    expect(OPEN_WAIT_MS).toBe(70_000);
+  test("the open allowance is the engine's connect budget", async () => {
+    const opened = { opened: true };
+    /** Whether the wait `type`'s open is handed, from a `now` `ago` ms back, had already aborted when it was handed. */
+    const abortedAt = async (type: DatabaseType, ago: number): Promise<boolean> => {
+      let aborted: boolean | undefined;
+      await openWithinCall(
+        new AbortController().signal,
+        type,
+        async (wait) => {
+          aborted = wait.signal.aborted;
+          return opened;
+        },
+        Date.now() - ago,
+      );
+      return aborted as boolean;
+    };
+    const budgets: readonly (readonly [DatabaseType, number])[] = [
+      ["postgres", 70_000],
+      ["bigquery", 140_000],
+      ["snowflake", 80_000],
+    ];
+
+    const seen = await Promise.all(
+      budgets.map(async ([type, budget]) => [await abortedAt(type, budget - 1_000), await abortedAt(type, budget + 1)]),
+    );
+
+    expect(seen).toEqual(budgets.map(() => [false, true]));
   });
 
   test("an open is handed the call's own wait, which the caller's leaving or the allowance ends", async () => {
     const opened = { opened: true };
     const seen: OpenWait[] = [];
-    const answered = await openWithinCall(new AbortController().signal, async (wait) => {
+    const answered = await openWithinCall(new AbortController().signal, "postgres", async (wait) => {
       seen.push(wait);
       return opened;
     });
@@ -844,7 +863,7 @@ describe("the editor call's open wait", () => {
     expect(seen[0]?.signal.aborted).toBe(false);
 
     const caller = new AbortController();
-    const leaving = openWithinCall(caller.signal, openUntilWaitEnds(seen)).catch((error: unknown) => error);
+    const leaving = openWithinCall(caller.signal, "postgres", openUntilWaitEnds(seen)).catch((error: unknown) => error);
     const reason = new Error(`left ${crypto.randomUUID()}`);
     caller.abort(reason);
     await leaving;
@@ -853,6 +872,7 @@ describe("the editor call's open wait", () => {
     // An opener that ignores its wait is answered as it is; the allowance had passed before it was called.
     const late = await openWithinCall(
       new AbortController().signal,
+      "postgres",
       async (wait) => {
         seen.push(wait);
         return opened;
@@ -867,7 +887,7 @@ describe("the editor call's open wait", () => {
 
   test("an open the caller left answers QueryCancelledError, not-sent", async () => {
     const caller = new AbortController();
-    const leaving = openWithinCall(caller.signal, openUntilWaitEnds([])).catch((error: unknown) => error);
+    const leaving = openWithinCall(caller.signal, "postgres", openUntilWaitEnds([])).catch((error: unknown) => error);
     caller.abort(new DOMException("The request went away.", "AbortError"));
 
     const caught = await leaving;
@@ -878,26 +898,38 @@ describe("the editor call's open wait", () => {
     expect(errorKind(caught)).toBe("cancelled");
   });
 
-  test("an open past its allowance answers StudioTimeoutRefusal naming the open, not-sent", async () => {
-    const caught = await openWithinCall(new AbortController().signal, openUntilWaitEnds([]), allowancePassed()).catch(
-      (error: unknown) => error,
+  test("an open past its allowance answers StudioTimeoutRefusal naming the engine's budget, not-sent", async () => {
+    const [bigquery, postgres] = await Promise.all(
+      (
+        [
+          ["bigquery", 140_000],
+          ["postgres", 70_000],
+        ] as const
+      ).map(([type, budget]) =>
+        openWithinCall(new AbortController().signal, type, openUntilWaitEnds([]), allowancePassed(budget)).catch(
+          (error: unknown) => error,
+        ),
+      ),
     );
 
-    expect(caught).toBeInstanceOf(StudioTimeoutRefusal);
-    expect((caught as Error).message).toBe(OPEN_SENTENCE);
-    expect(errorOutcome(caught)).toBe("not-sent");
-    expect(databaseErrorBody(caught)?.body).toMatchObject({
-      code: "TIMEOUT_ERROR",
-      statusCode: 504,
-      kind: "studio-timeout-refusal",
-      outcome: "not-sent",
-    });
+    expect(bigquery).toBeInstanceOf(StudioTimeoutRefusal);
+    expect((bigquery as Error).message).toBe(OPEN_SENTENCE(140));
+    expect((postgres as Error).message).toBe(OPEN_SENTENCE(70));
+    for (const caught of [bigquery, postgres]) {
+      expect(errorOutcome(caught)).toBe("not-sent");
+      expect(databaseErrorBody(caught)?.body).toMatchObject({
+        code: "TIMEOUT_ERROR",
+        statusCode: 504,
+        kind: "studio-timeout-refusal",
+        outcome: "not-sent",
+      });
+    }
   });
 
   test("an open's own failure passes as the same object", async () => {
     const refused = new ConnectionError(`refused by ${crypto.randomUUID()}`, "postgres");
     markNotSent(refused);
-    const caught = await openWithinCall(new AbortController().signal, async () => {
+    const caught = await openWithinCall(new AbortController().signal, "postgres", async () => {
       throw refused;
     }).catch((error: unknown) => error);
     expect(caught).toBe(refused);
@@ -907,7 +939,7 @@ describe("the editor call's open wait", () => {
     const caller = new AbortController();
     caller.abort(new DOMException("The request went away.", "AbortError"));
     const own = new ConnectionError(`refused by ${crypto.randomUUID()}`, "postgres");
-    const ownCaught = await openWithinCall(caller.signal, async () => {
+    const ownCaught = await openWithinCall(caller.signal, "postgres", async () => {
       throw own;
     }).catch((error: unknown) => error);
     expect(ownCaught).toBe(own);

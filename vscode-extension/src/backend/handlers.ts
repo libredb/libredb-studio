@@ -275,8 +275,9 @@ export function createHandlers(
   // As handleObjectRequest (src/lib/api/object-route.ts) resolves it: the cached provider, or a new one opened from
   // the record after the idle sweep closed the old one. Engine-shape checks of a path stay with the provider.
   const providerOf = (record: OpenRecord) => factory.getOrCreateProvider(record.connection, {}, record.posture);
-  // The same provider, waited for only within an editor call's open wait (`openWithinCall`), as the query and cancel
-  // routes wait for theirs: the call stops waiting when the wait ends, and the open goes on for the next call.
+  // The same provider, waited for only within an editor call's open wait, its engine's connect budget
+  // (`openWithinCall`), as the query and cancel routes wait for theirs: the call stops waiting when the wait ends, and
+  // the open goes on for the next call.
   const providerWithin = (record: OpenRecord, wait: OpenWait) =>
     factory.getOrCreateProvider(record.connection, {}, record.posture, wait);
 
@@ -476,7 +477,7 @@ export function createHandlers(
       try {
         return await answeringFor(record.connection, async () => {
           const provider = await scopeToCatalog(
-            await openWithinCall(controller.signal, (wait) => providerWithin(record, wait)),
+            await openWithinCall(controller.signal, record.connection.type, (wait) => providerWithin(record, wait)),
             catalog,
           );
           const { body, resultSetCount } = await runEditorQuery(provider, {
@@ -510,7 +511,9 @@ export function createHandlers(
       if (token.isCancellationRequested) controller.abort();
       try {
         return await answeringFor(record.connection, async () => {
-          const provider = await openWithinCall(controller.signal, (wait) => providerWithin(record, wait));
+          const provider = await openWithinCall(controller.signal, record.connection.type, (wait) =>
+            providerWithin(record, wait),
+          );
           // Through the provider host core's cancel call, bounded by its cleanup deadline and the request's signal.
           const answer = await cancelEditorRun(provider, queryId, controller.signal, CANCEL_ROUTE);
           if (!answer.offered) {

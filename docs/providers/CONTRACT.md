@@ -1660,7 +1660,7 @@ An open a removal or a close of the caches overtook closes what it opened exactl
 A close of the caches overtakes every open that settles while it runs, one that started after it began included, so it leaves no provider admitted and drops none without a close.
 An open that fails with no caller left is handled by the host, never left as a detached rejection: it is logged by its connection, the error's kind and its code, never its text.
 A caller passes its own wait as the fourth argument of `getOrCreateProvider`.
-The editor's query and its cancel, in the routes and in the VS Code backend, wait for their provider's open at most `OPEN_WAIT_MS`, the pools' 60 s connect bound plus 10 s, or until their caller leaves, whichever comes first.
+The editor's query and its cancel, in the routes and in the VS Code backend, wait for their provider's open at most their engine's connect budget, M-51, or until their caller leaves, whichever comes first.
 
 - test `tests/unit/lib/provider-host/core/open-once.test.ts` "concurrent callers of one key share one open"
 - test `tests/unit/lib/provider-host/core/open-once.test.ts` "a failed open reaches every caller and frees its key"
@@ -1812,10 +1812,10 @@ A refused offset and refused params of a session that refuses a field arrive wit
 - test `tests/unit/lib/provider-host/access.test.ts` "a row no page can hold is answered as StudioByteBudgetRefusal, outcome unknown"
 - test `tests/unit/lib/provider-host/access.test.ts` "any other refusal is a host defect named by its rule"
 - test `tests/unit/lib/provider-host/access.test.ts` "every class the accessor builds is the calling bundle's own"
-- test `tests/unit/lib/api/editor-query.test.ts` "the open allowance is the pools' acquire bound plus ten seconds"
+- test `tests/unit/lib/api/editor-query.test.ts` "the open allowance is the engine's connect budget"
 - test `tests/unit/lib/api/editor-query.test.ts` "an open is handed the call's own wait, which the caller's leaving or the allowance ends"
 - test `tests/unit/lib/api/editor-query.test.ts` "an open the caller left answers QueryCancelledError, not-sent"
-- test `tests/unit/lib/api/editor-query.test.ts` "an open past its allowance answers StudioTimeoutRefusal naming the open, not-sent"
+- test `tests/unit/lib/api/editor-query.test.ts` "an open past its allowance answers StudioTimeoutRefusal naming the engine's budget, not-sent"
 - test `tests/unit/lib/api/editor-query.test.ts` "an open's own failure passes as the same object"
 - test `tests/api/db/query.test.ts` "a request that leaves while its connection opens answers 499 not-sent and runs nothing"
 

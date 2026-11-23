@@ -8,16 +8,12 @@ import {
 } from "@libredb/provider-sdk/calls";
 import { firstResultSet } from "@/lib/api/first-result-set";
 import { pageOfProbe, pageOptionError } from "@/lib/api/page-probe";
+import { connectBudgetFor, openDeadlineSentence } from "@/lib/db/connect-budget";
 import { consoleTextByteLimit, consoleTextOverLimit } from "@/lib/db/destructive-commands";
 import { errorCode, errorKind } from "@/lib/db/error-record";
 import { QueryCancelledError, waitedSeconds } from "@/lib/db/errors";
 import { type ProviderTextScrub, withScrubbedWarnings } from "@/lib/db/operations/provider-text";
-import {
-  DEFAULT_POOL_CONFIG,
-  DEFAULT_QUERY_TIMEOUT,
-  type DatabaseProvider,
-  type QueryPrepareOptions,
-} from "@/lib/db/types";
+import { DEFAULT_QUERY_TIMEOUT, type DatabaseProvider, type QueryPrepareOptions } from "@/lib/db/types";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { logger } from "@/lib/logger";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
@@ -160,36 +156,31 @@ export function executeDeadline(provider: Pick<DatabaseProvider, "config">, now:
 }
 
 /**
- * How long an editor call waits for its provider's open: the pools' connect bound, `acquireTimeout` (60 s), plus 10 s
- * for the provider's own connect failure to arrive after it, so a provider that bounds its connect answers in its own
- * words, as `EXECUTE_SLACK_MS` lets the engine's own timeout win. The open has its own allowance and the execute keeps
- * its own deadline, which starts once the provider resolved.
- */
-export const OPEN_WAIT_MS = DEFAULT_POOL_CONFIG.acquireTimeout + 10_000;
-
-/** Studio's sentence for an open its allowance ended. */
-const OPEN_DEADLINE_SENTENCE = `The connection did not open within ${waitedSeconds(OPEN_WAIT_MS)}, so Studio stopped waiting for it and sent nothing.`;
-
-/**
- * Resolves an editor call's provider through `open`, waiting for it at most `OPEN_WAIT_MS` from `now` or until
- * `caller` aborts (docs/providers/CONTRACT.md, clauses C-44 and C-51). `open` is handed the call's open wait, which the
- * caller passes to `getOrCreateProvider`, so the call stops waiting while the open goes on for every other caller and
- * admits itself. A rejection with the wait's own reason answers this bundle's class (`openStopError`):
- * `QueryCancelledError` when the caller left, `StudioTimeoutRefusal` naming the open when the allowance ended, both
- * not-sent. Any other failure of the open passes as the same object, and an opener that answers despite its wait is
- * answered as it is.
+ * Resolves an editor call's provider through `open`, waiting for it at most its engine's connect budget from `now`
+ * (`connectBudgetFor`, src/lib/db/connect-budget.ts) or until `caller` aborts (docs/providers/CONTRACT.md, clauses
+ * C-44, C-51 and M-51). The budget is the engine's own connect bound plus 10 s for its connect failure to arrive, so a
+ * provider that bounds its connect answers in its own words, as `EXECUTE_SLACK_MS` lets the engine's own timeout win.
+ * `open` is handed the call's open wait, which the caller passes to `getOrCreateProvider`, so the call stops waiting
+ * while the open goes on for every other caller and admits itself. A rejection with the wait's own reason answers this
+ * bundle's class (`openStopError`): `QueryCancelledError` when the caller left, `StudioTimeoutRefusal` naming the
+ * engine's budget when the allowance ended, both not-sent. Any other failure of the open passes as the same object,
+ * and an opener that answers despite its wait is answered as it is. The open's own deadline, the same budget from the
+ * open's start (clause C-55), answers the same class and sentence. The execute keeps its own deadline, which starts
+ * once the provider resolved.
  */
 export async function openWithinCall<T>(
   caller: AbortSignal,
+  type: DatabaseType,
   open: (wait: OpenWait) => Promise<T>,
   now: number = Date.now(),
 ): Promise<T> {
-  const wait: OpenWait = { signal: deadlineSignal(now + OPEN_WAIT_MS, caller) };
+  const budget = connectBudgetFor(type);
+  const wait: OpenWait = { signal: deadlineSignal(now + budget, caller) };
   try {
     return await open(wait);
   } catch (error) {
     if (wait.signal.aborted && error === wait.signal.reason) {
-      throw openStopError(error, { caller, deadlineSentence: OPEN_DEADLINE_SENTENCE });
+      throw openStopError(error, { caller, deadlineSentence: openDeadlineSentence(budget) });
     }
     throw error;
   }
