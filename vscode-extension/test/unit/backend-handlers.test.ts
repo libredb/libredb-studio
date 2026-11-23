@@ -562,7 +562,7 @@ describe("object reads", () => {
 
   it("counts, lists and describes on the provider with the container, kind and path as sent", async () => {
     const { handlers, provider } = await opened();
-    assert.equal(await handlers.countObjects({ connectionId: "c1", container: ["app", "public"] }), COUNTS);
+    assert.deepEqual(await handlers.countObjects({ connectionId: "c1", container: ["app", "public"] }), COUNTS);
     assert.deepEqual(provider.calls.at(-1), ["countObjects", ["app", "public"]]);
     assert.equal(
       await handlers.listObjects({ connectionId: "c1", container: ["app", "public"], kind: "table" }),
@@ -574,6 +574,54 @@ describe("object reads", () => {
       DETAIL,
     );
     assert.deepEqual(provider.calls.at(-1), ["describeObject", ["app", "public", "orders"], "table"]);
+  });
+
+  it("answers an object count's and description's sentences that hold the connection's credential withheld, and the clean ones as the provider answered them", async () => {
+    const password = crypto.randomUUID();
+    const counts: Record<string, KindCount> = {
+      table: { unavailable: `permission denied for ${password}` },
+      view: { count: 3, sampledFrom: `sampled by ${password}` },
+      index: { count: 2 },
+    };
+    const detail: ObjectDetail = {
+      path: ["app", "public", "orders"],
+      columns: [],
+      indexes: { unavailable: `pg_index is not readable by ${password}` },
+      foreignKeys: [],
+    };
+    const cleanCounts: Record<string, KindCount> = {
+      table: { unavailable: "permission denied" },
+      view: { count: 3, sampledFrom: "a sample" },
+    };
+    const cleanDetail: ObjectDetail = { ...detail, indexes: { unavailable: "pg_index is not readable" } };
+    let answer: { counts: Record<string, KindCount>; detail: ObjectDetail } = { counts, detail };
+    const made = backend(
+      fakeProvider({ countObjects: async () => answer.counts, describeObject: async () => answer.detail }),
+    );
+    await made.handlers.openConnection({
+      connection: { ...WIRE, password },
+      posture: { allowExternalFileAccess: false },
+    });
+    const counted = await made.handlers.countObjects({ connectionId: "c1", container: ["app", "public"] });
+    assert.deepEqual(counted, {
+      table: { unavailable: PROVIDER_TEXT_WITHHELD },
+      view: { count: 3, sampledFrom: PROVIDER_TEXT_WITHHELD },
+      index: { count: 2 },
+    });
+    const described = await made.handlers.describeObject({
+      connectionId: "c1",
+      path: ["app", "public", "orders"],
+      kind: "table",
+    });
+    assert.deepEqual(described, { ...detail, indexes: { unavailable: PROVIDER_TEXT_WITHHELD } });
+    assert.equal(JSON.stringify([counted, described]).includes(password), false);
+
+    answer = { counts: cleanCounts, detail: cleanDetail };
+    assert.deepEqual(await made.handlers.countObjects({ connectionId: "c1", container: ["app"] }), cleanCounts);
+    assert.deepEqual(
+      await made.handlers.describeObject({ connectionId: "c1", path: ["app", "public", "orders"], kind: "table" }),
+      cleanDetail,
+    );
   });
 
   it("refuses params it cannot read, naming the field, before resolving a provider", async () => {
