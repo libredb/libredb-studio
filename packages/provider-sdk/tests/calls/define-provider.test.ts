@@ -147,10 +147,114 @@ describe("checkProviderModule", () => {
 
   test("an implemented facet the manifest does not offer is refused as facet-undeclared", () => {
     const changed = record((r) => (r.impl.console.endScope = async () => ({ openTransaction: "none" })));
+    const undefinedKey = record((r) => (r.impl.console.endScope = undefined));
+    const expected = refusal("facet-undeclared", "/impl/console/endScope", { name: "console.endScope" });
 
-    expect(checkProviderModule(changed)).toEqual([
-      refusal("facet-undeclared", "/impl/console/endScope", { name: "console.endScope" }),
-    ]);
+    expect(checkProviderModule(changed)).toEqual([expected]);
+    expect(checkProviderModule(undefinedKey)).toEqual([expected]);
+    expect(definitionRefusalSentence(expected)).toBe(
+      'The implementation has the key console.endScope at "/impl/console/endScope", a console facet the manifest declares not-offered.',
+    );
+  });
+
+  test("an honours item that is no request field, or one listed twice, is refused as manifest-unreadable", () => {
+    const cases: [unknown[], string[]][] = [
+      [[1, "params"], ["/0"]],
+      [["params", "params"], ["/1"]],
+      [["rows", "offset"], ["/0"]],
+      [
+        ["rows", 1],
+        ["/0", "/1"],
+      ],
+    ];
+    const both = record((r) => (r.manifest.calls.console.execute.honours = ["params", "offset"]));
+    const none = record((r) => (r.manifest.calls.console.execute.honours = []));
+
+    for (const [honours, pointers] of cases) {
+      expect(checkProviderModule(record((r) => (r.manifest.calls.console.execute.honours = honours)))).toEqual(
+        pointers.map((at) => refusal("manifest-unreadable", `/manifest/calls/console/execute/honours${at}`)),
+      );
+    }
+    expect(checkProviderModule(both)).toEqual([]);
+    expect(checkProviderModule(none)).toEqual([]);
+  });
+
+  test("an honours list longer than the request fields is refused as manifest-unreadable at the list, and no item is read", () => {
+    let reads = 0;
+    const counted = (items: unknown[]): unknown[] =>
+      Object.defineProperty(items, "0", {
+        enumerable: true,
+        get() {
+          reads += 1;
+          return "params";
+        },
+      });
+
+    for (const honours of [
+      counted(["params", "offset", "params"]),
+      counted([1, 2, 3, 4, 5]),
+      ["params", "offset", "rows"],
+    ]) {
+      expect(checkProviderModule(record((r) => (r.manifest.calls.console.execute.honours = honours)))).toEqual([
+        refusal("manifest-unreadable", "/manifest/calls/console/execute/honours"),
+      ]);
+    }
+    expect(reads).toBe(0);
+  });
+
+  test("an accessor the check would read is refused as property-not-data, and its getter is never called", () => {
+    let calls = 0;
+    // A getter that counts its calls and throws, so a read of it both shows and stops the check.
+    const accessor = (target: object, key: string): void => {
+      Object.defineProperty(target, key, {
+        enumerable: true,
+        configurable: true,
+        get() {
+          calls += 1;
+          throw new Error(`the getter of ${key} was called`);
+        },
+      });
+    };
+    const cases: [(r: Json) => void, string][] = [
+      [(r) => accessor(r.impl, "open"), "/impl/open"],
+      [(r) => accessor(r.impl, "console"), "/impl/console"],
+      [(r) => accessor(r.impl.console, "cancel"), "/impl/console/cancel"],
+      [(r) => accessor(r.impl.console, "execute"), "/impl/console/execute"],
+      [(r) => accessor(r.manifest, "calls"), "/manifest/calls"],
+      [(r) => accessor(r.manifest.calls.console.execute, "honours"), "/manifest/calls/console/execute/honours"],
+      [(r) => accessor(r.manifest.calls.console.execute.honours, "0"), "/manifest/calls/console/execute/honours/0"],
+      [(r) => accessor(r.manifest.engines, "0"), "/manifest/engines/0"],
+      [
+        (r) => accessor(r.manifest.engines[0].facets.monitoring, "storage"),
+        "/manifest/engines/0/facets/monitoring/storage",
+      ],
+    ];
+
+    for (const [change, pointer] of cases) {
+      const changed = record(change);
+      expect(checkProviderModule(changed)).toEqual([refusal("property-not-data", pointer)]);
+
+      let thrown: unknown;
+      try {
+        defineProvider(changed.manifest, changed.impl);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(ProviderDefinitionError);
+      expect((thrown as ProviderDefinitionError).refusals).toEqual([refusal("property-not-data", pointer)]);
+    }
+    const recordKeys: [string, string][] = [
+      ["impl", "/impl"],
+      ["manifest", "/manifest"],
+      ["contract", "/contract"],
+    ];
+    for (const [key, pointer] of recordKeys) {
+      const changed = record((r) => accessor(r, key));
+      expect(checkProviderModule(changed)).toEqual([refusal("property-not-data", pointer)]);
+    }
+    const manifestContract = record((r) => accessor(r.manifest, "contract"));
+    expect(checkProviderModule(manifestContract)).toEqual([refusal("property-not-data", "/manifest/contract")]);
+    expect(calls).toBe(0);
   });
 
   test("a mandatory call that is missing or no function is refused as call-missing", () => {
@@ -337,9 +441,20 @@ describe("definitionRefusalSentence", () => {
 
         expect(sentence).toMatch(/^[A-Z][^\n]*\.$/);
         expect(sentence).not.toMatch(/\. [A-Z]/);
-        expect(sentence).toContain("/impl/console/cancel");
+        expect(sentence).toContain('"/impl/console/cancel"');
       }
     }
+  });
+
+  test("quotes the pointer as a JSON string, so a key with a line break stays on one line", () => {
+    const [unknownKey] = checkProviderModule(record((r) => (r.impl["a\nb"] = async () => ({}))));
+
+    expect(unknownKey).toEqual(refusal("impl-key-unknown", "/impl/a\nb", { key: "a\nb" }));
+    const sentence = definitionRefusalSentence(unknownKey);
+    expect(sentence).not.toContain("\n");
+    expect(sentence).toBe(
+      'The implementation has the key "a\\nb" at "/impl/a\\nb", for which the provider contract defines no call.',
+    );
   });
 
   test("names the top level for an empty pointer, and quotes a key as a JSON string", () => {
@@ -353,10 +468,10 @@ describe("definitionRefusalSentence", () => {
 
   test("names the contract a record or manifest was built against, where it has the form of one", () => {
     expect(definitionRefusalSentence(refusal("contract-not-served", "/manifest/contract", { contract: "0.2" }))).toBe(
-      "The value at /manifest/contract names provider contract 0.2, which this SDK does not serve.",
+      'The value at "/manifest/contract" names provider contract 0.2, which this SDK does not serve.',
     );
     expect(definitionRefusalSentence(refusal("contract-not-served", "/contract"))).toBe(
-      "The value at /contract is not the provider contract this SDK serves.",
+      'The value at "/contract" is not the provider contract this SDK serves.',
     );
   });
 });
