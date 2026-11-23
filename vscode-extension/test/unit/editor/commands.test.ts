@@ -109,7 +109,7 @@ function setup() {
     selectStatement: (): Promise<SelectStatementResult> =>
       Promise.resolve({ statement: 'SELECT * FROM "public"."orders";' }),
     runTarget: (params: RunTargetParams): Promise<RunTargetResult> =>
-      Promise.resolve({ statement: params.text, dangerous: false }),
+      Promise.resolve({ statement: params.text, confirmation: null }),
     listContainers: (): Promise<Container[]> => Promise.resolve([SHOP]),
     cancel: (): Promise<CancelResult | undefined> => Promise.resolve(undefined),
   };

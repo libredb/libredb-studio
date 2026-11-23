@@ -227,6 +227,25 @@ describe("BackendClient", () => {
       });
     }
 
+    it("keeps a 428's confirmation on the BackendError", async () => {
+      const { client, serve } = setup();
+      const confirmation = {
+        token: crypto.randomUUID(),
+        expiresAt: new Date(0).toISOString(),
+        unreadable: false,
+        typedConfirmation: null,
+        classificationFailed: false,
+      };
+      serve(METHODS.testConnection, () => {
+        throw new ResponseError(428, "m", { code: "CONFIRMATION_REQUIRED", confirmation });
+      });
+      const error = await rejection(client.testConnection(PARAMS));
+      assert.ok(error instanceof BackendError);
+      assert.equal(error.status, 428);
+      assert.equal(error.code, "CONFIRMATION_REQUIRED");
+      assert.deepEqual(error.confirmation, confirmation);
+    });
+
     for (const status of [ErrorCodes.InvalidParams, ErrorCodes.ServerNotInitialized]) {
       it(`gives ${status}, which carries no data.code, the code null`, async () => {
         const { client, serve } = setup();

@@ -2,16 +2,17 @@
 import type * as vscode from "vscode";
 import type { RunFailure } from "../../results-protocol";
 import { BackendError, BackendExitedError } from "../backend-client";
+import { RunNotConfirmedError } from "../editor/run-confirmation";
 
 /**
- * Part 4's error table: QUERY_CANCELLED is cancelled, BackendExitedError is backendExited, any other BackendError
+ * Part 4's error table: QUERY_CANCELLED and a declined run confirmation (RunNotConfirmedError) are cancelled, BackendExitedError is backendExited, any other BackendError
  * is an error with its message, details.detail when that is a string, and fixStatement; anything else is an error
  * with its message, and its stack goes to the log when one is given. A run's failure is logged by
  * LogResultsPresenter, so only a page read, which no log presenter sees, passes a log: one stack line per failure.
  * No key holds undefined, since postMessage clones an undefined value and the webview's guard refuses it.
  */
 export function toRunFailure(error: unknown, log?: Pick<vscode.LogOutputChannel, "error">): RunFailure {
-  if (error instanceof BackendError && error.code === "QUERY_CANCELLED") {
+  if ((error instanceof BackendError && error.code === "QUERY_CANCELLED") || error instanceof RunNotConfirmedError) {
     return { kind: "cancelled" };
   }
   if (error instanceof BackendExitedError) {

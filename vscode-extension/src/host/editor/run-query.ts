@@ -9,13 +9,13 @@ import { type ConnectionStore, UnknownConnectionError } from "../connections/con
 import type { BindingStore, EditorBinding } from "./bindings";
 import { type FailureDeps, reportCommandFailure } from "./command-failure";
 import { type PickerDeps, pickCatalog, pickConnection } from "./connection-picker";
+import { askToRun, type ConfirmationAnswer } from "./run-confirmation";
 import { ALREADY_RUNNING, type PreparingRun, type RunRegistry } from "./run-registry";
 import type { RunRequest, RunService } from "./run-service";
 
 export const NOTHING_TO_RUN = "Nothing to run.";
 export const EDITOR_NOT_VISIBLE = "The editor to run is not visible.";
 export const NO_ACTIVE_EDITOR = "Open an editor to run a query.";
-export const RUN_ANYWAY = "Run Anyway";
 export const HIGHLIGHT_MS = 1000;
 export const ROW_LIMIT_MAX = 10_000;
 
@@ -44,7 +44,11 @@ export interface RunQueryDeps extends PickerDeps, FailureDeps {
     FailureDeps["window"] &
     Pick<
       typeof vscode.window,
-      "activeTextEditor" | "visibleTextEditors" | "createTextEditorDecorationType" | "showWarningMessage"
+      | "activeTextEditor"
+      | "visibleTextEditors"
+      | "createTextEditorDecorationType"
+      | "showWarningMessage"
+      | "showInputBox"
     >;
   readonly workspace: Pick<typeof vscode.workspace, "getConfiguration">;
   readonly store: PickerDeps["store"] & Pick<ConnectionStore, "get">;
@@ -135,8 +139,8 @@ export function showRowLimitError(deps: Pick<RunQueryDeps, "window" | "openUserS
 
 /**
  * Steps 7 to 11 under the prepared run's token: the open, the catalog, query/target, the highlight and, for a target the
- * web editor would ask about, the confirmation. Answers the request, or undefined when the run was cancelled, the
- * catalog pick dismissed, the target holds no code or the confirmation declined.
+ * run gate asks about, the confirmation. Answers the request, or undefined when the run was cancelled, the catalog pick
+ * dismissed, the target holds no code or the confirmation declined.
  */
 async function prepare(
   deps: RunQueryDeps,
@@ -174,11 +178,12 @@ async function prepare(
       text,
       selection: offsets,
       cursor,
+      ...(catalog === undefined ? {} : { catalog }),
     }),
     token,
   );
   if (target.cancelled) return undefined;
-  const { statement, range, dangerous } = target.value;
+  const { statement, range, confirmation: offer } = target.value;
   if (statement.trim() === "") {
     void deps.window.showInformationMessage(NOTHING_TO_RUN);
     return undefined;
@@ -195,10 +200,15 @@ async function prepare(
   }
   const entry = deps.store.get(connectionId);
   if (entry === undefined) throw new UnknownConnectionError(connectionId);
-  // Fail closed: only an explicit false skips the question, so an answer that leaves the verdict out still asks.
-  if (dangerous !== false) {
-    const answer = await untilCancelled(confirmDangerous(deps, entry.name, statement), token);
-    if (answer.cancelled || !answer.value) return undefined;
+  // The child's offer is asked here, and its token rides on the request the service sends; a null offer asks nothing.
+  let confirmation: ConfirmationAnswer | undefined;
+  if (offer !== null) {
+    const answer = await untilCancelled(
+      askToRun(deps.window, { connectionName: entry.name, statement, offer }, token),
+      token,
+    );
+    if (answer.cancelled || answer.value === undefined) return undefined;
+    confirmation = answer.value;
   }
   return {
     documentLabel: documentLabel(document),
@@ -208,24 +218,8 @@ async function prepare(
     statement,
     ...(catalog === undefined ? {} : { catalog }),
     limit,
+    ...(confirmation === undefined ? {} : { confirmation }),
   };
-}
-
-/**
- * The web editor's dialog before a write or a drop, as a modal that shows the statement: true once the person chooses
- * Run Anyway, false on Cancel or Escape.
- */
-async function confirmDangerous(
-  deps: Pick<RunQueryDeps, "window">,
-  connectionName: string,
-  statement: string,
-): Promise<boolean> {
-  const choice = await deps.window.showWarningMessage(
-    `This statement may change data, database objects, or permissions. Review it before running it on ${connectionName}.`,
-    { modal: true, detail: statement },
-    RUN_ANYWAY,
-  );
-  return choice === RUN_ANYWAY;
 }
 
 /**
