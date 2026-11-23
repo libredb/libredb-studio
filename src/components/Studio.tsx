@@ -851,9 +851,13 @@ export default function Studio() {
   const closeSaveQuery = useCallback(() => setIsSaveQueryModalOpen(false), []);
   const closeImport = useCallback(() => setIsImportModalOpen(false), []);
   const closeSafety = useCallback(() => queryExec.setSafetyCheckQuery(null), [queryExec.setSafetyCheckQuery]);
-  const proceedSafety = useCallback(() => {
-    if (queryExec.safetyCheckQuery) queryExec.forceExecuteQuery(queryExec.safetyCheckQuery);
-  }, [queryExec.safetyCheckQuery, queryExec.forceExecuteQuery]);
+  // `typed` is what the person typed where the dialog asked for a value, sent beside the server's token (FND-5 6c).
+  const proceedSafety = useCallback(
+    (typed?: string) => {
+      if (queryExec.safetyCheckQuery) queryExec.forceExecuteQuery(queryExec.safetyCheckQuery, typed);
+    },
+    [queryExec.safetyCheckQuery, queryExec.forceExecuteQuery],
+  );
   const closeProfiler = useCallback(() => setProfilerPath(null), []);
   const closeCodeGen = useCallback(() => setCodeGenPath(null), []);
   const closeTestData = useCallback(() => setTestDataPath(null), []);
@@ -1822,6 +1826,7 @@ export default function Studio() {
         onCloseImport={closeImport}
         onImport={runImport}
         safetyCheckQuery={queryExec.safetyCheckQuery}
+        safetyCheckTypedConfirmation={queryExec.safetyCheckTypedConfirmation}
         onCloseSafety={closeSafety}
         onProceedSafety={proceedSafety}
         showCodeGenerator

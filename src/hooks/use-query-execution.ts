@@ -11,7 +11,7 @@ import { storage } from "@/lib/storage";
 import { isDangerousQuery } from "@/components/QuerySafetyDialog";
 import { statementRefusal } from "@/lib/db/destructive-commands";
 import { executionUiFor } from "@/lib/db/execution-ui";
-import { runsAsScript } from "@/lib/editor/statement-analysis";
+import { runsAsScript, type TypedConfirmation, typedConfirmationFor } from "@/lib/editor/statement-analysis";
 import { countCodeStatements } from "@/lib/sql/statement-splitter";
 import { readsSqlText, resolveSqlGrammar } from "@/lib/sql/grammar";
 import { hasLoneCarriageReturnInLineComment, hasUnterminatedSpan } from "@/lib/sql/spans";
@@ -61,6 +61,12 @@ export interface QueryExecutionOptions {
    * `forceExecuteQuery` when the safety dialog it answers was opened by the server's 428.
    */
   confirmationToken?: string;
+  /**
+   * What the person typed in the safety dialog (FND-5 slice 6c). Sent beside the token where the server's 428 asks for
+   * a typed value, so the run is confirmed without a second dialog. Set by `forceExecuteQuery` from Proceed; never
+   * kept after the run.
+   */
+  typedConfirmation?: string;
 }
 
 interface UseQueryExecutionParams {
@@ -356,17 +362,42 @@ export function useQueryExecution({
     };
   }, []);
 
-  const [safetyCheckQuery, showSafetyCheck] = useState<string | null>(null);
+  /**
+   * The statement the safety dialog shows, and what the person types before it runs: the local verdict's ask, the
+   * server's, or `undefined` where the dialog reads the ask itself.
+   */
+  const [safetyCheck, showSafetyCheck] = useState<{
+    readonly query: string;
+    readonly typedConfirmation: TypedConfirmation | null | undefined;
+  } | null>(null);
   /**
    * The server's confirmation token for the statement the safety dialog shows, when the server opened it (a 428 for a
    * statement the local gate let through), so Proceed sends that token. Cleared whenever the dialog's statement
    * changes or the dialog closes, so a token never outlives the dialog it was issued for.
    */
   const serverConfirmationRef = useRef<{ query: string; token: string } | null>(null);
-  const setSafetyCheckQuery = useCallback((query: string | null) => {
-    serverConfirmationRef.current = null;
-    showSafetyCheck(query);
-  }, []);
+  /**
+   * A run that met the server's typed ask and waits on the safety dialog for what the person types (FND-5 slice 6c).
+   * `settle` hands the run the typed value, or `undefined` where the dialog closed or the run was aborted. Proceed of
+   * that statement settles it with the value (`forceExecuteQuery`), any change of the dialog's statement and its
+   * closing settle it with nothing, and so does the run's own abort. It holds no typed value.
+   */
+  const typedWaitRef = useRef<{ query: string; settle: (typed: string | undefined) => void } | null>(null);
+  /** Shows `check` in the safety dialog, or closes it, ending any run that waited on what it showed before. */
+  const openSafetyCheck = useCallback(
+    (check: { query: string; typedConfirmation: TypedConfirmation | null | undefined } | null) => {
+      serverConfirmationRef.current = null;
+      const wait = typedWaitRef.current;
+      typedWaitRef.current = null;
+      wait?.settle(undefined);
+      showSafetyCheck(check);
+    },
+    [],
+  );
+  const setSafetyCheckQuery = useCallback(
+    (query: string | null) => openSafetyCheck(query === null ? null : { query, typedConfirmation: undefined }),
+    [openSafetyCheck],
+  );
   const [unlimitedWarningOpen, setUnlimitedWarningOpen] = useState(false);
   const [pendingUnlimitedQuery, setPendingUnlimitedQuery] = useState<{
     query: string;
@@ -494,7 +525,18 @@ export function useQueryExecution({
         // under, and the gate reads the statement under it (#292).
         isDangerousQuery(queryToExecute, activeConnection.type)
       ) {
-        setSafetyCheckQuery(queryToExecute);
+        // The dialog asks what the server's verdict asks, read with this editor's copy of the connection's environment
+        // (FND-5 slice 6c), so a write on a production connection costs one dialog. Where the copy disagrees with the
+        // server, the server's 428 rules: it is answered inside the run below.
+        openSafetyCheck({
+          query: queryToExecute,
+          typedConfirmation: typedConfirmationFor(
+            queryToExecute,
+            activeConnection.type,
+            activeConnection.name,
+            activeConnection.environment,
+          ),
+        });
         return false;
       }
 
@@ -636,6 +678,58 @@ export function useQueryExecution({
       // Playground mode: begin a transaction before executing (will rollback after)
       const isPlaygroundRun = playgroundMode && !transactionActive && !isExplain && !isLoadMore;
 
+      /**
+       * Rolls back the SANDBOX transaction of a run that did not end in a result. A statement that failed may still have
+       * changed something first (a multi-statement text), so an unconfirmed rollback is reported rather than only
+       * logged.
+       */
+      const rollBackSandboxRun = async () => {
+        const rolledBack = await rollbackConfirmed(
+          appFetch("/api/db/transaction", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...runPayload, action: "rollback" }),
+          }),
+        );
+        if (!rolledBack) {
+          logger.warn("Playground transaction rollback failed", { route: "use-query-execution" });
+          toast({
+            ...SANDBOX_NOT_ROLLED_BACK,
+            description: "The rollback was not confirmed by the server, so any changes may have been kept.",
+          });
+        }
+      };
+
+      /**
+       * Opens the safety dialog with the server's typed ask for this run's statement and waits for what the person
+       * types: the value on Proceed, `undefined` once the dialog closes or shows another statement, or once this run is
+       * aborted (a newer run of the tab, a cancel, the studio unmounting), which also closes the dialog it opened.
+       */
+      const awaitTypedConfirmation = (typedConfirmation: TypedConfirmation) =>
+        new Promise<string | undefined>((resolve) => {
+          const { signal } = abortController;
+          const wait = {
+            query: queryToExecute,
+            settle: (typed: string | undefined) => {
+              signal.removeEventListener("abort", onAbort);
+              resolve(typed);
+            },
+          };
+          // Listened to only while this wait is the one `typedWaitRef` holds: every path that takes it out of the ref
+          // settles it, and settling removes the listener. So closing the dialog settles it here.
+          function onAbort() {
+            openSafetyCheck(null);
+          }
+          openSafetyCheck({ query: queryToExecute, typedConfirmation });
+          if (signal.aborted) {
+            openSafetyCheck(null);
+            wait.settle(undefined);
+            return;
+          }
+          typedWaitRef.current = wait;
+          signal.addEventListener("abort", onAbort);
+        });
+
       onStatementSent?.();
       try {
         if (isPlaygroundRun) {
@@ -704,7 +798,7 @@ export function useQueryExecution({
         // The run's `confirmation` (docs/API_DOCS.md, "Server confirmation of a run"): every run that is not an explain
         // asks the server, which answers 428 with a token where its gate asks about the statement; a token the server
         // issued for this statement confirms it. An explain is not classified, so it carries none.
-        const sendRun = (confirmation: "ask" | { token: string } | undefined) =>
+        const sendRun = (confirmation: "ask" | { token: string; typed?: string } | undefined) =>
           appFetch(queryEndpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -778,20 +872,43 @@ export function useQueryExecution({
 
         let response = await mainQueryPromise;
 
-        // THE SERVER ASKS (428): its gate asks about a statement this run did not confirm with a token. Where this
-        // editor's own gate did not ask about the run because the person had already confirmed it (Proceed, an inline
-        // edit), or because it skips the gate for it (a page, a SANDBOX run), the run is sent once more with the
-        // server's token. Where this editor's gate let the statement through, the safety dialog opens for it, and its
-        // Proceed sends the token. A 428 to a request that carried a token, or a second 428, is a failure below.
+        // THE SERVER ASKS (428): its gate asks about a statement this run did not confirm with a token.
+        //
+        // Where it asks for a typed value (a production connection's name, or a row's own ask; FND-5 slice 6c), the run
+        // is sent once more with the token and what the person typed: the value Proceed handed this run, or else the
+        // value the person types in the safety dialog, which opens with the server's ask while this run waits on it.
+        // So no path that skips this editor's gate (an inline edit, a page, a SANDBOX run) sends the statement without
+        // the person typing, and an inline edit's rows each wait in turn. A dialog closed without a value ends the run
+        // as not run, rolling back the transaction a SANDBOX run opened.
+        //
+        // Where it asks for no typed value, and this editor's own gate did not ask about the run because the person had
+        // already confirmed it (Proceed, an inline edit), or because it skips the gate for it (a page, a SANDBOX run),
+        // the run is sent once more with the server's token. Where this editor's gate let the statement through, the
+        // safety dialog opens for it, and its Proceed sends the token.
+        //
+        // A 428 to a request that carried a token, or a second 428, is a failure below.
         if (response.status === 428 && confirmationToken === undefined) {
           const asked = await response.clone().json();
           const token: unknown = asked?.confirmation?.token;
           if (asked?.code === ApiErrorCode.CONFIRMATION_REQUIRED && typeof token === "string") {
-            if (skipSafety || isLoadMore || playgroundMode) {
+            const typedAsk: unknown = asked.confirmation.typedConfirmation;
+            if (typeof typedAsk === "object" && typedAsk !== null) {
+              const typed =
+                executionOptions?.typedConfirmation ?? (await awaitTypedConfirmation(typedAsk as TypedConfirmation));
+              if (abortController.signal.aborted) {
+                throw new DOMException("The run was stopped while it waited for its typed confirmation.", "AbortError");
+              }
+              if (typed === undefined) {
+                if (isPlaygroundRun) await rollBackSandboxRun();
+                commitToTab((t) => ({ ...t, isExecuting: false, isLoadingMore: false }));
+                return false;
+              }
+              response = await sendRun({ token, typed });
+            } else if (skipSafety || isLoadMore || playgroundMode) {
               response = await sendRun({ token });
             } else {
               commitToTab((t) => ({ ...t, isExecuting: false, isLoadingMore: false }));
-              setSafetyCheckQuery(queryToExecute);
+              openSafetyCheck({ query: queryToExecute, typedConfirmation: null });
               serverConfirmationRef.current = { query: queryToExecute, token };
               return false;
             }
@@ -1081,25 +1198,8 @@ export function useQueryExecution({
         // would otherwise count one the user never sees.
         return !resultData.hasError && !isSuperseded();
       } catch (error) {
-        // Playground mode: rollback on error too. A statement that failed may still have
-        // changed something first (a multi-statement text), so an unconfirmed rollback is
-        // reported here as well rather than only logged.
-        if (isPlaygroundRun) {
-          const rolledBack = await rollbackConfirmed(
-            appFetch("/api/db/transaction", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ ...runPayload, action: "rollback" }),
-            }),
-          );
-          if (!rolledBack) {
-            logger.warn("Playground transaction rollback failed", { route: "use-query-execution" });
-            toast({
-              ...SANDBOX_NOT_ROLLED_BACK,
-              description: "The rollback was not confirmed by the server, so any changes may have been kept.",
-            });
-          }
-        }
+        // Playground mode: rollback on error too.
+        if (isPlaygroundRun) await rollBackSandboxRun();
         // A superseded run must not clear the flags the newer run just set: the
         // spinner belongs to the query that is still running.
         commitToTab((t) => ({ ...t, isExecuting: false, isLoadingMore: false }));
@@ -1167,19 +1267,28 @@ export function useQueryExecution({
       playgroundMode,
       setTabs,
       queryEditorRef,
-      setSafetyCheckQuery,
+      openSafetyCheck,
     ],
   );
 
-  // Force execute (bypass safety check): unified via skipSafety flag. A dialog the server's 428 opened hands its
-  // token on, so the run is sent confirmed; one this editor's own gate opened asks the server, which may answer 428
-  // with a token that `executeQuery` then sends.
+  // Force execute (bypass safety check): unified via skipSafety flag. `typed` is what the person typed in the dialog,
+  // where it asked for a value. A dialog a waiting run opened hands that run the value, and the run goes on; one the
+  // server's typed-less 428 opened hands its token on, so the run is sent confirmed; one this editor's own gate opened
+  // asks the server, which may answer 428 with a token that `executeQuery` then sends, with `typed` where it asks for it.
   const forceExecuteQuery = useCallback(
-    (query: string) => {
+    (query: string, typed?: string) => {
+      const wait = typedWaitRef.current;
+      if (wait !== null && wait.query === query) {
+        typedWaitRef.current = null;
+        serverConfirmationRef.current = null;
+        showSafetyCheck(null);
+        wait.settle(typed);
+        return;
+      }
       const server = serverConfirmationRef.current;
       const confirmationToken = server !== null && server.query === query ? server.token : undefined;
       setSafetyCheckQuery(null);
-      executeQuery(query, undefined, false, { skipSafety: true, confirmationToken });
+      executeQuery(query, undefined, false, { skipSafety: true, confirmationToken, typedConfirmation: typed });
     },
     [executeQuery, setSafetyCheckQuery],
   );
@@ -1413,7 +1522,8 @@ export function useQueryExecution({
     cancelQuery,
     handleLoadMore,
     handleUnlimitedQuery,
-    safetyCheckQuery,
+    safetyCheckQuery: safetyCheck?.query ?? null,
+    safetyCheckTypedConfirmation: safetyCheck?.typedConfirmation,
     setSafetyCheckQuery,
     unlimitedWarningOpen,
     setUnlimitedWarningOpen,

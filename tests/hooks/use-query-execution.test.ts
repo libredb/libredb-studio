@@ -35,6 +35,7 @@ import { SNOWFLAKE_EXPLAIN_GATED_DECLINE } from "@/lib/explain/snowflake-json";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { isMultiStatement } from "@/lib/sql/statement-splitter";
 import type { DatabaseConnection, QueryTab } from "@/lib/types";
+import type { TypedConfirmation } from "@/lib/editor/statement-analysis";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import * as explainModule from "@/lib/explain";
 import type { ExplainStrategy } from "@/lib/explain";
@@ -6668,5 +6669,461 @@ describe("the server's confirmation", () => {
     });
     expect(bodiesTo(fetchMock, "/api/db/query").map((body) => body.confirmation)).toEqual(["ask", { token }]);
     expect(onFailure).toHaveBeenCalledWith("this confirmation was issued for another connection");
+  });
+});
+
+describe("the server's typed confirmation", () => {
+  const MISMATCH = "the typed confirmation does not match what this statement asks to be typed";
+  let name: string;
+  let production: DatabaseConnection;
+
+  /** Every run request body sent to `route`, in order: no explain, and no begin, commit or rollback. */
+  function runsTo(fetchMock: ReturnType<typeof mockGlobalFetch>, route: string): Record<string, unknown>[] {
+    return fetchMock.mock.calls
+      .filter((call) => typeof call[0] === "string" && call[0].includes(route))
+      .map((call) => JSON.parse(String((call[1] as RequestInit).body)) as Record<string, unknown>)
+      .filter((body) => body.explain === undefined && (body.action === undefined || body.action === "query"));
+  }
+
+  /** Every request body sent to `route`, in order. */
+  function bodiesTo(fetchMock: ReturnType<typeof mockGlobalFetch>, route: string): Record<string, unknown>[] {
+    return fetchMock.mock.calls
+      .filter((call) => typeof call[0] === "string" && call[0].includes(route))
+      .map((call) => JSON.parse(String((call[1] as RequestInit).body)) as Record<string, unknown>);
+  }
+
+  /**
+   * A server that asks for the connection's name on every run that is not a read and does not carry it: a fresh token
+   * each time, which `tokens` lists, and a 400 for a typed value that is not the name.
+   */
+  function typedServer(route = "/api/db/query") {
+    const tokens: string[] = [];
+    const fetchMock = mockGlobalFetch({
+      [route]: async (req) => {
+        const body = (await req.json()) as Record<string, unknown>;
+        if (body.action !== undefined && body.action !== "query") return { ok: true, json: { status: "ok" } };
+        // A read runs, as the server's gate lets it.
+        if (body.explain !== undefined || String(body.sql).startsWith("SELECT")) {
+          return { ok: true, json: mockQueryResult };
+        }
+        const confirmation = body.confirmation as { token?: string; typed?: string } | string | undefined;
+        if (typeof confirmation === "object" && confirmation.typed !== undefined) {
+          if (confirmation.typed !== name)
+            return { status: 400, json: { error: MISMATCH, code: "CONFIRMATION_INVALID" } };
+          return { ok: true, json: { ...mockQueryResult, inTransaction: true } };
+        }
+        const token = crypto.randomUUID();
+        tokens.push(token);
+        return {
+          status: 428,
+          json: {
+            error: "This statement needs a typed confirmation before it runs.",
+            code: "CONFIRMATION_REQUIRED",
+            confirmation: {
+              token,
+              expiresAt: "2026-11-23T12:05:00.000Z",
+              unreadable: false,
+              typedConfirmation: { type: "connection-name", expected: name, targets: [] },
+              classificationFailed: false,
+            },
+          },
+        };
+      },
+    });
+    return { fetchMock, tokens };
+  }
+
+  const nameAsk = (): TypedConfirmation => ({ type: "connection-name", expected: name, targets: [] });
+
+  beforeEach(() => {
+    mockToastError.mockClear();
+    addToHistorySpy = spyOn(storage, "addToHistory").mockImplementation(() => {});
+    name = crypto.randomUUID();
+    production = { ...mockConnection, name, environment: "production" };
+  });
+
+  afterEach(() => {
+    addToHistorySpy.mockRestore();
+    restoreGlobalFetch();
+  });
+
+  test("the local gate asks for the name on a production connection", async () => {
+    typedServer();
+    const hook = renderHook((props) => useQueryExecution(props), {
+      initialProps: createDefaultParams({ activeConnection: production }),
+    });
+    await act(async () => {
+      await hook.result.current.executeQuery("DELETE FROM users");
+    });
+    expect(hook.result.current.safetyCheckQuery).toBe("DELETE FROM users");
+    expect(hook.result.current.safetyCheckTypedConfirmation).toEqual(nameAsk());
+
+    hook.rerender(createDefaultParams({ activeConnection: { ...production, environment: "development" } }));
+    await act(async () => {
+      await hook.result.current.executeQuery("DELETE FROM users");
+    });
+    expect(hook.result.current.safetyCheckTypedConfirmation).toBeNull();
+
+    hook.rerender(createDefaultParams({ activeConnection: { ...production, name: "" } }));
+    await act(async () => {
+      await hook.result.current.executeQuery("DELETE FROM users");
+    });
+    expect(hook.result.current.safetyCheckQuery).toBe("DELETE FROM users");
+    expect(hook.result.current.safetyCheckTypedConfirmation).toBeUndefined();
+
+    act(() => hook.result.current.setSafetyCheckQuery(null));
+    expect(hook.result.current.safetyCheckTypedConfirmation).toBeUndefined();
+  });
+
+  test("Proceed resends a typed 428 with the token and what was typed", async () => {
+    const { fetchMock, tokens } = typedServer();
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams({ activeConnection: production })));
+    await act(async () => {
+      await result.current.executeQuery("DELETE FROM users");
+    });
+    expect(runsTo(fetchMock, "/api/db/query")).toEqual([]);
+    await act(async () => {
+      result.current.forceExecuteQuery("DELETE FROM users", name);
+    });
+    await waitFor(() => expect(runsTo(fetchMock, "/api/db/query")).toHaveLength(2));
+    expect(runsTo(fetchMock, "/api/db/query").map((body) => body.confirmation)).toEqual([
+      "ask",
+      { token: tokens[0], typed: name },
+    ]);
+    expect(result.current.safetyCheckQuery).toBeNull();
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  type Case = {
+    readonly label: string;
+    readonly route: string;
+    readonly params?: Record<string, unknown>;
+    readonly query: string;
+    readonly options?: Record<string, unknown>;
+    readonly start: (
+      hook: { current: ReturnType<typeof useQueryExecution> },
+      query: string,
+      options?: Record<string, unknown>,
+    ) => Promise<boolean>;
+  };
+  const viaExecute: Case["start"] = (hook, query, options) =>
+    hook.current.executeQuery(query, undefined, false, options);
+  const CASES: Case[] = [
+    {
+      label: "a run the local gate let through",
+      route: "/api/db/query",
+      query: "REPLACE INTO users VALUES (1)",
+      start: viaExecute,
+    },
+    {
+      label: "a page",
+      route: "/api/db/query",
+      query: "DELETE FROM users RETURNING *",
+      options: { offset: 500 },
+      start: viaExecute,
+    },
+    {
+      label: "an inline edit",
+      route: "/api/db/query",
+      query: "UPDATE users SET name = $1 WHERE id = $2",
+      options: { skipSafety: true, params: ["Ada", 1] },
+      start: viaExecute,
+    },
+    {
+      label: "a SANDBOX run",
+      route: "/api/db/transaction",
+      params: { playgroundMode: true },
+      query: "DELETE FROM users",
+      start: viaExecute,
+    },
+    {
+      label: "a Proceed with no field",
+      route: "/api/db/query",
+      query: "REPLACE INTO users VALUES (1)",
+      options: { skipSafety: true },
+      start: viaExecute,
+    },
+  ];
+
+  test.each(CASES.map((c) => [c.label, c] as const))(
+    "a typed 428 to %s opens the dialog and waits: Proceed resends in the same run",
+    async (_label, c) => {
+      const { fetchMock, tokens } = typedServer(c.route);
+      const onFailure = mock((_message: string) => {});
+      const { result } = renderHook(() =>
+        useQueryExecution(createDefaultParams({ activeConnection: production, ...c.params })),
+      );
+      let pending: Promise<boolean> = Promise.resolve(false);
+      await act(async () => {
+        pending = c.start(result, c.query, { ...c.options, onFailure });
+      });
+      await waitFor(() => expect(result.current.safetyCheckQuery).toBe(c.query));
+      expect(result.current.safetyCheckTypedConfirmation).toEqual(nameAsk());
+      expect(runsTo(fetchMock, c.route).map((body) => body.confirmation)).toEqual(["ask"]);
+      await act(async () => {
+        result.current.forceExecuteQuery(c.query, name);
+      });
+      let ran = false;
+      await act(async () => {
+        ran = await pending;
+      });
+      expect(ran).toBe(true);
+      expect(runsTo(fetchMock, c.route).map((body) => body.confirmation)).toEqual([
+        "ask",
+        { token: tokens[0], typed: name },
+      ]);
+      expect(result.current.safetyCheckQuery).toBeNull();
+      expect(onFailure).not.toHaveBeenCalled();
+    },
+  );
+
+  test("a closed dialog ends the waiting run as not run", async () => {
+    const { fetchMock } = typedServer();
+    const onFailure = mock((_message: string) => {});
+    const params = createDefaultParams({ activeConnection: production });
+    const { result } = renderHook(() => useQueryExecution(params));
+    let pending: Promise<boolean> = Promise.resolve(true);
+    await act(async () => {
+      pending = result.current.executeQuery("DELETE FROM users RETURNING *", undefined, false, {
+        offset: 500,
+        onFailure,
+      });
+    });
+    await waitFor(() => expect(result.current.safetyCheckQuery).toBe("DELETE FROM users RETURNING *"));
+    act(() => result.current.setSafetyCheckQuery(null));
+    let ran = true;
+    await act(async () => {
+      ran = await pending;
+    });
+    expect(ran).toBe(false);
+    expect(onFailure).not.toHaveBeenCalled();
+    expect(runsTo(fetchMock, "/api/db/query")).toHaveLength(1);
+    const lastUpdate = params.setTabs.mock.calls.at(-1)?.[0] as (tabs: QueryTab[]) => QueryTab[];
+    expect(lastUpdate([createTab({ isExecuting: true, isLoadingMore: true })])[0]).toMatchObject({
+      isExecuting: false,
+      isLoadingMore: false,
+    });
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  test("a closed dialog in a SANDBOX run rolls its transaction back", async () => {
+    const { fetchMock } = typedServer("/api/db/transaction");
+    const { result } = renderHook(() =>
+      useQueryExecution(createDefaultParams({ activeConnection: production, playgroundMode: true })),
+    );
+    let pending: Promise<boolean> = Promise.resolve(true);
+    await act(async () => {
+      pending = result.current.executeQuery("DELETE FROM users");
+    });
+    await waitFor(() => expect(result.current.safetyCheckQuery).toBe("DELETE FROM users"));
+    act(() => result.current.setSafetyCheckQuery(null));
+    let ran = true;
+    await act(async () => {
+      ran = await pending;
+    });
+    expect(ran).toBe(false);
+    expect(bodiesTo(fetchMock, "/api/db/transaction").map((body) => [body.action, body.confirmation ?? null])).toEqual([
+      ["begin", null],
+      ["query", "ask"],
+      ["rollback", null],
+    ]);
+  });
+
+  test("an unconfirmed SANDBOX rollback after a closed dialog says so", async () => {
+    let asked = false;
+    mockGlobalFetch({
+      "/api/db/transaction": async (req) => {
+        const body = (await req.json()) as Record<string, unknown>;
+        if (body.action === "begin") return { ok: true, json: { status: "ok" } };
+        if (body.action === "rollback") return { status: 500, json: { error: "gone" } };
+        asked = true;
+        return {
+          status: 428,
+          json: {
+            error: "typed",
+            code: "CONFIRMATION_REQUIRED",
+            confirmation: { token: crypto.randomUUID(), typedConfirmation: nameAsk() },
+          },
+        };
+      },
+    });
+    const { result } = renderHook(() =>
+      useQueryExecution(createDefaultParams({ activeConnection: production, playgroundMode: true })),
+    );
+    let pending: Promise<boolean> = Promise.resolve(true);
+    await act(async () => {
+      pending = result.current.executeQuery("DELETE FROM users");
+    });
+    await waitFor(() => expect(result.current.safetyCheckQuery).toBe("DELETE FROM users"));
+    act(() => result.current.setSafetyCheckQuery(null));
+    await act(async () => {
+      await pending;
+    });
+    expect(asked).toBe(true);
+    expect(mockToastError).toHaveBeenCalledTimes(1);
+  });
+
+  test("an aborted run stops waiting and closes its dialog: a newer run of the tab", async () => {
+    const { fetchMock } = typedServer();
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams({ activeConnection: production })));
+    let pending: Promise<boolean> = Promise.resolve(true);
+    await act(async () => {
+      pending = result.current.executeQuery("DELETE FROM users RETURNING *", undefined, false, { offset: 500 });
+    });
+    await waitFor(() => expect(result.current.safetyCheckQuery).toBe("DELETE FROM users RETURNING *"));
+    let ran = true;
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1");
+      ran = await pending;
+    });
+    expect(ran).toBe(false);
+    expect(result.current.safetyCheckQuery).toBeNull();
+    // The waiting run sent nothing more: its ask, then the newer run's own ask.
+    expect(runsTo(fetchMock, "/api/db/query").map((body) => body.sql)).toEqual([
+      "DELETE FROM users RETURNING *",
+      "SELECT 1",
+    ]);
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  test("a run aborted while it read the typed 428 opens no dialog and sends nothing more", async () => {
+    // The 428's body is handed over only when the test says so, after a newer run of the tab aborted this one.
+    let answer: (body: unknown) => void = () => {};
+    const body = new Promise<unknown>((resolve) => {
+      answer = resolve;
+    });
+    const sent: Record<string, unknown>[] = [];
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      sent.push(request);
+      if (String(request.sql).startsWith("SELECT")) return new Response(JSON.stringify(mockQueryResult));
+      return { status: 428, ok: false, clone: () => ({ json: () => body }) } as unknown as Response;
+    }) as unknown as typeof fetch;
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams({ activeConnection: production })));
+    let pending: Promise<boolean> = Promise.resolve(true);
+    await act(async () => {
+      pending = result.current.executeQuery("DELETE FROM users RETURNING *", undefined, false, { offset: 500 });
+    });
+    expect(sent).toHaveLength(1);
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1");
+    });
+    answer({
+      code: "CONFIRMATION_REQUIRED",
+      confirmation: { token: crypto.randomUUID(), typedConfirmation: nameAsk() },
+    });
+    let ran = true;
+    await act(async () => {
+      ran = await pending;
+    });
+    expect(ran).toBe(false);
+    expect(result.current.safetyCheckQuery).toBeNull();
+    expect(sent.filter((request) => request.explain === undefined).map((request) => request.sql)).toEqual([
+      "DELETE FROM users RETURNING *",
+      "SELECT 1",
+    ]);
+  });
+
+  test("an aborted run stops waiting: the studio unmounts", async () => {
+    const { fetchMock } = typedServer();
+    const { result, unmount } = renderHook(() =>
+      useQueryExecution(createDefaultParams({ activeConnection: production })),
+    );
+    let pending: Promise<boolean> = Promise.resolve(true);
+    await act(async () => {
+      pending = result.current.executeQuery("DELETE FROM users RETURNING *", undefined, false, { offset: 500 });
+    });
+    await waitFor(() => expect(result.current.safetyCheckQuery).toBe("DELETE FROM users RETURNING *"));
+    unmount();
+    expect(await pending).toBe(false);
+    expect(runsTo(fetchMock, "/api/db/query")).toHaveLength(1);
+  });
+
+  test("inline-edit rows wait for their typed confirmation one after another", async () => {
+    const { fetchMock, tokens } = typedServer();
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams({ activeConnection: production })));
+    const statement = "UPDATE users SET name = $1 WHERE id = $2";
+    // The apply loop of use-inline-editing.ts: one row after another, each awaited.
+    const outcomes: boolean[] = [];
+    let applied: Promise<void> = Promise.resolve();
+    await act(async () => {
+      applied = (async () => {
+        for (const id of [1, 2]) {
+          outcomes.push(
+            // oxlint-disable-next-line no-await-in-loop -- the inline-edit apply loop runs one row after another.
+            await result.current.executeQuery(statement, undefined, false, { skipSafety: true, params: ["Ada", id] }),
+          );
+        }
+      })();
+    });
+    await waitFor(() => expect(result.current.safetyCheckQuery).toBe(statement));
+    expect(runsTo(fetchMock, "/api/db/query")).toHaveLength(1);
+    await act(async () => {
+      result.current.forceExecuteQuery(statement, name);
+    });
+    await waitFor(() => expect(runsTo(fetchMock, "/api/db/query")).toHaveLength(3));
+    await waitFor(() => expect(result.current.safetyCheckQuery).toBe(statement));
+    await act(async () => {
+      result.current.forceExecuteQuery(statement, name);
+    });
+    await act(async () => {
+      await applied;
+    });
+    expect(outcomes).toEqual([true, true]);
+    expect(runsTo(fetchMock, "/api/db/query").map((body) => [body.params, body.confirmation])).toEqual([
+      [["Ada", 1], "ask"],
+      [["Ada", 1], { token: tokens[0], typed: name }],
+      [["Ada", 2], "ask"],
+      [["Ada", 2], { token: tokens[1], typed: name }],
+    ]);
+  });
+
+  test("nothing is remembered: the next run of the statement asks again", async () => {
+    const { fetchMock } = typedServer();
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams({ activeConnection: production })));
+    await act(async () => {
+      await result.current.executeQuery("DELETE FROM users");
+    });
+    await act(async () => {
+      result.current.forceExecuteQuery("DELETE FROM users", name);
+    });
+    await waitFor(() => expect(runsTo(fetchMock, "/api/db/query")).toHaveLength(2));
+    await waitFor(() => expect(result.current.safetyCheckQuery).toBeNull());
+    await act(async () => {
+      await result.current.executeQuery("DELETE FROM users");
+    });
+    expect(result.current.safetyCheckQuery).toBe("DELETE FROM users");
+    expect(result.current.safetyCheckTypedConfirmation).toEqual(nameAsk());
+    expect(runsTo(fetchMock, "/api/db/query")).toHaveLength(2);
+    // Proceed without a value now asks the server, which asks for the name in the run.
+    await act(async () => {
+      result.current.forceExecuteQuery("DELETE FROM users");
+    });
+    await waitFor(() => expect(runsTo(fetchMock, "/api/db/query")).toHaveLength(3));
+    expect(runsTo(fetchMock, "/api/db/query")[2].confirmation).toBe("ask");
+    await waitFor(() => expect(result.current.safetyCheckTypedConfirmation).toEqual(nameAsk()));
+    act(() => result.current.setSafetyCheckQuery(null));
+  });
+
+  test("a wrong typed value ends the run with the server's sentence", async () => {
+    const { fetchMock, tokens } = typedServer();
+    const onFailure = mock((_message: string) => {});
+    const wrong = crypto.randomUUID();
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams({ activeConnection: production })));
+    let ran = true;
+    await act(async () => {
+      ran = await result.current.executeQuery("DELETE FROM users", undefined, false, {
+        skipSafety: true,
+        typedConfirmation: wrong,
+        onFailure,
+      });
+    });
+    expect(ran).toBe(false);
+    expect(runsTo(fetchMock, "/api/db/query").map((body) => body.confirmation)).toEqual([
+      "ask",
+      { token: tokens[0], typed: wrong },
+    ]);
+    expect(onFailure).toHaveBeenCalledWith(MISMATCH);
+    expect(result.current.safetyCheckQuery).toBeNull();
   });
 });

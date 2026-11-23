@@ -182,3 +182,35 @@ describe("StudioModals: the connection's type reaches the Test Data and import d
     expect(baseElement.querySelector("pre")?.textContent ?? "").toContain("INSERT INTO shop.`Order Items` (");
   });
 });
+
+// =============================================================================
+// StudioModals hands the safety dialog the typed confirmation its shell already read (FND-5 slice 6c)
+// =============================================================================
+
+describe("StudioModals: the safety check's typed confirmation", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  test("hands the safety check's typed confirmation to the dialog, and its typed value to onProceedSafety", () => {
+    const name = crypto.randomUUID();
+    const onProceedSafety = mock((_typed?: string) => {});
+    const { baseElement } = renderModals(
+      { config: DEFAULT_MASKING_CONFIG, enabled: false, role: "admin" },
+      {
+        databaseType: "etcd",
+        connectionName: name,
+        showCodeGenerator: false,
+        profilerPath: null,
+        safetyCheckQuery: "del /a /b",
+        safetyCheckTypedConfirmation: { type: "connection-name", expected: name, targets: ["/a"] },
+        onProceedSafety,
+      },
+    );
+    const dialog = within(baseElement).getByRole("alertdialog");
+    expect(dialog.textContent).toContain("/a");
+    act(() => fireEvent.change(within(dialog).getByLabelText(`Type ${name} to confirm`), { target: { value: name } }));
+    act(() => fireEvent.click(within(dialog).getByRole("button", { name: "Execute Query" })));
+    expect(onProceedSafety.mock.calls).toEqual([[name]]);
+  });
+});

@@ -3610,3 +3610,160 @@ describe("DuckDB's INSERT OR REPLACE asks", () => {
     expect(isDangerousQuery(sql, "duckdb")).toBe(false);
   });
 });
+
+describe("a typed confirmation the caller already read", () => {
+  const onClose = mock(() => {});
+  const onProceed = mock((_typed?: string) => {});
+  const proceed = () => screen.getByRole("button", { name: "Execute Query" }) as HTMLButtonElement;
+  const safe = async () => ({
+    riskLevel: "low" as const,
+    summary: "s",
+    warnings: [],
+    affectedRows: "",
+    cascadeEffects: "",
+    recommendation: "",
+  });
+
+  beforeEach(() => {
+    onClose.mockClear();
+    onProceed.mockClear();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  test("draws the field and targets from the prop", async () => {
+    const name = crypto.randomUUID();
+    const target = `/${crypto.randomUUID()}/`;
+    render(
+      <QuerySafetyDialog
+        isOpen
+        query="DELETE FROM t"
+        schemaContext=""
+        databaseType="postgres"
+        connectionName={name}
+        typedConfirmation={{ type: "connection-name", expected: name, targets: [target] }}
+        onClose={onClose}
+        onProceed={onProceed}
+        onAnalyzeSafety={safe}
+      />,
+    );
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog.textContent).toContain(target);
+    const field = screen.getByLabelText(`Type ${name} to confirm`) as HTMLInputElement;
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Skip analysis" })).toBeNull());
+    expect(proceed().disabled).toBe(true);
+    fireEvent.change(field, { target: { value: name.toUpperCase() } });
+    expect(proceed().disabled).toBe(true);
+    fireEvent.change(field, { target: { value: name } });
+    expect(proceed().disabled).toBe(false);
+  });
+
+  test("a text ask from the prop draws its field with no targets", () => {
+    const text = `/${crypto.randomUUID()}/`;
+    render(
+      <QuerySafetyDialog
+        isOpen
+        query="lease revoke 694d77aa9e38260f"
+        schemaContext=""
+        databaseType="etcd"
+        connectionName={crypto.randomUUID()}
+        typedConfirmation={{ type: "text", expected: text }}
+        onClose={onClose}
+        onProceed={onProceed}
+      />,
+    );
+    expect(screen.getByLabelText(`Type ${text} to confirm`)).toBeTruthy();
+    expect(screen.getByRole("alertdialog").textContent).not.toContain("Targets");
+  });
+
+  test("a name ask with no targets draws the field and no targets list", () => {
+    const name = crypto.randomUUID();
+    render(
+      <QuerySafetyDialog
+        isOpen
+        query="del /a /b"
+        schemaContext=""
+        databaseType="etcd"
+        connectionName={name}
+        typedConfirmation={{ type: "connection-name", expected: name, targets: [] }}
+        onClose={onClose}
+        onProceed={onProceed}
+      />,
+    );
+    expect(screen.getByLabelText(`Type ${name} to confirm`)).toBeTruthy();
+    expect(screen.getByRole("alertdialog").textContent).not.toContain("Targets");
+  });
+
+  test("a null prop draws no field", () => {
+    render(
+      <QuerySafetyDialog
+        isOpen
+        query="del /a /b"
+        schemaContext=""
+        databaseType="etcd"
+        connectionName={crypto.randomUUID()}
+        typedConfirmation={null}
+        onClose={onClose}
+        onProceed={onProceed}
+      />,
+    );
+    expect(within(screen.getByRole("alertdialog")).queryByRole("textbox")).toBeNull();
+    expect(proceed().disabled).toBe(false);
+  });
+
+  test("Proceed hands the typed value to onProceed", () => {
+    const name = crypto.randomUUID();
+    render(
+      <QuerySafetyDialog
+        isOpen
+        query="del /a /b"
+        schemaContext=""
+        databaseType="etcd"
+        connectionName={name}
+        typedConfirmation={{ type: "connection-name", expected: name, targets: ["/a"] }}
+        onClose={onClose}
+        onProceed={onProceed}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText(`Type ${name} to confirm`), { target: { value: name } });
+    fireEvent.click(proceed());
+    expect(onProceed.mock.calls).toEqual([[name]]);
+  });
+
+  test("Proceed of the dialog's own reading hands the value it asked for", () => {
+    render(
+      <QuerySafetyDialog
+        isOpen
+        query="del /App/ --prefix"
+        schemaContext=""
+        databaseType="etcd"
+        connectionName={crypto.randomUUID()}
+        onClose={onClose}
+        onProceed={onProceed}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("Type /App/ to confirm"), { target: { value: "/App/" } });
+    fireEvent.click(proceed());
+    expect(onProceed.mock.calls).toEqual([["/App/"]]);
+  });
+
+  test("Proceed without a field hands no value", async () => {
+    render(
+      <QuerySafetyDialog
+        isOpen
+        query="DELETE FROM t"
+        schemaContext=""
+        databaseType="postgres"
+        connectionName={crypto.randomUUID()}
+        onClose={onClose}
+        onProceed={onProceed}
+        onAnalyzeSafety={safe}
+      />,
+    );
+    await waitFor(() => expect(proceed().disabled).toBe(false));
+    fireEvent.click(proceed());
+    expect(onProceed.mock.calls).toEqual([[]]);
+  });
+});
