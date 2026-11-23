@@ -69,8 +69,10 @@ import {
 import {
   snowflakeAccountRefusal,
   SNOWFLAKE_FIELD_SENTENCES,
+  SNOWFLAKE_SIGN_IN_DEFAULT,
   snowflakeHostHint,
 } from "@/lib/db/providers/sql/snowflake/account-host";
+import { CONNECTION_FIELDS as FIELD_CLASS } from "@/lib/storage/secret-fields";
 import { SPARK_FIELD_SENTENCES } from "@/lib/db/providers/sql/spark/connection-options";
 import {
   SPARK_CATALOG_PATTERN,
@@ -1834,7 +1836,7 @@ describe("the Snowflake entry", () => {
     expect(connectionFieldShown(snowflake, "password", { authMethod: "pat" })).toBe(true);
     expect(connectionFieldShown(snowflake, "privateKey", { authMethod: "pat" })).toBe(false);
     expect(connectionFieldShown(snowflake, "privateKeyPassphrase", { authMethod: "pat" })).toBe(false);
-    // An unset method reads as the select's first option, the key pair.
+    // An unset method reads as its declared default, the key pair.
     expect(connectionFieldShown(snowflake, "privateKey", {})).toBe(true);
     expect(connectionFieldShown(snowflake, "password", {})).toBe(false);
     expect(connectionFieldShown(snowflake, "password", { authMethod: undefined })).toBe(false);
@@ -1866,6 +1868,103 @@ describe("the Snowflake entry", () => {
     );
     expect(SNOWFLAKE_FIELD_RULES.privateKey).toEqual({ required: SNOWFLAKE_FIELD_SENTENCES.keyEmpty });
     expect(SNOWFLAKE_FIELD_RULES.password).toEqual({ required: SNOWFLAKE_FIELD_SENTENCES.tokenEmpty });
+  });
+
+  test("refuses a key or a token that is not text or holds only whitespace, as connect() does", () => {
+    const blanks: readonly unknown[] = [undefined, "", "   ", "\n\t", null, 42];
+    for (const sign of [{ authMethod: "keypair" }, { authMethod: undefined }, { authMethod: null }]) {
+      for (const blank of blanks) {
+        expect(connectionFieldRefusal(snowflake, connection({ ...sign, privateKey: blank }))).toBe(
+          SNOWFLAKE_FIELD_SENTENCES.keyEmpty,
+        );
+      }
+    }
+    for (const blank of blanks) {
+      expect(connectionFieldRefusal(snowflake, connection({ authMethod: "pat", password: blank }))).toBe(
+        SNOWFLAKE_FIELD_SENTENCES.tokenEmpty,
+      );
+    }
+  });
+
+  test("checks neither secret under a Sign-in that is neither method, which connect() refuses by its own sentence", () => {
+    for (const authMethod of ["", "oauth"]) {
+      expect(
+        connectionFieldRefusal(snowflake, connection({ authMethod, privateKey: "   ", password: undefined })),
+      ).toBeUndefined();
+    }
+    // Under a key pair the token is not read, and under a token the key is not read.
+    expect(connectionFieldRefusal(snowflake, connection({ authMethod: "keypair", password: "  " }))).toBeUndefined();
+    expect(
+      connectionFieldRefusal(
+        snowflake,
+        connection({ authMethod: "pat", privateKey: null, password: crypto.randomUUID() }),
+      ),
+    ).toBeUndefined();
+  });
+
+  test("reads an absent or null Sign-in as its declared default, not as the select's first option", () => {
+    expect(SNOWFLAKE_SIGN_IN_DEFAULT).toBe("keypair");
+    expect(snowflake.fieldOptions?.authMethod?.map((option) => option.value)).toContain(SNOWFLAKE_SIGN_IN_DEFAULT);
+    expect(snowflake.fieldDefaults).toEqual({ authMethod: SNOWFLAKE_SIGN_IN_DEFAULT });
+    // The options reversed: the default still reads as the key pair, so the order of the select decides nothing.
+    const reversed: DatabaseUIConfig = {
+      ...snowflake,
+      fieldOptions: { authMethod: [...(snowflake.fieldOptions?.authMethod ?? [])].reverse() },
+    };
+    for (const sign of [{}, { authMethod: undefined }, { authMethod: null }]) {
+      expect(connectionFieldShown(reversed, "privateKey", sign)).toBe(true);
+      expect(connectionFieldShown(reversed, "password", sign)).toBe(false);
+    }
+    expect(connectionFieldShown(reversed, "password", { authMethod: "pat" })).toBe(true);
+  });
+
+  test("reads a whitespace value as before where the field is not a required secret", () => {
+    const databend = getDBConfig("databend");
+    expect(
+      connectionFieldRefusal(databend, {
+        id: "db",
+        name: "Databend",
+        type: "databend",
+        host: "localhost",
+        user: "  ",
+        createdAt: new Date(0),
+      } as DatabaseConnection),
+    ).toBeUndefined();
+    // The dialog reads a padded Snowflake user as filled; connect() trims it and refuses it.
+    expect(connectionFieldRefusal(snowflake, connection({ user: "  " }))).toBeUndefined();
+    // A secret without `required` still reaches its format rule with a whitespace value.
+    const spark = getDBConfig("spark");
+    expect(
+      connectionFieldRefusal(spark, {
+        id: "spark",
+        name: "Apache Spark",
+        type: "spark",
+        host: "spark.example.internal",
+        password: " ",
+        createdAt: new Date(0),
+      } as DatabaseConnection),
+    ).toBe(SPARK_FIELD_RULES.password?.format?.sentence);
+  });
+
+  test("declares exactly Snowflake's key and token as required secrets, each sentence naming its field's label, and a default for every controlling select", () => {
+    const declared: string[] = [];
+    for (const [type, config] of Object.entries(DB_UI_CONFIG)) {
+      for (const field of config.connectionFields) {
+        const required = config.fieldRules?.[field]?.required;
+        if (required === undefined || FIELD_CLASS[field] !== "secret") continue;
+        declared.push(`${type}.${field}`);
+        expect(required.toLowerCase()).toContain(connectionFieldLabel(config, field, field).toLowerCase());
+      }
+      for (const condition of Object.values(config.fieldShownWhen ?? {})) {
+        const options = config.fieldOptions?.[condition.field];
+        if (options === undefined) continue;
+        expect(options.map((option) => option.value)).toContain(config.fieldDefaults?.[condition.field] as string);
+      }
+      for (const field of Object.keys(config.fieldDefaults ?? {})) {
+        expect(config.connectionFields).toContain(field as ConnectionField);
+      }
+    }
+    expect(declared).toEqual(["snowflake.privateKey", "snowflake.password"]);
   });
 
   test("derives the host it connects to for the Account hint, and declares the account placeholder", () => {

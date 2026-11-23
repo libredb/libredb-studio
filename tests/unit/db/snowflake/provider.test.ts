@@ -186,6 +186,14 @@ describe("connect() validates the configuration before any socket", () => {
     ["an unknown sign-in method", { authMethod: "password" }, SNOWFLAKE_FIELD_SENTENCES.method],
     ["no key under keypair", { privateKey: "" }, SNOWFLAKE_FIELD_SENTENCES.keyEmpty],
     ["no token under pat", { authMethod: "pat", password: "" }, SNOWFLAKE_FIELD_SENTENCES.tokenEmpty],
+    ["a key of only whitespace", { privateKey: "   " }, SNOWFLAKE_FIELD_SENTENCES.keyEmpty],
+    [
+      "a null key under an absent method",
+      { authMethod: undefined, privateKey: null },
+      SNOWFLAKE_FIELD_SENTENCES.keyEmpty,
+    ],
+    ["a token of only whitespace", { authMethod: "pat", password: " \n" }, SNOWFLAKE_FIELD_SENTENCES.tokenEmpty],
+    ["a null token", { authMethod: "pat", password: null }, SNOWFLAKE_FIELD_SENTENCES.tokenEmpty],
     [
       "a key-pair JWT as the token",
       { authMethod: "pat", password: KEY_PAIR_JWT },

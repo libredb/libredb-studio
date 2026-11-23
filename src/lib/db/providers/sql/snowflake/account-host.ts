@@ -40,6 +40,14 @@ export const SNOWFLAKE_FIELD_SENTENCES = {
   method: "Choose Key pair or Programmatic access token for Sign-in. Nothing was sent.",
 } as const;
 
+/**
+ * The Sign-in method a connection that leaves `authMethod` absent (undefined or null) reads as: in the dialog, which
+ * declares it as the field's `fieldDefaults` value, at seed load, in core's refusal of a missing required secret before
+ * the provider is built, and in `connect()`. One constant, so the four cannot disagree about which secret an absent
+ * Sign-in needs.
+ */
+export const SNOWFLAKE_SIGN_IN_DEFAULT = "keypair";
+
 /** What an account URL carried besides its host, for `account.ts` to refuse; empty strings when absent. */
 export interface SnowflakeUrlParts {
   readonly port: string;

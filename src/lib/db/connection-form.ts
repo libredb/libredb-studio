@@ -23,11 +23,15 @@ import { DEFAULT_CONNECTION_TYPE } from "@/lib/db/default-connection-type";
 import { CREDENTIAL_WARNINGS, type CredentialWarning } from "@/lib/db/credential-warnings";
 import {
   SNOWFLAKE_FIELD_SENTENCES,
+  SNOWFLAKE_SIGN_IN_DEFAULT,
   snowflakeAccountRefusal,
   snowflakeHostHint,
   snowflakeHostIdentity,
 } from "@/lib/db/providers/sql/snowflake/account-host";
 import { typeIdRow } from "@/lib/db/type-id";
+// The storage classification, aliased because this module's own `CONNECTION_FIELDS` is the field lists: whether a
+// field is a credential is answered there once, for storage, the VS Code prompts and a required secret's blank rule.
+import { CONNECTION_FIELDS as FIELD_CLASS } from "@/lib/storage/secret-fields";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 
 /** What the connection dialog reads for one engine, apart from the icon and colour `DB_UI_CONFIG` adds. */
@@ -110,9 +114,18 @@ export interface ConnectionFormSpec {
    * A field the connection dialog draws only while another field holds one value, such as Snowflake's private key,
    * drawn only while Sign-in is Key pair. Read through `connectionFieldShown`: the dialog draws such a field only
    * while the condition holds, `buildConnection` writes it only then, and `connectionFieldRefusal` checks its rules
-   * only then, so a hidden field is neither saved nor required. Absent means every field the engine takes is drawn.
+   * only then, so a hidden field is neither saved nor required. A controlling field the connection leaves absent reads
+   * as its `fieldDefaults` value. Absent means every field the engine takes is drawn.
    */
   fieldShownWhen?: Partial<Record<ConnectionField, { readonly field: ConnectionField; readonly equals: string }>>;
+  /**
+   * The value the provider reads for a field a connection leaves absent (undefined or null), declared for a field a
+   * `fieldShownWhen` condition reads, so the dialog and core decide which fields such a connection shows, and so
+   * requires, as the provider does: Snowflake's absent Sign-in is `SNOWFLAKE_SIGN_IN_DEFAULT`, the key pair. Where the
+   * field has `fieldOptions`, the value is one of them; tests/unit/lib/db-ui-config.test.ts holds both. Absent, an
+   * absent controlling field meets no condition.
+   */
+  fieldDefaults?: Partial<Record<ConnectionField, string>>;
   /**
    * `false` where the engine's endpoint fixes its own TLS, so an SSL mode would be read by nothing. Absent
    * means the dialog offers the panel. Read through `offersSslPanel`, never directly.
@@ -143,7 +156,13 @@ export interface ConnectionFormSpec {
 
 /** A check the connection dialog runs on one field before Test Connection and Save (`fieldRules`). */
 export interface ConnectionFieldRule {
-  /** The refusal of a blank field; absent, a blank field passes. */
+  /**
+   * The refusal of a blank field; absent, a blank field passes. A field is blank when the dialog wrote no value for it
+   * or an empty one; a field the storage classification (`CONNECTION_FIELDS` in src/lib/storage/secret-fields.ts)
+   * calls `secret` is blank, as its provider reads it, also when the value is not text or holds only whitespace. Such a
+   * required secret, while `connectionFieldShown` shows it, is also refused by core, with this sentence, before the
+   * provider is built (`requiredSecretRefusal`), so the sentence names the field as the dialog labels it.
+   */
   readonly required?: string;
   /** A field that is not blank must match `pattern` whole, or `sentence` is the refusal. */
   readonly format?: { readonly pattern: RegExp; readonly sentence: string };
@@ -216,7 +235,8 @@ export const SNOWFLAKE_FIELD_RULES: Readonly<Partial<Record<ConnectionField, Con
   host: { required: SNOWFLAKE_FIELD_SENTENCES.accountEmpty, check: snowflakeAccountRefusal },
   user: { required: SNOWFLAKE_FIELD_SENTENCES.userEmpty },
   // Each credential is required only under its own sign-in method: `fieldShownWhen` hides the other one, and a
-  // hidden field's rules are not checked.
+  // hidden field's rules are not checked. Both are secrets, so a key or token that is not text or holds only
+  // whitespace is blank, as connect() reads it, and core refuses the one the Sign-in needs before the build.
   privateKey: { required: SNOWFLAKE_FIELD_SENTENCES.keyEmpty },
   password: { required: SNOWFLAKE_FIELD_SENTENCES.tokenEmpty },
   role: { required: SNOWFLAKE_FIELD_SENTENCES.roleEmpty },
@@ -988,6 +1008,8 @@ export const CONNECTION_FORM: {
       privateKeyPassphrase: { field: "authMethod", equals: "keypair" },
       password: { field: "authMethod", equals: "pat" },
     },
+    // An absent Sign-in is the key pair, the constant connect() and the seed check read.
+    fieldDefaults: { authMethod: SNOWFLAKE_SIGN_IN_DEFAULT },
     // TLS is fixed (the certificate checked, the account host as its name), so an SSL mode would be read by nothing. No
     // SSH panel either: core's SSH_TUNNEL_REFUSAL row refuses a tunnel, and offersSshTunnel reads it.
     showSslPanel: false,
@@ -1462,8 +1484,9 @@ export function connectionFieldPlacement(config: ConnectionFormSpec, field: Plac
 
 /**
  * Whether the dialog draws a field the engine takes, by the engine's `fieldShownWhen`: true when the field has no
- * condition, else whether the controlling field holds the declared value. An unset controlling field reads as its
- * first `fieldOptions` value, the choice its select shows first, so Snowflake's unset Sign-in reads as Key pair.
+ * condition, else whether the controlling field holds the declared value. A controlling field left absent (undefined
+ * or null) reads as its declared `fieldDefaults` value, the one the provider reads, so Snowflake's absent Sign-in
+ * reads as Key pair.
  */
 export function connectionFieldShown(
   config: ConnectionFormSpec,
@@ -1472,15 +1495,26 @@ export function connectionFieldShown(
 ): boolean {
   const condition = config.fieldShownWhen?.[field];
   if (condition === undefined) return true;
-  const value = connection[condition.field] ?? config.fieldOptions?.[condition.field]?.[0]?.value;
+  const value = connection[condition.field] ?? config.fieldDefaults?.[condition.field];
   return value !== undefined && String(value) === condition.equals;
+}
+
+/**
+ * Whether `value` is blank for the `required` rule of `field`: for a field the storage classification calls `secret`,
+ * a value that is not text or holds only whitespace, as the provider reads a secret it cannot sign in without; for any
+ * other field, no value or an empty one, as the dialog writes it.
+ */
+function blankForRequired(field: ConnectionField, value: unknown): boolean {
+  if (FIELD_CLASS[field] === "secret") return typeof value !== "string" || value.trim() === "";
+  return value === undefined || value === "";
 }
 
 /**
  * The first refusal of the engine's `fieldRules` for a connection as the dialog built it, or `undefined` when every
  * declared check passes. The fields are checked in `connectionFields` order, so the dialog names the first box to fix.
- * A blank field is one the dialog wrote no value for, or an empty one. A field `connectionFieldShown` hides is not
- * checked, since the dialog neither draws nor writes it.
+ * A `required` field is refused when it is blank (`ConnectionFieldRule.required`); any other check skips a field the
+ * dialog wrote no value for, or an empty one. A field `connectionFieldShown` hides is not checked, since the dialog
+ * neither draws nor writes it.
  */
 export function connectionFieldRefusal(config: ConnectionFormSpec, connection: DatabaseConnection): string | undefined {
   const values = connection as Partial<Record<ConnectionField, unknown>>;
@@ -1489,10 +1523,8 @@ export function connectionFieldRefusal(config: ConnectionFormSpec, connection: D
     if (rule === undefined) continue;
     if (!connectionFieldShown(config, field, values)) continue;
     const value = values[field];
-    if (value === undefined || value === "") {
-      if (rule.required !== undefined) return rule.required;
-      continue;
-    }
+    if (rule.required !== undefined && blankForRequired(field, value)) return rule.required;
+    if (value === undefined || value === "") continue;
     if (rule.format !== undefined && !rule.format.pattern.test(String(value))) return rule.format.sentence;
     if (
       rule.charRange !== undefined &&

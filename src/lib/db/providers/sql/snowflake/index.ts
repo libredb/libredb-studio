@@ -61,7 +61,7 @@ import type {
 import { MAX_UNLIMITED_ROWS } from "@/lib/db/utils/query-limiter";
 import { SQLBaseProvider } from "../sql-base";
 import { snowflakeEndpoint, type SnowflakeEndpoint } from "./account";
-import { SNOWFLAKE_FIELD_SENTENCES } from "./account-host";
+import { SNOWFLAKE_FIELD_SENTENCES, SNOWFLAKE_SIGN_IN_DEFAULT } from "./account-host";
 import { jwtClaim, keyPairTokenSource, type LoadedKey, loadPrivateKey, patTokenSource, readAccessToken } from "./auth";
 import { connectDeadlineError, SNOWFLAKE, SNOWFLAKE_ERROR_SENTENCES, SnowflakeError, toDatabaseError } from "./errors";
 import {
@@ -234,12 +234,12 @@ function refuse(sentence: string): never {
 
 /**
  * The account, the user, the sign-in method and its credential, then the role, in that order. An absent
- * method reads as `keypair`; a seed can write any other string, which is refused.
+ * method reads as `SNOWFLAKE_SIGN_IN_DEFAULT`, the key pair; a seed can write any other string, which is refused.
  */
 function readSettings(config: DatabaseConnection, egress: EgressDecision): SnowflakeSettings {
   const endpoint = snowflakeEndpoint(config.host, egress);
   if (isBlank(config.user)) refuse(SNOWFLAKE_FIELD_SENTENCES.userEmpty);
-  const method: unknown = config.authMethod ?? "keypair";
+  const method: unknown = config.authMethod ?? SNOWFLAKE_SIGN_IN_DEFAULT;
   if (typeof method !== "string" || !SIGN_IN_METHODS.has(method)) refuse(SNOWFLAKE_FIELD_SENTENCES.method);
   if (method === "keypair" && isBlank(config.privateKey)) refuse(SNOWFLAKE_FIELD_SENTENCES.keyEmpty);
   if (method === "pat" && isBlank(config.password)) refuse(SNOWFLAKE_FIELD_SENTENCES.tokenEmpty);
