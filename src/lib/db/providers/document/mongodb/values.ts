@@ -41,7 +41,10 @@ function serializeMongoValue(value: unknown): unknown {
   // Only an echo of what the statement wrote (`insertedId` of a `$numberDouble`
   // `_id`) is a Double here: the driver promotes every double it reads to a number.
   if (value instanceof mongodbDriver.BSON.Double) return value.valueOf();
-  if (Array.isArray(value)) return value.map((entry) => serializeMongoValue(entry));
+  // An array entry of BSON's deprecated undefined (type 6), which the driver decodes to `undefined`, is `null`:
+  // what JSON already writes for it, so the editor's answer is unchanged, and a value MCP's value codec answers,
+  // where it refuses `undefined`. A member holding undefined stays as it is: JSON and the codec both leave it out.
+  if (Array.isArray(value)) return value.map((entry) => (entry === undefined ? null : serializeMongoValue(entry)));
   const scalar = bsonScalarText(value);
   if (scalar !== undefined) return scalar;
   return serializeMongoDocument(value as Document);

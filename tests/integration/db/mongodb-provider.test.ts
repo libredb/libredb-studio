@@ -16,6 +16,8 @@ import type { DatabaseConnection } from "@/lib/types";
 // which is the shape standing ruling 5b catalogues as a fake that cannot see a change.
 import * as realMongoDriver from "mongodb";
 import {
+  bsonDocumentBytes,
+  bsonUndefinedFor,
   MockBinary,
   type MockCollectionInfo,
   MockObjectId,
@@ -2089,6 +2091,34 @@ describe("MongoDBProvider", () => {
       expect(typeof result.rows[0]._id).toBe("string");
     });
 
+    // BSON's deprecated undefined (type 6) decodes to `undefined`. JSON writes it as null inside an array and leaves
+    // a member holding it out, so the editor route's answer was already that; the row itself now says the same
+    // inside an array, which is what lets MCP's value codec answer it. A member keeps `undefined`, which the codec
+    // leaves out as JSON does.
+    test("an undefined inside an array reaches the row as null, and a member whose value is undefined is left as it was", async () => {
+      mongoDriver.collectionData = [
+        {
+          top: undefined,
+          list: [1, undefined, 3],
+          nested: { inner: [undefined] },
+          deep: [[undefined]],
+          docs: [{ a: undefined }],
+        },
+      ];
+      const result = await provider.query(JSON.stringify({ collection: "users", operation: "find", filter: {} }));
+      const row = result.rows[0] as Record<string, unknown>;
+      expect(row).toStrictEqual({
+        top: undefined,
+        list: [1, null, 3],
+        nested: { inner: [null] },
+        deep: [[null]],
+        docs: [{ a: undefined }],
+      });
+      expect(Object.hasOwn(row, "top")).toBe(true);
+      expect(Object.hasOwn((row.docs as Record<string, unknown>[])[0], "a")).toBe(true);
+      expect(JSON.stringify(row)).toBe('{"list":[1,null,3],"nested":{"inner":[null]},"deep":[[null]],"docs":[{}]}');
+    });
+
     // Measured on MongoDB 8.2.12 (#1423): the grid showed `big` as `{"high":2097152,"low":1,"unsigned":false}`,
     // `ts` the same way, `re` as `{}` and `uid` as `<Binary: 16 bytes>`. The values are the driver's own classes,
     // as it reads them back: a Long past 2^53 stays a Long and a regular expression is a native RegExp.
@@ -2418,6 +2448,18 @@ describe("MongoDBProvider", () => {
     describe("the read", () => {
       /** The cursor or command each read opened, with what it was opened with. */
       const lastCursor = () => mongoDriver.cursors.at(-1) as (typeof mongoDriver.cursors)[number];
+
+      // The agent read decodes the raw cursor's bytes with the real parser, which reads BSON undefined (type 6) as
+      // `undefined`; the stand-in serves bytes carrying it, since the real serializer writes an array's undefined as null.
+      test("an undefined inside an array of a document the cursor serves as BSON reaches the row as null", async () => {
+        mongoDriver.collectionData = [bsonDocumentBytes(bsonUndefinedFor({ list: [1, null, 3] }))];
+        const profiled = profiledProvider();
+        await profiled.connect();
+        const find = await profiled.queryReadOnly(envelope("find"), budget);
+        expect(lastCursor().options.raw).toBe(true);
+        expect(find.rows).toStrictEqual([{ list: [1, null, 3] }]);
+        await profiled.disconnect();
+      });
 
       test("the five read operations answer through the envelope the editor takes", async () => {
         mongoDriver.collectionData = [

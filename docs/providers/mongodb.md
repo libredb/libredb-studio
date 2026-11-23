@@ -167,6 +167,11 @@ prototype carries, so a document's own field of that name stays data. A bigint o
 is reached only by a write echoing a typed `_id` the statement sent, and renders as a number (a
 bigint past 2^53 as its digits) ([§3.1](#extended-json-in-the-query)).
 
+A BSON undefined (the deprecated type 6) inside an array is `null`, as JSON writes it, so the editor's answer is unchanged and MCP's answer carries the row.
+Before, the driver's `undefined` reached the row, and MCP's value codec, which takes no `undefined`, refused the whole answer: `The value codec cannot encode undefined, at "/0/list/1".`
+A field whose value is undefined stays as it is in the row, and both the editor's JSON and MCP's answer leave it out.
+Measured with the bson 7.3.2 parser on hand-built bytes; the Node driver itself writes an array's undefined as null, so only a document another writer stored carries one.
+
 ### 3.3 Sampling-based schema inference, nested to three levels
 
 MongoDB has no fixed schema, so the object surface ([`mongodb/index.ts`](../../src/lib/db/providers/document/mongodb/index.ts))
