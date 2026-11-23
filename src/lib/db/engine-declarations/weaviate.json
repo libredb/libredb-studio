@@ -1,0 +1,54 @@
+{
+  "id": "weaviate",
+  "displayName": "Weaviate",
+  "location": "external",
+  "connection": {
+    "fields": [
+      "host",
+      "port",
+      "password"
+    ],
+    "defaults": {
+      "port": 8080
+    },
+    "seedOnly": null,
+    "refused": [
+      "user"
+    ],
+    "connectionString": {
+      "accepted": false,
+      "dialogOffersUri": false
+    },
+    "tls": "offered",
+    "sshTunnel": {
+      "offered": true
+    },
+    "hostPathFields": [],
+    "opensLocalFile": false,
+    "serverLevelWithoutDatabase": false,
+    "agentCredential": {
+      "form": "secret",
+      "supersededBy": []
+    }
+  },
+  "facets": {
+    "monitoring": {
+      "overview": "offered",
+      "performance": "not-offered",
+      "slowQueries": "not-offered",
+      "activeSessions": "not-offered",
+      "tables": "offered",
+      "indexes": "offered",
+      "storage": "not-offered"
+    },
+    "maintenance": [],
+    "agentReadings": [
+      "table-stats",
+      "index-stats",
+      "health"
+    ]
+  },
+  "agent": {
+    "statementLanguage": "weaviateapi"
+  }
+}

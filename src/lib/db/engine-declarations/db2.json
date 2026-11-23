@@ -1,0 +1,57 @@
+{
+  "id": "db2",
+  "displayName": "Db2 LUW",
+  "location": "external",
+  "connection": {
+    "fields": [
+      "host",
+      "port",
+      "user",
+      "password",
+      "database",
+      "allowInsecureAuth"
+    ],
+    "defaults": {
+      "port": 50000
+    },
+    "seedOnly": null,
+    "refused": [],
+    "connectionString": {
+      "accepted": true,
+      "dialogOffersUri": false
+    },
+    "tls": "offered",
+    "sshTunnel": {
+      "offered": true
+    },
+    "hostPathFields": [],
+    "opensLocalFile": false,
+    "serverLevelWithoutDatabase": false,
+    "agentCredential": {
+      "form": "pair",
+      "supersededBy": []
+    }
+  },
+  "facets": {
+    "monitoring": {
+      "overview": "offered",
+      "performance": "not-offered",
+      "slowQueries": "not-offered",
+      "activeSessions": "not-offered",
+      "tables": "offered",
+      "indexes": "not-offered",
+      "storage": "not-offered"
+    },
+    "maintenance": [
+      "analyze",
+      "optimize"
+    ],
+    "agentReadings": [
+      "table-stats",
+      "health"
+    ]
+  },
+  "agent": {
+    "statementLanguage": "sql"
+  }
+}

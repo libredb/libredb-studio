@@ -1,0 +1,53 @@
+{
+  "id": "kafka",
+  "displayName": "Apache Kafka",
+  "location": "external",
+  "connection": {
+    "fields": [
+      "host",
+      "port",
+      "saslMechanism",
+      "user",
+      "password"
+    ],
+    "defaults": {
+      "port": 9092
+    },
+    "seedOnly": null,
+    "refused": [],
+    "connectionString": {
+      "accepted": false,
+      "dialogOffersUri": false
+    },
+    "tls": "offered",
+    "sshTunnel": {
+      "offered": false,
+      "refusal": "Kafka does not run through an SSH tunnel: the tunnel forwards one address, and a Kafka client reads from every broker the cluster advertises, at the address the broker advertises. Connect to the brokers directly."
+    },
+    "hostPathFields": [],
+    "opensLocalFile": false,
+    "serverLevelWithoutDatabase": false,
+    "agentCredential": {
+      "form": "pair",
+      "supersededBy": []
+    }
+  },
+  "facets": {
+    "monitoring": {
+      "overview": "offered",
+      "performance": "not-offered",
+      "slowQueries": "not-offered",
+      "activeSessions": "not-offered",
+      "tables": "not-offered",
+      "indexes": "not-offered",
+      "storage": "offered"
+    },
+    "maintenance": [],
+    "agentReadings": [
+      "health"
+    ]
+  },
+  "agent": {
+    "statementLanguage": "kafkaread"
+  }
+}

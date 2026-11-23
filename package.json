@@ -175,6 +175,8 @@
     "channels:showcase": "node scripts/generate-channel-showcase.mjs",
     "channels:showcase:check": "node scripts/generate-channel-showcase.mjs --check",
     "readme:check": "node scripts/readme-check.mjs",
+    "manifest:types": "bun scripts/generate-manifest-types.ts --write",
+    "engines:generate": "bun scripts/generate-engine-declarations.ts --write",
     "security:check": "node scripts/security-check.mjs",
     "test:e2e:base-path": "playwright test --config=playwright.base-path.config.ts"
   },
@@ -274,6 +276,7 @@
     "@arethetypeswrong/cli": "^0.18.5",
     "@biomejs/biome": "^2.5.12",
     "@eslint/compat": "^2.1.1",
+    "@libredb/provider-sdk": "workspace:*",
     "@modelcontextprotocol/client": "2.4.0",
     "@modelcontextprotocol/server": "2.4.0",
     "@peculiar/x509": "^2.1.0",

@@ -86,6 +86,7 @@ RUN apk add --no-cache python3 make g++
 # without the package (packages/README.md, "Docker").
 COPY package.json bun.lock bunfig.toml ./
 COPY patches ./patches
+COPY packages/provider-sdk/package.json ./packages/provider-sdk/
 RUN bun install --frozen-lockfile
 
 # The BUILD still runs on the official, version-pinned Node: `next build` is the

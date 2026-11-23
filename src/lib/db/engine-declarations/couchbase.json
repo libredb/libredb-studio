@@ -1,0 +1,63 @@
+{
+  "id": "couchbase",
+  "displayName": "Couchbase",
+  "location": "external",
+  "connection": {
+    "fields": [
+      "host",
+      "port",
+      "user",
+      "password",
+      "database",
+      "connectionString"
+    ],
+    "defaults": {
+      "port": 8091
+    },
+    "seedOnly": null,
+    "refused": [],
+    "connectionString": {
+      "accepted": true,
+      "dialogOffersUri": true
+    },
+    "tls": "offered",
+    "sshTunnel": {
+      "offered": false,
+      "refusal": "Couchbase does not run through an SSH tunnel: the tunnel forwards one port, and queries go to the query service, on another port, at the address the cluster's node map advertises. Turn the tunnel off."
+    },
+    "hostPathFields": [],
+    "opensLocalFile": false,
+    "serverLevelWithoutDatabase": false,
+    "agentCredential": {
+      "form": "pair",
+      "supersededBy": []
+    }
+  },
+  "facets": {
+    "monitoring": {
+      "overview": "offered",
+      "performance": "offered",
+      "slowQueries": "offered",
+      "activeSessions": "offered",
+      "tables": "offered",
+      "indexes": "offered",
+      "storage": "offered"
+    },
+    "maintenance": [
+      "analyze",
+      "reindex",
+      "kill"
+    ],
+    "agentReadings": [
+      "sessions",
+      "slow-queries",
+      "table-stats",
+      "index-stats",
+      "storage",
+      "health"
+    ]
+  },
+  "agent": {
+    "statementLanguage": "sql"
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "id": "prometheus",
+  "displayName": "Prometheus",
+  "location": "external",
+  "connection": {
+    "fields": [
+      "host",
+      "port",
+      "user",
+      "password"
+    ],
+    "defaults": {
+      "port": 9090
+    },
+    "seedOnly": null,
+    "refused": [],
+    "connectionString": {
+      "accepted": false,
+      "dialogOffersUri": false
+    },
+    "tls": "offered",
+    "sshTunnel": {
+      "offered": true
+    },
+    "hostPathFields": [],
+    "opensLocalFile": false,
+    "serverLevelWithoutDatabase": false,
+    "agentCredential": {
+      "form": "pair",
+      "supersededBy": []
+    }
+  },
+  "facets": {
+    "monitoring": {
+      "overview": "offered",
+      "performance": "not-offered",
+      "slowQueries": "not-offered",
+      "activeSessions": "not-offered",
+      "tables": "offered",
+      "indexes": "not-offered",
+      "storage": "offered"
+    },
+    "maintenance": [],
+    "agentReadings": [
+      "table-stats",
+      "storage",
+      "health"
+    ]
+  },
+  "agent": {
+    "statementLanguage": "promql"
+  }
+}

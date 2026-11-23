@@ -71,8 +71,8 @@ describe("workspacePackageDirectories", () => {
     expect(() => workspacePackageDirectories(scratch)).toThrow("packages/linked is a symbolic link or junction");
   });
 
-  test("the repository lists no package today", () => {
-    expect(workspacePackageDirectories(repositoryRoot)).toEqual([]);
+  test("the repository lists the provider SDK, its first package", () => {
+    expect(workspacePackageDirectories(repositoryRoot)).toEqual(["packages/provider-sdk"]);
   });
 });
 
@@ -106,8 +106,8 @@ describe("workspacePackageNames", () => {
     expect(workspacePackageManifests(scratch)).toEqual([{ directory: "packages/planted", manifest }]);
   });
 
-  test("the repository names no workspace package today", () => {
-    expect(workspacePackageNames(repositoryRoot)).toEqual([]);
+  test("the repository names the provider SDK, its first package", () => {
+    expect(workspacePackageNames(repositoryRoot)).toEqual(["@libredb/provider-sdk"]);
   });
 });
 

@@ -1,0 +1,65 @@
+{
+  "id": "opcua",
+  "displayName": "OPC UA",
+  "location": "external",
+  "connection": {
+    "fields": [
+      "host",
+      "user",
+      "password",
+      "securityMode",
+      "serverCertificateThumbprint"
+    ],
+    "defaults": {
+      "port": 4840
+    },
+    "seedOnly": {
+      "fields": [
+        "securityMode",
+        "serverCertificateThumbprint",
+        "securityPolicyUri",
+        "clientCertificatePath",
+        "clientPrivateKeyPath",
+        "agentReadRoots"
+      ],
+      "scope": "each",
+      "refusal": "{field} is OPC UA only: no other engine's provider reads it, so this connection would be listed as carrying it and would not. Remove {field} from this connection.",
+      "projectionRefusal": null
+    },
+    "refused": [],
+    "connectionString": {
+      "accepted": false,
+      "dialogOffersUri": false
+    },
+    "tls": "not-offered",
+    "sshTunnel": {
+      "offered": true
+    },
+    "hostPathFields": [
+      "clientCertificatePath",
+      "clientPrivateKeyPath"
+    ],
+    "opensLocalFile": false,
+    "serverLevelWithoutDatabase": false,
+    "agentCredential": {
+      "form": "pair",
+      "supersededBy": []
+    }
+  },
+  "facets": {
+    "monitoring": {
+      "overview": "offered",
+      "performance": "not-offered",
+      "slowQueries": "not-offered",
+      "activeSessions": "not-offered",
+      "tables": "not-offered",
+      "indexes": "not-offered",
+      "storage": "not-offered"
+    },
+    "maintenance": [],
+    "agentReadings": []
+  },
+  "agent": {
+    "statementLanguage": "opcuaread"
+  }
+}

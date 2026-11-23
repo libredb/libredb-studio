@@ -1,0 +1,52 @@
+{
+  "id": "oxia",
+  "displayName": "Oxia",
+  "location": "external",
+  "connection": {
+    "fields": [
+      "host",
+      "port",
+      "password",
+      "database",
+      "dataServers",
+      "allowInsecureAuth"
+    ],
+    "defaults": {
+      "port": 6648
+    },
+    "seedOnly": null,
+    "refused": [
+      "user"
+    ],
+    "connectionString": {
+      "accepted": false,
+      "dialogOffersUri": false
+    },
+    "tls": "offered",
+    "sshTunnel": {
+      "offered": true
+    },
+    "hostPathFields": [],
+    "opensLocalFile": false,
+    "serverLevelWithoutDatabase": false,
+    "agentCredential": null
+  },
+  "facets": {
+    "monitoring": {
+      "overview": "not-offered",
+      "performance": "not-offered",
+      "slowQueries": "not-offered",
+      "activeSessions": "not-offered",
+      "tables": "not-offered",
+      "indexes": "not-offered",
+      "storage": "not-offered"
+    },
+    "maintenance": [],
+    "agentReadings": [
+      "health"
+    ]
+  },
+  "agent": {
+    "statementLanguage": "oxiacli"
+  }
+}

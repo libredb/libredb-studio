@@ -99,6 +99,7 @@
         "@arethetypeswrong/cli": "^0.18.5",
         "@biomejs/biome": "^2.5.12",
         "@eslint/compat": "^2.1.1",
+        "@libredb/provider-sdk": "workspace:*",
         "@modelcontextprotocol/client": "2.4.0",
         "@modelcontextprotocol/server": "2.4.0",
         "@peculiar/x509": "^2.1.0",
@@ -136,6 +137,16 @@
       "peerDependencies": {
         "react": "^19",
         "react-dom": "^19",
+      },
+    },
+    "packages/provider-sdk": {
+      "name": "@libredb/provider-sdk",
+      "version": "0.1.0",
+      "dependencies": {
+        "ajv": "^8.17.1",
+      },
+      "devDependencies": {
+        "typescript": "^6.0.3",
       },
     },
   },
@@ -505,6 +516,8 @@
     "@levischuck/tiny-cbor": ["@levischuck/tiny-cbor@0.2.11", "", {}, "sha512-llBRm4dT4Z89aRsm6u2oEZ8tfwL/2l6BwpZ7JcyieouniDECM5AqNgr/y08zalEIvW3RSK4upYyybDcmjXqAow=="],
 
     "@libredb/libredb": ["@libredb/libredb@0.2.2", "", { "bin": { "libredb": "dist/cli/main.js" } }, "sha512-x/7Bc42njLHcG2BCwGHX/UA5wmKG82NkVBlYXj7C4TNy+9LpXKQGZRzhgfORv+wlxMG7WQP4sDEqiM2rZymZUg=="],
+
+    "@libredb/provider-sdk": ["@libredb/provider-sdk@workspace:packages/provider-sdk"],
 
     "@loaderkit/resolve": ["@loaderkit/resolve@1.0.6", "", { "dependencies": { "@braidai/lang": "^1.0.0" } }, "sha512-G8FdIoF5CypfwmD9rl8BXod5HDn8JqB0CCNBXDTaRZ+yRYhARrrSToX1zg1zy9jX3zLqigsELwhT4gNtkdQAUg=="],
 

@@ -1,0 +1,60 @@
+{
+  "id": "snowflake",
+  "displayName": "Snowflake",
+  "location": "external",
+  "connection": {
+    "fields": [
+      "host",
+      "user",
+      "authMethod",
+      "privateKey",
+      "privateKeyPassphrase",
+      "password",
+      "warehouse",
+      "database",
+      "schema",
+      "role"
+    ],
+    "defaults": {
+      "host": ""
+    },
+    "seedOnly": null,
+    "refused": [],
+    "connectionString": {
+      "accepted": false,
+      "dialogOffersUri": false
+    },
+    "tls": "not-offered",
+    "sshTunnel": {
+      "offered": false,
+      "refusal": "Snowflake does not run through an SSH tunnel: the driver reaches the account's Snowflake hosts over HTTPS, and a tunnel forwards one address. Turn the tunnel off."
+    },
+    "hostPathFields": [],
+    "opensLocalFile": false,
+    "serverLevelWithoutDatabase": false,
+    "agentCredential": null
+  },
+  "facets": {
+    "monitoring": {
+      "overview": "offered",
+      "performance": "offered",
+      "slowQueries": "offered",
+      "activeSessions": "offered",
+      "tables": "offered",
+      "indexes": "offered",
+      "storage": "offered"
+    },
+    "maintenance": [],
+    "agentReadings": [
+      "sessions",
+      "slow-queries",
+      "table-stats",
+      "index-stats",
+      "storage",
+      "health"
+    ]
+  },
+  "agent": {
+    "statementLanguage": null
+  }
+}

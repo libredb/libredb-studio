@@ -1,0 +1,66 @@
+{
+  "id": "elasticsearch",
+  "displayName": "Elasticsearch",
+  "location": "external",
+  "connection": {
+    "fields": [
+      "host",
+      "port",
+      "user",
+      "password",
+      "apiKeyId",
+      "apiKeySecret"
+    ],
+    "defaults": {
+      "port": 9200
+    },
+    "seedOnly": {
+      "fields": [
+        "apiKeyId",
+        "apiKeySecret"
+      ],
+      "scope": "set",
+      "refusal": "apiKeyId and apiKeySecret are Elasticsearch-only. OpenSearch (and every other engine) refuses the pair: nothing here has measured whether OpenSearch's security plugin accepts Authorization: ApiKey, so a seed that carries it is rejected rather than listed as a connection that silently falls back to user/password.",
+      "projectionRefusal": "Seed connection \"{id}\" of type \"{type}\" carries an Elasticsearch API key pair. The pair is Elasticsearch-only; OpenSearch's security plugin has not been measured to accept Authorization: ApiKey, so the seed is refused rather than projected as a connection that silently falls back to user/password."
+    },
+    "refused": [],
+    "connectionString": {
+      "accepted": false,
+      "dialogOffersUri": false
+    },
+    "tls": "offered",
+    "sshTunnel": {
+      "offered": true
+    },
+    "hostPathFields": [],
+    "opensLocalFile": false,
+    "serverLevelWithoutDatabase": false,
+    "agentCredential": {
+      "form": "pair",
+      "supersededBy": [
+        "apiKeyId",
+        "apiKeySecret"
+      ]
+    }
+  },
+  "facets": {
+    "monitoring": {
+      "overview": "offered",
+      "performance": "not-offered",
+      "slowQueries": "not-offered",
+      "activeSessions": "not-offered",
+      "tables": "offered",
+      "indexes": "not-offered",
+      "storage": "offered"
+    },
+    "maintenance": [],
+    "agentReadings": [
+      "table-stats",
+      "storage",
+      "health"
+    ]
+  },
+  "agent": {
+    "statementLanguage": "sql"
+  }
+}

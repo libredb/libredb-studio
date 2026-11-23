@@ -2,7 +2,7 @@
 
 This directory holds Studio's bun workspace packages: code staged as separate packages inside this repository before it moves to a repository of its own.
 The root `package.json` declares them with `"workspaces": ["packages/*"]`.
-No package exists yet; this file is here so the layout is written down, and so every gate that names `packages/` names a directory that exists.
+The first package is `packages/provider-sdk/`, `@libredb/provider-sdk`: the provider contract's schema, its generated types and its validator (`docs/providers/CONTRACT.md`).
 
 ## Layout
 
@@ -28,6 +28,14 @@ The agent leg has no place in a package yet, so a type-id with a non-null `AGENT
 Without it, bun 1.4.4 installs a workspace root with its isolated linker as soon as one package exists, which moves every dependency under `node_modules/.bun` and changes the layout Studio builds, tests and ships with.
 With it, the layout stays the one a root without packages gets, and each package is linked at `node_modules/<name>`.
 The linker is not recorded in `bun.lock`, so the setting has to travel with every install, the images' included.
+
+## Imports
+
+A package imports its own files, Node built-ins, the names its `package.json` declares and `@libredb/provider-sdk`, and its tests may also import a Bun runtime module such as `bun:test`.
+A package never imports an `@/` path or a path out of its own directory, so it depends on no other package's internals and on none of Studio's, and moving it to a repository of its own changes no import.
+Studio's own code, under `src/`, `bin/`, `scripts/`, `tests/`, `e2e/` and `vscode-extension/src/`, reaches a package only by its name, never by a path into `packages/`, so what Studio sees of a package is what its `exports` publish.
+A root file that imports a package by name needs the package in the root `devDependencies` as `"workspace:*"`, or knip reports it as unlisted.
+`tests/unit/package-imports.test.ts` holds both rules.
 
 ## Docker
 
@@ -71,6 +79,7 @@ Every gate that finds its files by a `src/` or `tests/` path also reads a packag
 - knip analyses each package as a workspace, through the root `package.json` `workspaces`.
 - The root `tsc` checks every `.ts` file under the root, packages included.
 - The packed library check (`bun run lib:load`) fails on a dist or a packed manifest that names a package, and on a package dependency the root does not declare.
+- The package import rule (`tests/unit/package-imports.test.ts`) reads every package's `src/` and `tests/`, and every core file that names `packages/`, as "Imports" says.
 - The VS Code extension's bundle checks (`vscode-extension/scripts/bundle-checks.mjs`) refuse package code in the host bundle, and let the webview bundle a package file only when a sql-grammar row reaches it.
 
 `tests/unit/package-gates.test.ts` plants a violation in a throwaway package for the install, Biome, ESLint and knip, and fails when one of them stops seeing it.

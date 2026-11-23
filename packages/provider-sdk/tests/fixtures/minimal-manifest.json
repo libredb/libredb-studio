@@ -1,0 +1,64 @@
+{
+  "contract": "0.1",
+  "runtime": {
+    "entry": "dist/index.mjs"
+  },
+  "engines": [
+    {
+      "id": "exampledb",
+      "displayName": "ExampleDB",
+      "location": "external",
+      "connection": {
+        "fields": ["host", "port", "user", "password", "database"],
+        "defaults": {
+          "port": 7000
+        },
+        "seedOnly": null,
+        "refused": [],
+        "connectionString": {
+          "accepted": false,
+          "dialogOffersUri": false
+        },
+        "tls": "offered",
+        "sshTunnel": {
+          "offered": true
+        },
+        "hostPathFields": [],
+        "opensLocalFile": false,
+        "serverLevelWithoutDatabase": false,
+        "agentCredential": null
+      },
+      "facets": {
+        "monitoring": {
+          "overview": "offered",
+          "performance": "not-offered",
+          "slowQueries": "not-offered",
+          "activeSessions": "not-offered",
+          "tables": "not-offered",
+          "indexes": "not-offered",
+          "storage": "not-offered"
+        },
+        "maintenance": [],
+        "agentReadings": []
+      },
+      "agent": {
+        "statementLanguage": null
+      }
+    }
+  ],
+  "compatibility": [
+    {
+      "engine": "exampledb",
+      "product": "ExampleDB",
+      "versions": {
+        "kind": "list",
+        "list": ["2.4"]
+      },
+      "tested": [
+        {
+          "version": "2.4"
+        }
+      ]
+    }
+  ]
+}

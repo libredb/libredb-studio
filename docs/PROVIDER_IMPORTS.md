@@ -288,5 +288,7 @@ A provider that imports a core module the outward table does not list fails the 
 ## Limits
 
 - An `import()` or `require()` whose argument is not a literal is not seen; no core file that names `providers` holds one today.
-- Tests, e2e and workspace packages are not scanned. PR 9 widens the scan to the SDK package as core, and PR 14 to provider packages as provider directories.
+- Tests, e2e and workspace packages are not scanned.
+  The SDK package needs no place in this scan: the package import rule (`tests/unit/package-imports.test.ts`, packages/README.md "Imports") refuses any import out of a package, so the SDK cannot import a provider directory, and core reaches the SDK only by its name.
+  PR 14 widens the scan to provider packages as provider directories.
 - Files under `docker/` are not scanned either; `docker/s3/make-data.ts`, the S3 sample data generator, imports an S3 constant from its provider directory.
