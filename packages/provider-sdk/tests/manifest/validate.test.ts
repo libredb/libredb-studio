@@ -1892,6 +1892,29 @@ describe("schema refusals", () => {
     expect(refusalsFor(restrictive)).toEqual([]);
   });
 
+  test("an engine whose connection, facets, agent and SQL text claims are at their restrictive values is admitted", () => {
+    const restrictive = kafkaManifest();
+    Object.assign(connectionOf(restrictive), {
+      opensLocalFile: true,
+      serverLevelWithoutDatabase: true,
+      sshTunnel: { offered: false, refusal: "Kafka does not run through an SSH tunnel. Turn the tunnel off." },
+      seedOnly: {
+        fields: ["clientCertificatePath"],
+        scope: "each",
+        refusal: "{field} is Kafka only.",
+        projectionRefusal: null,
+      },
+      hostPathFields: ["clientCertificatePath"],
+      agentCredential: null,
+    });
+    restrictive.engines[0].agent.statementLanguage = null;
+    restrictive.engines[0].facets.agentReadings = [];
+    sqlTextOf(restrictive).redaction = { kind: "none" };
+
+    expect(refusalsFor(restrictive)).toEqual([]);
+    expect(validator.validateEngine(restrictive.engines[0]).admitted).toBe(true);
+  });
+
   test("a write reach outside the claim's values is refused as value-not-allowed", () => {
     for (const reach of ["partial", "OPEN"]) {
       const changed = manifest((m) => (policyOf(m).writeReach = reach));

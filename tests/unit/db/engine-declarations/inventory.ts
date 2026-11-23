@@ -32,7 +32,7 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
   {
     module: "src/lib/agent/agent-manifest.ts",
     name: "AGENT_STATEMENT_LANGUAGE",
-    destination: "engine declaration: agent.statementLanguage",
+    destination: claim("agent.statementLanguage"),
   },
   {
     module: "src/lib/agent/languages/engines/server.ts",
@@ -88,13 +88,13 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     name: "CONNECTION_STRING_ACCEPTED",
     destination: "engine declaration: connection.connectionString.accepted",
   },
-  { module: COMPATIBILITY, name: "OPENS_LOCAL_FILE", destination: "engine declaration: connection.opensLocalFile" },
-  { module: COMPATIBILITY, name: "HOST_PATH_FIELDS", destination: "engine declaration: connection.hostPathFields" },
-  { module: COMPATIBILITY, name: "SSH_TUNNEL_REFUSAL", destination: "engine declaration: connection.sshTunnel" },
+  { module: COMPATIBILITY, name: "OPENS_LOCAL_FILE", destination: claim("connection.opensLocalFile") },
+  { module: COMPATIBILITY, name: "HOST_PATH_FIELDS", destination: claim("connection.hostPathFields") },
+  { module: COMPATIBILITY, name: "SSH_TUNNEL_REFUSAL", destination: claim("connection.sshTunnel") },
   {
     module: COMPATIBILITY,
     name: "OPENS_SERVER_LEVEL_WITHOUT_DATABASE",
-    destination: "engine declaration: connection.serverLevelWithoutDatabase",
+    destination: claim("connection.serverLevelWithoutDatabase"),
   },
   {
     module: CONNECTION_FIELDS_MODULE,
@@ -115,7 +115,7 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
   {
     module: CONNECTION_FIELDS_MODULE,
     name: "SEED_AGENT_CREDENTIAL",
-    destination: "engine declaration: connection.agentCredential",
+    destination: claim("connection.agentCredential"),
   },
   {
     module: "src/lib/db/connect-budget.ts",
@@ -149,7 +149,12 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     name: "NON_SQL_DESTRUCTIVE_VOCABULARY",
     destination: STATEMENT_FAMILY,
   },
-  { module: "src/lib/db/engine-facets/index.ts", name: "ENGINE_FACETS", destination: "engine declaration: facets" },
+  {
+    module: "src/lib/db/engine-facets/index.ts",
+    name: "ENGINE_FACETS",
+    destination:
+      "engine declaration: facets, with facets.agentReadings the engine's request, which this table grants as Studio's review record of the claim",
+  },
   {
     module: "src/lib/db/execution-ui/index.ts",
     name: "EXECUTION_UI",
@@ -171,7 +176,7 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     module: "src/lib/db/sql-grammar/index.ts",
     name: "SQL_GRAMMAR",
     destination:
-      "engine declaration: sqlText, its grammar with each trailing limit clause by its source and flags, redaction, updateTarget and completion, each function named by the slot it fills",
+      "engine declaration: sqlText, its grammar with each trailing limit clause by its source and flags, redaction, updateTarget and completion, each function named by the slot it fills, with sqlText.redaction the engine's request, which this table grants as Studio's review record of the claim",
   },
   {
     module: "src/lib/db/sql-writing/index.ts",

@@ -1460,6 +1460,10 @@ export const CONNECTION_STRING_ACCEPTED: Readonly<Record<DatabaseType, boolean>>
  * The provider factory reads it too: it admits the file such a connection names before the provider is built
  * (`admittedFileConnection` in `./provider-files`), refusing Studio's own storage files there, and hands the provider
  * the absolute path it admitted.
+ *
+ * This table is Studio's review record of the claim an engine declaration requests at `connection.opensLocalFile`, and
+ * every gate reads it: the declaration states each shipped engine's request as this table's row, and the table is never
+ * a projection of declarations (docs/providers/CONTRACT.md, clauses M-52 and M-53).
  */
 export const OPENS_LOCAL_FILE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   postgres: false,
@@ -1523,6 +1527,10 @@ const NO_HOST_PATH_FIELDS: readonly HostPathField[] = Object.freeze([]);
  * Kept apart from `OPENS_LOCAL_FILE` because that record also decides governance row admission: an engine that reads a
  * certificate from the host is still a server a governance source may grant. An exhaustive Record for the reason
  * `EXTERNAL` gives, frozen with every row, like the records above it.
+ *
+ * This table is Studio's review record of the claim an engine declaration requests at `connection.hostPathFields`, and
+ * every gate reads it: the declaration states each shipped engine's request as this table's row, and the table is never
+ * a projection of declarations (docs/providers/CONTRACT.md, clauses M-52 and M-53).
  */
 export const HOST_PATH_FIELDS: Readonly<Record<DatabaseType, readonly HostPathField[]>> = Object.freeze({
   postgres: NO_HOST_PATH_FIELDS,
@@ -1595,6 +1603,10 @@ export const HOST_PATH_FIELDS: Readonly<Record<DatabaseType, readonly HostPathFi
  *
  * No sentence quotes a value of the connection. An exhaustive Record for the reason `EXTERNAL` gives, frozen like the
  * records above it.
+ *
+ * This table is Studio's review record of the claim an engine declaration requests at `connection.sshTunnel`, and every
+ * gate reads it: the declaration states each shipped engine's request as this table's row, and the table is never a
+ * projection of declarations (docs/providers/CONTRACT.md, clauses M-52 and M-53).
  */
 export const SSH_TUNNEL_REFUSAL: Readonly<Record<DatabaseType, string | null>> = Object.freeze({
   postgres: null,
@@ -1663,6 +1675,11 @@ export const SSH_TUNNEL_REFUSAL: Readonly<Record<DatabaseType, string | null>> =
  * with no database and no connection string, nothing connecting, and holds this record equal to the engines whose
  * provider then reports `catalogSessions`. An exhaustive Record for the reason `EXTERNAL` gives, frozen like the
  * records above it.
+ *
+ * This table is Studio's review record of the claim an engine declaration requests at
+ * `connection.serverLevelWithoutDatabase`, and every gate reads it: the declaration states each shipped engine's
+ * request as this table's row, and the table is never a projection of declarations (docs/providers/CONTRACT.md, clauses
+ * M-52 and M-53).
  */
 export const OPENS_SERVER_LEVEL_WITHOUT_DATABASE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   // An empty `database` on discrete fields reaches the whole server (`serverLevel` in providers/sql/postgres.ts);
