@@ -413,8 +413,9 @@ describe("who wrote a refusal", () => {
 
 /**
  * The paths the census covers: the agent, the hand-over and MCP, and the core read path they share; every database
- * route, the object routes' shared handler, the fleet health check and the shared steps behind them, the query events
- * those routes record, the provider factory's log lines, and the VS Code extension's backend child.
+ * route, the object routes' shared handler, the fleet health check and the shared steps behind them (the editor's two
+ * caller facades among them), the query events those routes record, the provider factory's log lines, and the VS Code
+ * extension's backend child.
  */
 const PROVIDER_TEXT_PATHS = [
   join("src", "lib", "agent"),
@@ -426,6 +427,7 @@ const PROVIDER_TEXT_PATHS = [
   join("src", "app", "api", "admin", "fleet-health"),
   join("src", "lib", "api", "object-route.ts"),
   join("src", "lib", "api", "editor-query.ts"),
+  join("src", "lib", "api", "editor-transaction.ts"),
   join("src", "lib", "provider-host"),
   join("src", "lib", "api", "test-connection.ts"),
   join("src", "lib", "query-events"),
@@ -501,7 +503,7 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   [testConnectionCore, "testConnection", "scrubProviderWarnings"],
   [testConnectionCore, "testConnection", "withheldProviderError"],
   [testConnectionCore, "testConnectionCautions", "withholdProviderError"],
-  [editorQuery, "runEditorQuery", "withScrubbedWarnings"],
+  [editorQuery, "editorPageBody", "withScrubbedWarnings"],
   [routeEvents, "failure", "providerTextScrub"],
   [routeEvents, "failure", "withheldProviderError"],
   [recordedRun, "runRecorded", "providerTextScrub"],
@@ -600,6 +602,8 @@ const NOT_PROVIDER_TEXT: Readonly<Record<string, string>> = {
   [`${mcp("tools", "run-statement.ts")}: build: raw.warnings`]: "a result executeOpened scrubbed before resultOf",
   [`${providerHost("legacy-bridge.ts")}: answerOf: result.warnings`]:
     "a legacy result's warnings carried into the execute answer, which runEditorQuery never renders: it answers the legacy result through withScrubbedWarnings",
+  [`${join("src", "lib", "api", "editor-transaction.ts")}: readTransactionState: read.error.message`]:
+    "the accessor's own sentence for a state read the host stopped waiting for or refused before the call, Studio's: no provider text reaches it",
   [`${providerHost("core", "console.ts")}: runExecute: answer.warnings`]:
     "an execute answer's warnings carried by reference into the page record, which runEditorQuery never renders",
   [`${mcp("tools", "statement-arms.ts")}: fence: refusal.message`]: "the language reader's own refusal, Studio's",

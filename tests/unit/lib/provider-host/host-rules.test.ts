@@ -1,9 +1,10 @@
 /**
- * The provider host's rules for the query and cancel surface (docs/providers/CONTRACT.md, clauses C-27, C-28, C-30,
- * C-48 and E-5), held through the caller facade (src/lib/api/editor-query.ts), the legacy bridge and the host core
- * together: no statement starts once the call's signal aborted, a cancel answers what the engine did, an engine that
- * cannot cancel is called for nothing, every provider promise the host abandons keeps a rejection handler, and a
- * failure's outcome says whether the statement can have reached the database.
+ * The provider host's rules for the query, cancel and transaction surface (docs/providers/CONTRACT.md, clauses C-27,
+ * C-28, C-30, C-48 and E-5), held through the caller facades (src/lib/api/editor-query.ts and
+ * src/lib/api/editor-transaction.ts), the legacy bridge and the host core together: no statement starts once the call's
+ * signal aborted, a cancel answers what the engine did, an engine that cannot cancel is called for nothing, every
+ * provider promise the host abandons keeps a rejection handler, and a failure's outcome says whether the statement can
+ * have reached the database.
  *
  * Every provider is a fake the test drives through promises it settles itself; no assertion follows a timer. A
  * `process.on("unhandledRejection")` counter, registered for the file, must read zero after every abandoned promise
@@ -13,6 +14,7 @@ import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from "bun:te
 import { randomUUID } from "node:crypto";
 import { BATCH_MAX_BYTES, envReader, PAGE_MAX_BYTES, rowsSource } from "@libredb/provider-sdk/calls";
 import { cancelEditorRun, runEditorQuery } from "@/lib/api/editor-query";
+import { beginInTransaction, runInTransaction } from "@/lib/api/editor-transaction";
 import { databaseErrorBody } from "@/lib/api/error-body";
 import { errorOutcome } from "@/lib/db/error-record";
 import { checkoutPhase, ConnectionError, connectPhase, QueryCancelledError } from "@/lib/db/errors";
@@ -276,5 +278,79 @@ describe("E23-K1: what a lost or failed connection answers", () => {
       kind: "connection",
       outcome: "not-sent",
     });
+  });
+
+  /** A transaction provider whose session state the test sets through `open`. */
+  function transactionProvider(extra: Record<string, unknown>) {
+    const session = { open: false };
+    const provider: DatabaseProvider = Object.assign(
+      createMockProvider({ config: connection }),
+      {
+        beginTransaction: mock(async () => {
+          session.open = true;
+        }),
+        commitTransaction: mock(async () => {}),
+        rollbackTransaction: mock(async () => {}),
+        isInTransaction: mock(() => session.open),
+        queryInTransaction: mock(async () => resultOf(1)),
+      },
+      extra,
+    );
+    return { provider, session };
+  }
+
+  test("a begin whose checkout failed answers not-sent, and holds no transaction", async () => {
+    const refused = new ConnectionError("connect ECONNREFUSED 127.0.0.1:5432", "postgres");
+    const { provider, session } = transactionProvider({
+      // The provider takes its connection through `checkoutPhase` before it sends BEGIN, as the pooled providers do.
+      beginTransaction: mock(() =>
+        checkoutPhase(
+          () => Promise.reject(new Error("connect ECONNREFUSED 127.0.0.1:5432")),
+          () => refused,
+        ),
+      ),
+    });
+
+    const outcome = await beginInTransaction(provider, false, {
+      signal: new AbortController().signal,
+      route: "host-rules",
+    });
+
+    expect(outcome.kind).toBe("failed");
+    const caught = (outcome as { error: unknown }).error;
+    expect(caught).toBe(refused);
+    expect(databaseErrorBody(caught)?.body).toMatchObject({
+      code: "CONNECTION_ERROR",
+      statusCode: 503,
+      kind: "connection",
+      outcome: "not-sent",
+    });
+    expect(session.open).toBe(false);
+  });
+
+  test("a socket lost mid-statement inside a transaction answers CONNECTION_ERROR with outcome unknown", async () => {
+    const lost = new ConnectionError("Connection terminated unexpectedly", "postgres");
+    const { provider, session } = transactionProvider({
+      queryInTransaction: mock(async () => {
+        throw lost;
+      }),
+    });
+    session.open = true;
+
+    const outcome = await runInTransaction(
+      provider,
+      { statement: "UPDATE t SET n = 1", options: {}, scrub },
+      { signal: new AbortController().signal, route: "host-rules" },
+    );
+
+    expect(outcome).toEqual({ kind: "failed", error: lost, sessionState: "in-transaction" });
+    const caught = (outcome as { error: unknown }).error;
+    expect(caught).toBe(lost);
+    expect(databaseErrorBody(caught)?.body).toMatchObject({
+      code: "CONNECTION_ERROR",
+      statusCode: 503,
+      outcome: "unknown",
+    });
+    expect(callsOf((provider as DatabaseProvider & { isInTransaction: unknown }).isInTransaction)).toHaveLength(1);
   });
 });
