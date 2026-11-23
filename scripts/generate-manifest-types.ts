@@ -79,8 +79,17 @@ function typeName(key: string): string {
   return `${key.charAt(0).toUpperCase()}${key.slice(1)}`;
 }
 
+/**
+ * A JSON value as a TypeScript literal. A string is quoted as the repository's formatter writes it: in double quotes,
+ * or in single quotes where it holds more double quotes than single ones, so fewer of them are escaped.
+ */
 function literal(value: unknown): string {
-  return JSON.stringify(value);
+  const json = JSON.stringify(value);
+  if (typeof value !== "string") return json;
+  const doubles = value.split('"').length - 1;
+  const singles = value.split("'").length - 1;
+  if (doubles <= singles) return json;
+  return `'${json.slice(1, -1).replaceAll('\\"', '"').replaceAll("'", "\\'")}'`;
 }
 
 /** A property key as TypeScript writes it: bare when it is an identifier, quoted otherwise. */
@@ -122,6 +131,11 @@ class Renderer {
       if (!(KEYWORDS.has(keyword) || (isRoot && ROOT_KEYWORDS.has(keyword)))) {
         throw new Error(
           `${pointer}: the keyword "${keyword}" is outside the subset scripts/generate-manifest-types.ts reads`,
+        );
+      }
+      if (keyword === "description" && typeof value === "string" && value.includes("*/")) {
+        throw new Error(
+          `${pointer}: the description holds "*/", which would end its doc comment in the generated module`,
         );
       }
       if (keyword === "properties" || keyword === "$defs") {

@@ -96,5 +96,76 @@
     ],
     "explainFormat": "postgres-json",
     "dialect": null
+  },
+  "sqlText": {
+    "readsSqlText": true,
+    "grammar": {
+      "hash": "code",
+      "bracket": "subscript",
+      "blockComment": "nesting",
+      "alternateQuoting": false,
+      "doubleSlashComment": false,
+      "backslashAlwaysEscapes": false,
+      "tripleQuotedStrings": false,
+      "backtickBackslashEscapes": false,
+      "dollarTags": true,
+      "doubleQuoteBackslashEscapes": null,
+      "singleQuoteBackslashEscapes": null,
+      "rawStrings": false,
+      "hintsAreCode": false,
+      "lineCommentBackslashContinues": false,
+      "lineCommentEndsAtCarriageReturn": false,
+      "script": {
+        "blocks": "none",
+        "separatorLine": null,
+        "unit": "statement",
+        "terminatedStatements": []
+      },
+      "trailingLimitClauses": [
+        {
+          "source": "\\s+AS\\s+OF\\s+(?:AT\\s+LEAST\\s+)?(?:\\d+|'[^']*')\\s*$",
+          "flags": "i"
+        },
+        {
+          "source": "\\s+FOR\\s+(?:NO\\s+KEY\\s+UPDATE|KEY\\s+SHARE|UPDATE|SHARE)(?:\\s+OF\\s+(?:\"(?:[^\"]|\"\")*\"|[^\\s()',;\"`][^\\s()',;\"`]*)(?:\\s*,\\s*(?:\"(?:[^\"]|\"\")*\"|[^\\s()',;\"`][^\\s()',;\"`]*))*)?(?:\\s+(?:NOWAIT|SKIP\\s+LOCKED))?\\s*$",
+          "flags": "i"
+        }
+      ],
+      "nonNumericRowBounds": [
+        "ALL"
+      ],
+      "confirmForms": [],
+      "confirmCodeForms": [
+        {
+          "wordThenBody": "DO"
+        },
+        [
+          "DO",
+          "LANGUAGE"
+        ]
+      ],
+      "confirmFormsWhen": [],
+      "confirmExemptForms": [],
+      "formatterLanguage": "postgresql",
+      "completionWords": {
+        "keywords": [],
+        "functions": []
+      },
+      "confirmConfigKeys": null,
+      "explainExecutesWithAnalyze": true
+    },
+    "redaction": {
+      "kind": "sql",
+      "nameQuote": "\""
+    },
+    "updateTarget": {
+      "dashCommentNeedsSeparator": false,
+      "extraQueryOpeners": [],
+      "extraSetOperators": []
+    },
+    "completion": {
+      "formatSegment": "formatSegment",
+      "readQuotedQualifier": "readQuotedQualifier"
+    }
   }
 }

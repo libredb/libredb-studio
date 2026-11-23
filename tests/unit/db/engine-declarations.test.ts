@@ -13,26 +13,44 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   type AgentCredentialForm,
+  type BlockCommentRule,
+  type BracketRule,
   compileManifestValidator,
   type CredentialWarning as ManifestCredentialWarning,
   type EngineDeclaration,
   type ExplainFormat as ManifestExplainFormat,
   type FieldName,
   type FieldPlacement as ManifestFieldPlacement,
+  type FormatterLanguage,
+  type GrammarFacts,
+  type HashRule,
   type HostPathField as ManifestHostPathField,
   type HostUriScheme as ManifestHostUriScheme,
   type JwtAccessClaim,
   type MaintenanceOperation as ManifestMaintenanceOperation,
   type PlaceableFieldName,
+  type ProcedureBodies,
   type QueryDialect as ManifestQueryDialect,
+  type ScriptFacts,
+  type ScriptUnit,
   type SelectFieldName,
   type StatementLanguage,
+  type StatementRedaction,
 } from "@libredb/provider-sdk/manifest";
+import type {
+  BlockCommentGrammar,
+  BracketGrammar,
+  HashGrammar,
+  ProceduralBlockGrammar,
+  ScriptGrammar,
+  SqlGrammar,
+} from "@libredb/provider-sdk/sql";
 import {
   buildDialog,
   buildEditor,
   buildEngineDeclaration,
   buildFieldRules,
+  buildSqlText,
   CAPABILITY_READ_ENVIRONMENT,
   declarationDirectoryProblems,
   EDITOR_TABLES,
@@ -94,6 +112,11 @@ import { createDatabaseProvider } from "@/lib/db/factory";
 import { MONITORING_PANELS } from "@/lib/db/engine-facets/types";
 import { CURATED_OPERATION_KINDS } from "@/lib/db/operations/descriptors";
 import { refusedFieldRefusal } from "@/lib/db/provider-connection";
+import { SQL_GRAMMAR } from "@/lib/db/sql-grammar";
+import type { CompletionQuoting, SqlGrammarSpec, SqlRedaction, UpdateTargetGrammar } from "@/lib/db/sql-grammar/types";
+import { MONGODB_SQL_GRAMMAR } from "@/lib/db/providers/document/mongodb/sql-grammar";
+import { REDIS_SQL_GRAMMAR } from "@/lib/db/providers/keyvalue/redis-sql-grammar";
+import { POSTGRES_SQL_GRAMMAR } from "@/lib/db/providers/sql/postgres-sql-grammar";
 import { type DialectSpec, QUERY_DIALECTS, type QueryDialect } from "@/lib/db/query-dialects";
 import { COUCHBASE_CONNECTION_STRING } from "@/lib/db/providers/document/couchbase/connection-string";
 import { MONGODB_CONNECTION_STRING } from "@/lib/db/providers/document/mongodb/connection-string";
@@ -119,11 +142,16 @@ import type { ExplainFormat, MaintenanceOperation, ProviderCapabilities } from "
 import { getExplainStrategy } from "@/lib/explain";
 import { historyMaskOf } from "@/lib/history-mask";
 import { importKubeconfig } from "@/lib/kubernetes/kubeconfig-import";
+import { writesUnderGrammar } from "@/lib/sql/dangerous-query";
 import { ALIAS_ENGINES, fenceTagEngine, isQueryFenceTag, QUERY_FENCE_ALIASES } from "@/lib/sql/fence-tags";
+import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
+import { hasUnterminatedSpan, readSqlSpan } from "@/lib/sql/spans";
+import { splitExecutionUnits } from "@/lib/sql/statement-splitter";
 import { CONNECTION_FIELDS as FIELD_CLASSES } from "@/lib/storage/secret-fields";
 import type { DatabaseConnection, DatabaseType, HostPathField } from "@/lib/types";
 import { readCensusCapabilities } from "../../helpers/census-capabilities";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
+import { SPAN_STATEMENTS } from "./sql-grammar/fixtures";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 const SCRIPT = path.join(ROOT, "scripts/generate-engine-declarations.ts");
@@ -191,6 +219,14 @@ function sameValue(a: unknown, b: unknown): boolean {
   return JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
 }
 
+/** Every member a redaction of any kind may hold. */
+type RedactionMember = "kind" | "nameQuote" | "read";
+
+/** The reader of a command redaction, or undefined where the redaction is of another kind. */
+function commandReader(redaction: SqlRedaction): unknown {
+  return redaction.kind === "command" ? redaction.read : undefined;
+}
+
 /**
  * The census's own resolver of the functions a declaration names: per engine, each name mapped to the function Studio
  * exports, imported here from its own module. It is written apart from the generator and the inventory, so a name is
@@ -199,6 +235,8 @@ function sameValue(a: unknown, b: unknown): boolean {
  * A connection string name resolves to the slot of the engine's own connection string row, imported from its provider
  * module rather than from the registry index the generator reads: every URL TLS reader, paste reader and seed check is
  * private to its module, so the row's slot is the binding there is, and the census holds it to the slot core runs.
+ * A SQL grammar name resolves the same way, to the slot of the engine's own grammar row imported from its provider
+ * module: every redaction reader and completion reader is private to its module too.
  */
 const NAMED_FUNCTIONS: Readonly<Partial<Record<DatabaseType, Readonly<Record<string, unknown>>>>> = {
   snowflake: {
@@ -215,13 +253,21 @@ const NAMED_FUNCTIONS: Readonly<Partial<Record<DatabaseType, Readonly<Record<str
   db2: { urlTls: DB2_CONNECTION_STRING.readTls, pasteReader: DB2_CONNECTION_STRING.paste },
   etcd: { seedCheck: ETCD_CONNECTION_STRING.validateSeed },
   libsql: { pasteReader: LIBSQL_CONNECTION_STRING.paste },
-  mongodb: { pasteReader: MONGODB_CONNECTION_STRING.paste },
+  mongodb: {
+    pasteReader: MONGODB_CONNECTION_STRING.paste,
+    redactionReader: commandReader(MONGODB_SQL_GRAMMAR.redaction),
+  },
   mssql: { urlTls: MSSQL_CONNECTION_STRING.readTls, pasteReader: MSSQL_CONNECTION_STRING.paste },
   mysql: { urlTls: MYSQL_CONNECTION_STRING.readTls, pasteReader: MYSQL_CONNECTION_STRING.paste },
   opcua: { seedCheck: OPCUA_CONNECTION_STRING.validateSeed },
   oracle: { pasteReader: ORACLE_CONNECTION_STRING.paste },
-  postgres: { urlTls: POSTGRES_CONNECTION_STRING.readTls, pasteReader: POSTGRES_CONNECTION_STRING.paste },
-  redis: { pasteReader: REDIS_CONNECTION_STRING.paste },
+  postgres: {
+    urlTls: POSTGRES_CONNECTION_STRING.readTls,
+    pasteReader: POSTGRES_CONNECTION_STRING.paste,
+    formatSegment: POSTGRES_SQL_GRAMMAR.completion.formatSegment,
+    readQuotedQualifier: POSTGRES_SQL_GRAMMAR.completion.readQuotedQualifier,
+  },
+  redis: { pasteReader: REDIS_CONNECTION_STRING.paste, redactionReader: commandReader(REDIS_SQL_GRAMMAR.redaction) },
   spark: { pasteReader: SPARK_CONNECTION_STRING.paste },
 };
 
@@ -270,6 +316,174 @@ function connectionStringNames(d: EngineDeclaration): string[] {
     ...(paste === null ? [] : [paste.reader]),
     ...(seedCheck === null ? [] : [seedCheck]),
   ];
+}
+
+/** The slots of a SQL grammar row whose function the declaration names, as `functionPaths` spells them. */
+function sqlTextSlotPaths(d: EngineDeclaration): string[] {
+  const { redaction, completion } = d.sqlText;
+  return [
+    ...(redaction.kind === "command" ? ["redaction.read"] : []),
+    ...(completion.formatSegment === null ? [] : ["completion.formatSegment"]),
+    ...(completion.readQuotedQualifier === null ? [] : ["completion.readQuotedQualifier"]),
+  ];
+}
+
+/** The SQL grammar function names a declaration states. */
+function sqlTextNames(d: EngineDeclaration): string[] {
+  const { redaction, completion } = d.sqlText;
+  return [
+    ...(redaction.kind === "command" ? [redaction.reader] : []),
+    ...(completion.formatSegment === null ? [] : [completion.formatSegment]),
+    ...(completion.readQuotedQualifier === null ? [] : [completion.readQuotedQualifier]),
+  ];
+}
+
+/**
+ * The grammar facts a declaration states for `grammar`, written here from the readers and the SDK's SqlGrammar doc
+ * comments rather than from the generator: a fact the grammar leaves out at the reading its readers give that absence
+ * (false for a form a reader tests with `=== true` or truthiness, true for `dollarTags`, which a reader tests with
+ * `=== false`, an empty list where a reader reads `?? []`, `postgresql` for the formatter, two empty word lists for
+ * completion), the two backslash overrides and the session keys null where they are left out, since each has a reading
+ * no value of its type gives, and each trailing limit clause by its source and flags.
+ */
+function declaredGrammar(grammar: SqlGrammar): GrammarFacts {
+  return {
+    hash: grammar.hash,
+    bracket: grammar.bracket,
+    blockComment: grammar.blockComment,
+    alternateQuoting: grammar.alternateQuoting,
+    doubleSlashComment: grammar.doubleSlashComment,
+    backslashAlwaysEscapes: grammar.backslashAlwaysEscapes,
+    tripleQuotedStrings: grammar.tripleQuotedStrings === true,
+    backtickBackslashEscapes: grammar.backtickBackslashEscapes === true,
+    dollarTags: grammar.dollarTags !== false,
+    doubleQuoteBackslashEscapes: grammar.doubleQuoteBackslashEscapes ?? null,
+    singleQuoteBackslashEscapes: grammar.singleQuoteBackslashEscapes ?? null,
+    rawStrings: grammar.rawStrings === true,
+    hintsAreCode: grammar.hintsAreCode === true,
+    lineCommentBackslashContinues: grammar.lineCommentBackslashContinues === true,
+    lineCommentEndsAtCarriageReturn: grammar.lineCommentEndsAtCarriageReturn === true,
+    script: {
+      blocks: grammar.script.blocks,
+      separatorLine: grammar.script.separatorLine,
+      unit: grammar.script.unit,
+      terminatedStatements: [...(grammar.script.terminatedStatements ?? [])],
+    },
+    trailingLimitClauses: grammar.trailingLimitClauses.map((pattern) => ({
+      source: pattern.source,
+      flags: pattern.flags as "i" | "iu",
+    })),
+    nonNumericRowBounds: [...(grammar.nonNumericRowBounds ?? [])],
+    confirmForms: (grammar.confirmForms ?? []).map((form) => form.slice()),
+    confirmCodeForms: (grammar.confirmCodeForms ?? []).map((form) => (Array.isArray(form) ? form.slice() : form)),
+    confirmFormsWhen: (grammar.confirmFormsWhen ?? []).map(({ form, when }) => ({ form: form.slice(), when })),
+    confirmExemptForms: (grammar.confirmExemptForms ?? []).map((form) => form.slice()),
+    formatterLanguage: grammar.formatterLanguage ?? "postgresql",
+    completionWords: {
+      keywords: [...(grammar.completionWords?.keywords ?? [])],
+      functions: [...(grammar.completionWords?.functions ?? [])],
+    },
+    confirmConfigKeys: grammar.confirmConfigKeys === undefined ? null : [...grammar.confirmConfigKeys],
+    explainExecutesWithAnalyze: grammar.explainExecutesWithAnalyze === true,
+  };
+}
+
+/**
+ * A grammar read from a declaration, as a host that admits it would build one: each trailing limit clause compiled from
+ * its source and flags, and each fact stated as null, and the formatter language stated as `postgresql`, left out, so
+ * its readers take the reading of its absence.
+ */
+function grammarFromDeclaration(d: EngineDeclaration): SqlGrammar {
+  const {
+    doubleQuoteBackslashEscapes,
+    singleQuoteBackslashEscapes,
+    confirmConfigKeys,
+    formatterLanguage,
+    trailingLimitClauses,
+    ...facts
+  } = d.sqlText.grammar;
+  return {
+    ...facts,
+    trailingLimitClauses: trailingLimitClauses.map(({ source, flags }) => new RegExp(source, flags)),
+    ...(doubleQuoteBackslashEscapes === null ? {} : { doubleQuoteBackslashEscapes }),
+    ...(singleQuoteBackslashEscapes === null ? {} : { singleQuoteBackslashEscapes }),
+    ...(confirmConfigKeys === null ? {} : { confirmConfigKeys }),
+    ...(formatterLanguage === "postgresql" ? {} : { formatterLanguage }),
+  };
+}
+
+/** A statement naming a confirmation code form, written out. */
+function codeFormStatement(form: NonNullable<SqlGrammar["confirmCodeForms"]>[number]): string {
+  if (Array.isArray(form)) return `SELECT ${form.join(" ")}`;
+  if ("prefix" in form) return `SELECT ${form.prefix}X(1)`;
+  if ("wordThenLiteral" in form) return `SELECT TRANSFORM (a) ${form.wordThenLiteral} 'cat' FROM t`;
+  if ("wordThenBody" in form) return `${form.wordThenBody} $$ SELECT 1 $$`;
+  if ("quotedCall" in form) return `SELECT \`${form.quotedCall}\`('a'), "${form.quotedCall}"('a')`;
+  if ("computedCall" in form) return `SELECT ${form.computedCall}('f')(1)`;
+  return "SELECT $t$x$t$, $$y$$";
+}
+
+/**
+ * The statements the behavioural read-back runs under both grammars: the golden span statements, one statement naming
+ * each fact whose absent reading a declaration writes, and every form a shipped grammar declares, written out.
+ */
+function censusCorpus(): string[] {
+  const forms = SHIPPED_DATABASE_TYPES.flatMap((type) => {
+    const { grammar } = SQL_GRAMMAR[type];
+    return [
+      ...(grammar.confirmForms ?? []).map((form) => form.join(" ")),
+      ...(grammar.confirmExemptForms ?? []).map((form) => `${form.join(" ")} x = 1`),
+      ...(grammar.confirmFormsWhen ?? []).map(({ form, when }) => `${form.join(" ")} s ${when} = 'x'`),
+      ...(grammar.confirmCodeForms ?? []).map(codeFormStatement),
+      ...(grammar.confirmConfigKeys ?? []).map((key) => `SET ${key}x = 1`),
+    ];
+  });
+  return [
+    ...SPAN_STATEMENTS,
+    "SELECT $t$x; DELETE FROM t; $t$",
+    "SELECT 'a\\' FROM \".x\" --'",
+    'SELECT "a\\"; DELETE FROM t --"',
+    "SELECT `a\\` WHERE x = '`; DELETE FROM t --'",
+    "SELECT r'C:\\'; DROP TABLE t; --'",
+    "SELECT '''a'b'''; DELETE FROM t; --'",
+    "/* a /*+ b */ DELETE FROM t; -- */",
+    "WITH c AS (SELECT 1 -- note \\\n) SELECT 1 --\n) DELETE FROM u",
+    "WITH c AS (SELECT 1) -- note\rINSERT INTO u\nSELECT 1",
+    "RESET",
+    "RESET spark.sql.defaultCatalog",
+    "SET spark.sql.defaultCatalog = x",
+    "EXPLAIN ANALYZE DELETE FROM t",
+    "ALTER SESSION SET x = 1",
+    "MERGE INTO t USING s ON t.a = s.a WHEN MATCHED THEN DELETE; SELECT 1",
+    ...forms,
+  ];
+}
+
+/** The span walk from 0: a span is `[kind, start, end]`, and where none starts the walk steps one character. */
+function spanWalk(sql: string, grammar: SqlGrammar): [string, number, number][] {
+  const spans: [string, number, number][] = [];
+  let index = 0;
+  while (index < sql.length) {
+    const span = readSqlSpan(sql, index, grammar);
+    if (span === null) {
+      index += 1;
+      continue;
+    }
+    spans.push([span.kind, index, span.end]);
+    index = span.end;
+  }
+  return spans;
+}
+
+/** What Studio's SQL readers answer of `sql` under `grammar`, one reading per reader. */
+function readings(sql: string, grammar: SqlGrammar): unknown {
+  return {
+    spans: spanWalk(sql, grammar),
+    units: splitExecutionUnits(sql, grammar),
+    operative: readOperativeKeyword(sql, grammar),
+    unterminated: hasUnterminatedSpan(sql, grammar),
+    writes: writesUnderGrammar(sql, grammar),
+  };
 }
 
 /** The schema's generic fence tags: the tags of a language several engines speak, which name no engine. */
@@ -414,6 +628,57 @@ describe("the committed declarations", () => {
     expect(() => buildEditor("kafka", CAPABILITIES.kafka, { ...EDITOR_TABLES, aliasEngines })).toThrow(
       `kafka: the fence alias "${alias}" names the engine but is not a query fence tag`,
     );
+  });
+
+  test("the generator refuses, by name, a SQL grammar member it has no place for", () => {
+    const key = `k${crypto.randomUUID().replaceAll("-", "")}`;
+    const row = SQL_GRAMMAR.kafka;
+    const planted: [SqlGrammarSpec, string][] = [
+      [{ ...row, grammar: { ...row.grammar, [key]: true } }, `grammar.${key}`],
+      [
+        { ...row, grammar: { ...row.grammar, script: { ...row.grammar.script, [key]: true } } },
+        `grammar.script.${key}`,
+      ],
+      [{ ...row, [key]: true }, key],
+      [{ ...row, redaction: { ...row.redaction, [key]: true } }, `redaction.${key}`],
+      [{ ...row, updateTarget: { ...row.updateTarget, [key]: true } }, `updateTarget.${key}`],
+      [{ ...row, completion: { ...row.completion, [key]: null } }, `completion.${key}`],
+      [
+        { ...row, grammar: { ...row.grammar, completionWords: { keywords: [], functions: [], [key]: true } } },
+        `grammar.completionWords.${key}`,
+      ],
+      [
+        { ...row, grammar: { ...row.grammar, confirmFormsWhen: [{ form: ["REPLACE"], when: "ON", [key]: true }] } },
+        `grammar.confirmFormsWhen.0.${key}`,
+      ],
+    ];
+
+    expect(() => buildSqlText("kafka", row)).not.toThrow();
+    for (const [spec, member] of planted) {
+      expect(() => buildSqlText("kafka", spec)).toThrow(
+        `kafka: the SQL grammar member "${member}" has no place in the engine declaration`,
+      );
+    }
+  });
+
+  test("the generator refuses, by name, a trailing limit clause whose flags the contract does not allow", () => {
+    const row = SQL_GRAMMAR.cassandra;
+    const clauses = (flags: string) => [...row.grammar.trailingLimitClauses, new RegExp("\\s+X\\s*$", flags)];
+    const index = row.grammar.trailingLimitClauses.length;
+
+    for (const flags of ["g", "", "im", "iy"]) {
+      const spec: SqlGrammarSpec = { ...row, grammar: { ...row.grammar, trailingLimitClauses: clauses(flags) } };
+
+      expect(() => buildSqlText("cassandra", spec)).toThrow(
+        `cassandra: trailing limit clause ${index} has flags "${flags}"; the provider contract allows i or iu`,
+      );
+    }
+    const unicode: SqlGrammarSpec = { ...row, grammar: { ...row.grammar, trailingLimitClauses: clauses("iu") } };
+
+    expect(buildSqlText("cassandra", unicode).grammar.trailingLimitClauses[index]).toEqual({
+      source: "\\s+X\\s*$",
+      flags: "iu",
+    });
   });
 
   test("--check names a differing, missing or extra file, and --write writes every declaration and removes a stray one", () => {
@@ -963,6 +1228,7 @@ describe("the census", () => {
         ...(connection.hostIdentity === null ? [] : [connection.hostIdentity]),
         ...(connection.import === null ? [] : [connection.import.importer]),
         ...connectionStringNames(declared(type)),
+        ...sqlTextNames(declared(type)),
       ];
     };
     const unnamed = Object.entries(NAMED_FUNCTIONS).flatMap(([type, table]) =>
@@ -1464,6 +1730,228 @@ describe("the census", () => {
     ).toEqual([]);
   });
 
+  test("sqlText.readsSqlText is the engine's SQL_GRAMMAR row's", () => {
+    expect(differing((type, d) => d.sqlText.readsSqlText === SQL_GRAMMAR[type].readsSqlText)).toEqual([]);
+    // Vacuity: some engines read SQL text and some do not, so the member is not read back as a constant.
+    expect(new Set(SHIPPED_DATABASE_TYPES.map((type) => declared(type).sqlText.readsSqlText)).size).toBe(2);
+  });
+
+  test("sqlText.grammar is the row's grammar, each fact the row leaves out at its reading when left out and each trailing limit clause by its source and flags", () => {
+    expect(differing((type, d) => sameValue(d.sqlText.grammar, declaredGrammar(SQL_GRAMMAR[type].grammar)))).toEqual(
+      [],
+    );
+    // Vacuity: some row states each nullable fact and some row leaves it out, some row turns tagged runs off, and some
+    // row declares more than one clause, whose order sameValue keeps.
+    const facts = SHIPPED_DATABASE_TYPES.map((type) => declared(type).sqlText.grammar);
+    for (const member of ["doubleQuoteBackslashEscapes", "singleQuoteBackslashEscapes", "confirmConfigKeys"] as const) {
+      expect(facts.some((grammar) => grammar[member] === null)).toBe(true);
+      expect(facts.some((grammar) => grammar[member] !== null)).toBe(true);
+    }
+    expect(facts.some((grammar) => !grammar.dollarTags)).toBe(true);
+    expect(facts.some((grammar) => grammar.trailingLimitClauses.length > 1)).toBe(true);
+  });
+
+  test("a grammar read from the declaration reads every statement of the census corpus as the row's grammar does", () => {
+    const corpus = censusCorpus();
+
+    expect(
+      differing((type, d) => {
+        const row = SQL_GRAMMAR[type].grammar;
+        const read = grammarFromDeclaration(d);
+        return (
+          sameList(
+            read.trailingLimitClauses.map(({ source, flags }) => `/${source}/${flags}`),
+            row.trailingLimitClauses.map(({ source, flags }) => `/${source}/${flags}`),
+          ) && corpus.every((sql) => sameValue(readings(sql, read), readings(sql, row)))
+        );
+      }),
+    ).toEqual([]);
+    // Vacuity: the corpus reads differently under many engines' grammars, so it reaches the facts that tell them apart.
+    const answers = new Set(
+      SHIPPED_DATABASE_TYPES.map((type) =>
+        JSON.stringify(corpus.map((sql) => readings(sql, SQL_GRAMMAR[type].grammar))),
+      ),
+    );
+    expect(answers.size).toBeGreaterThan(10);
+  });
+
+  test("sqlText.redaction is the row's redaction, a command reader named by its slot", () => {
+    expect(
+      differing((type, d) => {
+        const row = SQL_GRAMMAR[type].redaction;
+        const expected =
+          row.kind === "sql"
+            ? { kind: "sql", nameQuote: row.nameQuote }
+            : row.kind === "command"
+              ? { kind: "command", reader: "redactionReader" }
+              : { kind: "none" };
+        return sameValue(d.sqlText.redaction, expected);
+      }),
+    ).toEqual([]);
+    // Vacuity: every kind and more than one name quote are declared.
+    const redactions = SHIPPED_DATABASE_TYPES.map((type) => declared(type).sqlText.redaction);
+    expect(new Set(redactions.map(({ kind }) => kind)).size).toBe(3);
+    expect(new Set(redactions.flatMap((r) => (r.kind === "sql" ? [r.nameQuote] : []))).size).toBe(4);
+  });
+
+  test("sqlText.updateTarget is the row's, each word set in its order", () => {
+    expect(
+      differing((type, d) => {
+        const row = SQL_GRAMMAR[type].updateTarget;
+        const words = d.sqlText.updateTarget;
+        return (
+          words.dashCommentNeedsSeparator === row.dashCommentNeedsSeparator &&
+          sameList(words.extraQueryOpeners, [...row.extraQueryOpeners]) &&
+          sameList(words.extraSetOperators, [...row.extraSetOperators])
+        );
+      }),
+    ).toEqual([]);
+    // Vacuity: each member is stated other than empty or false on some engine.
+    const targets = SHIPPED_DATABASE_TYPES.map((type) => declared(type).sqlText.updateTarget);
+    expect(targets.some((target) => target.dashCommentNeedsSeparator)).toBe(true);
+    expect(targets.some((target) => target.extraQueryOpeners.length > 1)).toBe(true);
+    expect(targets.some((target) => target.extraSetOperators.length > 0)).toBe(true);
+  });
+
+  test("sqlText.completion names a segment formatter and a quoted qualifier reader exactly where the row has one", () => {
+    expect(
+      differing((type, d) => {
+        const row = SQL_GRAMMAR[type].completion;
+        return sameValue(d.sqlText.completion, {
+          formatSegment: row.formatSegment === null ? null : "formatSegment",
+          readQuotedQualifier: row.readQuotedQualifier === null ? null : "readQuotedQualifier",
+        });
+      }),
+    ).toEqual([]);
+  });
+
+  test("every function a grammar row holds is, through the census's own resolver, the very slot its declaration names", () => {
+    expect(
+      differing((type, d) => {
+        const row = SQL_GRAMMAR[type];
+        const { redaction, completion } = d.sqlText;
+        const same = (name: string | null, held: unknown) =>
+          name === null || (typeof held === "function" && resolveNamed(type, name) === held);
+        return (
+          (redaction.kind !== "command" || same(redaction.reader, commandReader(row.redaction))) &&
+          same(completion.formatSegment, row.completion.formatSegment) &&
+          same(completion.readQuotedQualifier, row.completion.readQuotedQualifier)
+        );
+      }),
+    ).toEqual([]);
+    expect(resolveNamed("postgres", "readQuotedQualifier")).toBe(SQL_GRAMMAR.postgres.completion.readQuotedQualifier);
+    expect(typeof resolveNamed("postgres", "readQuotedQualifier")).toBe("function");
+  });
+
+  test("every function a grammar row holds is named by its engine's declaration", () => {
+    expect(
+      differing((type, d) => sameValue(sorted(functionPaths(SQL_GRAMMAR[type], "")), sorted(sqlTextSlotPaths(d)))),
+    ).toEqual([]);
+    expect(
+      SHIPPED_DATABASE_TYPES.flatMap((type) => sqlTextSlotPaths(declared(type)).map((slot) => `${type}.${slot}`)),
+    ).toEqual([
+      "postgres.completion.formatSegment",
+      "postgres.completion.readQuotedQualifier",
+      "mongodb.redaction.read",
+      "redis.redaction.read",
+    ]);
+  });
+
+  test("every member of a grammar row has its member in the declaration", () => {
+    const specDeclaredAt: Readonly<Record<keyof SqlGrammarSpec, string>> = {
+      grammar: "grammar",
+      readsSqlText: "readsSqlText",
+      redaction: "redaction",
+      updateTarget: "updateTarget",
+      completion: "completion",
+    };
+    const grammarDeclaredAt: Readonly<Record<keyof SqlGrammar, string>> = {
+      hash: "hash",
+      bracket: "bracket",
+      blockComment: "blockComment",
+      alternateQuoting: "alternateQuoting",
+      doubleSlashComment: "doubleSlashComment",
+      backslashAlwaysEscapes: "backslashAlwaysEscapes",
+      tripleQuotedStrings: "tripleQuotedStrings",
+      backtickBackslashEscapes: "backtickBackslashEscapes",
+      dollarTags: "dollarTags",
+      doubleQuoteBackslashEscapes: "doubleQuoteBackslashEscapes",
+      singleQuoteBackslashEscapes: "singleQuoteBackslashEscapes",
+      rawStrings: "rawStrings",
+      hintsAreCode: "hintsAreCode",
+      lineCommentBackslashContinues: "lineCommentBackslashContinues",
+      lineCommentEndsAtCarriageReturn: "lineCommentEndsAtCarriageReturn",
+      script: "script",
+      trailingLimitClauses: "trailingLimitClauses",
+      nonNumericRowBounds: "nonNumericRowBounds",
+      confirmForms: "confirmForms",
+      confirmCodeForms: "confirmCodeForms",
+      confirmFormsWhen: "confirmFormsWhen",
+      confirmExemptForms: "confirmExemptForms",
+      formatterLanguage: "formatterLanguage",
+      completionWords: "completionWords",
+      confirmConfigKeys: "confirmConfigKeys",
+      explainExecutesWithAnalyze: "explainExecutesWithAnalyze",
+    };
+    const scriptDeclaredAt: Readonly<Record<keyof ScriptGrammar, string>> = {
+      blocks: "blocks",
+      separatorLine: "separatorLine",
+      unit: "unit",
+      terminatedStatements: "terminatedStatements",
+    };
+    const redactionDeclaredAt: Readonly<Record<RedactionMember, string>> = {
+      kind: "kind",
+      nameQuote: "nameQuote",
+      read: "reader",
+    };
+    const updateTargetDeclaredAt: Readonly<Record<keyof UpdateTargetGrammar, string>> = {
+      dashCommentNeedsSeparator: "dashCommentNeedsSeparator",
+      extraQueryOpeners: "extraQueryOpeners",
+      extraSetOperators: "extraSetOperators",
+    };
+    const completionDeclaredAt: Readonly<Record<keyof CompletionQuoting, string>> = {
+      formatSegment: "formatSegment",
+      readQuotedQualifier: "readQuotedQualifier",
+    };
+    const unplaced = (row: object, declaredAt: object, at: string) =>
+      Object.keys(row)
+        .filter((member) => !Object.hasOwn(declaredAt, member))
+        .map((member) => `${at}${member}`);
+    const placed = (declaration: object, declaredAt: object) =>
+      Object.values(declaredAt).every((member) => Object.hasOwn(declaration, member));
+
+    expect(
+      SHIPPED_DATABASE_TYPES.flatMap((type) => {
+        const row = SQL_GRAMMAR[type];
+        return [
+          ...unplaced(row, specDeclaredAt, ""),
+          ...unplaced(row.grammar, grammarDeclaredAt, "grammar."),
+          ...unplaced(row.grammar.script, scriptDeclaredAt, "grammar.script."),
+          ...unplaced(row.redaction, redactionDeclaredAt, "redaction."),
+          ...unplaced(row.updateTarget, updateTargetDeclaredAt, "updateTarget."),
+          ...unplaced(row.completion, completionDeclaredAt, "completion."),
+        ].map((member) => `${type}.${member}`);
+      }),
+    ).toEqual([]);
+    expect(
+      differing((type, d) => {
+        const { sqlText } = d;
+        const redaction = Object.entries(redactionDeclaredAt).every(
+          ([member, declaredMember]) =>
+            Object.hasOwn(SQL_GRAMMAR[type].redaction, member) === Object.hasOwn(sqlText.redaction, declaredMember),
+        );
+        return (
+          placed(sqlText, specDeclaredAt) &&
+          placed(sqlText.grammar, grammarDeclaredAt) &&
+          placed(sqlText.grammar.script, scriptDeclaredAt) &&
+          redaction &&
+          placed(sqlText.updateTarget, updateTargetDeclaredAt) &&
+          placed(sqlText.completion, completionDeclaredAt)
+        );
+      }),
+    ).toEqual([]);
+  });
+
   test("id is the file's type-id", () => {
     expect(differing((type, d) => d.id === type)).toEqual([]);
   });
@@ -1524,9 +2012,39 @@ describe("the vocabularies", () => {
       Equal<SelectFieldName, "saslMechanism" | "authMethod">,
       Equal<Exclude<ManifestExplainFormat, null>, ExplainFormat>,
       Equal<ManifestQueryDialect, QueryDialect>,
-    ] = [true, true, true, true, true, true, true, true, true, true, true, true, true];
+      Equal<HashRule, HashGrammar>,
+      Equal<BracketRule, BracketGrammar>,
+      Equal<BlockCommentRule, BlockCommentGrammar>,
+      Equal<ProcedureBodies, ProceduralBlockGrammar>,
+      Equal<ScriptUnit, ScriptGrammar["unit"]>,
+      Equal<ScriptFacts["separatorLine"], ScriptGrammar["separatorLine"]>,
+      Equal<Exclude<FormatterLanguage, "postgresql">, NonNullable<SqlGrammar["formatterLanguage"]>>,
+      Equal<StatementRedaction["kind"], SqlRedaction["kind"]>,
+    ] = [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+    ];
 
-    expect(parity).toEqual([true, true, true, true, true, true, true, true, true, true, true, true, true]);
+    expect<readonly boolean[]>(parity).toEqual(Array.from({ length: 21 }, () => true));
   });
 
   test("the explain formats, the query dialects and the generic fence tags are Studio's", () => {

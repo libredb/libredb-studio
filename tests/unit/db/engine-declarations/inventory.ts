@@ -140,7 +140,12 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
   { module: "src/lib/db/graph-policy-profiles.ts", name: "GRAPH_POLICY_PROFILES", destination: STATEMENT_FAMILY },
   { module: "src/lib/db/migration-ddl/index.ts", name: "MIGRATION_DDL", destination: EDITOR_AND_SQL },
   { module: "src/lib/db/query-generators/index.ts", name: "SQL_ENGINE_GENERATORS", destination: EDITOR_AND_SQL },
-  { module: "src/lib/db/sql-grammar/index.ts", name: "SQL_GRAMMAR", destination: EDITOR_AND_SQL },
+  {
+    module: "src/lib/db/sql-grammar/index.ts",
+    name: "SQL_GRAMMAR",
+    destination:
+      "engine declaration: sqlText, its grammar with each trailing limit clause by its source and flags, redaction, updateTarget and completion, each function named by the slot it fills",
+  },
   { module: "src/lib/db/sql-writing/index.ts", name: "SQL_WRITING", destination: EDITOR_AND_SQL },
   {
     module: "src/lib/seed/samples.ts",

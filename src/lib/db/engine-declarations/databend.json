@@ -152,5 +152,69 @@
     "fenceAliases": [],
     "explainFormat": "databend-text",
     "dialect": null
+  },
+  "sqlText": {
+    "readsSqlText": true,
+    "grammar": {
+      "hash": "code",
+      "bracket": "subscript",
+      "blockComment": "flat",
+      "alternateQuoting": false,
+      "doubleSlashComment": false,
+      "backslashAlwaysEscapes": true,
+      "tripleQuotedStrings": false,
+      "backtickBackslashEscapes": false,
+      "dollarTags": true,
+      "doubleQuoteBackslashEscapes": null,
+      "singleQuoteBackslashEscapes": null,
+      "rawStrings": false,
+      "hintsAreCode": false,
+      "lineCommentBackslashContinues": false,
+      "lineCommentEndsAtCarriageReturn": false,
+      "script": {
+        "blocks": "none",
+        "separatorLine": null,
+        "unit": "statement",
+        "terminatedStatements": []
+      },
+      "trailingLimitClauses": [
+        {
+          "source": "\\s+FORMAT\\s+\\w+\\s*$",
+          "flags": "i"
+        }
+      ],
+      "nonNumericRowBounds": [],
+      "confirmForms": [],
+      "confirmCodeForms": [],
+      "confirmFormsWhen": [
+        {
+          "form": [
+            "REPLACE"
+          ],
+          "when": "ON"
+        }
+      ],
+      "confirmExemptForms": [],
+      "formatterLanguage": "postgresql",
+      "completionWords": {
+        "keywords": [],
+        "functions": []
+      },
+      "confirmConfigKeys": null,
+      "explainExecutesWithAnalyze": false
+    },
+    "redaction": {
+      "kind": "sql",
+      "nameQuote": null
+    },
+    "updateTarget": {
+      "dashCommentNeedsSeparator": false,
+      "extraQueryOpeners": [],
+      "extraSetOperators": []
+    },
+    "completion": {
+      "formatSegment": null,
+      "readQuotedQualifier": null
+    }
   }
 }

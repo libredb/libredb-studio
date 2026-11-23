@@ -177,5 +177,158 @@
     "fenceAliases": [],
     "explainFormat": "spark-text",
     "dialect": null
+  },
+  "sqlText": {
+    "readsSqlText": true,
+    "grammar": {
+      "hash": "code",
+      "bracket": "subscript",
+      "blockComment": "nesting",
+      "alternateQuoting": false,
+      "doubleSlashComment": false,
+      "backslashAlwaysEscapes": true,
+      "tripleQuotedStrings": false,
+      "backtickBackslashEscapes": false,
+      "dollarTags": true,
+      "doubleQuoteBackslashEscapes": null,
+      "singleQuoteBackslashEscapes": null,
+      "rawStrings": true,
+      "hintsAreCode": true,
+      "lineCommentBackslashContinues": true,
+      "lineCommentEndsAtCarriageReturn": true,
+      "script": {
+        "blocks": "none",
+        "separatorLine": null,
+        "unit": "statement",
+        "terminatedStatements": []
+      },
+      "trailingLimitClauses": [
+        {
+          "source": "\\s+OFFSET\\s+\\d+\\s*$",
+          "flags": "i"
+        }
+      ],
+      "nonNumericRowBounds": [],
+      "confirmForms": [
+        [
+          "CREATE",
+          "OR",
+          "REPLACE"
+        ],
+        [
+          "REPLACE",
+          "TABLE"
+        ],
+        [
+          "LOAD",
+          "DATA"
+        ],
+        [
+          "CALL"
+        ],
+        [
+          "EXECUTE",
+          "IMMEDIATE"
+        ],
+        [
+          "ADD"
+        ]
+      ],
+      "confirmCodeForms": [
+        [
+          "INSERT",
+          "OVERWRITE"
+        ],
+        [
+          "EVOLUTION",
+          "OVERWRITE"
+        ],
+        [
+          "REPLACE",
+          "WHERE"
+        ],
+        [
+          "REPLACE",
+          "ON"
+        ],
+        [
+          "REPLACE",
+          "USING"
+        ],
+        [
+          "USING",
+          "JAR"
+        ],
+        [
+          "USING",
+          "FILE"
+        ],
+        [
+          "USING",
+          "ARCHIVE"
+        ],
+        [
+          "DROP",
+          "PARTITIONS"
+        ],
+        [
+          "SYNC",
+          "PARTITIONS"
+        ],
+        {
+          "wordThenLiteral": "USING"
+        },
+        [
+          "REFLECT"
+        ],
+        [
+          "JAVA_METHOD"
+        ],
+        [
+          "TRY_REFLECT"
+        ],
+        {
+          "quotedCall": "REFLECT"
+        },
+        {
+          "quotedCall": "JAVA_METHOD"
+        },
+        {
+          "quotedCall": "TRY_REFLECT"
+        },
+        {
+          "computedCall": "IDENTIFIER"
+        },
+        {
+          "dollarQuoted": true
+        }
+      ],
+      "confirmFormsWhen": [],
+      "confirmExemptForms": [],
+      "formatterLanguage": "postgresql",
+      "completionWords": {
+        "keywords": [],
+        "functions": []
+      },
+      "confirmConfigKeys": [
+        "spark.sql.variable.substitute",
+        "spark.sql.defaultCatalog",
+        "spark.sql.catalog."
+      ],
+      "explainExecutesWithAnalyze": false
+    },
+    "redaction": {
+      "kind": "sql",
+      "nameQuote": null
+    },
+    "updateTarget": {
+      "dashCommentNeedsSeparator": false,
+      "extraQueryOpeners": [],
+      "extraSetOperators": []
+    },
+    "completion": {
+      "formatSegment": null,
+      "readQuotedQualifier": null
+    }
   }
 }

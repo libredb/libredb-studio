@@ -65,6 +65,63 @@ const connectionStringOf = (m: Json): Json => m.engines[0].connection.connection
 /** The editor facts of the fixture's one engine. */
 const editorOf = (m: Json): Json => m.engines[0].editor;
 
+/** The SQL text facts of the fixture's one engine. */
+const sqlTextOf = (m: Json): Json => m.engines[0].sqlText;
+
+/** The SQL grammar facts of the fixture's one engine. */
+const grammarOf = (m: Json): Json => m.engines[0].sqlText.grammar;
+
+/** The pointer of the fixture's one engine's SQL text facts. */
+const SQL_TEXT = "/engines/0/sqlText";
+
+/** A trailing limit clause pattern matching `words` at a statement's end, with `flags`. */
+function clause(words: string, flags = "i"): Json {
+  return { source: `\\s+${words}\\s*$`, flags };
+}
+
+/** A grammar stating every fact the SDK's SqlGrammar may leave out, each with a value other than its absent reading. */
+function everyGrammarFact(m: Json): void {
+  Object.assign(grammarOf(m), {
+    hash: "code",
+    bracket: "subscript",
+    blockComment: "nesting",
+    alternateQuoting: true,
+    doubleSlashComment: true,
+    backslashAlwaysEscapes: true,
+    tripleQuotedStrings: true,
+    backtickBackslashEscapes: true,
+    dollarTags: false,
+    doubleQuoteBackslashEscapes: false,
+    singleQuoteBackslashEscapes: true,
+    rawStrings: true,
+    hintsAreCode: true,
+    lineCommentBackslashContinues: true,
+    lineCommentEndsAtCarriageReturn: true,
+    script: { blocks: "pl-sql", separatorLine: "/", unit: "batch", terminatedStatements: ["MERGE"] },
+    trailingLimitClauses: [clause("BYPASS\\s+CACHE"), clause("ALLOW\\s+FILTERING", "iu")],
+    nonNumericRowBounds: ["ALL", "$$$$"],
+    confirmForms: [
+      ["CREATE", "STAGE"],
+      ["COPY", "INTO", "LOCATION"],
+    ],
+    confirmCodeForms: [
+      ["SYSTEM", "FUNCTION"],
+      { prefix: "SYSTEM$" },
+      { wordThenLiteral: "USING" },
+      { wordThenBody: "DO" },
+      { quotedCall: "REFLECT" },
+      { computedCall: "IDENTIFIER" },
+      { dollarQuoted: true },
+    ],
+    confirmFormsWhen: [{ form: ["CREATE", "STAGE"], when: "URL" }],
+    confirmExemptForms: [["ALTER", "SESSION", "SET"]],
+    formatterLanguage: "snowflake",
+    completionWords: { keywords: ["ASOF JOIN", "QUALIFY"], functions: ["IFF", "TRY_CAST"] },
+    confirmConfigKeys: ["spark.sql.defaultCatalog", "spark.sql.catalog."],
+    explainExecutesWithAnalyze: true,
+  });
+}
+
 /** A fresh copy of the Kafka-shaped fixture, whose one engine is `kafka`. */
 function kafkaManifest(): Json {
   return JSON.parse(readFileSync(path.join(import.meta.dir, "../fixtures/kafka-manifest.json"), "utf8"));
@@ -238,6 +295,77 @@ describe("schema refusals", () => {
       "/engines/0/editor/dialect/historyMask",
       "credentialFlags",
     ],
+    ["sqlText", (m: Json) => delete m.engines[0].sqlText, "/engines/0", "sqlText"],
+    ...["readsSqlText", "grammar", "redaction", "updateTarget", "completion"].map(
+      (member) => [`sqlText.${member}`, (m: Json) => delete sqlTextOf(m)[member], SQL_TEXT, member] as const,
+    ),
+    ...[
+      "hash",
+      "bracket",
+      "blockComment",
+      "alternateQuoting",
+      "doubleSlashComment",
+      "backslashAlwaysEscapes",
+      "tripleQuotedStrings",
+      "backtickBackslashEscapes",
+      "dollarTags",
+      "doubleQuoteBackslashEscapes",
+      "singleQuoteBackslashEscapes",
+      "rawStrings",
+      "hintsAreCode",
+      "lineCommentBackslashContinues",
+      "lineCommentEndsAtCarriageReturn",
+      "script",
+      "trailingLimitClauses",
+      "nonNumericRowBounds",
+      "confirmForms",
+      "confirmCodeForms",
+      "confirmFormsWhen",
+      "confirmExemptForms",
+      "formatterLanguage",
+      "completionWords",
+      "confirmConfigKeys",
+      "explainExecutesWithAnalyze",
+    ].map(
+      (member) =>
+        [`sqlText.grammar.${member}`, (m: Json) => delete grammarOf(m)[member], `${SQL_TEXT}/grammar`, member] as const,
+    ),
+    ...["blocks", "separatorLine", "unit", "terminatedStatements"].map(
+      (member) =>
+        [
+          `sqlText.grammar.script.${member}`,
+          (m: Json) => delete grammarOf(m).script[member],
+          `${SQL_TEXT}/grammar/script`,
+          member,
+        ] as const,
+    ),
+    ...["keywords", "functions"].map(
+      (member) =>
+        [
+          `sqlText.grammar.completionWords.${member}`,
+          (m: Json) => delete grammarOf(m).completionWords[member],
+          `${SQL_TEXT}/grammar/completionWords`,
+          member,
+        ] as const,
+    ),
+    ...["dashCommentNeedsSeparator", "extraQueryOpeners", "extraSetOperators"].map(
+      (member) =>
+        [
+          `sqlText.updateTarget.${member}`,
+          (m: Json) => delete sqlTextOf(m).updateTarget[member],
+          `${SQL_TEXT}/updateTarget`,
+          member,
+        ] as const,
+    ),
+    ...["formatSegment", "readQuotedQualifier"].map(
+      (member) =>
+        [
+          `sqlText.completion.${member}`,
+          (m: Json) => delete sqlTextOf(m).completion[member],
+          `${SQL_TEXT}/completion`,
+          member,
+        ] as const,
+    ),
   ])("a missing %s is refused as missing-key", (_name, change, pointer, key) => {
     expect(refusalsFor(manifest(change))).toEqual([refusal("missing-key", pointer, key)]);
   });
@@ -766,6 +894,151 @@ describe("schema refusals", () => {
     }
   });
 
+  test("a SQL text segment with every grammar fact stated, a command redaction and both completion readers is admitted", () => {
+    const full = manifest((m) => {
+      everyGrammarFact(m);
+      sqlTextOf(m).redaction = { kind: "command", reader: "redactionReader" };
+      sqlTextOf(m).updateTarget = {
+        dashCommentNeedsSeparator: true,
+        extraQueryOpeners: ["PIVOT", "FROM"],
+        extraSetOperators: ["MINUS"],
+      };
+      sqlTextOf(m).completion = { formatSegment: "formatSegment", readQuotedQualifier: "readQuotedQualifier" };
+    });
+    const quoted = ['"', "`", "[", null].map((nameQuote) =>
+      manifest((m) => (sqlTextOf(m).redaction = { kind: "sql", nameQuote })),
+    );
+    const noKeys = manifest((m) => (grammarOf(m).confirmConfigKeys = []));
+
+    expect(refusalsFor(full)).toEqual([]);
+    for (const changed of quoted) expect(refusalsFor(changed)).toEqual([]);
+    expect(refusalsFor(noKeys)).toEqual([]);
+  });
+
+  test("a trailing limit clause longer than 512 characters is refused as out-of-range", () => {
+    const words = (length: number) => "A".repeat(length - "\\s+\\s*$".length);
+    const long = manifest((m) => (grammarOf(m).trailingLimitClauses = [clause(words(513))]));
+    const longest = manifest((m) => (grammarOf(m).trailingLimitClauses = [clause(words(512))]));
+
+    expect(refusalsFor(long)).toEqual([refusal("out-of-range", `${SQL_TEXT}/grammar/trailingLimitClauses/0/source`)]);
+    expect(refusalsFor(longest)).toEqual([]);
+  });
+
+  test("a trailing limit clause whose flags are not i or iu is refused as value-not-allowed", () => {
+    for (const flags of ["g", "", "im", "u", "ig"]) {
+      const changed = manifest((m) => (grammarOf(m).trailingLimitClauses = [clause("LIMIT", flags)]));
+
+      expect(refusalsFor(changed)).toEqual([
+        refusal("value-not-allowed", `${SQL_TEXT}/grammar/trailingLimitClauses/0/flags`),
+      ]);
+    }
+    const unicode = manifest((m) => (grammarOf(m).trailingLimitClauses = [clause("LIMIT", "iu")]));
+
+    expect(refusalsFor(unicode)).toEqual([]);
+  });
+
+  test("a trailing limit clause that does not open with \\s+ and close with \\s*$ is refused as pattern-mismatch", () => {
+    for (const source of ["BYPASS\\s+CACHE\\s*$", "\\s+BYPASS\\s+CACHE", "\\s*BYPASS\\s*$", " BYPASS\\s*$"]) {
+      const changed = manifest((m) => (grammarOf(m).trailingLimitClauses = [{ source, flags: "i" }]));
+
+      expect(refusalsFor(changed)).toEqual([
+        refusal("pattern-mismatch", `${SQL_TEXT}/grammar/trailingLimitClauses/0/source`),
+      ]);
+    }
+  });
+
+  test("a keyword that is not one upper-case word is refused as pattern-mismatch, and an empty keyword sequence as too-few", () => {
+    for (const word of ["drop", "DROP TABLE", "1DROP", "", `D${"A".repeat(64)}`]) {
+      const changed = manifest((m) => (grammarOf(m).confirmForms = [[word]]));
+
+      expect(refusalsFor(changed)).toEqual([refusal("pattern-mismatch", `${SQL_TEXT}/grammar/confirmForms/0/0`)]);
+    }
+    const empty = manifest((m) => (grammarOf(m).confirmForms = [[]]));
+    const many = manifest((m) => (grammarOf(m).confirmExemptForms = [Array.from({ length: 17 }, () => "SET")]));
+    const opener = manifest((m) => (sqlTextOf(m).updateTarget.extraQueryOpeners = ["pivot"]));
+    const terminated = manifest((m) => (grammarOf(m).script.terminatedStatements = ["Merge"]));
+
+    expect(refusalsFor(empty)).toEqual([refusal("too-few", `${SQL_TEXT}/grammar/confirmForms/0`)]);
+    expect(refusalsFor(many)).toEqual([refusal("too-many", `${SQL_TEXT}/grammar/confirmExemptForms/0`)]);
+    expect(refusalsFor(opener)).toEqual([refusal("pattern-mismatch", `${SQL_TEXT}/updateTarget/extraQueryOpeners/0`)]);
+    expect(refusalsFor(terminated)).toEqual([
+      refusal("pattern-mismatch", `${SQL_TEXT}/grammar/script/terminatedStatements/0`),
+    ]);
+  });
+
+  test("a code form of no listed shape is refused as no-variant", () => {
+    for (const form of [
+      { prefix: "x", extra: 1 },
+      { dollarQuoted: false },
+      { prefix: "SYSTEM$", quotedCall: "A" },
+      [],
+    ]) {
+      const changed = manifest((m) => (grammarOf(m).confirmCodeForms = [form]));
+
+      expect(refusalsFor(changed)).toEqual([refusal("no-variant", `${SQL_TEXT}/grammar/confirmCodeForms/0`)]);
+    }
+  });
+
+  test("a redaction of no listed kind, a name quote outside the vocabulary and a reader that is not a function name are each one refusal at the redaction", () => {
+    for (const redaction of [
+      { kind: "masked" },
+      { kind: "sql", nameQuote: "'" },
+      { kind: "sql" },
+      { kind: "command", reader: "Redact" },
+      { kind: "command", reader: null },
+      { kind: "none", nameQuote: null },
+    ]) {
+      const changed = manifest((m) => (sqlTextOf(m).redaction = redaction));
+
+      expect(refusalsFor(changed)).toEqual([refusal("no-variant", `${SQL_TEXT}/redaction`)]);
+    }
+  });
+
+  test("a grammar rule, a script separator or a formatter language outside its vocabulary is refused", () => {
+    const cases: [(m: Json) => void, string][] = [
+      [(m) => (grammarOf(m).hash = "slash"), "/grammar/hash"],
+      [(m) => (grammarOf(m).bracket = "array"), "/grammar/bracket"],
+      [(m) => (grammarOf(m).blockComment = "nested"), "/grammar/blockComment"],
+      [(m) => (grammarOf(m).script.blocks = "plpgsql"), "/grammar/script/blocks"],
+      [(m) => (grammarOf(m).script.separatorLine = "go"), "/grammar/script/separatorLine"],
+      [(m) => (grammarOf(m).script.unit = "script"), "/grammar/script/unit"],
+      [(m) => (grammarOf(m).formatterLanguage = "mysql"), "/grammar/formatterLanguage"],
+    ];
+    for (const [change, pointer] of cases) {
+      expect(refusalsFor(manifest(change))).toEqual([refusal("value-not-allowed", `${SQL_TEXT}${pointer}`)]);
+    }
+  });
+
+  test("a row bound value holding whitespace is refused as pattern-mismatch, and a word listed twice in a set as duplicate at the later", () => {
+    for (const bound of ["A B", "", " ALL", "x".repeat(33)]) {
+      const changed = manifest((m) => (grammarOf(m).nonNumericRowBounds = [bound]));
+
+      expect(refusalsFor(changed)).toEqual([refusal("pattern-mismatch", `${SQL_TEXT}/grammar/nonNumericRowBounds/0`)]);
+    }
+    const twice = manifest((m) => (sqlTextOf(m).updateTarget.extraSetOperators = ["MINUS", "EXCEPT", "MINUS"]));
+    const twiceForm = manifest(
+      (m) =>
+        (grammarOf(m).confirmForms = [
+          ["CREATE", "STAGE"],
+          ["CREATE", "STAGE"],
+        ]),
+    );
+    const twiceKey = manifest((m) => (grammarOf(m).confirmConfigKeys = ["spark.sql.a", "spark.sql.a"]));
+    const badKey = manifest((m) => (grammarOf(m).confirmConfigKeys = ["spark sql"]));
+    const keyword = manifest(
+      (m) => (grammarOf(m).completionWords = { keywords: ["ASOF  JOIN"], functions: ["IFF", "IFF"] }),
+    );
+
+    expect(refusalsFor(twice)).toEqual([refusal("duplicate", `${SQL_TEXT}/updateTarget/extraSetOperators/2`)]);
+    expect(refusalsFor(twiceForm)).toEqual([refusal("duplicate", `${SQL_TEXT}/grammar/confirmForms/1`)]);
+    expect(refusalsFor(twiceKey)).toEqual([refusal("duplicate", `${SQL_TEXT}/grammar/confirmConfigKeys/1`)]);
+    expect(refusalsFor(badKey)).toEqual([refusal("pattern-mismatch", `${SQL_TEXT}/grammar/confirmConfigKeys/0`)]);
+    expect(refusalsFor(keyword)).toEqual([
+      refusal("duplicate", `${SQL_TEXT}/grammar/completionWords/functions/1`),
+      refusal("pattern-mismatch", `${SQL_TEXT}/grammar/completionWords/keywords/0`),
+    ]);
+  });
+
   test("several failures are each refused, ordered by pointer", () => {
     const changed = manifest((m) => {
       m.bogus = true;
@@ -1138,6 +1411,23 @@ describe("rules the schema cannot state", () => {
     expect(sentence).not.toContain("Invalid regular expression");
   });
 
+  test("a trailing limit clause that does not compile is refused as pattern-invalid", () => {
+    const source = `\\s+(${randomUUID()}\\s*$`;
+    const changed = manifest((m) => (grammarOf(m).trailingLimitClauses = [clause("LIMIT"), { source, flags: "i" }]));
+    const notUnicode = manifest((m) => (grammarOf(m).trailingLimitClauses = [clause("\\p{L", "iu")]));
+    const plain = manifest((m) => (grammarOf(m).trailingLimitClauses = [clause("\\p{L")]));
+
+    const refusals = refusalsFor(changed);
+    expect(refusals).toEqual([refusal("pattern-invalid", `${SQL_TEXT}/grammar/trailingLimitClauses/1/source`)]);
+    expect(refusalsFor(notUnicode)).toEqual([
+      refusal("pattern-invalid", `${SQL_TEXT}/grammar/trailingLimitClauses/0/source`),
+    ]);
+    expect(refusalsFor(plain)).toEqual([]);
+    const sentence = refusalSentence(refusals[0] as ManifestRefusal);
+    expect(sentence).not.toContain(source);
+    expect(sentence).not.toContain("Invalid regular expression");
+  });
+
   test("a character range whose minimum exceeds its maximum is refused as char-range-inverted", () => {
     const inverted = manifest(
       (m) => (connectionOf(m).fieldRules = [fieldRule("user", { charRange: { min: 9, max: 3, sentence: "s" } })]),
@@ -1420,6 +1710,19 @@ describe("one engine declaration", () => {
     });
   });
 
+  test("an engine declaration's trailing limit clauses are held to the rules the schema cannot state, at pointers into it", () => {
+    const declaration = engine();
+    declaration.sqlText.grammar.trailingLimitClauses = [clause("(LIMIT"), clause("LIMIT"), clause("[")];
+
+    expect(validator.validateEngine(declaration)).toEqual({
+      admitted: false,
+      refusals: [
+        refusal("pattern-invalid", "/sqlText/grammar/trailingLimitClauses/0/source"),
+        refusal("pattern-invalid", "/sqlText/grammar/trailingLimitClauses/2/source"),
+      ],
+    });
+  });
+
   test("an engine declaration's dialog is held to the rules the schema cannot state, at pointers into it", () => {
     const declaration = engine();
     declaration.connection.fields.push("serviceName");
@@ -1480,6 +1783,10 @@ describe("refusals carry no value", () => {
           explainFormat: "postgres-json",
           dialect: dialect(["--token"]),
         };
+        everyGrammarFact(m);
+        sqlTextOf(m).redaction = { kind: "sql", nameQuote: "`" };
+        sqlTextOf(m).updateTarget.extraSetOperators = ["MINUS"];
+        sqlTextOf(m).completion = { formatSegment: "formatSegment", readQuotedQualifier: "readQuotedQualifier" };
       }),
       planted,
     ) as Json;

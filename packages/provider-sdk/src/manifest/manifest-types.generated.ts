@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "0ccab5e28af89ee7c608de85e4894029f5c2747c7c8298f521acacddf9085d8b";
+export const MANIFEST_SCHEMA_SHA256 = "d3d656d48b7abaa4c478351a1bff81f53874bfb9c1c82e6eb5c8dfc3fe685aa3";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -109,6 +109,7 @@ export interface EngineDeclaration {
   readonly facets: Facets;
   readonly agent: Agent;
   readonly editor: Editor;
+  readonly sqlText: SqlText;
 }
 
 /** external: a database the user already runs, which Studio is pointed at. embedded: a store Studio carries and creates itself. */
@@ -527,7 +528,7 @@ export type StatementLanguage =
   | "sparkplugread"
   | null;
 
-/** The editor facts of the engine that are data: the keyword its open transaction is committed with, the consent card's deadline, the fence tags naming it, the explain format of its plans and its query dialect. The engine's SQL grammar, SQL writing, migration DDL, generators and editor languages are later parts of the contract. */
+/** The editor facts of the engine that are data: the keyword its open transaction is committed with, the consent card's deadline, the fence tags naming it, the explain format of its plans and its query dialect. The SQL text facts are sqlText, and SQL writing, migration DDL, generators and editor languages are later parts of the contract. */
 export interface Editor {
   /** The one word that keeps an open transaction on the engine, which the notice Studio shows when a statement left a transaction open and it was rolled back names: a letter, then up to 31 letters, digits or underscores. */
   readonly commitKeyword: string;
@@ -609,6 +610,195 @@ export type HistoryMask = {
 
 /** A long command-line option: two hyphens, a lower-case letter, then up to 62 lower-case letters, digits or hyphens. */
 export type CredentialFlag = string;
+
+/** The engine's SQL text facts: whether its statement text is SQL, the grammar Studio's SQL readers read a statement's structure with, how a statement is redacted before the query event log keeps it, the words the update target reader needs beyond the grammar, and how completion quotes and reads qualified names. */
+export interface SqlText {
+  /** Whether the engine's statement text is SQL. False is a claim that loosens the confirmation gate, which the gate counts only where Studio's review record lists it, and every other reader reads it as declared. */
+  readonly readsSqlText: boolean;
+  readonly grammar: GrammarFacts;
+  readonly redaction: StatementRedaction;
+  readonly updateTarget: UpdateTargetWords;
+  readonly completion: CompletionReaders;
+}
+
+/** The engine's SQL grammar facts, one member per fact of the SDK's SqlGrammar, whose doc comments give each fact's rationale. A fact the SqlGrammar type may leave out is written at the reading its absence has, so a form the engine does not have is false or an empty list. */
+export interface GrammarFacts {
+  readonly hash: HashRule;
+  readonly bracket: BracketRule;
+  readonly blockComment: BlockCommentRule;
+  /** Whether q'...' opens a string literal, Oracle's alternate quoting. */
+  readonly alternateQuoting: boolean;
+  /** Whether // opens a line comment. */
+  readonly doubleSlashComment: boolean;
+  /** Whether a backslash always escapes the next character inside '...' and "...", under every session setting. */
+  readonly backslashAlwaysEscapes: boolean;
+  /** Whether '''...''' and """...""" are string literals that run to the next unescaped triple; false where the engine has no such form. */
+  readonly tripleQuotedStrings: boolean;
+  /** Whether a backslash escapes the next character inside a backtick identifier; false where only a doubled backtick escapes. */
+  readonly backtickBackslashEscapes: boolean;
+  /** Whether a tagged run, $tag$ ... $tag$, is a string literal; true where the engine has the form, the reading every engine had before the fact existed. False: the $ that would open a tagged run is code, and the untagged $$ ... $$ is still a dollar string. */
+  readonly dollarTags: boolean;
+  /** Whether a backslash escapes the next character inside "..."; null where the quote takes the reading backslashAlwaysEscapes gives both quotes, which is a third reading where backslashAlwaysEscapes is false. */
+  readonly doubleQuoteBackslashEscapes: boolean | null;
+  /** Whether a backslash escapes the next character inside '...'; null where the quote takes the reading backslashAlwaysEscapes gives both quotes, which is a third reading where backslashAlwaysEscapes is false. */
+  readonly singleQuoteBackslashEscapes: boolean | null;
+  /** Whether r'...', R'...', r"..." and R"..." are string literals that take no escapes; false where the engine has no such form. */
+  readonly rawStrings: boolean;
+  /** Whether /*+ opens an optimizer hint the engine lexes as code rather than a block comment; false where it opens a block comment. */
+  readonly hintsAreCode: boolean;
+  /** Whether a line comment continues onto the next line when a backslash stands immediately before the line feed that would end it; false where it never does. */
+  readonly lineCommentBackslashContinues: boolean;
+  /** Whether a carriage return ends a line comment as a line feed does; false where a carriage return is comment text. */
+  readonly lineCommentEndsAtCarriageReturn: boolean;
+  readonly script: ScriptFacts;
+  /** The clauses that must follow the row bound on the engine, each a pattern matching one such clause at the very end of a statement, in the order the limiter strips them; empty where the engine has none. */
+  readonly trailingLimitClauses: readonly ClausePattern[];
+  /** The values other than a digit run the engine accepts as a LIMIT or FETCH count and as an OFFSET, each spelled as a statement writes it, with no whitespace; empty where the engine accepts only digits. */
+  readonly nonNumericRowBounds: readonly string[];
+  /** Keyword sequences that ask for a confirmation when they operate a statement, beside the shared dangerous keywords; empty where the engine adds none. */
+  readonly confirmForms: readonly KeywordSequence[];
+  /** Forms that ask for a confirmation wherever they appear in a statement's code; empty where the engine adds none. */
+  readonly confirmCodeForms: readonly CodeForm[];
+  /** Keyword sequences that ask only when a code word also appears in the statement's code after them; empty where the engine adds none. */
+  readonly confirmFormsWhen: readonly ConditionalForm[];
+  /** Keyword sequences led by a shared dangerous keyword that do not ask on the engine, each a claim that loosens the confirmation gate, which the gate counts only where Studio's review record lists it; empty where every shared keyword asks. */
+  readonly confirmExemptForms: readonly KeywordSequence[];
+  readonly formatterLanguage: FormatterLanguage;
+  readonly completionWords: CompletionWords;
+  /** Session configuration keys whose SET or RESET asks for a confirmation, compared without case, an entry ending in . matching every key under it; a list, even an empty one, also makes a RESET with no key ask. Null where no SET or RESET asks. */
+  readonly confirmConfigKeys: readonly string[] | null;
+  /** Whether EXPLAIN ANALYZE executes the explained statement; false where EXPLAIN only plans. */
+  readonly explainExecutesWithAnalyze: boolean;
+}
+
+/** What a # opens. comment: a line comment, always. code: never a comment. comment-unless-operator: the compatibility default, a comment unless the next character makes a PostgreSQL jsonb or geometric operator. */
+export type HashRule = "comment" | "code" | "comment-unless-operator";
+
+/** What a [...] run is. quoted-identifier: a name that does not nest. subscript: an array literal or a subscript, which nests. */
+export type BracketRule = "quoted-identifier" | "subscript";
+
+/** Where a block comment ends when a second /* is written inside it. flat: at the first closer, whatever is inside. nesting: an inner /* opens another comment, so the run ends where the depth returns to zero. */
+export type BlockCommentRule = "flat" | "nesting";
+
+/** How a script is cut into what the engine receives, beyond the ; the span rules find. separatorLine: the token a line holding only it ends the statement in progress with, never sent, or null where the engine has none. terminatedStatements: the operative keywords whose statement keeps its own terminating ;, empty where every statement drops it. */
+export interface ScriptFacts {
+  readonly blocks: ProcedureBodies;
+  readonly separatorLine: "GO" | "/" | null;
+  readonly unit: ScriptUnit;
+  readonly terminatedStatements: readonly SqlKeyword[];
+}
+
+/** Which statements carry a procedural body, inside which a ; ends a body statement. none: no statement does. trigger-body: CREATE TRIGGER ... BEGIN ... END is the one statement with a body. pl-sql: an anonymous block and every stored PL/SQL unit. */
+export type ProcedureBodies = "none" | "trigger-body" | "pl-sql";
+
+/** What one request to the engine carries. statement: one statement. batch: everything between two separator lines, sent whole. */
+export type ScriptUnit = "statement" | "batch";
+
+/** A pattern matching one clause that must follow the row bound, at the very end of a statement: its source and flags as JavaScript's RegExp reads them, which must compile. The source opens with \s+, so a host that anchors it behind a character that is not whitespace starts a match only where a whitespace run starts, and closes with \s*$, so it matches only at the end. */
+export interface ClausePattern {
+  readonly source: string;
+  /** i, so the clause's words match in any case, or iu. */
+  readonly flags: "i" | "iu";
+}
+
+/** One SQL keyword as the readers compare it, upper-cased: an upper-case letter, then up to 63 upper-case letters, digits or underscores. */
+export type SqlKeyword = string;
+
+/** A sequence of one to 16 keywords, read in order with whitespace or comments between them. */
+export type KeywordSequence = readonly SqlKeyword[];
+
+/** A form a confirmation code form looks for: a keyword sequence, an identifier prefix, a word a literal follows, a word a routine body follows, a quoted name called as a function, a word whose parenthesised run names the function called, or a dollar-quoted run. */
+export type CodeForm =
+  | KeywordSequence
+  | CodeFormPrefix
+  | CodeFormWordThenLiteral
+  | CodeFormWordThenBody
+  | CodeFormQuotedCall
+  | CodeFormComputedCall
+  | CodeFormDollarQuoted;
+
+/** The start of an identifier: an upper-case letter, then up to 63 upper-case letters, digits, underscores or dollar signs. */
+export interface CodeFormPrefix {
+  readonly prefix: string;
+}
+
+/** A word whose next code, past whitespace and comments, is a string literal. */
+export interface CodeFormWordThenLiteral {
+  readonly wordThenLiteral: SqlKeyword;
+}
+
+/** A word whose next code is a routine body, a string literal or a dollar-quoted run. */
+export interface CodeFormWordThenBody {
+  readonly wordThenBody: SqlKeyword;
+}
+
+/** A closed quoted name whose text is the word, compared without case, that a ( follows. */
+export interface CodeFormQuotedCall {
+  readonly quotedCall: SqlKeyword;
+}
+
+/** A word followed by a parenthesised run and then a (, a call whose function name the run computes. */
+export interface CodeFormComputedCall {
+  readonly computedCall: SqlKeyword;
+}
+
+/** A dollar-quoted run, $$...$$ or $tag$...$tag$, a body the gate does not read. */
+export interface CodeFormDollarQuoted {
+  readonly dollarQuoted: true;
+}
+
+/** A keyword sequence that asks only when the code word when also appears in the statement's code after it. */
+export interface ConditionalForm {
+  readonly form: KeywordSequence;
+  readonly when: SqlKeyword;
+}
+
+/** The sql-formatter language the editor's Format uses for the engine; postgresql where the engine declares none, the language every engine formatted with before an engine declared one. */
+export type FormatterLanguage = "postgresql" | "snowflake";
+
+/** The keywords and functions the editor's completion offers on the engine beside the shared lists, a function inserted as a call; both lists empty where the engine adds none. A keyword is upper-case words separated by one space. */
+export interface CompletionWords {
+  readonly keywords: readonly string[];
+  readonly functions: readonly SqlKeyword[];
+}
+
+/** How a statement is redacted before the query event log keeps it. */
+export type StatementRedaction = SqlTextRedaction | CommandRedaction | NoRedaction;
+
+/** SQL text: the statement's literals are replaced, and only a closed name in the engine's identifier quote is kept. */
+export interface SqlTextRedaction {
+  readonly kind: "sql";
+  readonly nameQuote: NameQuote;
+}
+
+/** A command language: the named pure reader answers, from the statement's text, the text the query event log keeps. */
+export interface CommandRedaction {
+  readonly kind: "command";
+  readonly reader: FunctionName;
+}
+
+/** Nothing of the statement's text is kept. */
+export interface NoRedaction {
+  readonly kind: "none";
+}
+
+/** The character that opens the engine's quoted identifier, whose closed names redaction keeps; null where the engine has none. */
+export type NameQuote = '"' | "`" | "[" | null;
+
+/** The facts the update target reader needs beyond the grammar. dashCommentNeedsSeparator: whether -- opens a comment only when a space or a control character follows it. extraQueryOpeners: the words beside the shared set that open a query. extraSetOperators: the words beside the shared set that join two queries. Each word list is empty where the engine adds none. */
+export interface UpdateTargetWords {
+  readonly dashCommentNeedsSeparator: boolean;
+  readonly extraQueryOpeners: readonly SqlKeyword[];
+  readonly extraSetOperators: readonly SqlKeyword[];
+}
+
+/** How completion quotes and reads qualified names. */
+export interface CompletionReaders {
+  /** The pure function that quotes one name segment, used instead of the connection's quoting; null where the connection's quoting is used. */
+  readonly formatSegment: FunctionName | null;
+  /** The pure function that reads, from the text up to a dot, the qualifier before the dot when it is quoted; null where the engine has no such reading. */
+  readonly readQuotedQualifier: FunctionName | null;
+}
 
 /** One product the package was measured against: the engine that serves it, the versions claimed and the versions tested. */
 export interface CompatibilityEntry {
