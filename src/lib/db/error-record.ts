@@ -18,8 +18,22 @@
  * leaves out its SQLSTATE. `readErrorRecord` reads one from the wire and refuses anything
  * else by naming the field, never its value.
  *
+ * The record's fields, their vocabularies and patterns are the provider contract's (`@libredb/provider-sdk/errors`,
+ * docs/providers/CONTRACT.md, Errors); this module is core's reading of Studio's error classes into a record, with
+ * Studio's own code vocabulary.
+ *
  * Free of Node-only globals and of server-only imports, so every bundle that carries `./errors` can carry it.
  */
+import {
+  type ErrorRecord as ContractErrorRecord,
+  ENGINE_CODE_PATTERN,
+  ERROR_KINDS,
+  type ErrorKind,
+  EXECUTE_OUTCOMES,
+  type ExecuteOutcome,
+  SESSION_STATES,
+  SQLSTATE_PATTERN,
+} from "@libredb/provider-sdk/errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import {
   AuthenticationError,
@@ -52,67 +66,11 @@ import {
   UnknownProviderError,
 } from "./errors";
 
-/** Every kind, in the order of the classes in `./errors`, and `internal` for any other thrown value. */
-export const ERROR_KINDS = [
-  "database",
-  "config",
-  "unknown-provider",
-  "not-offered",
-  "connection",
-  "transaction-lost",
-  "authentication",
-  "permission",
-  "pool-exhausted",
-  "query",
-  "offset-unsupported",
-  "refused-before-send",
-  "read-allowance-exceeded",
-  "row-budget-refusal",
-  "byte-budget-refusal",
-  "time-budget-refusal",
-  "cut-value-refusal",
-  "serialised-result-refusal",
-  "studio-row-budget-refusal",
-  "studio-byte-budget-refusal",
-  "studio-time-budget-refusal",
-  "timeout",
-  "studio-timeout-refusal",
-  "cancelled",
-  "execution-profile",
-  "studio-profile-refusal",
-  "provider-text-withheld",
-  "internal",
-] as const;
-
-export type ErrorKind = (typeof ERROR_KINDS)[number];
-
-/** Whether the statement may have reached the database: `not-sent` when it cannot have, `unknown` otherwise. */
-export const EXECUTE_OUTCOMES = ["not-sent", "unknown"] as const;
-
-export type ExecuteOutcome = (typeof EXECUTE_OUTCOMES)[number];
-
-/** Whether the session is in a transaction, an aborted one included, not in one, or unknown. */
-export const SESSION_STATES = ["in-transaction", "not-in-transaction", "unknown"] as const;
-
-export type SessionState = (typeof SESSION_STATES)[number];
-
 /** The record's code: an API code, or a deny code for the two execution profile kinds. */
 export type ErrorRecordCode = ApiErrorCode | ExecutionProfileDenyCode;
 
-export interface ErrorRecord {
-  readonly kind: ErrorKind;
-  readonly code: ErrorRecordCode;
-  readonly sqlState?: string;
-  readonly engineCode?: string;
-  readonly outcome?: ExecuteOutcome;
-  readonly sessionState?: SessionState;
-}
-
-/** A SQLSTATE: five digits or upper-case letters, with a digit, so a system code such as `EPIPE` is not read as one. */
-export const SQLSTATE_PATTERN = /^(?=[A-Z]*\d)[0-9A-Z]{5}$/;
-
-/** An engine's own code: MySQL `1146`, Oracle `ORA-00942`, Db2 `-204`, SQLite `SQLITE_ERROR`, MongoDB `NamespaceNotFound`. */
-const ENGINE_CODE_PATTERN = /^[A-Za-z0-9_.:-]{1,64}$/;
+/** The contract's record with Studio's code vocabulary. */
+export type ErrorRecord = ContractErrorRecord<ErrorRecordCode>;
 
 /** Every deny code, held complete by its type: a code added to `ExecutionProfileDenyCode` fails typecheck here. */
 const DENY_CODES: Readonly<Record<ExecutionProfileDenyCode, true>> = {

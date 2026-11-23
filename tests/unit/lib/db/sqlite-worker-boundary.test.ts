@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { deserializeCell, serializeBinds } from "@/lib/db/providers/sql/sqlite-worker";
-import { encodeValue, ValueCodecError } from "@/lib/db/value-codec";
+import { encodeValue, ValueCodecError } from "@libredb/provider-sdk/values";
 
 /**
  * The parent half of the worker boundary: `serializeBinds` writes bound parameters in

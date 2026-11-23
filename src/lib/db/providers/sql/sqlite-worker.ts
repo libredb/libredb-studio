@@ -21,7 +21,7 @@
  *
  * THE BOUNDARY IS DELIBERATELY NARROW. The child opens the handle, runs SQL and reads
  * raw rows; every value crosses the line in Studio's value codec
- * (`src/lib/db/value-codec.ts`), in both directions:
+ * (`@libredb/provider-sdk/values`, `packages/provider-sdk/src/values/codec.ts`), in both directions:
  *
  * - the parent encodes bound parameters with `encodeValue`, and decodes every answer
  *   with `decodeValue`, then gives it the in-process driver's shapes: a 64-bit integer
@@ -49,7 +49,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
 import { logger } from "@/lib/logger";
-import { decodeValue, encodeValue, type WireValue } from "@/lib/db/value-codec";
+import { decodeValue, encodeValue, type WireValue } from "@libredb/provider-sdk/values";
 import { normalizeSQLiteBigInt, toSQLiteBindValue, type SQLiteDeclaredColumn } from "./sqlite-driver";
 
 // ============================================================================
@@ -151,7 +151,7 @@ const WORKER_BOOTSTRAP = [
   '  if (override === "bun" || override === "node") return override;',
   '  return typeof Bun === "undefined" ? "node" : "bun";',
   "}",
-  "// The child's copy of Studio's value codec (src/lib/db/value-codec.ts), restricted to",
+  "// The child's copy of Studio's value codec (packages/provider-sdk/src/values/codec.ts), restricted to",
   "// what the child binds and reads. Its agreement with the module is held by round trips",
   "// through this child in tests/integration/db/sqlite-worker.test.ts.",
   "function pointerSegment(key) {",

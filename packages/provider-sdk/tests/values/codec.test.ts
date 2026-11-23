@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { decodeValue, encodeValue, ValueCodecError } from "@/lib/db/value-codec";
+import { decodeValue, encodeValue, ValueCodecError } from "@libredb/provider-sdk/values";
 
 /**
  * Studio's value codec, held by seeded property tests per tag.

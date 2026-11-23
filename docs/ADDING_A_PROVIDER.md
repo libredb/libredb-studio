@@ -409,7 +409,9 @@ stand in for, because both read the WHOLE fleet at once:
 Wrap native driver errors with `mapDatabaseError(err, '<type-id>', query)` — the 3rd argument is the
 raw query string (SQL **or** JSON, per `src/lib/db/errors.ts`) — so they normalise onto the shared
 error classes. What your driver's own code fields and words mean is a row of `DRIVER_ERROR_CLASSIFIERS`
-(`src/lib/db/driver-errors/index.ts`), declared beside the provider; the shared mapping names no driver. For the exact DTO shapes see [Reference: Interface Contracts](#reference-interface-contracts);
+(`src/lib/db/driver-errors/index.ts`), declared beside the provider; the shared mapping names no driver.
+The row's contract is `DriverErrorClassifier` from `@libredb/provider-sdk/errors`, and the error kind each answer maps to is clause E-7 of [`docs/providers/CONTRACT.md`](providers/CONTRACT.md#errors).
+For the exact DTO shapes see [Reference: Interface Contracts](#reference-interface-contracts);
 for worked, code-verified examples see each provider's **Design decisions** section in
 [`docs/providers/`](./providers/README.md).
 
@@ -1267,7 +1269,7 @@ Those three reach code and tests only; the four prose greps of the published blo
 - [ ] `src/lib/db/query-generators/index.ts`: only if the engine needs its own forms or quoting, an `SqlEngineGenerators` row beside the provider, under its type id in `SQL_ENGINE_GENERATORS`; the default is PostgreSQL-shaped, so check before assuming it fits
 - [ ] `src/lib/db/driver-errors/index.ts`: only if the driver's errors carry code fields or words of their own,
       a `<provider>-driver-errors.ts` row beside the provider (`DriverErrorClassifier`,
-      `src/lib/db/driver-errors/types.ts`), added to `DRIVER_ERROR_CLASSIFIERS` in its fixed order;
+      `@libredb/provider-sdk/errors`), added to `DRIVER_ERROR_CLASSIFIERS` in its fixed order;
       `mapDatabaseError` (`src/lib/db/map-database-error.ts`) reads that row, and neither it nor
       `src/lib/db/errors.ts` names a driver
 - [ ] `src/lib/db/sql-grammar/`: write your engine's grammar module, `<family>/<id>/sql-grammar.ts`

@@ -5,7 +5,7 @@ import { MYSQL_DRIVER_ERRORS } from "@/lib/db/providers/sql/mysql-driver-errors"
 import { ORACLE_DRIVER_ERRORS } from "@/lib/db/providers/sql/oracle-driver-errors";
 import { POSTGRES_DRIVER_ERRORS } from "@/lib/db/providers/sql/postgres-driver-errors";
 import { SQLITE_DRIVER_ERRORS } from "@/lib/db/providers/sql/sqlite-driver-errors";
-import type { DriverErrorClassifier } from "./types";
+import type { DriverErrorClassifier } from "@libredb/provider-sdk/errors";
 
 /**
  * Every driver's error row, in the one order `mapDatabaseError` asks them: where two rows could both answer one step,

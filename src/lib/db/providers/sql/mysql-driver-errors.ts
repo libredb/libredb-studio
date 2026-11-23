@@ -1,4 +1,4 @@
-import type { AccessRefusal, DriverErrorClassifier } from "@/lib/db/driver-errors/types";
+import type { AccessRefusal, DriverErrorClassifier } from "@libredb/provider-sdk/errors";
 
 /**
  * MySQL errors that carry SQLSTATE `42000` and are not the statement's fault: `1203`

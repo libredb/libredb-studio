@@ -307,7 +307,7 @@ A child that exits without the client stopping it is logged as a warning with it
 A worker that cannot be spawned at all (its executable missing or not runnable, or no file descriptor left for its pipes) fails the connect or the restart with `SQLite worker failed: <reason>`, and the next statement tries a fresh spawn.
 Nothing is retried.
 
-**Values cross the worker's line in Studio's value codec** ([`value-codec.ts`](../../src/lib/db/value-codec.ts), [ARCHITECTURE.md 4.13](../ARCHITECTURE.md#413-value-codec-srclibdbvalue-codects)).
+**Values cross the worker's line in Studio's value codec** ([`@libredb/provider-sdk/values`](../../packages/provider-sdk/src/values/codec.ts), [ARCHITECTURE.md 4.13](../ARCHITECTURE.md#413-value-codec-libredbprovider-sdkvalues)).
 The parent encodes every bound parameter and decodes every answer with it, then hands back the in-process driver's shapes: a 64-bit integer through `normalizeSQLiteBigInt` ([§3.6](#36-a-64-bit-integer-survives-the-round-trip-in-both-directions)) and a `BLOB` as a `Buffer`.
 The child runs from `node -e` and cannot import the module, so its bootstrap carries a copy restricted to what it binds and reads: 64-bit integers, `BLOB`s, the infinities, and the escape that keeps a row whose columns are named `$` and `v` a row.
 A value the child cannot bind is refused by name and the worker serves the next statement: a `Date` parameter answers `The SQLite worker cannot bind a timestamp (ts) value, at "/0".`, and an `undefined` parameter is refused by the parent's encoder with a `ValueCodecError` naming its place (`/0`).

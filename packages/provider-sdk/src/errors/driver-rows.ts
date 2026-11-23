@@ -6,6 +6,7 @@
  * and the classification reads the fields whichever provider handed the error over. Each row is declared beside the
  * provider that owns the driver and imports nothing that raises an error class, so the shared module builds the
  * classes from what a row answers. Every member is optional: a driver with nothing to say for one step leaves it out.
+ * The error kind each answer maps to is clause E-7 of docs/providers/CONTRACT.md.
  */
 
 /**

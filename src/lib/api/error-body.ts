@@ -6,7 +6,8 @@
  */
 
 import { ApiErrorCode } from "./error-codes";
-import { type ErrorKind, type ExecuteOutcome, errorKind, errorOutcome } from "@/lib/db/error-record";
+import type { ErrorKind, ExecuteOutcome } from "@libredb/provider-sdk/errors";
+import { errorKind, errorOutcome } from "@/lib/db/error-record";
 import {
   DatabaseError,
   DatabaseConfigError,

@@ -18,14 +18,39 @@ interface SourceText {
   readonly text: string;
 }
 
-type ImpurityKind = "top-level let or var" | "top-level collection" | "process reference";
+type ImpurityKind = "top-level let or var" | "top-level collection" | "top-level typed array" | "process reference";
 
 interface Impurity {
   readonly file: string;
   readonly kind: ImpurityKind;
+  /** The declared name, for a top-level typed array: each one is listed by file and name. */
+  readonly name?: string;
 }
 
 const COLLECTIONS = new Set(["Map", "Set", "WeakMap", "WeakSet"]);
+
+const TYPED_ARRAYS = new Set([
+  "Int8Array",
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "Int16Array",
+  "Uint16Array",
+  "Int32Array",
+  "Uint32Array",
+  "Float16Array",
+  "Float32Array",
+  "Float64Array",
+  "BigInt64Array",
+  "BigUint64Array",
+]);
+
+/** Whether `initializer` builds a typed array: `new Uint8Array(...)`, `Uint8Array.from(...)` or `Uint8Array.of(...)`. */
+function buildsTypedArray(initializer: ts.Expression, source: ts.SourceFile): boolean {
+  if (ts.isNewExpression(initializer)) return TYPED_ARRAYS.has(initializer.expression.getText(source));
+  if (!ts.isCallExpression(initializer) || !ts.isPropertyAccessExpression(initializer.expression)) return false;
+  const access = initializer.expression;
+  return ["from", "of"].includes(access.name.text) && TYPED_ARRAYS.has(access.expression.getText(source));
+}
 
 /** Every `.ts` file under `directory`, as package-relative POSIX paths, sorted. */
 function sourceFiles(directory: string): SourceText[] {
@@ -66,6 +91,9 @@ function impurities(files: readonly SourceText[]): Impurity[] {
         if (initializer && ts.isNewExpression(initializer) && COLLECTIONS.has(initializer.expression.getText(source))) {
           found.push({ file: file.path, kind: "top-level collection" });
         }
+        if (initializer && buildsTypedArray(initializer, source)) {
+          found.push({ file: file.path, kind: "top-level typed array", name: declaration.name.getText(source) });
+        }
       }
     }
     const visit = (node: ts.Node): void => {
@@ -97,6 +125,17 @@ describe("the SDK keeps no process-global state", () => {
     expect(impurities(files).filter((item) => item.kind === "top-level collection")).toEqual([]);
   });
 
+  test("SDK source's module-level typed arrays are the codec's lookup tables and its encode buffer", () => {
+    // Each is listed by file and name, so a new one fails here by name. The two lookup tables are written once, at
+    // load, and never again. The encode buffer is overwritten by every call before that call reads it, synchronously,
+    // so no call reads what another left: it holds nothing between calls (clause M-19).
+    expect(impurities(files).filter((item) => item.kind === "top-level typed array")).toEqual([
+      { file: "src/values/codec.ts", kind: "top-level typed array", name: "BASE64_VALUES" },
+      { file: "src/values/codec.ts", kind: "top-level typed array", name: "BASE64_CODES" },
+      { file: "src/values/codec.ts", kind: "top-level typed array", name: "ASCII_CHUNK" },
+    ]);
+  });
+
   test("SDK source never reads process", () => {
     expect(impurities(files).filter((item) => item.kind === "process reference")).toEqual([]);
   });
@@ -108,8 +147,12 @@ describe("the SDK keeps no process-global state", () => {
       { path: "src/c.ts", text: "export const home = process.env.HOME;\n" },
       { path: "src/d.ts", text: 'import { env } from "node:process";\nexport const value = env;\n' },
       {
+        path: "src/e.ts",
+        text: "const cache = new Uint8Array(8);\nexport const table = Int8Array.from([1]);\nconst list = Array.from([1]);\n",
+      },
+      {
         path: "src/clean.ts",
-        text: "export function make() {\n  let n = 0;\n  const m = new Map();\n  return { n, m, process: 1, a: holder.process };\n}\ndeclare const holder: { process: number };\n",
+        text: "export function make() {\n  let n = 0;\n  const m = new Map();\n  const b = new Uint8Array(1);\n  return { n, m, b, process: 1, a: holder.process };\n}\ndeclare const holder: { process: number };\n",
       },
     ];
 
@@ -120,6 +163,8 @@ describe("the SDK keeps no process-global state", () => {
       { file: "src/b.ts", kind: "top-level collection" },
       { file: "src/c.ts", kind: "process reference" },
       { file: "src/d.ts", kind: "process reference" },
+      { file: "src/e.ts", kind: "top-level typed array", name: "cache" },
+      { file: "src/e.ts", kind: "top-level typed array", name: "table" },
     ]);
   });
 

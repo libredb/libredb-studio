@@ -15,6 +15,8 @@ import {
   ManifestSchemaDigestError,
 } from "@libredb/provider-sdk/manifest";
 import * as packageRoot from "@libredb/provider-sdk";
+import { decodeValue, encodeValue, ValueCodecError } from "@libredb/provider-sdk/values";
+import { ERROR_KINDS, PROVIDER_ERROR_KINDS, SQLSTATE_PATTERN } from "@libredb/provider-sdk/errors";
 
 const SCHEMA_BYTES = readFileSync(path.join(import.meta.dir, "../../src/manifest/manifest.schema.json"));
 
@@ -57,5 +59,17 @@ describe("the manifest schema digest", () => {
   test("the package root exports the manifest surface", () => {
     expect(packageRoot.compileManifestValidator).toBe(compileManifestValidator);
     expect(packageRoot.MANIFEST_SCHEMA_SHA256).toBe(MANIFEST_SCHEMA_SHA256);
+  });
+
+  test("the package root exports the values surface", () => {
+    expect(packageRoot.encodeValue).toBe(encodeValue);
+    expect(packageRoot.decodeValue).toBe(decodeValue);
+    expect(packageRoot.ValueCodecError).toBe(ValueCodecError);
+  });
+
+  test("the package root exports the errors surface", () => {
+    expect(packageRoot.ERROR_KINDS).toBe(ERROR_KINDS);
+    expect(packageRoot.PROVIDER_ERROR_KINDS).toBe(PROVIDER_ERROR_KINDS);
+    expect(packageRoot.SQLSTATE_PATTERN).toBe(SQLSTATE_PATTERN);
   });
 });

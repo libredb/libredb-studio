@@ -1066,6 +1066,11 @@
       },
       "required": ["repository", "digest"],
       "additionalProperties": false
+    },
+    "valueTag": {
+      "description": "The tag of a tagged value, the form a value JSON cannot carry takes when it crosses a JSON boundary: an object whose own keys are exactly $ (the tag) and v (its payload). The value and payload each tag carries are stated by the value codec, @libredb/provider-sdk/values.",
+      "type": "string",
+      "enum": ["i64", "bytes", "ts", "nf", "obj"]
     }
   }
 }

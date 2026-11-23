@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "249d0250e8b59f15fc83d44b92dd89c3a5529af02750236c49d80b71fd4e14f0";
+export const MANIFEST_SCHEMA_SHA256 = "763cb73d9868bdcf61eb27f86a9c010b60304f5da6b34f46a21023a5aab8172f";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -477,3 +477,6 @@ export interface ImageReference {
   readonly repository: string;
   readonly digest: string;
 }
+
+/** The tag of a tagged value, the form a value JSON cannot carry takes when it crosses a JSON boundary: an object whose own keys are exactly $ (the tag) and v (its payload). The value and payload each tag carries are stated by the value codec, @libredb/provider-sdk/values. */
+export type ValueTag = "i64" | "bytes" | "ts" | "nf" | "obj";
