@@ -34,12 +34,17 @@ import {
   PROVIDER_TEXT_WITHHELD,
   providerAuthor,
   providerTextScrub,
+  recordedProviderCode,
   scrubKeyScanPage,
   scrubKindCounts,
   scrubMaintenancePreview,
   scrubMaintenanceResult,
   scrubMonitoringData,
   scrubObjectDetail,
+  scrubObjectEditOutcome,
+  scrubObjectEditPlan,
+  scrubObjectEditPreimage,
+  scrubObjectEditRefusal,
   scrubProviderText,
   scrubProviderWarnings,
   scrubSourceDocument,
@@ -57,6 +62,10 @@ import type {
   MaintenanceResult,
   MonitoringData,
   ObjectDetail,
+  ObjectEditOutcome,
+  ObjectEditPlan,
+  ObjectEditPreimage,
+  ObjectEditRefusal,
   ObjectSourceDocument,
 } from "@/lib/db/types";
 import type { DatabaseConnection, DatabaseType, QueryResult } from "@/lib/types";
@@ -619,6 +628,206 @@ describe("the success sentences of a provider's answers", () => {
     expect(Object.keys(scrubKeyScanPage(scrub, plain)).sort()).toEqual(["cursor", "keys", "total", "types"]);
   });
 
+  /** A plan as a build answers it: its unit, session, revision and consequences are database facts. */
+  const editPlan = (fields: Partial<ObjectEditPlan> = {}): ObjectEditPlan => ({
+    planVersion: 1,
+    planId: "plan-1",
+    issuedAt: "2026-09-13T00:00:00.000Z",
+    connectionFingerprint: "fingerprint",
+    type: "postgres",
+    path: ["app", "order_total(integer)"],
+    kind: "function",
+    partId: "definition",
+    strategy: "guarded-atomic-batch",
+    unit: {
+      medium: "statement",
+      steps: [{ text: "SELECT 1", language: "pgsql", segments: [{ from: "provider", text: "SELECT 1" }] }],
+    },
+    session: [{ mode: "pinned", setting: "search_path", value: "app" }],
+    revision: { check: "guarded", token: "xmin:7841", basis: "pg_proc.xmin", scope: "server" },
+    consequences: [],
+    ...fields,
+  });
+
+  test("scrubObjectEditRefusal withholds a sentence, code or hint that holds the connection's credential and keeps the class and the position", () => {
+    const refusal: ObjectEditRefusal = {
+      refusal: "privilege",
+      sentence: `must be owner of ${password}`,
+      code: `E${password}`,
+      hint: `Use DROP FUNCTION ${password} first.`,
+      at: { within: "user", line: 3, column: 7 },
+    };
+    expect(scrubObjectEditRefusal(scrub, refusal)).toEqual({
+      refusal: "privilege",
+      sentence: PROVIDER_TEXT_WITHHELD,
+      code: PROVIDER_TEXT_WITHHELD,
+      hint: PROVIDER_TEXT_WITHHELD,
+      at: { within: "user", line: 3, column: 7 },
+    });
+    const bare: ObjectEditRefusal = {
+      refusal: "definition",
+      sentence: "syntax error at end of input",
+      at: { within: "none" },
+    };
+    const answered = scrubObjectEditRefusal(scrub, bare);
+    expect(answered).toEqual(bare);
+    expect(Object.keys(answered).sort()).toEqual(["at", "refusal", "sentence"]);
+  });
+
+  test("scrubObjectEditPlan withholds an unavailable revision's reason and answers any other plan as given", () => {
+    const unavailable = editPlan({
+      revision: { check: "unavailable", reason: `pg_proc is not readable by ${password}` },
+    });
+    expect(scrubObjectEditPlan(scrub, unavailable)).toEqual({
+      ...unavailable,
+      revision: { check: "unavailable", reason: PROVIDER_TEXT_WITHHELD },
+    });
+    const clean = editPlan({ revision: { check: "unavailable", reason: "pg_proc is not readable" } });
+    expect(scrubObjectEditPlan(scrub, clean)).toEqual(clean);
+    const guarded = editPlan();
+    expect(scrubObjectEditPlan(scrub, guarded)).toBe(guarded);
+  });
+
+  test("scrubObjectEditPreimage withholds a truncation reason and keeps the text", () => {
+    const preimage: ObjectEditPreimage = {
+      text: "CREATE FUNCTION f() RETURNS integer",
+      language: "pgsql",
+      truncated: { limit: 1000, reason: `cut for ${password}` },
+    };
+    expect(scrubObjectEditPreimage(scrub, preimage)).toEqual({
+      ...preimage,
+      truncated: { limit: 1000, reason: PROVIDER_TEXT_WITHHELD },
+    });
+    const whole: ObjectEditPreimage = { text: "CREATE FUNCTION f() RETURNS integer", language: "pgsql" };
+    expect(scrubObjectEditPreimage(scrub, whole)).toBe(whole);
+  });
+
+  test("scrubObjectEditOutcome withholds every sentence and engine code of each outcome arm that holds the connection's credential, and keeps what was written and lost", () => {
+    const lost = [
+      { loses: "replaces-whole-container", fact: { source: "FUNCTION LIST", observed: "order_tax" } },
+    ] as const;
+    const arms: readonly [ObjectEditOutcome, ObjectEditOutcome][] = [
+      [
+        {
+          outcome: "refused",
+          refusal: {
+            refusal: "privilege",
+            sentence: `denied ${password}`,
+            code: `E${password}`,
+            hint: `ask ${password}`,
+            at: { within: "outside" },
+          },
+          duration: 4,
+        },
+        {
+          outcome: "refused",
+          refusal: {
+            refusal: "privilege",
+            sentence: PROVIDER_TEXT_WITHHELD,
+            code: PROVIDER_TEXT_WITHHELD,
+            hint: PROVIDER_TEXT_WITHHELD,
+            at: { within: "outside" },
+          },
+          duration: 4,
+        },
+      ],
+      [
+        {
+          outcome: "conflict",
+          conflict: "engine-refused-concurrent",
+          sentence: `tuple concurrently updated for ${password}`,
+          code: `X${password}`,
+          duration: 5,
+        },
+        {
+          outcome: "conflict",
+          conflict: "engine-refused-concurrent",
+          sentence: PROVIDER_TEXT_WITHHELD,
+          code: PROVIDER_TEXT_WITHHELD,
+          duration: 5,
+        },
+      ],
+      [
+        {
+          outcome: "conflict",
+          conflict: "object-changed",
+          current: {
+            text: `SELECT '${password}'`,
+            language: "pgsql",
+            truncated: { limit: 9, reason: `cut ${password}` },
+          },
+          duration: 6,
+        },
+        {
+          outcome: "conflict",
+          conflict: "object-changed",
+          current: {
+            text: `SELECT '${password}'`,
+            language: "pgsql",
+            truncated: { limit: 9, reason: PROVIDER_TEXT_WITHHELD },
+          },
+          duration: 6,
+        },
+      ],
+      [
+        { outcome: "interrupted", committed: "rolled-back", sentence: `socket closed for ${password}`, duration: 7 },
+        { outcome: "interrupted", committed: "rolled-back", sentence: PROVIDER_TEXT_WITHHELD, duration: 7 },
+      ],
+      [
+        { outcome: "applied", revision: { check: "unavailable", reason: `unreadable for ${password}` }, duration: 8 },
+        { outcome: "applied", revision: { check: "unavailable", reason: PROVIDER_TEXT_WITHHELD }, duration: 8 },
+      ],
+      [
+        {
+          outcome: "applied-with-collateral",
+          lost,
+          revision: { check: "unavailable", reason: `unreadable for ${password}` },
+          duration: 9,
+        },
+        {
+          outcome: "applied-with-collateral",
+          lost,
+          revision: { check: "unavailable", reason: PROVIDER_TEXT_WITHHELD },
+          duration: 9,
+        },
+      ],
+      [
+        { outcome: "applied-elsewhere", undone: false, wrote: password, duration: 10 },
+        { outcome: "applied-elsewhere", undone: false, wrote: password, duration: 10 },
+      ],
+    ];
+    for (const [given, answered] of arms) expect(scrubObjectEditOutcome(scrub, given)).toEqual(answered);
+
+    const changedWhole: ObjectEditOutcome = {
+      outcome: "conflict",
+      conflict: "object-changed",
+      current: { text: "SELECT 2", language: "pgsql" },
+      duration: 1,
+    };
+    expect(scrubObjectEditOutcome(scrub, changedWhole)).toBe(changedWhole);
+    const concurrentBare: ObjectEditOutcome = {
+      outcome: "conflict",
+      conflict: "engine-refused-concurrent",
+      sentence: "tuple concurrently updated",
+      duration: 1,
+    };
+    const concurrentAnswered = scrubObjectEditOutcome(scrub, concurrentBare);
+    expect(concurrentAnswered).toEqual(concurrentBare);
+    expect("code" in concurrentAnswered).toBe(false);
+    const guarded: ObjectEditOutcome = {
+      outcome: "applied",
+      revision: { check: "guarded", token: password, basis: password, scope: "server" },
+      duration: 1,
+    };
+    expect(scrubObjectEditOutcome(scrub, guarded)).toBe(guarded);
+  });
+
+  test("recordedProviderCode keeps a clean code and records none for a code that holds the connection's credential", () => {
+    expect(recordedProviderCode(scrub, undefined)).toBeUndefined();
+    expect(recordedProviderCode(scrub, "42501")).toBe("42501");
+    expect(recordedProviderCode(scrub, `E${password}`)).toBeUndefined();
+  });
+
   test("database content in each answer is kept as given, even where it holds the connection's credential", () => {
     const data: MonitoringData = {
       timestamp: new Date(0),
@@ -643,6 +852,28 @@ describe("the success sentences of a provider's answers", () => {
       prefixes: [`${password}/`],
     };
     expect(scrubKeyScanPage(scrub, page)).toEqual(page);
+    const plan = editPlan({
+      path: [password],
+      unit: {
+        medium: "statement",
+        steps: [{ text: password, language: "pgsql", segments: [{ from: "provider", text: password }] }],
+      },
+      session: [{ mode: "asserted", setting: "role", value: password }],
+      revision: { check: "compared", token: password, basis: password, scope: "connection" },
+      consequences: [{ loses: "destroys-comment", fact: { source: password, observed: password } }],
+    });
+    expect(scrubObjectEditPlan(scrub, plan)).toEqual(plan);
+    const preimage: ObjectEditPreimage = { text: password, language: "pgsql", truncated: { limit: 1, reason: "cut" } };
+    expect(scrubObjectEditPreimage(scrub, preimage)).toEqual(preimage);
+    const changed: ObjectEditOutcome = {
+      outcome: "conflict",
+      conflict: "object-changed",
+      current: { text: password, language: "pgsql" },
+      duration: 1,
+    };
+    expect(scrubObjectEditOutcome(scrub, changed)).toEqual(changed);
+    const elsewhere: ObjectEditOutcome = { outcome: "applied-elsewhere", undone: true, wrote: password, duration: 1 };
+    expect(scrubObjectEditOutcome(scrub, elsewhere)).toEqual(elsewhere);
   });
 
   test("an answer none of whose sentences holds a form answers deep-equal to the answer given, and the answer given is not changed", () => {
@@ -662,18 +893,58 @@ describe("the success sentences of a provider's answers", () => {
       skipped: { count: 1, reason: `skipped for ${password}` },
       readOutcome: { scope: "incomplete", endReason: `ended for ${password}`, provenLoss: [`lost for ${password}`] },
     };
-    const before = structuredClone({ data, result, preview, page });
+    const refusal: ObjectEditRefusal = {
+      refusal: "guard",
+      sentence: `refused for ${password}`,
+      code: `E${password}`,
+      hint: `hint for ${password}`,
+      at: { within: "none" },
+    };
+    const plan = editPlan({ revision: { check: "unavailable", reason: `unreadable for ${password}` } });
+    const preimage: ObjectEditPreimage = {
+      text: "SELECT 1",
+      language: "pgsql",
+      truncated: { limit: 8, reason: `cut for ${password}` },
+    };
+    const outcomes: ObjectEditOutcome[] = [
+      { outcome: "refused", refusal, duration: 1 },
+      {
+        outcome: "conflict",
+        conflict: "engine-refused-concurrent",
+        sentence: `busy ${password}`,
+        code: `X${password}`,
+        duration: 1,
+      },
+      {
+        outcome: "conflict",
+        conflict: "object-changed",
+        current: { text: "SELECT 2", language: "pgsql", truncated: { limit: 8, reason: `cut ${password}` } },
+        duration: 1,
+      },
+      { outcome: "interrupted", committed: "unknown", sentence: `lost ${password}`, duration: 1 },
+      { outcome: "applied", revision: { check: "unavailable", reason: `unreadable ${password}` }, duration: 1 },
+    ];
+    const before = structuredClone({ data, result, preview, page, refusal, plan, preimage, outcomes });
     scrubMonitoringData(scrub, data);
     scrubMaintenanceResult(scrub, result);
     scrubMaintenancePreview(scrub, preview);
     scrubKeyScanPage(scrub, page);
-    expect({ data, result, preview, page }).toEqual(before);
+    scrubObjectEditRefusal(scrub, refusal);
+    scrubObjectEditPlan(scrub, plan);
+    scrubObjectEditPreimage(scrub, preimage);
+    for (const outcome of outcomes) scrubObjectEditOutcome(scrub, outcome);
+    expect({ data, result, preview, page, refusal, plan, preimage, outcomes }).toEqual(before);
 
     const clean = providerTextScrub(connectionWith({ password: generated() }), "any");
     expect(scrubMonitoringData(clean, data)).toEqual(data);
     expect(scrubMaintenanceResult(clean, result)).toEqual(result);
     expect(scrubMaintenancePreview(clean, preview)).toEqual(preview);
     expect(scrubKeyScanPage(clean, page)).toEqual(page);
+    expect(scrubObjectEditRefusal(clean, refusal)).toEqual(refusal);
+    expect(scrubObjectEditPlan(clean, plan)).toEqual(plan);
+    expect(scrubObjectEditPreimage(clean, preimage)).toEqual(preimage);
+    for (const outcome of outcomes) expect(scrubObjectEditOutcome(clean, outcome)).toEqual(outcome);
+    expect(recordedProviderCode(clean, refusal.code)).toBe(refusal.code);
   });
 });
 
