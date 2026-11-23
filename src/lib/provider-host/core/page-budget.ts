@@ -117,8 +117,10 @@ export function createPageBudget(slots: number): PageBudget {
  * `source`, its first pull passed through and every later one run under a large-page slot of `budget`, taken before
  * the second pull and recorded in `hold`; the page's caller releases it.
  *
- * A wait for the slot that `ctx.signal` ends throws `CallRefusalError` with every refusal `checkCallStart` answers, the
- * signal's reason as its cause, and the source is not pulled. `columns`, `rowCount` and `close` are the source's own.
+ * A wait for the slot that `ctx.signal` ends, the take rejecting with that signal's reason, throws `CallRefusalError`
+ * with every refusal `checkCallStart` answers, the signal's reason as its cause, and the source is not pulled. Any other
+ * failure of the take passes by reference, and the source is not pulled either. `columns`, `rowCount` and `close` are
+ * the source's own.
  */
 export function withLargePageSlot(
   source: ResultSource,
@@ -135,7 +137,8 @@ export function withLargePageSlot(
         hold.waiting = true;
         try {
           hold.slot = await budget.take(ctx.signal);
-        } catch {
+        } catch (error) {
+          if (!ctx.signal.aborted || error !== ctx.signal.reason) throw error;
           throw new CallRefusalError(checkCallStart(ctx), { cause: ctx.signal.reason });
         }
         hold.waiting = false;

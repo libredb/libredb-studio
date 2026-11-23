@@ -1748,6 +1748,7 @@ The live check `tests/live/host-core-live.ts` holds the same rule against the bu
 A host core holds one page budget of large-page slots, and the budget holds one slot.
 Every page takes its first batch without waiting, at most one batch's bytes or one row.
 A page that needs a second batch first takes a slot, waiting for one in arrival order until its call's signal aborts, and runs every later pull under it.
+A wait its call's signal ends is refused as `checkCallStart` refuses that call, and any other failure of the take passes by reference.
 A waiting page holds its first batch and no slot, so no two pages wait on each other.
 The caller releases a page record once its answer body is built, exactly once, and the host releases a page that ends any other way: a run that answers no page gives its slot back before it answers, and a page answered after its call stopped is released by the host.
 A slot or a page record released twice is refused by name.
@@ -1762,6 +1763,7 @@ The budget does not bound a legacy provider's own rows, held before the first pu
 - test `tests/unit/lib/provider-host/core/page-budget.test.ts` "a slot count that is not a positive safe integer is refused"
 - test `tests/unit/lib/provider-host/core/page-budget.test.ts` "a page's first pull takes no slot, and every later pull runs under the one slot it took"
 - test `tests/unit/lib/provider-host/core/page-budget.test.ts` "a pull whose wait for a slot the call's signal ends is refused as checkCallStart answers, the signal's reason as its cause, and the source is not pulled"
+- test `tests/unit/lib/provider-host/core/page-budget.test.ts` "a take that fails for a reason other than the call's signal passes that failure by reference"
 - test `tests/unit/lib/provider-host/core/console-pages.test.ts` "every page takes its first batch without waiting"
 - test `tests/unit/lib/provider-host/core/console-pages.test.ts` "of two concurrent large pages the second waits for the slot holding one batch, and is pumped once the first page is released"
 - test `tests/unit/lib/provider-host/core/console-pages.test.ts` "three concurrent large pages are pumped one after another in arrival order, each waiting page holding one batch and no slot"
