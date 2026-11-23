@@ -75,7 +75,14 @@ import {
   renderEngineDeclaration,
 } from "../../../scripts/generate-engine-declarations";
 import { refuseInexactJson } from "../../../scripts/read-engine-capabilities";
-import { AGENT_STATEMENT_LANGUAGE, type AgentStatementLanguageId } from "@/lib/agent/agent-manifest";
+import {
+  AGENT_REQUIREMENT_ENGINES,
+  AGENT_STATEMENT_LANGUAGE,
+  AGENT_WORKFLOW_VARIANTS,
+  type AgentStatementLanguageId,
+  workflowAvailability,
+} from "@/lib/agent/agent-manifest";
+import type { AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
 import type { HostUriScheme } from "@/lib/connection-host-uri";
 import { PASTE_FORMATS_TEXT } from "@/lib/connection-paste-formats";
 import { detectConnectionStringType, parseConnectionString, pasteText } from "@/lib/connection-string-parser";
@@ -131,6 +138,7 @@ import {
   ENGINE_URI_SCHEMES,
 } from "@/lib/db/connection-string";
 import type { ConnectionStringPaste, ConnectionStringSpec } from "@/lib/db/connection-string/types";
+import { CONFIRMATION_CLAIM_REVIEW, isReviewedConfirmationClaim } from "@/lib/db/confirmation-claim-review";
 import { CREDENTIAL_WARNINGS, type CredentialWarning } from "@/lib/db/credential-warnings";
 import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import { MIGRATION_DDL } from "@/lib/db/migration-ddl";
@@ -279,6 +287,12 @@ function sameValue(a: unknown, b: unknown): boolean {
 
 /** Every member a redaction of any kind may hold. */
 type RedactionMember = "kind" | "nameQuote" | "read";
+
+/** A row's redaction as a declaration writes it: a command reader named by its slot. */
+function declaredRedaction(row: SqlRedaction): object {
+  if (row.kind === "sql") return { kind: "sql", nameQuote: row.nameQuote };
+  return row.kind === "command" ? { kind: "command", reader: "redactionReader" } : { kind: "none" };
+}
 
 /** The reader of a command redaction, or undefined where the redaction is of another kind. */
 function commandReader(redaction: SqlRedaction): unknown {
@@ -1228,6 +1242,57 @@ const MCP_CLAIM_RECORDS: { readonly [K in keyof McpClaims]: Readonly<Record<Data
   statementRead: MCP_STATEMENT_READ,
   metadataReadChangesState: MCP_METADATA_READ_CHANGES_STATE,
   agentCredentialRequired: MCP_AGENT_CREDENTIAL_REQUIRED,
+};
+
+/** How the census reads one claim of an earlier segment: the engine's request, and Studio's record of it. */
+interface SegmentClaimRecord {
+  /** The claim as the declaration requests it. */
+  readonly request: (declaration: EngineDeclaration) => unknown;
+  /** The row of Studio's review record for `type`, written in the declaration's form. */
+  readonly record: (type: DatabaseType) => unknown;
+}
+
+/**
+ * Studio's review record of each claim of the connection, facets, agent and SQL text segments, by the dotted member
+ * that requests it (docs/providers/CONTRACT.md, clauses M-52 and M-53): the table every gate reads and each
+ * declaration's request is generated from. Written here apart from the generator, as `POLICY_CLAIM_RECORDS` is.
+ */
+const SEGMENT_CLAIM_RECORDS: Readonly<Record<string, SegmentClaimRecord>> = {
+  "connection.opensLocalFile": {
+    request: (d) => d.connection.opensLocalFile,
+    record: (type) => OPENS_LOCAL_FILE[type],
+  },
+  "connection.hostPathFields": {
+    request: (d) => d.connection.hostPathFields,
+    record: (type) => HOST_PATH_FIELDS[type],
+  },
+  "connection.serverLevelWithoutDatabase": {
+    request: (d) => d.connection.serverLevelWithoutDatabase,
+    record: (type) => OPENS_SERVER_LEVEL_WITHOUT_DATABASE[type],
+  },
+  "connection.sshTunnel": {
+    request: (d) => (d.connection.sshTunnel.offered ? null : d.connection.sshTunnel.refusal),
+    record: (type) => SSH_TUNNEL_REFUSAL[type],
+  },
+  "connection.agentCredential": {
+    request: (d) => d.connection.agentCredential,
+    record: (type) => {
+      const row = SEED_AGENT_CREDENTIAL[type];
+      return row === null ? null : { form: row.form, supersededBy: row.supersededBy };
+    },
+  },
+  "agent.statementLanguage": {
+    request: (d) => d.agent.statementLanguage,
+    record: (type) => AGENT_STATEMENT_LANGUAGE[type],
+  },
+  "facets.agentReadings": {
+    request: (d) => d.facets.agentReadings,
+    record: (type) => ENGINE_FACETS[type].agentReadings,
+  },
+  "sqlText.redaction": {
+    request: (d) => d.sqlText.redaction,
+    record: (type) => declaredRedaction(SQL_GRAMMAR[type].redaction),
+  },
 };
 
 /** A record over the shipped ids, each id's value read from its committed declaration by `read`. */
@@ -2263,16 +2328,7 @@ describe("the census", () => {
 
   test("sqlText.redaction is the row's redaction, a command reader named by its slot", () => {
     expect(
-      differing((type, d) => {
-        const row = SQL_GRAMMAR[type].redaction;
-        const expected =
-          row.kind === "sql"
-            ? { kind: "sql", nameQuote: row.nameQuote }
-            : row.kind === "command"
-              ? { kind: "command", reader: "redactionReader" }
-              : { kind: "none" };
-        return sameValue(d.sqlText.redaction, expected);
-      }),
+      differing((type, d) => sameValue(d.sqlText.redaction, declaredRedaction(SQL_GRAMMAR[type].redaction))),
     ).toEqual([]);
     // Vacuity: every kind and more than one name quote are declared.
     const redactions = SHIPPED_DATABASE_TYPES.map((type) => declared(type).sqlText.redaction);
@@ -3030,6 +3086,30 @@ describe("the census", () => {
     expect(readBack.length).toBe(9);
   });
 
+  test("every claim of the connection, facets, agent and SQL text segments is the row of Studio's review record of it", () => {
+    const readBack = Object.entries(SEGMENT_CLAIM_RECORDS).map(
+      ([member, { request, record }]) => [member, differing((type, d) => sameValue(request(d), record(type)))] as const,
+    );
+
+    expect(readBack.filter(([, ids]) => ids.length > 0).map(([claim, ids]) => `${claim}: ${ids.join(", ")}`)).toEqual(
+      [],
+    );
+    expect(readBack.length).toBe(8);
+  });
+
+  test("each claim the census reads back is a member of the schema's engine declaration", () => {
+    const segments = SCHEMA.$defs.engineDeclaration?.properties ?? {};
+    const isMember = (claim: string): boolean => {
+      const [segment, member, ...rest] = claim.split(".");
+      const reference = (segments[segment] as { $ref?: string } | undefined)?.$ref ?? "";
+      const definition = SCHEMA.$defs[reference.replace("#/$defs/", "")];
+      return rest.length === 0 && member !== undefined && Object.hasOwn(definition?.properties ?? {}, member);
+    };
+
+    expect(Object.keys(SEGMENT_CLAIM_RECORDS).filter((claim) => !isMember(claim))).toEqual([]);
+    expect(Object.keys(SEGMENT_CLAIM_RECORDS).length).toBe(8);
+  });
+
   test("READ_ONLY_ENFORCED is true exactly where the declaration's write reach is not open", () => {
     expect(differing((type, d) => READ_ONLY_ENFORCED[type] === (d.policy.writeReach !== "open"))).toEqual([]);
     expect(SHIPPED_DATABASE_TYPES.filter((type) => READ_ONLY_ENFORCED[type]).length).toBeGreaterThan(0);
@@ -3069,6 +3149,73 @@ describe("the census", () => {
     ).toEqual([]);
     expect(languages.length).toBeGreaterThan(0);
     expect(served.some(([, engines]) => engines.length > 0)).toBe(true);
+  });
+
+  test("agent mode opens a workflow on exactly the engines the declarations' statement languages and readings and Studio's agent execution record give it", () => {
+    const tables = {
+      languages: declaredRecord((d) => d.agent.statementLanguage) as Readonly<
+        Record<DatabaseType, AgentStatementLanguageId | null>
+      >,
+      variants: AGENT_WORKFLOW_VARIANTS,
+      requirementEngines: {
+        ...AGENT_REQUIREMENT_ENGINES,
+        "agent-readings": SHIPPED_DATABASE_TYPES.filter((type) => declared(type).facets.agentReadings.length > 0),
+      },
+      reviewed: AGENT_EXECUTION_ENGINES,
+    };
+    // The SQL record is total over the workflows, so every workflow of every language is among its keys.
+    const workflows = Object.keys(AGENT_WORKFLOW_VARIANTS.sql) as AgentRunWorkflowType[];
+    const modes: readonly AgentRunMode[] = ["planning", "agent"];
+    const answers = SHIPPED_DATABASE_TYPES.flatMap((type) =>
+      modes.flatMap((mode) =>
+        workflows.map((workflow) => ({
+          key: `${type} ${mode} ${workflow}`,
+          declared: workflowAvailability(mode, workflow, type, tables),
+          recorded: workflowAvailability(mode, workflow, type),
+        })),
+      ),
+    );
+
+    expect(answers.filter(({ declared, recorded }) => !sameValue(declared, recorded)).map(({ key }) => key)).toEqual(
+      [],
+    );
+    // Vacuity: some engine opens operations and no statement workflow, and some opens a statement workflow.
+    const opens = (type: DatabaseType, workflow: AgentRunWorkflowType): boolean =>
+      workflowAvailability("agent", workflow, type, tables).open;
+    const statementWorkflows = workflows.filter((workflow) => workflow !== "operations");
+    expect(
+      SHIPPED_DATABASE_TYPES.some(
+        (type) => opens(type, "operations") && !statementWorkflows.some((workflow) => opens(type, workflow)),
+      ),
+    ).toBe(true);
+    expect(SHIPPED_DATABASE_TYPES.some((type) => statementWorkflows.some((workflow) => opens(type, workflow)))).toBe(
+      true,
+    );
+  });
+
+  test("the confirmation gate's claims each declaration makes are the entries Studio's review record lists for its engine", () => {
+    // A vocabulary row's `decidesAlone` is no declaration's, so only these two kinds are read back.
+    const made = SHIPPED_DATABASE_TYPES.flatMap((type) => {
+      const { readsSqlText, grammar } = declared(type).sqlText;
+      return [
+        ...(readsSqlText ? [] : [{ label: `${type} text-not-sql`, claim: { kind: "text-not-sql", type } as const }]),
+        ...grammar.confirmExemptForms.map((form) => ({
+          label: `${type} exempt-form ${form.join(" ")}`,
+          claim: { kind: "exempt-form", type, form } as const,
+        })),
+      ];
+    });
+    const listed = CONFIRMATION_CLAIM_REVIEW.flatMap(({ claim }) => {
+      if (claim.kind === "text-not-sql") return [`${claim.type} text-not-sql`];
+      return claim.kind === "exempt-form" ? [`${claim.type} exempt-form ${claim.form.join(" ")}`] : [];
+    });
+
+    expect({
+      unreviewed: made.filter(({ claim }) => !isReviewedConfirmationClaim(claim)).map(({ label }) => label),
+      unmade: listed.filter((label) => !made.some((claim) => claim.label === label)),
+    }).toEqual({ unreviewed: [], unmade: [] });
+    // Vacuity: both kinds are made by some declaration.
+    expect(new Set(made.map(({ claim }) => claim.kind)).size).toBe(2);
   });
 
   test("connection.readsTrustMaterial is the engine's READS_TRUST_MATERIAL row", () => {
