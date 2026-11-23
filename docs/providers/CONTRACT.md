@@ -1241,11 +1241,12 @@ A page of very small rows is bounded in the heap by the host's row limit, not by
 A row a source answers as the same array the pull's measure sized, in the order the source measured its rows, is measured once, by that call, and its cells are read once, when it is measured.
 Every other row is measured by the pump as C-15 states, so a copy of a measured row, a row measured in another pull and a row answered twice are measured a second time, as is a row that crossed a frame of the kit, C-19.
 The pump hands on the provider's own row arrays, so a source whose cells change after the row was measured, through a getter or a later write, whether after its own call of the pull's measure or after the pump read the batch, answers more than was measured.
-In process nothing is framed, so the host measures what a source answers, through the pump's own measure, and a source of the legacy bridge answers each row in the form C-50 states.
+In process nothing is framed, so the host measures what a source answers, through the pump's own measure, and a source of the legacy bridge sizes each row with the pull's measure in the form C-50 states.
 How many pages larger than one batch the host holds at once is bounded by its page budget, C-53.
 
 - test `tests/unit/lib/provider-host/core/console.test.ts` "the first result is pumped within the limits set from the answer, and every other result is closed once"
 - test `packages/provider-sdk/tests/calls/results.test.ts` "each pull hands the source the pump's own measure, and a row the source sized with it is not measured again"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the bridge sizes every row it answers with the pull's measure, and answers that same array"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a cell outside the value codec is measured in its JSON form and answered unchanged"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the page's row limit is the probe limit for a bound Studio wrote, and every returned row otherwise"
 
@@ -1672,7 +1673,7 @@ Its execute honours `params` and `offset` for every engine, so each provider ans
 It offers `console.cancel` exactly when the provider can cancel a run, and does not offer `console.endScope`: the run's open transaction is ended inside its execute, as the editor query always ended it, until that moves onto `console.endScope`.
 Its execute hands the provider a fresh copy of the caller's own page options and a new array of the request's params, so a provider that writes what it receives changes nothing the host froze, and runs the provider's prepare, the probe row past the page, the statement and the transaction's end as the editor query always ran them.
 It answers one source per result set, the main rows first.
-A source reads each row positionally under the result's columns and answers it in its value codec form, or, when the codec refuses a cell, in the JSON form the answer writes for that row, so the page budget measures every row in the form closest to its answer.
+A source reads each row positionally under the result's columns in its value codec form, or, when the codec refuses a cell, in the JSON form the answer writes for that row, sizes it with the pull's measure, C-15, and answers that same array, so each row is measured once, in the form closest to its answer.
 Which cells the codec refuses is read before encoding, the codec's domain read as the codec reads it, so no codec error is thrown per row, and every error measuring a row throws passes by reference.
 A key a row holds outside its columns is answered and not measured.
 The page's row limit is set once execute answered: one past the page when the provider applied the page, otherwise every row the provider returned, at least one.
@@ -1681,6 +1682,7 @@ The page's row limit is set once execute answered: one past the page when the pr
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a legacy provider that writes what it receives changes nothing the host froze"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the run prepares, probes, queries and ends its transaction as runEditorQuery did"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "every result set is a source, the main rows first"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the bridge sizes every row it answers with the pull's measure, and answers that same array"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a cell outside the value codec is measured in its JSON form and answered unchanged"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a measuring error other than the codec's passes as the same object"
 - test `tests/unit/lib/provider-host/legacy-bridge-measure.test.ts` "a row with an undefined cell is measured in its JSON form, and the codec throws nothing"
@@ -1827,3 +1829,7 @@ Against the manifest sketch the design started from:
 - The type vocabulary is a fact of each engine, S-14.
 - An engine's migration DDL row is one segment, `migrationDdl`, in one of its two forms, S-17.
 - The sketch's frame cap is replaced by the byte budgets, since calls are unframed in process; the memory test transport keeps frames for tests only.
+
+Against this contract's earlier text:
+
+- A row is measured once on the host's path: the pump hands each pull its own measure and takes the size it recorded for the row a source answers, C-13 to C-16 and C-50, where a source and the pump each measured every row.

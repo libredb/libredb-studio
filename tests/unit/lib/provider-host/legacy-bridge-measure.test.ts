@@ -4,34 +4,54 @@
  * positionally under its union of fields has an undefined cell in every document that lacks a field, so a throw per
  * row was one per document.
  *
- * The SDK's `encodedRowBytes` is replaced, for the bridge's import only, by one that counts the codec's refusals it
- * throws; it is a module mock, so this file runs in its own process (tests/run-tests.ts).
+ * The bridge sizes each row with the measure of the pull that asks for it, so the count is taken there: a source
+ * wrapper hands the bridge the pump's own measure wrapped in a counter of its calls and of the `ValueCodecError`s it
+ * throws, calling it with the same array, so the pump's records still hold the row.
  */
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import * as calls from "@libredb/provider-sdk/calls";
 import { ValueCodecError } from "@libredb/provider-sdk/values";
+import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
 import { createMockProvider } from "../../../helpers/mock-provider";
 
 const real = { ...calls };
-let refusalsThrown = 0;
-mock.module("@libredb/provider-sdk/calls", () => ({
-  ...real,
-  encodedRowBytes: (row: readonly unknown[]): number => {
-    try {
-      return real.encodedRowBytes(row);
-    } catch (error) {
-      if (error instanceof ValueCodecError) refusalsThrown += 1;
-      throw error;
-    }
-  },
-}));
-
-const { bridgedConsole } = await import("@/lib/provider-host/legacy-bridge");
 
 const PAGE = { maxRows: 1_000, maxBytes: calls.PAGE_MAX_BYTES, batchMaxBytes: calls.BATCH_MAX_BYTES } as const;
 const HOUR = 3_600_000;
 
-/** The page the bridge answers for `rows` under `fields`; `refusalsThrown` counts what the codec threw meanwhile. */
+/** What `source` answers, each pull's measure wrapped to count its calls and the codec's refusals it throws. */
+function counting(source: calls.ResultSource): {
+  readonly source: calls.ResultSource;
+  readonly counts: { measured: number; refusalsThrown: number };
+} {
+  const counts = { measured: 0, refusalsThrown: 0 };
+  return {
+    counts,
+    source: {
+      columns: source.columns,
+      next: (limit) =>
+        source.next({
+          maxRows: limit.maxRows,
+          maxBytes: limit.maxBytes,
+          measure: (row) => {
+            counts.measured += 1;
+            try {
+              return limit.measure(row);
+            } catch (error) {
+              if (error instanceof ValueCodecError) counts.refusalsThrown += 1;
+              throw error;
+            }
+          },
+        }),
+      close: () => source.close(),
+    },
+  };
+}
+
+/**
+ * The page the bridge answers for `rows` under `fields`, once every row was sized with its pull's measure, and how
+ * many refusals the codec threw meanwhile.
+ */
 async function measured(fields: string[], rows: Record<string, unknown>[]) {
   const provider = Object.assign(createMockProvider(), {
     prepareQuery: mock((query: string) => ({ query, wasLimited: false, limit: 500, offset: 0 })),
@@ -46,14 +66,13 @@ async function measured(fields: string[], rows: Record<string, unknown>[]) {
     calls.freezeData({ statement: "find", page: { limit: 500, offset: 0 } }),
     ctx,
   );
-  return await calls.pumpPage(answer.results[0] as calls.ResultSource, PAGE, ctx);
+  const { source, counts } = counting(answer.results[0] as calls.ResultSource);
+  const page = await calls.pumpPage(source, PAGE, ctx);
+  expect(counts.measured).toBe(rows.length);
+  return { ...page, refusalsThrown: counts.refusalsThrown };
 }
 
 describe("the bridge's measure of a row the value codec refuses", () => {
-  beforeEach(() => {
-    refusalsThrown = 0;
-  });
-
   class Point {
     constructor(readonly at: number) {}
   }
@@ -63,7 +82,7 @@ describe("the bridge's measure of a row the value codec refuses", () => {
 
     const page = await measured(["_id", "qty", "missing"], rows);
 
-    expect(refusalsThrown).toBe(0);
+    expect(page.refusalsThrown).toBe(0);
     expect(page.rows).toEqual(rows.map((row) => [row._id, row.qty, null]));
     expect(page.bytes).toBe(rows.reduce((sum, row) => sum + real.encodedRowBytes([row._id, row.qty, null]), 0));
   });
@@ -71,7 +90,7 @@ describe("the bridge's measure of a row the value codec refuses", () => {
   test("a row with a Map is measured in its JSON form, and the codec throws nothing", async () => {
     const page = await measured(["m"], [{ m: new Map([["k", 1]]) }]);
 
-    expect(refusalsThrown).toBe(0);
+    expect(page.refusalsThrown).toBe(0);
     expect(page.rows).toEqual([[{}]]);
     expect(page.bytes).toBe(real.encodedRowBytes([{}]));
   });
@@ -79,7 +98,7 @@ describe("the bridge's measure of a row the value codec refuses", () => {
   test("a row with a class instance, nested in a cell, is measured in its JSON form, and the codec throws nothing", async () => {
     const page = await measured(["p"], [{ p: { at: [new Point(3)] } }]);
 
-    expect(refusalsThrown).toBe(0);
+    expect(page.refusalsThrown).toBe(0);
     expect(page.rows).toEqual([[{ at: [{ at: 3 }] }]]);
     expect(page.bytes).toBe(real.encodedRowBytes([{ at: [{ at: 3 }] }]));
   });
@@ -123,8 +142,8 @@ describe("the bridge's measure of a row the value codec refuses", () => {
 
     const pages = await Promise.all(values.map((value) => measured(["v"], [{ v: value }])));
 
-    expect(refusalsThrown).toBe(0);
     pages.forEach((page, index) => {
+      expect(page.refusalsThrown).toBe(0);
       expect(page.rows).toEqual([codecForm([values[index]])]);
     });
   });
