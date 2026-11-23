@@ -1,0 +1,204 @@
+/**
+ * A session's calls and the requests the host sends it (docs/providers/CONTRACT.md, clauses C-9 and C-10).
+ *
+ * The manifest's `calls` declares what a package answers; `open` may answer a refinement that narrows it for one
+ * session, which `checkRefinement` reads and `sessionCalls` applies. The host keeps the session's calls with the
+ * session, with no cache and no invalidation event, and holds every request to them with `checkExecuteRequest` before
+ * the call, so a package is never sent a field it does not honour.
+ */
+import type { Calls, ExecuteRequestField, FacetOffer } from "../manifest/manifest-types.generated";
+import { isPlainRecord, pointerTo, readOwn } from "./records";
+import { type CallRefusal, CallRefusalError } from "./refusals";
+import { EXECUTE_REQUEST_FIELDS, type ExecuteRequest, type Refinement } from "./types";
+
+/**
+ * Every way `request` sends what `calls` does not take, in request order: a `params` key, of any length, to a session
+ * that does not honour `params`; a non-zero offset to one that does not honour `offset`; a `scope` key to one that does
+ * not offer `console.endScope`. A refusal names the field and a pointer into the request, never a value of it.
+ */
+export function checkExecuteRequest(calls: Calls, request: ExecuteRequest): readonly CallRefusal[] {
+  const honours: readonly ExecuteRequestField[] = calls.console.execute.honours;
+  const refusals: CallRefusal[] = [];
+  if (Object.hasOwn(request, "params") && !honours.includes("params")) {
+    refusals.push({ rule: "request-field-not-honoured", pointer: "/params", name: "params" });
+  }
+  if ("offset" in request.page && request.page.offset !== 0 && !honours.includes("offset")) {
+    refusals.push({ rule: "request-field-not-honoured", pointer: "/page/offset", name: "offset" });
+  }
+  if (Object.hasOwn(request, "scope") && calls.console.endScope !== "offered") {
+    refusals.push({ rule: "request-scope-not-offered", pointer: "/scope" });
+  }
+  return refusals;
+}
+
+const OFFERS: readonly unknown[] = Object.freeze(["offered", "not-offered"] satisfies FacetOffer[]);
+const REQUEST_FIELDS: readonly unknown[] = EXECUTE_REQUEST_FIELDS;
+
+/**
+ * The own string keys of `value`, a plain record, enumerable or not, so the object is read as closed; `null` with a
+ * `refinement-unreadable` refusal at `pointer` when `value` is no plain record.
+ */
+function closedRecord(value: unknown, pointer: string, refusals: CallRefusal[]): readonly string[] | null {
+  if (isPlainRecord(value)) return Object.getOwnPropertyNames(value);
+  refusals.push({ rule: "refinement-unreadable", pointer });
+  return null;
+}
+
+/**
+ * The value at `key` of `record`, or `undefined` with a `refinement-unreadable` refusal at `pointer` when it is an
+ * accessor, whose getter is never called.
+ */
+function dataAt(
+  record: unknown,
+  key: string,
+  pointer: string,
+  refusals: CallRefusal[],
+): { readonly value: unknown } | undefined {
+  const read = readOwn(record, key);
+  if (read.kind === "data") return { value: read.value };
+  refusals.push({ rule: "refinement-unreadable", pointer });
+  return undefined;
+}
+
+/** The refusals of a refinement's facet offer against the declared one. */
+function readOffer(value: unknown, declared: FacetOffer, pointer: string, refusals: CallRefusal[]): void {
+  if (!OFFERS.includes(value)) refusals.push({ rule: "refinement-unreadable", pointer });
+  else if (value === "offered" && declared !== "offered") refusals.push({ rule: "refinement-widens", pointer });
+}
+
+/**
+ * The refusals of a refinement's `honours` list against the declared one. A list longer than the declared one cannot be
+ * a subset of it, so it is refused as `refinement-widens` at the list, by its length, before any item is read: a sparse
+ * array's length bounds no loop over it.
+ */
+function readHonours(
+  value: unknown,
+  declared: readonly ExecuteRequestField[],
+  pointer: string,
+  refusals: CallRefusal[],
+): void {
+  if (!Array.isArray(value)) {
+    refusals.push({ rule: "refinement-unreadable", pointer });
+    return;
+  }
+  if (value.length > declared.length) {
+    refusals.push({ rule: "refinement-widens", pointer });
+    return;
+  }
+  const seen: unknown[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const at = pointerTo(pointer, index);
+    const item = dataAt(value, String(index), at, refusals);
+    if (item === undefined) continue;
+    if (!REQUEST_FIELDS.includes(item.value) || seen.includes(item.value)) {
+      refusals.push({ rule: "refinement-unreadable", pointer: at });
+    } else if (!(declared as readonly unknown[]).includes(item.value)) {
+      refusals.push({ rule: "refinement-widens", pointer: at });
+    }
+    seen.push(item.value);
+  }
+}
+
+/** The refusals of a refinement's `calls.console.execute`. */
+function readExecute(value: unknown, declared: Calls, pointer: string, refusals: CallRefusal[]): void {
+  const keys = closedRecord(value, pointer, refusals);
+  if (keys === null) return;
+  if (!keys.includes("honours"))
+    refusals.push({ rule: "refinement-unreadable", pointer: pointerTo(pointer, "honours") });
+  for (const key of keys) {
+    const at = pointerTo(pointer, key);
+    if (key !== "honours") {
+      refusals.push({ rule: "refinement-key-unknown", pointer: at, name: key });
+      continue;
+    }
+    const honours = dataAt(value, key, at, refusals);
+    if (honours !== undefined) readHonours(honours.value, declared.console.execute.honours, at, refusals);
+  }
+}
+
+/** The refusals of a refinement's `calls.console`. */
+function readConsole(value: unknown, declared: Calls, pointer: string, refusals: CallRefusal[]): void {
+  const keys = closedRecord(value, pointer, refusals);
+  if (keys === null) return;
+  for (const key of keys) {
+    const at = pointerTo(pointer, key);
+    if (key !== "execute" && key !== "cancel" && key !== "endScope") {
+      refusals.push({ rule: "refinement-key-unknown", pointer: at, name: key });
+      continue;
+    }
+    const read = dataAt(value, key, at, refusals);
+    if (read === undefined) continue;
+    if (key === "execute") readExecute(read.value, declared, at, refusals);
+    else readOffer(read.value, key === "cancel" ? declared.console.cancel : declared.console.endScope, at, refusals);
+  }
+}
+
+/** The refusals of a record of which `key` is the one key it may have, its value read by `read`. */
+function readOnly(
+  value: unknown,
+  key: string,
+  pointer: string,
+  refusals: CallRefusal[],
+  read: (value: unknown, at: string) => void,
+): void {
+  const keys = closedRecord(value, pointer, refusals);
+  if (keys === null) return;
+  for (const own of keys) {
+    const at = pointerTo(pointer, own);
+    if (own !== key) {
+      refusals.push({ rule: "refinement-key-unknown", pointer: at, name: own });
+      continue;
+    }
+    const data = dataAt(value, own, at, refusals);
+    if (data !== undefined) read(data.value, at);
+  }
+}
+
+/**
+ * Every way `refine`, what `open` answered beside its handle, is not a refinement of `declared`, the manifest's calls,
+ * in the refinement's own key order: a key a refinement cannot have (`refinement-key-unknown`), a value of the wrong
+ * type, an accessor or a repeated field (`refinement-unreadable`), and a value that offers or honours more than
+ * `declared` (`refinement-widens`). `undefined` is no refinement. Every pointer is rooted at the refinement, and no
+ * refusal carries a value of it; a getter is never called.
+ */
+export function checkRefinement(declared: Calls, refine: unknown): readonly CallRefusal[] {
+  if (refine === undefined) return [];
+  const refusals: CallRefusal[] = [];
+  readOnly(refine, "calls", "", refusals, (calls, at) =>
+    readOnly(calls, "console", at, refusals, (consoleCalls, consoleAt) =>
+      readConsole(consoleCalls, declared, consoleAt, refusals),
+    ),
+  );
+  return refusals;
+}
+
+/**
+ * The items of `honours` read by index, `0` to `length - 1`, into a new frozen array, the way `checkRefinement` read
+ * them: the list is never spread or iterated, so an iterator a package planted on it, or on its prototype, is never
+ * called and cannot change which fields the session honours.
+ */
+function indexedHonours(honours: readonly ExecuteRequestField[]): readonly ExecuteRequestField[] {
+  const items: ExecuteRequestField[] = [];
+  for (let index = 0; index < honours.length; index += 1) items.push(honours[index]);
+  return Object.freeze(items);
+}
+
+/**
+ * The session's calls: `declared`, the manifest's calls, narrowed by `refine`, frozen at every depth. `declared` is
+ * left as it is. A key the refinement leaves out keeps the declared value.
+ *
+ * @throws {CallRefusalError} With every refusal `checkRefinement` answers, for a refinement it does not admit.
+ */
+export function sessionCalls(declared: Calls, refine: Refinement | undefined): Calls {
+  const refusals = checkRefinement(declared, refine);
+  if (refusals.length > 0) throw new CallRefusalError(refusals);
+  const narrowed = refine?.calls?.console;
+  const honours = narrowed?.execute?.honours ?? declared.console.execute.honours;
+  return Object.freeze({
+    console: Object.freeze({
+      execute: Object.freeze({ honours: indexedHonours(honours) }),
+      cancel: narrowed?.cancel ?? declared.console.cancel,
+      endScope: narrowed?.endScope ?? declared.console.endScope,
+    }),
+  });
+}

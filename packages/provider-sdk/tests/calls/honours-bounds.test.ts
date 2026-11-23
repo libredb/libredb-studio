@@ -1,6 +1,6 @@
 /**
  * An honours list a package answers is refused by its length before any item is read (docs/providers/CONTRACT.md,
- * clause C-1), proven where a failure is bounded.
+ * clauses C-1 and C-10), proven where a failure is bounded.
  *
  * A check that walked a list to its `length` would loop over a sparse array of length 2^32 - 1 and push a refusal per
  * hole until the heap is gone. So neither case runs in this process: each runs in a Node child, as production runs
@@ -10,13 +10,13 @@
  *
  * The child runs a bundle that Bun.build({ target: "node" }) makes of the SDK's calls entry around the text of
  * `runCase`, as pump-bounds.test.ts runs its cases. It covers nothing in this process, by design: every line it
- * reaches, define-provider.test.ts reaches in process too.
+ * reaches, refinement.test.ts and define-provider.test.ts reach in process too.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { checkProviderModule, DefinitionRefusal } from "@libredb/provider-sdk/calls";
+import type { CallRefusal, checkProviderModule, checkRefinement, DefinitionRefusal } from "@libredb/provider-sdk/calls";
 
 /** The old space each child may use: far less than a refusal per hole of the longest array would need. */
 const HEAP_LIMIT_MIB = 64;
@@ -25,21 +25,29 @@ const CHILD_TIMEOUT_MS = 20_000;
 
 interface ChildDeps {
   readonly checkProviderModule: typeof checkProviderModule;
+  readonly checkRefinement: typeof checkRefinement;
   readonly manifest: Record<string, unknown>;
 }
 
 interface ChildReport {
   readonly name: string;
-  readonly refusals: readonly DefinitionRefusal[];
+  readonly refusals: readonly (CallRefusal | DefinitionRefusal)[];
 }
 
 /**
- * Runs in the child, from its text, so it names nothing outside itself: a manifest whose honours list
+ * Runs in the child, from its text, so it names nothing outside itself: a refinement or a manifest whose honours list
  * is a sparse array of the longest length an array can have. Only the refusals of that list are reported.
  */
 function runCase(deps: ChildDeps, name: string): ChildReport {
   const longest: unknown[] = [];
   longest.length = 2 ** 32 - 1;
+  if (name === "refinement") {
+    const declared = {
+      console: { execute: { honours: ["params", "offset"] }, cancel: "offered", endScope: "offered" },
+    };
+    const refine = { calls: { console: { execute: { honours: longest } } } };
+    return { name, refusals: deps.checkRefinement(declared as never, refine) };
+  }
   const manifest = JSON.parse(JSON.stringify(deps.manifest));
   manifest.calls.console.execute.honours = longest;
   const impl = { open: async () => ({ handle: {} }), close: async () => {}, console: { execute: async () => ({}) } };
@@ -56,10 +64,10 @@ beforeAll(async () => {
   writeFileSync(
     path.join(dir, "child.ts"),
     [
-      `import { checkProviderModule } from ${JSON.stringify(CALLS_ENTRY)};`,
+      `import { checkProviderModule, checkRefinement } from ${JSON.stringify(CALLS_ENTRY)};`,
       `import manifest from ${JSON.stringify(MANIFEST)};`,
       `const runCase = ${runCase.toString()};`,
-      "const report = runCase({ checkProviderModule, manifest }, process.argv[2]);",
+      "const report = runCase({ checkProviderModule, checkRefinement, manifest }, process.argv[2]);",
       'process.stdout.write(JSON.stringify(report) + "\\n");',
       "",
     ].join("\n"),
@@ -105,6 +113,13 @@ async function runChild(name: string): Promise<ChildReport> {
 }
 
 describe(`the honours checks in a Node child under --max-old-space-size=${HEAP_LIMIT_MIB}`, () => {
+  test("a refinement honours list of the longest length is refused at the list, in a bounded child", async () => {
+    expect(await runChild("refinement")).toEqual({
+      name: "refinement",
+      refusals: [{ rule: "refinement-widens", pointer: "/calls/console/execute/honours" }],
+    });
+  }, 30_000);
+
   test("a manifest honours list of the longest length is refused at the list, in a bounded child", async () => {
     expect(await runChild("module")).toEqual({
       name: "module",

@@ -679,7 +679,7 @@ An engine facet for which this contract has no call yet, a monitoring panel, a m
 ### C-5 (normative): A package declares the request fields its execute honours
 
 A package lists in `calls.console.execute.honours` the optional request fields, of `EXECUTE_REQUEST_FIELDS`, its execute honours.
-How the host and a provider use that list is C-8, which no test checks yet.
+How the host uses that list is C-9, and how a provider does is C-8.
 
 - schema `/$defs/executeCall/properties/honours`
 - schema `/$defs/executeRequestField`
@@ -707,11 +707,38 @@ A census over Studio's own types holds this, one record over the connection's fi
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's console answer and request has a place in the console calls"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "the context's shared shapes are Studio's own"
 
-### C-8 (informative): The host sends only the request fields a package honours
+### C-8 (informative): A provider never ignores a request field it does not honour
 
-The host sends a package no optional request field outside its `honours` list, and sends `scope` only to a package that offers `console.endScope`.
-A provider that receives a field it does not honour answers a named error and never ignores it.
-The host's refusal of an undeclared field arrives with the test transport, and the check of a provider's answer with the kit; until then this clause is informative.
+A provider that receives a request field it does not honour answers a named error and never ignores it.
+The kit checks it, and no such check exists yet.
+The host's half, which sends no such field, is C-9.
+
+### C-9 (normative): The host sends only the request fields a session honours
+
+The host holds every execute request to the session's calls with `checkExecuteRequest` before the call, and refuses it by a rule of `CALL_REFUSAL_RULES` when it carries an optional request field the session does not honour, or a `scope` to a session that does not offer `console.endScope`.
+A present `params` key is sent whatever its length, and an offset is sent when it is not zero.
+A refusal names the field and a JSON Pointer into the request, never a value of it.
+
+- test `packages/provider-sdk/tests/calls/request.test.ts` "a request field the session does not honour is refused before the call"
+- test `packages/provider-sdk/tests/calls/request.test.ts` "a session that honours every field and offers endScope takes each"
+- test `packages/provider-sdk/tests/calls/request.test.ts` "a request on a refined session is held to the narrowed calls"
+- test `packages/provider-sdk/tests/calls/request.test.ts` "a CallRefusalError carries every refusal and words each"
+
+### C-10 (normative): A refinement only narrows a session's calls
+
+`open` may answer a refinement beside its handle: a closed object at the paths of the manifest's `calls`, every key optional, every value of which is a subset of the declared one.
+`checkRefinement` refuses a widening, an unknown key and an unreadable value by name, reading every value as a data property and never calling a getter, and no refusal carries a value of the refinement.
+An `honours` list longer than the declared one is refused as a widening by its length, before any item is read, so a sparse array's length bounds no loop of the check.
+`sessionCalls` answers the narrowed calls, frozen, and the host keeps them with the session and nowhere else, with no cache and no invalidation event.
+A refinement is a call's answer, not a manifest fact, so the schema has no place for it.
+
+- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement that narrows the declared calls is admitted, and the session's calls are the narrowed ones"
+- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement that widens a declared value is refused as refinement-widens"
+- test `packages/provider-sdk/tests/calls/refinement.test.ts` "an honours list longer than the declared one is refused as refinement-widens at the list, and no item is read"
+- test `packages/provider-sdk/tests/calls/honours-bounds.test.ts` "a refinement honours list of the longest length is refused at the list, in a bounded child"
+- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a key a refinement cannot have is refused as refinement-key-unknown"
+- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement value of the wrong type, an accessor or a repeated field is refused as refinement-unreadable"
+- test `packages/provider-sdk/tests/calls/refinement.test.ts` "no refinement refusal carries a value of the refinement"
 
 ## Not yet in this contract
 
@@ -720,7 +747,7 @@ These chapters are added by the changes that bring their enforcers:
 - Connection string rows: their schemes, their URL TLS and paste readers, and their seed checks.
 - Editor and SQL text: execution UI, the SQL grammar facts as manifest data, SQL writing, migration DDL, generators, editor languages, explain formats and discovery fence tags.
 - Policy and MCP claims, each a request a provider makes that only Studio's review record grants, the agent overlay, and presentation (an icon and a colour).
-- Calls, continued: the memory test transport, refinements and the byte budgets, and the cancel, deadline and failure rules.
+- Calls, continued: the memory test transport, the byte budgets, and the cancel, deadline and failure rules.
 - The API report of each SDK entry.
 
 ## Change notes

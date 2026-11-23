@@ -18,11 +18,15 @@ import * as packageRoot from "@libredb/provider-sdk";
 import { decodeValue, encodeValue, ValueCodecError } from "@libredb/provider-sdk/values";
 import { ERROR_KINDS, PROVIDER_ERROR_KINDS, SQLSTATE_PATTERN } from "@libredb/provider-sdk/errors";
 import {
+  CALL_REFUSAL_RULES,
   CONSOLE_FACETS,
+  checkExecuteRequest,
   checkProviderModule,
+  checkRefinement,
   defineProvider,
   envReader,
   EXECUTE_REQUEST_FIELDS,
+  sessionCalls,
 } from "@libredb/provider-sdk/calls";
 
 const SCHEMA_BYTES = readFileSync(path.join(import.meta.dir, "../../src/manifest/manifest.schema.json"));
@@ -86,5 +90,9 @@ describe("the manifest schema digest", () => {
     expect(packageRoot.envReader).toBe(envReader);
     expect(packageRoot.CONSOLE_FACETS).toBe(CONSOLE_FACETS);
     expect(packageRoot.EXECUTE_REQUEST_FIELDS).toBe(EXECUTE_REQUEST_FIELDS);
+    expect(packageRoot.checkExecuteRequest).toBe(checkExecuteRequest);
+    expect(packageRoot.checkRefinement).toBe(checkRefinement);
+    expect(packageRoot.sessionCalls).toBe(sessionCalls);
+    expect(packageRoot.CALL_REFUSAL_RULES).toBe(CALL_REFUSAL_RULES);
   });
 });

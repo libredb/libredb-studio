@@ -27,6 +27,11 @@ export function token(key: string): string {
   return key.replaceAll("~", "~0").replaceAll("/", "~1");
 }
 
+/** `key` appended to the JSON Pointer `pointer` as one reference token. */
+export function pointerTo(pointer: string, key: string | number): string {
+  return `${pointer}/${typeof key === "number" ? key : token(key)}`;
+}
+
 /** One own property, read by its descriptor: absent, an accessor whose getter was not called, or a data value. */
 export type OwnRead =
   | { readonly kind: "absent" }
