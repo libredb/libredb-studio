@@ -20,6 +20,7 @@ import {
   isTimeoutError,
   isAuthenticationError,
   TransactionLostError,
+  QueryCancelledError,
   NO_TRANSACTION_OPENED,
   ProviderTextWithheldError,
 } from "@/lib/db/errors";
@@ -1241,6 +1242,134 @@ describe("POST /api/db/transaction", () => {
     expect(res.status).toBe(500);
     expect(data.error).toContain("Internal database error");
   });
+
+  // The record of a transaction follows the provider's own state after a failure: it is kept while the provider still
+  // holds a transaction, and handed back once it holds none. These titles pin what the route answers today, and the
+  // host core's transaction calls keep each answer (docs/providers/CONTRACT.md, clauses C-57 and C-58).
+  describe("what the transaction route answers today, which the host core keeps (E21-K2, E23-K1)", () => {
+    interface ErrorBody {
+      readonly code: string;
+      readonly kind?: string;
+      readonly outcome?: string;
+    }
+
+    /** The status of a call and the code, kind and outcome of its body. */
+    async function answerOf(response: Response) {
+      const body = await parseResponseJSON<ErrorBody>(response);
+      return { status: response.status, code: body.code, kind: body.kind, outcome: body.outcome };
+    }
+
+    /** Whether another session finds the transaction still held: its begin is refused as not owned. */
+    async function heldForAnother(connectionId: string) {
+      asSession("bob", "admin");
+      const res = await call(connectionId, { action: "begin" });
+      return { status: res.status, code: (await parseResponseJSON<{ code?: string }>(res)).code };
+    }
+
+    test("a statement that fails inside the transaction answers its error and keeps the transaction and its owner", async () => {
+      openableProvider();
+      asSession("alice");
+      expect((await call("e21-statement-open", { action: "begin" })).status).toBe(200);
+      mockTxProvider.queryInTransaction.mockImplementationOnce(async () => {
+        throw new QueryError('relation "missing" does not exist', "postgres");
+      });
+
+      const failed = await answerOf(
+        await call("e21-statement-open", { action: "query", sql: "SELECT * FROM missing" }),
+      );
+
+      expect(failed).toEqual({ status: 400, code: "QUERY_ERROR", kind: "query", outcome: "unknown" });
+      expect(await heldForAnother("e21-statement-open")).toEqual({ status: 409, code: "TRANSACTION_NOT_OWNED" });
+      asSession("alice");
+      expect(await parseResponseJSON(await call("e21-statement-open", { action: "status" }))).toMatchObject({
+        inTransaction: true,
+        ownedByYou: true,
+      });
+    });
+
+    test("a statement that fails and ends the transaction answers its error and hands the connection back", async () => {
+      const provider = openableProvider();
+      asSession("alice");
+      expect((await call("e21-statement-lost", { action: "begin" })).status).toBe(200);
+      mockTxProvider.queryInTransaction.mockImplementationOnce(async () => {
+        provider.expire();
+        throw new TransactionLostError("The transaction was lost: its database session ended (x).", "postgres");
+      });
+
+      const failed = await answerOf(await call("e21-statement-lost", { action: "query", sql: "SELECT 1" }));
+
+      expect(failed).toEqual({ status: 503, code: "TRANSACTION_LOST", kind: "transaction-lost", outcome: "unknown" });
+      expect(await heldForAnother("e21-statement-lost")).toEqual({ status: 200, code: undefined });
+    });
+
+    test("a COMMIT that fails and leaves the transaction open answers its error and keeps its owner", async () => {
+      openableProvider();
+      asSession("alice");
+      expect((await call("e21-commit-open", { action: "begin" })).status).toBe(200);
+      mockTxProvider.commitTransaction.mockImplementationOnce(async () => {
+        throw new QueryError("could not serialize access", "postgres");
+      });
+
+      const failed = await answerOf(await call("e21-commit-open", { action: "commit" }));
+
+      expect(failed).toEqual({ status: 400, code: "QUERY_ERROR", kind: "query", outcome: "unknown" });
+      expect(await heldForAnother("e21-commit-open")).toEqual({ status: 409, code: "TRANSACTION_NOT_OWNED" });
+      asSession("alice");
+      expect((await call("e21-commit-open", { action: "rollback" })).status).toBe(200);
+    });
+
+    test("a COMMIT that fails and ends the transaction answers its error and hands the connection back", async () => {
+      const provider = openableProvider();
+      asSession("alice");
+      expect((await call("e21-commit-ended", { action: "begin" })).status).toBe(200);
+      // PostgreSQL ends a transaction whose COMMIT fails, as with a deferred constraint.
+      mockTxProvider.commitTransaction.mockImplementationOnce(async () => {
+        provider.expire();
+        throw new QueryError("deferred constraint violated", "postgres");
+      });
+
+      const failed = await answerOf(await call("e21-commit-ended", { action: "commit" }));
+
+      expect(failed).toEqual({ status: 400, code: "QUERY_ERROR", kind: "query", outcome: "unknown" });
+      expect(await heldForAnother("e21-commit-ended")).toEqual({ status: 200, code: undefined });
+    });
+
+    test("a statement the engine cancelled answers 499 and keeps the transaction and its owner", async () => {
+      // A cancellation the engine confirms from outside Studio, another session's pg_cancel_backend or a DBA's KILL
+      // QUERY: PostgreSQL leaves the transaction aborted, so the provider still holds it.
+      openableProvider();
+      asSession("alice");
+      expect((await call("e21-cancelled", { action: "begin" })).status).toBe(200);
+      mockTxProvider.queryInTransaction.mockImplementationOnce(async () => {
+        throw new QueryCancelledError("canceling statement due to user request", "postgres");
+      });
+
+      const failed = await answerOf(await call("e21-cancelled", { action: "query", sql: "SELECT pg_sleep(60)" }));
+
+      expect(failed).toEqual({ status: 499, code: "QUERY_CANCELLED", kind: "cancelled", outcome: "unknown" });
+      expect(await heldForAnother("e21-cancelled")).toEqual({ status: 409, code: "TRANSACTION_NOT_OWNED" });
+      asSession("alice");
+      expect(await parseResponseJSON(await call("e21-cancelled", { action: "status" }))).toMatchObject({
+        inTransaction: true,
+        ownedByYou: true,
+      });
+    });
+
+    test("a connection lost mid-statement inside the transaction answers CONNECTION_ERROR with outcome unknown", async () => {
+      openableProvider();
+      asSession("alice");
+      expect((await call("e23-socket-lost", { action: "begin" })).status).toBe(200);
+      mockTxProvider.queryInTransaction.mockImplementationOnce(async () => {
+        throw new ConnectionError("Connection terminated unexpectedly", "postgres");
+      });
+
+      const failed = await answerOf(await call("e23-socket-lost", { action: "query", sql: "UPDATE t SET n = 1" }));
+
+      expect(failed).toEqual({ status: 503, code: "CONNECTION_ERROR", kind: "connection", outcome: "unknown" });
+      // The provider still holds the transaction, so the record follows it.
+      expect(await heldForAnother("e23-socket-lost")).toEqual({ status: 409, code: "TRANSACTION_NOT_OWNED" });
+    });
+  });
 });
 
 // ─── Server-level connections (#1530) ───────────────────────────────────────
@@ -1808,6 +1937,27 @@ describe("POST /api/db/transaction under governance", () => {
       transactionOutcome: "open",
     });
     expect(recordedEvents[0]?.rowCount).toBeUndefined();
+  });
+
+  test("governance: a statement the engine cancelled records an open event with status error and keeps the transaction", async () => {
+    const providers = providerPerOwner();
+    as("alice@example.com", "alice-subject");
+    expect((await send({ action: "begin" })).status).toBe(200);
+    providers.of("alice-subject")?.queryInTransaction.mockImplementationOnce(async () => {
+      throw new QueryCancelledError("canceling statement due to user request", "postgres");
+    });
+
+    expect((await send({ action: "query", sql: "SELECT pg_sleep(60)" })).status).toBe(499);
+    expect((await send({ action: "query", sql: "ROLLBACK TO SAVEPOINT s" })).status).toBe(200);
+
+    expect(
+      recordedEvents.map((event) => [event.transactionOutcome, event.statement, event.status, event.errorCode]),
+    ).toEqual([
+      ["open", "SELECT pg_sleep(60)", "error", "QUERY_CANCELLED"],
+      ["open", "ROLLBACK TO SAVEPOINT s", "success", undefined],
+    ]);
+    expect(recordedEvents[0]?.transactionId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(recordedEvents[1]?.transactionId).toBe(recordedEvents[0]?.transactionId);
   });
 
   test("governance: a statement that finds its transaction lost records the transaction's end, not a timeout", async () => {
