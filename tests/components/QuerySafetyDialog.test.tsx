@@ -3767,3 +3767,58 @@ describe("a typed confirmation the caller already read", () => {
     expect(onProceed.mock.calls).toEqual([[]]);
   });
 });
+
+describe("a typed field reopened during the dialog's exit animation", () => {
+  // The content's exit animation keeps it mounted after it closes (Radix Presence waits for `animationend`), and
+  // happy-dom reports no animation, so the stub below reports one on closed content the way a browser does. A dialog
+  // reopened before the animation ends is a new ask: the field starts empty and Proceed waits for the name again.
+  const realGetComputedStyle = globalThis.getComputedStyle;
+
+  beforeEach(() => {
+    const stub = (element: Element, pseudo?: string | null) => {
+      // A browser's computed style is live, and Presence keeps the one it read on mount, so the stub answers from
+      // the element's state at each read.
+      const style = realGetComputedStyle(element, pseudo);
+      return new Proxy(style, {
+        get: (target, property) =>
+          property === "animationName" && element.getAttribute("data-state") === "closed"
+            ? "exit"
+            : Reflect.get(target, property, target),
+      });
+    };
+    globalThis.getComputedStyle = stub as typeof globalThis.getComputedStyle;
+    window.getComputedStyle = stub as typeof window.getComputedStyle;
+  });
+
+  afterEach(() => {
+    cleanup();
+    globalThis.getComputedStyle = realGetComputedStyle;
+    window.getComputedStyle = realGetComputedStyle;
+  });
+
+  test("an opening with the same expected name starts from an empty field and a disabled Proceed", () => {
+    const name = crypto.randomUUID();
+    const dialog = (isOpen: boolean) => (
+      <QuerySafetyDialog
+        isOpen={isOpen}
+        query="del /a /b"
+        schemaContext=""
+        databaseType="etcd"
+        connectionName={name}
+        typedConfirmation={{ type: "connection-name", expected: name, targets: ["/a"] }}
+        onClose={() => {}}
+        onProceed={() => {}}
+      />
+    );
+    const { rerender } = render(dialog(true));
+    const content = screen.getByRole("alertdialog");
+    fireEvent.change(screen.getByLabelText(`Type ${name} to confirm`), { target: { value: name } });
+    rerender(dialog(false));
+    rerender(dialog(true));
+    // The same content node, so the reopening happened inside the exit animation rather than after an unmount.
+    expect(screen.getByRole("alertdialog")).toBe(content);
+    const again = screen.getByLabelText(`Type ${name} to confirm`) as HTMLInputElement;
+    expect(again.value).toBe("");
+    expect((screen.getByRole("button", { name: "Execute Query" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});

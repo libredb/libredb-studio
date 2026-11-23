@@ -183,6 +183,12 @@ export function QuerySafetyDialog({
   // Whether the typed confirmation's field matches (#1089, section 5.5). The field reports it when it mounts and on
   // every change, so each opening starts from false: the field's own state lives inside the dialog content.
   const [typedMatches, setTypedMatches] = useState(false);
+  // Counts the openings, so each one draws a new field. The content's exit animation keeps it mounted for a moment
+  // after it closes, and an opening within that moment would otherwise keep the field, and what was typed in it,
+  // whenever it asks for the same value: a 428 for the next row of an inline edit asks for the same name (FND-5 6c).
+  // Counted while rendering from the previous `isOpen`, React's pattern for state that follows a prop.
+  const [opening, setOpening] = useState({ count: 0, open: isOpen });
+  if (opening.open !== isOpen) setOpening({ count: isOpen ? opening.count + 1 : opening.count, open: isOpen });
   // Radix hands focus back only to an AlertDialogTrigger, and the editor opens this dialog without
   // one, so the dialog keeps what had focus when it opened and puts focus back there on close.
   const returnFocus = useReturnFocus();
@@ -575,7 +581,7 @@ export function QuerySafetyDialog({
               <p className="text-xs text-danger">{MISSING_CONNECTION_NAME}</p>
             ) : (
               <TypedConfirmField
-                key={typedExpected}
+                key={`${opening.count}:${typedExpected}`}
                 expected={typedExpected}
                 match="exact"
                 onMatchChange={setTypedMatches}
