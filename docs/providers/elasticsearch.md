@@ -21,6 +21,7 @@
 | **Connection string** | **Not supported** — addressed by host and port like Druid, and `http(s)://` is already ClickHouse's in the shared parser ([§4.2](#42-there-is-no-connection-string-and-that-is-deliberate)) |
 | **EXPLAIN** | **None.** `supportsExplain: false` and no `explainFormat`, so the button and the tab are hidden — even though this product *does* answer `EXPLAIN <select>` ([§3.10](#310-no-explain-even-though-elasticsearch-answers-one)) |
 | **Write reach** | open: Studio sends the SQL the editor holds, and the grammar has no `INSERT`, `UPDATE`, `DELETE`, `CREATE` or `ALTER`, which is the engine's grammar and not a Studio gate; documents change through the document APIs ([§5.6](#56-this-grammar-does-not-write)) |
+| **Failed statement outcome** | unknown: every statement is sent on an HTTP request of the provider's transport, and nothing is taken from a pool before it is sent |
 | **Transactions** | Not exposed (Elasticsearch has none) |
 | **Maintenance** | None — nothing in `MaintenanceType` has a SQL-reachable analogue ([§8](#8-maintenance)) |
 | **Query cancellation** | No `cancelQuery`. An abort closes **this client's** socket; the cluster keeps working ([§3.8](#38-the-deadline-is-the-clients-and-only-the-clients)) |

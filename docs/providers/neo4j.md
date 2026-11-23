@@ -7,6 +7,7 @@ Tests: [`tests/unit/db/neo4j/`](../../tests/unit/db/neo4j/), [`tests/unit/db/gra
 | | |
 |---|---|
 | **Write reach** | none: the shared Cypher read policy, `checkCypherRead`, refuses every statement that is not a read before any Bolt request; there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: the driver takes its pooled connection inside `session.run()`, the call that sends the statement, so no failure can be shown to come before the send |
 
 ## 1. Overview
 

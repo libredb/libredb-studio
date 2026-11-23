@@ -7,6 +7,7 @@ Tests: [`tests/unit/db/influxdb/`](../../tests/unit/db/influxdb/) and [`tests/in
 | | |
 |---|---|
 | **Write reach** | none: the InfluxQL policy, `evaluateInfluxql`, refuses every statement that is not one `SELECT`, `SHOW` or `EXPLAIN` before any request, and the route table reaches no write endpoint; there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: a statement waits for one of the provider's request slots and then sends, and nothing is taken from a pool, so a wait that ends answers `unknown` like every other failure |
 
 ## 1. Overview
 

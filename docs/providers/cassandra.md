@@ -23,6 +23,7 @@
 | **Connection string** | Not supported — no URI convention carries `localDataCenter`, which the driver requires ([§4.2](#42-there-is-no-connection-string-and-why-that-is-not-fixable-by-inventing-one)) |
 | **EXPLAIN** | **None.** `EXPLAIN` is not in the grammar at all ([§5.6](#56-there-is-no-explain-and-tracing-is-not-a-plan)) |
 | **Write reach** | open: the editor and Import send `INSERT`, `UPDATE`, `DELETE` (all upserts, all primary-key-restricted), `TRUNCATE` and `BATCH` |
+| **Failed statement outcome** | unknown: the driver takes its pooled connection inside `session.execute()`, the call that sends the statement, so no failure can be shown to come before the send |
 | **Transactions** | None. Lightweight transactions (`IF NOT EXISTS`, `IF <condition>`) are per-partition compare-and-set, not sessions |
 | **Maintenance** | **None** — every operation is a `nodetool`/JMX action on a node ([§8](#8-maintenance)) |
 | **Query cancellation** | **None** — the protocol has no cancel frame and `cancelQuery` is deliberately not implemented ([§3.7](#37-there-is-no-cancellation-so-none-is-offered)) |

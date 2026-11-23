@@ -15,6 +15,7 @@
 | **Connection string**  | Not stored: a pasted Snowflake URL is decomposed into fields                                        |
 | **EXPLAIN**            | `snowflake-json`: `EXPLAIN USING JSON`, which compiles the statement; never sent for a `SYSTEM$` call |
 | **Write reach** | open: the editor sends every statement as written, and the role is the boundary; the confirmation gate asks before Snowflake's destructive forms |
+| **Failed statement outcome** | unknown: a statement waits for one of the provider's request slots and then sends, and nothing is taken from a pool, so a wait that ends answers `unknown` like every other failure |
 | **Transactions**       | None across statements; a transaction runs inside one `EXECUTE IMMEDIATE $$ ... $$` block           |
 | **Maintenance**        | None                                                                                                |
 | **Query parameters**   | Not supported: v1 sends no bindings                                                                 |

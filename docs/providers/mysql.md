@@ -22,6 +22,7 @@
 | **Base** | [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts) |
 | **Tests** | [`tests/integration/db/mysql-provider.test.ts`](../../tests/integration/db/mysql-provider.test.ts) |
 | **Write reach** | open: the editor, inline row edit, Import, Generate Test Data, Create Table, maintenance (`analyze`, `optimize`, `check`, `kill`) and the transaction route all send writes |
+| **Failed statement outcome** | unknown: the provider takes a connection from the pool (`pool.getConnection()`) before it sends the statement, and that failure answers `unknown` like every other |
 
 ---
 

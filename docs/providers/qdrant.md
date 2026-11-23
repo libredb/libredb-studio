@@ -8,6 +8,7 @@ Tracking issue: [#424](https://github.com/libredb/libredb-studio/issues/424), wi
 | | |
 |---|---|
 | **Write reach** | none: every route of the closed console route table, `QDRANT_ROUTES`, is a read, and any other route is refused before any request; there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: a statement waits for one of the provider's request slots and then sends, and nothing is taken from a pool, so a wait that ends answers `unknown` like every other failure |
 
 ## 1. Overview
 

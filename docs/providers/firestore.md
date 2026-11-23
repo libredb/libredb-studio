@@ -15,6 +15,7 @@
 | **Connection string**  | Not supported                                                                                     |
 | **EXPLAIN**            | `firestore-explain`: Query Explain, plan only from the button; not offered on an emulator server  |
 | **Write reach** | none: the request builder, `buildRequest`, builds only the read requests of its closed table, before any socket; there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: every statement is sent on a request of the client opened at connect, and nothing is taken from a pool before it is sent |
 | **Transactions**       | None                                                                                              |
 | **Maintenance**        | None                                                                                              |
 | **Query cancellation** | Supported: the request is aborted                                                                 |

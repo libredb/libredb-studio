@@ -21,6 +21,7 @@
 | **Connection string** | **Not supported** — Druid has no URI convention for its SQL API ([§4.2](#42-there-is-no-connection-string-and-that-is-deliberate)) |
 | **EXPLAIN** | `druid-native` — the native query plan as a tree. Druid's `EXPLAIN` never executes the statement, so there is no separate analyze mode |
 | **Write reach** | open: Studio sends the statement the editor holds, and Druid SQL itself has no `UPDATE`, `DELETE` or `CREATE TABLE` and needs the MSQ task engine for `INSERT` and `REPLACE`, which is the engine's grammar and not a Studio gate ([§5.5](#55-druid-sql-cannot-write-and-the-server-says-so-clearly)) |
+| **Failed statement outcome** | unknown: every statement is sent on an HTTP request of the provider's transport, and nothing is taken from a pool before it is sent |
 | **Transactions** | Not exposed (Druid has none) |
 | **Maintenance** | None — nothing in `MaintenanceType` has a SQL-reachable Druid analogue ([§8](#8-maintenance)) |
 | **Query cancellation** | No `cancelQuery`; the server-side statement deadline is what stops a runaway query ([§13](#13-known-limitations--future-work)) |

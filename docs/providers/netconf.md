@@ -14,6 +14,7 @@ server used only to check that a rule was not one implementation's habit.
 | | |
 |---|---|
 | **Write reach** | none: the request builder, `buildRpc`, writes four read operations and `<close-session>`, and no `<edit-config>`; there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: every statement is sent on the one session opened at connect, and nothing is taken from a pool before it is sent |
 
 ## 1. Overview
 

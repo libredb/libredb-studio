@@ -19,6 +19,7 @@
 | **Connection string** | Not supported. `http://` and `https://` already parse as ClickHouse ([§4.5](#45-no-connection-string)) |
 | **EXPLAIN** | None. `/api/v1/parse_query` is experimental upstream, so no plan view is offered |
 | **Write reach** | none: the transport requests only the closed endpoint table `PATHS`, every one a read listed in [§6.1](#every-endpoint-call-with-its-parameters), and builds no admin, remote-write, OTLP or lifecycle endpoint; there is no object edit, maintenance or transaction route, so every connection is read-only and a read-only one is accepted |
+| **Failed statement outcome** | unknown: a statement waits for one of the provider's request slots and then sends, and nothing is taken from a pool, so a wait that ends answers `unknown` like every other failure |
 | **Transactions** | Not applicable |
 | **Maintenance** | None. The admin API (series deletion, snapshots, tombstones) and the lifecycle endpoints (`/-/quit`, `/-/reload`) are never called |
 | **Query cancellation** | Yes: `cancelQuery(queryId)` aborts that query's request, and the server ends the evaluation at its next checkpoint; a query still waiting for one of the connection's query slots leaves the queue without reaching the server (M1, [§5.5](#55-timeout-and-cancellation)) |

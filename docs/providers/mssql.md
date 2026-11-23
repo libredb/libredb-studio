@@ -26,6 +26,7 @@
 | **Base** | [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts) |
 | **Tests** | [`tests/integration/db/mssql-provider.test.ts`](../../tests/integration/db/mssql-provider.test.ts) |
 | **Write reach** | open: the editor, inline row edit, Import, Generate Test Data, Create Table, maintenance (`analyze`, `check`, `optimize`, `kill`) and the transaction route all send writes |
+| **Failed statement outcome** | unknown: the driver takes its pooled connection inside `request.query()`, the call that sends the statement, so no failure can be shown to come before the send |
 
 ---
 

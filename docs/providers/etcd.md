@@ -8,6 +8,7 @@ Tracking issue: [#1089](https://github.com/libredb/libredb-studio/issues/1089), 
 | | |
 |---|---|
 | **Write reach** | guarded: while read-only mode holds, a write command (`put`, `del`, a `txn` that writes, `lease grant`, `lease keep-alive`, `lease revoke`) is refused by `refuseBeforeSend`, and the value edit and compact, defragment and disarm by `refuseReadOnly`, both in `write-policy.ts` and before any request; there is no transaction route |
+| **Failed statement outcome** | unknown: every statement is sent on a gRPC call of the client opened at connect, and nothing is taken from a pool before it is sent |
 
 ## 1. Overview
 

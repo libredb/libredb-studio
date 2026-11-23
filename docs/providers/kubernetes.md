@@ -7,6 +7,7 @@ Tests: [`tests/unit/db/kubernetes/`](../../tests/unit/db/kubernetes/), [`tests/i
 | | |
 |---|---|
 | **Write reach** | none: the request policy, `admitRequest`, admits `GET` and the three self reviews only, before any socket; there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: every statement is sent on an HTTP request of the provider's transport, and nothing is taken from a pool before it is sent |
 
 ## 1. Overview
 

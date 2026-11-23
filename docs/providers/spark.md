@@ -18,6 +18,7 @@ LibreDB Studio has no affiliation with and is not endorsed by The Apache Softwar
 | **Connection string**  | Not stored: a pasted `sc://` address is decomposed into fields                                   |
 | **EXPLAIN**            | `spark-text`: `EXPLAIN FORMATTED`, which plans the statement and runs nothing                    |
 | **Write reach** | open: the editor sends every statement as written, and the server is the boundary; the confirmation gate asks before Spark's replacing and code-loading forms |
+| **Failed statement outcome** | unknown: the provider opens its Spark Connect session (`sessions.forScope()`) before it sends the statement, and that failure answers `unknown` like every other |
 | **Transactions**       | None                                                                                             |
 | **Maintenance**        | None                                                                                             |
 | **Query parameters**   | Not supported: Studio sends no bound parameters                                                  |

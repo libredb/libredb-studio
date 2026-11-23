@@ -13,6 +13,7 @@ were behaviour.
 | | |
 |---|---|
 | **Write reach** | none: the valve, `assertOutboundAllowed`, admits only the read function codes and device identification on every outbound frame; there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: the provider opens a connection of its own for each read (`dialModbus()`) before it sends the statement, and that failure answers `unknown` like every other |
 
 ## 1. Overview
 

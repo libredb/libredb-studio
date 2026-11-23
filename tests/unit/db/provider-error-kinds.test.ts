@@ -6,7 +6,8 @@
  * error class `src/lib/db/errors.ts` exports takes a kind of one of them, so a class of a core kind is one only core
  * constructs. Provider code, `src/lib/db/providers/` and every `packages/provider-*\/src/`, constructs and extends none
  * of those classes, through an import alias or a namespace import included, and assigns no property named `outcome`:
- * a provider claims not-sent only by raising `refused-before-send`, whose constructor writes it.
+ * a provider claims not-sent only by raising `refused-before-send`, whose constructor writes it, or by taking its
+ * connection or session through `checkoutPhase` in src/lib/db/errors.ts, which writes it on what the checkout raised.
  *
  * One core kind reaches a caller through a provider: `read-allowance-exceeded`, raised by the read allowance core hands
  * a provider when the provider charges it. The provider code that calls a `charge` method is recorded here, so a new

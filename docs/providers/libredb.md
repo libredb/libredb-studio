@@ -18,6 +18,7 @@
 | **Source** | [`src/lib/db/providers/embedded/libredb.ts`](../../src/lib/db/providers/embedded/libredb.ts) |
 | **Tests** | [`tests/integration/db/libredb-provider.test.ts`](../../tests/integration/db/libredb-provider.test.ts) |
 | **Write reach** | open: the editor sends `put` and `delete`, and no gate refuses them on a connection |
+| **Failed statement outcome** | unknown: every statement is sent on the engine in Studio's process, and nothing is taken from a pool before it is sent |
 
 ---
 
