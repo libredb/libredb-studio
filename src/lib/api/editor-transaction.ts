@@ -225,12 +225,19 @@ export async function readTransactionState(
   return "unknown";
 }
 
-/** The state read at once after a provider's failure: `unknown` when the read fails too, logged by kind and code. */
-async function stateAfterFailure(provider: DatabaseProvider, caller: TransactionCaller): Promise<SessionState> {
+/**
+ * The session state of `provider` read as `readTransactionState` reads it, answering `unknown` for a read that fails,
+ * logged by kind and code and never its text: the state read after a provider's failure, whose own error is the one
+ * answered, and the read of the route's timeout watch. It never rejects.
+ */
+export async function readTransactionStateOrUnknown(
+  provider: DatabaseProvider,
+  caller: TransactionCaller,
+): Promise<SessionState> {
   try {
     return await readTransactionState(provider, caller);
   } catch (failure) {
-    logger.warn("The transaction state read after a failed call failed, so the state is unknown", {
+    logger.warn("A transaction state read failed, so the state is unknown", {
       route: caller.route,
       kind: errorKind(failure),
       code: errorCode(failure),
@@ -276,7 +283,7 @@ export async function endTransaction(
   try {
     record = await transactionOn(provider, { action }, executeDeadline(provider, now), caller.signal, caller.route);
   } catch (error) {
-    return { kind: "failed", error, sessionState: await stateAfterFailure(provider, caller) };
+    return { kind: "failed", error, sessionState: await readTransactionStateOrUnknown(provider, caller) };
   }
   if (record.kind === "refused") return refusedOutcome(record, view);
   if (record.kind === "stopped") return { kind: "unanswered", error: stopError(record.reason, view) };
@@ -313,7 +320,7 @@ export async function runInTransaction(
       hostPorts(caller.route),
     );
   } catch (error) {
-    return { kind: "failed", error, sessionState: await stateAfterFailure(provider, caller) };
+    return { kind: "failed", error, sessionState: await readTransactionStateOrUnknown(provider, caller) };
   }
   if (record.kind === "refused") return refusedOutcome(record, views.view);
   if (record.kind === "stopped") return { kind: "unanswered", error: stopError(record.reason, views.stopView(record)) };

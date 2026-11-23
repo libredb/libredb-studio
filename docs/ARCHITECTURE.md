@@ -466,7 +466,7 @@ Today it holds two primitives the provider factory (`src/lib/db/factory.ts`) run
 `open-once.ts` keeps one open in flight per cache key: concurrent callers share one open, a caller's own signal ends only its own wait, the open admits its own result into its cache, a failure no caller waits for goes to the table's `unclaimed` hook, and a discard aborts the signal of every matching open in flight (clause C-44).
 An open table may carry its owner's deadline: at it every caller still waiting is answered the owner's error, the open leaves the table so the next caller opens afresh, and the open closes what it opened once it settles; the factory's two tables carry each engine's connect budget (`src/lib/db/connect-budget.ts`, clause C-55).
 `teardown.ts` tears a provider down under fixed deadlines: the rollback of an open transaction waited for at most `TEARDOWN_ROLLBACK_MS` (5 s), then the close at most `TEARDOWN_CLOSE_MS` (10 s), the SDK's cleanup deadline, with an outcome per step and never a rejection (clause C-45).
-`console.ts` makes a console execute or cancel call: it checks the call before it is made, freezes its context and request, waits for it until the call's signal, pumps the first result within the page's 32 MiB, and answers a record of how the call ended; a stop sends the run's cancel under a cleanup context of its own (clauses C-47 and C-48).
+`console.ts` makes a console execute, cancel or transaction call: it checks the call before it is made, freezes its context and request, waits for it until the call's signal, pumps the first result within the page's 32 MiB, and answers a record of how the call ended; a stop sends the run's cancel under a cleanup context of its own (clauses C-47 and C-48); a transaction call, and a statement sent inside a transaction, answers the session state the session answered, read by the SDK's checks, and keeps none between calls (clause C-58).
 `turns.ts` awaits one turn of the event loop before every pull of a result, so a page of rows already in memory never holds the event loop for more than one batch (clause C-49).
 `page-budget.ts` bounds the pages in flight (clause C-53): a budget of large-page slots, one in each host core, `LARGE_PAGE_SLOTS`.
 Every page takes its first batch without waiting; before a page's second pull `withLargePageSlot` takes a slot, waiting for one in arrival order until the call's signal aborts, and every later pull runs under it.
@@ -479,7 +479,7 @@ Core imports only the public subpaths of `@libredb/provider-sdk` other than `tes
 It answers plain data and passes errors through by reference, so it never constructs a class that code in another Next.js bundle would test with `instanceof`.
 
 One process holds one host core (clause C-52).
-`host-core.ts` creates it, `createHostCore()`: a frozen object holding the console calls and nothing else, `executeCall` bound to a page budget the core creates for itself and `cancelCall` by identity, so the process holds one page budget as it holds one core.
+`host-core.ts` creates it, `createHostCore()`: a frozen object holding the three console calls and nothing else, `executeCall` bound to a page budget the core creates for itself and `cancelCall` and `transactionCall` by identity, so the process holds one page budget as it holds one core.
 `src/lib/provider-host/instance.ts` keeps it in a global under `Symbol.for("libredb-studio.provider-host-core")`, which every bundle of the process resolves to one key.
 Each composition root installs it when its process starts, naming itself (`HostCoreRoot`): `register()` in `src/instrumentation.ts` for the server, after the boot checks and the credential re-seal, and the VS Code backend child's entry, `vscode-extension/src/backend/main.ts`, before it starts the backend, so the child holds a core and a page budget of its own.
 The caller facade reads it at the start of every call, so a route bundle holds no copy of the console calls; a call made before the install fails with `HostCoreBootOrderError`, by name, so no core is ever created on demand.
@@ -491,7 +491,9 @@ The library surface never reads the slot, so an embedder of the npm package comp
 
 Beside core, in the calling bundle, sit the two pieces that serve today's providers through it.
 `src/lib/provider-host/legacy-bridge.ts` serves a legacy `DatabaseProvider` as one session of console execute, cancel and transaction (clause C-50), and `src/lib/provider-host/access.ts`, the accessor, builds Studio's error classes from the records core answers (clause C-51).
-The caller facade is `src/lib/api/editor-query.ts`: `runEditorQuery` and `cancelEditorRun` keep the shape `POST /api/db/query`, `POST /api/db/cancel` and the VS Code backend child's `query/run` and `query/cancel` have always called, and run each call through the bridge, core and the accessor under the call's deadline: the statement timeout plus 10 s for a statement, 10 s for a cancel.
+The caller facades are `src/lib/api/editor-query.ts` and `src/lib/api/editor-transaction.ts`.
+`runEditorQuery` and `cancelEditorRun` keep the shape `POST /api/db/query`, `POST /api/db/cancel` and the VS Code backend child's `query/run` and `query/cancel` have always called, and run each call through the bridge, core and the accessor under the call's deadline: the statement timeout plus 10 s for a statement, 10 s for a cancel.
+The transaction facade serves `POST /api/db/transaction`: its begin, statement, COMMIT, ROLLBACK and state read run through the bridge's transaction session and core's transaction and execute calls under the deadlines of clause C-59, and answer the session state each call answered, never one kept between calls (clause C-58).
 
 ## 5. Directory Structure
 

@@ -326,7 +326,7 @@ describe("the transaction facade's calls", () => {
           { route: ROUTE, kind: "studio-timeout-refusal", code: "TIMEOUT_ERROR" },
         ],
         [
-          "The transaction state read after a failed call failed, so the state is unknown",
+          "A transaction state read failed, so the state is unknown",
           { route: ROUTE, kind: "query", code: "QUERY_ERROR" },
         ],
       ]);
