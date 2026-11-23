@@ -3132,7 +3132,7 @@ Found 2026-10-12 while designing the RabbitMQ provider.
 
 ### D315. The API replaces every provider's timeout sentence with one shared sentence
 
-`createErrorResponse` in `src/lib/api/errors.ts` answers every `TimeoutError` through `databaseErrorBody` in `src/lib/api/error-body.ts`, whose `TIMEOUT_SENTENCE` is "Query timed out. Please try a simpler query or increase timeout.", so a provider's phase-specific sentence, such as RabbitMQ's "No answer from {host}:{port} within {n} s.", never reaches the user; 19 provider files write such sentences today.
+`createErrorResponse` in `src/lib/api/errors.ts` answers a provider's `TimeoutError` through `databaseErrorBody` in `src/lib/api/error-body.ts` (Studio's own `StudioTimeoutRefusal` answers its own sentence since the provider plugins PR 10a5), whose `TIMEOUT_SENTENCE` is "Query timed out. Please try a simpler query or increase timeout.", so a provider's phase-specific sentence, such as RabbitMQ's "No answer from {host}:{port} within {n} s.", never reaches the user; 19 provider files write such sentences today.
 
 Found 2026-10-12 while designing the RabbitMQ provider.
 

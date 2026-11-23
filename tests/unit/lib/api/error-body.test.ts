@@ -34,7 +34,9 @@ import {
   TimeoutError,
   TransactionLostError,
   UnknownProviderError,
+  markNotSent,
 } from "@/lib/db/errors";
+import { openDeadlineSentence } from "@/lib/db/connect-budget";
 import { errorKind } from "@/lib/db/error-record";
 import { errorRecord, type ProviderTextScrub } from "@/lib/db/operations/provider-text";
 import { secretForms } from "@/lib/db/utils/server-text";
@@ -316,6 +318,43 @@ describe("databaseErrorBody", () => {
       expect(body.kind, error.name).toBe(record.kind);
       expect(body.outcome, error.name).toBe(record.outcome);
     }
+  });
+
+  test("a Studio timeout refusal answers its own sentence and a provider's timeout the shared one", () => {
+    const open = new StudioTimeoutRefusal(openDeadlineSentence(70_000), "postgres", 70_000);
+    markNotSent(open);
+    expect(databaseErrorBody(open)?.body).toEqual({
+      error: "The connection did not open within 70 seconds, so Studio stopped waiting for it and sent nothing.",
+      code: ApiErrorCode.TIMEOUT_ERROR,
+      statusCode: 504,
+      retryable: true,
+      kind: "studio-timeout-refusal",
+      outcome: "not-sent",
+    });
+    const deadline = new StudioTimeoutRefusal(
+      "The statement did not answer within its timeout of 60 seconds and 10 seconds more, so Studio stopped waiting for it.",
+      "postgres",
+      70_000,
+    );
+    expect(databaseErrorBody(deadline)?.body).toEqual({
+      error:
+        "The statement did not answer within its timeout of 60 seconds and 10 seconds more, so Studio stopped waiting for it.",
+      code: ApiErrorCode.TIMEOUT_ERROR,
+      statusCode: 504,
+      retryable: true,
+      kind: "studio-timeout-refusal",
+      outcome: "unknown",
+    });
+    expect(
+      databaseErrorBody(new TimeoutError("canceling statement due to statement timeout", "postgres"))?.body,
+    ).toEqual({
+      error: TIMEOUT_SENTENCE,
+      code: ApiErrorCode.TIMEOUT_ERROR,
+      statusCode: 504,
+      retryable: true,
+      kind: "timeout",
+      outcome: "unknown",
+    });
   });
 
   test("a refusal with no fix statement carries no fixStatement key", () => {

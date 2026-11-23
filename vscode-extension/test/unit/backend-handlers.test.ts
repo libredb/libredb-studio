@@ -40,9 +40,12 @@ import {
   QueryCancelledError,
   QueryError,
   RefusedBeforeSendError,
+  StudioTimeoutRefusal,
   TimeoutError,
   connectPhase,
+  markNotSent,
 } from "@/lib/db/errors";
+import { connectBudgetFor, openDeadlineSentence } from "@/lib/db/connect-budget";
 import type { Container, DatabaseObject, KindCount, ObjectDetail, ProviderCapabilities } from "@/lib/db/types";
 import type { ColumnSchema, QueryResult } from "@/lib/types";
 import { engineCatalog } from "../../src/backend/engine-catalog";
@@ -915,6 +918,32 @@ describe("query/run", () => {
     });
     await answeredAs(run, notSent);
     assert.equal(waits[0]?.signal.aborted, true);
+    assert.deepEqual(methodsOf(provider), []);
+  });
+
+  it("query/run whose open its connect budget ended answers TIMEOUT_ERROR in Studio's sentence naming the budget, not-sent", async () => {
+    const { handlers, factory, provider } = await openedOn();
+    factory.getOrCreateProvider = async () => {
+      // The factory's open refusal, as its open table answers every caller when the engine's connect budget ends.
+      const expired = new StudioTimeoutRefusal(openDeadlineSentence(connectBudgetFor("postgres")));
+      markNotSent(expired);
+      throw expired;
+    };
+
+    await assert.rejects(handlers.runQuery(RUN, idle), (error) => {
+      assert.ok(error instanceof ResponseError, `expected a ResponseError, got ${String(error)}`);
+      assert.equal(
+        error.message,
+        "The connection did not open within 70 seconds, so Studio stopped waiting for it and sent nothing.",
+      );
+      assert.deepEqual(error.data, {
+        code: "TIMEOUT_ERROR",
+        retryable: true,
+        kind: "studio-timeout-refusal",
+        outcome: "not-sent",
+      });
+      return true;
+    });
     assert.deepEqual(methodsOf(provider), []);
   });
 
