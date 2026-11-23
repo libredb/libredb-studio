@@ -1295,6 +1295,7 @@ Those three reach code and tests only; the four prose greps of the published blo
       and add the `SQL grammar` subsection to your provider doc, which
       `tests/unit/db/sql-grammar/docs.test.ts` holds to the module.
       Import `SqlGrammar` and `DEFAULT_SQL_GRAMMAR` from `@libredb/provider-sdk/sql` by name, the one place both are declared (`docs/providers/CONTRACT.md`, S-1).
+      The row is also the source of the engine declaration's `sqlText` segment, so run `bun run engines:generate` after writing or changing it and commit the regenerated declaration (`docs/providers/CONTRACT.md`, S-3).
       `readsSqlText: false` and each `confirmExemptForms` form loosen the confirmation gate, so each needs its claim in `CONFIRMATION_CLAIM_REVIEW` (`src/lib/db/confirmation-claim-review.ts`), with the reason it holds, in the same PR: the gate reads an unlisted claim as if it were not made, and `tests/unit/lib/db/confirmation-claim-review.test.ts` fails until the entry is written
 - [ ] `src/lib/db/types.ts`: `queryLanguage`, only when the engine's query text is neither SQL nor JSON.
       A new member is not neutral: a reader written `=== "json"` sends it into its SQL branch and one written `!== "sql"` into its MongoDB branch, so every reader needs an explicit arm or a test pinning that its branch is right.
