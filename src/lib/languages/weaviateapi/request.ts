@@ -12,7 +12,7 @@ import {
 } from "@/lib/db/console/tagged-json";
 import { checkDenseElements, vectorNumbers } from "@/lib/db/vector/dense";
 import type { QueryWarning } from "@/lib/types";
-import type { WeaviateConsoleOp, WeaviateEncodedOp } from "./client";
+import type { WeaviateConsoleOp, WeaviateEncodedOp } from "./ops";
 import {
   refusedRouteSentence,
   WEAVIATE_BOUNDS,
@@ -24,7 +24,7 @@ import {
   type WeaviateObjectName,
   type WeaviateRoute,
 } from "./routes";
-import type { WeaviateCollectionFacts } from "./schema";
+import type { WeaviateCollectionFacts } from "./collection-facts";
 
 /**
  * The Weaviate console's request rules (#1566 spec 5.1, W1, W3, W4, W6): one console text to one typed request, in
@@ -34,7 +34,8 @@ import type { WeaviateCollectionFacts } from "./schema";
  * schema (`weaviatePhase0`): names, closed keys at every level, ids, the inference rule, enumerations, bounds, and the
  * defaults written in, so the REST and the GraphQL paths answer the same rows. Phase 1 (`weaviatePhase1`) reads the
  * collection's definition: the tenancy rule, every property and vector the request names, and the query vector's
- * numbers. The tenant's status (W6) is read by `execute.ts` after phase 1, since only the server holds it.
+ * numbers. The tenant's status (W6) is read by the provider's `execute.ts` after phase 1, since only the server holds
+ * it.
  *
  * Nothing here sends anything. The first two functions are what the browser runs before a statement leaves it.
  */
@@ -498,7 +499,7 @@ function readAggregateBody(body: TaggedObject, collection: string): WeaviateSear
     tenant: value("tenant") === undefined ? null : tenantAt(body.tenant, "tenant"),
     where: value("where") === undefined ? null : readFilter(body.where),
     // Both paths answer at most 100 groups when no limit is given (measured on 1.37.4 and 1.40.2), so the bound is
-    // written out and results.ts can say when the groups reached it.
+    // written out and the provider's results.ts can say when the groups reached it.
     limit: value("limit") ?? (groupBy === null ? null : integer(WEAVIATE_BOUNDS.defaultGroupsLimit)),
     offset: null,
     autoLimit: null,

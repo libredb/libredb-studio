@@ -19,11 +19,12 @@ import { QueryError } from "@/lib/db/errors";
 import { countLabel } from "@/lib/db/vector/count";
 import type { VectorColumn } from "@/lib/db/vector/types";
 import type { DatabaseType, QueryResult, QueryWarning } from "@/lib/types";
-import type { WeaviateConsoleOp } from "./client";
+import type { WeaviateConsoleOp } from "@/lib/languages/weaviateapi/ops";
 import { GRAPHQL_METADATA } from "./graphql";
-import type { WeaviateSearchModel } from "./request";
-import { WEAVIATE_BOUNDS } from "./routes";
-import { vectorColumnName, type WeaviateCollectionFacts } from "./schema";
+import type { WeaviateSearchModel } from "@/lib/languages/weaviateapi/request";
+import { WEAVIATE_BOUNDS } from "@/lib/languages/weaviateapi/routes";
+import { vectorColumnName } from "./schema";
+import type { WeaviateCollectionFacts } from "@/lib/languages/weaviateapi/collection-facts";
 import type { WeaviatePath } from "./versions";
 
 const PROVIDER: DatabaseType = "weaviate";

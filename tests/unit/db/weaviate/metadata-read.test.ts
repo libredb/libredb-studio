@@ -23,10 +23,10 @@ import {
   weaviateProjectionOf,
 } from "@/lib/db/providers/vector/weaviate/metadata-read";
 import { measureResultBytes } from "@/lib/db/providers/sql/read-only-budget";
-import { readWeaviateAgentStatement } from "@/lib/db/providers/vector/weaviate/metadata-request";
+import { readWeaviateAgentStatement } from "@/lib/languages/weaviateapi/metadata-request";
 import { type WeaviateAnswer, WeaviateError, type WeaviateRequest } from "@/lib/db/providers/vector/weaviate/client";
 import type { WeaviateAnswered } from "@/lib/db/providers/vector/weaviate/execute";
-import type { WeaviatePlan } from "@/lib/db/providers/vector/weaviate/request";
+import type { WeaviatePlan } from "@/lib/languages/weaviateapi/request";
 import type { WeaviatePath } from "@/lib/db/providers/vector/weaviate/versions";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import { agentAnswer, agentCapture, agentCollectionAnswer, scopeAnswer } from "../../../helpers/weaviate-agent";

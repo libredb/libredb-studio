@@ -1,12 +1,12 @@
 /**
  * The agent's admission of one Weaviate request, next to the descriptor that reads it (`weaviateapi.query.read`).
  *
- * It is the provider's own reader (`readWeaviateAgentStatement` in `providers/vector/weaviate/metadata-request.ts`), so
- * the agent's tool path and the provider, which reads the same text with the same reader before it sends anything,
- * refuse the same requests with the same sentence: one metadata read or bare aggregate count, in the console's own
- * grammar with every body key closed. Plus one refusal of the agent's own, 4,096 characters, for the reason the
- * kubectl and MongoDB contracts have one: a model has no reason to send a longer read, and a shorter contract is one
- * it can be told.
+ * It is the reader the provider runs (`readWeaviateAgentStatement` in
+ * `src/lib/languages/weaviateapi/metadata-request.ts`), so the agent's tool path and the provider, which reads the same
+ * text with the same reader before it sends anything, refuse the same requests with the same sentence: one metadata
+ * read or bare aggregate count, in the console's own grammar with every body key closed. Plus one refusal of the
+ * agent's own, 4,096 characters, for the reason the kubectl and MongoDB contracts have one: a model has no reason to
+ * send a longer read, and a shorter contract is one it can be told.
  *
  * Not the boundary. The boundary is the provider's closed operation table and the viewer the server proves before
  * every agent request; this is what lets the model read why it was refused, before anything is sent.
@@ -15,7 +15,7 @@ import { z } from "zod";
 import {
   readWeaviateAgentStatement,
   type WeaviateAgentRefusalCode,
-} from "@/lib/db/providers/vector/weaviate/metadata-request";
+} from "@/lib/languages/weaviateapi/metadata-request";
 
 export const WEAVIATEAPI_AGENT_MAX_STATEMENT_CHARS = 4096;
 

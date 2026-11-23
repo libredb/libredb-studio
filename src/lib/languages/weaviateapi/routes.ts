@@ -1,14 +1,14 @@
 import type { ConsoleDialectSpec, QueryKeySpec, RouteSpec } from "@/lib/db/console/dialect";
-import type { WeaviateConsoleOp, WeaviateOp } from "./client";
+import type { WeaviateConsoleOp, WeaviateOp } from "./ops";
 
 /**
  * The Weaviate console as data (#1566 spec 5.1): its dialect, its route table, the closed key sets of every request
  * body, its bounds and the sentences it refuses a route with.
  *
  * The console text is a Weaviate REST request line and one JSON body, the form Weaviate's own REST reference prints.
- * Every search is written in the REST search shape on every server, and `execute.ts` runs it over REST or GraphQL as
- * the server's version decides (spec 3.3). Every body key is closed: a key the OpenAPI document (v1.40.2; the top
- * level is the same on 1.38.22 and 1.39.8) does not declare at its level is refused by name, because the server
+ * Every search is written in the REST search shape on every server, and the provider's `execute.ts` runs it over REST
+ * or GraphQL as the server's version decides (spec 3.3). Every body key is closed: a key the OpenAPI document (v1.40.2;
+ * the top level is the same on 1.38.22 and 1.39.8) does not declare at its level is refused by name, because the server
  * reads past an unknown key without a word, so a misspelled `where` returns unfiltered results (measured, spec A.6).
  *
  * Nothing here is derived at run time. Browser-safe: it imports types only.

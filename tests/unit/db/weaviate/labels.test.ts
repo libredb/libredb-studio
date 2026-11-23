@@ -11,7 +11,7 @@ import {
   weaviateReadRoutes,
   weaviateStatementLanguage,
 } from "@/lib/db/providers/vector/weaviate/labels";
-import { refusedRouteSentence, WEAVIATE_CONSOLE, WEAVIATE_ROUTES } from "@/lib/db/providers/vector/weaviate/routes";
+import { refusedRouteSentence, WEAVIATE_CONSOLE, WEAVIATE_ROUTES } from "@/lib/languages/weaviateapi/routes";
 import { plan } from "../../../helpers/weaviate-request-fixtures";
 
 const ROUTES =

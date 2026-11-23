@@ -9,7 +9,7 @@ import { KUBERNETES_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/platform/k
 import { INFLUXDB_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/influxql/destructive";
 import { MILVUS_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/vector/milvus/destructive";
 import { QDRANT_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/vector/qdrant/destructive";
-import { WEAVIATE_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/vector/weaviate/destructive";
+import { WEAVIATE_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/weaviateapi/destructive";
 import { typeIdRow } from "@/lib/db/type-id";
 import type { TypedConfirmationAsk } from "@/lib/db/types";
 import { KAFKA_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/kafkaread/destructive";

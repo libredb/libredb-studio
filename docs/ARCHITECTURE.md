@@ -557,8 +557,9 @@ src/
     │                        #   the SQL INSERT/DDL forms, and the one blob-download path
     ├── sql/                 # Statement splitter, alias extractor
     ├── languages/           # Statement language family modules, the core vocabulary every provider of a language reads;
-    │                        #   today each non-SQL language's confirmation row, and for influxql and oxiacli also the
-    │                        #   readers the admissions, the agent packs and the providers share (docs/PROVIDER_IMPORTS.md)
+    │                        #   today each non-SQL language's confirmation row, and for influxql, oxiacli and weaviateapi
+    │                        #   also the readers the admissions, the agent packs and the providers share
+    │                        #   (docs/PROVIDER_IMPORTS.md)
     ├── seed/                # Seed connections: operator sources (sources/), operator loader, filter, credential resolver, CapRover and Kubernetes discovery + sample seeding
     ├── config/              # auth-env.ts — single JWT_SECRET reader (auth.ts, proxy.ts, oidc.ts)
     │                        #   custom-connections.ts: the ALLOW_CUSTOM_CONNECTIONS switch

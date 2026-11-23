@@ -8,8 +8,8 @@ import {
   readWeaviateAgentStatement,
   WEAVIATE_AGENT_OPS,
   WEAVIATE_AGENT_SENTENCES,
-} from "@/lib/db/providers/vector/weaviate/metadata-request";
-import { WEAVIATE_ROUTES } from "@/lib/db/providers/vector/weaviate/routes";
+} from "@/lib/languages/weaviateapi/metadata-request";
+import { WEAVIATE_ROUTES } from "@/lib/languages/weaviateapi/routes";
 
 const ID = "00000000-0000-4000-8000-000000000001";
 

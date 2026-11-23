@@ -176,10 +176,6 @@ export const INWARD_IMPORTS: readonly AllowlistEntry[] = [
     modules: ["industrial/sparkplug/agent-read.ts", "industrial/sparkplug/agent-surface.ts"],
   },
   {
-    file: "src/lib/agent/languages/weaviateapi/adapter.ts",
-    modules: ["vector/weaviate/metadata-request.ts"],
-  },
-  {
     file: "src/lib/connection-string-parser.ts",
     modules: ["sql/databend/paste.ts", "sql/snowflake/paste.ts"],
   },
@@ -244,7 +240,6 @@ export const INWARD_IMPORTS: readonly AllowlistEntry[] = [
       "platform/kubernetes/destructive.ts",
       "vector/milvus/destructive.ts",
       "vector/qdrant/destructive.ts",
-      "vector/weaviate/destructive.ts",
     ],
   },
   {
@@ -561,10 +556,6 @@ export const INWARD_IMPORTS: readonly AllowlistEntry[] = [
   {
     file: "src/lib/db/operations/sparkplugread-admission.ts",
     modules: ["industrial/sparkplug/agent-statement.ts"],
-  },
-  {
-    file: "src/lib/db/operations/weaviateapi-admission.ts",
-    modules: ["vector/weaviate/metadata-request.ts"],
   },
   {
     file: "src/lib/db/query-dialects.ts",

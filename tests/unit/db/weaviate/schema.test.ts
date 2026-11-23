@@ -15,11 +15,11 @@ import {
   vectorField,
   vectorTypeText,
   WEAVIATE_PRIMITIVE_TYPES,
-  type WeaviateVector,
   weaviateCollectionFacts,
   weaviateColumns,
   weaviateIndexes,
 } from "@/lib/db/providers/vector/weaviate/schema";
+import type { WeaviateVector } from "@/lib/languages/weaviateapi/collection-facts";
 import { capturedText } from "../../../helpers/weaviate-surface";
 
 const captured = (name: string, file = "weaviate/surface.json") =>

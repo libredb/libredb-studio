@@ -12,8 +12,8 @@
  *
  * One limiter covers every client call. No transaction method and no maintenance operation: each is detected by
  * presence, and none exists for Weaviate in this version. `queryReadOnly` is the agent read-only profile's path: the
- * rules of an agent request are in `metadata-request.ts`, the viewer proof, the metadata-only projection and the
- * wording of a failure in `metadata-read.ts`.
+ * rules of an agent request are in `src/lib/languages/weaviateapi/metadata-request.ts`, the viewer proof, the
+ * metadata-only projection and the wording of a failure in `metadata-read.ts`.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError, ExecutionProfileError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
@@ -63,15 +63,9 @@ import {
   weaviateAgentFailure,
   weaviateListedCollection,
 } from "./metadata-read";
-import { readWeaviateAgentStatement } from "./metadata-request";
-import type {
-  WeaviateAnswer,
-  WeaviateClient,
-  WeaviateOp,
-  WeaviateRequest,
-  WeaviateRouteTemplates,
-  WeaviateSend,
-} from "./client";
+import { readWeaviateAgentStatement } from "@/lib/languages/weaviateapi/metadata-request";
+import type { WeaviateAnswer, WeaviateClient, WeaviateRequest, WeaviateRouteTemplates, WeaviateSend } from "./client";
+import type { WeaviateOp } from "@/lib/languages/weaviateapi/ops";
 import {
   buildWeaviateConnectionOptions,
   WEAVIATE_DEFAULT_PORT,
@@ -98,7 +92,7 @@ import {
   type WeaviateSurfaceContext,
 } from "./objects";
 import { createRestWeaviateClient } from "./rest-client";
-import { WEAVIATE_BOUNDS, WEAVIATE_CLIENT_ROUTES } from "./routes";
+import { WEAVIATE_BOUNDS, WEAVIATE_CLIENT_ROUTES } from "@/lib/languages/weaviateapi/routes";
 import {
   belowFloorWarning,
   readWeaviateVersion,
@@ -113,7 +107,7 @@ import { noWritePath } from "@/lib/db/write-reach";
  * before any request.
  */
 const WEAVIATE_WRITE_REACH = noWritePath({
-  module: "src/lib/db/providers/vector/weaviate/routes.ts",
+  module: "src/lib/languages/weaviateapi/routes.ts",
   symbol: "WEAVIATE_ROUTES",
 });
 

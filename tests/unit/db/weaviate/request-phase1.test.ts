@@ -4,8 +4,8 @@
  * `RequestRefusal` of phase 1 naming its key; nothing is sent. The definitions are the seeded server's own.
  */
 import { describe, expect, test } from "bun:test";
-import { type WeaviatePlan, weaviatePhase1 } from "@/lib/db/providers/vector/weaviate/request";
-import type { WeaviateCollectionFacts } from "@/lib/db/providers/vector/weaviate/schema";
+import { type WeaviatePlan, weaviatePhase1 } from "@/lib/languages/weaviateapi/request";
+import type { WeaviateCollectionFacts } from "@/lib/languages/weaviateapi/collection-facts";
 import { handFacts, plan, recordedFacts, refusalOf } from "../../../helpers/weaviate-request-fixtures";
 
 const ARTICLE = recordedFacts("Article");

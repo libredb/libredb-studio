@@ -10,12 +10,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { NodeTransport } from "@/lib/db/http/node-transport";
-import type {
-  WeaviateAnswer,
-  WeaviateClient,
-  WeaviateOp,
-  WeaviateRequest,
-} from "@/lib/db/providers/vector/weaviate/client";
+import type { WeaviateAnswer, WeaviateClient, WeaviateRequest } from "@/lib/db/providers/vector/weaviate/client";
+import type { WeaviateOp } from "@/lib/languages/weaviateapi/ops";
 import {
   buildWeaviateConnectionOptions,
   type WeaviateConnectionOptions,
@@ -24,7 +20,7 @@ import type { WeaviatePathState } from "@/lib/db/providers/vector/weaviate/execu
 import type { WeaviateClientFactory } from "@/lib/db/providers/vector/weaviate/index";
 import type { WeaviateSurfaceContext } from "@/lib/db/providers/vector/weaviate/objects";
 import { createRestWeaviateClient } from "@/lib/db/providers/vector/weaviate/rest-client";
-import { WEAVIATE_CLIENT_ROUTES } from "@/lib/db/providers/vector/weaviate/routes";
+import { WEAVIATE_CLIENT_ROUTES } from "@/lib/languages/weaviateapi/routes";
 import {
   readWeaviateVersion,
   type WeaviatePath,

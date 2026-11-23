@@ -42,7 +42,7 @@ import {
   WEAVIATE_OBJECT_KINDS,
   type WeaviateSurfaceContext,
 } from "@/lib/db/providers/vector/weaviate/objects";
-import { WEAVIATE_CLIENT_ROUTES } from "@/lib/db/providers/vector/weaviate/routes";
+import { WEAVIATE_CLIENT_ROUTES } from "@/lib/languages/weaviateapi/routes";
 import type { DatabaseConnection, ProviderExecutionContext, ProviderOptions } from "@/lib/db/types";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { expectCalls } from "../../../helpers/call-log";
@@ -138,7 +138,7 @@ describe("declarations", () => {
       writeReach: {
         editor: {
           reach: "absent",
-          proof: { module: "src/lib/db/providers/vector/weaviate/routes.ts", symbol: "WEAVIATE_ROUTES" },
+          proof: { module: "src/lib/languages/weaviateapi/routes.ts", symbol: "WEAVIATE_ROUTES" },
         },
         objectEdit: { reach: "absent" },
         maintenance: { reach: "absent" },
