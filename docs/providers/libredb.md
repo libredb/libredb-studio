@@ -885,8 +885,10 @@ summarises, and the row click that opens data runs the same thing.
 
 #### Nothing here opens a second handle
 
-This is the one engine that declares `singleWriterFile`: `open({ path })` takes an exclusive
-`<path>.lock` sidecar and a second open of the same file throws `LOCKED`. Every object read goes
+LibreDB is one of the engines `SINGLE_WRITER_FILE` in
+[`compatibility.ts`](../../src/lib/db/compatibility.ts) names, which the single-writer borrow reads:
+`open({ path })` takes an exclusive `<path>.lock` sidecar and a second open of the same file throws
+`LOCKED`. Every object read goes
 through the `this.db` / `this.kv` handle `connect()` already holds, and nothing in the object
 surface calls `open` at all. A second handle for an object read would lock the session out of its
 own database (`findOpenSingleWriterProvider`). The suite pins it: it asserts that a second `open`

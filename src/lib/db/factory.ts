@@ -50,11 +50,12 @@ import {
   READS_FILE_ACCESS_POSTURE,
   READS_TRUST_MATERIAL,
   REFUSES_DENIED_FILE_ACCESS,
+  SINGLE_WRITER_FILE,
 } from "./compatibility";
 import { assertStatementsReviewed } from "./statement-review";
 import { requiredSecretRefusal } from "./connection-form";
 import { type ProviderTextScrub, providerTextScrub, withholdProviderError } from "./operations/provider-text";
-import { REFUSED_CONNECTION_FIELDS } from "./connection-fields";
+import { AGENT_CREDENTIAL_FORM, REFUSED_CONNECTION_FIELDS } from "./connection-fields";
 import { assertDatabaseType, typeIdRow } from "./type-id";
 import { enabledProviderTypes } from "./enabled-providers";
 import { type DatabaseType, TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
@@ -993,9 +994,9 @@ interface CachedProvider {
    */
   owner?: string;
   /**
-   * The file this entry holds open, when the provider declares
-   * `ProviderCapabilities.singleWriterFile` - see `findOpenSingleWriterProvider`.
-   * `null` on every other provider, which is all of them but one.
+   * The file this entry holds open, when `SINGLE_WRITER_FILE` names the engine as one that
+   * keeps one handle per file - see `findOpenSingleWriterProvider`.
+   * `null` on every other engine.
    */
   singleWriterFile?: string | null;
   /**
@@ -1217,7 +1218,7 @@ function providerName(connectionId: string, type: DatabaseType): string {
  * That last case is not a nicety. `path.resolve(":memory:")` is a path in the working
  * directory, so two unrelated in-memory connections came out with ONE identity and the
  * second borrowed the first's open handle - reading a database nobody pointed it at.
- * It fires on the engines that declare `singleWriterFile`, which is where the borrow
+ * It fires on the engines `SINGLE_WRITER_FILE` names, which is where the borrow
  * lives: DuckDB accepts `:memory:` (LibreDB does not). An anonymous in-memory database
  * is per-handle by definition - there is no file to share, no lock to work around, and
  * therefore nothing a borrow could buy.
@@ -1241,8 +1242,9 @@ function fileIdentity(connection: DatabaseConnection): string | null {
 /**
  * The connected provider that already holds this connection's file, if there is one.
  *
- * Only a provider whose engine declares `ProviderCapabilities.singleWriterFile` ever
- * registers a file identity here (`getOrCreateProvider` below), so a match means the
+ * Only an engine `SINGLE_WRITER_FILE` names ever registers a file identity here
+ * (`getOrCreateProvider` below), read from that record and never from the built
+ * provider's own `singleWriterFile` (docs/providers/CONTRACT.md, clause M-57), so a match means the
  * engine admits ONE handle per file and the caller's alternative is not a second,
  * lesser handle - it is no handle at all. Borrowers must NOT disconnect what they get
  * back: the returned provider is owned by the writable cache and serves the user's
@@ -1758,13 +1760,13 @@ async function openEditorProvider(
   // two accounts share, or a copied id), and then each request closes the other's handle. On DuckDB a
   // second read-write handle keeps its own copy of the catalog and checkpoints it over the file when it
   // closes, losing the first handle's committed rows on Linux and macOS and corrupting the file after a
-  // bulk write, and Windows refuses the second open; LibreDB, the other engine that declares
-  // `singleWriterFile`, refuses it on every platform. So every such stale handle is closed first, as the
+  // bulk write, and Windows refuses the second open; LibreDB, the other engine `SINGLE_WRITER_FILE`
+  // names, refuses it on every platform. So every such stale handle is closed first, as the
   // query-timeout change above closes its own, leaving this open as the file's only handle; the session
   // state on a closed handle (temporary tables, SET values) goes with it. Entries of a DIFFERENT
   // connection id on the same file are the separate, pre-existing D240 case and are left alone here.
-  // `singleWriterFile` is set only for single-writer engines, so this is a no-op for the rest without a
-  // type-id branch.
+  // An entry's `singleWriterFile` is set only for the engines `SINGLE_WRITER_FILE` names, so this is a no-op
+  // for the rest without a type-id branch.
   const openFileIdentity = fileIdentity(connection);
   if (openFileIdentity !== null) {
     // Not the key we are about to open under (any entry still there is disconnected, since a connected
@@ -1817,9 +1819,11 @@ async function openEditorProvider(
       ...ownerContext(owner, execution),
     });
     // Cache it, remembering the file when this engine admits only one handle on it -
-    // that is what lets the callers that would otherwise open a second one find this.
+    // that is what lets the callers that would otherwise open a second one find this. Which engines do is
+    // `SINGLE_WRITER_FILE`, Studio's review record of the claim, never the built provider's own declaration
+    // (docs/providers/CONTRACT.md, clause M-57).
     const admit = () => {
-      const singleWriterFile = provider.getCapabilities().singleWriterFile === true ? fileIdentity(connection) : null;
+      const singleWriterFile = typeIdRow(SINGLE_WRITER_FILE, connection.type) ? fileIdentity(connection) : null;
       if (tunnel) tunnelProviderOpened(tunnel);
       providerCache.set(cacheKey, {
         provider,
@@ -1993,14 +1997,14 @@ export function executionContextFor(
  *   credentials, still on a read-only statement path under a declared
  *   boundary: the engine's own read-only session, or on Kubernetes Studio's
  *   request allowlist with the connection token's RBAC);
- * - only one field present → deny, unless the engine declares a secret-only
- *   form, `agentCredential: "token"` or `"service-account-key"`, and the field
- *   is `agentPassword`: that engine takes the agent's bearer token or
- *   service-account key alone, and refuses an `agentUser` beside it.
- *   A half-configured credential must not silently degrade to the more
- *   privileged default. The form is the provider's declaration, so it is
- *   decided by `assertAgentCredentialForm` once the provider is built and
- *   before it connects; this function only reads what the fields hold;
+ * - only one field present → deny, unless the engine's row of
+ *   `AGENT_CREDENTIAL_FORM` is a secret-only form, `"token"` or
+ *   `"service-account-key"`, and the field is `agentPassword`: that engine
+ *   takes the agent's bearer token or service-account key alone, and refuses
+ *   an `agentUser` beside it. A half-configured credential must not silently
+ *   degrade to the more privileged default. The form is decided by
+ *   `assertAgentCredentialForm` once the provider is built and before it
+ *   connects; this function only reads what the fields hold;
  * - a password shaped like a storage envelope (`isEnvelopeClaim`) → deny,
  *   without opening it and never as a plaintext fallback;
  * - combined with a connection string → deny: buildPoolConfig ignores
@@ -2028,19 +2032,17 @@ function resolveAgentCredential(connection: DatabaseConnection): { user?: string
 }
 
 /**
- * Refuses an agent credential whose form the built provider does not take, before it connects. The forms are
- * `AgentCredentialForm` in `src/lib/db/types.ts`: absent takes `agentUser` and `agentPassword` together, `"token"`
+ * Refuses an agent credential in a form the engine does not take, before the provider connects. The forms are
+ * `AgentCredentialForm` in `src/lib/db/types.ts`: null takes `agentUser` and `agentPassword` together, `"token"`
  * and `"service-account-key"` take `agentPassword` alone, `"dedicated-user"` takes both with a user other than the
- * connection's own, and `"none"` takes nothing. Read from the provider rather than from `connection.type`, which
- * `CLAUDE.md` forbids here. `password` is the agent secret `resolveAgentCredential` resolved, never echoed.
+ * connection's own, and `"none"` takes nothing. The form is the engine's row of `AGENT_CREDENTIAL_FORM`
+ * (./connection-fields), Studio's review record of the claim, read through `typeIdRow` and never from the built
+ * provider's own `agentCredential` (docs/providers/CONTRACT.md, clause M-57). `password` is the agent secret
+ * `resolveAgentCredential` resolved, never echoed.
  */
-function assertAgentCredentialForm(
-  connection: DatabaseConnection,
-  provider: DatabaseProvider,
-  password: string | undefined,
-): void {
+function assertAgentCredentialForm(connection: DatabaseConnection, password: string | undefined): void {
   const { agentUser, agentPassword } = connection;
-  const form = provider.getCapabilities().agentCredential;
+  const form = typeIdRow(AGENT_CREDENTIAL_FORM, connection.type);
   if (form === "none") {
     throw new StudioProfileRefusal(
       `Connection "${connection.id}" configures an agent credential, and this engine takes none: it has no user for the agent to sign in as, so clear the agent user and password`,
@@ -2186,7 +2188,7 @@ export async function acquireExecutionProfileProvider(
   /*
     The single-writer exception (B49), and why it is safe HERE and nowhere else.
 
-    On an engine that declares `singleWriterFile` the file admits one open handle, so
+    On an engine `SINGLE_WRITER_FILE` names the file admits one open handle, so
     opening a second one for this acquisition does not produce a less privileged
     handle - it throws, and the run continues silently ungrounded (a `ConnectionError`
     becomes an unavailable capture). Every agent grounding read on a LibreDB
@@ -2225,8 +2227,8 @@ export async function acquireExecutionProfileProvider(
     or a cache close overtook admits nothing (`connectUnlessOvertaken`).
   */
   const openProfiledProvider = async (flight: Flight<OpenMeta>): Promise<DatabaseProvider> => {
-    // A partial credential is overlaid as it stands so the provider can be built and asked for its form; one it does
-    // not take is refused below, before any connect. Each half is overlaid only into a field the engine receives
+    // A partial credential is overlaid as it stands so the provider can be built; one in a form the engine's record
+    // does not take is refused below, before any connect. Each half is overlaid only into a field the engine receives
     // (`providerFields`): an agent user on an engine that takes no user stays out of the record the build reads, so
     // core's refusal of a field the engine refuses (`assertNoRefusedField`) never speaks for it, and the agent
     // credential's own refusal below names it.
@@ -2269,7 +2271,7 @@ export async function acquireExecutionProfileProvider(
     }
     if (credential !== null) {
       try {
-        assertAgentCredentialForm(connection, provider, credential.password);
+        assertAgentCredentialForm(connection, credential.password);
         assertAgentUserTaken(connection, credential);
       } catch (error) {
         await releaseTunnel();

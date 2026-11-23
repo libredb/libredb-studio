@@ -3685,17 +3685,17 @@ Found 2026-10-14 while merging #1759 and #1764; pre-existing since #1518.
 
 ### D362. A Spark connection takes no agent credential: the factory asks for a user Apache Spark refuses
 
-`assertAgentCredentialForm` in `src/lib/db/factory.ts` takes `agentPassword` alone only from a provider whose capabilities declare a secret-only form, `agentCredential: "token"` or `"service-account-key"`, and asks every engine that declares no form for both `agentUser` and `agentPassword`, which the agent profile then opens with as the connection's user and password.
+`assertAgentCredentialForm` in `src/lib/db/factory.ts` takes `agentPassword` alone only from an engine whose `AGENT_CREDENTIAL_FORM` row in `src/lib/db/connection-fields.ts` is a secret-only form, `"token"` or `"service-account-key"`, and asks every engine whose row is null for both `agentUser` and `agentPassword`, which the agent profile then opens with as the connection's user and password.
 `SparkProvider` declares no `agentCredential`, and core refuses any non-empty User on a Spark connection before the provider is built (`REFUSED_CONNECTION_FIELDS` in `src/lib/db/connection-fields.ts`), since a Spark Connect session's identity is its token.
 So no agent credential works on a Spark connection: an `agentPassword` alone is refused as an incomplete agent credential, and an `agentUser` beside it is refused by `assertAgentUserTaken` in `src/lib/db/factory.ts`, since Spark takes no user name.
 Plan-mode grounding and the operations workflow, which both acquire through the `agent-operations` profile, then meet one of the two refusals instead of reading the schema.
 With no agent credential stored, both run under the connection's own token, and the connection dialog has no input for one, so only a record written through the API or storage reaches this.
-`tests/unit/db/agent-credential-capability.test.ts` pins each engine's form in `DECLARED_FORMS`, where the token engines are Kubernetes, Qdrant, Weaviate, libSQL and InfluxDB 3, and Spark has no row, so `SEED_AGENT_CREDENTIAL.spark` in `src/lib/db/connection-fields.ts` is null and a Spark seed that sets either agent field is refused at load.
+Studio records each engine's form in `AGENT_CREDENTIAL_FORM` in `src/lib/db/connection-fields.ts`, which `tests/unit/db/agent-credential-capability.test.ts` holds to every provider, where the token engines are Kubernetes, Qdrant, Weaviate, libSQL and InfluxDB 3, and Spark's row is null, so `SEED_AGENT_CREDENTIAL.spark` in `src/lib/db/connection-fields.ts` is null and a Spark seed that sets either agent field is refused at load.
 Verified 2026-10-14 by reading `factory.ts`, `connection-options.ts` and that test on `main` at 59cdfd09b.
 
 Found 2026-10-14 in the integration review of #1759 and #1764; Spark behaved the same before #1764 added the token form.
 
-**Done when:** `SparkProvider.getCapabilities()` declares `agentCredential: "token"`, `DECLARED_FORMS` has a `spark: "token"` row, `SEED_AGENT_CREDENTIAL.spark` is `secret`, a factory test shows an `agentPassword` alone becoming the token of the agent's Spark session and an `agentUser` refused, and section 8.3 of `docs/providers/spark.md` says so in one sentence.
+**Done when:** `SparkProvider.getCapabilities()` declares `agentCredential: "token"`, `AGENT_CREDENTIAL_FORM` in `src/lib/db/connection-fields.ts` has a `spark: "token"` row, `SEED_AGENT_CREDENTIAL.spark` is `secret`, a factory test shows an `agentPassword` alone becoming the token of the agent's Spark session and an `agentUser` refused, and section 8.3 of `docs/providers/spark.md` says so in one sentence.
 
 ### D363. Snowflake's first result partition is read uncompressed
 
@@ -4409,74 +4409,74 @@ Found 2026-11-03 while adding the seed agent credential, and left out of it by d
 ### D436. SQLite declares no agent credential form, so only the seed table refuses one
 
 `SEED_AGENT_CREDENTIAL` in `src/lib/db/connection-fields.ts` gives a SQLite seed no agent credential, because the engine has no password field and a file opened by path has no principal, and the seed schema refuses `agentUser` and `agentPassword` on one at load.
-Its provider declares no `agentCredential`, so `assertAgentCredentialForm` in `src/lib/db/factory.ts` asks it for a user and a password together, as it asks an engine that takes them.
+Its row in `AGENT_CREDENTIAL_FORM` in `src/lib/db/connection-fields.ts` is null, as its provider declares no `agentCredential`, so `assertAgentCredentialForm` in `src/lib/db/factory.ts` asks it for a user and a password together, as it asks an engine that takes them.
 So a SQLite connection that reaches the factory with an agent credential by another way, the API or storage, is opened under it instead of refused, and `tests/unit/db/agent-credential-capability.test.ts` has to name the engine as an exception to the census rather than read the form.
 Found 2026-11-03 while adding the seed agent credential.
 
-**Done when:** the SQLite provider declares `agentCredential: "none"`, `DECLARED_FORMS` has its row, the census names it no longer as an exception, a factory test shows an agent credential refused at open, and its provider doc says so in one sentence.
+**Done when:** the SQLite provider declares `agentCredential: "none"`, `AGENT_CREDENTIAL_FORM` in `src/lib/db/connection-fields.ts` has its row, the census names it no longer as an exception, a factory test shows an agent credential refused at open, and its provider doc says so in one sentence.
 
 ### D437. DuckDB declares no agent credential form, so only the seed table refuses one
 
 `SEED_AGENT_CREDENTIAL` in `src/lib/db/connection-fields.ts` gives a DuckDB seed no agent credential, because the engine has no password field and a file opened by path has no principal, and the seed schema refuses `agentUser` and `agentPassword` on one at load.
-Its provider declares no `agentCredential`, so `assertAgentCredentialForm` in `src/lib/db/factory.ts` asks it for a user and a password together, as it asks an engine that takes them.
+Its row in `AGENT_CREDENTIAL_FORM` in `src/lib/db/connection-fields.ts` is null, as its provider declares no `agentCredential`, so `assertAgentCredentialForm` in `src/lib/db/factory.ts` asks it for a user and a password together, as it asks an engine that takes them.
 So a DuckDB connection that reaches the factory with an agent credential by another way, the API or storage, is opened under it instead of refused, and `tests/unit/db/agent-credential-capability.test.ts` has to name the engine as an exception to the census rather than read the form.
 Found 2026-11-03 while adding the seed agent credential.
 
-**Done when:** the DuckDB provider declares `agentCredential: "none"`, `DECLARED_FORMS` has its row, the census names it no longer as an exception, a factory test shows an agent credential refused at open, and its provider doc says so in one sentence.
+**Done when:** the DuckDB provider declares `agentCredential: "none"`, `AGENT_CREDENTIAL_FORM` in `src/lib/db/connection-fields.ts` has its row, the census names it no longer as an exception, a factory test shows an agent credential refused at open, and its provider doc says so in one sentence.
 
 ### D438. MTConnect declares no agent credential form, so only the seed table refuses one
 
 `SEED_AGENT_CREDENTIAL` in `src/lib/db/connection-fields.ts` gives a MTConnect seed no agent credential, because the engine has no password field and the agent reads an unauthenticated HTTP endpoint, and the seed schema refuses `agentUser` and `agentPassword` on one at load.
-Its provider declares no `agentCredential`, so `assertAgentCredentialForm` in `src/lib/db/factory.ts` asks it for a user and a password together, as it asks an engine that takes them.
+Its row in `AGENT_CREDENTIAL_FORM` in `src/lib/db/connection-fields.ts` is null, as its provider declares no `agentCredential`, so `assertAgentCredentialForm` in `src/lib/db/factory.ts` asks it for a user and a password together, as it asks an engine that takes them.
 So a MTConnect connection that reaches the factory with an agent credential by another way, the API or storage, is opened under it instead of refused, and `tests/unit/db/agent-credential-capability.test.ts` has to name the engine as an exception to the census rather than read the form.
 Found 2026-11-03 while adding the seed agent credential.
 
-**Done when:** the MTConnect provider declares `agentCredential: "none"`, `DECLARED_FORMS` has its row, the census names it no longer as an exception, a factory test shows an agent credential refused at open, and its provider doc says so in one sentence.
+**Done when:** the MTConnect provider declares `agentCredential: "none"`, `AGENT_CREDENTIAL_FORM` in `src/lib/db/connection-fields.ts` has its row, the census names it no longer as an exception, a factory test shows an agent credential refused at open, and its provider doc says so in one sentence.
 
 ### D439. Modbus declares no agent credential form, so only the seed table refuses one
 
 `SEED_AGENT_CREDENTIAL` in `src/lib/db/connection-fields.ts` gives a Modbus seed no agent credential, because the engine has no password field and Modbus TCP defines no authentication, and the seed schema refuses `agentUser` and `agentPassword` on one at load.
-Its provider declares no `agentCredential`, so `assertAgentCredentialForm` in `src/lib/db/factory.ts` asks it for a user and a password together, as it asks an engine that takes them.
+Its row in `AGENT_CREDENTIAL_FORM` in `src/lib/db/connection-fields.ts` is null, as its provider declares no `agentCredential`, so `assertAgentCredentialForm` in `src/lib/db/factory.ts` asks it for a user and a password together, as it asks an engine that takes them.
 So a Modbus connection that reaches the factory with an agent credential by another way, the API or storage, is opened under it instead of refused, and `tests/unit/db/agent-credential-capability.test.ts` has to name the engine as an exception to the census rather than read the form.
 Found 2026-11-03 while adding the seed agent credential.
 
-**Done when:** the Modbus provider declares `agentCredential: "none"`, `DECLARED_FORMS` has its row, the census names it no longer as an exception, a factory test shows an agent credential refused at open, and its provider doc says so in one sentence.
+**Done when:** the Modbus provider declares `agentCredential: "none"`, `AGENT_CREDENTIAL_FORM` in `src/lib/db/connection-fields.ts` has its row, the census names it no longer as an exception, a factory test shows an agent credential refused at open, and its provider doc says so in one sentence.
 
 ### D440. Sparkplug B declares no agent credential form, so only the seed table refuses one
 
 `SEED_AGENT_CREDENTIAL` in `src/lib/db/connection-fields.ts` gives a Sparkplug B seed no agent credential, because the engine has no password field and the broker connection is anonymous, and the seed schema refuses `agentUser` and `agentPassword` on one at load.
-Its provider declares no `agentCredential`, so `assertAgentCredentialForm` in `src/lib/db/factory.ts` asks it for a user and a password together, as it asks an engine that takes them.
+Its row in `AGENT_CREDENTIAL_FORM` in `src/lib/db/connection-fields.ts` is null, as its provider declares no `agentCredential`, so `assertAgentCredentialForm` in `src/lib/db/factory.ts` asks it for a user and a password together, as it asks an engine that takes them.
 So a Sparkplug B connection that reaches the factory with an agent credential by another way, the API or storage, is opened under it instead of refused, and `tests/unit/db/agent-credential-capability.test.ts` has to name the engine as an exception to the census rather than read the form.
 Found 2026-11-03 while adding the seed agent credential.
 
-**Done when:** the Sparkplug B provider declares `agentCredential: "none"`, `DECLARED_FORMS` has its row, the census names it no longer as an exception, a factory test shows an agent credential refused at open, and its provider doc says so in one sentence.
+**Done when:** the Sparkplug B provider declares `agentCredential: "none"`, `AGENT_CREDENTIAL_FORM` in `src/lib/db/connection-fields.ts` has its row, the census names it no longer as an exception, a factory test shows an agent credential refused at open, and its provider doc says so in one sentence.
 
 ### D441. Oxia declares no agent credential form, so its seed cannot carry an agent token
 
 `SEED_AGENT_CREDENTIAL` in `src/lib/db/connection-fields.ts` gives a Oxia seed no agent credential, because its provider declares no `agentCredential` and its connection fields hold a token and no user.
-`assertAgentCredentialForm` in `src/lib/db/factory.ts` asks a provider with no declared form for a user and a password together, which this engine cannot take, so no agent token reaches it, from a seed or from storage.
+`assertAgentCredentialForm` in `src/lib/db/factory.ts` asks an engine whose `AGENT_CREDENTIAL_FORM` row in `src/lib/db/connection-fields.ts` is null, as this engine's is, for a user and a password together, which this engine cannot take, so no agent token reaches it, from a seed or from storage.
 A Oxia agent therefore always runs under the connection's own token.
 Found 2026-11-03 while adding the seed agent credential; Spark has the same gap as D362.
 
-**Done when:** the Oxia provider declares a secret-only form, `"token"` or a form of its own, `DECLARED_FORMS` has its row, `SEED_AGENT_CREDENTIAL` gives it `secret`, a factory test shows an `agentPassword` alone becoming the agent's token and an `agentUser` refused, and its provider doc says so in one sentence.
+**Done when:** the Oxia provider declares a secret-only form, `"token"` or a form of its own, `AGENT_CREDENTIAL_FORM` in `src/lib/db/connection-fields.ts` has its row, `SEED_AGENT_CREDENTIAL` gives it `secret`, a factory test shows an `agentPassword` alone becoming the agent's token and an `agentUser` refused, and its provider doc says so in one sentence.
 
 ### D442. Firestore declares no agent credential form, so its seed cannot carry an agent service-account key
 
 `SEED_AGENT_CREDENTIAL` in `src/lib/db/connection-fields.ts` gives a Firestore seed no agent credential, because its provider declares no `agentCredential` and its connection fields hold a service-account key and no user.
-`assertAgentCredentialForm` in `src/lib/db/factory.ts` asks a provider with no declared form for a user and a password together, which this engine cannot take, so no agent service-account key reaches it, from a seed or from storage.
+`assertAgentCredentialForm` in `src/lib/db/factory.ts` asks an engine whose `AGENT_CREDENTIAL_FORM` row in `src/lib/db/connection-fields.ts` is null, as this engine's is, for a user and a password together, which this engine cannot take, so no agent service-account key reaches it, from a seed or from storage.
 A Firestore agent therefore always runs under the connection's own service-account key.
 Found 2026-11-03 while adding the seed agent credential; Spark has the same gap as D362.
 
-**Done when:** the Firestore provider declares a secret-only form, `"token"` or a form of its own, `DECLARED_FORMS` has its row, `SEED_AGENT_CREDENTIAL` gives it `secret`, a factory test shows an `agentPassword` alone becoming the agent's service-account key and an `agentUser` refused, and its provider doc says so in one sentence.
+**Done when:** the Firestore provider declares a secret-only form, `"token"` or a form of its own, `AGENT_CREDENTIAL_FORM` in `src/lib/db/connection-fields.ts` has its row, `SEED_AGENT_CREDENTIAL` gives it `secret`, a factory test shows an `agentPassword` alone becoming the agent's service-account key and an `agentUser` refused, and its provider doc says so in one sentence.
 
 ### D443. SNMP declares no agent credential form, so its seed cannot carry an agent community
 
 `SEED_AGENT_CREDENTIAL` in `src/lib/db/connection-fields.ts` gives a SNMP seed no agent credential, because its provider declares no `agentCredential` and its connection fields hold a community and no user.
-`assertAgentCredentialForm` in `src/lib/db/factory.ts` asks a provider with no declared form for a user and a password together, which this engine cannot take, so no agent community reaches it, from a seed or from storage.
+`assertAgentCredentialForm` in `src/lib/db/factory.ts` asks an engine whose `AGENT_CREDENTIAL_FORM` row in `src/lib/db/connection-fields.ts` is null, as this engine's is, for a user and a password together, which this engine cannot take, so no agent community reaches it, from a seed or from storage.
 A SNMP agent therefore always runs under the connection's own community.
 Found 2026-11-03 while adding the seed agent credential; Spark has the same gap as D362.
 
-**Done when:** the SNMP provider declares a secret-only form, `"token"` or a form of its own, `DECLARED_FORMS` has its row, `SEED_AGENT_CREDENTIAL` gives it `secret`, a factory test shows an `agentPassword` alone becoming the agent's community and an `agentUser` refused, and its provider doc says so in one sentence.
+**Done when:** the SNMP provider declares a secret-only form, `"token"` or a form of its own, `AGENT_CREDENTIAL_FORM` in `src/lib/db/connection-fields.ts` has its row, `SEED_AGENT_CREDENTIAL` gives it `secret`, a factory test shows an `agentPassword` alone becoming the agent's community and an `agentUser` refused, and its provider doc says so in one sentence.
 
 ### D444. A Snowflake seed cannot carry an agent credential, since a user and password would narrow nothing
 

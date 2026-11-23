@@ -49,7 +49,7 @@ import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import { createCanonicalOperationRegistry, sqlExplainAnalyzeDescriptor } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
-import type { DatabaseProvider, QueryResult } from "@/lib/db/types";
+import type { AgentCredentialForm, DatabaseProvider, QueryResult } from "@/lib/db/types";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative as relativePath } from "node:path";
@@ -5076,8 +5076,9 @@ describe("acquireExecutionProfileProvider", () => {
   /**
    * The agent credential forms past the user-and-password pair and the token (PR 0.7): `"none"`, which libredb
    * declares, `"service-account-key"`, which BigQuery declares, the token form on Weaviate and Qdrant, and
-   * `"dedicated-user"`, which S3 declares and a PostgreSQL provider is given here as well. Every refusal
-   * lands before the provider connects, which each test holds by stubbing `connect` and asserting it never ran.
+   * `"dedicated-user"`, which S3 declares. The factory reads each form from Studio's record, `AGENT_CREDENTIAL_FORM`,
+   * never from the provider it builds. Every refusal lands before the provider connects, which each test holds by
+   * stubbing `connect` and asserting it never ran.
    */
   describe("agent credential forms", () => {
     async function connectStubbed(conn: DatabaseConnection) {
@@ -5266,57 +5267,56 @@ describe("acquireExecutionProfileProvider", () => {
       }
     });
 
-    describe("dedicated-user", () => {
-      let restoreCapabilities: () => void = () => {};
-      beforeEach(async () => {
-        const prototype = Object.getPrototypeOf(await createDatabaseProvider(pgConn())) as DatabaseProvider;
-        const original = prototype.getCapabilities;
-        const spy = spyOn(prototype, "getCapabilities").mockImplementation(function (this: DatabaseProvider) {
-          return { ...original.call(this), agentCredential: "dedicated-user" };
-        });
-        restoreCapabilities = () => spy.mockRestore();
+    /** Spies `getCapabilities` on the prototype of `conn`'s provider so the built provider declares `form`. */
+    async function declaringForm(
+      conn: DatabaseConnection,
+      form: AgentCredentialForm | undefined,
+    ): Promise<{ mockRestore(): void }> {
+      const prototype = Object.getPrototypeOf(await createDatabaseProvider(conn)) as DatabaseProvider;
+      const original = prototype.getCapabilities;
+      return spyOn(prototype, "getCapabilities").mockImplementation(function (this: DatabaseProvider) {
+        return { ...original.call(this), agentCredential: form };
       });
-      afterEach(() => restoreCapabilities());
+    }
 
-      test("takes an agent user other than the connection's own with its secret", async () => {
-        const agent = await acquireExecutionProfileProvider(
-          pgConn({ id: "pg-dedicated", agentUser: "agent_ro", agentPassword: "agent-secret" }),
-          "agent-operations",
-        );
+    test("a form a provider declares that Studio's record does not hold is never read: the record's pair refuses an agent secret alone", async () => {
+      const conn = pgConn({ id: "pg-declares-token", agentPassword: crypto.randomUUID() });
+      const capabilities = await declaringForm(conn, "token");
+      const connect = await connectStubbed(conn);
+      try {
+        const error = await refusal(conn);
 
-        expect(agent.config.user).toBe("agent_ro");
-        expect(agent.config.password).toBe("agent-secret");
-      });
-
-      test.each(["test", "TEST", " Test "])(
-        "refuses the connection's own user %p as the agent user before it connects",
-        async (agentUser) => {
-          const conn = pgConn({ id: "pg-same-user", agentUser, agentPassword: "agent-secret" });
-          const connect = await connectStubbed(conn);
-          try {
-            const error = await refusal(conn);
-
-            expect(error.reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
-            expect(error.message).toBe(
-              'Connection "pg-same-user" configures the connection\'s own user as the agent user, and this engine takes only an agent user of its own: name a dedicated agent user',
-            );
-            expect(connect).not.toHaveBeenCalled();
-          } finally {
-            connect.mockRestore();
-          }
-        },
-      );
-
-      test.each([
-        ["an agent secret alone", { agentPassword: "agent-secret" }],
-        ["an agent user alone", { agentUser: "agent_ro" }],
-      ] as const)("refuses %s as incomplete", async (_label, credential) => {
-        const error = await refusal(pgConn({ id: "pg-dedicated-half", ...credential }));
-
+        expect(error.reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
         expect(error.message).toBe(
-          'Connection "pg-dedicated-half" configures an incomplete agent credential (user and password are both required)',
+          'Connection "pg-declares-token" configures an incomplete agent credential (user and password are both required)',
         );
+        expect(connect).not.toHaveBeenCalled();
+        expect(getExecutionProfileCacheStats().size).toBe(0);
+      } finally {
+        connect.mockRestore();
+        capabilities.mockRestore();
+      }
+    });
+
+    test("the form Studio's record holds is read when the provider declares none: Kubernetes takes an agent token alone", async () => {
+      const token = crypto.randomUUID();
+      const conn = kubernetesConn({
+        id: "k8s-declares-none",
+        password: crypto.randomUUID(),
+        agentPassword: token,
       });
+      const capabilities = await declaringForm(conn, undefined);
+      const connect = await connectStubbed(conn);
+      try {
+        const agent = await acquireExecutionProfileProvider(conn, "agent-operations");
+
+        expect(agent.config.password).toBe(token);
+        expect(Object.hasOwn(agent.config, "user")).toBe(false);
+        expect(connect).toHaveBeenCalledTimes(1);
+      } finally {
+        connect.mockRestore();
+        capabilities.mockRestore();
+      }
     });
 
     describe("dedicated-user on S3, the engine that declares it", () => {
@@ -5332,6 +5332,44 @@ describe("acquireExecutionProfileProvider", () => {
           expect(error.reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
           expect(error.message).toBe(
             'Connection "s3-same-key" configures the connection\'s own user as the agent user, and this engine takes only an agent user of its own: name a dedicated agent user',
+          );
+          expect(connect).not.toHaveBeenCalled();
+        } finally {
+          connect.mockRestore();
+        }
+      });
+
+      test.each(["AKIDCONNECTIONKEY", " AkidConnectionKey "])(
+        "refuses the connection's own access key ID %p as the agent user before it connects",
+        async (agentUser) => {
+          const conn = s3Conn({ id: "s3-same-key-spelling", agentUser, agentPassword: crypto.randomUUID() });
+          const connect = await connectStubbed(conn);
+          try {
+            const error = await refusal(conn);
+
+            expect(error.reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
+            expect(error.message).toBe(
+              'Connection "s3-same-key-spelling" configures the connection\'s own user as the agent user, and this engine takes only an agent user of its own: name a dedicated agent user',
+            );
+            expect(connect).not.toHaveBeenCalled();
+          } finally {
+            connect.mockRestore();
+          }
+        },
+      );
+
+      test.each([
+        ["an agent secret alone", () => ({ agentPassword: crypto.randomUUID() })],
+        ["an agent user alone", () => ({ agentUser: "AKIDAGENTKEY" })],
+      ] as const)("refuses %s as incomplete before it connects", async (_label, credential) => {
+        const conn = s3Conn({ id: "s3-dedicated-half", ...credential() });
+        const connect = await connectStubbed(conn);
+        try {
+          const error = await refusal(conn);
+
+          expect(error.reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
+          expect(error.message).toBe(
+            'Connection "s3-dedicated-half" configures an incomplete agent credential (user and password are both required)',
           );
           expect(connect).not.toHaveBeenCalled();
         } finally {
@@ -5986,6 +6024,53 @@ describe("single-writer file reuse", () => {
     expect(await getOrCreateProvider(conn, {}, { owner: "bob-subject", ownerPoolMax: 3 })).toBe(alice);
     expect(await getOrCreateProvider(conn)).toBe(alice);
     expect(getProviderCacheStats().size).toBe(1);
+  });
+
+  /** Spies `getCapabilities` on the prototype of `conn`'s provider so the built provider declares `singleWriterFile`. */
+  async function declaringSingleWriterFile(
+    conn: DatabaseConnection,
+    singleWriterFile: boolean | undefined,
+  ): Promise<{ mockRestore(): void }> {
+    const prototype = Object.getPrototypeOf(await createDatabaseProvider(conn)) as DatabaseProvider;
+    const original = prototype.getCapabilities;
+    return spyOn(prototype, "getCapabilities").mockImplementation(function (this: DatabaseProvider) {
+      return { ...original.call(this), singleWriterFile };
+    });
+  }
+
+  test("a provider that declares singleWriterFile on an engine Studio's record does not name registers no file, and no other connection is lent its handle", async () => {
+    const held = makeConnection("postgres", { id: "pg-declares-single-writer", database: "shared" });
+    const capabilities = await declaringSingleWriterFile(held, true);
+    try {
+      await getOrCreateProvider(held);
+
+      // Another record on another host, signing in as another user, that only names the same database.
+      const other = makeConnection("postgres", {
+        id: "pg-other-server",
+        host: "other.internal",
+        user: "other_user",
+        password: randomUUID(),
+        database: "shared",
+      });
+
+      expect(findOpenSingleWriterProvider(other)).toBeNull();
+      expect(isSingleWriterFileOpen(other)).toBe(false);
+    } finally {
+      capabilities.mockRestore();
+      await removeProvider(held.id);
+    }
+  });
+
+  test("Studio's record registers the file of a single-writer engine whose provider declares nothing, and another connection on the file is lent the open handle", async () => {
+    const held = libredbConn();
+    const capabilities = await declaringSingleWriterFile(held, undefined);
+    try {
+      const writable = await getOrCreateProvider(held);
+
+      expect(findOpenSingleWriterProvider({ ...held, id: "libredb-same-file" })).toBe(writable);
+    } finally {
+      capabilities.mockRestore();
+    }
   });
 
   test("a connection with no file path holds no file, and matches nothing", async () => {
