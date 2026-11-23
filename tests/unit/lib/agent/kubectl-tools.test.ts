@@ -17,7 +17,7 @@ import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { admitKubectlStatement } from "@/lib/db/operations/kubectl-admission";
-import { QueryError } from "@/lib/db/errors";
+import { QueryError, RowBudgetRefusal } from "@/lib/db/errors";
 import { createTargetScope } from "@/lib/db/operations/policy";
 import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes";
 import { AGENT_PAGING_SENTENCE } from "@/lib/db/providers/platform/kubernetes/console/paging";
@@ -157,22 +157,24 @@ describe("run_read_query on kubectl", () => {
 });
 
 describe("the kubectl adapter's server half on run_read_query", () => {
-  function failingHarness(message: string) {
+  function failingHarness(failure: QueryError) {
     const queryReadOnly = mock(async (): Promise<QueryResult> => {
-      throw new QueryError(message, "kubernetes");
+      throw failure;
     });
     return harness({ acquireProvider: mock(async () => ({ queryReadOnly }) as unknown as DatabaseProvider) });
   }
 
   test("a read refused past the row budget is advised in get's own flags, never with LIMIT", async () => {
-    const h = failingHarness("Read-only execution exceeded the row budget: 1000 rows > 200 allowed");
+    const h = failingHarness(
+      new RowBudgetRefusal("Read-only execution exceeded the row budget: 1000 rows > 200 allowed", "kubernetes"),
+    );
     const outcome = await runReadQueryTool(h.context, { statement: "get pods -A" });
     for (const flag of ["-n", "-l", "--field-selector", "200"]) expect(outcome.modelText).toContain(flag);
     expect(outcome.modelText).not.toContain("LIMIT");
   });
 
   test("the repair ledger knows one read written two ways, and tells a different namespace apart", async () => {
-    const h = failingHarness("pods is forbidden");
+    const h = failingHarness(new QueryError("pods is forbidden", "kubernetes"));
     await runReadQueryTool(h.context, { statement: "get pods -n shop" });
     const again = await runReadQueryTool(h.context, { statement: "kubectl get pods --namespace=shop" });
     expect(again).toMatchObject({ kind: "unavailable", reasonCode: "STATEMENT_ALREADY_FAILED" });

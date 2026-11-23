@@ -3972,7 +3972,8 @@ describe("SQLiteProvider agent read-only execution profile (#328)", () => {
       );
 
     expect(thrown).toBeInstanceOf(QueryError);
-    expect(rowBudgetIn((thrown as QueryError).message)).toEqual({ projected: 3, allowed: 2 });
+    expect(errorKind(thrown)).toBe("row-budget-refusal");
+    expect(rowBudgetIn(errorKind(thrown), (thrown as QueryError).message)).toEqual({ projected: 3, allowed: 2 });
 
     /*
       PostgreSQL raises the same sentence and cannot be driven from here without a

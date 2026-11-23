@@ -480,6 +480,7 @@ A provider doc whose fence raises it names which of its refusals do; a refusal r
 The tool layer records the provider's sentence as `message` and `refusedBy: "provider"`, and tells the model, in a fence of its own naming the provider ("PostgreSQL provider, bundled with Studio"), that the statement was refused before it was sent and the database was not asked; the read allowance's sentence is this server's own, said unfenced and recorded `refusedBy: "studio"`.
 MCP answers a provider's refusal behind a notice naming the provider.
 It still counts a statement and a repair attempt, because the run spent the execution and the rewrite is the model's to author.
+Every `database-error` refusal also carries `record`, the failure's error record (`src/lib/db/error-record.ts`): its kind, code, outcome and, where its text was not withheld, its SQLSTATE, and the tool layer decides what the failure is by that record, never by `message`.
 
 **A provider's row or byte budget refusal is database content; Studio's own is Studio's.**
 A provider that refuses its own answer by the row, byte or time budget raises the class of that budget (`RowBudgetRefusal`, `ByteBudgetRefusal`, `TimeBudgetRefusal`, and SQL Server's `CutValueRefusal` and `SerialisedResultRefusal` in `src/lib/db/errors.ts`), each a `QueryError` with an error kind of its own, and the tool layer fences that sentence as database content relayed by the provider, as it fences any engine error.
@@ -490,6 +491,9 @@ A resumed run is told such a refusal in this server's words too, and any other f
 The rail shows it as "Refused before the database" with that sentence as the detail, not as "The database refused the statement", and a repeat of the call is answered from the ledger in the same words.
 A resumed run is told to draft a statement that does not do what the refusal names, an allowance refusal included, because the ledger keeps the sentence and not which advice the model was first given.
 MCP answers a fence's refusal as `mcp_statement_refused` and the allowance's as `mcp_result_too_large`, both in this server's words, never behind the untrusted-content notice as the database's error.
+The row-cap advice that follows a refusal is given only for a row budget class, the provider's or Studio's, and any other failure gets none, even one whose text quotes a row budget sentence.
+It names the bound that refusal's own sentence states, never the run's row budget, because a provider may refuse at a lower bound of its own (InfluxQL's cell cut, a search engine's result limit).
+A row budget refusal whose sentence states no bound gets no row advice, since no LIMIT is known to pass.
 
 **`driver-resolved` says what drove the run**, and it exists because a finished run used to say
 nothing about that: no event and no record field carried the model id, so "these settings were
@@ -510,9 +514,8 @@ numbers: rows projected against rows allowed. Before it, a plan run whose captur
 nothing at all between the drive starting and the run ending, so the rule this document's setup guide
 states about ledgers - that the ledger is the authority on what a run did - held only for captures
 that succeeded, in exactly the case an operator has to diagnose. The reason code and the sentence
-never depend on parsing anything; the two numbers are read back out of the provider's own refusal
-message, which is pinned by a test that drives a real over-budget read rather than by a copy of the
-sentence.
+never depend on parsing anything.
+The two numbers are recorded only when the refusal's class is a row budget's, the provider's or Studio's, as its error record says, and are read from that refusal's own sentence, which is pinned by a test that drives a real over-budget read rather than by a copy of the sentence.
 
 It is written **once per drive** rather than once per run, because a resume picks the model up from
 the configuration as it stands then: a run resumed after an operator changed it carries one entry per

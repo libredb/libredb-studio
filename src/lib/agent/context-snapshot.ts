@@ -86,6 +86,7 @@ import {
   type AgentToolContext,
   readCatalogForGrounding,
   readObjectInventoryForGrounding,
+  refusedErrorKind,
 } from "./tools";
 import type {
   AgentContextSnapshot,
@@ -96,6 +97,7 @@ import type {
 } from "./types";
 import { fenceUntrustedContent, quoteIdentifierForPrompt } from "./untrusted-content";
 import { DatabaseError, ExecutionProfileError, type ExecutionProfileDenyCode } from "@/lib/db/errors";
+import type { ErrorKind } from "@/lib/db/error-record";
 import { declaredKinds, isIndexesUnavailable } from "@/lib/db/object-kinds";
 import { type ProviderTextScrub, scrubProviderText } from "@/lib/db/operations/provider-text";
 import type { ProviderCapabilities } from "@/lib/db/types";
@@ -205,7 +207,8 @@ export type AgentContextCapture =
       /**
        * The two numbers a row-budget refusal named, when that is what refused this
        * capture: how many rows the catalog read projected, and how many the run's
-       * policy allows. Present only for that reason — see `rowBudgetIn`.
+       * policy allows. Present only when the refusal's class is a row budget's, read
+       * from that refusal's own sentence (`rowBudgetIn`).
        */
       readonly rowBudget?: AgentContextRowBudget;
       /**
@@ -392,21 +395,16 @@ export function fingerprintInventory(inventory: AgentInventory): string {
 // ============================================================================
 
 /**
- * The row budget a refusal named, read out of the sentence that named it.
+ * The row budget a refusal named: the two numbers, read out of the refusal's own sentence once its class says a row
+ * budget refused.
  *
- * A regex over a message is not the shape anybody would choose, and it is the only
- * shape available: the two numbers are formatted by the PROVIDER
- * (`postgres.ts`/`sqlite.ts` both refuse rather than truncate) into a `QueryError`
- * message, and neither the error nor the tool refusal that wraps it carries them as
- * fields. Reading them here is what turns the pair from prose the model was shown into
- * data the ledger can hold — which is the whole of B54's second half, since the reason
- * code alone says "somebody said no" where the numbers say "narrow the capture".
- *
- * Anchored on the whole phrase, so the `200` in the advice sentence the tool layer
- * appends ("add LIMIT 200") cannot be mistaken for a measurement. `otherStatementAdvice`
- * in `tools.ts` reads the same message with the same anchor; the duplication is deliberate
- * rather than shared, because the two answer different questions — one composes advice
- * for a model, the other records a fact — and either may be given a different source.
+ * The CLASS decides, never the words: `kind` is the refusal's error kind, from its ledger record, and only a row budget
+ * refusal (`row-budget-refusal`, the provider's, or `studio-row-budget-refusal`, Studio's own) answers a pair. Any other
+ * kind, and `undefined` (a refusal with no record, one recorded before records existed, or a capture that was not a
+ * refusal at all), answers none, whatever the detail says. The numbers themselves are still text: neither class
+ * carries them as fields (BACKLOG B73), so they are read from the sentence `rowBudgetSentence` formats, the one the
+ * provider or Studio wrote when it refused, anchored on the whole phrase so the `200` in the advice the tool layer
+ * appends ("add LIMIT 200") cannot be mistaken for a measurement.
  *
  * Absent when the refusal was about anything else, and absent is the honest answer:
  * this run met no budget, so a pair of zeros would be a measurement nobody took (#477).
@@ -417,21 +415,27 @@ export function fingerprintInventory(inventory: AgentInventory): string {
  * silent: reword the provider's sentence and this returns `undefined` for ever, the
  * ledger quietly loses the pair, and B54 re-opens with nothing going red. So
  * `tests/integration/db/sqlite-provider.test.ts` drives a REAL over-budget read through
- * `bun:sqlite`, catches the error the provider itself threw, and feeds its message
- * through here — and pins PostgreSQL's copy of the same sentence against its source.
+ * `bun:sqlite`, catches the error the provider itself threw, and feeds its kind and its
+ * message through here, and pins PostgreSQL's copy of the same sentence against its source.
  */
-export function rowBudgetIn(detail: string): AgentContextRowBudget | undefined {
+export function rowBudgetIn(kind: ErrorKind | undefined, detail: string): AgentContextRowBudget | undefined {
+  if (kind !== "row-budget-refusal" && kind !== "studio-row-budget-refusal") return undefined;
   const matched = /row budget: (\d+) rows > (\d+) allowed/.exec(detail);
   if (matched === null) return undefined;
   return { projected: Number(matched[1]), allowed: Number(matched[2]) };
 }
 
+/**
+ * An unavailable capture. `refusal` carries a profile refusal for the drive to act on, and the error kind of the
+ * failure that refused the read, which alone decides whether `rowBudgetIn` reads a pair from `detail`.
+ */
 function unavailable(
   reasonCode: AgentContextUnavailableCode,
   detail: string,
-  profileRefusal?: AgentContextProfileRefusal,
+  refusal: { readonly profileRefusal?: AgentContextProfileRefusal; readonly errorKind?: ErrorKind } = {},
 ): AgentContextCapture {
-  const rowBudget = rowBudgetIn(detail);
+  const rowBudget = rowBudgetIn(refusal.errorKind, detail);
+  const { profileRefusal } = refusal;
   return {
     kind: "unavailable",
     reasonCode,
@@ -593,7 +597,9 @@ async function readInventory(context: AgentToolContext): Promise<AgentContextCap
   try {
     for (const kind of plan.kinds) {
       const outcome = await readCatalogForGrounding(context, { kind });
-      if (outcome.kind !== "completed") return unavailable("CATALOG_READ_REFUSED", outcome.modelText);
+      if (outcome.kind !== "completed") {
+        return unavailable("CATALOG_READ_REFUSED", outcome.modelText, { errorKind: refusedErrorKind(outcome) });
+      }
       const artifact = context.artifacts.get(outcome.artifact.correlationId, nowMs);
       if (artifact === undefined) {
         return unavailable(
@@ -719,7 +725,9 @@ async function captureFromProvider(context: AgentToolContext, nowMs: number): Pr
       `This ${context.connection.type} database did not describe its own schema within the ${read.grantedMs}ms this run granted the reading.`,
     );
   }
-  if (read.kind === "unavailable") return unavailable("CATALOG_READ_REFUSED", read.modelText);
+  if (read.kind === "unavailable") {
+    return unavailable("CATALOG_READ_REFUSED", read.modelText, { errorKind: read.errorKind });
+  }
   if (read.kind === "unsupported") {
     return unavailable(
       "CATALOG_READ_REFUSED",
@@ -898,7 +906,7 @@ function environmentFailure(error: unknown, context: AgentToolContext): AgentCon
     return unavailable(
       "CATALOG_READ_REFUSED",
       `This server could not open a connection to this ${context.connection.type} database under the execution profile a grounding read takes, so its schema was not read for this run. ${PROFILE_REFUSAL_ADVICE[error.reasonCode]}`,
-      { reasonCode: error.reasonCode, error },
+      { profileRefusal: { reasonCode: error.reasonCode, error } },
     );
   }
   if (error instanceof DatabaseError) {

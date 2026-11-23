@@ -485,7 +485,7 @@ describe("the streamed read", () => {
     );
     expect(errorKind(error)).toBe("row-budget-refusal");
     // The sentence round-trips through the reader the run uses for its row-budget advice.
-    expect(rowBudgetIn((error as Error).message)).toEqual({ projected: 11, allowed: 10 });
+    expect(rowBudgetIn(errorKind(error), (error as Error).message)).toEqual({ projected: 11, allowed: 10 });
     expect(opened[0].pulled).toBe(11);
     expect(opened[0].closes).toBe(1);
     expect(BSON_DESERIALIZE).toHaveBeenCalledTimes(10);

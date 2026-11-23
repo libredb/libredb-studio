@@ -9161,11 +9161,10 @@ bumps that implies.
 
 ### B73. The row-budget pair travels as prose and is recovered by regex
 
-B54 records a refused capture's `reasonCode` and, for a row-budget refusal, the two numbers. The
-reason code is structural. The numbers are not: they are formatted into a `QueryError` MESSAGE by the
-provider (`postgres.ts`, `sqlite.ts` - both refuse rather than truncate) and read back out by
-`rowBudgetIn` in `context-snapshot.ts`. `statementAdvice` (`tools.ts`) reads the same sentence with
-the same anchor, so there are two prose consumers, not one.
+B54 records a refused capture's `reasonCode` and, for a row-budget refusal, the two numbers.
+The reason code is structural, and so is the decision to record the pair: `rowBudgetIn` in `context-snapshot.ts` records one only when the refusal's error record names a row budget class (`row-budget-refusal` or `studio-row-budget-refusal`).
+The numbers are not: they are formatted into the refusal's MESSAGE by the provider or by Studio (`rowBudgetSentence`) and read back out of that sentence.
+The row-cap advice (`otherStatementAdvice` in `tools.ts`) is given only for a row budget class too, and names the bound read from the same sentence through `rowBudgetIn`, since a provider may refuse at a bound below the run's row budget (InfluxQL's cell cut).
 
 Blast radius of doing it properly, measured while closing B54: a structured field on `QueryError`
 (`src/lib/db/errors.ts`, the error type every provider throws, ~40 call sites), the two provider
