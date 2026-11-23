@@ -360,6 +360,18 @@ function fieldRuleRefusals(connection: EngineDeclaration["connection"], at: stri
 }
 
 /**
+ * The rule of an engine's trailing limit clauses the schema cannot state, at pointers under `at`: each clause's source
+ * compiles with its flags.
+ */
+function clausePatternRefusals(engine: EngineDeclaration, at: string): SchemaRefusal[] {
+  return engine.sqlText.grammar.trailingLimitClauses.flatMap(({ source, flags }, index) =>
+    compiled(source, flags) === null
+      ? [schemaRefusal("pattern-invalid", `${at}/sqlText/grammar/trailingLimitClauses/${index}/source`)]
+      : [],
+  );
+}
+
+/**
  * The rules of an engine's connection string the schema cannot state, at pointers under `at`: a scheme and a URL TLS
  * reader only on an engine whose connection string names a paste reader, since Studio shows a scheme as one a paste of
  * it reads, and only the paste reader reads a URL's query.
@@ -388,7 +400,7 @@ function editorRuleRefusals(engine: EngineDeclaration, at: string, vocabularies:
   return refusals;
 }
 
-/** The rules of one engine's connection and editor facts the schema cannot state, at pointers under `at`. */
+/** The rules of one engine's connection, editor and SQL text facts the schema cannot state, at pointers under `at`. */
 function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies: FieldVocabularies): SchemaRefusal[] {
   const seedOnlyNames = vocabularies.seedOnly;
   const refusals: SchemaRefusal[] = [];
@@ -417,6 +429,7 @@ function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies:
   refusals.push(...fieldRuleRefusals(connection, at));
   refusals.push(...connectionStringRuleRefusals(connection, at));
   refusals.push(...editorRuleRefusals(engine, at, vocabularies));
+  refusals.push(...clausePatternRefusals(engine, at));
   return refusals;
 }
 

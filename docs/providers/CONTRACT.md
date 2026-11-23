@@ -363,7 +363,7 @@ An engine declares at most one `no-secret` warning, and each warning reads only 
 The manifest holds no code: where an engine has a function, its declaration names it, and the package exports it.
 A name is a lower-case letter followed by up to 63 letters or digits, `functionName` in the schema, and it is local to its engine, so two engines of one package may each have a function of one name.
 A package names its functions freely.
-Studio's own declarations name each function by the slot it fills: `<field>Check` for a field rule's check, `hostHint`, `hostIdentity`, `importer` for the connection import, and `urlTls`, `pasteReader` and `seedCheck` for the connection string's URL TLS reader, paste reader and seed check.
+Studio's own declarations name each function by the slot it fills: `<field>Check` for a field rule's check, `hostHint`, `hostIdentity`, `importer` for the connection import, `urlTls`, `pasteReader` and `seedCheck` for the connection string's URL TLS reader, paste reader and seed check, `redactionReader` for a command redaction's reader, and `formatSegment` and `readQuotedQualifier` for the completion readers.
 Studio's census holds every name its declarations give to the very function Studio runs, by identity and never by the function's own name, and finds no function Studio runs that a declaration does not name.
 
 - schema `/$defs/functionName`
@@ -372,6 +372,8 @@ Studio's census holds every name its declarations give to the very function Stud
 - test `tests/unit/db/engine-declarations.test.ts` "every function the connection form holds is named by its engine's declaration, and the resolver names nothing else"
 - test `tests/unit/db/engine-declarations.test.ts` "every function a connection string row holds is, through the census's own resolver, the very slot its declaration names"
 - test `tests/unit/db/engine-declarations.test.ts` "every function a connection string row holds is named by its engine's declaration"
+- test `tests/unit/db/engine-declarations.test.ts` "every function a grammar row holds is, through the census's own resolver, the very slot its declaration names"
+- test `tests/unit/db/engine-declarations.test.ts` "every function a grammar row holds is named by its engine's declaration"
 
 ### M-32 (informative): How a package's named functions are found and called
 
@@ -797,15 +799,105 @@ An engine whose query text is SQL states its grammar facts: what a handful of ch
 
 The grammar facts are one type and the compatibility reading is one value, both exported from `@libredb/provider-sdk/sql`.
 Studio's readers and every engine's grammar row import `SqlGrammar` and `DEFAULT_SQL_GRAMMAR` from `@libredb/provider-sdk/sql` by name, a fact a dialect has not established takes the default's value, and the module that resolves a grammar by engine id declares neither.
+The default is frozen to its leaves, so no module that imports it changes it for another.
 
 - test `packages/provider-sdk/tests/sql/grammar.test.ts` "DEFAULT_SQL_GRAMMAR is the compatibility reading"
+- test `packages/provider-sdk/tests/sql/grammar.test.ts` "DEFAULT_SQL_GRAMMAR is frozen to its leaves, so no importer changes it for another"
 - test `tests/unit/sql/grammar.test.ts` "the module that resolves a grammar by engine id exports only its two readers"
 - test `tests/unit/db/sql-grammar/shared.test.ts` "the shared blocks are SQLITE_GRAMMAR, NO_EXTRA_WORDS and REDACTED_VALUE"
 
-### S-2 (informative): The grammar facts are not yet manifest data
+### S-2 (informative): Studio still reads its grammar rows
 
-A grammar row is still code beside its provider, read by Studio's registry.
-The manifest segment that declares the facts, each pattern as a bounded pattern string, is a later part of this chapter.
+A grammar row is code beside its provider, read by Studio's registry.
+Each engine declaration states the same facts as data, which nothing but Studio's census reads until Studio's readers take their grammar from admitted manifests.
+
+### S-3 (normative): The SQL text segment
+
+An engine states, in `sqlText`, whether its statement text is SQL, its grammar facts, its redaction, its update target words and its completion quoting.
+`grammar` has one member per member of the SDK's `SqlGrammar`, under the same name, and every member is required.
+Studio's census holds every member of every declaration to the engine's grammar row, and finds no member of a row that its declaration leaves out.
+
+- schema `/$defs/sqlText`
+- schema `/$defs/grammarFacts`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a SQL text segment with every grammar fact stated, a command redaction and both completion readers is admitted"
+- test `tests/unit/db/engine-declarations.test.ts` "sqlText.readsSqlText is the engine's SQL_GRAMMAR row's"
+- test `tests/unit/db/engine-declarations.test.ts` "sqlText.grammar is the row's grammar, each fact the row leaves out at its reading when left out and each trailing limit clause by its source and flags"
+- test `tests/unit/db/engine-declarations.test.ts` "every member of a grammar row has its member in the declaration"
+- test `tests/unit/db/engine-declarations.test.ts` "the generator refuses, by name, a SQL grammar member it has no place for"
+
+### S-4 (normative): A fact the grammar may leave out is written
+
+A fact the `SqlGrammar` type may leave out is written at the reading its absence has.
+A form the engine does not have is false or an empty list, tagged runs are true, the formatter language is `postgresql` and the completion words are two empty lists where the engine adds none.
+The two backslash overrides are null where the quote takes the reading `backslashAlwaysEscapes` gives both quotes, which is a third reading where that fact is false.
+The session keys are null where no SET or RESET asks, and a list, even an empty one, makes a RESET with no key ask.
+A grammar read from a declaration, each null fact left out, reads every statement as the engine's grammar row does.
+
+- schema `/$defs/grammarFacts/properties/confirmConfigKeys`
+- test `tests/unit/db/engine-declarations.test.ts` "sqlText.grammar is the row's grammar, each fact the row leaves out at its reading when left out and each trailing limit clause by its source and flags"
+- test `tests/unit/db/engine-declarations.test.ts` "a grammar read from the declaration reads every statement of the census corpus as the row's grammar does"
+- test `tests/components/QuerySafetyDialog.test.tsx` "absent: a RESET and a listed key ask nothing"
+- test `tests/unit/sql/spans.test.ts` "absent, with backslashAlwaysEscapes true: the backslash escapes the quote and the run does not close"
+
+### S-5 (normative): Trailing limit clauses
+
+A trailing limit clause is a pattern of a `source`, of 1 to 512 characters, which opens with `\s+` and closes with `\s*$`, and its `flags`, `i` or `iu`, and it compiles as JavaScript's `RegExp` reads it with its flags.
+The flags that would make the limiter remember where it stopped, match at a line end or anchor at a stored index are left out.
+Studio places the row bound before the run of such clauses at a statement's end, stripping them in the order declared, and reads a bound followed by such a run as the statement's own.
+
+- schema `/$defs/clausePattern`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a trailing limit clause longer than 512 characters is refused as out-of-range"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a trailing limit clause whose flags are not i or iu is refused as value-not-allowed"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a trailing limit clause that does not compile is refused as pattern-invalid"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's trailing limit clauses are held to the rules the schema cannot state, at pointers into it"
+- test `tests/unit/db/engine-declarations.test.ts` "the generator refuses, by name, a trailing limit clause whose flags the contract does not allow"
+- test `tests/unit/sql/spark-grammar.test.ts` "a trailing OFFSET follows the row bound, and LIMIT before OFFSET reads as bounded"
+
+### S-6 (informative): How a host runs a clause pattern
+
+A host compiles each clause pattern once, when it reads the declaration, never per statement, and anchors it behind a character that is not whitespace, so a match starts only where a whitespace run starts.
+Backtracking is not checked yet, as M-35 says of a field rule's pattern.
+Every clause pattern Studio declares is, by its census, the source and flags of a pattern its limiter runs today, and each was measured to run in time linear in the statement's length.
+
+### S-7 (normative): Redaction
+
+An engine's redaction says what the query event log keeps of a statement.
+`sql`: the statement's literals are replaced, and only a closed name in its `nameQuote` is kept, or none where it is null.
+`none`: nothing of the text is kept.
+`command`: a named pure reader answers, from the statement's text, the text the log keeps.
+
+- schema `/$defs/statementRedaction`
+- schema `/$defs/nameQuote`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a redaction of no listed kind, a name quote outside the vocabulary and a reader that is not a function name are each one refusal at the redaction"
+- test `tests/unit/db/engine-declarations.test.ts` "sqlText.redaction is the row's redaction, a command reader named by its slot"
+- test `tests/unit/db/engine-declarations.test.ts` "every function a grammar row holds is, through the census's own resolver, the very slot its declaration names"
+- test `tests/unit/lib/query-events/redact.test.ts` "the vectors hold every literal form for postgres, mysql, mssql and oracle, and MongoDB and Redis commands"
+
+### S-8 (normative): A claim that loosens the confirmation gate
+
+`readsSqlText: false` and an exempt form each loosen the confirmation gate.
+The gate counts such a claim only where Studio's review record lists it, and every other reader reads it as declared.
+
+- test `tests/unit/sql/confirmation-claim-review-gate.test.ts` "mongodb and redis text is not read as SQL"
+- test `tests/unit/sql/confirmation-claim-review-gate.test.ts` "snowflake's session forms stay exempt"
+- test `tests/unit/lib/db/confirmation-claim-review.test.ts` "lists every exempt form a shipped grammar row declares, and no other"
+- test `tests/unit/lib/db/confirmation-claim-review.test.ts` "lists every text-not-sql claim a shipped grammar row makes, and no other"
+
+### S-9 (normative): Update target words and completion quoting
+
+`updateTarget` names the words beside the shared sets that open a query and that join two queries, each one upper-case word, and whether `--` opens a comment only before a space or a control character.
+`completion` names a pure segment formatter, used instead of the connection's quoting, and a pure reader of a quoted qualifier before a dot, each null where the engine has none.
+
+- schema `/$defs/updateTargetWords`
+- schema `/$defs/completionReaders`
+- test `tests/unit/db/engine-declarations.test.ts` "sqlText.updateTarget is the row's, each word set in its order"
+- test `tests/unit/db/engine-declarations.test.ts` "sqlText.completion names a segment formatter and a quoted qualifier reader exactly where the row has one"
+- test `tests/unit/db/engine-declarations.test.ts` "every function a grammar row holds is named by its engine's declaration"
+
+### S-10 (informative): Where a grammar function runs
+
+Studio runs a command redaction reader on its server, and its completion readers in the editor, in the browser.
+M-32 says no package function runs in a browser, so how a package's completion reader is called is decided when the editor reads admitted manifests.
 
 ## Calls
 
@@ -1503,7 +1595,7 @@ The live check `tests/live/host-core-live.ts` holds the same rule against the bu
 
 These chapters are added by the changes that bring their enforcers:
 
-- Editor and SQL text: the SQL grammar facts as manifest data, SQL writing, migration DDL, generators and editor languages.
+- Editor and SQL text: SQL writing, migration DDL, generators and editor languages.
 - Policy and MCP claims, each a request a provider makes that only Studio's review record grants, the agent overlay, and presentation (an icon and a colour).
 - The API report of each SDK entry.
 
@@ -1534,4 +1626,7 @@ Against the manifest sketch the design started from:
 - An engine's own id is always one of its fence tags, so a manifest lists only its other tags, and the tags of a language several engines speak are the contract's, M-46.
 - The explain format a manifest states is the one before a connection is measured, M-48.
 - A dialect's tabs are named by the dialect, so a manifest states the name once, M-50.
+- An engine's SQL grammar row is one segment, `sqlText`, S-3.
+- A fact the SDK's grammar type may leave out is written at the reading its absence has, and three facts are null where a reading of their own applies, S-4.
+- A trailing limit clause is a pattern's source and flags, S-5.
 - The sketch's frame cap is replaced by the byte budgets, since calls are unframed in process; the memory test transport keeps frames for tests only.

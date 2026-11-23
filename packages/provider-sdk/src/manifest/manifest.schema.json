@@ -244,9 +244,12 @@
         },
         "editor": {
           "$ref": "#/$defs/editor"
+        },
+        "sqlText": {
+          "$ref": "#/$defs/sqlText"
         }
       },
-      "required": ["id", "displayName", "location", "connection", "facets", "agent", "editor"],
+      "required": ["id", "displayName", "location", "connection", "facets", "agent", "editor", "sqlText"],
       "additionalProperties": false
     },
     "engineLocation": {
@@ -1223,7 +1226,7 @@
       ]
     },
     "editor": {
-      "description": "The editor facts of the engine that are data: the keyword its open transaction is committed with, the consent card's deadline, the fence tags naming it, the explain format of its plans and its query dialect. The engine's SQL grammar, SQL writing, migration DDL, generators and editor languages are later parts of the contract.",
+      "description": "The editor facts of the engine that are data: the keyword its open transaction is committed with, the consent card's deadline, the fence tags naming it, the explain format of its plans and its query dialect. The SQL text facts are sqlText, and SQL writing, migration DDL, generators and editor languages are later parts of the contract.",
       "type": "object",
       "properties": {
         "commitKeyword": {
@@ -1383,6 +1386,537 @@
       "description": "A long command-line option: two hyphens, a lower-case letter, then up to 62 lower-case letters, digits or hyphens.",
       "type": "string",
       "pattern": "^--[a-z][a-z0-9-]{0,62}$"
+    },
+    "sqlText": {
+      "description": "The engine's SQL text facts: whether its statement text is SQL, the grammar Studio's SQL readers read a statement's structure with, how a statement is redacted before the query event log keeps it, the words the update target reader needs beyond the grammar, and how completion quotes and reads qualified names.",
+      "type": "object",
+      "properties": {
+        "readsSqlText": {
+          "description": "Whether the engine's statement text is SQL. False is a claim that loosens the confirmation gate, which the gate counts only where Studio's review record lists it, and every other reader reads it as declared.",
+          "type": "boolean"
+        },
+        "grammar": {
+          "$ref": "#/$defs/grammarFacts"
+        },
+        "redaction": {
+          "$ref": "#/$defs/statementRedaction"
+        },
+        "updateTarget": {
+          "$ref": "#/$defs/updateTargetWords"
+        },
+        "completion": {
+          "$ref": "#/$defs/completionReaders"
+        }
+      },
+      "required": ["readsSqlText", "grammar", "redaction", "updateTarget", "completion"],
+      "additionalProperties": false
+    },
+    "grammarFacts": {
+      "description": "The engine's SQL grammar facts, one member per fact of the SDK's SqlGrammar, whose doc comments give each fact's rationale. A fact the SqlGrammar type may leave out is written at the reading its absence has, so a form the engine does not have is false or an empty list.",
+      "type": "object",
+      "properties": {
+        "hash": {
+          "$ref": "#/$defs/hashRule"
+        },
+        "bracket": {
+          "$ref": "#/$defs/bracketRule"
+        },
+        "blockComment": {
+          "$ref": "#/$defs/blockCommentRule"
+        },
+        "alternateQuoting": {
+          "description": "Whether q'...' opens a string literal, Oracle's alternate quoting.",
+          "type": "boolean"
+        },
+        "doubleSlashComment": {
+          "description": "Whether // opens a line comment.",
+          "type": "boolean"
+        },
+        "backslashAlwaysEscapes": {
+          "description": "Whether a backslash always escapes the next character inside '...' and \"...\", under every session setting.",
+          "type": "boolean"
+        },
+        "tripleQuotedStrings": {
+          "description": "Whether '''...''' and \"\"\"...\"\"\" are string literals that run to the next unescaped triple; false where the engine has no such form.",
+          "type": "boolean"
+        },
+        "backtickBackslashEscapes": {
+          "description": "Whether a backslash escapes the next character inside a backtick identifier; false where only a doubled backtick escapes.",
+          "type": "boolean"
+        },
+        "dollarTags": {
+          "description": "Whether a tagged run, $tag$ ... $tag$, is a string literal; true where the engine has the form, the reading every engine had before the fact existed. False: the $ that would open a tagged run is code, and the untagged $$ ... $$ is still a dollar string.",
+          "type": "boolean"
+        },
+        "doubleQuoteBackslashEscapes": {
+          "description": "Whether a backslash escapes the next character inside \"...\"; null where the quote takes the reading backslashAlwaysEscapes gives both quotes, which is a third reading where backslashAlwaysEscapes is false.",
+          "type": ["boolean", "null"]
+        },
+        "singleQuoteBackslashEscapes": {
+          "description": "Whether a backslash escapes the next character inside '...'; null where the quote takes the reading backslashAlwaysEscapes gives both quotes, which is a third reading where backslashAlwaysEscapes is false.",
+          "type": ["boolean", "null"]
+        },
+        "rawStrings": {
+          "description": "Whether r'...', R'...', r\"...\" and R\"...\" are string literals that take no escapes; false where the engine has no such form.",
+          "type": "boolean"
+        },
+        "hintsAreCode": {
+          "description": "Whether /*+ opens an optimizer hint the engine lexes as code rather than a block comment; false where it opens a block comment.",
+          "type": "boolean"
+        },
+        "lineCommentBackslashContinues": {
+          "description": "Whether a line comment continues onto the next line when a backslash stands immediately before the line feed that would end it; false where it never does.",
+          "type": "boolean"
+        },
+        "lineCommentEndsAtCarriageReturn": {
+          "description": "Whether a carriage return ends a line comment as a line feed does; false where a carriage return is comment text.",
+          "type": "boolean"
+        },
+        "script": {
+          "$ref": "#/$defs/scriptFacts"
+        },
+        "trailingLimitClauses": {
+          "description": "The clauses that must follow the row bound on the engine, each a pattern matching one such clause at the very end of a statement, in the order the limiter strips them; empty where the engine has none.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/clausePattern"
+          },
+          "maxItems": 32,
+          "uniqueItems": true
+        },
+        "nonNumericRowBounds": {
+          "description": "The values other than a digit run the engine accepts as a LIMIT or FETCH count and as an OFFSET, each spelled as a statement writes it, with no whitespace; empty where the engine accepts only digits.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^\\S{1,32}$"
+          },
+          "maxItems": 16,
+          "uniqueItems": true
+        },
+        "confirmForms": {
+          "description": "Keyword sequences that ask for a confirmation when they operate a statement, beside the shared dangerous keywords; empty where the engine adds none.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/keywordSequence"
+          },
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "confirmCodeForms": {
+          "description": "Forms that ask for a confirmation wherever they appear in a statement's code; empty where the engine adds none.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/codeForm"
+          },
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "confirmFormsWhen": {
+          "description": "Keyword sequences that ask only when a code word also appears in the statement's code after them; empty where the engine adds none.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/conditionalForm"
+          },
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "confirmExemptForms": {
+          "description": "Keyword sequences led by a shared dangerous keyword that do not ask on the engine, each a claim that loosens the confirmation gate, which the gate counts only where Studio's review record lists it; empty where every shared keyword asks.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/keywordSequence"
+          },
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "formatterLanguage": {
+          "$ref": "#/$defs/formatterLanguage"
+        },
+        "completionWords": {
+          "$ref": "#/$defs/completionWords"
+        },
+        "confirmConfigKeys": {
+          "description": "Session configuration keys whose SET or RESET asks for a confirmation, compared without case, an entry ending in . matching every key under it; a list, even an empty one, also makes a RESET with no key ask. Null where no SET or RESET asks.",
+          "type": ["array", "null"],
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$"
+          },
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "explainExecutesWithAnalyze": {
+          "description": "Whether EXPLAIN ANALYZE executes the explained statement; false where EXPLAIN only plans.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "hash",
+        "bracket",
+        "blockComment",
+        "alternateQuoting",
+        "doubleSlashComment",
+        "backslashAlwaysEscapes",
+        "tripleQuotedStrings",
+        "backtickBackslashEscapes",
+        "dollarTags",
+        "doubleQuoteBackslashEscapes",
+        "singleQuoteBackslashEscapes",
+        "rawStrings",
+        "hintsAreCode",
+        "lineCommentBackslashContinues",
+        "lineCommentEndsAtCarriageReturn",
+        "script",
+        "trailingLimitClauses",
+        "nonNumericRowBounds",
+        "confirmForms",
+        "confirmCodeForms",
+        "confirmFormsWhen",
+        "confirmExemptForms",
+        "formatterLanguage",
+        "completionWords",
+        "confirmConfigKeys",
+        "explainExecutesWithAnalyze"
+      ],
+      "additionalProperties": false
+    },
+    "hashRule": {
+      "description": "What a # opens. comment: a line comment, always. code: never a comment. comment-unless-operator: the compatibility default, a comment unless the next character makes a PostgreSQL jsonb or geometric operator.",
+      "type": "string",
+      "enum": ["comment", "code", "comment-unless-operator"]
+    },
+    "bracketRule": {
+      "description": "What a [...] run is. quoted-identifier: a name that does not nest. subscript: an array literal or a subscript, which nests.",
+      "type": "string",
+      "enum": ["quoted-identifier", "subscript"]
+    },
+    "blockCommentRule": {
+      "description": "Where a block comment ends when a second /* is written inside it. flat: at the first closer, whatever is inside. nesting: an inner /* opens another comment, so the run ends where the depth returns to zero.",
+      "type": "string",
+      "enum": ["flat", "nesting"]
+    },
+    "scriptFacts": {
+      "description": "How a script is cut into what the engine receives, beyond the ; the span rules find. separatorLine: the token a line holding only it ends the statement in progress with, never sent, or null where the engine has none. terminatedStatements: the operative keywords whose statement keeps its own terminating ;, empty where every statement drops it.",
+      "type": "object",
+      "properties": {
+        "blocks": {
+          "$ref": "#/$defs/procedureBodies"
+        },
+        "separatorLine": {
+          "type": ["string", "null"],
+          "enum": ["GO", "/", null]
+        },
+        "unit": {
+          "$ref": "#/$defs/scriptUnit"
+        },
+        "terminatedStatements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sqlKeyword"
+          },
+          "maxItems": 64,
+          "uniqueItems": true
+        }
+      },
+      "required": ["blocks", "separatorLine", "unit", "terminatedStatements"],
+      "additionalProperties": false
+    },
+    "procedureBodies": {
+      "description": "Which statements carry a procedural body, inside which a ; ends a body statement. none: no statement does. trigger-body: CREATE TRIGGER ... BEGIN ... END is the one statement with a body. pl-sql: an anonymous block and every stored PL/SQL unit.",
+      "type": "string",
+      "enum": ["none", "trigger-body", "pl-sql"]
+    },
+    "scriptUnit": {
+      "description": "What one request to the engine carries. statement: one statement. batch: everything between two separator lines, sent whole.",
+      "type": "string",
+      "enum": ["statement", "batch"]
+    },
+    "clausePattern": {
+      "description": "A pattern matching one clause that must follow the row bound, at the very end of a statement: its source and flags as JavaScript's RegExp reads them, which must compile. The source opens with \\s+, so a host that anchors it behind a character that is not whitespace starts a match only where a whitespace run starts, and closes with \\s*$, so it matches only at the end.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^\\\\s\\+[\\s\\S]*\\\\s\\*\\$$"
+        },
+        "flags": {
+          "description": "i, so the clause's words match in any case, or iu.",
+          "type": "string",
+          "enum": ["i", "iu"]
+        }
+      },
+      "required": ["source", "flags"],
+      "additionalProperties": false
+    },
+    "sqlKeyword": {
+      "description": "One SQL keyword as the readers compare it, upper-cased: an upper-case letter, then up to 63 upper-case letters, digits or underscores.",
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+    },
+    "keywordSequence": {
+      "description": "A sequence of one to 16 keywords, read in order with whitespace or comments between them.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/sqlKeyword"
+      },
+      "minItems": 1,
+      "maxItems": 16
+    },
+    "codeForm": {
+      "description": "A form a confirmation code form looks for: a keyword sequence, an identifier prefix, a word a literal follows, a word a routine body follows, a quoted name called as a function, a word whose parenthesised run names the function called, or a dollar-quoted run.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/keywordSequence"
+        },
+        {
+          "$ref": "#/$defs/codeFormPrefix"
+        },
+        {
+          "$ref": "#/$defs/codeFormWordThenLiteral"
+        },
+        {
+          "$ref": "#/$defs/codeFormWordThenBody"
+        },
+        {
+          "$ref": "#/$defs/codeFormQuotedCall"
+        },
+        {
+          "$ref": "#/$defs/codeFormComputedCall"
+        },
+        {
+          "$ref": "#/$defs/codeFormDollarQuoted"
+        }
+      ]
+    },
+    "codeFormPrefix": {
+      "description": "The start of an identifier: an upper-case letter, then up to 63 upper-case letters, digits, underscores or dollar signs.",
+      "type": "object",
+      "properties": {
+        "prefix": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_$]{0,63}$"
+        }
+      },
+      "required": ["prefix"],
+      "additionalProperties": false
+    },
+    "codeFormWordThenLiteral": {
+      "description": "A word whose next code, past whitespace and comments, is a string literal.",
+      "type": "object",
+      "properties": {
+        "wordThenLiteral": {
+          "$ref": "#/$defs/sqlKeyword"
+        }
+      },
+      "required": ["wordThenLiteral"],
+      "additionalProperties": false
+    },
+    "codeFormWordThenBody": {
+      "description": "A word whose next code is a routine body, a string literal or a dollar-quoted run.",
+      "type": "object",
+      "properties": {
+        "wordThenBody": {
+          "$ref": "#/$defs/sqlKeyword"
+        }
+      },
+      "required": ["wordThenBody"],
+      "additionalProperties": false
+    },
+    "codeFormQuotedCall": {
+      "description": "A closed quoted name whose text is the word, compared without case, that a ( follows.",
+      "type": "object",
+      "properties": {
+        "quotedCall": {
+          "$ref": "#/$defs/sqlKeyword"
+        }
+      },
+      "required": ["quotedCall"],
+      "additionalProperties": false
+    },
+    "codeFormComputedCall": {
+      "description": "A word followed by a parenthesised run and then a (, a call whose function name the run computes.",
+      "type": "object",
+      "properties": {
+        "computedCall": {
+          "$ref": "#/$defs/sqlKeyword"
+        }
+      },
+      "required": ["computedCall"],
+      "additionalProperties": false
+    },
+    "codeFormDollarQuoted": {
+      "description": "A dollar-quoted run, $$...$$ or $tag$...$tag$, a body the gate does not read.",
+      "type": "object",
+      "properties": {
+        "dollarQuoted": {
+          "const": true
+        }
+      },
+      "required": ["dollarQuoted"],
+      "additionalProperties": false
+    },
+    "conditionalForm": {
+      "description": "A keyword sequence that asks only when the code word when also appears in the statement's code after it.",
+      "type": "object",
+      "properties": {
+        "form": {
+          "$ref": "#/$defs/keywordSequence"
+        },
+        "when": {
+          "$ref": "#/$defs/sqlKeyword"
+        }
+      },
+      "required": ["form", "when"],
+      "additionalProperties": false
+    },
+    "formatterLanguage": {
+      "description": "The sql-formatter language the editor's Format uses for the engine; postgresql where the engine declares none, the language every engine formatted with before an engine declared one.",
+      "type": "string",
+      "enum": ["postgresql", "snowflake"]
+    },
+    "completionWords": {
+      "description": "The keywords and functions the editor's completion offers on the engine beside the shared lists, a function inserted as a call; both lists empty where the engine adds none. A keyword is upper-case words separated by one space.",
+      "type": "object",
+      "properties": {
+        "keywords": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[A-Z][A-Z0-9_]*(?: [A-Z][A-Z0-9_]*)*$"
+          },
+          "maxItems": 1024,
+          "uniqueItems": true
+        },
+        "functions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sqlKeyword"
+          },
+          "maxItems": 1024,
+          "uniqueItems": true
+        }
+      },
+      "required": ["keywords", "functions"],
+      "additionalProperties": false
+    },
+    "statementRedaction": {
+      "description": "How a statement is redacted before the query event log keeps it.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/sqlTextRedaction"
+        },
+        {
+          "$ref": "#/$defs/commandRedaction"
+        },
+        {
+          "$ref": "#/$defs/noRedaction"
+        }
+      ]
+    },
+    "sqlTextRedaction": {
+      "description": "SQL text: the statement's literals are replaced, and only a closed name in the engine's identifier quote is kept.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "sql"
+        },
+        "nameQuote": {
+          "$ref": "#/$defs/nameQuote"
+        }
+      },
+      "required": ["kind", "nameQuote"],
+      "additionalProperties": false
+    },
+    "commandRedaction": {
+      "description": "A command language: the named pure reader answers, from the statement's text, the text the query event log keeps.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "command"
+        },
+        "reader": {
+          "$ref": "#/$defs/functionName"
+        }
+      },
+      "required": ["kind", "reader"],
+      "additionalProperties": false
+    },
+    "noRedaction": {
+      "description": "Nothing of the statement's text is kept.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "none"
+        }
+      },
+      "required": ["kind"],
+      "additionalProperties": false
+    },
+    "nameQuote": {
+      "description": "The character that opens the engine's quoted identifier, whose closed names redaction keeps; null where the engine has none.",
+      "type": ["string", "null"],
+      "enum": ["\"", "`", "[", null]
+    },
+    "updateTargetWords": {
+      "description": "The facts the update target reader needs beyond the grammar. dashCommentNeedsSeparator: whether -- opens a comment only when a space or a control character follows it. extraQueryOpeners: the words beside the shared set that open a query. extraSetOperators: the words beside the shared set that join two queries. Each word list is empty where the engine adds none.",
+      "type": "object",
+      "properties": {
+        "dashCommentNeedsSeparator": {
+          "type": "boolean"
+        },
+        "extraQueryOpeners": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sqlKeyword"
+          },
+          "maxItems": 64,
+          "uniqueItems": true
+        },
+        "extraSetOperators": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sqlKeyword"
+          },
+          "maxItems": 64,
+          "uniqueItems": true
+        }
+      },
+      "required": ["dashCommentNeedsSeparator", "extraQueryOpeners", "extraSetOperators"],
+      "additionalProperties": false
+    },
+    "completionReaders": {
+      "description": "How completion quotes and reads qualified names.",
+      "type": "object",
+      "properties": {
+        "formatSegment": {
+          "description": "The pure function that quotes one name segment, used instead of the connection's quoting; null where the connection's quoting is used.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "readQuotedQualifier": {
+          "description": "The pure function that reads, from the text up to a dot, the qualifier before the dot when it is quoted; null where the engine has no such reading.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": ["formatSegment", "readQuotedQualifier"],
+      "additionalProperties": false
     },
     "compatibilityEntry": {
       "description": "One product the package was measured against: the engine that serves it, the versions claimed and the versions tested.",

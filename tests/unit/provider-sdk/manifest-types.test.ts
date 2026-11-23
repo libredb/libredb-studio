@@ -91,6 +91,13 @@ describe("rendering", () => {
     expect(rendered).toContain('export type Kind = "x" | "y";\n');
   });
 
+  test("a string literal holding more double quotes than single ones renders in single quotes, as the formatter writes it", () => {
+    const quotes = ['"', "`", "it's", `a"b'c`, `"\\"`, null];
+    const rendered = renderManifestTypes(schema({}, { quote: { type: ["string", "null"], enum: quotes } }));
+
+    expect(rendered).toContain(`export type Quote = '"' | "\`" | "it's" | "a\\"b'c" | '"\\\\"' | null;\n`);
+  });
+
   test("a union longer than a line renders one member per line", () => {
     const members = Array.from({ length: 12 }, (_, index) => `member-number-${index}`);
     const rendered = renderManifestTypes(schema({}, { kind: { type: "string", enum: members } }));
@@ -176,6 +183,12 @@ describe("rendering", () => {
     const text = schema({ a: { type: "string", format: "email" } });
 
     expect(() => renderManifestTypes(text)).toThrow('/properties/a: the keyword "format"');
+  });
+
+  test("rendering refuses a description that would end its doc comment, naming it", () => {
+    const text = schema({ a: { type: "string", description: "Ends a comment */ early." } });
+
+    expect(() => renderManifestTypes(text)).toThrow('/properties/a: the description holds "*/"');
   });
 
   test("rendering refuses an inline object schema with properties", () => {

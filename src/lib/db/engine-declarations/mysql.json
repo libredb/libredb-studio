@@ -93,5 +93,99 @@
     ],
     "explainFormat": "mysql-json",
     "dialect": null
+  },
+  "sqlText": {
+    "readsSqlText": true,
+    "grammar": {
+      "hash": "comment",
+      "bracket": "quoted-identifier",
+      "blockComment": "flat",
+      "alternateQuoting": false,
+      "doubleSlashComment": false,
+      "backslashAlwaysEscapes": false,
+      "tripleQuotedStrings": false,
+      "backtickBackslashEscapes": false,
+      "dollarTags": true,
+      "doubleQuoteBackslashEscapes": null,
+      "singleQuoteBackslashEscapes": null,
+      "rawStrings": false,
+      "hintsAreCode": false,
+      "lineCommentBackslashContinues": false,
+      "lineCommentEndsAtCarriageReturn": false,
+      "script": {
+        "blocks": "none",
+        "separatorLine": null,
+        "unit": "statement",
+        "terminatedStatements": []
+      },
+      "trailingLimitClauses": [
+        {
+          "source": "\\s+FOR\\s+(?:UPDATE|SHARE)(?:\\s+OF\\s+(?:`(?:[^`]|``)*`|\"(?:[^\"]|\"\")*\"|[^\\s()',;\"`]+)(?:\\s*,\\s*(?:`(?:[^`]|``)*`|\"(?:[^\"]|\"\")*\"|[^\\s()',;\"`]+))*)?(?:\\s+(?:NOWAIT|SKIP\\s+LOCKED|WAIT\\s+\\d+))?\\s*$",
+          "flags": "i"
+        },
+        {
+          "source": "\\s+LOCK\\s+IN\\s+SHARE\\s+MODE(?:\\s+(?:NOWAIT|SKIP\\s+LOCKED|WAIT\\s+\\d+))?\\s*$",
+          "flags": "i"
+        }
+      ],
+      "nonNumericRowBounds": [],
+      "confirmForms": [
+        [
+          "REPLACE"
+        ],
+        [
+          "INSERT",
+          "OVERWRITE"
+        ],
+        [
+          "CREATE",
+          "OR",
+          "REPLACE",
+          "TABLE"
+        ],
+        [
+          "CREATE",
+          "OR",
+          "REPLACE",
+          "TEMPORARY",
+          "TABLE"
+        ]
+      ],
+      "confirmCodeForms": [
+        [
+          "ON",
+          "DUPLICATE",
+          "KEY",
+          "UPDATE"
+        ],
+        [
+          "REPLACE",
+          "INTO",
+          "TABLE"
+        ]
+      ],
+      "confirmFormsWhen": [],
+      "confirmExemptForms": [],
+      "formatterLanguage": "postgresql",
+      "completionWords": {
+        "keywords": [],
+        "functions": []
+      },
+      "confirmConfigKeys": null,
+      "explainExecutesWithAnalyze": false
+    },
+    "redaction": {
+      "kind": "sql",
+      "nameQuote": "`"
+    },
+    "updateTarget": {
+      "dashCommentNeedsSeparator": true,
+      "extraQueryOpeners": [],
+      "extraSetOperators": []
+    },
+    "completion": {
+      "formatSegment": null,
+      "readQuotedQualifier": null
+    }
   }
 }

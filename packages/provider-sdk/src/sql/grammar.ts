@@ -406,17 +406,20 @@ export type ConfirmCodeForm =
  * suite in the same change that introduces the channel would leave nothing
  * pinning the old behaviour. Pinned by its own tests instead, so it is a decision
  * rather than an accident.
+ *
+ * Frozen to its leaves, so no module that imports it changes it for another: many grammar rows hold this record,
+ * its `script` or its `trailingLimitClauses` by identity, and an assignment to one of them throws a TypeError.
  */
-export const DEFAULT_SQL_GRAMMAR: SqlGrammar = {
+export const DEFAULT_SQL_GRAMMAR: SqlGrammar = Object.freeze({
   hash: "comment-unless-operator",
   bracket: "quoted-identifier",
   blockComment: "flat",
   alternateQuoting: false,
   doubleSlashComment: false,
   backslashAlwaysEscapes: false,
-  script: { blocks: "none", separatorLine: null, unit: "statement" },
-  trailingLimitClauses: [],
-};
+  script: Object.freeze({ blocks: "none", separatorLine: null, unit: "statement" }),
+  trailingLimitClauses: Object.freeze([]),
+});
 
 /**
  * Whether a `#` run this grammar read as a comment might be code in the dialect
