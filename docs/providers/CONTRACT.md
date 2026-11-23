@@ -363,7 +363,7 @@ An engine declares at most one `no-secret` warning, and each warning reads only 
 The manifest holds no code: where an engine has a function, its declaration names it, and the package exports it.
 A name is a lower-case letter followed by up to 63 letters or digits, `functionName` in the schema, and it is local to its engine, so two engines of one package may each have a function of one name.
 A package names its functions freely.
-Studio's own declarations name each function by the slot it fills: `<field>Check` for a field rule's check, `hostHint`, `hostIdentity`, `importer` for the connection import, `urlTls`, `pasteReader` and `seedCheck` for the connection string's URL TLS reader, paste reader and seed check, `redactionReader` for a command redaction's reader, and `formatSegment` and `readQuotedQualifier` for the completion readers.
+Studio's own declarations name each function by the slot it fills: `<field>Check` for a field rule's check, `hostHint`, `hostIdentity`, `importer` for the connection import, `urlTls`, `pasteReader` and `seedCheck` for the connection string's URL TLS reader, paste reader and seed check, `redactionReader` for a command redaction's reader, `formatSegment` and `readQuotedQualifier` for the completion readers, and, for the SQL writing functions, `escapeLiteral`, `unescapeLiteral`, `quoteIdentifier`, `placeholder`, `temporalLiteral`, `insertDocuments`, `boundEdit`, `binaryLiteral`, `rewriteDeclared`, `declareFromSample`, `typedLiteral`, `columnWriters` and `createTableKeyClause` for the create table key's clause.
 Studio's census holds every name its declarations give to the very function Studio runs, by identity and never by the function's own name, and finds no function Studio runs that a declaration does not name.
 
 - schema `/$defs/functionName`
@@ -374,6 +374,8 @@ Studio's census holds every name its declarations give to the very function Stud
 - test `tests/unit/db/engine-declarations.test.ts` "every function a connection string row holds is named by its engine's declaration"
 - test `tests/unit/db/engine-declarations.test.ts` "every function a grammar row holds is, through the census's own resolver, the very slot its declaration names"
 - test `tests/unit/db/engine-declarations.test.ts` "every function a grammar row holds is named by its engine's declaration"
+- test `tests/unit/db/engine-declarations.test.ts` "every name an SQL writing declaration states is its member's slot, and resolves through the census's slot table to the very function the engine's own module exports there"
+- test `tests/unit/db/engine-declarations.test.ts` "every function an SQL writing row holds is named at its slot by its engine's declaration, and no slot the row leaves empty is named"
 
 ### M-32 (informative): How a package's named functions are found and called
 
@@ -898,6 +900,86 @@ The gate counts such a claim only where Studio's review record lists it, and eve
 
 Studio runs a command redaction reader on its server, and its completion readers in the editor, in the browser.
 M-32 says no package function runs in a browser, so how a package's completion reader is called is decided when the editor reads admitted manifests.
+
+### S-11 (normative): The SQL writing segment
+
+An engine states, in `sqlWriting`, how a generated statement spells a literal, a name, a bind and a temporal literal for it, what its inline edit and its result export read, and how a document insert is written where its console text is a request.
+The segment has one member per member of Studio's SQL writing row, under the same name and with the same nesting, and every member is required.
+A function the engine lacks is null, and every other function is named by the slot it fills.
+Studio's census holds every member of every declaration to the engine's row, and finds no member of a row that its declaration leaves out.
+
+- schema `/$defs/sqlWriting`
+- schema `/$defs/inlineEditFacts`
+- schema `/$defs/exportFacts`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an SQL writing segment with every hook named, a create table key, a bare spelling and every key float64 is admitted"
+- test `tests/unit/db/engine-declarations.test.ts` "sqlWriting.inlineEdit is the row's, each type name set in its order and float64 as all where every key is"
+- test `tests/unit/db/engine-declarations.test.ts` "sqlWriting.export states the row's DDL types, standing-alone names, bare spellings, non-finite literals and insert form"
+- test `tests/unit/db/engine-declarations.test.ts` "every member of an SQL writing row has its member in the declaration"
+- test `tests/unit/db/engine-declarations.test.ts` "the generator refuses, by name, an SQL writing member it has no place for"
+
+### S-12 (normative): The type names an inline edit and an export read
+
+An inline edit type name is one lower-case word, since the inline edit reads the first word of a declared type, lower-cased and with its wrappers off.
+A standing-alone name, a bare spelling's name and a bare type family's name are lower-case words separated by one space, since the export reads a declared type trimmed, lower-cased and with each run of whitespace one space.
+Every key column is float64 where `float64TypeNames` is `all`.
+A map keyed by type name is a list, the bare spellings as entries and the bare type families as one list per kind, and each name is named once per table.
+
+- schema `/$defs/keyTypeName`
+- schema `/$defs/declaredTypeName`
+- schema `/$defs/float64TypeNames`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an inline edit type name that is not one lower-case word is refused as pattern-mismatch"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a declared type name that is not lower-case words separated by single spaces is refused as pattern-mismatch"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "float64 type names that are neither a list nor all are one refusal at the member"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a type name under two families, or a bare spelling named twice, is refused as type-name-duplicate at the later"
+- test `tests/unit/db/engine-declarations.test.ts` "sqlWriting.inlineEdit is the row's, each type name set in its order and float64 as all where every key is"
+- test `tests/unit/db/engine-declarations.test.ts` "sqlWriting.export states the row's DDL types, standing-alone names, bare spellings, non-finite literals and insert form"
+- test `tests/unit/db/engine-declarations/sql-writing-replay.test.ts` "every engine's SQL writing row, rebuilt from its declaration with each function resolved by its slot, renders the engine's golden output"
+
+### S-13 (normative): Text an export writes from a declaration stays on its line
+
+A DDL type and a bare spelling are SQL type spellings with no line break, and a non-finite literal is printable ASCII with no line break and no space at either end.
+A create table key's note is whole comment lines, each `-- ` and text with no line break, ending in a line feed.
+So nothing a declaration states becomes a statement of the file an export writes.
+
+- schema `/$defs/sqlTypeSpelling`
+- schema `/$defs/nonFiniteLiteral`
+- schema `/$defs/commentLines`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a DDL type, a bare spelling or a non-finite literal that would not stay on its line is refused as pattern-mismatch"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a create table key note that is not whole comment lines is refused as pattern-mismatch"
+- test `tests/unit/db/engine-declarations.test.ts` "sqlWriting.export.createTableKey carries the row's note where the row has a key"
+
+### S-14 (normative): The type vocabulary
+
+Each engine states the vocabulary its declared types are read with: its bare type families grouped by kind, and three patterns.
+Each pattern is a `source` of 2 to 512 characters, written with `^` and `$`, and its `flags`, none, `i`, `u` or `iu`, and it compiles as JavaScript's `RegExp` reads it with its flags.
+`floatType` and `exactNumericType` are tested against a whole type, and `numericWrapper` captures exactly one group, the type it wraps.
+
+- schema `/$defs/typeVocabulary`
+- schema `/$defs/typePattern`
+- schema `/$defs/typeFamilies`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a type pattern longer than 512 characters is refused as out-of-range, and one not written with ^ and $ as pattern-mismatch"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a type pattern whose flags are not none, i, u or iu is refused as value-not-allowed"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a type pattern that does not compile is refused as pattern-invalid"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a wrapper pattern that does not capture exactly one group is refused as wrapper-group-count"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's SQL writing facts are held to the rules the schema cannot state, at pointers into it"
+- test `tests/unit/db/engine-declarations.test.ts` "the generator refuses, by name, a type pattern whose flags the contract does not allow"
+- test `tests/unit/db/engine-declarations.test.ts` "the generator refuses, by name, a bare type family outside the inferred kinds"
+- test `tests/unit/db/engine-declarations.test.ts` "sqlWriting.export.typeVocabulary is the row's, its bare type families grouped by kind and each pattern by its source and flags"
+- test `tests/unit/db/engine-declarations/sql-writing-replay.test.ts` "every engine's SQL writing row, rebuilt from its declaration with each function resolved by its slot, renders the engine's golden output"
+
+### S-15 (informative): How a host runs a type pattern
+
+A host compiles each type pattern once, when it reads the declaration.
+It strips wrappers while the wrapper pattern matches and its capture is shorter than the type, and stops otherwise, since a capture as long as the type would never end the loop.
+Backtracking is not checked yet, as M-35 says of a field rule's pattern.
+Every type pattern Studio declares is the source and flags of one its export runs today, each measured to run in time linear in the type's length.
+
+### S-16 (informative): Studio still reads its SQL writing rows, and where their functions run
+
+An SQL writing row is code beside its provider, read by Studio's registry.
+Each engine declaration states the same facts as data, which nothing but Studio's census reads until Studio's readers take them from admitted manifests.
+Studio runs these functions in the browser, in the inline editor, the result export, the test data generator, the data import and the pivot table, and on its server.
+M-32 says no package function runs in a browser, so how a package's SQL writing functions are called is decided when Studio reads admitted manifests.
 
 ## Calls
 
@@ -1595,7 +1677,7 @@ The live check `tests/live/host-core-live.ts` holds the same rule against the bu
 
 These chapters are added by the changes that bring their enforcers:
 
-- Editor and SQL text: SQL writing, migration DDL, generators and editor languages.
+- Editor and SQL text: migration DDL, generators and editor languages.
 - Policy and MCP claims, each a request a provider makes that only Studio's review record grants, the agent overlay, and presentation (an icon and a colour).
 - The API report of each SDK entry.
 
@@ -1629,4 +1711,7 @@ Against the manifest sketch the design started from:
 - An engine's SQL grammar row is one segment, `sqlText`, S-3.
 - A fact the SDK's grammar type may leave out is written at the reading its absence has, and three facts are null where a reading of their own applies, S-4.
 - A trailing limit clause is a pattern's source and flags, S-5.
+- An engine's SQL writing row is one segment, `sqlWriting`, S-11.
+- A map keyed by type name is a list, the bare spellings as entries and the bare type families grouped by kind, S-12.
+- The type vocabulary is a fact of each engine, S-14.
 - The sketch's frame cap is replaced by the byte budgets, since calls are unframed in process; the memory test transport keeps frames for tests only.
