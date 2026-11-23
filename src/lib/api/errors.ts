@@ -34,19 +34,24 @@ export type { ApiErrorResponse } from "./error-body";
 
 /**
  * The answer and the log line for a thrown value. `scrub` is the calling connection's core scrub, passed by a route
- * once its connection is resolved: on the two branches a provider's error reaches (every database error class and the
- * generic one) an error whose text holds a credential of the connection answers its own status, code, kind, outcome
- * and `retryable` with only its texts replaced (`withWithheldText`), and its log line carries the withheld error.
- * Given a scrub, a database error's body also carries the `sqlState` of its error record (`errorRecord`), which the
- * record holds only when the error's text was not withheld, so the body is the record's fields beside its texts;
- * without a scrub no body carries one, because the record's string fields are only built through the scrub. The
- * other branches answer Studio's own classes, raised before any provider exists.
+ * once its connection is resolved. Given a scrub, the detection (`withheldProviderError`) runs once over the error,
+ * whatever its class, and every branch reads it: an error whose text holds a credential of the connection answers its
+ * branch's own status, code, kind, outcome and `retryable` with only its texts replaced by the withheld error's
+ * message (`withWithheldText` on a database error's body), and every log line given the error is given the withheld
+ * error instead, so no answer or log line built under a scrub carries a credential of that connection. A branch that
+ * answers a fixed sentence of Studio's keeps it. Given a scrub, a database error's body also carries the `sqlState`
+ * of its error record (`errorRecord`), which the record holds only when the error's text was not withheld, so the body
+ * is the record's fields beside its texts; without a scrub no body carries one, because the record's string fields
+ * are only built through the scrub.
  */
 export function createErrorResponse(
   error: unknown,
   context?: { route?: string; scrub?: ProviderTextScrub },
 ): NextResponse<ApiErrorResponse> {
   const route = context?.route;
+  const withheld = context?.scrub === undefined ? null : withheldProviderError(context.scrub, error);
+  /** The error's own text for an answer, or the withheld error's message when the detection found a credential. */
+  const answered = (text: string): string => withheld?.message ?? text;
 
   // --- Seed Connection Error ---
   if (error instanceof SeedConnectionError) {
@@ -61,7 +66,7 @@ export function createErrorResponse(
           ? ApiErrorCode.CONFIG_ERROR
           : undefined);
     return NextResponse.json(
-      { error: error.message, ...(code ? { code } : {}), statusCode: error.statusCode },
+      { error: answered(error.message), ...(code ? { code } : {}), statusCode: error.statusCode },
       { status: error.statusCode },
     );
   }
@@ -76,7 +81,7 @@ export function createErrorResponse(
   if (error instanceof VaultError) {
     logger.warn("Vault reference error", { route });
     return NextResponse.json(
-      { error: error.message, code: ApiErrorCode.CONFIG_ERROR, statusCode: 400 },
+      { error: answered(error.message), code: ApiErrorCode.CONFIG_ERROR, statusCode: 400 },
       { status: 400 },
     );
   }
@@ -86,13 +91,12 @@ export function createErrorResponse(
   // binding). The message names the list index and the field path, never a value, and nothing was written.
   if (error instanceof ConnectionWriteRefused) {
     logger.warn("Connection write refused", { route });
-    return NextResponse.json({ error: error.message, statusCode: 400 }, { status: 400 });
+    return NextResponse.json({ error: answered(error.message), statusCode: 400 }, { status: 400 });
   }
 
   // --- DB: every DatabaseError class, answered by the Next-free error body ---
   const answer = databaseErrorBody(error);
   if (answer !== null) {
-    const withheld = context?.scrub === undefined ? null : withheldProviderError(context.scrub, error);
     const { level, message, context: logContext } = answer.log;
     if (level === "error") logger.error(message, withheld ?? error, { route, ...logContext });
     else logger[level](message, { route, ...logContext });
@@ -139,12 +143,12 @@ export function createErrorResponse(
     logger.warn("LLM config error", { route, provider: error.provider });
     // Missing credentials may be intentional; a malformed model, URL or provider is still a setup error.
     const code = error.reason === "missing_credentials" ? ApiErrorCode.LLM_UNCONFIGURED : ApiErrorCode.LLM_CONFIG;
-    return NextResponse.json({ error: error.message, code, statusCode: 503 }, { status: 503 });
+    return NextResponse.json({ error: answered(error.message), code, statusCode: 503 }, { status: 503 });
   }
 
   // --- LLM: Stream ---
   if (error instanceof LLMStreamError) {
-    logger.error("LLM stream error", error, { route, provider: error.provider });
+    logger.error("LLM stream error", withheld ?? error, { route, provider: error.provider });
     if (isContextLengthError(error)) {
       return NextResponse.json(
         {
@@ -157,7 +161,7 @@ export function createErrorResponse(
       );
     }
     return NextResponse.json(
-      { error: error.message, code: ApiErrorCode.LLM_STREAM, statusCode: 502, retryable: true },
+      { error: answered(error.message), code: ApiErrorCode.LLM_STREAM, statusCode: 502, retryable: true },
       { status: 502 },
     );
   }
@@ -165,8 +169,11 @@ export function createErrorResponse(
   // --- LLM: generic LLMError (base class catch-all) ---
   if (error instanceof LLMError) {
     const status = error.statusCode ?? 500;
-    logger.error("LLM error", error, { route, provider: error.provider });
-    return NextResponse.json({ error: error.message, code: ApiErrorCode.LLM_ERROR, statusCode: status }, { status });
+    logger.error("LLM error", withheld ?? error, { route, provider: error.provider });
+    return NextResponse.json(
+      { error: answered(error.message), code: ApiErrorCode.LLM_ERROR, statusCode: status },
+      { status },
+    );
   }
 
   // --- Application rate limit ---
@@ -193,7 +200,6 @@ export function createErrorResponse(
   }
 
   // --- Generic Error ---
-  const withheld = context?.scrub === undefined ? null : withheldProviderError(context.scrub, error);
   logger.error("Unhandled error", withheld ?? error, { route });
   const body = internalErrorBody(error);
   return NextResponse.json(withheld === null ? body : withWithheldText(body, withheld.message), { status: 500 });

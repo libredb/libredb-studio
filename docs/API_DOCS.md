@@ -2892,8 +2892,9 @@ interface ActiveSession {
 }
 ```
 
-On `POST /api/db/query`, `POST /api/db/multi-query`, `POST /api/db/transaction`, `POST /api/db/test-connection`, `POST /api/agent/runs` and `POST /api/agent/runs/{runId}/handover`, a database error whose text holds a credential of the request's connection, in any form Studio derives from it, answers Studio's own sentence in `error`, naming the error's class and saying its text was withheld.
-`details` then keeps only `position`, and `fixStatement` is left out, while the HTTP status, `code`, `kind`, `outcome` and `retryable` are the error's own.
+On `POST /api/db/query`, `POST /api/db/multi-query`, `POST /api/db/transaction`, `POST /api/db/test-connection`, `POST /api/agent/runs`, `POST /api/agent/runs/{runId}/handover` and `POST /api/agent/drive`, an error of any class whose text holds a credential of the request's connection, in any form Studio derives from it, answers Studio's own sentence in `error`, naming the error's class and saying its text was withheld, and the server log line written for it carries that sentence in place of the error.
+The HTTP status, `code`, `kind`, `outcome` and `retryable` are the error's own, and an answer that is already a fixed sentence of Studio's keeps it.
+A database error's `details` then keeps only `position`, and `fixStatement` is left out.
 A script statement's `error` and every warning's `message`, string `code` and `severity` follow the same rule, and a warning field that holds such a form answers `(Studio withheld this text because it contained a credential of this connection)`.
 
 ### Error Codes
