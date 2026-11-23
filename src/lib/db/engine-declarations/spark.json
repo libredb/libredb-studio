@@ -459,5 +459,29 @@
       "createTableKey": null
     },
     "insertDocuments": null
+  },
+  "migrationDdl": {
+    "tableDdl": "written",
+    "transactionWrapper": null,
+    "createTable": {
+      "kind": "written",
+      "primaryKey": "createTablePrimaryKey",
+      "foreignKey": "createTableForeignKey"
+    },
+    "columnDef": "columnDef",
+    "createIndex": "createIndex",
+    "dropIndex": "dropIndex",
+    "addForeignKey": "addForeignKey",
+    "dropForeignKey": "dropForeignKey",
+    "addColumn": "addColumn",
+    "dropColumn": "dropColumn",
+    "modifyColumn": "modifyColumn",
+    "dropTable": "dropTable",
+    "reasons": [
+      "Whether a column's type, nullability or default can change depends on the catalog and the table format; write the change by hand.",
+      "Apache Spark: Cannot generate index DDL. Spark SQL's index statements work only in a catalog whose tables support indexes; write the index change by hand.",
+      "Spark accepts a foreign key only as an informational NOT ENFORCED constraint, in a catalog that implements constraints.",
+      "Spark accepts a primary key only as an informational NOT ENFORCED constraint, in a catalog that implements constraints."
+    ]
   }
 }

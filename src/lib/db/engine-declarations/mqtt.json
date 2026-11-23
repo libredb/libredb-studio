@@ -294,5 +294,13 @@
       "createTableKey": null
     },
     "insertDocuments": null
+  },
+  "migrationDdl": {
+    "tableDdl": "refused",
+    "refusal": "-- MQTT: Cannot generate table DDL. A broker keeps no schema and no catalog, so there is no column definition to change.",
+    "transactionWrapper": null,
+    "reasons": [
+      "A broker keeps no schema and no catalog, so there is no column definition to change."
+    ]
   }
 }

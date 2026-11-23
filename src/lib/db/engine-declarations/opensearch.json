@@ -266,5 +266,13 @@
       "createTableKey": null
     },
     "insertDocuments": null
+  },
+  "migrationDdl": {
+    "tableDdl": "refused",
+    "refusal": "-- OpenSearch: Cannot generate table DDL. OpenSearch SQL reads only; change a field by reindexing into an index whose mapping declares it.",
+    "transactionWrapper": null,
+    "reasons": [
+      "OpenSearch SQL reads only; change a field by reindexing into an index whose mapping declares it."
+    ]
   }
 }

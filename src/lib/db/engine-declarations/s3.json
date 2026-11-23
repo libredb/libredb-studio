@@ -385,5 +385,13 @@
       "createTableKey": null
     },
     "insertDocuments": null
+  },
+  "migrationDdl": {
+    "tableDdl": "refused",
+    "refusal": "-- S3-compatible object storage: Cannot generate table DDL. S3 stores objects under keys with no schema, so there is no column definition to change.",
+    "transactionWrapper": null,
+    "reasons": [
+      "S3 stores objects under keys with no schema, so there is no column definition to change."
+    ]
   }
 }

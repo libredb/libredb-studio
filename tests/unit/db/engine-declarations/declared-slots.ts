@@ -9,13 +9,15 @@
  * name a declaration states to the path this table gives it, and every function a row holds to the name this table
  * gives its path.
  *
- * A slot is resolved on the row the engine's own module exports, which tests/unit/db/sql-writing/engine-modules.ts finds
- * by walking the provider tree, never through the registry index the generator reads, so the census holds the module's
- * row and the registry's row to be the same object as a separate fact.
+ * A slot is resolved on the row the engine's own module exports, imported by its absolute path, never through the
+ * registry index the generator reads, so the census holds the module's row and the registry's row to be the same object
+ * as a separate fact. Each table's modules are found apart from that index: the SQL writing modules by a walk of the
+ * provider tree (tests/unit/db/sql-writing/engine-modules.ts), and the migration DDL modules from the import statements
+ * of the registry file, read as source (`engineModules` in tests/unit/db/migration-ddl/modules.ts).
  */
 
 /** The registries whose rows the table names slots of. */
-export type SlotTable = "SQL_WRITING";
+export type SlotTable = "SQL_WRITING" | "MIGRATION_DDL";
 
 /** One slot: the registry whose row holds it and the dotted path of its member in that row. */
 export interface DeclaredSlot {
@@ -38,6 +40,18 @@ export const DECLARED_SLOTS = Object.freeze({
   typedLiteral: { table: "SQL_WRITING", path: "export.typedLiteral" },
   columnWriters: { table: "SQL_WRITING", path: "export.columnWriters" },
   createTableKeyClause: { table: "SQL_WRITING", path: "export.createTableKey.clause" },
+  createTablePrimaryKey: { table: "MIGRATION_DDL", path: "createTable.primaryKey" },
+  createTableForeignKey: { table: "MIGRATION_DDL", path: "createTable.foreignKey" },
+  createTableRefusal: { table: "MIGRATION_DDL", path: "createTable.createTableRefusal" },
+  columnDef: { table: "MIGRATION_DDL", path: "columnDef" },
+  createIndex: { table: "MIGRATION_DDL", path: "createIndex" },
+  dropIndex: { table: "MIGRATION_DDL", path: "dropIndex" },
+  addForeignKey: { table: "MIGRATION_DDL", path: "addForeignKey" },
+  dropForeignKey: { table: "MIGRATION_DDL", path: "dropForeignKey" },
+  addColumn: { table: "MIGRATION_DDL", path: "addColumn" },
+  dropColumn: { table: "MIGRATION_DDL", path: "dropColumn" },
+  modifyColumn: { table: "MIGRATION_DDL", path: "modifyColumn" },
+  dropTable: { table: "MIGRATION_DDL", path: "dropTable" },
 } as const satisfies Readonly<Record<string, DeclaredSlot>>);
 
 /** The name of a slot of the table. */

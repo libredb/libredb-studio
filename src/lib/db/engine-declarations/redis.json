@@ -276,5 +276,13 @@
       "createTableKey": null
     },
     "insertDocuments": null
+  },
+  "migrationDdl": {
+    "tableDdl": "refused",
+    "refusal": "-- Redis: Cannot generate table DDL. Keys are not tables and have no column definitions to change.",
+    "transactionWrapper": null,
+    "reasons": [
+      "Keys are not tables and have no column definitions to change."
+    ]
   }
 }

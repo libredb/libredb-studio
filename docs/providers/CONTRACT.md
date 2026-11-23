@@ -363,7 +363,7 @@ An engine declares at most one `no-secret` warning, and each warning reads only 
 The manifest holds no code: where an engine has a function, its declaration names it, and the package exports it.
 A name is a lower-case letter followed by up to 63 letters or digits, `functionName` in the schema, and it is local to its engine, so two engines of one package may each have a function of one name.
 A package names its functions freely.
-Studio's own declarations name each function by the slot it fills: `<field>Check` for a field rule's check, `hostHint`, `hostIdentity`, `importer` for the connection import, `urlTls`, `pasteReader` and `seedCheck` for the connection string's URL TLS reader, paste reader and seed check, `redactionReader` for a command redaction's reader, `formatSegment` and `readQuotedQualifier` for the completion readers, and, for the SQL writing functions, `escapeLiteral`, `unescapeLiteral`, `quoteIdentifier`, `placeholder`, `temporalLiteral`, `insertDocuments`, `boundEdit`, `binaryLiteral`, `rewriteDeclared`, `declareFromSample`, `typedLiteral`, `columnWriters` and `createTableKeyClause` for the create table key's clause.
+Studio's own declarations name each function by the slot it fills: `<field>Check` for a field rule's check, `hostHint`, `hostIdentity`, `importer` for the connection import, `urlTls`, `pasteReader` and `seedCheck` for the connection string's URL TLS reader, paste reader and seed check, `redactionReader` for a command redaction's reader, `formatSegment` and `readQuotedQualifier` for the completion readers, and, for the SQL writing functions, `escapeLiteral`, `unescapeLiteral`, `quoteIdentifier`, `placeholder`, `temporalLiteral`, `insertDocuments`, `boundEdit`, `binaryLiteral`, `rewriteDeclared`, `declareFromSample`, `typedLiteral`, `columnWriters` and `createTableKeyClause` for the create table key's clause, and, for the migration DDL functions, `createTablePrimaryKey` and `createTableForeignKey` for a written CREATE TABLE's key writers, `createTableRefusal` for a refused one's line, `columnDef`, `createIndex`, `dropIndex`, `addForeignKey`, `dropForeignKey`, `addColumn`, `dropColumn`, `modifyColumn` and `dropTable`.
 Studio's census holds every name its declarations give to the very function Studio runs, by identity and never by the function's own name, and finds no function Studio runs that a declaration does not name.
 
 - schema `/$defs/functionName`
@@ -376,6 +376,8 @@ Studio's census holds every name its declarations give to the very function Stud
 - test `tests/unit/db/engine-declarations.test.ts` "every function a grammar row holds is named by its engine's declaration"
 - test `tests/unit/db/engine-declarations.test.ts` "every name an SQL writing declaration states is its member's slot, and resolves through the census's slot table to the very function the engine's own module exports there"
 - test `tests/unit/db/engine-declarations.test.ts` "every function an SQL writing row holds is named at its slot by its engine's declaration, and no slot the row leaves empty is named"
+- test `tests/unit/db/engine-declarations.test.ts` "every name a migration DDL declaration states is its member's slot, and resolves through the census's slot table to the very function the engine's own module exports there"
+- test `tests/unit/db/engine-declarations.test.ts` "every function a migration DDL row holds is named at its slot by its engine's declaration, and no slot the row leaves empty is named"
 
 ### M-32 (informative): How a package's named functions are found and called
 
@@ -937,7 +939,8 @@ A map keyed by type name is a list, the bare spellings as entries and the bare t
 
 ### S-13 (normative): Text an export writes from a declaration stays on its line
 
-A DDL type and a bare spelling are SQL type spellings with no line break, and a non-finite literal is printable ASCII with no line break and no space at either end.
+A DDL type and a bare spelling are each one SQL type of up to 64 characters with no line break: words separated by one space, then at most one parenthesized argument list with its commas inside it, then words, so it fills one column's type and never adds a column.
+A non-finite literal is printable ASCII with no line break and no space at either end.
 A create table key's note is whole comment lines, each `-- ` and text with no line break, ending in a line feed.
 So nothing a declaration states becomes a statement of the file an export writes.
 
@@ -945,6 +948,7 @@ So nothing a declaration states becomes a statement of the file an export writes
 - schema `/$defs/nonFiniteLiteral`
 - schema `/$defs/commentLines`
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "a DDL type, a bare spelling or a non-finite literal that would not stay on its line is refused as pattern-mismatch"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a DDL type or a bare spelling that is more than one type at the top level is refused as pattern-mismatch"
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "a create table key note that is not whole comment lines is refused as pattern-mismatch"
 - test `tests/unit/db/engine-declarations.test.ts` "sqlWriting.export.createTableKey carries the row's note where the row has a key"
 
@@ -982,6 +986,53 @@ An SQL writing row is code beside its provider, read by Studio's registry.
 Each engine declaration states the same facts as data, which nothing but Studio's census reads until Studio's readers take them from admitted manifests.
 Studio runs these functions in the browser, in the inline editor, the result export, the test data generator, the data import and the pivot table, and on its server.
 M-32 says no package function runs in a browser, so how a package's SQL writing functions are called is decided when Studio reads admitted manifests.
+
+### S-17 (normative): The migration DDL segment
+
+An engine states, in `migrationDdl`, what the schema diff's migration writes for it, in one of two forms.
+Refused: the one line the migration writes in place of any statement, no transaction wrapper, and the reason the line gives.
+Written: its transaction wrapper or none, its CREATE TABLE form, written by a key writer and a foreign key writer or refused by a named function that writes the line for the quoted table, its nine statement writers, and every refusal sentence its writers print.
+The segment has one member per member of Studio's migration DDL row in that form, under the same name and with the same nesting, and every member is required.
+A value neither form admits is one `no-variant` refusal at the segment, as M-5 says of every union.
+Studio's census holds every member of every declaration to the engine's row, and finds no member of a row that its declaration leaves out.
+
+- schema `/$defs/migrationDdl`
+- schema `/$defs/migrationDdlRefused`
+- schema `/$defs/migrationDdlWritten`
+- schema `/$defs/createTable`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a migration DDL segment that refuses table DDL, one that writes it with a transaction wrapper, and one whose CREATE TABLE is refused are admitted"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a migration DDL member of the other form, a missing one or an unknown one is one no-variant refusal at the segment"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a create table of no listed kind, or with a member of the other kind, is one no-variant refusal at the segment"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's migration DDL is refused at its own pointer under validateEngine"
+- test `tests/unit/db/engine-declarations.test.ts` "migrationDdl states the row's table DDL, its refusal line, its transaction wrapper and its reasons in order"
+- test `tests/unit/db/engine-declarations.test.ts` "migrationDdl.createTable states the row's create table form"
+- test `tests/unit/db/engine-declarations.test.ts` "every member of a migration DDL row has its member in the declaration"
+- test `tests/unit/db/engine-declarations.test.ts` "the generator refuses, by name, a migration DDL member it has no place for"
+- test `tests/unit/db/engine-declarations.test.ts` "the generator refuses, by name, a table DDL or create table form that is neither refused nor written"
+- test `tests/unit/db/engine-declarations/migration-ddl-replay.test.ts` "every engine's migration DDL row, rebuilt from its declaration with each function resolved by its slot, renders the engine's golden migration text"
+
+### S-18 (normative): Text a migration writes from a declaration stays on its line
+
+The refusal is one comment line, `-- ` and text with no line break, up to 1024 characters.
+Each transaction wrapper statement is words separated by one space, ending in its one semicolon, up to 64 characters.
+Each reason is one line of 1 to 1024 characters, named once.
+So nothing a declaration states becomes a second statement of the migration.
+
+- schema `/$defs/migrationRefusal`
+- schema `/$defs/wrapperStatement`
+- schema `/$defs/transactionWrapper`
+- schema `/$defs/ddlReason`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a migration DDL refusal that is not one comment line is one no-variant refusal at the segment"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a migration DDL reason that is not one line, or is listed twice, is one no-variant refusal at the segment"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a transaction wrapper statement that is not words ending in one semicolon is one no-variant refusal at the segment"
+- test `tests/unit/db/engine-declarations/migration-ddl-replay.test.ts` "every engine's migration DDL row, rebuilt from its declaration with each function resolved by its slot, renders the engine's golden migration text"
+
+### S-19 (informative): Studio still reads its migration DDL rows, and where their functions run
+
+A migration DDL row is code beside its provider, read by Studio's registry.
+Each engine declaration states the same facts as data, which nothing but Studio's census reads until the schema diff reads admitted manifests.
+Studio runs every migration DDL function in the browser, in the schema diff panel, and none on its server.
+M-32 says no package function runs in a browser, so how a package's migration DDL functions are called is decided when Studio reads admitted manifests.
 
 ## Calls
 
@@ -1679,7 +1730,7 @@ The live check `tests/live/host-core-live.ts` holds the same rule against the bu
 
 These chapters are added by the changes that bring their enforcers:
 
-- Editor and SQL text: migration DDL, generators and editor languages.
+- Editor and SQL text: generators and editor languages.
 - Policy and MCP claims, each a request a provider makes that only Studio's review record grants, the agent overlay, and presentation (an icon and a colour).
 - The API report of each SDK entry.
 
@@ -1716,4 +1767,5 @@ Against the manifest sketch the design started from:
 - An engine's SQL writing row is one segment, `sqlWriting`, S-11.
 - A map keyed by type name is a list, the bare spellings as entries and the bare type families grouped by kind, S-12.
 - The type vocabulary is a fact of each engine, S-14.
+- An engine's migration DDL row is one segment, `migrationDdl`, in one of its two forms, S-17.
 - The sketch's frame cap is replaced by the byte budgets, since calls are unframed in process; the memory test transport keeps frames for tests only.

@@ -16,6 +16,7 @@ import {
   type BlockCommentRule,
   type BracketRule,
   compileManifestValidator,
+  type CreateTable,
   type CredentialWarning as ManifestCredentialWarning,
   type DdlTypeSpellings,
   type EngineDeclaration,
@@ -30,6 +31,7 @@ import {
   type InsertForm,
   type JwtAccessClaim,
   type MaintenanceOperation as ManifestMaintenanceOperation,
+  type MigrationDdl,
   type NonFiniteLiterals,
   type PlaceableFieldName,
   type ProcedureBodies,
@@ -54,6 +56,7 @@ import {
   buildEditor,
   buildEngineDeclaration,
   buildFieldRules,
+  buildMigrationDdl,
   buildSqlText,
   buildSqlWriting,
   CAPABILITY_READ_ENVIRONMENT,
@@ -111,6 +114,8 @@ import {
 import type { ConnectionStringPaste, ConnectionStringSpec } from "@/lib/db/connection-string/types";
 import { CREDENTIAL_WARNINGS, type CredentialWarning } from "@/lib/db/credential-warnings";
 import { ENGINE_FACETS } from "@/lib/db/engine-facets";
+import { MIGRATION_DDL } from "@/lib/db/migration-ddl";
+import type { CreateTableDdl, MigrationDdlSpec, TableDdlRefused, TableDdlWritten } from "@/lib/db/migration-ddl/types";
 import { EXECUTION_UI, executionUiFor } from "@/lib/db/execution-ui";
 import type { ConsentDeadline, ExecutionUiSpec } from "@/lib/db/execution-ui/types";
 import { createDatabaseProvider } from "@/lib/db/factory";
@@ -166,10 +171,12 @@ import type { DatabaseConnection, DatabaseType, HostPathField } from "@/lib/type
 import { readCensusCapabilities } from "../../helpers/census-capabilities";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 import { SPAN_STATEMENTS } from "./sql-grammar/fixtures";
+import { engineModules as migrationDdlModules } from "./migration-ddl/modules";
 import { ENGINE_MODULES } from "./sql-writing/engine-modules";
 import {
   DECLARED_SLOTS,
   type DeclaredSlotName,
+  type SlotTable,
   slotFunction,
   slotNameAt,
   valueAt,
@@ -381,6 +388,38 @@ function moduleSqlWriting(type: DatabaseType): object {
   return row;
 }
 
+/** The migration DDL modules the registry imports, read from the registry file's import statements as source. */
+const MIGRATION_DDL_MODULES = migrationDdlModules();
+
+/**
+ * Each engine's migration DDL row as its own module exports it, the module imported by its absolute path, never through
+ * the registry index the generator reads: every migration DDL slot the census's slot table names is resolved on this
+ * row.
+ */
+const MODULE_MIGRATION_DDL: ReadonlyMap<string, unknown> = new Map(
+  await Promise.all(
+    MIGRATION_DDL_MODULES.map(
+      async (engine) =>
+        [
+          engine.id,
+          ((await import(path.join(ROOT, engine.path))) as Record<string, unknown>)[engine.exportName],
+        ] as const,
+    ),
+  ),
+);
+
+/** The engine module's migration DDL row of `type`, which the census holds to be the registry's row. */
+function moduleMigrationDdl(type: DatabaseType): object {
+  const row = MODULE_MIGRATION_DDL.get(type);
+  if (typeof row !== "object" || row === null) throw new Error(`${type}: no migration DDL module exports a row`);
+  return row;
+}
+
+/** The row of `table` that `type`'s own engine module exports, on which the census resolves that table's slots. */
+function moduleRow(table: SlotTable, type: DatabaseType): object {
+  return table === "SQL_WRITING" ? moduleSqlWriting(type) : moduleMigrationDdl(type);
+}
+
 /** The kinds a bare type family may be, in the order of the schema's `typeFamilies`. */
 const TYPE_FAMILY_KINDS = Object.keys(SCHEMA.$defs.typeFamilies?.properties ?? {}) as InferredKind[];
 
@@ -390,25 +429,48 @@ const TYPE_FAMILY_KINDS = Object.keys(SCHEMA.$defs.typeFamilies?.properties ?? {
  * schema itself.
  */
 function schemaFunctionPaths(name: string, at = ""): string[] {
-  const definition = SCHEMA.$defs[name] as { properties?: Record<string, SchemaMember> } | undefined;
-  return Object.entries(definition?.properties ?? {}).flatMap(([member, schema]) => {
+  const definition = SCHEMA.$defs[name] as SchemaMember | undefined;
+  const refsOf = (schemas: readonly SchemaMember[]) =>
+    schemas.flatMap((branch) => (branch.$ref === undefined ? [] : [branch.$ref.replace("#/$defs/", "")]));
+  const members = Object.entries(definition?.properties ?? {}).flatMap(([member, schema]) => {
     const path = at === "" ? member : `${at}.${member}`;
-    const refs = [schema, ...(schema.oneOf ?? [])].flatMap((branch) =>
-      branch.$ref === undefined ? [] : [branch.$ref.replace("#/$defs/", "")],
-    );
+    const refs = refsOf([schema, ...(schema.oneOf ?? [])]);
     if (refs.includes("functionName")) return [path];
     return refs.flatMap((ref) => schemaFunctionPaths(ref, path));
   });
+  // A definition that is itself a union, such as migrationDdl or createTable, states its members in its branches, at
+  // the definition's own path.
+  const variants = refsOf(definition?.oneOf ?? []).flatMap((ref) => schemaFunctionPaths(ref, at));
+  return [...members, ...variants];
 }
 
-/** A member of a schema definition, as far as `schemaFunctionPaths` reads it. */
+/** A schema definition or a member of one, as far as `schemaFunctionPaths` reads it. */
 interface SchemaMember {
   readonly $ref?: string;
   readonly oneOf?: readonly SchemaMember[];
+  readonly properties?: Readonly<Record<string, SchemaMember>>;
 }
 
 /** The function members of a declaration's `sqlWriting`, by their dotted paths, read off the schema. */
 const SQL_WRITING_FUNCTION_PATHS = schemaFunctionPaths("sqlWriting");
+
+/** The function members of a declaration's `migrationDdl`, in either form, by their dotted paths, read off the schema. */
+const MIGRATION_DDL_FUNCTION_PATHS = schemaFunctionPaths("migrationDdl");
+
+/** Every function name a declaration's `migrationDdl` states, with the dotted path it is stated at. */
+function migrationDdlNames(d: EngineDeclaration): (readonly [path: string, name: string])[] {
+  return MIGRATION_DDL_FUNCTION_PATHS.flatMap((path) => {
+    const name = valueAt(d.migrationDdl, path);
+    return typeof name === "string" ? [[path, name] as const] : [];
+  });
+}
+
+/** The dotted paths of the slots of `table` in the census's slot table. */
+function tablePaths(table: SlotTable): string[] {
+  return Object.values(DECLARED_SLOTS)
+    .filter((slot) => slot.table === table)
+    .map(({ path }) => path);
+}
 
 /** Every function name a declaration's `sqlWriting` states, with the dotted path it is stated at. */
 function sqlWritingNames(d: EngineDeclaration): (readonly [path: string, name: string])[] {
@@ -823,6 +885,59 @@ describe("the committed declarations", () => {
 
     expect(() => buildSqlWriting("postgres", spec)).toThrow(
       `postgres: the bare type "${name}" has the family "json", which is not an inferred kind of the provider contract`,
+    );
+  });
+
+  test("the generator refuses, by name, a migration DDL member it has no place for", () => {
+    const key = `k${crypto.randomUUID().replaceAll("-", "")}`;
+    const refused = MIGRATION_DDL.kafka;
+    const written = MIGRATION_DDL.postgres;
+    const createTableRefused = MIGRATION_DDL.cassandra;
+    if (refused.tableDdl !== "refused") throw new Error("kafka's migration DDL row writes table DDL");
+    if (written.tableDdl !== "written" || written.transactionWrapper === null) {
+      throw new Error("postgres's migration DDL row writes no wrapped table DDL");
+    }
+    if (createTableRefused.tableDdl !== "written" || createTableRefused.createTable.kind !== "refused") {
+      throw new Error("cassandra's migration DDL row writes its CREATE TABLE");
+    }
+    const planted: [DatabaseType, MigrationDdlSpec, string][] = [
+      ["kafka", { ...refused, [key]: null }, key],
+      ["postgres", { ...written, [key]: null }, key],
+      ["postgres", { ...written, createTable: { ...written.createTable, [key]: null } }, `createTable.${key}`],
+      [
+        "cassandra",
+        { ...createTableRefused, createTable: { ...createTableRefused.createTable, [key]: null } },
+        `createTable.${key}`,
+      ],
+      [
+        "postgres",
+        { ...written, transactionWrapper: { ...written.transactionWrapper, [key]: null } },
+        `transactionWrapper.${key}`,
+      ],
+    ];
+
+    for (const [type, spec, member] of planted) {
+      expect(() => buildMigrationDdl(type, MIGRATION_DDL[type])).not.toThrow();
+      expect(() => buildMigrationDdl(type, spec)).toThrow(
+        `${type}: the migration DDL member "${member}" has no place in the engine declaration`,
+      );
+    }
+  });
+
+  test("the generator refuses, by name, a table DDL or create table form that is neither refused nor written", () => {
+    const row = MIGRATION_DDL.postgres;
+    if (row.tableDdl !== "written") throw new Error("postgres's migration DDL row writes no table DDL");
+    const partialTable = { ...row, tableDdl: "partial" } as unknown as MigrationDdlSpec;
+    const partialCreate = {
+      ...row,
+      createTable: { ...row.createTable, kind: "partial" },
+    } as unknown as MigrationDdlSpec;
+
+    expect(() => buildMigrationDdl("postgres", partialTable)).toThrow(
+      'postgres: the migration DDL member "tableDdl" is "partial", neither refused nor written',
+    );
+    expect(() => buildMigrationDdl("postgres", partialCreate)).toThrow(
+      'postgres: the migration DDL member "createTable.kind" is "partial", neither refused nor written',
     );
   });
 
@@ -2205,7 +2320,7 @@ describe("the census", () => {
       ),
     ).toEqual([]);
     // Vacuity: the schema states every slot of the table as a function member, and the declarations name them.
-    expect(sorted(SQL_WRITING_FUNCTION_PATHS)).toEqual(sorted(Object.values(DECLARED_SLOTS).map(({ path }) => path)));
+    expect(sorted(SQL_WRITING_FUNCTION_PATHS)).toEqual(sorted(tablePaths("SQL_WRITING")));
     expect(SHIPPED_DATABASE_TYPES.flatMap((type) => sqlWritingNames(declared(type))).length).toBeGreaterThan(190);
   });
 
@@ -2227,16 +2342,19 @@ describe("the census", () => {
     ).toEqual([]);
   });
 
-  test("every slot of the census's slot table is filled by some shipped SQL writing row", () => {
+  test("every slot of the census's slot table is filled by some shipped row of its table", () => {
     const names = Object.keys(DECLARED_SLOTS) as DeclaredSlotName[];
 
     expect(
       names.filter(
         (name) =>
-          !SHIPPED_DATABASE_TYPES.some((type) => typeof slotFunction(moduleSqlWriting(type), name) === "function"),
+          !SHIPPED_DATABASE_TYPES.some(
+            (type) => typeof slotFunction(moduleRow(DECLARED_SLOTS[name].table, type), name) === "function",
+          ),
       ),
     ).toEqual([]);
-    expect(names.length).toBe(13);
+    expect(names.length).toBe(25);
+    expect(names.filter((name) => DECLARED_SLOTS[name].table === "MIGRATION_DDL").length).toBe(12);
   });
 
   test("every member of an SQL writing row has its member in the declaration", () => {
@@ -2335,6 +2453,162 @@ describe("the census", () => {
     ).toEqual([]);
   });
 
+  test("the migration DDL modules the registry imports are the shipped engines, each exporting its registry row", () => {
+    expect(sorted(MIGRATION_DDL_MODULES.map(({ id }) => id))).toEqual(sorted(SHIPPED_DATABASE_TYPES));
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => MODULE_MIGRATION_DDL.get(type) !== MIGRATION_DDL[type])).toEqual([]);
+  });
+
+  test("migrationDdl states the row's table DDL, its refusal line, its transaction wrapper and its reasons in order", () => {
+    expect(
+      differing((type, d) => {
+        const row = MIGRATION_DDL[type];
+        const ddl = d.migrationDdl;
+        if (ddl.tableDdl !== row.tableDdl || !sameList(ddl.reasons, row.reasons)) return false;
+        if (row.tableDdl === "refused") {
+          return ddl.tableDdl === "refused" && ddl.refusal === row.refusal && ddl.transactionWrapper === null;
+        }
+        const wrapper = row.transactionWrapper;
+        const stated = ddl.transactionWrapper;
+        return wrapper === null
+          ? stated === null
+          : stated !== null && stated.begin === wrapper.begin && stated.commit === wrapper.commit;
+      }),
+    ).toEqual([]);
+    // Vacuity: some engine refuses and some writes, the wrappers hold two begin texts and a written engine has none,
+    // and a written engine lists more than one reason, so their order is read.
+    const segments = SHIPPED_DATABASE_TYPES.map((type) => declared(type).migrationDdl);
+    const written = segments.filter((ddl) => ddl.tableDdl === "written");
+    expect(segments.some((ddl) => ddl.tableDdl === "refused")).toBe(true);
+    const begins = written.flatMap((ddl) => (ddl.transactionWrapper === null ? [] : [ddl.transactionWrapper.begin]));
+    expect(new Set(begins).size).toBeGreaterThan(1);
+    expect(written.some((ddl) => ddl.transactionWrapper === null)).toBe(true);
+    expect(written.some((ddl) => ddl.reasons.length > 1)).toBe(true);
+  });
+
+  test("migrationDdl.createTable states the row's create table form", () => {
+    expect(
+      differing((type, d) => {
+        const row = MIGRATION_DDL[type];
+        const ddl = d.migrationDdl;
+        if (row.tableDdl === "refused") return ddl.tableDdl === "refused";
+        return ddl.tableDdl === "written" && ddl.createTable.kind === row.createTable.kind;
+      }),
+    ).toEqual([]);
+    // Vacuity: some engine refuses its CREATE TABLE and some writes it.
+    const kinds = SHIPPED_DATABASE_TYPES.flatMap((type) => {
+      const ddl = declared(type).migrationDdl;
+      return ddl.tableDdl === "written" ? [ddl.createTable.kind] : [];
+    });
+    expect(sorted([...new Set(kinds)])).toEqual(["refused", "written"]);
+  });
+
+  test("every name a migration DDL declaration states is its member's slot, and resolves through the census's slot table to the very function the engine's own module exports there", () => {
+    const slots = DECLARED_SLOTS as Readonly<Record<string, { readonly table: SlotTable; readonly path: string }>>;
+    expect(
+      SHIPPED_DATABASE_TYPES.flatMap((type) =>
+        migrationDdlNames(declared(type)).flatMap(([path, name]) => {
+          const held = valueAt(MIGRATION_DDL[type], path);
+          const isSlot = slots[name]?.table === "MIGRATION_DDL" && slots[name]?.path === path;
+          const resolved = isSlot ? slotFunction(moduleMigrationDdl(type), name as DeclaredSlotName) : undefined;
+          return typeof resolved === "function" && resolved === held ? [] : [`${type}:${path}=${name}`];
+        }),
+      ),
+    ).toEqual([]);
+    // Vacuity: the schema states every migration DDL slot of the table as a function member, and the declarations name
+    // them.
+    expect(sorted(MIGRATION_DDL_FUNCTION_PATHS)).toEqual(sorted(tablePaths("MIGRATION_DDL")));
+    expect(SHIPPED_DATABASE_TYPES.flatMap((type) => migrationDdlNames(declared(type))).length).toBeGreaterThan(160);
+  });
+
+  test("every function a migration DDL row holds is named at its slot by its engine's declaration, and no slot the row leaves empty is named", () => {
+    expect(
+      SHIPPED_DATABASE_TYPES.flatMap((type) =>
+        functionPaths(MIGRATION_DDL[type], "").flatMap((path) => {
+          const name = slotNameAt("MIGRATION_DDL", path);
+          return name !== undefined && valueAt(declared(type).migrationDdl, path) === name ? [] : [`${type}:${path}`];
+        }),
+      ),
+    ).toEqual([]);
+    expect(
+      SHIPPED_DATABASE_TYPES.flatMap((type) =>
+        migrationDdlNames(declared(type)).flatMap(([path, name]) =>
+          typeof valueAt(MIGRATION_DDL[type], path) === "function" ? [] : [`${type}:${path}=${name}`],
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  test("every member of a migration DDL row has its member in the declaration", () => {
+    const refusedDeclaredAt: Readonly<Record<keyof TableDdlRefused, string>> = {
+      tableDdl: "tableDdl",
+      refusal: "refusal",
+      transactionWrapper: "transactionWrapper",
+      reasons: "reasons",
+    };
+    const writtenDeclaredAt: Readonly<Record<keyof TableDdlWritten, string>> = {
+      tableDdl: "tableDdl",
+      transactionWrapper: "transactionWrapper",
+      createTable: "createTable",
+      columnDef: "columnDef",
+      createIndex: "createIndex",
+      dropIndex: "dropIndex",
+      addForeignKey: "addForeignKey",
+      dropForeignKey: "dropForeignKey",
+      addColumn: "addColumn",
+      dropColumn: "dropColumn",
+      modifyColumn: "modifyColumn",
+      dropTable: "dropTable",
+      reasons: "reasons",
+    };
+    const createTableRefusedAt: Readonly<Record<keyof Extract<CreateTableDdl, { kind: "refused" }>, string>> = {
+      kind: "kind",
+      createTableRefusal: "createTableRefusal",
+    };
+    const createTableWrittenAt: Readonly<Record<keyof Extract<CreateTableDdl, { kind: "written" }>, string>> = {
+      kind: "kind",
+      primaryKey: "primaryKey",
+      foreignKey: "foreignKey",
+    };
+    const wrapperDeclaredAt: Readonly<Record<keyof NonNullable<TableDdlWritten["transactionWrapper"]>, string>> = {
+      begin: "begin",
+      commit: "commit",
+    };
+    const unplaced = (row: object, declaredAt: object, at: string) =>
+      Object.keys(row)
+        .filter((member) => !Object.hasOwn(declaredAt, member))
+        .map((member) => `${at}${member}`);
+    const placed = (declaration: object, declaredAt: object) =>
+      Object.values(declaredAt).every((member) => Object.hasOwn(declaration, member));
+    const createTableAt = (kind: CreateTableDdl["kind"]) =>
+      kind === "refused" ? createTableRefusedAt : createTableWrittenAt;
+
+    expect(
+      SHIPPED_DATABASE_TYPES.flatMap((type) => {
+        const row = MIGRATION_DDL[type];
+        if (row.tableDdl === "refused")
+          return unplaced(row, refusedDeclaredAt, "").map((member) => `${type}.${member}`);
+        return [
+          ...unplaced(row, writtenDeclaredAt, ""),
+          ...unplaced(row.createTable, createTableAt(row.createTable.kind), "createTable."),
+          ...(row.transactionWrapper === null
+            ? []
+            : unplaced(row.transactionWrapper, wrapperDeclaredAt, "transactionWrapper.")),
+        ].map((member) => `${type}.${member}`);
+      }),
+    ).toEqual([]);
+    expect(
+      differing((_type, d) => {
+        const ddl = d.migrationDdl;
+        if (ddl.tableDdl === "refused") return placed(ddl, refusedDeclaredAt);
+        return (
+          placed(ddl, writtenDeclaredAt) &&
+          placed(ddl.createTable, createTableAt(ddl.createTable.kind)) &&
+          (ddl.transactionWrapper === null || placed(ddl.transactionWrapper, wrapperDeclaredAt))
+        );
+      }),
+    ).toEqual([]);
+  });
+
   test("id is the file's type-id", () => {
     expect(differing((type, d) => d.id === type)).toEqual([]);
   });
@@ -2407,7 +2681,11 @@ describe("the vocabularies", () => {
       Equal<keyof TypeFamilies, InferredKind>,
       Equal<keyof NonFiniteLiterals, NonFiniteWord>,
       Equal<InsertForm, ExportSpec["insertForm"]>,
+      Equal<MigrationDdl["tableDdl"], MigrationDdlSpec["tableDdl"]>,
+      Equal<CreateTable["kind"], CreateTableDdl["kind"]>,
     ] = [
+      true,
+      true,
       true,
       true,
       true,
@@ -2435,7 +2713,7 @@ describe("the vocabularies", () => {
       true,
     ];
 
-    expect<readonly boolean[]>(parity).toEqual(Array.from({ length: 25 }, () => true));
+    expect<readonly boolean[]>(parity).toEqual(Array.from({ length: 27 }, () => true));
   });
 
   test("the explain formats, the query dialects and the generic fence tags are Studio's", () => {

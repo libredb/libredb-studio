@@ -264,5 +264,13 @@
       "createTableKey": null
     },
     "insertDocuments": null
+  },
+  "migrationDdl": {
+    "tableDdl": "refused",
+    "refusal": "-- Apache Druid: Cannot generate table DDL. Druid SQL has no ALTER TABLE; rewrite the datasource with REPLACE INTO through an MSQ task.",
+    "transactionWrapper": null,
+    "reasons": [
+      "Druid SQL has no ALTER TABLE; rewrite the datasource with REPLACE INTO through an MSQ task."
+    ]
   }
 }
