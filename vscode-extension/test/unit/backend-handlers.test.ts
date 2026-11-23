@@ -49,6 +49,7 @@ import {
   createHandlers,
   invalidParams,
   nodeMeetsFloor,
+  RUN_CONFIRMATION_USER,
   RUN_ROUTE,
   refusal,
   registerHandlers,
@@ -924,6 +925,7 @@ describe("the confirmation gate on query/run (FND-5 6e)", () => {
     }
     assert.equal(page.confirmation, "unconfirmed");
     assert.equal(ran(provider), true);
+    assert.equal(RUN_CONFIRMATION_USER, "vscode-extension");
     assert.equal(lines.length, 1);
     assert.match(
       lines[0],
