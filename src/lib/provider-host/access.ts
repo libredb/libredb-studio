@@ -7,7 +7,9 @@
  * ended is `StudioTimeoutRefusal` with the caller's sentence, which names the wait. A row no page can hold is
  * `StudioByteBudgetRefusal`, naming the page's bytes and the row's size. A refusal before the call was made answers
  * outcome `not-sent`, written with `markNotSent`, since nothing reached the database; once the provider was called the
- * outcome stays `unknown`, since the statement may have run.
+ * outcome stays `unknown`, since the statement may have run. A wait for the provider's open that ended
+ * (`openStopError`) is `QueryCancelledError` when the caller left and `StudioTimeoutRefusal` with the caller's sentence
+ * otherwise, both `not-sent`, since no statement was sent.
  *
  * Every other refusal is a defect of Studio's own bridge, which honours every request field and offers no scope, so no
  * provider can cause one: a plain `Error` naming each refusal's sentence, answered 500. Two rows of the host's mapping
@@ -68,4 +70,15 @@ export function refusalError(record: RefusedRecord, view: CallerView): Error {
 /** The error a stopped record answers, this bundle's class, outcome unknown: the statement may have run. */
 export function stopError(reason: unknown, view: CallerView): QueryCancelledError | StudioTimeoutRefusal {
   return endedError(callerLeft(reason, view), view);
+}
+
+/**
+ * The error a call's wait for its provider's open answers when that wait ended with `reason`, this bundle's class:
+ * `QueryCancelledError` when the reason is the caller's own, otherwise `StudioTimeoutRefusal` with the caller's
+ * sentence, which names the open's allowance. Both are outcome not-sent: the provider was never handed the statement.
+ */
+export function openStopError(reason: unknown, view: CallerView): QueryCancelledError | StudioTimeoutRefusal {
+  const error = endedError(callerLeft(reason, view), view);
+  markNotSent(error);
+  return error;
 }

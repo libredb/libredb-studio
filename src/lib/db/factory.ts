@@ -57,6 +57,7 @@ import {
   discardFlights,
   type Flight,
   openOnce,
+  type OpenWait,
 } from "@/lib/provider-host/core/open-once";
 import {
   settleWithin,
@@ -1020,8 +1021,8 @@ interface OpenMeta {
 /**
  * Logs an open that failed after every caller stopped waiting for it, by the connection id and the error's kind and
  * code, never its text, which may carry what the provider said. The open admitted nothing, so nothing else is left to
- * do. Today every caller of the two caches waits until its open settles, so only a caller with a wait of its own can
- * leave one; exported for the tests.
+ * do. A caller leaves an open only through a wait of its own, `getOrCreateProvider`'s fourth argument, which the
+ * editor's query and cancel pass; exported for the tests.
  */
 export function logUnclaimedOpen(error: unknown, flight: Flight<OpenMeta>): void {
   const id = flight.meta.connectionId;
@@ -1136,7 +1137,9 @@ async function reusableEntry(
 /**
  * The open under `key` in `flights`, shared with every concurrent caller (`openOnce`), for `connection`. A caller that
  * joined an open of a connection with another query timeout is not handed that provider: it re-reads the cache once,
- * which takes the timeout path of `reusableEntry`, and then opens at most once more, so no caller loops.
+ * which takes the timeout path of `reusableEntry`, and then opens at most once more, so no caller loops. With `wait`,
+ * the caller stops waiting for either open when `wait.signal` aborts, with its reason, and the open goes on for the
+ * others and admits itself.
  */
 async function sharedOpen(
   cache: Map<string, CachedProvider>,
@@ -1145,10 +1148,11 @@ async function sharedOpen(
   connection: DatabaseConnection,
   meta: OpenMeta,
   open: (flight: Flight<OpenMeta>) => Promise<DatabaseProvider>,
+  wait?: OpenWait,
 ): Promise<DatabaseProvider> {
-  const shared = await openOnce(flights, key, meta, open);
+  const shared = await openOnce(flights, key, meta, open, wait);
   if (shared.config.queryTimeout === connection.queryTimeout) return shared;
-  return (await reusableEntry(cache, key, connection)) ?? openOnce(flights, key, meta, open);
+  return (await reusableEntry(cache, key, connection)) ?? openOnce(flights, key, meta, open, wait);
 }
 
 /**
@@ -1615,6 +1619,12 @@ function ownerContext(owner: string | undefined, requester: EditorExecutionConte
  *   per file shares that handle whatever the owner (`providerOwner`).
  *   A `readOnly` in it is refused (`DatabaseConfigError`): this cache holds writable providers,
  *   and a read-only one comes from `createDatabaseProvider` or an execution profile.
+ * @param wait - The caller's own wait for the open (docs/providers/CONTRACT.md, clause C-44): when `wait.signal`
+ *   aborts, this call rejects with its reason, by reference, and the open goes on for every other caller, admits its
+ *   provider into the cache once, or, when it fails with no caller left, is logged by its connection, kind and code
+ *   (`logUnclaimedOpen`). A signal already aborted rejects before any open is started or joined. The checks, the cache
+ *   key and a cached entry's reuse run before the open and are not bounded by it. Without it the call waits until the
+ *   open settles.
  * @returns Cached or new DatabaseProvider instance
  * @throws UnknownProviderError if the connection's type is absent or names no provider, before the cache key, the
  *   lookup and any tunnel (FND-1)
@@ -1623,6 +1633,7 @@ export async function getOrCreateProvider(
   connection: DatabaseConnection,
   options: ProviderOptions = {},
   execution: EditorExecutionContext = {},
+  wait?: OpenWait,
 ): Promise<DatabaseProvider> {
   // First, ahead of the cache lookup and of any tunnel (#1089): see assertReadOnlyHonoured. The id
   // refusal shares the place: the cache key length-frames connection.id, so a missing id must be
@@ -1679,6 +1690,7 @@ export async function getOrCreateProvider(
         { cacheKey, owner, allowExternalFileAccess, tunnelDecision },
         flight,
       ),
+    wait,
   );
 }
 

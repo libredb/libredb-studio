@@ -1319,7 +1319,9 @@ A caller's wait for an open is ended only by its own signal, with that signal's 
 An open that settles after every caller left is admitted exactly once, by the open itself.
 An open a removal or a close of the caches overtook closes what it opened exactly once, admits nothing, and answers its callers that the connection was closed while it was opening, outcome not-sent.
 A close of the caches overtakes every open that settles while it runs, one that started after it began included, so it leaves no provider admitted and drops none without a close.
-An open that fails with no caller left is handled by the host, never left as a detached rejection.
+An open that fails with no caller left is handled by the host, never left as a detached rejection: it is logged by its connection, the error's kind and its code, never its text.
+A caller passes its own wait as the fourth argument of `getOrCreateProvider`.
+The editor's query and its cancel, in the routes and in the VS Code backend, wait for their provider's open at most `OPEN_WAIT_MS`, the pools' 60 s connect bound plus 10 s, or until their caller leaves, whichever comes first.
 
 - test `tests/unit/lib/provider-host/core/open-once.test.ts` "concurrent callers of one key share one open"
 - test `tests/unit/lib/provider-host/core/open-once.test.ts` "a failed open reaches every caller and frees its key"
@@ -1336,6 +1338,17 @@ An open that fails with no caller left is handled by the host, never left as a d
 - test `tests/isolated/factory.test.ts` "a cache clear closes an open in flight and names one still opening at the cut"
 - test `tests/isolated/factory.test.ts` "an open that settles while the caches close is closed once, admits nothing and answers not-sent, in either cache"
 - test `tests/integration/db/factory-open-once.test.ts` "two concurrent first writes for one DuckDB connection both reach the file"
+- test `tests/isolated/factory.test.ts` "a caller whose wait ends stops waiting with its reason, and the others still get the open"
+- test `tests/isolated/factory.test.ts` "an open every caller stopped waiting for is admitted once and served from the cache"
+- test `tests/isolated/factory.test.ts` "an open that fails after every caller stopped waiting is logged by its connection, kind and code, never its text"
+- test `tests/isolated/factory.test.ts` "a caller whose wait already ended builds and connects nothing"
+- test `tests/unit/lib/api/editor-open-bounds.test.ts` "an open that never settles is cut at the call's open allowance, not-sent"
+- test `tests/api/db/query.test.ts` "the provider opens under the request's own open wait"
+- test `tests/api/db/cancel.test.ts` "a cancel that leaves while its connection opens answers 499 not-sent and cancels nothing"
+- test `tests/api/db/query-open-wait.test.ts` "a request that leaves while its connection opens is answered at once, and the open's later failure is logged by connection, kind and code"
+- test `vscode-extension/test/unit/backend-handlers.test.ts` "query/run opens its provider under the run's own open wait, and a token cancelled while it opens answers QUERY_CANCELLED not-sent"
+- test `vscode-extension/test/unit/backend-handlers.test.ts` "query/cancel takes its request's cancellation as its caller signal, while the provider opens and while the engine answers"
+- test `vscode-extension/test/unit/backend-handlers.test.ts` "query/cancel with a token already cancelled calls nothing"
 
 ### C-45 (normative): Teardown under fixed deadlines
 
@@ -1443,6 +1456,7 @@ A refusal or a stop whose reason is the caller's own signal's reason is `QueryCa
 A refusal of a passed deadline or of any other aborted signal, and any other stop, is `StudioTimeoutRefusal`, with Studio's sentence naming the wait.
 A row no page can hold is `StudioByteBudgetRefusal`, naming the page's bytes and the row's size, outcome unknown, since the statement ran.
 A refusal before the call was made answers outcome not-sent, E-5; once the provider was called the outcome stays unknown.
+A call's wait for its provider's open that ended answers `QueryCancelledError` when its reason is the caller's own and `StudioTimeoutRefusal` naming the open otherwise, both outcome not-sent, since no statement was sent; any other failure of the open passes as the same object.
 Every other refusal is a defect of Studio's own bridge, which honours every request field and offers no scope: a plain error naming each refusal's sentence.
 A refused offset and refused params of a session that refuses a field arrive with the first such session.
 
@@ -1451,6 +1465,39 @@ A refused offset and refused params of a session that refuses a field arrive wit
 - test `tests/unit/lib/provider-host/access.test.ts` "a row no page can hold is answered as StudioByteBudgetRefusal, outcome unknown"
 - test `tests/unit/lib/provider-host/access.test.ts` "any other refusal is a host defect named by its rule"
 - test `tests/unit/lib/provider-host/access.test.ts` "every class the accessor builds is the calling bundle's own"
+- test `tests/unit/lib/api/editor-query.test.ts` "the open allowance is the pools' acquire bound plus ten seconds"
+- test `tests/unit/lib/api/editor-query.test.ts` "an open is handed the call's own wait, which the caller's leaving or the allowance ends"
+- test `tests/unit/lib/api/editor-query.test.ts` "an open the caller left answers QueryCancelledError, not-sent"
+- test `tests/unit/lib/api/editor-query.test.ts` "an open past its allowance answers StudioTimeoutRefusal naming the open, not-sent"
+- test `tests/unit/lib/api/editor-query.test.ts` "an open's own failure passes as the same object"
+- test `tests/api/db/query.test.ts` "a request that leaves while its connection opens answers 499 not-sent and runs nothing"
+
+### C-52 (normative): One host core per process
+
+A process holds one host core, created by `createHostCore` and installed under a registered symbol by the process's composition root, which the install names: the server's instrumentation and the VS Code backend's entry.
+The core holds plain functions, the console calls, and constructs no class, so a caller in any bundle of the process runs the core another bundle installed.
+The classes a caller tests with `instanceof` and the ports that read them stay the caller's, built per call, C-51.
+A call made before the core is installed fails by name, as a defect of how the process was composed, and nothing reaches the provider.
+A second install from the same composition root keeps the first core and changes nothing, so the server's `register()` may run again in one process.
+A second install from another composition root is refused by name, naming both roots, and the first core stays, so no second core is ever used.
+The library surface never reads the installed core, so an embedder composes nothing.
+The live check `tests/live/host-core-live.ts` holds the same rule against the built standalone server, in CI's "Host Core Live Check".
+
+- test `tests/unit/lib/provider-host/core/host-core.test.ts` "the host core holds the core's console calls, frozen, and nothing else"
+- test `tests/unit/lib/provider-host/instance.test.ts` "the host core is installed once per process, under a registered symbol"
+- test `tests/unit/lib/provider-host/instance.test.ts` "a second install from the same composition root keeps the first core, and throws nothing"
+- test `tests/unit/lib/provider-host/instance.test.ts` "a second install from another composition root is refused by name, naming both roots, and the first core stays"
+- test `tests/unit/instrumentation.test.ts` "register() installs the shutdown handler once, and before the auth bootstrap"
+- test `tests/unit/lib/provider-host/instance.test.ts` "a call made with no host core installed fails by name, and nothing reaches the provider"
+- test `tests/unit/lib/provider-host/instance.test.ts` "only a composition root creates the host core, and only the core reaches its console calls"
+- test `tests/unit/lib/provider-host/instance.test.ts` "no module the library entries reach reads the host core, so an embedder needs none"
+- test `tests/unit/instrumentation.test.ts` "register() installs the provider host core once, after the boot checks"
+- test `tests/unit/instrumentation.test.ts` "a boot a check refuses installs no host core"
+- test `vscode-extension/test/unit/backend-start.test.ts` "installs the provider host core, then starts the backend on its own process, which under Mocha has no IPC channel"
+- test `tests/unit/lib/provider-host/cross-bundle.test.ts` "the two bundles hold two copies of Studio's errors, as instrumentation and a route do"
+- test `tests/unit/lib/provider-host/cross-bundle.test.ts` "a route runs the host core instrumentation installed, and builds none of its own"
+- test `tests/unit/lib/provider-host/cross-bundle.test.ts` "a refusal the host core answers as a record becomes the route bundle's own class"
+- test `tests/unit/lib/provider-host/cross-bundle.test.ts` "a provider error the route bundle built passes through the host core by reference"
 
 ## Not yet in this contract
 
@@ -1475,6 +1522,7 @@ Against the manifest sketch the design started from:
 - The error kinds keep the names of Studio's error record, E-1.
 - Facet names keep Studio's own vocabulary, the seven monitoring panels, the maintenance operations and the curated agent readings, rather than new dotted names.
 - The host's own rules for opening and closing sessions and for the legacy provider interface are clauses of the calls chapter, C-44 to C-46, since the host serves today's providers through them.
+- The host core is one instance per process, installed by the process's composition root, C-52, where the sketch named no instance.
 - The connection dialog's per-field facts, its labels, hints, placeholders, placement, choices, conditions and absent values, are lists of entries that each name their field, rather than maps keyed by field, M-24.
 - A condition is one field equal to one value, with no list of values and no combination of conditions in this contract, M-25.
 - A `calls` segment declares the package's optional console facets and the request fields its execute honours.

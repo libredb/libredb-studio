@@ -536,6 +536,9 @@ A statement still unanswered at the server's deadline, on any engine, is answere
 That deadline is how a statement ends on an engine whose provider applies no statement timeout of its own.
 Whether a provider applies the statement timeout itself, and whether it can cancel a run, is in its engine's document under [`docs/providers/`](providers/); each document whose provider applies none states this deadline and whether the run is cancelled.
 A request whose deadline has already passed when the statement is to start runs nothing and answers the same 504 with `outcome: "not-sent"`.
+Before the statement, the server waits for the connection to open at most 70 s: the pools' 60 s connect bound (`acquireTimeout`) plus 10 s for the provider's own connect failure to arrive, so a provider that bounds its connect answers in its own words.
+A connection still not open at that point answers `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "not-sent"`, "The connection did not open within 70 seconds, so Studio stopped waiting for it and sent nothing.".
+The statement's own deadline starts once the connection is open, so it stays the statement timeout plus 10 s.
 
 A page holds at most 32 MiB of rows, each measured as the UTF-8 length of its JSON text.
 A result larger than that is answered with the rows that fit, `rowCount` and `pagination.totalReturned` naming how many, and `pagination.wasLimited` true.
@@ -545,8 +548,9 @@ A single row larger than 32 MiB answers `400 QUERY_ERROR` with `kind: "studio-by
 A caller that goes away while the statement runs, a browser that drops the request, is answered at once with `499 QUERY_CANCELLED` and `outcome: "unknown"`, and the server sends the run's cancel under the `queryId` the request named, when the provider can cancel.
 The statement's own end arrives after that answer; a failure there is logged by its kind and code, never its text, except the engine's cancellation answer to the cancel the server sent, which is the run's expected end.
 A request already aborted when the statement is to start runs nothing and answers `499 QUERY_CANCELLED` with `outcome: "not-sent"`.
-`POST /api/db/cancel` runs through the same host core: a cancel request already aborted calls nothing and answers `499 QUERY_CANCELLED`, and the server waits for the engine's cancel at most 10 s.
-When several of its checks fail, a cancel request gets the answer of the first, in this order: the session and rate limit guard; a body that is not a JSON object, `400`; the connection's resolution, with its own refusals; a missing `queryId`, `400`; a `queryId` that is not a string, `400`; the provider's build, with its own errors; a request already aborted, `499 QUERY_CANCELLED`; a provider that cannot cancel, `400` "Query cancellation is not supported for this database type".
+A caller that goes away while its connection opens is answered at once with `499 QUERY_CANCELLED` and `outcome: "not-sent"`; the open goes on, so the next request finds the connection open, and an open that then fails is logged by the connection's id, the error's kind and its code, never its text.
+`POST /api/db/cancel` runs through the same host core: a cancel request already aborted calls nothing and answers `499 QUERY_CANCELLED`, it waits for its connection to open within the same 70 s and while the request stays, and the server waits for the engine's cancel at most 10 s.
+When several of its checks fail, a cancel request gets the answer of the first, in this order: the session and rate limit guard; a body that is not a JSON object, `400`; the connection's resolution, with its own refusals; a missing `queryId`, `400`; a `queryId` that is not a string, `400`; the provider's checks before its open, with their own errors; a request already aborted, `499 QUERY_CANCELLED`, answered at the open, before any provider is built, unless the provider is already open; the provider's open, with its own errors; a provider that cannot cancel, `400` "Query cancellation is not supported for this database type".
 So a request already aborted for an engine that cannot cancel answers `499`.
 
 **The database a run reads (optional):**

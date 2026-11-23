@@ -15,7 +15,7 @@
  * Node 24's `JSON.parse` quotes the first bytes of the text it refuses, which Bun's does not; the SyntaxError cases
  * raise that exact message from the seams, so the boundary is held to it under Bun too.
  */
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import * as actualDb from "@/lib/db";
 import { TransportError } from "@/lib/db/http/node-transport";
@@ -34,6 +34,12 @@ import {
   startFakePeer,
 } from "../../../helpers/rabbitmq-fake-peer";
 import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The editor query reads the process's host core (src/lib/provider-host/instance.ts), so this file composes its own.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 const SENTINEL = "PEER-SENTINEL";
 const CONNECTION = rabbitmqConnection();

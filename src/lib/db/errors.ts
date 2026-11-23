@@ -435,8 +435,9 @@ export class TimeoutError extends DatabaseError {
 }
 
 /**
- * A time limit Studio set and the work outlasted: the agent's statistics read, and the host's deadline on a provider
- * call (src/lib/provider-host/access.ts). It exists only to mark Studio's sentence apart from a provider's timeout, so
+ * A time limit Studio set and the work outlasted: the agent's statistics read, the host's deadline on a provider's
+ * execute or cancel call (`refusalError` and `stopError` in src/lib/provider-host/access.ts), and an editor call's
+ * allowance for its provider's open (`openStopError`, the same module). It exists only to mark Studio's sentence apart from a provider's timeout, so
  * the agent says this one in Studio's voice and an answer names its kind, `studio-timeout-refusal`. Its `name` stays
  * `TimeoutError`, so a log line, an error body and a reader of the name see no difference. No provider constructs it;
  * tests/unit/db/operations/provider-text-census.test.ts holds that.

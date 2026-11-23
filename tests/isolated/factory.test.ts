@@ -473,11 +473,12 @@ const {
 // Existing SQLite cache tests exercise trusted callers. Explicitly grant their file posture;
 // denied callers are tested separately against the unwrapped factory below.
 function getOrCreateProvider(...args: Parameters<typeof rawGetOrCreateProvider>) {
-  const [connection, options, execution] = args;
+  const [connection, options, execution, wait] = args;
   return rawGetOrCreateProvider(
     connection,
     options,
     execution ?? (connection.type === "sqlite" ? { allowExternalFileAccess: true } : {}),
+    wait,
   );
 }
 // The same for the profiled path: existing SQLite agent tests exercise trusted requesters, and the
@@ -2458,6 +2459,142 @@ describe("one open in flight per cache key", () => {
       ]);
     } finally {
       warn.mockRestore();
+    }
+  });
+});
+
+// ─── a caller's own wait for an open (docs/providers/CONTRACT.md, clause C-44) ──────────────────────────────────
+
+describe("a caller's own wait for an open", () => {
+  /**
+   * Resolves once `condition` holds, read after each turn of the event loop, never a timer; throws naming `what` after
+   * `limit` turns, so a regression fails by name instead of waiting for the test's timeout.
+   */
+  async function until(condition: () => boolean, what: string, limit = 2_000): Promise<void> {
+    for (let turn = 0; !condition(); turn += 1) {
+      if (turn === limit) throw new Error(`${what} did not happen within ${limit} turns of the event loop`);
+      // oxlint-disable-next-line no-await-in-loop -- each turn reads the condition again after what it let run.
+      await turns(1);
+    }
+  }
+
+  test("a caller whose wait ends stops waiting with its reason, and the others still get the open", async () => {
+    const conn = makeConnection("postgres", { id: "open-wait-leaves" });
+    const gate = await gateConnects(conn);
+    const digests = trackDigests();
+    try {
+      const leaving = new AbortController();
+      const staying = getOrCreateProvider(conn);
+      const left = getOrCreateProvider(conn, {}, {}, { signal: leaving.signal }).catch((error: unknown) => error);
+      await gate.reached(1);
+      await digests.settled();
+      await turns(20);
+      const reason = new Error(`left ${randomUUID()}`);
+      leaving.abort(reason);
+      expect(await left).toBe(reason);
+      gate.open();
+      const provider = await staying;
+      expect(gate.connected).toHaveLength(1);
+      expect(provider).toBe(gate.connected[0]);
+      expect(getProviderCacheStats()).toEqual({ size: 1, connections: ["open-wait-leaves"] });
+    } finally {
+      gate.restore();
+      digests.restore();
+    }
+  });
+
+  test("an open every caller stopped waiting for is admitted once and served from the cache", async () => {
+    const conn = makeConnection("postgres", { id: "open-wait-admitted" });
+    const gate = await gateConnects(conn);
+    const digests = trackDigests();
+    try {
+      const waits = [new AbortController(), new AbortController()];
+      const callers = waits.map((wait) =>
+        getOrCreateProvider(conn, {}, {}, { signal: wait.signal }).catch((error: unknown) => error),
+      );
+      await gate.reached(1);
+      await digests.settled();
+      await turns(20);
+      const reasons = waits.map((wait) => {
+        const reason = new Error(`left ${randomUUID()}`);
+        wait.abort(reason);
+        return reason;
+      });
+      expect(await Promise.all(callers)).toEqual(reasons);
+      gate.open();
+      await until(() => getProviderCacheStats().size === 1, "the open's admission");
+      const served = await getOrCreateProvider(conn);
+      expect(gate.connected).toHaveLength(1);
+      expect(served).toBe(gate.connected[0]);
+      expect(getProviderCacheStats()).toEqual({ size: 1, connections: ["open-wait-admitted"] });
+    } finally {
+      gate.restore();
+      digests.restore();
+    }
+  });
+
+  test("an open that fails after every caller stopped waiting is logged by its connection, kind and code, never its text", async () => {
+    const conn = makeConnection("postgres", { id: "open-wait-unclaimed" });
+    const gate = await gateConnects(conn);
+    const digests = trackDigests();
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown) => rejections.push(reason);
+    process.on("unhandledRejection", onRejection);
+    let logged: () => void = () => {};
+    const unclaimedLogged = new Promise<void>((resolve) => {
+      logged = resolve;
+    });
+    const warn = spyOn(logger, "warn").mockImplementation((message: string) => {
+      if (message.startsWith("[DB] An open of")) logged();
+    });
+    try {
+      const wait = new AbortController();
+      const caller = getOrCreateProvider(conn, {}, {}, { signal: wait.signal }).catch((error: unknown) => error);
+      await gate.reached(1);
+      await digests.settled();
+      await turns(20);
+      const reason = new Error(`left ${randomUUID()}`);
+      wait.abort(reason);
+      expect(await caller).toBe(reason);
+      const marker = randomUUID();
+      gate.fail(new ConnectionError(`refused by ${marker}`, "postgres"));
+      await unclaimedLogged;
+      await turns(2);
+
+      const unclaimed = warn.mock.calls.filter(([message]) => String(message).startsWith("[DB] An open of"));
+      expect(unclaimed).toEqual([
+        [
+          "[DB] An open of open-wait-unclaimed failed after every caller stopped waiting for it, so nothing was admitted.",
+          { connectionId: "open-wait-unclaimed", kind: "connection", code: "CONNECTION_ERROR" },
+        ],
+      ]);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(marker);
+      expect(rejections).toEqual([]);
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      process.off("unhandledRejection", onRejection);
+      warn.mockRestore();
+      gate.restore();
+      digests.restore();
+    }
+  });
+
+  test("a caller whose wait already ended builds and connects nothing", async () => {
+    const conn = makeConnection("postgres", { id: "open-wait-ended" });
+    const gate = await gateConnects(conn);
+    try {
+      const wait = new AbortController();
+      const reason = new Error(`left ${randomUUID()}`);
+      wait.abort(reason);
+
+      const caught = await getOrCreateProvider(conn, {}, {}, { signal: wait.signal }).catch((error: unknown) => error);
+
+      expect(caught).toBe(reason);
+      expect(gate.connected).toHaveLength(0);
+      expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      gate.restore();
     }
   });
 });

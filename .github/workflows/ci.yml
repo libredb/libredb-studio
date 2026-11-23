@@ -1204,6 +1204,53 @@ jobs:
         env:
           LIBREDB_LIVE_STANDALONE_DIR: ${{ runner.temp }}/standalone
 
+  # The built standalone server's routes answer through the provider host core
+  # its boot installed, in their own error classes: a statement, a refusal the
+  # core answers as a record, and a provider error passed through it
+  # (docs/providers/CONTRACT.md, clause C-52; tests/live/host-core-live.ts). An
+  # inline SQLite connection in a temporary directory, so no database service.
+  host-core-live:
+    name: Host Core Live Check (Node ${{ matrix.node-version }})
+    needs: [engine-payload]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["24", "26"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
+      - name: Setup Node ${{ matrix.node-version }}
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.4.4"
+
+      - name: Install dependencies
+        uses: ./.github/actions/bun-install
+
+      - name: Download payload artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: engine-smoke-payload
+          path: dist-payload
+
+      - name: Extract payload
+        run: |
+          mkdir -p "$RUNNER_TEMP/standalone"
+          tar -xzf dist-payload/libredb-studio-standalone-*.tar.gz -C "$RUNNER_TEMP/standalone" --strip-components=1
+
+      - name: Run host core live check
+        run: bun tests/live/host-core-live.ts
+        env:
+          LIBREDB_LIVE_STANDALONE_DIR: ${{ runner.temp }}/standalone
+
   # Browser E2E of the embedded samples against the PACKAGED artifact: the
   # tarball channel (extract + node server.js) and the npx channel
   # (bin/studio.js --archive). The regular e2e job covers the same spec

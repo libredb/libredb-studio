@@ -5,7 +5,7 @@
  *
  * Every provider here is a fake the test builds; every marker is generated at run time and no timer runs.
  */
-import { describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import {
   BATCH_MAX_BYTES,
@@ -25,6 +25,12 @@ import { appendedBoundNote } from "@/lib/db/utils/query-limiter";
 import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
 import type { QueryResult } from "@/lib/types";
 import { createMockProvider } from "../../../helpers/mock-provider";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The editor query reads the process's host core (src/lib/provider-host/instance.ts), so this file composes its own.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 const HOUR = 3_600_000;
 const marker = (): string => randomUUID();

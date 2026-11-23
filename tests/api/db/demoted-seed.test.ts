@@ -20,6 +20,12 @@ import { clearRateLimitState } from "@/lib/api/rate-limit";
 import type { NodeRequest, NodeResponse, NodeTransportOptions } from "@/lib/db/http/node-transport";
 import { resetCache } from "@/lib/seed";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The editor query reads the process's host core (src/lib/provider-host/instance.ts), so this file composes its own.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 type Wire = Record<string, unknown>;
 

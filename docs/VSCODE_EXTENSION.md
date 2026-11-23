@@ -120,6 +120,7 @@ In practice that is the first expand of a connection in the tree, the first Add 
 The supervisor sends `initialize` with `PROTOCOL_VERSION`; the child answers its runtime and enabled providers, or refuses with `PROTOCOL_MISMATCH` or `RUNTIME_UNSUPPORTED` (a Node older than the root `package.json` `engines.node`).
 `PROTOCOL_VERSION` is 2 since the child holds the run confirmation contract (section 5): a host and a child of different versions refuse each other, so a host that asks no question never meets a child that runs what it is sent.
 Concurrent callers share one start.
+The child's entry, `src/backend/main.ts`, is its composition root: it installs the process's one provider host core (`installHostCore(createHostCore(), "vscode-backend")`, `src/lib/provider-host/instance.ts`) before it starts the backend, as `register()` does for the server, so every `query/run` and `query/cancel` reads that core ([Architecture](ARCHITECTURE.md), "The provider host core").
 
 ```mermaid
 stateDiagram-v2
@@ -208,6 +209,7 @@ Step by step, with the code that does it:
    Neither the token nor the typed value is kept past that request: they are not in `RunStart`, the run registry or the presenter's record.
 6. In the child, `createHandlers().runQuery` checks the params, runs `checkEditorQuery` (the page bounds, the connection's statement timeout, and the console text bound, which answers `TEXT_TOO_LARGE`), then `gateRun` under the route `vscode/query/run`, before any provider: a statement the gate asks about runs only with a token the child minted for that statement, connection and catalog, once.
    It then resolves the provider through `getOrCreateProvider` and `scopeToCatalog`, and calls `runEditorQuery`, the same function `POST /api/db/query` uses.
+   It waits for the provider's open as the route does, through `openWithinCall`: at most 70 s, then `TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "not-sent"`, and the open goes on for the next request ([API reference](API_DOCS.md)).
 7. The answer is a `QueryPage`: the route's `EditorQueryBody` (first result set, `pagination` always present), plus `resultSetCount` when the text produced more than one result set, and `confirmation: "unconfirmed"` where advisory mode ran a statement the gate asks about without its confirmation.
 8. `ResultsViewPresenter.runSucceeded` keeps the page in the document's record and posts `runSucceeded` with a `GridContext` built by `gridContextOf`; `fanOut` also hands every event to `LogResultsPresenter`, which writes a log line per run event and never the statement or a row.
 9. In the webview, `startResultsView` (`src/webview/start.tsx`) has already rendered `ResultsApp`, which renders Studio's `ResultsGrid` with the page, `supportsResultPagination`, `databaseType` and `EXTENSION_MASKING_CONFIG`.
@@ -249,8 +251,11 @@ The Cancel button shows only for documents in `libredb.cancellableQueries`.
 A running run is cancellable only when its connection's description has `supportsQueryCancel`, computed in the child as `POST /api/db/provider-meta` computes it.
 `cancelled: false` shows "The server did not stop the statement.".
 Separately, the `query/run` request carries a JSON-RPC cancellation token: the client cancels it when the supervisor is about to stop and when a connection is removed (`cancelRuns`), and in the child that token aborts the `AbortController` whose signal `runEditorQuery` runs the statement under.
+The same signal ends the run's wait for its provider's open, so a run cancelled while its connection opens is answered at once, `QUERY_CANCELLED` with the outcome not-sent, and runs nothing.
 The run is then answered at once, `QUERY_CANCELLED` with the outcome unknown, and the provider host core sends the provider's cancel under the run's `queryId`; the statement's own end arrives later and is only logged when it fails.
 `query/cancel` reaches the provider through the same host core's cancel call, `cancelEditorRun`, which waits for the engine at most 10 s.
+It waits for its provider's open within the same 70 s as `query/run`, and its own JSON-RPC request's cancellation is its caller signal: a `$/cancelRequest` for it ends the wait for the open and for the engine's answer at once, `QUERY_CANCELLED`, and a request already cancelled calls nothing.
+The extension's own client sends no cancellation for `query/cancel`, so only a JSON-RPC client that cancels the request reaches that signal.
 
 ### Errors
 

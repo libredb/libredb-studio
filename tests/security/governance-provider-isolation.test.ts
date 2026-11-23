@@ -14,6 +14,12 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spy
 import { EventEmitter } from "node:events";
 import * as auth from "@/lib/auth";
 import { admittedConnection, grantedSnapshot } from "../helpers/governance/granted-snapshot";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The editor query reads the process's host core (src/lib/provider-host/instance.ts), so this file composes its own.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The text of the statement that runs until a cancel stops it. */
 const SLOW_STATEMENT = "SELECT pg_sleep(60)";

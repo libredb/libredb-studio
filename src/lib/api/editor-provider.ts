@@ -3,6 +3,7 @@ import { scopeToCatalog } from "@/lib/db/catalog-scope";
 import { getOrCreateProvider } from "@/lib/db";
 import { findCachedProvider } from "@/lib/db/factory";
 import type { DatabaseProvider } from "@/lib/db/types";
+import type { OpenWait } from "@/lib/provider-host/core/open-once";
 import type { DatabaseConnection } from "@/lib/types";
 
 /**
@@ -14,13 +15,17 @@ import type { DatabaseConnection } from "@/lib/types";
  * The one place a route decides this, so no route opens a provider under another posture or skips
  * the catalog check. Routes that act on the whole connection rather than in one database, such as
  * cancel, which finds a statement in whichever session runs it, call `getOrCreateProvider` directly.
+ *
+ * `wait` is the request's own wait for the open (`openWithinCall` in src/lib/api/editor-query.ts), handed to
+ * `getOrCreateProvider` as it is; a catalog session opens after it, on the same connection.
  */
 export async function editorProvider(
   session: { role: string; idpSubject?: string },
   connection: DatabaseConnection,
   catalog: string | undefined,
+  wait?: OpenWait,
 ): Promise<DatabaseProvider> {
-  const connected = await getOrCreateProvider(connection, {}, editorExecutionContext(session, connection));
+  const connected = await getOrCreateProvider(connection, {}, editorExecutionContext(session, connection), wait);
   return scopeToCatalog(connected, catalog);
 }
 

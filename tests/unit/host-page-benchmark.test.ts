@@ -7,7 +7,7 @@
  * Specifiers are read with the scanner of tests/unit/lib/db/provider-imports/scan.ts, so a path in a comment or a
  * string is never one; declarations are read from the TypeScript syntax tree.
  */
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
@@ -15,6 +15,12 @@ import { setImmediate as nextTurn } from "node:timers/promises";
 import { compareAnswers, generateRows, heapAdded, hostText, todayText } from "../../scripts/host-page-benchmark/case";
 import { THRESHOLDS } from "../../scripts/host-page-benchmark";
 import { moduleSpecifiers } from "./lib/db/provider-imports/scan";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The editor query reads the process's host core (src/lib/provider-host/instance.ts), so this file composes its own.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 const CASE_FILE = path.join(import.meta.dir, "..", "..", "scripts", "host-page-benchmark", "case.ts");
 const OWN_PUMP = new Set(["pumpPage", "rowsSource", "encodedRowBytes"]);

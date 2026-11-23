@@ -7,7 +7,9 @@
  * storage location (src/lib/data-dir.ts), then bootstrap missing auth env
  * (#109), run the boot preflights and the credential re-seal and check when
  * STORAGE_ENCRYPTION_RESEAL or STORAGE_ENCRYPTION_REQUIRE_V2 asks for them,
- * and start copying the built-in samples (src/lib/seed/samples.ts), which
+ * then install the process's one provider host core
+ * (src/lib/provider-host/instance.ts), so a boot a check refuses installs
+ * none, and start copying the built-in samples (src/lib/seed/samples.ts), which
  * boot never waits for: a sample whose copy fails is logged once and listed
  * unavailable.
  */
@@ -93,6 +95,15 @@ export async function register(): Promise<void> {
   // and after the preflights, so a boot they refuse never touches the store.
   const { resealStoreAtBoot } = await import("@/lib/storage/reseal-at-boot");
   if (!(await resealStoreAtBoot())) return;
+
+  // The provider host core (docs/providers/CONTRACT.md, clause C-52): this
+  // server's composition root installs it once, after the boot checks and the
+  // re-seal, so a boot they refuse installs none, and before any request is
+  // served, since register() completes before the server is ready. Every route
+  // bundle reads this one core; none creates its own.
+  const { createHostCore } = await import("@/lib/provider-host/core/host-core");
+  const { installHostCore } = await import("@/lib/provider-host/instance");
+  installHostCore(createHostCore(), "server");
 
   // Governance snapshot (docs/GOVERNANCE.md#operating-notes): load the
   // governance source in the background and keep it current. Not awaited, so

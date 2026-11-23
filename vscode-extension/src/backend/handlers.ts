@@ -5,7 +5,7 @@
 // The factory functions arrive as one parameter object, which main.ts fills with the real ones and the unit leg with
 // fakes, so this module value-imports neither src/lib/db/factory.ts nor src/lib/api/test-connection.ts.
 import { type CancellationToken, ErrorCodes, type MessageConnection, ResponseError } from "vscode-jsonrpc";
-import { cancelEditorRun, checkEditorQuery, runEditorQuery } from "@/lib/api/editor-query";
+import { cancelEditorRun, checkEditorQuery, openWithinCall, runEditorQuery } from "@/lib/api/editor-query";
 import { databaseErrorBody, internalErrorBody, withWithheldText } from "@/lib/api/error-body";
 import { pageOptionError } from "@/lib/api/page-probe";
 import { gateRun, type RunGateAnswerBody, type RunGateRequest } from "@/lib/api/run-confirmation";
@@ -29,6 +29,7 @@ import { findKind, kindHasColumns } from "@/lib/db/object-kinds";
 import { supportsQueryCancel } from "@/lib/db/query-cancel";
 import type { Container, DatabaseObject, KindCount, ObjectDetail, QueryPrepareOptions } from "@/lib/db/types";
 import { editorLanguageOf } from "@/lib/editor/tab-language";
+import type { OpenWait } from "@/lib/provider-host/core/open-once";
 import { generateTableQuery } from "@/lib/query-generators";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { type RunTarget, runnableTarget } from "@/lib/sql/run-target";
@@ -125,7 +126,7 @@ export interface BackendHandlers {
   listObjects(params: unknown): Promise<DatabaseObject[]>;
   describeObject(params: unknown): Promise<ObjectDetail>;
   runQuery(params: unknown, token: CancellationToken): Promise<QueryPage>;
-  cancelQuery(params: unknown): Promise<CancelResult>;
+  cancelQuery(params: unknown, token: CancellationToken): Promise<CancelResult>;
   shutdown(): Promise<null>;
   listEngines(params: unknown): EngineCatalog;
   parsePastedConnection(params: unknown): PastedConnection;
@@ -274,6 +275,10 @@ export function createHandlers(
   // As handleObjectRequest (src/lib/api/object-route.ts) resolves it: the cached provider, or a new one opened from
   // the record after the idle sweep closed the old one. Engine-shape checks of a path stay with the provider.
   const providerOf = (record: OpenRecord) => factory.getOrCreateProvider(record.connection, {}, record.posture);
+  // The same provider, waited for only within an editor call's open wait (`openWithinCall`), as the query and cancel
+  // routes wait for theirs: the call stops waiting when the wait ends, and the open goes on for the next call.
+  const providerWithin = (record: OpenRecord, wait: OpenWait) =>
+    factory.getOrCreateProvider(record.connection, {}, record.posture, wait);
 
   // Each id's connection/open and connection/close run one at a time, in the order they arrived: a second open finds
   // the first one's provider and record, and a close never runs beside an open of the same id. The factory also
@@ -470,7 +475,10 @@ export function createHandlers(
       if (token.isCancellationRequested) controller.abort();
       try {
         return await answeringFor(record.connection, async () => {
-          const provider = await scopeToCatalog(await providerOf(record), catalog);
+          const provider = await scopeToCatalog(
+            await openWithinCall(controller.signal, (wait) => providerWithin(record, wait)),
+            catalog,
+          );
           const { body, resultSetCount } = await runEditorQuery(provider, {
             statement,
             options,
@@ -491,20 +499,28 @@ export function createHandlers(
     },
 
     // As POST /api/db/cancel: the whole connection's provider, which finds a statement in whichever session runs it.
-    async cancelQuery(params) {
+    async cancelQuery(params, token) {
       const connectionId = connectionIdOf(params);
       const queryId = nonEmptyString(fieldOf(params, "queryId"), "queryId");
       const record = openRecord(connectionId);
-      return await answeringFor(record.connection, async () => {
-        const provider = await providerOf(record);
-        // Through the provider host core's cancel call, bounded by its cleanup deadline. query/cancel reads no
-        // cancellation token, as it never did, so the caller's signal is one nothing aborts.
-        const answer = await cancelEditorRun(provider, queryId, new AbortController().signal, CANCEL_ROUTE);
-        if (!answer.offered) {
-          throw refusal(400, "CANCEL_UNSUPPORTED", "Query cancellation is not supported for this database type");
-        }
-        return { cancelled: answer.cancelled };
-      });
+      // The request's cancellation is the caller going away, as a dropped browser request is the cancel route's: it
+      // ends the wait for the provider's open and for the engine's answer, and a token already cancelled calls nothing.
+      const controller = new AbortController();
+      const listener = token.onCancellationRequested(() => controller.abort());
+      if (token.isCancellationRequested) controller.abort();
+      try {
+        return await answeringFor(record.connection, async () => {
+          const provider = await openWithinCall(controller.signal, (wait) => providerWithin(record, wait));
+          // Through the provider host core's cancel call, bounded by its cleanup deadline and the request's signal.
+          const answer = await cancelEditorRun(provider, queryId, controller.signal, CANCEL_ROUTE);
+          if (!answer.offered) {
+            throw refusal(400, "CANCEL_UNSUPPORTED", "Query cancellation is not supported for this database type");
+          }
+          return { cancelled: answer.cancelled };
+        });
+      } finally {
+        listener.dispose();
+      }
     },
 
     // The dispatcher refuses every request from here on; this closes every pool the factory holds.
