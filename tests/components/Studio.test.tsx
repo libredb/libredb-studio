@@ -2661,7 +2661,19 @@ describe("Studio", () => {
     render(<Studio />);
     const fn = capturedSafetyDialogProps.onProceed as () => void;
     act(() => fn());
-    expect(mockForceExecuteQuery).toHaveBeenCalledWith("DROP TABLE users");
+    // A dialog that asked for no typed value hands none on.
+    expect(mockForceExecuteQuery).toHaveBeenCalledWith("DROP TABLE users", undefined);
+  });
+
+  test("QuerySafetyDialog is handed the safety check's typed confirmation, and its typed value reaches forceExecuteQuery", () => {
+    const name = crypto.randomUUID();
+    const typedConfirmation = { type: "connection-name", expected: name, targets: [] };
+    queryExecOverride = { safetyCheckQuery: "DROP TABLE users", safetyCheckTypedConfirmation: typedConfirmation };
+    render(<Studio />);
+    expect(capturedSafetyDialogProps.typedConfirmation).toEqual(typedConfirmation);
+    const fn = capturedSafetyDialogProps.onProceed as (typed?: string) => void;
+    act(() => fn(name));
+    expect(mockForceExecuteQuery).toHaveBeenCalledWith("DROP TABLE users", name);
   });
 
   test("QuerySafetyDialog is handed the active connection's name, which a typed confirmation of it asks for (#1089)", () => {

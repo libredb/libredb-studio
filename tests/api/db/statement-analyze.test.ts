@@ -69,8 +69,13 @@ const ALICE: auth.UserPayload = {
   idpIssuer: ISSUER,
 };
 
-/** A governed connection named after its id, so the etcd one is the `orders-etcd` of case C9. */
-const governed = (id: string, type: DatabaseType) => admittedConnection(id, { name: id, extra: { type } });
+/**
+ * A governed connection named after its id, so the etcd one is the `orders-etcd` of case C9. It is a development
+ * connection: the cases of #2204 predate the production escalation, which describe("the connection's environment")
+ * tests on its own.
+ */
+const governed = (id: string, type: DatabaseType) =>
+  admittedConnection(id, { name: id, extra: { type, environment: "development" } });
 const ORDERS_PG = governed("orders-pg", "postgres");
 const ORDERS_ORACLE = governed("orders-oracle", "oracle");
 const ORDERS_REDIS = governed("orders-redis", "redis");
@@ -642,6 +647,53 @@ describe("POST /api/db/statement/analyze without governance", () => {
       statement: text,
       range: { start: 0, end: 1_000_000 },
       route: "query",
+    });
+  });
+});
+
+describe("the connection's environment", () => {
+  beforeEach(() => {
+    delete process.env.GOVERNANCE_SOURCE;
+  });
+
+  const inline = (name: string, environment: string) => ({
+    id: "inline-pg",
+    name,
+    type: "postgres",
+    host: "127.0.0.1",
+    port: 1,
+    environment,
+  });
+
+  test("a write on a production connection answers the name to type", async () => {
+    const name = crypto.randomUUID();
+    expect(await analyze({ connection: inline(name, "production"), text: "DELETE FROM t", ...at(0) })).toEqual({
+      status: 200,
+      body: {
+        decision: "confirm",
+        statement: "DELETE FROM t",
+        range: { start: 0, end: 13 },
+        route: "query",
+        unreadable: false,
+        typedConfirmation: { type: "connection-name", expected: name, targets: [] },
+      },
+      retryAfter: null,
+    });
+  });
+
+  test("the same write on a development connection answers no typed confirmation", async () => {
+    const name = crypto.randomUUID();
+    expect(await analyze({ connection: inline(name, "development"), text: "DELETE FROM t", ...at(0) })).toEqual({
+      status: 200,
+      body: {
+        decision: "confirm",
+        statement: "DELETE FROM t",
+        range: { start: 0, end: 13 },
+        route: "query",
+        unreadable: false,
+        typedConfirmation: null,
+      },
+      retryAfter: null,
     });
   });
 });

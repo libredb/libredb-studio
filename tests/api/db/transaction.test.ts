@@ -2240,4 +2240,70 @@ describe("POST /api/db/transaction: the server's confirmation of a run", () => {
       nothingRan();
     });
   });
+
+  describe("server confirmation, production", () => {
+    test("advisory asks the query action that writes on production and sends no field, and nothing runs", async () => {
+      const name = crypto.randomUUID();
+      const production = { ...validConnection, name, environment: "production" };
+      recordedEvents.length = 0;
+      const res = await run({ connection: production, action: "query", sql: "DELETE FROM t" });
+      expect(res.status).toBe(428);
+      const { confirmation } = await parseResponseJSON<{
+        confirmation: { token: string; typedConfirmation: unknown };
+      }>(res);
+      expect(confirmation.token).toEqual(expect.any(String));
+      expect(confirmation.typedConfirmation).toEqual({ type: "connection-name", expected: name, targets: [] });
+      nothingRan();
+      expect(recordedEvents).toEqual([]);
+    });
+
+    test("advisory still runs the query action that writes with no field off production, marked unconfirmed", async () => {
+      const staging = { ...validConnection, name: crypto.randomUUID(), environment: "staging" };
+      const res = await run({ connection: staging, action: "query", sql: "DELETE FROM t" });
+      expect(res.status).toBe(200);
+      expect((await parseResponseJSON<{ confirmation?: string }>(res)).confirmation).toBe("unconfirmed");
+      expect(mockTxProvider.queryInTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    test("advisory runs a read in the query action on production with no field", async () => {
+      const production = { ...validConnection, name: crypto.randomUUID(), environment: "production" };
+      const res = await run({ connection: production, action: "query", sql: "SELECT 1" });
+      expect(res.status).toBe(200);
+      expect(mockTxProvider.queryInTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    test("the query action asks for the name on production, and runs once with it", async () => {
+      process.env.LIBREDB_RUN_CONFIRMATION = "required";
+      const name = crypto.randomUUID();
+      const production = { ...validConnection, name, environment: "production" };
+      const body = { connection: production, action: "query", sql: "DELETE FROM t" };
+      const asked = await run(body);
+      expect(asked.status).toBe(428);
+      const { confirmation } = await parseResponseJSON<{
+        confirmation: { token: string; typedConfirmation: unknown };
+      }>(asked);
+      expect(confirmation.typedConfirmation).toEqual({ type: "connection-name", expected: name, targets: [] });
+      expect((await run({ ...body, confirmation: { token: confirmation.token } })).status).toBe(428);
+      expect(
+        (await run({ ...body, confirmation: { token: confirmation.token, typed: crypto.randomUUID() } })).status,
+      ).toBe(400);
+      nothingRan();
+      const ran = await run({ ...body, confirmation: { token: confirmation.token, typed: name } });
+      expect(ran.status).toBe(200);
+      expect(mockTxProvider.queryInTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    test("begin, commit and rollback are not classified on production", async () => {
+      process.env.LIBREDB_RUN_CONFIRMATION = "required";
+      const production = { ...validConnection, name: crypto.randomUUID(), environment: "production" };
+      mockTxProvider.isInTransaction.mockImplementation(() => false);
+      expect((await run({ connection: production, action: "begin" })).status).toBe(200);
+      mockTxProvider.isInTransaction.mockImplementation(() => true);
+      expect((await run({ connection: production, action: "commit" })).status).toBe(200);
+      mockTxProvider.isInTransaction.mockImplementation(() => false);
+      expect((await run({ connection: production, action: "begin" })).status).toBe(200);
+      mockTxProvider.isInTransaction.mockImplementation(() => true);
+      expect((await run({ connection: production, action: "rollback" })).status).toBe(200);
+    });
+  });
 });

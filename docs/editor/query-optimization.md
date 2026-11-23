@@ -773,6 +773,17 @@ result the user already has, a playground run (rolled back rather than committed
 (`src/workspace/hooks/use-query-adapter.ts`) has only the force-execute bypass, so every other
 query a host application runs through it reaches the gate.
 
+### On a production connection
+
+On a connection whose environment is `production`, every statement the gate asks about is confirmed by typing the connection's name, and none of the four bypasses above skips it.
+The dialog draws the name field, and where the connection type asks a value of its own (an etcd prefix, start key or lease id), that value is shown as the target of the name.
+A read the gate does not ask about runs as anywhere else.
+The server checks the name: it asks for it in its 428 answer and compares what the person typed before it runs the statement ([API_DOCS.md](../API_DOCS.md#server-confirmation-of-a-run)).
+Where a run reaches the server without the name, as a page, a SANDBOX run or an inline edit does, the dialog opens with the server's ask and the run waits for it, so inline edits ask row by row, each row's request sent only once the row before was answered.
+Closing that dialog ends the run as not run, and a SANDBOX run rolls back the transaction it opened.
+Nothing is remembered: every run asks again.
+The embedded workspace does not ask for the name yet (backlog U217).
+
 ---
 
 ## Load More Functionality

@@ -16,7 +16,7 @@ import { useReturnFocus } from "@/hooks/use-return-focus";
 import { QUERY_SAFETY_ANALYSIS_TIMEOUT_MS } from "@/lib/llm/query-safety";
 import { cn } from "@/lib/utils";
 import { vocabularySendsToModel, vocabularyTypedConfirmation } from "@/lib/db/destructive-commands";
-import { typedConfirmationExpected } from "@/lib/editor/statement-analysis";
+import { type TypedConfirmation, typedConfirmationExpected } from "@/lib/editor/statement-analysis";
 import { hasUnreadableRun } from "@/lib/sql/dangerous-query";
 import { typeIdRefusal } from "@/lib/db/type-id";
 import { unavailableConnectionNotice } from "@/lib/connection-availability";
@@ -57,8 +57,19 @@ interface QuerySafetyDialogProps {
    * gets a refusal in place of the typed field and a disabled Proceed button, never a throw.
    */
   connectionName?: string;
+  /**
+   * What the person types before the statement runs, as a caller already read it: the server's 428 answer, or the
+   * verdict on a connection whose environment the caller knows (FND-5 slice 6c). Given, the field and its targets are
+   * drawn from it and the dialog reads no typed ask of its own; `null` draws no field. Omitted, the dialog reads the
+   * ask itself from the vocabulary row, as before.
+   */
+  typedConfirmation?: TypedConfirmation | null;
   onClose: () => void;
-  onProceed: () => void;
+  /**
+   * Called by Proceed with the value the person typed where the dialog drew a typed field, and with no value where it
+   * drew none. The field compares exactly, so the value handed on is the expected value it matched.
+   */
+  onProceed: (typed?: string) => void;
   /**
    * Optional API adapter: when provided, bypasses the built-in /api/ai/query-safety fetch. `signal` aborts when the
    * dialog stops waiting (the person skipped the analysis, the wait ran out, or the dialog closed); an adapter that
@@ -155,6 +166,7 @@ export function QuerySafetyDialog({
   schemaContext,
   databaseType,
   connectionName,
+  typedConfirmation,
   onClose,
   onProceed,
   onAnalyzeSafety,
@@ -171,6 +183,12 @@ export function QuerySafetyDialog({
   // Whether the typed confirmation's field matches (#1089, section 5.5). The field reports it when it mounts and on
   // every change, so each opening starts from false: the field's own state lives inside the dialog content.
   const [typedMatches, setTypedMatches] = useState(false);
+  // Counts the openings, so each one draws a new field. The content's exit animation keeps it mounted for a moment
+  // after it closes, and an opening within that moment would otherwise keep the field, and what was typed in it,
+  // whenever it asks for the same value: a 428 for the next row of an inline edit asks for the same name (FND-5 6c).
+  // Counted while rendering from the previous `isOpen`, React's pattern for state that follows a prop.
+  const [opening, setOpening] = useState({ count: 0, open: isOpen });
+  if (opening.open !== isOpen) setOpening({ count: isOpen ? opening.count + 1 : opening.count, open: isOpen });
   // Radix hands focus back only to an AlertDialogTrigger, and the editor opens this dialog without
   // one, so the dialog keeps what had focus when it opened and puts focus back there on close.
   const returnFocus = useReturnFocus();
@@ -204,13 +222,23 @@ export function QuerySafetyDialog({
 
   // What this engine's vocabulary asks the person to type before the statement runs, read from the table the gate
   // that opened this dialog read, so the two cannot disagree about a statement (#1089, section 5.5).
-  const typedAsk = useMemo(
-    () =>
-      typeRefusal === null ? vocabularyTypedConfirmation(databaseType as DatabaseType | undefined, query) : undefined,
-    [query, databaseType, typeRefusal],
-  );
-  // Undefined where the ask is the connection's name and there is none to type, answered with MISSING_CONNECTION_NAME.
-  const typedExpected = typedAsk === undefined ? undefined : typedConfirmationExpected(typedAsk, connectionName);
+  // A caller that already read the ask hands it over, and the dialog then reads none of its own. `expected` is
+  // undefined where the ask is the connection's name and there is none to type, answered with MISSING_CONNECTION_NAME.
+  const typedAsk = useMemo((): { readonly targets?: readonly string[]; readonly expected?: string } | undefined => {
+    if (typedConfirmation !== undefined) {
+      if (typedConfirmation === null) return undefined;
+      const { expected } = typedConfirmation;
+      return typedConfirmation.type === "connection-name"
+        ? { targets: typedConfirmation.targets, expected }
+        : { expected };
+    }
+    if (typeRefusal !== null) return undefined;
+    const ask = vocabularyTypedConfirmation(databaseType as DatabaseType | undefined, query);
+    if (ask === undefined) return undefined;
+    const expected = typedConfirmationExpected(ask, connectionName);
+    return ask.type === "connection-name" ? { targets: ask.targets, expected } : { expected };
+  }, [query, databaseType, typeRefusal, typedConfirmation, connectionName]);
+  const typedExpected = typedAsk?.expected;
   // Proceed waits for the analysis and for an exact match, and a refusal in place of the field is never a match,
   // whatever was typed before it replaced the field. The wait for the analysis is bounded: Skip ends it at once and
   // QUERY_SAFETY_ANALYSIS_TIMEOUT_MS ends it anyway, so a slow or hung model can no longer hold every write back.
@@ -536,7 +564,7 @@ export function QuerySafetyDialog({
         */}
         {typedAsk !== undefined && (
           <div className="px-5 py-3 border-t border-hairline space-y-3">
-            {typedAsk.type === "connection-name" && (
+            {typedAsk.targets !== undefined && typedAsk.targets.length > 0 && (
               <div>
                 <p className="text-xs text-fg-muted">Targets</p>
                 <ul className="mt-1 space-y-0.5">
@@ -553,7 +581,7 @@ export function QuerySafetyDialog({
               <p className="text-xs text-danger">{MISSING_CONNECTION_NAME}</p>
             ) : (
               <TypedConfirmField
-                key={typedExpected}
+                key={`${opening.count}:${typedExpected}`}
                 expected={typedExpected}
                 match="exact"
                 onMatchChange={setTypedMatches}
@@ -580,7 +608,9 @@ export function QuerySafetyDialog({
             <span>Cancel</span>
           </AlertDialogCancel>
           <button
-            onClick={onProceed}
+            onClick={() =>
+              typedAsk !== undefined && typedExpected !== undefined ? onProceed(typedExpected) : onProceed()
+            }
             disabled={proceedBlocked}
             className={cn(
               "px-4 py-2 rounded-lg text-white text-xs font-medium transition-colors flex items-center gap-1.5",

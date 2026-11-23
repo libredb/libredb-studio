@@ -127,6 +127,7 @@ export async function POST(req: NextRequest) {
         databaseType: connection.type,
         capabilities,
         connectionName: connection.name,
+        connectionEnvironment: connection.environment,
       });
     } catch (error) {
       // Offsets the run target cannot honour are the caller's, answered in the rule's own sentence, which names

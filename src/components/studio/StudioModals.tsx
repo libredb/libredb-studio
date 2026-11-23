@@ -4,6 +4,7 @@ import React from "react";
 import type { DatabaseConnection } from "@/lib/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderCapabilities } from "@/lib/db/types";
+import type { TypedConfirmation } from "@/lib/editor/statement-analysis";
 import type { MaskingConfig } from "@/lib/data-masking";
 import { objectAtPath } from "@/lib/db/detailed-object";
 import { catalogOfPath } from "@/lib/db/object-kinds";
@@ -62,8 +63,14 @@ interface StudioModalsProps {
 
   // Query safety check (both shells; the embedded one supplies its own analyzer).
   safetyCheckQuery: string | null;
+  /**
+   * What the person types before the safety check's statement runs, as the shell already read it (FND-5 slice 6c);
+   * omitted, the dialog reads it itself.
+   */
+  safetyCheckTypedConfirmation?: TypedConfirmation | null;
   onCloseSafety: () => void;
-  onProceedSafety: () => void;
+  /** Called by Proceed with the value the person typed, where the dialog asked for one. */
+  onProceedSafety: (typed?: string) => void;
   onAnalyzeSafety?: SafetyAnalyzer;
 
   // Data profiler and code generator share the embedded shell's codeGenerator gate.
@@ -108,6 +115,7 @@ export function StudioModals({
   onCloseImport,
   onImport,
   safetyCheckQuery,
+  safetyCheckTypedConfirmation,
   onCloseSafety,
   onProceedSafety,
   onAnalyzeSafety,
@@ -153,6 +161,7 @@ export function StudioModals({
         schemaContext={schemaContext}
         databaseType={databaseType}
         connectionName={connectionName}
+        typedConfirmation={safetyCheckTypedConfirmation}
         onClose={onCloseSafety}
         onProceed={onProceedSafety}
         onAnalyzeSafety={onAnalyzeSafety}
