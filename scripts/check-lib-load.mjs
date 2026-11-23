@@ -17,7 +17,10 @@
  * 3. Every bare specifier of every `.js`, `.mjs`, `.d.ts` and `.d.mts` file of the packed `dist/` is a declared
  *    `dependencies` or `peerDependencies` name, a Node builtin (`module.isBuiltin`), or a Bun runtime module
  *    (`bun:`), read with the TypeScript parser so text inside a string is never taken for an import. A computed
- *    `import()` or `require()` fails too, because what it loads cannot be checked.
+ *    `import()` or `require()` fails too, because what it loads cannot be checked. A declaration file's relative
+ *    specifier must be one of the two forms the build writes, `./<name>.js` naming `<name>.d.ts` from a `.d.ts` or
+ *    `./<name>.mjs` naming `<name>.d.mts` from a `.d.mts`, with that declaration file in the dist, because no load
+ *    reads a declaration and a dangling one would otherwise pass.
  * 4. Only the declared names are linked into the temporary `node_modules`, each to the repository's install, and a
  *    child `node` (scripts/load-lib-closure.mjs) loads every module of the `index` and `providers` closures, ESM by
  *    `import()` and CJS by `require`, dynamic imports included.
@@ -48,6 +51,9 @@ const ENTRIES = ["index.mjs", "index.js", "providers.mjs", "providers.js"];
 
 /** The dist files whose specifiers are read: the JavaScript and the declaration files a consumer installs. */
 const SCANNED = /\.(?:m?js|d\.m?ts)$/;
+
+/** A declaration file, and the JavaScript extension its relative specifiers carry: `.js` from `.d.ts`, `.mjs` from `.d.mts`. */
+const DECLARATION = /\.d\.(m?)ts$/;
 
 const LOAD_LIB_CLOSURE = fileURLToPath(new URL("./load-lib-closure.mjs", import.meta.url));
 
@@ -112,8 +118,25 @@ function filesUnder(directory) {
 }
 
 /**
+ * Whether a declaration file's relative specifier names a declaration file of the dist in a form the build writes:
+ * `./<name>.js` from a `.d.ts` naming `<name>.d.ts`, or `./<name>.mjs` from a `.d.mts` naming `<name>.d.mts`.
+ * @param {string} file the declaration file, a POSIX path relative to the dist
+ * @param {string} specifier its relative specifier
+ * @param {Set<string>} distFiles every file of the dist, POSIX paths relative to it
+ */
+function namesDistDeclaration(file, specifier, distFiles) {
+  const esm = DECLARATION.exec(file)[1];
+  const extension = `.${esm}js`;
+  if (!specifier.startsWith("./") || !specifier.endsWith(extension)) return false;
+  const target = path.posix.join(path.posix.dirname(file), `${specifier.slice(0, -extension.length)}.d.${esm}ts`);
+  return distFiles.has(target);
+}
+
+/**
  * The failures of the specifier rule over every scanned file of `distDir`, one sentence each, and how many files it
- * read. A relative specifier is the build's own file and is not checked here; the load checks it.
+ * read. A JavaScript file's relative specifier is the build's own file and is not checked here; the load checks it. A
+ * declaration file's relative specifier is checked here, since nothing loads a declaration: it must name a declaration
+ * file of the dist in a form the build writes.
  * @param {string} distDir
  * @param {{ dependencies?: Record<string, string>, peerDependencies?: Record<string, string> }} manifest
  * @returns {{ files: number, failures: string[] }}
@@ -123,12 +146,20 @@ export function undeclaredSpecifiers(distDir, manifest) {
     ...Object.keys(manifest.dependencies ?? {}),
     ...Object.keys(manifest.peerDependencies ?? {}),
   ]);
-  const files = filesUnder(distDir).filter((file) => SCANNED.test(file));
+  const distFiles = filesUnder(distDir);
+  const distFileSet = new Set(distFiles);
+  const files = distFiles.filter((file) => SCANNED.test(file));
   const failures = [];
   for (const file of files) {
     const { specifiers, computed } = moduleSpecifiers(fs.readFileSync(path.join(distDir, file), "utf8"), file);
     for (const specifier of specifiers) {
-      if (specifier.startsWith(".") || specifier.startsWith("/")) continue;
+      if (specifier.startsWith(".") || specifier.startsWith("/")) {
+        if (!DECLARATION.test(file) || namesDistDeclaration(file, specifier, distFileSet)) continue;
+        failures.push(
+          `dist/${file} imports "${specifier}", which names no declaration file of the dist in a form the build writes (./<name>.js naming <name>.d.ts from a .d.ts, ./<name>.mjs naming <name>.d.mts from a .d.mts).`,
+        );
+        continue;
+      }
       if (specifier.startsWith("bun:") || isBuiltin(specifier) || declared.has(packageNameOf(specifier))) continue;
       failures.push(
         `dist/${file} imports "${specifier}", which is not a dependencies or peerDependencies name of the packed package.json, a Node builtin or a Bun runtime module.`,

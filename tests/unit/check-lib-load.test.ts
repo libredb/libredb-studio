@@ -19,6 +19,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import ts from "typescript";
 import { parse } from "yaml";
 import {
   ancestorNodeModules,
@@ -31,7 +32,11 @@ import {
   undeclaredSpecifiers,
   workspaceDependencyFailures,
 } from "../../scripts/check-lib-load.mjs";
-import { workspacePackageManifests, workspacePackageNames } from "../../scripts/workspace-packages.mjs";
+import {
+  workspacePackageManifests,
+  workspacePackageNames,
+  workspacePackageSourcePaths,
+} from "../../scripts/workspace-packages.mjs";
 import { missingUnixTool, resolveUnixTool, testIf } from "../helpers/posix-tools";
 
 const REPOSITORY_ROOT = path.resolve(import.meta.dir, "../..");
@@ -172,6 +177,34 @@ describe("undeclaredSpecifiers", () => {
 
     expect(undeclaredSpecifiers(dist, manifest).failures).toEqual([
       expect.stringContaining('dist/a.mjs imports "sqlite"'),
+    ]);
+  });
+
+  test("a declaration's relative specifier that names no declaration file of the dist is refused, naming the file and the specifier", () => {
+    const dist = distWith({ "index.d.ts": "export * from './manifest';\n" });
+
+    expect(undeclaredSpecifiers(dist, manifest).failures).toEqual([
+      expect.stringContaining('dist/index.d.ts imports "./manifest", which names no declaration file of the dist'),
+    ]);
+  });
+
+  test("a declaration's relative specifier in the forms the build writes passes", () => {
+    const dist = distWith({
+      "index.d.ts": 'export * from "./types-abc.js";\n',
+      "types-abc.d.ts": "export type A = 1;\n",
+      "providers.d.mts": 'export * from "./index.mjs";\n',
+      "index.d.mts": "export type B = 2;\n",
+      "chunk.mjs": 'import "./not-checked-here.mjs";\n',
+    });
+
+    expect(undeclaredSpecifiers(dist, manifest)).toEqual({ files: 5, failures: [] });
+  });
+
+  test("a declaration's .js specifier whose .d.ts is missing is refused", () => {
+    const dist = distWith({ "providers.d.ts": 'export * from "./index.js";\n', "index.d.mts": "export {};\n" });
+
+    expect(undeclaredSpecifiers(dist, manifest).failures).toEqual([
+      expect.stringContaining('dist/providers.d.ts imports "./index.js", which names no declaration file of the dist'),
     ]);
   });
 
@@ -501,6 +534,11 @@ describe("the repository's lib:load wiring", () => {
     expect(config.noExternal?.filter((entry) => entry instanceof RegExp).map((entry) => entry.source)).toEqual([
       "\\.css$",
     ]);
-    expect(config.dts).toEqual({ resolve: names });
+    const rootTsconfig = ts.readConfigFile(path.join(REPOSITORY_ROOT, "tsconfig.json"), ts.sys.readFile);
+    expect(config.dts).toEqual({
+      compilerOptions: {
+        paths: { ...rootTsconfig.config.compilerOptions.paths, ...workspacePackageSourcePaths(REPOSITORY_ROOT) },
+      },
+    });
   });
 });

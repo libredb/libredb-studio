@@ -15,6 +15,7 @@ import {
   workspacePackageDirectories,
   workspacePackageManifests,
   workspacePackageNames,
+  workspacePackageSourcePaths,
 } from "../../scripts/workspace-packages.mjs";
 
 const repositoryRoot = path.resolve(import.meta.dir, "../..");
@@ -108,6 +109,49 @@ describe("workspacePackageNames", () => {
 
   test("the repository names the provider SDK, its first package", () => {
     expect(workspacePackageNames(repositoryRoot)).toEqual(["@libredb/provider-sdk"]);
+  });
+});
+
+describe("workspacePackageSourcePaths", () => {
+  test("workspacePackageSourcePaths maps each export of each package to its source path", () => {
+    const scratch = root({
+      "packages/p/package.json": JSON.stringify({
+        name: "@x/p",
+        exports: { ".": "./src/index.ts", "./a": "./src/a/index.ts", "./b.json": "./src/b.json" },
+      }),
+    });
+
+    expect(workspacePackageSourcePaths(scratch)).toEqual({
+      "@x/p": ["./packages/p/src/index.ts"],
+      "@x/p/a": ["./packages/p/src/a/index.ts"],
+      "@x/p/b.json": ["./packages/p/src/b.json"],
+    });
+  });
+
+  test("workspacePackageSourcePaths refuses an export whose target is not a path string, naming the package and the entry", () => {
+    const scratch = root({
+      "packages/p/package.json": JSON.stringify({
+        name: "@x/p",
+        exports: { ".": "./src/index.ts", "./a": { import: "./src/a.mjs", require: "./src/a.cjs" } },
+      }),
+    });
+
+    expect(() => workspacePackageSourcePaths(scratch)).toThrow(
+      'packages/p/package.json exports "./a" as something other than a path string',
+    );
+  });
+
+  test("workspacePackageSourcePaths refuses a package without an exports object, naming the manifest", () => {
+    const scratch = root({ "packages/p/package.json": JSON.stringify({ name: "@x/p" }) });
+
+    expect(() => workspacePackageSourcePaths(scratch)).toThrow("packages/p/package.json has no exports object");
+  });
+
+  test("the repository maps the provider SDK's root and every subpath it exports", () => {
+    const paths = workspacePackageSourcePaths(repositoryRoot);
+
+    expect(paths["@libredb/provider-sdk"]).toEqual(["./packages/provider-sdk/src/index.ts"]);
+    expect(paths["@libredb/provider-sdk/manifest"]).toEqual(["./packages/provider-sdk/src/manifest/index.ts"]);
   });
 });
 

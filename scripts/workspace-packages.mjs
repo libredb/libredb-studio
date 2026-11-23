@@ -11,7 +11,8 @@
  * (`scripts/only-check.mjs`), the coverage merge (`scripts/merge-lcov.mjs`) and the
  * coverage gate (`scripts/check-coverage.mjs`) read the layout from here, and
  * `tests/unit/docker-workspace-install.test.ts` holds each Dockerfile to the listing. The library
- * build (`tsup.config.ts`) bundles every package it names, and the packed library check
+ * build (`tsup.config.ts`) bundles every package it names and resolves each package's declarations through
+ * {@link workspacePackageSourcePaths}, and the packed library check
  * (`scripts/check-lib-load.mjs`) reads the package manifests from here too.
  */
 import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
@@ -90,4 +91,36 @@ export function workspacePackageNames(root) {
     }
     return manifest.name;
   });
+}
+
+/**
+ * TypeScript `paths` for every `exports` entry of every workspace package under `root`: `"<name>"` for `"."` and
+ * `"<name>/<sub>"` for `"./<sub>"`, each mapped to its target as `./packages/<dir>/<target>`. The library build's
+ * declaration bundler resolves a package through these to its source, outside `node_modules`, so rollup-plugin-dts
+ * inlines its declarations instead of leaving an import of the unpublished package (packages/README.md, "Library").
+ * Throws, naming the manifest and the entry, on a manifest without an `exports` object and on an entry whose target
+ * is not a path string, such as a conditional-exports object, because no single source path stands for it.
+ * @param {string} root
+ * @returns {Record<string, string[]>}
+ */
+export function workspacePackageSourcePaths(root) {
+  const paths = {};
+  const names = workspacePackageNames(root);
+  workspacePackageManifests(root).forEach(({ directory, manifest }, index) => {
+    if (typeof manifest.exports !== "object" || manifest.exports === null) {
+      throw new Error(
+        `${directory}/package.json has no exports object, so the library build cannot resolve the package's declarations. Give it an "exports" map (packages/README.md, "Library").`,
+      );
+    }
+    for (const [entry, target] of Object.entries(manifest.exports)) {
+      if (typeof target !== "string") {
+        throw new Error(
+          `${directory}/package.json exports "${entry}" as something other than a path string, so the library build cannot resolve its declarations to one source file. Point the entry at one file under src/.`,
+        );
+      }
+      const specifier = entry === "." ? names[index] : `${names[index]}/${entry.slice(2)}`;
+      paths[specifier] = [`./${path.posix.join(directory, target)}`];
+    }
+  });
+  return paths;
 }
