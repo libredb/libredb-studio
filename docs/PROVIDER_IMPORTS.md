@@ -93,7 +93,6 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/db/object-edit.ts` | SDK /objects | The pure edit text bound and position mapping. |
 | `src/lib/db/object-kinds.ts` | SDK /objects | Pure derivations over a provider's object declarations. |
 | `src/lib/db/object-path.ts` | SDK /objects | The pure order and spelling of object paths. |
-| `src/lib/db/query-dialects.ts` | SDK /manifest | Provider code imports only the `DialectSpec` row type; the registry itself stays core and loses its kubernetes import in PR 11 editor and SQL text. |
 | `src/lib/db/query-generators/shared.ts` | SDK /manifest | Pure pieces a query generator row shares. |
 | `src/lib/db/query-generators/types.ts` | SDK /manifest | The query generator row contract. |
 | `src/lib/db/read-allowance.ts` | host service: run bounds | The billed-read allowance is a ledger of one agent run or MCP call, which the host owns. |
@@ -263,7 +262,6 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 | `src/lib/db/operations/s3api-admission.ts` | 1 statement reader module | PR 8 s3api | the s3api family, `src/lib/languages/s3api/` |
 | `src/lib/db/operations/snmpget-admission.ts` | 1 statement reader module | PR 8 snmpget | the snmpget family, `src/lib/languages/snmpget/` |
 | `src/lib/db/operations/sparkplugread-admission.ts` | 1 statement reader module | PR 8 sparkplugread | the sparkplugread family, `src/lib/languages/sparkplugread/` |
-| `src/lib/db/query-dialects.ts` | 1 kubernetes query dialect row | PR 11 editor and SQL text | a manifest row |
 | `src/lib/db/query-generators/index.ts` | 27 query generator rows | PR 11 editor and SQL text | manifest rows: the PR 9 schema, collected by the PR 11 projection |
 | `src/lib/db/sql-grammar/index.ts` | 43 SQL grammar rows | PR 11 editor and SQL text | manifest rows: the PR 9 schema, collected by the PR 11 projection |
 | `src/lib/db/sql-writing/index.ts` | 43 SQL writing rows | PR 11 editor and SQL text | manifest rows: the PR 9 schema, collected by the PR 11 projection |

@@ -558,10 +558,6 @@ export const INWARD_IMPORTS: readonly AllowlistEntry[] = [
     modules: ["industrial/sparkplug/agent-statement.ts"],
   },
   {
-    file: "src/lib/db/query-dialects.ts",
-    modules: ["platform/kubernetes/query-dialect.ts"],
-  },
-  {
     file: "src/lib/db/query-generators/index.ts",
     modules: [
       "document/couchbase/generators.ts",
