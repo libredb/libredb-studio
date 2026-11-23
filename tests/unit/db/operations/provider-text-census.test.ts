@@ -359,6 +359,8 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   [agent("context-snapshot.ts"), "scrubSnapshotSentences", "scrubProviderText"],
   [agent("investigation.ts"), "describeSettled", "fenceProviderText"],
   [agent("runtime.ts"), "driveAgentRun", "withholdProviderError"],
+  [agent("runtime.ts"), "driveAgentRunOutcome", "providerTextScrub"],
+  [api("drive", "route.ts"), "driveFailure", "withholdProviderError"],
   [api("runs", "route.ts"), "POST", "providerTextScrub"],
   [api("runs", "[runId]", "handover", "route.ts"), "POST", "providerTextScrub"],
   [api("runs", "[runId]", "handover", "route.ts"), "POST", "withScrubbedWarnings"],
@@ -451,8 +453,6 @@ const NOT_PROVIDER_TEXT: Readonly<Record<string, string>> = {
   [`${api("drive", "route.ts")}: POST: logger.error(auditError)`]: "the audit sink's own failure",
   [`${api("drive", "route.ts")}: POST: createErrorResponse(new RateLimitError(decision.retryAfterSeconds))`]:
     "Studio's rate limit",
-  [`${api("drive", "route.ts")}: POST: error.message`]: "an AgentRunServiceError, the run service's own sentence",
-  [`${api("drive", "route.ts")}: POST: createErrorResponse(error)`]: "a drive's failure, which driveAgentRun withheld",
   [`${api("classify", "route.ts")}: POST: createErrorResponse(error)`]: "an LLM classification error",
   [`${api("runs", "route.ts")}: GET: createErrorResponse(error)`]: "the run ledger's own failure",
   [`${api("runs", "route.ts")}: POST: gate.refusal.message`]: "the capability gate's own refusal, Studio's",

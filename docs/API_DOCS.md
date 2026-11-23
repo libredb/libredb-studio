@@ -2307,6 +2307,7 @@ one: `401 { "error": "A valid agent drive credential is required" }`, audited as
 `permission_denied` event. `404` for an unknown run, `409` for a run that has already ended (the
 message is not retryable, so a queue should stop delivering it).
 A run whose ledger names an id this Studio does not have answers `409` with code `AGENT_RUN_UNAVAILABLE` too, before its connection is resolved or a provider or model is built, for the same reason: no delivery to this server can drive it.
+Any other failure answers as the agent runs route does, with its own status, code, kind and outcome, and a text that held a credential of the run's connection replaced by Studio's sentence.
 
 Nothing in the product produces a drive delivery yet, so this route's callers today are its tests.
 
@@ -2962,7 +2963,7 @@ directly by the request middleware (`src/proxy.ts`), before a request ever reach
 Every database error body `createErrorResponse` answers carries `kind` and `outcome` beside `code`.
 An answer without them is not a database error's: an unhandled error (`INTERNAL_ERROR`) and the codes a route or the middleware answers itself carry neither.
 Both are closed vocabularies and never hold the error's text.
-A route that resolves the calling connection (the editor's query, script and transaction routes, the connection test, the agent runs route and the hand-over route) also answers `sqlState`, the SQLSTATE the driver reported, when there is one and the error's text was not withheld.
+A route that resolves the calling connection (the editor's query, script and transaction routes, the connection test, the agent runs route, the hand-over route and the agent drive route) also answers `sqlState`, the SQLSTATE the driver reported, when there is one and the error's text was not withheld.
 An MCP tool's error answer built from a failure carries the same record, `kind`, `code`, `outcome` and that `sqlState`, in `structuredContent.error` ([MCP](MCP.md)); there every kind can appear, and `code` is the deny code of an `execution-profile` or `studio-profile-refusal` failure.
 
 `kind` names the class of failure, so a client can branch on it without reading the sentence:

@@ -30,7 +30,7 @@ import {
   UnknownProviderError,
 } from "@/lib/db/errors";
 import { assertDatabaseType } from "@/lib/db/type-id";
-import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
+import { withheldErrorMessage, withheldProviderError } from "@/lib/db/operations/provider-text";
 import { secretForms } from "@/lib/db/utils/server-text";
 import { SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { filterByRoles } from "@/lib/seed/connection-filter";
@@ -96,9 +96,8 @@ mock.module("@/lib/db/factory", () => ({
 mock.module("@/lib/agent/model-adapter", () => ({ createAgentModel: mockCreateAgentModel }));
 mock.module("@/lib/agent/investigation", () => ({ runInvestigation: mockRunInvestigation }));
 
-const { AGENT_MAX_ARTIFACTS, driveAgentRun, getAgentRunService, readAgentArtifact } = await import(
-  "@/lib/agent/runtime"
-);
+const { AGENT_MAX_ARTIFACTS, driveAgentRun, driveAgentRunOutcome, getAgentRunService, readAgentArtifact } =
+  await import("@/lib/agent/runtime");
 
 const ACTOR = { sessionId: "ada", role: "user" } as const;
 
@@ -805,6 +804,83 @@ describe("driveAgentRun, a failure whose text carries the connection's credentia
     } finally {
       mockResolveConnection.mockImplementation(async () => CONNECTION);
     }
+  });
+
+  test("the drive's outcome answers the original failure with the run's scrub, and records the reason driveAgentRun records", async () => {
+    await openRun("arun_outcome_wrapped");
+    await openRun("arun_outcome_failed");
+    mockResolveConnection.mockImplementation(async () => credentialed);
+    try {
+      mockRunInvestigation.mockImplementationOnce(async () => {
+        throw new ConnectionError(`could not connect with ${password}`, "postgres");
+      });
+      await driveAgentRun("arun_outcome_wrapped").then(
+        () => null,
+        (thrown: unknown) => thrown,
+      );
+      const failure = new ConnectionError(`could not connect with ${password}`, "postgres");
+      mockRunInvestigation.mockImplementationOnce(async () => {
+        throw failure;
+      });
+
+      const outcome = await driveAgentRunOutcome("arun_outcome_failed");
+
+      expect(outcome.kind).toBe("failed");
+      if (outcome.kind !== "failed") return;
+      expect(outcome.error).toBe(failure);
+      expect(withheldProviderError(outcome.scrub, outcome.error)).not.toBeNull();
+      expect(await finishedReason("arun_outcome_failed")).toBe(await finishedReason("arun_outcome_wrapped"));
+    } finally {
+      mockResolveConnection.mockImplementation(async () => CONNECTION);
+    }
+  });
+
+  test("under an agent credential, the outcome's scrub covers the capability read's echo of the connection's own password", async () => {
+    await openRun("arun_outcome_ownpassword");
+    mockResolveConnection.mockImplementation(
+      async () =>
+        ({ ...credentialed, agentUser: "agent_reader", agentPassword: crypto.randomUUID() }) as DatabaseConnection,
+    );
+    try {
+      mockReadProviderDeclarations.mockImplementationOnce(async () => {
+        throw new ConnectionError(`could not connect with ${password}`, "postgres");
+      });
+
+      const outcome = await driveAgentRunOutcome("arun_outcome_ownpassword");
+
+      expect(outcome.kind).toBe("failed");
+      if (outcome.kind !== "failed") return;
+      expect(withheldProviderError(outcome.scrub, outcome.error)).not.toBeNull();
+    } finally {
+      mockResolveConnection.mockImplementation(async () => CONNECTION);
+    }
+  });
+
+  test("a drive that finishes answers its result", async () => {
+    await openRun("arun_outcome_finished");
+
+    const outcome = await driveAgentRunOutcome("arun_outcome_finished");
+
+    expect(outcome).toEqual({
+      kind: "finished",
+      result: {
+        runId: "arun_outcome_finished",
+        status: "succeeded",
+        stopReason: "report-composed",
+        turns: 1,
+        text: "",
+      },
+    } as never);
+  });
+
+  test("a run that does not exist is thrown, since there is no connection to scrub with", async () => {
+    const error = await driveAgentRunOutcome("arun_outcome_none").then(
+      () => null,
+      (thrown: unknown) => thrown,
+    );
+
+    expect(error).toBeInstanceOf(AgentRunServiceError);
+    expect((error as AgentRunServiceError).reasonCode).toBe("RUN_NOT_FOUND");
   });
 });
 
