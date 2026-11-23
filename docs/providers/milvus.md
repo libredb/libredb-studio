@@ -8,6 +8,7 @@ Tracking issues: [#424](https://github.com/libredb/libredb-studio/issues/424) an
 | | |
 |---|---|
 | **Write reach** | guarded: while read-only mode holds, Load and Release are refused by `refuseReadOnly` in `write-policy.ts` before any request; every console route in `MILVUS_ROUTES` is a read, and there is no object edit or transaction route |
+| **Failed statement outcome** | unknown: a statement waits for one of the provider's request slots and then sends, and nothing is taken from a pool, so a wait that ends answers `unknown` like every other failure |
 
 ## 1. Overview
 

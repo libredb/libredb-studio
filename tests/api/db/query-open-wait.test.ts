@@ -134,6 +134,51 @@ describe("the query route's open wait, with the real factory", () => {
     }
   });
 
+  test("an open its connect budget ended answers 504 in Studio's sentence naming the open and its budget, not-sent", async () => {
+    clearRateLimitState();
+    const address = listener.address();
+    if (address === null || typeof address === "string") throw new Error("The listener has no TCP address.");
+    // Trino bounds nothing of its own on a server that accepts and never answers, so only the open's deadline ends it.
+    const connection = {
+      id: randomUUID(),
+      name: "never answers",
+      type: "trino",
+      host: "127.0.0.1",
+      port: address.port,
+      database: "studio",
+    };
+    budgetOverride = 40;
+    // The open dials on its own schedule, which may be after the answer: the case waits for its dial, so the socket is
+    // accepted, and ended, before the next case runs.
+    const dial = new Promise<void>((resolve) => {
+      dialed = resolve;
+    });
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const response = await POST(
+        new Request("http://localhost:3000/api/db/query", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ connection, sql: "SELECT 1", queryId: randomUUID() }),
+        }) as never,
+      );
+      const body = await parseResponseJSON<Record<string, unknown>>(response);
+
+      expect(response.status).toBe(504);
+      expect(body).toEqual({
+        error: "The connection did not open within 0.1 seconds, so Studio stopped waiting for it and sent nothing.",
+        code: "TIMEOUT_ERROR",
+        statusCode: 504,
+        retryable: true,
+        kind: "studio-timeout-refusal",
+        outcome: "not-sent",
+      });
+      await dial;
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   test("a connection whose open never settles is opened afresh by the next request after its connect budget", async () => {
     clearRateLimitState();
     const address = listener.address();

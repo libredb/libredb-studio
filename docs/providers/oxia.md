@@ -8,6 +8,7 @@ Tracking issue: [#424](https://github.com/libredb/libredb-studio/issues/424).
 | | |
 |---|---|
 | **Write reach** | none: the gRPC stub, built from `allowlistedServices`, holds only the read RPCs, so no write RPC can be called; there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: a statement waits for one of the provider's request slots and then sends, and nothing is taken from a pool, so a wait that ends answers `unknown` like every other failure |
 
 ## Before you connect
 

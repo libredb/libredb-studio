@@ -19,6 +19,7 @@
 | **Tests** | [`tests/integration/db/redis-provider.test.ts`](../../tests/integration/db/redis-provider.test.ts) |
 | **Tracking issue** | [#7 — Implement Redis Provider](https://github.com/libredb/libredb-studio/issues/7) |
 | **Write reach** | open: the editor's write commands, the function object edit and maintenance (`analyze`) send writes |
+| **Failed statement outcome** | unknown: every statement is sent on the one connection opened at connect, and nothing is taken from a pool before it is sent |
 
 ---
 

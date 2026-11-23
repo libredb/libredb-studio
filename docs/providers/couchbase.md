@@ -25,6 +25,7 @@
 | **Tests** | [`tests/integration/db/couchbase-provider.test.ts`](../../tests/integration/db/couchbase-provider.test.ts) + [`tests/unit/db/couchbase/`](../../tests/unit/db/couchbase/) |
 | **Tracking issue** | [#262 — Add Couchbase provider (SQL++ over Query REST, no native dependency)](https://github.com/libredb/libredb-studio/issues/262) |
 | **Write reach** | open: the editor, Import and maintenance (`analyze`, `reindex`, `kill`) send writes |
+| **Failed statement outcome** | unknown: every statement is sent on an HTTP request of the provider's transport, and nothing is taken from a pool before it is sent |
 
 ---
 

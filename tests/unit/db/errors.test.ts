@@ -34,6 +34,7 @@ import {
   waitedSeconds,
   connectPhase,
   buildPhase,
+  checkoutPhase,
   ExecutionProfileError,
 } from "@/lib/db/errors";
 import * as errorsModule from "@/lib/db/errors";
@@ -1316,5 +1317,94 @@ describe("buildPhase", () => {
   test("resolves to what the build answers", async () => {
     const built = { built: true };
     expect(await buildPhase(async () => built)).toBe(built);
+  });
+});
+
+describe("checkoutPhase", () => {
+  const SENTENCE =
+    /^No connection of the pool came free or opened within (\d+(?:\.\d)?) seconds?, so the statement was not sent: every connection may be in use, or the server may not be answering\.$/;
+
+  test("a checkout that answers resolves to its value and maps nothing", async () => {
+    const connection = { taken: true };
+    let mapped = 0;
+    const answer = await checkoutPhase(
+      async () => connection,
+      (error) => {
+        mapped += 1;
+        return error;
+      },
+    );
+    expect(answer).toBe(connection);
+    expect(mapped).toBe(0);
+  });
+
+  test("a failure the checkout raises is thrown as its mapped class and answers not-sent", async () => {
+    const raw = new Error("connect ECONNREFUSED 127.0.0.1:5432");
+    const mapped = [
+      new ConnectionError("connect ECONNREFUSED 127.0.0.1:5432", "postgres"),
+      new AuthenticationError("password authentication failed", "postgres"),
+      new PoolExhaustedError("Pool is closed.", "mysql"),
+      new DatabaseConfigError("bad config", "oracle"),
+    ];
+    const seen: unknown[] = [];
+    const rejections = await Promise.all(
+      mapped.map((error) =>
+        checkoutPhase(
+          () => Promise.reject(raw),
+          (cause) => {
+            seen.push(cause);
+            return error;
+          },
+        ).catch((e: unknown) => e),
+      ),
+    );
+    rejections.forEach((rejection, index) => expect(rejection).toBe(mapped[index]));
+    for (const error of mapped) expect(error.outcome).toBe("not-sent");
+    for (const cause of seen) expect(cause).toBe(raw);
+    expect(Object.keys(raw)).toEqual([]);
+  });
+
+  test("a checkout deadline becomes a ConnectionError naming the wait that answers not-sent, the deadline kept as its cause", async () => {
+    const deadline = new TimeoutError("Query timeout: timeout exceeded when trying to connect", "postgres");
+    const error = await checkoutPhase(
+      async () => {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        throw new Error("timeout exceeded when trying to connect");
+      },
+      () => deadline,
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect(error).not.toBeInstanceOf(TimeoutError);
+    const failure = error as ConnectionError;
+    const match = SENTENCE.exec(failure.message);
+    expect(match).not.toBeNull();
+    expect(Number(match?.[1])).toBeGreaterThanOrEqual(0.2);
+    expect(Number(match?.[1])).toBeLessThan(2);
+    expect(failure.provider).toBe("postgres");
+    expect(failure.cause).toBe(deadline);
+    expect(failure.outcome).toBe("not-sent");
+    expect(deadline.outcome).toBeUndefined();
+    expect(Object.keys(deadline)).not.toContain("outcome");
+  });
+
+  test("a mapped value outside the database classes passes unmarked and answers unknown", async () => {
+    const raw = new Error("socket hang up");
+    expect(
+      await checkoutPhase(
+        () => Promise.reject(new Error("first")),
+        () => raw,
+      ).catch((e: unknown) => e),
+    ).toBe(raw);
+    expect(Object.keys(raw)).toEqual([]);
+    const broken = new Error("the map itself failed");
+    expect(
+      await checkoutPhase(
+        () => Promise.reject(new Error("first")),
+        () => {
+          throw broken;
+        },
+      ).catch((e: unknown) => e),
+    ).toBe(broken);
+    expect(Object.keys(broken)).toEqual([]);
   });
 });

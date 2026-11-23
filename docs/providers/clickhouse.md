@@ -25,6 +25,7 @@
 | **Tests** | [`tests/integration/db/clickhouse-provider.test.ts`](../../tests/integration/db/clickhouse-provider.test.ts) + [`tests/unit/db/clickhouse/`](../../tests/unit/db/clickhouse/) + [`tests/unit/lib/explain/clickhouse-json.test.ts`](../../tests/unit/lib/explain/clickhouse-json.test.ts) |
 | **Tracking issue** | [#264 — Add ClickHouse provider](https://github.com/libredb/libredb-studio/issues/264) |
 | **Write reach** | open: the editor and maintenance (`optimize`, `analyze`, `kill`) send writes |
+| **Failed statement outcome** | unknown: every statement is sent on an HTTP request of the provider's transport, and nothing is taken from a pool before it is sent |
 
 ---
 

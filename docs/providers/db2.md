@@ -11,6 +11,7 @@ A sentence that names 1.0.22 or 1.0.24 describes that version and is kept for th
 | | |
 |---|---|
 | **Write reach** | open: the editor, inline row edit, Import, Generate Test Data, maintenance (`analyze`, `optimize`) and the transaction route all send writes; there is no Create Table |
+| **Failed statement outcome** | unknown: every statement is sent on the one client opened at connect, and nothing is taken from a pool before it is sent |
 
 ## 1. Overview
 

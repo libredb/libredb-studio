@@ -9,6 +9,7 @@ a rule is a choice rather than a measurement, it is marked CHOICE and its cost i
 | | |
 |---|---|
 | **Write reach** | none: the encoder has no PUBLISH function, and the valve, `guardOutboundPacket`, refuses any other packet on the bytes; there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: the editor sends no statement to a broker, since `query` refuses every text |
 
 ## Before you connect
 

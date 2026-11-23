@@ -16,6 +16,7 @@
 | **Connection string** | Not supported; an `https://` management address pasted into Host is taken ([§4.1](#41-fields)) |
 | **SSH tunnel** | Refused by Studio before the bastion is dialled ([SSH tunnels](./README.md#ssh-tunnels-bastion-host-key-verification)): one tunnel carries one port, and the management API and AMQP use two |
 | **Write reach** | none: the AMQP codec's outbound check, `isAllowedOutbound`, admits no publish, get, reject or queue or exchange method, and the management client's routes are `GET` only ([§3.1](#31-read-only-by-construction)); there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: a statement waits for one of the provider's request slots and then sends, and nothing is taken from a pool, so a wait that ends answers `unknown` like every other failure |
 | **Maintenance** | None |
 | **Query cancellation** | Supported: Stop ends a read, and a read stopped after it started returns the rows read so far with a warning ([§5.5](#55-stop-reasons-and-warnings)) |
 | **Supported versions** | RabbitMQ 4.2 and later; an older broker is refused naming its version |

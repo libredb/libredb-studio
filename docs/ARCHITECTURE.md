@@ -446,7 +446,7 @@ A class declared elsewhere, such as a provider's own `QueryError` subclass, take
 `code` is the error's API code, or for the two execution profile kinds the refusal's deny code.
 `sqlState` is the SQLSTATE the driver reported, when it reported one.
 `engineCode` is an engine's own error code; no error carries one yet.
-`outcome` is `not-sent` when the statement never reached the database: a refusal before send (`RefusedBeforeSendError` and its subclasses), or whatever a provider's connect raised, which `connectPhase` marks.
+`outcome` is `not-sent` when the statement never reached the database: a refusal before send (`RefusedBeforeSendError` and its subclasses), whatever a provider's connect raised, which `connectPhase` marks, or whatever a provider's checkout of a connection or session before the send raised, which `checkoutPhase` marks.
 Every other failure answers `unknown`, since the statement may have run.
 `sessionState` says whether the session is in a transaction; no error carries one yet.
 The record holds no text of the error: no message, detail, statement or identifier.

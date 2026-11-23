@@ -787,7 +787,7 @@ A record holds no message, detail, statement or identifier of the error.
 ### E-5 (normative): Only a statement that cannot have reached the database is not-sent
 
 `outcome` is `not-sent` only when the statement cannot have reached the database.
-The host marks every failure of a provider's connect, and a provider claims not-sent only by raising `refused-before-send`, whose class marks it.
+The host marks every failure of a provider's connect, and a provider claims not-sent only by raising `refused-before-send`, whose class marks it, or by taking its connection or session through `checkoutPhase` before it sends anything, which marks what the checkout raised and turns a deadline the checkout met into a `ConnectionError` naming the wait.
 The host also marks not-sent a console call it refuses before making it, a deadline already passed or a caller already gone, C-51.
 No provider writes an error's `outcome` itself, and every other failure is `unknown`.
 
@@ -796,6 +796,13 @@ No provider writes an error's `outcome` itself, and every other failure is `unkn
 - test `tests/unit/lib/db/error-record.test.ts` "every other class answers unknown"
 - test `tests/unit/db/errors.test.ts` "a failure the connect raises keeps its identity and answers not-sent"
 - test `tests/unit/db/errors.test.ts` "a connect deadline becomes a ConnectionError that answers not-sent"
+- test `tests/unit/db/errors.test.ts` "a failure the checkout raises is thrown as its mapped class and answers not-sent"
+- test `tests/unit/db/errors.test.ts` "a checkout deadline becomes a ConnectionError naming the wait that answers not-sent, the deadline kept as its cause"
+- test `tests/unit/db/statement-outcome-docs.test.ts` "each provider document has one Failed statement outcome row, checkout-not-sent exactly when its provider runs a checkout through checkoutPhase"
+- test `tests/integration/db/postgres-provider.test.ts` "a pool checkout that fails answers its mapped class with outcome not-sent and sends nothing"
+- test `tests/integration/db/mysql-provider.test.ts` "a pool checkout that fails answers its mapped class with outcome not-sent, not an internal error"
+- test `tests/integration/db/oracle-provider.test.ts` "a pool checkout that fails answers its mapped class with outcome not-sent and sends nothing"
+- test `tests/unit/lib/provider-host/host-rules.test.ts` "a checkout failure inside execute answers not-sent"
 - test `tests/unit/lib/provider-host/access.test.ts` "a call the caller left is answered as QueryCancelledError, not-sent before the call and unknown after it"
 - test `tests/unit/lib/provider-host/access.test.ts` "a call past its deadline is answered as StudioTimeoutRefusal, not-sent before the call and unknown after it"
 
@@ -1986,4 +1993,5 @@ Against the manifest sketch the design started from:
 
 Against this contract's earlier text:
 
+- A provider may claim not-sent for a failure of its checkout of a connection or session before it sends, E-5, where only `refused-before-send` could.
 - A row is measured once on the host's path: the pump hands each pull its own measure and takes the size it recorded for the row a source answers, C-13 to C-16 and C-50, where a source and the pump each measured every row.

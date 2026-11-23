@@ -18,6 +18,7 @@
 | **SSH tunnel** | Refused: a tunnel forwards one address, and a Kafka client reaches every broker at the address the broker advertises ([§4.5](#45-no-ssh-tunnel)) |
 | **EXPLAIN** | None |
 | **Write reach** | none: the client sends only the read APIs of its API key set `KAFKA_READ_APIS`, the editor's text is a read request `parseReadRequest` admits or refuses, and there is no object edit, maintenance or transaction route, so every connection is read-only and a read-only one is accepted ([§11.5](#115-write-reach-measured-live)) |
+| **Failed statement outcome** | unknown: every statement is sent on the one client opened at connect, and nothing is taken from a pool before it is sent |
 | **Transactions** | Not applicable; reads are read-committed ([§5.2](#52-result-shape)) |
 | **Maintenance** | None |
 | **Query cancellation** | None: a read is bounded by its limit, its budgets and its timeout, and there is no server-side evaluation to stop ([§5.5](#55-timeout-and-cancellation)) |

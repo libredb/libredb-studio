@@ -25,13 +25,15 @@ export class DatabaseError extends Error {
   declare sqlstate?: string;
 
   /**
-   * `not-sent` when the statement this error answers never reached the database. Written in exactly five places: the
+   * `not-sent` when the statement this error answers never reached the database. Written in exactly six places: the
    * constructor of `RefusedBeforeSendError`, so every refusal before send carries it; `connectPhase`, on what a
    * provider's connect raised, the `ConnectionError` of an open a removal or a cache close overtook included (the
    * factory raises it inside the connect it runs there); `buildPhase`, which `buildProvider` in ./factory runs, on what building a provider
    * raised; `withheldProviderError` in ./operations/provider-text, which copies `not-sent` onto the error it answers
    * in place of one; and the provider host's accessor (src/lib/provider-host/access.ts), through `markNotSent`, on the
-   * class it builds for a console call the host refused before making it. Absent otherwise, which `errorOutcome` in ./error-record reads as `unknown`, because the statement
+   * class it builds for a console call the host refused before making it; and `checkoutPhase`, which a provider's execute
+   * runs around taking a connection or session from its pool or client before it sends, on what that checkout raised,
+   * mapped. Absent otherwise, which `errorOutcome` in ./error-record reads as `unknown`, because the statement
    * may have run. An own field only when set, so every other error keeps the own keys it had. An instance a failed
    * build or connect raised is never raised by a later statement: the factory keeps no provider whose build or connect
    * failed.
@@ -668,6 +670,36 @@ export async function buildPhase<T>(build: () => Promise<T>): Promise<T> {
   } catch (error) {
     markNotSent(error);
     throw error;
+  }
+}
+
+/**
+ * Runs the step of a provider's execute that takes a connection or session from its pool or client before anything
+ * of the statement is sent (docs/providers/CONTRACT.md, E-5). A failure of that step provably precedes the send, so
+ * the error it rejects with answers `outcome` `not-sent`: `map` (the provider's own `mapDatabaseError`) turns the
+ * raised value into the class it answers, and a database error it answers is marked on the instance as mapped. A
+ * deadline the checkout met is no statement timeout, for the reason `connectPhase` gives for a connect: a mapped
+ * TimeoutError becomes a ConnectionError naming the wait, the TimeoutError kept as its cause and left unmarked. A value
+ * `map` answers outside the database classes passes unmarked and answers `unknown`, and a throw from `map` itself
+ * propagates as thrown. It resolves to what the checkout answers, and every failure after it stays the provider's own.
+ */
+export async function checkoutPhase<T>(checkout: () => Promise<T>, map: (error: unknown) => unknown): Promise<T> {
+  const started = Date.now();
+  try {
+    return await checkout();
+  } catch (error) {
+    const mapped = map(error);
+    if (!(mapped instanceof TimeoutError)) {
+      markNotSent(mapped);
+      throw mapped;
+    }
+    const failure = new ConnectionError(
+      `No connection of the pool came free or opened within ${waitedSeconds(Date.now() - started)}, so the statement was not sent: every connection may be in use, or the server may not be answering.`,
+      mapped.provider,
+    );
+    failure.cause = mapped;
+    failure.outcome = "not-sent";
+    throw failure;
   }
 }
 

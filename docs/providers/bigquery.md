@@ -15,6 +15,7 @@
 | **Connection string**  | Not supported                                                                                        |
 | **EXPLAIN**            | `bigquery-dryrun`: a dry run that reports the bytes the statement would process, and bills nothing   |
 | **Write reach** | open: the editor sends every statement as written, DML included, which returns `numDmlAffectedRows` as the row count, and the credentials are the boundary |
+| **Failed statement outcome** | unknown: every statement is sent on an HTTP request of the provider's transport, and nothing is taken from a pool before it is sent |
 | **Transactions**       | Not exposed                                                                                          |
 | **Maintenance**        | None                                                                                                 |
 | **Query parameters**   | Not supported yet: a parameterized call is refused with a message                                    |

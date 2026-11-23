@@ -12,6 +12,7 @@ reference encoder is Eclipse Tahu `sparkplug-payload` 1.0.3.
 | | |
 |---|---|
 | **Write reach** | none: the encoder's packet table, `PACKET`, holds five packet types and no PUBLISH, and its CONNECT takes no will; there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: the provider opens an MQTT session of its own for each read (`reader()`) before it sends the statement, and that failure answers `unknown` like every other |
 
 ## 1. Overview
 

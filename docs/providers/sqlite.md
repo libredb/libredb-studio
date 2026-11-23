@@ -24,6 +24,7 @@
 | **Source** | [`src/lib/db/providers/sql/sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts) |
 | **Tests** | [`tests/integration/db/sqlite-provider.test.ts`](../../tests/integration/db/sqlite-provider.test.ts) |
 | **Write reach** | open: the editor, inline row edit, Import, Generate Test Data, Create Table and maintenance (`vacuum`, `analyze`, `reindex`, `check`) all write the file |
+| **Failed statement outcome** | unknown: the provider takes its worker's handle (`getHandle()`), starting a new worker when the last one stopped, before it sends the statement, and that failure answers `unknown` like every other |
 
 ---
 

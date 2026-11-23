@@ -10,6 +10,7 @@ measured, the document says so instead of estimating.
 | | |
 |---|---|
 | **Write reach** | none: the statement grammar, `parseStatement`, holds four read commands, and the valve refuses a Set PDU on every datagram it can read; there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: every statement is sent on the provider's one UDP socket, and nothing is taken from a pool before it is sent |
 
 ## 1. What it does
 

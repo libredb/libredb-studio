@@ -65,6 +65,7 @@ const NAMED_CITATIONS = [
       "disconnect",
       "getDatabasePath",
       "query",
+      "getHandle",
       "endOpenQueryTransaction",
       "queryReadOnly",
       "listContainers",

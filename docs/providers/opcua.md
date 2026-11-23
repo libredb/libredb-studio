@@ -9,6 +9,7 @@ Source: [`src/lib/db/providers/industrial/opcua/`](../../src/lib/db/providers/in
 | | |
 |---|---|
 | **Write reach** | none: the editor's request, read by `readRequest`, is a value or history read, and the client seam names eight read services only; there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: the provider takes a session from its session pool (`withSession`) before it sends the statement, and that failure answers `unknown` like every other |
 
 ## 1. Overview
 

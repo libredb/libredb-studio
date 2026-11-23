@@ -24,6 +24,7 @@
 | **Source** | [`src/lib/db/providers/document/mongodb/index.ts`](../../src/lib/db/providers/document/mongodb/index.ts) |
 | **Tests** | [`tests/integration/db/mongodb-provider.test.ts`](../../tests/integration/db/mongodb-provider.test.ts) |
 | **Write reach** | open: the editor's write operations, Import, Generate Test Data and maintenance (`vacuum`, `analyze`, `check`, `kill`) send writes |
+| **Failed statement outcome** | unknown: the driver takes its pooled connection inside each operation call, the call that sends the command, so no failure can be shown to come before the send |
 
 ---
 

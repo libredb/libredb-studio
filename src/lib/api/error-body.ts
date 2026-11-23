@@ -18,6 +18,7 @@ import {
   PoolExhaustedError,
   QueryError,
   QueryCancelledError,
+  StudioTimeoutRefusal,
   TimeoutError,
   TransactionLostError,
   UnknownProviderError,
@@ -154,10 +155,13 @@ function classifiedAnswer(error: unknown): DatabaseErrorAnswer | null {
 
   // --- DB: TimeoutError ---
   // 504: Chromium sends a POST answered Request Timeout on a reused connection again, so the statement ran again
-  // on the database. `retryable` is a hint for the person; no client resends on it.
+  // on the database. `retryable` is a hint for the person; no client resends on it. A Studio timeout refusal answers
+  // the sentence Studio wrote for it, which names what Studio waited for (an open, a statement, a page, a cancel) and
+  // whether anything was sent; a provider's own timeout answers the shared sentence.
   if (error instanceof TimeoutError) {
+    const sentence = error instanceof StudioTimeoutRefusal ? error.message : TIMEOUT_SENTENCE;
     return {
-      body: { error: TIMEOUT_SENTENCE, code: ApiErrorCode.TIMEOUT_ERROR, statusCode: 504, retryable: true },
+      body: { error: sentence, code: ApiErrorCode.TIMEOUT_ERROR, statusCode: 504, retryable: true },
       log: { level: "warn", message: "Query timeout", context: { provider: error.provider, duration: error.timeout } },
     };
   }
