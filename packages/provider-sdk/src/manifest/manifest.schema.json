@@ -20,12 +20,13 @@
       "$ref": "#/$defs/calls"
     },
     "engines": {
-      "description": "The engines the package serves, one declaration each.",
+      "description": "The engines the package serves, one declaration each, at most 64: a contract limit for a package that serves one provider's engines, which bounds every reading of the list.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/engineDeclaration"
       },
-      "minItems": 1
+      "minItems": 1,
+      "maxItems": 64
     },
     "compatibility": {
       "description": "The products the package was measured against, one entry per product, each naming an engine the manifest declares.",
@@ -1051,20 +1052,22 @@
           "$ref": "#/$defs/monitoringPanels"
         },
         "maintenance": {
-          "description": "The maintenance operations the engine offers before Studio connects.",
+          "description": "The maintenance operations the engine offers before Studio connects, each once, so at most as many as the operations there are.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/maintenanceOperation"
           },
-          "uniqueItems": true
+          "uniqueItems": true,
+          "maxItems": 11
         },
         "agentReadings": {
-          "description": "The curated operational readings agent mode is offered on the engine.",
+          "description": "The curated operational readings agent mode is offered on the engine, each once, so at most as many as the readings there are.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/agentReading"
           },
-          "uniqueItems": true
+          "uniqueItems": true,
+          "maxItems": 6
         }
       },
       "required": ["monitoring", "maintenance", "agentReadings"],

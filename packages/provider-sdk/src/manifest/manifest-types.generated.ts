@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "5b1dfa91f48c2d90553ea1fb2a97152334c8a662a909bbe4abb3ef41f1e523e6";
+export const MANIFEST_SCHEMA_SHA256 = "049ca47eaab2064c66fcbbbcffcdfb5582016a456161b877431bb0c7feda9baf";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -14,7 +14,7 @@ export interface ProviderManifest {
   readonly contract: "0.1";
   readonly runtime: Runtime;
   readonly calls: Calls;
-  /** The engines the package serves, one declaration each. */
+  /** The engines the package serves, one declaration each, at most 64: a contract limit for a package that serves one provider's engines, which bounds every reading of the list. */
   readonly engines: readonly EngineDeclaration[];
   /** The products the package was measured against, one entry per product, each naming an engine the manifest declares. */
   readonly compatibility: readonly CompatibilityEntry[];
@@ -447,9 +447,9 @@ export type HostPathField = "clientCertificatePath" | "clientPrivateKeyPath";
 /** What the engine offers beyond its queries. */
 export interface Facets {
   readonly monitoring: MonitoringPanels;
-  /** The maintenance operations the engine offers before Studio connects. */
+  /** The maintenance operations the engine offers before Studio connects, each once, so at most as many as the operations there are. */
   readonly maintenance: readonly MaintenanceOperation[];
-  /** The curated operational readings agent mode is offered on the engine. */
+  /** The curated operational readings agent mode is offered on the engine, each once, so at most as many as the readings there are. */
   readonly agentReadings: readonly AgentReading[];
 }
 
