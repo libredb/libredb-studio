@@ -483,6 +483,14 @@ The record keeps the SQLSTATE the driver reported.
 - test `tests/unit/db/driver-row-kinds.test.ts` "each answer a driver row gives maps to one error kind, keeping the driver's SQLSTATE"
 - test `tests/unit/db/driver-errors.test.ts` "answers every corpus input exactly as the shared mapping answered it before the move"
 
+### E-8 (normative): Nothing resends on `retryable`
+
+An answer's `retryable` is advice to a person that trying again may help.
+No host, client, agent or MCP component resends a request because of it, for a write and a billed read alike.
+Every read of the flag in Studio's source is a recorded copy that carries it to the next hop.
+
+- test `tests/unit/lib/api/retryable-readers.test.ts` "every read of an answer's retryable is a recorded copy, so nothing resends on it"
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:
