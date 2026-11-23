@@ -19,7 +19,7 @@ import {
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { SYNTHETIC_ENTITY_CAPABILITIES, SYNTHETIC_PREVIEW } from "../../fixtures/maintenance-entity-operations";
-import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
+import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 
 /**
  * `POST /api/db/maintenance/preview` (spec 3.11, E36): an admin-only read beside the maintenance route. It makes the
@@ -406,6 +406,35 @@ describe("POST /api/db/maintenance/preview", () => {
       code: "QUERY_ERROR",
       error: "No object named orders in app",
     });
+  });
+
+  test("a preview's summary, refusal and note that hold the connection's credential answer the withheld sentence, and its facts as the provider answered them", async () => {
+    const password = crypto.randomUUID();
+    const connection = { ...validConnection, password };
+    const send = () => preview({ type: "compact", target: "orders", container: "app", connection });
+    const facts = [{ label: "Revision", value: "42" }];
+    mockPreviewMaintenance.mockImplementationOnce(async () => ({
+      summary: `Compacts the history of ${password}`,
+      facts,
+      refusal: `the server refused ${password}`,
+      note: `read as ${password}`,
+    }));
+    const withheld = await send();
+    const body = await parseResponseJSON<Record<string, unknown>>(withheld);
+    expect(withheld.status).toBe(200);
+    expect(body).toEqual({
+      preview: {
+        summary: PROVIDER_TEXT_WITHHELD,
+        facts,
+        refusal: PROVIDER_TEXT_WITHHELD,
+        note: PROVIDER_TEXT_WITHHELD,
+      },
+    });
+    expect(JSON.stringify(body)).not.toContain(password);
+
+    const clean = { summary: "Compacts the history up to revision 42", facts, note: "as reported by the server" };
+    mockPreviewMaintenance.mockImplementationOnce(async () => clean);
+    expect(await parseResponseJSON(await send())).toEqual({ preview: clean });
   });
 
   test("a provider failure answers what it maps to", async () => {

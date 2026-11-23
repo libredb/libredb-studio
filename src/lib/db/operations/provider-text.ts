@@ -6,7 +6,10 @@
  * A provider scrubs the server's text at its own entry with `serverText` (src/lib/db/utils/server-text.ts); this is
  * the pass core runs after it, over every error, warning and notice text a provider hands core on those paths, and over
  * the sentences an object read answers in a provider's words (`scrubKindCounts`, `scrubObjectDetail`,
- * `scrubSourceDocument`), before any fence, prompt, ledger row, response or log line. It reads the secret-class values
+ * `scrubSourceDocument`) and a success answer writes in them (`scrubMonitoringData`, `scrubMaintenanceResult`,
+ * `scrubMaintenancePreview`, `scrubKeyScanPage`, and an object edit's `scrubObjectEditRefusal`, `scrubObjectEditPlan`,
+ * `scrubObjectEditPreimage` and `scrubObjectEditOutcome`), before any fence, prompt, ledger row, response or log line.
+ * A code a record keeps goes through `recordedProviderCode`. It reads the secret-class values
  * of the calling connection that its providers receive (`ScrubbedProviders`) through the central walk
  * (`secretFieldValues`) and expands them with `secretForms`. A text holding any form is replaced whole by
  * `PROVIDER_TEXT_WITHHELD`, matched exactly as `serverText` matches (`holdsSecretForm`).
@@ -35,7 +38,21 @@ import {
 } from "@/lib/db/errors";
 import { holdsSecretForm, secretForms } from "@/lib/db/utils/server-text";
 import { type SecretFieldRecord, secretFieldValues } from "@/lib/storage/secret-fields";
-import type { KindCount, ObjectDetail, ObjectSourceDocument, ObjectSourcePart } from "@/lib/db/types";
+import type {
+  KeyScanPage,
+  KindCount,
+  MaintenancePreview,
+  MaintenanceResult,
+  MonitoringData,
+  ObjectDetail,
+  ObjectEditOutcome,
+  ObjectEditPlan,
+  ObjectEditPreimage,
+  ObjectEditRefusal,
+  ObjectEditRevision,
+  ObjectSourceDocument,
+  ObjectSourcePart,
+} from "@/lib/db/types";
 import type { DatabaseType, QueryResult, QueryWarning } from "@/lib/types";
 
 /** Replaces a provider's text whole when it holds a credential of the calling connection; it echoes none of it. */
@@ -158,6 +175,150 @@ export function scrubSourceDocument(scrub: ProviderTextScrub, document: ObjectSo
     ...document,
     parts: [scrubSourcePart(scrub, first), ...rest.map((part) => scrubSourcePart(scrub, part))],
   };
+}
+
+/**
+ * Monitoring data with each panel's `errors` entry scrubbed, the engine's own sentence; every panel key the provider
+ * answered is kept, and data with no `errors` is answered as given. The panels' figures and statement texts are
+ * database content, never scrubbed.
+ */
+export function scrubMonitoringData(scrub: ProviderTextScrub, data: MonitoringData): MonitoringData {
+  if (data.errors === undefined) return data;
+  const errors = Object.fromEntries(
+    Object.entries(data.errors).map(([panel, sentence]) => [panel, scrubProviderText(scrub, sentence)]),
+  );
+  // `Object.entries` widens a panel key to `string`; every key here is one the provider answered in `data.errors`.
+  return { ...data, errors: errors as MonitoringData["errors"] };
+}
+
+/** A maintenance answer with its `message` scrubbed; its verdict, time, `rows` and `fields` are kept as given. */
+export function scrubMaintenanceResult(scrub: ProviderTextScrub, result: MaintenanceResult): MaintenanceResult {
+  return { ...result, message: scrubProviderText(scrub, result.message) };
+}
+
+/**
+ * A maintenance preview with its `summary`, and its `refusal` and `note` when present, scrubbed; its `facts` are
+ * field names and figures, kept as given.
+ */
+export function scrubMaintenancePreview(scrub: ProviderTextScrub, preview: MaintenancePreview): MaintenancePreview {
+  return {
+    ...preview,
+    summary: scrubProviderText(scrub, preview.summary),
+    ...(preview.refusal === undefined ? {} : { refusal: scrubProviderText(scrub, preview.refusal) }),
+    ...(preview.note === undefined ? {} : { note: scrubProviderText(scrub, preview.note) }),
+  };
+}
+
+/**
+ * A key page with its `skipped.reason`, `readOutcome.endReason` and each `readOutcome.provenLoss` entry scrubbed, the
+ * provider's own words. Keys, types, prefixes, the cursor, the total, the skipped count and the scope are kept, and a
+ * page with neither `skipped` nor `readOutcome` is answered as given.
+ */
+export function scrubKeyScanPage(scrub: ProviderTextScrub, page: KeyScanPage): KeyScanPage {
+  const { skipped, readOutcome } = page;
+  if (skipped === undefined && readOutcome === undefined) return page;
+  return {
+    ...page,
+    ...(skipped === undefined
+      ? {}
+      : { skipped: { count: skipped.count, reason: scrubProviderText(scrub, skipped.reason) } }),
+    ...(readOutcome === undefined
+      ? {}
+      : {
+          readOutcome: {
+            scope: readOutcome.scope,
+            endReason: scrubProviderText(scrub, readOutcome.endReason),
+            ...(readOutcome.provenLoss === undefined
+              ? {}
+              : { provenLoss: readOutcome.provenLoss.map((loss) => scrubProviderText(scrub, loss)) }),
+          },
+        }),
+  };
+}
+
+/**
+ * An object edit refusal with its `sentence`, and its `code` and `hint` when present, scrubbed: the engine's own words
+ * and identifier. A string code is scrubbed whole, as a warning's is. The refusal class and the position are kept.
+ */
+export function scrubObjectEditRefusal(scrub: ProviderTextScrub, refusal: ObjectEditRefusal): ObjectEditRefusal {
+  return {
+    ...refusal,
+    sentence: scrubProviderText(scrub, refusal.sentence),
+    ...(refusal.code === undefined ? {} : { code: scrubProviderText(scrub, refusal.code) }),
+    ...(refusal.hint === undefined ? {} : { hint: scrubProviderText(scrub, refusal.hint) }),
+  };
+}
+
+/** A revision of check `"unavailable"` with its `reason` scrubbed; a token, its basis and its scope are kept. */
+function scrubRevision(scrub: ProviderTextScrub, revision: ObjectEditRevision): ObjectEditRevision {
+  if (revision.check !== "unavailable") return revision;
+  return { check: "unavailable", reason: scrubProviderText(scrub, revision.reason) };
+}
+
+/** A text with its `truncated.reason` scrubbed; the text, its language and the limit are kept. */
+function scrubTruncation<T extends { readonly truncated?: { readonly limit: number; readonly reason: string } }>(
+  scrub: ProviderTextScrub,
+  text: T,
+): T {
+  if (text.truncated === undefined) return text;
+  return {
+    ...text,
+    truncated: { limit: text.truncated.limit, reason: scrubProviderText(scrub, text.truncated.reason) },
+  };
+}
+
+/**
+ * A plan with the `reason` of a revision of check `"unavailable"` scrubbed; any other plan is answered as given. Its
+ * unit, session pins, revision token and basis and its consequences are database facts, never scrubbed.
+ */
+export function scrubObjectEditPlan(scrub: ProviderTextScrub, plan: ObjectEditPlan): ObjectEditPlan {
+  const revision = scrubRevision(scrub, plan.revision);
+  return revision === plan.revision ? plan : { ...plan, revision };
+}
+
+/** A build's pre-image with its `truncated.reason` scrubbed; its text is database content, kept as given. */
+export function scrubObjectEditPreimage(scrub: ProviderTextScrub, preimage: ObjectEditPreimage): ObjectEditPreimage {
+  return scrubTruncation(scrub, preimage);
+}
+
+/**
+ * An apply outcome with each sentence and engine code the provider wrote scrubbed: a refusal's, an engine's concurrent
+ * refusal's sentence and code, an interruption's sentence, the current text's truncation reason and an unavailable
+ * revision's reason. What was written and lost, the current text, the commit disposition and the duration are kept.
+ */
+export function scrubObjectEditOutcome(scrub: ProviderTextScrub, outcome: ObjectEditOutcome): ObjectEditOutcome {
+  switch (outcome.outcome) {
+    case "refused":
+      return { ...outcome, refusal: scrubObjectEditRefusal(scrub, outcome.refusal) };
+    case "conflict":
+      if (outcome.conflict === "object-changed") {
+        const current = scrubTruncation(scrub, outcome.current);
+        return current === outcome.current ? outcome : { ...outcome, current };
+      }
+      return {
+        ...outcome,
+        sentence: scrubProviderText(scrub, outcome.sentence),
+        ...(outcome.code === undefined ? {} : { code: scrubProviderText(scrub, outcome.code) }),
+      };
+    case "interrupted":
+      return { ...outcome, sentence: scrubProviderText(scrub, outcome.sentence) };
+    case "applied":
+    case "applied-with-collateral": {
+      const revision = scrubRevision(scrub, outcome.revision);
+      return revision === outcome.revision ? outcome : { ...outcome, revision };
+    }
+    case "applied-elsewhere":
+      return outcome;
+  }
+}
+
+/**
+ * A provider's code for a record's code column, or `undefined` when it holds a form: that column holds a code and never
+ * a sentence, so a code that holds a credential of the connection is recorded as none.
+ */
+export function recordedProviderCode(scrub: ProviderTextScrub, code: string | undefined): string | undefined {
+  if (code === undefined) return undefined;
+  return holdsSecretForm(code, scrub.forms) ? undefined : code;
 }
 
 /**

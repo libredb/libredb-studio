@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getOrCreateProvider, type MaintenanceOperation } from "@/lib/db";
 import { emitAuditEvent } from "@/lib/audit";
 import { createErrorResponse } from "@/lib/api/errors";
-import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
+import { type ProviderTextScrub, providerTextScrub, scrubMaintenanceResult } from "@/lib/db/operations/provider-text";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { maintenanceControl, type MaintenancePlacement } from "@/lib/db/types";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
@@ -251,7 +251,9 @@ export async function POST(request: Request) {
       logger.error("Failed to record maintenance audit event", auditError, { route: "POST /api/db/maintenance" });
     }
 
-    return NextResponse.json(result);
+    // The message is the provider's sentence, answered through the connection's scrub; the verdict above reads
+    // `success`, which the scrub keeps.
+    return NextResponse.json(scrubMaintenanceResult(scrub, result));
   } catch (error) {
     return createErrorResponse(error, { route: "api/db/maintenance", scrub });
   }

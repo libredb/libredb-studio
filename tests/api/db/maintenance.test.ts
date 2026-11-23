@@ -25,7 +25,7 @@ import {
   isAuthenticationError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
-import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
+import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 
 // ─── Create mock objects ────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -276,6 +276,37 @@ describe("POST /api/db/maintenance", () => {
       code: "QUERY_ERROR",
       error: "at or near vacuum: syntax error",
     });
+  });
+
+  test("a maintenance message that holds the connection's credential answers the withheld sentence, and a clean message and the rows as the provider answered them", async () => {
+    const password = crypto.randomUUID();
+    const connection = { ...validConnection, password };
+    const send = () =>
+      POST(createMockRequest("/api/db/maintenance", { method: "POST", body: { type: "vacuum", connection } }) as never);
+    (mockProvider.runMaintenance as ReturnType<typeof mock>).mockResolvedValueOnce({
+      success: false,
+      executionTime: 3,
+      message: `ERR invalid password ${password}`,
+    });
+    const withheld = await send();
+    const body = await parseResponseJSON<Record<string, unknown>>(withheld);
+    expect(withheld.status).toBe(200);
+    expect(body).toEqual({ success: false, executionTime: 3, message: PROVIDER_TEXT_WITHHELD });
+    expect(JSON.stringify(body)).not.toContain(password);
+
+    const clean = { success: true, executionTime: 2, message: "VACUUM completed" };
+    (mockProvider.runMaintenance as ReturnType<typeof mock>).mockResolvedValueOnce(clean);
+    expect(await parseResponseJSON(await send())).toEqual(clean);
+
+    const read = {
+      success: true,
+      executionTime: 1,
+      message: "INFO read 1 line",
+      rows: [{ section: "server", key: "redis_version", value: "7.2.4" }],
+      fields: ["section", "key", "value"],
+    };
+    (mockProvider.runMaintenance as ReturnType<typeof mock>).mockResolvedValueOnce(read);
+    expect(await parseResponseJSON(await send())).toEqual(read);
   });
 
   test("admin with valid params returns maintenance result", async () => {

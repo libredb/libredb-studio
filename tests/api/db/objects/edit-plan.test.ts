@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { parseResponseJSON } from "../../../helpers/mock-next";
 import { getServerAuditBuffer } from "@/lib/audit";
 import { EDIT_CHARACTER_LIMIT, EDIT_PLAN_EXECUTABLE_LIMIT } from "@/lib/db/object-edit";
-import type { ObjectEditBuild } from "@/lib/db/types";
+import { PROVIDER_TEXT_WITHHELD } from "@/lib/db/operations/provider-text";
+import type { ObjectEditBuild, ObjectEditPlan, ObjectEditPreimage, ObjectEditRefusal } from "@/lib/db/types";
 import {
   POST_PLAN as POST,
+  POST_APPLY,
   CONNECTION,
   PLAN,
   PREIMAGE,
@@ -110,6 +112,66 @@ describe("POST /api/db/objects/edit-plan", () => {
     // was carried out, and today the identical refusal reaches the browser as HTTP 401
     // "Authentication failed: permission denied for schema app".
     expect((await parseResponseJSON<{ built: boolean }>(response)).built).toBe(false);
+  });
+
+  test("a refusal's sentence, code and hint that hold the connection's credential answer the withheld sentence, and its class and position as the provider answered them", async () => {
+    const password = crypto.randomUUID();
+    mockResolveConnection.mockResolvedValueOnce({ ...CONNECTION, password });
+    provider.buildObjectEdit.mockResolvedValueOnce({
+      built: false,
+      refusal: {
+        refusal: "privilege",
+        sentence: `must be owner of function ${password}`,
+        code: `E${password}`,
+        hint: `Use DROP FUNCTION ${password} first.`,
+        at: { within: "user", line: 2, column: 5 },
+      },
+    });
+    const response = await POST(request(VALID));
+    expect(response.status).toBe(200);
+    const body = await parseResponseJSON<{ built: boolean; refusal: ObjectEditRefusal }>(response);
+    expect(body).toEqual({
+      built: false,
+      refusal: {
+        refusal: "privilege",
+        sentence: PROVIDER_TEXT_WITHHELD,
+        code: PROVIDER_TEXT_WITHHELD,
+        hint: PROVIDER_TEXT_WITHHELD,
+        at: { within: "user", line: 2, column: 5 },
+      },
+    });
+    expect(JSON.stringify(body)).not.toContain(password);
+
+    mockResolveConnection.mockResolvedValueOnce({ ...CONNECTION, password });
+    provider.buildObjectEdit.mockResolvedValueOnce({ built: false, refusal: REFUSAL });
+    expect(await parseResponseJSON(await POST(request(VALID)))).toEqual({ built: false, refusal: REFUSAL });
+  });
+
+  test("a plan's unavailable revision reason and a pre-image's truncation reason that hold the connection's credential answer the withheld sentence, and the token seals the plan answered", async () => {
+    const password = crypto.randomUUID();
+    mockResolveConnection.mockResolvedValueOnce({ ...CONNECTION, password });
+    provider.buildObjectEdit.mockResolvedValueOnce({
+      built: true,
+      plan: { ...PLAN, revision: { check: "unavailable", reason: `pg_proc is not readable by ${password}` } },
+      preimage: { ...PREIMAGE, truncated: { limit: 4096, reason: `cut for ${password}` } },
+    });
+    const response = await POST(request(VALID));
+    expect(response.status).toBe(200);
+    const body = await parseResponseJSON<{
+      built: boolean;
+      plan: ObjectEditPlan;
+      preimage: ObjectEditPreimage;
+      planToken: string;
+    }>(response);
+    expect(JSON.stringify(body)).not.toContain(password);
+    expect(body.plan).toEqual({ ...PLAN, revision: { check: "unavailable", reason: PROVIDER_TEXT_WITHHELD } });
+    expect(body.preimage).toEqual({ ...PREIMAGE, truncated: { limit: 4096, reason: PROVIDER_TEXT_WITHHELD } });
+
+    mockResolveConnection.mockResolvedValueOnce({ ...CONNECTION, password });
+    const applied = await POST_APPLY(request({ plan: body.plan, planToken: body.planToken }));
+    expect(applied.status).toBe(200);
+    expect(provider.applyObjectEdit).toHaveBeenCalledTimes(1);
+    expect(provider.applyObjectEdit.mock.calls[0]![0]).toEqual(body.plan);
   });
 
   test("a build answering BOTH a plan and a refusal answers 400 and nothing is returned to the caller", async () => {

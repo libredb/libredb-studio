@@ -11,6 +11,7 @@ import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
 import { readOnlySentence } from "@/lib/db/providers/keyvalue/etcd/write-policy";
 import type { ObjectEditOutcome, ObjectEditPlan } from "@/lib/db/types";
 import { ProviderTextWithheldError } from "@/lib/db/errors";
+import { PROVIDER_TEXT_WITHHELD } from "@/lib/db/operations/provider-text";
 import { logger } from "@/lib/logger";
 import type { DatabaseConnection } from "@/lib/types";
 import {
@@ -504,6 +505,107 @@ function nextEtcdProvider(opened: OpenedEtcd[]): void {
   });
 }
 
+describe("POST /api/db/objects/edit-apply answers an outcome's sentences through the connection's scrub", () => {
+  const password = crypto.randomUUID();
+
+  beforeEach(() => {
+    resetHarness();
+    mockResolveConnection.mockImplementation(async () => ({ ...CONNECTION, password }));
+  });
+
+  afterEach(() => {
+    // The harness's own answer, so a suite added below this one starts from it.
+    mockResolveConnection.mockImplementation(async () => CONNECTION);
+  });
+
+  /** Each arm that carries a sentence: the outcome the provider answers, and the outcome the route answers for it. */
+  const ARMS: readonly (readonly [string, ObjectEditOutcome, ObjectEditOutcome])[] = [
+    [
+      "refused",
+      {
+        outcome: "refused",
+        refusal: {
+          refusal: "privilege",
+          sentence: `permission denied for ${password}`,
+          code: `E${password}`,
+          hint: `ask ${password}`,
+          at: { within: "none" },
+        },
+        duration: 9,
+      },
+      {
+        outcome: "refused",
+        refusal: {
+          refusal: "privilege",
+          sentence: PROVIDER_TEXT_WITHHELD,
+          code: PROVIDER_TEXT_WITHHELD,
+          hint: PROVIDER_TEXT_WITHHELD,
+          at: { within: "none" },
+        },
+        duration: 9,
+      },
+    ],
+    [
+      "conflict:engine-refused-concurrent",
+      {
+        outcome: "conflict",
+        conflict: "engine-refused-concurrent",
+        sentence: `tuple concurrently updated for ${password}`,
+        code: `X${password}`,
+        duration: 8,
+      },
+      {
+        outcome: "conflict",
+        conflict: "engine-refused-concurrent",
+        sentence: PROVIDER_TEXT_WITHHELD,
+        code: PROVIDER_TEXT_WITHHELD,
+        duration: 8,
+      },
+    ],
+    [
+      "conflict:object-changed",
+      {
+        outcome: "conflict",
+        conflict: "object-changed",
+        current: { text: "SELECT 2", language: "pgsql", truncated: { limit: 4096, reason: `cut for ${password}` } },
+        duration: 7,
+      },
+      {
+        outcome: "conflict",
+        conflict: "object-changed",
+        current: { text: "SELECT 2", language: "pgsql", truncated: { limit: 4096, reason: PROVIDER_TEXT_WITHHELD } },
+        duration: 7,
+      },
+    ],
+    [
+      "interrupted",
+      { outcome: "interrupted", committed: "unknown", sentence: `socket closed for ${password}`, duration: 10 },
+      { outcome: "interrupted", committed: "unknown", sentence: PROVIDER_TEXT_WITHHELD, duration: 10 },
+    ],
+    [
+      "applied",
+      { outcome: "applied", revision: { check: "unavailable", reason: `unreadable for ${password}` }, duration: 4 },
+      { outcome: "applied", revision: { check: "unavailable", reason: PROVIDER_TEXT_WITHHELD }, duration: 4 },
+    ],
+  ];
+
+  test.each(ARMS)(
+    "an apply outcome %s whose sentences hold the connection's credential answers them withheld, and its other fields as the provider answered them",
+    async (_arm, given, answered) => {
+      provider.applyObjectEdit.mockResolvedValueOnce(given);
+      const response = await POST(request(await mintValidPlan()));
+      expect(response.status).toBe(200);
+      const body = await parseResponseJSON<ObjectEditOutcome>(response);
+      expect(body).toEqual(answered);
+      expect(JSON.stringify(body)).not.toContain(password);
+
+      const clean = JSON.parse(JSON.stringify(given).replaceAll(password, "orders")) as ObjectEditOutcome;
+      provider.applyObjectEdit.mockResolvedValueOnce(clean);
+      expect(await parseResponseJSON(await POST(request(await mintValidPlan())))).toEqual(clean);
+    },
+  );
+});
+
 describe("E6 through the edit-apply route (#1089, spec 3.6)", () => {
   beforeEach(resetHarness);
 
@@ -613,6 +715,21 @@ describe("POST /api/db/objects/edit-apply under governance", () => {
       ["error", REFUSAL.code, plan.planId],
       ["error", undefined, plan.planId],
     ]);
+  });
+
+  test("governance: a refused apply whose engine code holds the connection's credential records no error code", async () => {
+    const password = crypto.randomUUID();
+    const { plan, planToken } = await mintValidPlan();
+    mockResolveConnection.mockResolvedValueOnce({ ...GOVERNED, password });
+    provider.applyObjectEdit.mockResolvedValueOnce({
+      outcome: "refused",
+      refusal: { ...REFUSAL, code: `E${password}` },
+      duration: 9,
+    });
+    expect((await POST(request({ plan, planToken }))).status).toBe(200);
+
+    expect(recorded().map(({ status, errorCode }) => [status, errorCode])).toEqual([["error", undefined]]);
+    expect(JSON.stringify(recorded())).not.toContain(password);
   });
 
   test("governance: a command unit records the command line it sends", async () => {

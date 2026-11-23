@@ -25,12 +25,21 @@ import {
   errorRecord,
   PROVIDER_TEXT_WITHHELD,
   providerTextScrub,
+  recordedProviderCode,
+  scrubKeyScanPage,
   scrubKindCounts,
+  scrubMaintenancePreview,
+  scrubMaintenanceResult,
+  scrubMonitoringData,
   scrubObjectDetail,
+  scrubObjectEditOutcome,
+  scrubObjectEditPlan,
+  scrubObjectEditPreimage,
+  scrubObjectEditRefusal,
   scrubSourceDocument,
   withholdProviderError,
 } from "@/lib/db/operations/provider-text";
-import type { DatabaseProvider, ObjectSourceDocument } from "@/lib/db/types";
+import type { DatabaseProvider, ObjectEditOutcome, ObjectEditPlan, ObjectSourceDocument } from "@/lib/db/types";
 import { secretForms } from "@/lib/db/utils/server-text";
 import { logger } from "@/lib/logger";
 import type { McpConnectionContext } from "@/lib/mcp/context";
@@ -48,6 +57,26 @@ pinMcpTestEnvironment();
 
 const password = `${crypto.randomUUID()}/${crypto.randomUUID().slice(0, 8)}`;
 const forms = secretForms([password]);
+
+/** A plan as a build answers it; each case sets the revision it means to drive. */
+const EDIT_PLAN: ObjectEditPlan = {
+  planVersion: 1,
+  planId: "plan-1",
+  issuedAt: "2026-09-13T00:00:00.000Z",
+  connectionFingerprint: "fingerprint",
+  type: "postgres",
+  path: ["app", "order_total(integer)"],
+  kind: "function",
+  partId: "definition",
+  strategy: "guarded-atomic-batch",
+  unit: {
+    medium: "statement",
+    steps: [{ text: "SELECT 1", language: "pgsql", segments: [{ from: "provider", text: "SELECT 1" }] }],
+  },
+  session: [],
+  revision: { check: "guarded", token: "xmin:1", basis: "pg_proc.xmin", scope: "server" },
+  consequences: [],
+};
 
 /** Every line written to the console or the logger while a case runs. */
 let written: string[] = [];
@@ -371,6 +400,99 @@ describe("on every route that resolves the calling connection", () => {
       };
       const source = scrubSourceDocument(scrub, document);
       expectNoForm("an object read's sentences", JSON.stringify([counts, detail, source]));
+    }
+  });
+
+  test("a success sentence of a monitoring, maintenance, key walk or object edit answer that holds the connection's credential in any form secretForms derives is withheld", () => {
+    const scrub = providerTextScrub(
+      { id: "c1", name: "Prod", type: "postgres", host: "db.internal", password, createdAt: new Date(0) },
+      "any",
+    );
+    for (const form of forms) {
+      const monitoring = scrubMonitoringData(scrub, {
+        timestamp: new Date(0),
+        errors: { slowQueries: `permission denied for ${form}` },
+      });
+      expect(monitoring.errors).toEqual({ slowQueries: PROVIDER_TEXT_WITHHELD });
+      const result = scrubMaintenanceResult(scrub, { success: false, executionTime: 1, message: `refused ${form}` });
+      expect(result.message).toBe(PROVIDER_TEXT_WITHHELD);
+      const preview = scrubMaintenancePreview(scrub, {
+        summary: `Loads ${form}`,
+        facts: [],
+        refusal: `refused ${form}`,
+        note: `stale for ${form}`,
+      });
+      expect(preview).toEqual({
+        summary: PROVIDER_TEXT_WITHHELD,
+        facts: [],
+        refusal: PROVIDER_TEXT_WITHHELD,
+        note: PROVIDER_TEXT_WITHHELD,
+      });
+      const page = scrubKeyScanPage(scrub, {
+        keys: [],
+        cursor: "0",
+        total: 0,
+        types: {},
+        skipped: { count: 1, reason: `skipped for ${form}` },
+        readOutcome: { scope: "incomplete", endReason: `ended for ${form}`, provenLoss: [`lost for ${form}`] },
+      });
+      const refusal = scrubObjectEditRefusal(scrub, {
+        refusal: "privilege",
+        sentence: `denied ${form}`,
+        code: `E${form}`,
+        hint: `ask ${form}`,
+        at: { within: "none" },
+      });
+      expect([refusal.sentence, refusal.code, refusal.hint]).toEqual([
+        PROVIDER_TEXT_WITHHELD,
+        PROVIDER_TEXT_WITHHELD,
+        PROVIDER_TEXT_WITHHELD,
+      ]);
+      const plan = scrubObjectEditPlan(scrub, {
+        ...EDIT_PLAN,
+        revision: { check: "unavailable", reason: `unreadable for ${form}` },
+      });
+      expect(plan.revision).toEqual({ check: "unavailable", reason: PROVIDER_TEXT_WITHHELD });
+      const preimage = scrubObjectEditPreimage(scrub, {
+        text: "SELECT 1",
+        language: "pgsql",
+        truncated: { limit: 8, reason: `cut for ${form}` },
+      });
+      const outcomes = (
+        [
+          {
+            outcome: "refused",
+            refusal: { refusal: "guard", sentence: `refused ${form}`, code: form, at: { within: "none" } },
+            duration: 1,
+          },
+          {
+            outcome: "conflict",
+            conflict: "engine-refused-concurrent",
+            sentence: `busy ${form}`,
+            code: form,
+            duration: 1,
+          },
+          {
+            outcome: "conflict",
+            conflict: "object-changed",
+            current: { text: "SELECT 2", language: "pgsql", truncated: { limit: 8, reason: `cut ${form}` } },
+            duration: 1,
+          },
+          { outcome: "interrupted", committed: "unknown", sentence: `lost ${form}`, duration: 1 },
+          { outcome: "applied", revision: { check: "unavailable", reason: `unreadable ${form}` }, duration: 1 },
+          {
+            outcome: "applied-with-collateral",
+            lost: [{ loses: "destroys-comment", fact: { source: "pg_description", observed: "a comment" } }],
+            revision: { check: "unavailable", reason: `unreadable ${form}` },
+            duration: 1,
+          },
+        ] satisfies ObjectEditOutcome[]
+      ).map((outcome) => scrubObjectEditOutcome(scrub, outcome));
+      expect(recordedProviderCode(scrub, form)).toBeUndefined();
+      expectNoForm(
+        "a success answer's sentences",
+        JSON.stringify([monitoring, result, preview, page, refusal, plan, preimage, outcomes]),
+      );
     }
   });
 });

@@ -18,6 +18,8 @@ import {
   errorRecord,
   type ProviderTextScrub,
   providerTextScrub,
+  scrubKindCounts,
+  scrubObjectDetail,
   withheldProviderError,
 } from "@/lib/db/operations/provider-text";
 import { ConnectionError, waitedSeconds } from "@/lib/db/errors";
@@ -396,7 +398,14 @@ export function createHandlers(
       const connectionId = connectionIdOf(params);
       const container = stringArray(fieldOf(params, "container"), "container");
       const record = openRecord(connectionId);
-      return await answeringFor(record.connection, async () => (await providerOf(record)).countObjects(container));
+      // The counts' `unavailable` and `sampledFrom` sentences are the provider's own words, answered through the
+      // connection's scrub as the object routes answer them.
+      return await answeringFor(record.connection, async () =>
+        scrubKindCounts(
+          providerTextScrub(record.connection, "any"),
+          await (await providerOf(record)).countObjects(container),
+        ),
+      );
     },
 
     async listObjects(params) {
@@ -412,7 +421,14 @@ export function createHandlers(
       const path = stringArray(fieldOf(params, "path"), "path");
       const kind = aString(fieldOf(params, "kind"), "kind");
       const record = openRecord(connectionId);
-      return await answeringFor(record.connection, async () => (await providerOf(record)).describeObject(path, kind));
+      // The description's `indexes.unavailable` sentence is the provider's own words, answered through the
+      // connection's scrub as the object routes answer it.
+      return await answeringFor(record.connection, async () =>
+        scrubObjectDetail(
+          providerTextScrub(record.connection, "any"),
+          await (await providerOf(record)).describeObject(path, kind),
+        ),
+      );
     },
 
     // The steps of POST /api/db/query for one statement, in its order (part 1, "What query/run re-does from the query

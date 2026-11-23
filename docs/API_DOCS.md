@@ -2897,6 +2897,8 @@ The HTTP status, `code`, `kind`, `outcome` and `retryable` are the error's own, 
 A database error's `details` then keeps only `position`, and `fixStatement` is left out.
 A script statement's `error` and every warning's `message`, string `code` and `severity` follow the same rule, and a warning field that holds such a form answers `(Studio withheld this text because it contained a credential of this connection)`.
 An object read's `unavailable`, `sampledFrom`, `indexes.unavailable` and the provider's `truncated.reason`, and a source part's `unavailable`, `truncated.reason` and refused `edit.reason`, follow the same rule and answer that sentence; a source part that the route also bounded keeps Studio's bound sentence after it.
+A monitoring answer's `errors` entries, a maintenance answer's `message`, a maintenance preview's `summary`, `refusal` and `note`, a key page's `skipped.reason`, `readOutcome.endReason` and each `readOutcome.provenLoss` entry, an object edit refusal's `sentence`, `code` and `hint`, a plan's unavailable `revision.reason`, a pre-image's `truncated.reason`, and an apply outcome's conflict `sentence` and `code`, `current.truncated.reason`, interrupted `sentence` and unavailable `revision.reason` follow the same rule and answer that sentence.
+Figures, rows, facts, key names and an object's text are answered as the database gave them.
 A column profile's `error` and `warnings` and a fleet health item's `error` follow it as well, and answer Studio's sentence naming the error's class.
 
 ### Error Codes

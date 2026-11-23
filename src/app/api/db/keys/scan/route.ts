@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { handleObjectRequest, ObjectRouteError, optionalDatabase, requireString } from "@/lib/api/object-route";
 import { containerDepth } from "@/lib/db/object-kinds";
+import { scrubKeyScanPage } from "@/lib/db/operations/provider-text";
 import {
   keyScanShape,
   type KeyScanCapability,
@@ -65,7 +66,7 @@ export const dynamic = "force-dynamic";
  * The panel draws each folder a level page answers as complete for its level, so a folder from another level, or one drawn twice, would be a wrong tree with no visible error.
  * Every prefix must therefore sit exactly one separator under the pattern and appear once, every key must sit directly under the pattern, and the page must hold no more entries than the `count` it was asked for.
  * A key walk must carry no prefixes at all, and its count is never checked, because a Redis `SCAN` page may hold more keys than `COUNT`.
- * The page itself is answered unchanged.
+ * A page that passes these checks answers its keys, prefixes and figures as given, and its skipped reason and read outcome sentences through the connection's scrub.
  *
  * Budget: shared, through `handleObjectRequest`, with the object routes and `POST /api/db/query`
  * (`src/lib/api/object-route.ts`). A walk a person drives with a progress bar spends the same
@@ -139,7 +140,9 @@ export async function POST(req: NextRequest) {
       async () => {
         const page = await walk.call(provider, forwarded);
         checkAnswer(provider.type, page, forwarded, shape.separator);
-        return page;
+        // The skipped and read outcome sentences are the provider's own words, answered through the connection's
+        // scrub; the keys the check read and the row count reads are kept.
+        return scrubKeyScanPage(context.scrub, page);
       },
       (page) => page.keys.length,
     );

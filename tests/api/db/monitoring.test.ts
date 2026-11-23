@@ -17,7 +17,7 @@ import {
   isAuthenticationError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
-import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
+import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 
 // ─── Create mock objects ────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -250,6 +250,38 @@ describe("POST /api/db/monitoring", () => {
     const clean = await send();
     expect(clean.status).toBe(400);
     expect(await parseResponseJSON(clean)).toMatchObject({ code: "QUERY_ERROR", error: "permission denied" });
+  });
+
+  test("a panel error that holds the connection's credential answers the withheld sentence, and the clean panel errors and the figures as the provider answered them", async () => {
+    const password = crypto.randomUUID();
+    const connection = { ...validConnection, password };
+    const overview = {
+      version: "PostgreSQL 16.1",
+      uptime: "10 days",
+      activeConnections: 5,
+      maxConnections: 100,
+      databaseSize: "256 MB",
+      databaseSizeBytes: 268435456,
+      tableCount: 15,
+      indexCount: 30,
+    };
+    (mockProvider.getMonitoringData as ReturnType<typeof mock>).mockResolvedValueOnce({
+      timestamp: new Date(0),
+      overview,
+      errors: {
+        slowQueries: `permission denied for ${password}`,
+        tables: "relation pg_stat_user_tables is not readable",
+      },
+    });
+    const res = await POST(createMockRequest("/api/db/monitoring", { method: "POST", body: { connection } }) as never);
+    const body = await parseResponseJSON<Record<string, unknown>>(res);
+    expect(res.status).toBe(200);
+    expect(body.errors).toEqual({
+      slowQueries: PROVIDER_TEXT_WITHHELD,
+      tables: "relation pg_stat_user_tables is not readable",
+    });
+    expect(body.overview).toEqual(overview);
+    expect(JSON.stringify(body)).not.toContain(password);
   });
 
   test("returns 401 when no session exists", async () => {

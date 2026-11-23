@@ -260,6 +260,7 @@ A handler that reaches a provider runs that step inside `answeringFor`, which an
 On a database error whose text was not withheld, `data` then also carries `sqlState`, the SQLSTATE the driver reported, when there is one, as the route body does.
 An error whose text holds a credential of the connection is answered as the routes answer it: the JSON-RPC code and the `data` fields stay the error's own, the message is Studio's sentence naming the error's class, `data.details` keeps only `position`, and `data.fixStatement` is left out ([API reference](API_DOCS.md#error-response-format)).
 A warning field of `query/run` that holds such a credential is withheld the same way.
+An `objects/counts` answer's `unavailable` and `sampledFrom` sentences and an `objects/describe` answer's `indexes.unavailable` sentence that hold such a credential answer `(Studio withheld this text because it contained a credential of this connection)`, as the object routes answer them.
 
 The run gate's answers keep the route's status and sentence: a 428 carries `data.code` `CONFIRMATION_REQUIRED` and the offer in `data.confirmation`, a 400 `CONFIRMATION_INVALID` the reason, and a refusal without a code (a malformed `confirmation`, a name ask on a nameless connection) no `data`.
 An unreadable `LIBREDB_RUN_CONFIRMATION` is a `DatabaseConfigError`, answered 400 `CONFIG_ERROR` on every `query/target` and `query/run`.
