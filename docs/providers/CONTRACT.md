@@ -1624,6 +1624,17 @@ The budget does not bound a legacy provider's own rows, held before the first pu
 - test `tests/unit/lib/api/editor-query.test.ts` "a large page's slot is released once its body is built, so the next large page does not wait"
 - test `tests/unit/lib/api/editor-query.test.ts` "two concurrent large pages each answer their whole page"
 
+### C-54 (normative): A wait for a large-page slot that ends
+
+A page whose wait for a large-page slot, C-53, its call's signal ends answers a stop marked as waiting for the slot.
+The caller answers `QueryCancelledError` when its own signal ended the wait, and otherwise `StudioTimeoutRefusal` with Studio's sentence naming that wait, both outcome unknown, since the statement ran.
+The run's cancel is sent as for any stop, C-48, and the page's first batch is closed with its source.
+
+- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "a call whose wait for a slot its caller ends answers a stop marked as waiting for the slot, and holds no slot"
+- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "a call whose wait for a slot its deadline ends answers a stop marked as waiting for the slot"
+- test `tests/unit/lib/provider-host/core/page-budget-bounds.test.ts` "a large page waiting behind a slot that is never released is stopped at its call's deadline"
+- test `tests/unit/lib/api/editor-query.test.ts` "a large page that waits for the slot past its deadline answers StudioTimeoutRefusal naming that wait, outcome unknown"
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:

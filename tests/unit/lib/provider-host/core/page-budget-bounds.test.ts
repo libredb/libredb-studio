@@ -2,7 +2,7 @@
  * A large page waiting for the one large-page slot, with a real deadline, in a bounded Node child
  * (src/lib/provider-host/core/page-budget.ts and console.ts; docs/providers/CONTRACT.md, clause C-53): page A takes the
  * slot and its next batch never answers, page B needs a second batch under a deadline 50 ms ahead, and B's call answers
- * a stop at that deadline, its wait gone from the budget's queue. The child holds a referenced interval, so a wait
+ * a stop at that deadline, marked as waiting for the slot, its wait gone from the budget's queue. The child holds a referenced interval, so a wait
  * nothing ends keeps it alive until the spawn timeout kills it and the case fails within seconds
  * (tests/helpers/bounded-node-child.ts).
  *
@@ -82,9 +82,10 @@ const child = boundedChild({
       ports,
     );
     const state = budget.state();
-    const stopped = record as { kind: string; reason?: Error };
+    const stopped = record as { kind: string; reason?: Error; waitingFor?: string };
     return {
       record: record.kind === "stopped" ? `stopped ${stopped.reason?.name}` : record.kind,
+      waitingFor: stopped.waitingFor ?? "nothing",
       pullsB,
       held: state.held,
       waiting: state.waiting,
@@ -106,6 +107,7 @@ describe("a large page in a bounded child", () => {
   test("a large page waiting behind a slot that is never released is stopped at its call's deadline", async () => {
     expect(await child.run<unknown>("slot-never-released")).toEqual({
       record: "stopped TimeoutError",
+      waitingFor: "large-page-slot",
       pullsB: 1,
       held: 1,
       waiting: 0,

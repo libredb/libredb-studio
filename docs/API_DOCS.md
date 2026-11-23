@@ -546,6 +546,8 @@ When the server's own limiter bounded the statement, `pagination.hasMore` is tru
 A single row larger than 32 MiB answers `400 QUERY_ERROR` with `kind: "studio-byte-budget-refusal"` and `outcome: "unknown"`, naming the row's size and the page's budget.
 A page larger than one batch, 1 MiB, waits while another such page is answered: the server answers one at a time per process ([`docs/providers/CONTRACT.md`](providers/CONTRACT.md), clause C-53).
 Each such page waits within its own statement's deadline, and a page of one batch never waits.
+A page whose deadline passes while it waits answers `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`, since the statement ran: "The statement answered, but its page waited for another large page to be answered past its timeout of 60 seconds and 10 seconds more, so Studio stopped waiting for it.", with the connection's own timeout in place of 60 seconds.
+A caller that goes away while its page waits is answered `499 QUERY_CANCELLED` with `outcome: "unknown"`.
 
 A caller that goes away while the statement runs, a browser that drops the request, is answered at once with `499 QUERY_CANCELLED` and `outcome: "unknown"`, and the server sends the run's cancel under the `queryId` the request named, when the provider can cancel.
 The statement's own end arrives after that answer; a failure there is logged by its kind and code, never its text, except the engine's cancellation answer to the cancel the server sent, which is the run's expected end.

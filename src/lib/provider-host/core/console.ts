@@ -16,7 +16,8 @@
  *
  * A page record holds its page's large-page slot, if it took one, until the caller calls its `release`, exactly once,
  * after building its answer body. A run that ends without a page gives the slot back before it answers or throws, and a
- * page answered after the wait on its call ended is released by the call's late handler.
+ * page answered after the wait on its call ended is released by the call's late handler. A stop that ends the call while
+ * its page waits for a slot is marked `waitingFor: "large-page-slot"` (clause C-54): the statement ran.
  *
  * A wait the signal ends answers a stop, the signal's reason by reference: a call is stopped exactly when its signal
  * aborted and the rejection is that signal's reason, so a provider that throws its own signal's reason is stopped too.
@@ -74,10 +75,15 @@ export interface RefusedRecord {
   readonly cause?: unknown;
 }
 
-/** A call whose wait the context's signal ended, with the signal's reason by reference. */
+/**
+ * A call whose wait the context's signal ended, with the signal's reason by reference. `waitingFor` names a wait inside
+ * the run the stop ended: `large-page-slot` when the execute had answered and its page was waiting for a large-page
+ * slot (clause C-54), so the statement ran.
+ */
 export interface StoppedRecord {
   readonly kind: "stopped";
   readonly reason: unknown;
+  readonly waitingFor?: "large-page-slot";
 }
 
 /** An execute that answered a page of its first result. */
@@ -309,7 +315,8 @@ async function executeCall(
   } catch (error) {
     if (!stoppedBy(ctx, error)) throw error;
     cancelStoppedRun(session, request, ctx, ports);
-    return { kind: "stopped", reason: error };
+    // `waiting` is cleared only when a slot is granted, so it is read the same whatever order the abort's reactions run.
+    return { kind: "stopped", reason: error, ...(hold.waiting ? { waitingFor: "large-page-slot" as const } : {}) };
   }
 }
 

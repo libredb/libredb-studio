@@ -242,8 +242,9 @@ function callContext(deadline: number, caller: AbortSignal): CallContext {
  * waits for it until its deadline or the caller's going, and pumps its first result within the 32 MiB page budget
  * with a turn of the event loop before every pull. A page that needs more than one batch waits for the core's one
  * large-page slot (clause C-53), and the facade releases the page record once it has built the answer body, in a
- * `finally`, so the next large page waits for no more than that. The accessor turns each record the core answers into
- * this bundle's own error class.
+ * `finally`, so the next large page waits for no more than that. A page whose wait for the slot its deadline ended
+ * answers `StudioTimeoutRefusal` in a sentence naming that wait, outcome unknown, since the statement ran (clause C-54).
+ * The accessor turns each record the core answers into this bundle's own error class.
  *
  * A caller that goes while the statement runs is answered at once, and the core sends the run's cancel; the
  * statement's own end is handled late, logged by kind and code when it fails, unless it is the provider's cancellation
@@ -257,6 +258,11 @@ export async function runEditorQuery(provider: DatabaseProvider, run: EditorQuer
   const view: CallerView = {
     caller: run.signal,
     deadlineSentence: `The statement did not answer within its timeout of ${waitedSeconds(statementTimeout(provider))} and ${waitedSeconds(EXECUTE_SLACK_MS)} more for the engine's own answer, so Studio stopped waiting for it.`,
+  };
+  // The statement answered, but its page waited for the core's large-page slot until the deadline (clause C-54).
+  const slotView: CallerView = {
+    caller: run.signal,
+    deadlineSentence: `The statement answered, but its page waited for another large page to be answered past its timeout of ${waitedSeconds(statementTimeout(provider))} and ${waitedSeconds(EXECUTE_SLACK_MS)} more, so Studio stopped waiting for it.`,
   };
   const bridged = bridgedConsole(provider, run.options);
   const request: ExecuteRequest = {
@@ -273,7 +279,9 @@ export async function runEditorQuery(provider: DatabaseProvider, run: EditorQuer
     hostPorts(run.route, () => bridged.run.cancelSent),
   );
   if (record.kind === "refused") throw refusalError(record, view);
-  if (record.kind === "stopped") throw stopError(record.reason, view);
+  if (record.kind === "stopped") {
+    throw stopError(record.reason, record.waitingFor === "large-page-slot" ? slotView : view);
+  }
   try {
     const { prepared, result, openTransaction } = bridged.answered();
     // The page the host pumped holds the rows that fit the page's row limit and its 32 MiB; the answer is the legacy

@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, afterEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { BATCH_MAX_BYTES, envReader, PAGE_MAX_BYTES, type ResultSource } from "@libredb/provider-sdk/calls";
 import {
   checkEditorQuery,
   type EditorQueryRefusal,
@@ -19,6 +20,7 @@ import {
   QueryError,
   StudioByteBudgetRefusal,
   StudioTimeoutRefusal,
+  waitedSeconds,
 } from "@/lib/db/errors";
 import { logger } from "@/lib/logger";
 import { PROVIDER_TEXT_WITHHELD, providerTextScrub } from "@/lib/db/operations/provider-text";
@@ -34,7 +36,7 @@ import { createMockProvider } from "../../../helpers/mock-provider";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../../../helpers/stand-in-vocabulary";
 import { serverOnlyReach, valueImportClosure } from "../../../helpers/value-import-closure";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
-import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
 
 // The editor query reads the process's host core (src/lib/provider-host/instance.ts), so this file composes its own.
 beforeAll(() => installHostCore(createHostCore(), "test"));
@@ -523,6 +525,59 @@ describe("runEditorQuery on the host core", () => {
     expect(alone.body.rows).toHaveLength(3);
     expect(one.body).toEqual(alone.body);
     expect(two.body).toEqual(alone.body);
+  });
+
+  test("a large page that waits for the slot past its deadline answers StudioTimeoutRefusal naming that wait, outcome unknown", async () => {
+    // A page run on the installed core holds the slot: its second batch is held by the test.
+    const secondPull = Promise.withResolvers<void>();
+    const secondBatch = Promise.withResolvers<void>();
+    let pulls = 0;
+    const holderSource: ResultSource = {
+      columns: [{ name: "v" }],
+      next: async () => {
+        pulls += 1;
+        if (pulls === 2) {
+          secondPull.resolve();
+          await secondBatch.promise;
+        }
+        return { rows: [[pulls]], done: pulls >= 2 };
+      },
+      close: async () => {},
+    };
+    const holder = hostCore().executeCall(
+      {
+        calls: { console: { execute: { honours: [] }, cancel: "not-offered", endScope: "not-offered" } },
+        execute: async () => ({ results: [holderSource], warnings: [], executionTimeMs: 1, pageApplied: true }),
+      },
+      { statement: "SELECT 1", page: { limit: 10, offset: 0 } },
+      { deadline: Date.now() + 60_000, signal: new AbortController().signal, env: envReader([], () => undefined) },
+      () => ({ maxRows: 10, maxBytes: PAGE_MAX_BYTES, batchMaxBytes: BATCH_MAX_BYTES }),
+      { late: () => {}, cancelFailed: () => {} },
+    );
+    await secondPull.promise;
+    // A deadline about 300 ms ahead, which the page spends waiting for the slot.
+    const queryTimeout = 300 - EXECUTE_SLACK_MS;
+
+    const caught = await runEditorQuery(largeFake(3, queryTimeout), runOf({ options: { limit: 100 } })).catch(
+      (error: unknown) => error,
+    );
+    secondBatch.resolve();
+    const held = await holder;
+
+    expect(caught).toBeInstanceOf(StudioTimeoutRefusal);
+    expect((caught as Error).message).toBe(
+      `The statement answered, but its page waited for another large page to be answered past its timeout of ${waitedSeconds(queryTimeout)} and ${waitedSeconds(EXECUTE_SLACK_MS)} more, so Studio stopped waiting for it.`,
+    );
+    expect(errorKind(caught)).toBe("studio-timeout-refusal");
+    expect(errorOutcome(caught)).toBe("unknown");
+    expect(databaseErrorBody(caught)?.body).toMatchObject({
+      code: "TIMEOUT_ERROR",
+      statusCode: 504,
+      kind: "studio-timeout-refusal",
+      outcome: "unknown",
+    });
+    expect(held.kind).toBe("page");
+    if (held.kind === "page") held.release();
   });
 
   test("a row no page can hold is refused in Studio's words", async () => {

@@ -304,6 +304,48 @@ describe("the console execute under the page budget", () => {
     expect(late).toEqual([]);
   });
 
+  /** A large page that holds the slot, and a second one whose call `controller` ends while it waits for the slot. */
+  async function stoppedWhileWaiting(reason: unknown) {
+    const holder = paged(2);
+    const held = pageOf(await run([holder.source]));
+    const waiting = paged(3);
+    const controller = new AbortController();
+    const { ports, late } = portsOf();
+    const running = run([waiting.source], { controller, ports });
+    await until("the second page waiting for the slot", () => budget.state().waiting === 1);
+
+    controller.abort(reason);
+    const record = await running;
+    const state = budget.state();
+    await until("the waiting page's source closed", () => waiting.seen.closes === 1);
+    await turn();
+    held.release();
+    return { record, state, waiting, late };
+  }
+
+  test("a call whose wait for a slot its caller ends answers a stop marked as waiting for the slot, and holds no slot", async () => {
+    const reason = new DOMException("The request went away.", "AbortError");
+
+    const { record, state, waiting, late } = await stoppedWhileWaiting(reason);
+
+    expect(record).toEqual({ kind: "stopped", reason, waitingFor: "large-page-slot" });
+    expect((record as { readonly reason: unknown }).reason).toBe(reason);
+    expect(state).toEqual({ slots: 1, held: 1, waiting: 0 });
+    expect(waiting.seen.pulls).toBe(1);
+    expect(late).toEqual([]);
+    expect(budget.state()).toEqual({ slots: 1, held: 0, waiting: 0 });
+  });
+
+  test("a call whose wait for a slot its deadline ends answers a stop marked as waiting for the slot", async () => {
+    const reason = new DOMException("The call's deadline has passed.", "TimeoutError");
+
+    const { record, state, late } = await stoppedWhileWaiting(reason);
+
+    expect(record).toEqual({ kind: "stopped", reason, waitingFor: "large-page-slot" });
+    expect(state).toEqual({ slots: 1, held: 1, waiting: 0 });
+    expect(late).toEqual([]);
+  });
+
   test("a page record released twice is refused by name", async () => {
     const large = pageOf(await run([paged(2).source]));
     const small = pageOf(await run([paged(1).source]));
