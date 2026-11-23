@@ -4864,7 +4864,7 @@ Found 2026-11-22 in review of the trust material change.
 ### D493. The run routes accept a statement that needs a confirmation without one by default
 
 `POST /api/db/query`, `POST /api/db/multi-query` and the `query` action of `POST /api/db/transaction` classify every run on the server and answer 428 with a confirmation token, but only when the request asks (`"confirmation": "ask"`) or `LIBREDB_RUN_CONFIRMATION` is `required` (control 3.47 in `docs/SECURITY.md`).
-The default is `advisory`, so a caller that sends no `confirmation` field runs a statement the gate asks about with no confirmation; the answer says `"confirmation": "unconfirmed"` and one warning is logged.
+The default is `advisory`, so a caller that sends no `confirmation` field runs a statement the gate asks about with no confirmation on any connection that is not `production`; the answer says `"confirmation": "unconfirmed"` and one warning is logged.
 The default stays advisory for one minor so that outside callers of the documented API keep working while they learn the field.
 The VS Code extension's backend does not re-check its `query/target` verdict on `query/run`, and the embedded npm workspace classifies in the browser and hands the statement to its host, so neither path meets the server's gate.
 
@@ -7529,9 +7529,9 @@ Found 2026-11-21 by the review of the FND-1 npm surface change.
 ### U217. A connection stored as production gets the same write prompts as any other
 
 The connection form stores `environment` (`ConnectionEnvironment` in `src/lib/types.ts`), and `production` is one of its values.
-Every read of it in `src` is display, seed parsing, fleet health, the MCP connection list filter or governance admission, and none is on an execution path, so a production connection is gated exactly like a development one.
-The browser's confirmation gate in `executeQuery` of `src/hooks/use-query-execution.ts` is skipped in playground mode and under `skipSafety`, which `useInlineEditing` in `src/hooks/use-inline-editing.ts` passes for every generated inline edit.
-The gate can already ask for a typed confirmation (`TypedConfirmField` in `src/components/QuerySafetyDialog.tsx`, #1089), so what is missing is an escalation, not a new dialog.
+Since FND-5 slice 6c the confirmation verdict (`confirmationVerdict` in `src/lib/editor/statement-analysis.ts`) reads it: on a production connection every statement the gate asks about asks for the connection's name, and the run routes check the typed value (`src/lib/api/run-confirmation.ts`).
+Studio's standalone editor asks it with no skip, inline edits row by row and SANDBOX runs and pages included, and remembers nothing between runs (`src/hooks/use-query-execution.ts`).
+What remains: writes the base gate does not ask about, such as a plain `INSERT`, still run on production without the typed name; and the VS Code extension and the embedded npm workspace do not ask for it yet.
 
 The owner decided on 2026-11-21:
 

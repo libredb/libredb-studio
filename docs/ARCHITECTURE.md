@@ -303,6 +303,8 @@ The run target, the connection type's refusal, the confirmation and the route of
 
 The server takes the confirmation decision again on every run (`src/lib/api/run-confirmation.ts`): `POST /api/db/query`, `POST /api/db/multi-query` and the `query` action of `POST /api/db/transaction` read the submitted statement with `confirmationVerdict`, the same verdict `analyzeStatement` composes, after their field checks and before the admission gate and any provider.
 A statement the gate asks about is answered 428 with a confirmation token (`src/lib/api/run-confirmation-token.ts`) when the request asks or `LIBREDB_RUN_CONFIRMATION` is `required`, and runs when it comes back with that token; the web editor asks on every run and keeps its own gate in front of the server's ([API_DOCS.md](API_DOCS.md#server-confirmation-of-a-run)).
+The verdict reads the connection's environment: on `production` every statement the gate asks about is confirmed by typing the connection's name, which the server compares before it verifies the token.
+The web editor asks that value in its own dialog, and where the server's 428 asks a value its run did not carry (an inline edit, a page, a SANDBOX run), the run waits on the safety dialog and is sent again with what the person typed, or ends as not run once the dialog closes (`src/hooks/use-query-execution.ts`).
 
 ### 4.4. Storage Abstraction Layer
 

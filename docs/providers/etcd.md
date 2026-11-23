@@ -348,6 +348,7 @@ Bound `params` are refused with a `DatabaseConfigError` before any request, and 
 Cancelling a read or a watch stops it; a write already sent is not stopped and the cancel answers false, because aborting the call cannot undo a request etcd may have applied, so its outcome is unknown until the key is read again.
 The confirmation gate reads the provider's own parser, so what runs and what asks are one parse, and it never sends an etcd statement to the model provider.
 A prefix delete asks for the prefix typed exactly, `/app/` and `/App/` being different prefixes; a key holding a newline is typed in Go's quoted form.
+On a connection whose environment is `production`, the connection's name is asked instead, and the prefix, start key or lease id is shown as its target; the server checks the typed value either way ([API_DOCS.md](../API_DOCS.md#server-confirmation-of-a-run)).
 
 ### 5.6 SQL grammar
 
