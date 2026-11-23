@@ -27,9 +27,13 @@ import { PostgresProvider } from "@/lib/db/providers/sql/postgres";
 import type { DatabaseConnection } from "@/lib/types";
 
 const PG_CONTAINER = `${process.env.LIBREDB_LIVE_PG_CONTAINER_PREFIX ?? "libredb-live-held-session-pg"}-${randomBytes(4).toString("hex")}`;
-const PG_ADMIN_PASSWORD = "held-session-password";
+/** A fresh password for each run: the check starts its own container and creates the agent role itself. */
+function runPassword(prefix: string): string {
+  return `${prefix}-${randomBytes(12).toString("hex")}`;
+}
+const PG_ADMIN_PASSWORD = runPassword("pg");
 const AGENT_USER = "agent_readonly";
-const AGENT_PASSWORD = "held-session-agent-password";
+const AGENT_PASSWORD = runPassword("agent");
 const LOST =
   /^The transaction was lost: its database session ended \(.+\)\. The server rolls back what was still open in the session when it ended, but a COMMIT that had already reached the server stays committed, so check the data before running the work again\. Begin a new transaction to continue\.$/;
 const NOT_ACTIVE = new RegExp(`^${NO_ACTIVE_TRANSACTION}$`);
