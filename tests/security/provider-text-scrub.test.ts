@@ -25,9 +25,12 @@ import {
   errorRecord,
   PROVIDER_TEXT_WITHHELD,
   providerTextScrub,
+  scrubKindCounts,
+  scrubObjectDetail,
+  scrubSourceDocument,
   withholdProviderError,
 } from "@/lib/db/operations/provider-text";
-import type { DatabaseProvider } from "@/lib/db/types";
+import type { DatabaseProvider, ObjectSourceDocument } from "@/lib/db/types";
 import { secretForms } from "@/lib/db/utils/server-text";
 import { logger } from "@/lib/logger";
 import type { McpConnectionContext } from "@/lib/mcp/context";
@@ -324,5 +327,50 @@ describe("on the editor routes and the connection test", () => {
       expectNoForm("a connection error answer", JSON.stringify(connectBody));
     });
     expectNoForm("a log line", written.join("\n"));
+  });
+});
+
+describe("on every route that resolves the calling connection", () => {
+  test("an object read's sentences that hold the connection's credential in any form secretForms derives are withheld", () => {
+    const scrub = providerTextScrub(
+      { id: "c1", name: "Prod", type: "postgres", host: "db.internal", password, createdAt: new Date(0) },
+      "any",
+    );
+    for (const form of forms) {
+      const counts = scrubKindCounts(scrub, {
+        table: { unavailable: `refused for ${form}` },
+        view: { count: 4, sampledFrom: `sampled as ${form}` },
+      });
+      expect(counts).toEqual({
+        table: { unavailable: PROVIDER_TEXT_WITHHELD },
+        view: { count: 4, sampledFrom: PROVIDER_TEXT_WITHHELD },
+      });
+      const detail = scrubObjectDetail(scrub, {
+        path: ["orders"],
+        columns: [],
+        indexes: { unavailable: `index read refused for ${form}` },
+        foreignKeys: [],
+      });
+      expect(detail.indexes).toEqual({ unavailable: PROVIDER_TEXT_WITHHELD });
+      const document: ObjectSourceDocument = {
+        path: ["report"],
+        kind: "function",
+        parts: [
+          { id: "definition", label: "Definition", unavailable: `refused for ${form}` },
+          {
+            id: "body",
+            label: "Body",
+            text: "SELECT 1",
+            language: "sql",
+            form: "partial",
+            origin: "stored",
+            truncated: { limit: 8, reason: `cut for ${form}` },
+            edit: { offered: false, reason: `owned by ${form}` },
+          },
+        ],
+      };
+      const source = scrubSourceDocument(scrub, document);
+      expectNoForm("an object read's sentences", JSON.stringify([counts, detail, source]));
+    }
   });
 });

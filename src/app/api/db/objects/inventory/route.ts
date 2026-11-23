@@ -23,6 +23,7 @@ import {
 } from "@/lib/db/container-walk";
 import { assertNotWholeServer } from "@/lib/db/catalog-scope";
 import { applicableKinds } from "@/lib/db/object-kinds";
+import { scrubObjectDetail, scrubProviderText } from "@/lib/db/operations/provider-text";
 import type { DatabaseObject, DatabaseProvider, ObjectDetail } from "@/lib/db/types";
 
 export const dynamic = "force-dynamic";
@@ -84,7 +85,7 @@ export const dynamic = "force-dynamic";
  * carried on the columns, and asking for it alone is a caller mistake rather than a silent no-op.
  */
 export async function POST(req: NextRequest) {
-  return handleObjectRequest(req, "api/db/objects/inventory", async (provider, body): Promise<ObjectInventory> => {
+  return handleObjectRequest(req, "api/db/objects/inventory", async (provider, body, ctx): Promise<ObjectInventory> => {
     const kinds = resolveKinds(provider, optionalStringArray(body, "kinds"));
     const named = optionalContainerList(body, "containers");
     named?.forEach((container) => assertContainerAddress(provider, "containers", container));
@@ -161,13 +162,15 @@ export async function POST(req: NextRequest) {
         const batch = includeDefaultSql
           ? await describeObjects(pair.container, pair.kind, bound, { defaultSql: true })
           : await describeObjects(pair.container, pair.kind, bound);
-        details.push(...batch.details);
-        // The provider's own bound, kept in the provider's own words. It is reported even when the
-        // listing above fitted, because a complete list of objects whose columns were cut is still
-        // an incomplete answer, and a reader that trusted it would read a missing column as an
-        // absent one. The LAST one wins among column bounds: they are all the same statement about
+        details.push(...batch.details.map((detail) => scrubObjectDetail(ctx.scrub, detail)));
+        // The provider's own bound, kept in the provider's own words through the connection's scrub,
+        // as each detail's index sentence is. It is reported even when the listing above fitted,
+        // because a complete list of objects whose columns were cut is still an incomplete answer,
+        // and a reader that trusted it would read a missing column as an absent one. The LAST one wins among column bounds: they are all the same statement about
         // the same read, and only the precedence below decides whether any of them is reported.
-        if (batch.truncated !== undefined) columnBound = batch.truncated;
+        if (batch.truncated !== undefined) {
+          columnBound = { limit: batch.truncated.limit, reason: scrubProviderText(ctx.scrub, batch.truncated.reason) };
+        }
       }
     }
 

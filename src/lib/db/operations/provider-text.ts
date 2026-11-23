@@ -1,13 +1,15 @@
 /**
- * The one core scrub of a provider's text on the agent, hand-over and MCP paths, the editor's query, script and
- * transaction routes, the connection test and the VS Code extension's backend child.
+ * The one core scrub of a provider's text on the agent, hand-over and MCP paths, every database route that resolves the
+ * calling connection and reaches its provider, the object routes, the fleet health check, the query events those
+ * routes record and the VS Code extension's backend child.
  *
  * A provider scrubs the server's text at its own entry with `serverText` (src/lib/db/utils/server-text.ts); this is
- * the pass core runs after it, over every error, warning and notice text a provider hands core on those paths,
- * before any fence, prompt, ledger row, response or log line. It reads the secret-class values of the calling
- * connection that its providers receive (`ScrubbedProviders`) through the central walk (`secretFieldValues`) and
- * expands them with `secretForms`. A text holding any form is
- * replaced whole by `PROVIDER_TEXT_WITHHELD`, matched exactly as `serverText` matches (`holdsSecretForm`).
+ * the pass core runs after it, over every error, warning and notice text a provider hands core on those paths, and over
+ * the sentences an object read answers in a provider's words (`scrubKindCounts`, `scrubObjectDetail`,
+ * `scrubSourceDocument`), before any fence, prompt, ledger row, response or log line. It reads the secret-class values
+ * of the calling connection that its providers receive (`ScrubbedProviders`) through the central walk
+ * (`secretFieldValues`) and expands them with `secretForms`. A text holding any form is replaced whole by
+ * `PROVIDER_TEXT_WITHHELD`, matched exactly as `serverText` matches (`holdsSecretForm`).
  *
  * What it does not catch, stated in docs/AGENT_DATA_FLOW.md: a secret that is part of a field's value rather than
  * the whole of it, an echo in a different case, and database content, which is never scrubbed.
@@ -33,6 +35,7 @@ import {
 } from "@/lib/db/errors";
 import { holdsSecretForm, secretForms } from "@/lib/db/utils/server-text";
 import { type SecretFieldRecord, secretFieldValues } from "@/lib/storage/secret-fields";
+import type { KindCount, ObjectDetail, ObjectSourceDocument, ObjectSourcePart } from "@/lib/db/types";
 import type { DatabaseType, QueryResult, QueryWarning } from "@/lib/types";
 
 /** Replaces a provider's text whole when it holds a credential of the calling connection; it echoes none of it. */
@@ -93,6 +96,68 @@ export function scrubProviderWarnings(scrub: ProviderTextScrub, warnings: readon
 export function withScrubbedWarnings(scrub: ProviderTextScrub, result: QueryResult): QueryResult {
   if (result.warnings === undefined) return result;
   return { ...result, warnings: scrubProviderWarnings(scrub, result.warnings) };
+}
+
+/**
+ * The counts of an object count read with each `unavailable` and `sampledFrom` sentence scrubbed: a provider writes
+ * them in its own words. Every count is kept, and the value given is not changed.
+ */
+export function scrubKindCounts(
+  scrub: ProviderTextScrub,
+  counts: Readonly<Record<string, KindCount>>,
+): Record<string, KindCount> {
+  return Object.fromEntries(
+    Object.entries(counts).map(([kind, count]): [string, KindCount] => {
+      if ("unavailable" in count) return [kind, { unavailable: scrubProviderText(scrub, count.unavailable) }];
+      if ("sampledFrom" in count) {
+        return [kind, { count: count.count, sampledFrom: scrubProviderText(scrub, count.sampledFrom) }];
+      }
+      return [kind, count];
+    }),
+  );
+}
+
+/**
+ * An object's description with its `indexes.unavailable` sentence scrubbed, the provider's own words; a description
+ * whose indexes are a list is answered as given. Columns, keys and the path are database content, never scrubbed.
+ */
+export function scrubObjectDetail(scrub: ProviderTextScrub, detail: ObjectDetail): ObjectDetail {
+  if (!("unavailable" in detail.indexes)) return detail;
+  return { ...detail, indexes: { unavailable: scrubProviderText(scrub, detail.indexes.unavailable) } };
+}
+
+/** One source part with its refusal, truncation and refused edit sentences scrubbed; its text is database content. */
+function scrubSourcePart(scrub: ProviderTextScrub, part: ObjectSourcePart): ObjectSourcePart {
+  if ("unavailable" in part) return { ...part, unavailable: scrubProviderText(scrub, part.unavailable) };
+  return {
+    ...part,
+    ...(part.truncated === undefined
+      ? {}
+      : { truncated: { limit: part.truncated.limit, reason: scrubProviderText(scrub, part.truncated.reason) } }),
+    ...(part.edit === undefined || part.edit.offered
+      ? {}
+      : { edit: { offered: false, reason: scrubProviderText(scrub, part.edit.reason) } }),
+  };
+}
+
+/**
+ * A source document with each part's `unavailable`, `truncated.reason` and refused `edit.reason` scrubbed, the
+ * provider's own sentences. A part's text, label and statement flag and an offered edit are kept, and `parts` stays a
+ * non-empty tuple in the same order.
+ *
+ * The source route scrubs a provider's document before its bound (`boundSourceDocument`) checks the document's shape,
+ * so a document with no parts, which the type does not admit and a provider can answer, holds no sentence and
+ * is answered as given, for the bound to refuse by name.
+ */
+export function scrubSourceDocument(scrub: ProviderTextScrub, document: ObjectSourceDocument): ObjectSourceDocument {
+  if (document.parts.length === 0) return document;
+  // Destructured rather than mapped, because `parts` is a non-empty tuple and `Array.prototype.map` answers a plain
+  // array that no longer satisfies it.
+  const [first, ...rest] = document.parts;
+  return {
+    ...document,
+    parts: [scrubSourcePart(scrub, first), ...rest.map((part) => scrubSourcePart(scrub, part))],
+  };
 }
 
 /**

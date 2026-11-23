@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { assertContainerAddress, handleObjectRequest, requireStringArray } from "@/lib/api/object-route";
+import { scrubKindCounts } from "@/lib/db/operations/provider-text";
 
 export const dynamic = "force-dynamic";
 
@@ -17,9 +18,9 @@ export const dynamic = "force-dynamic";
  * most easily lost, because dropping `sampledFrom` leaves a number that still renders.
  */
 export async function POST(req: NextRequest) {
-  return handleObjectRequest(req, "api/db/objects/counts", async (provider, body) => {
+  return handleObjectRequest(req, "api/db/objects/counts", async (provider, body, context) => {
     const container = requireStringArray(body, "container");
     assertContainerAddress(provider, "container", container);
-    return provider.countObjects(container);
+    return scrubKindCounts(context.scrub, await provider.countObjects(container));
   });
 }

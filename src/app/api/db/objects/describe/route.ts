@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { handleObjectRequest, requireObjectPath, requireString } from "@/lib/api/object-route";
+import { scrubObjectDetail } from "@/lib/db/operations/provider-text";
 
 export const dynamic = "force-dynamic";
 
@@ -55,9 +56,9 @@ export const dynamic = "force-dynamic";
  * against that declaration.
  */
 export async function POST(req: NextRequest) {
-  return handleObjectRequest(req, "api/db/objects/describe", async (provider, body) => {
+  return handleObjectRequest(req, "api/db/objects/describe", async (provider, body, context) => {
     const path = requireObjectPath(body);
     const kind = requireString(body, "kind");
-    return provider.describeObject(path, kind);
+    return scrubObjectDetail(context.scrub, await provider.describeObject(path, kind));
   });
 }
