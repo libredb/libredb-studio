@@ -94,7 +94,7 @@ describe("CallRefusalError", () => {
     for (const rule of CALL_REFUSAL_RULES) {
       const forms: CallRefusal[] = [
         { rule, pointer: "" },
-        { rule, pointer: "/a\nb", name: 'a"\nb' },
+        { rule, pointer: "/a\nb", name: 'a"\nb', limit: 1048576, size: 1048577 },
       ];
       for (const item of forms) {
         const sentence = callRefusalSentence(item);

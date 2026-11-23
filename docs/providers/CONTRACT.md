@@ -11,7 +11,7 @@ The SDK package `@libredb/provider-sdk`, under [`packages/provider-sdk`](../../p
 - `compileManifestValidator`, `refusalSentence` and the refusal types, exported from `@libredb/provider-sdk/manifest`.
 - [`codec.ts`](../../packages/provider-sdk/src/values/codec.ts), the value codec, exported from `@libredb/provider-sdk/values`.
 - [`errors/index.ts`](../../packages/provider-sdk/src/errors/index.ts), the error record's shape and vocabularies, the kinds a provider may raise and the driver error row contract, exported from `@libredb/provider-sdk/errors`.
-- [`calls/index.ts`](../../packages/provider-sdk/src/calls/index.ts), the call and context types, `defineProvider`, `checkProviderModule` and `envReader`, exported from `@libredb/provider-sdk/calls`.
+- [`calls/index.ts`](../../packages/provider-sdk/src/calls/index.ts), the call and context types, `defineProvider`, `checkProviderModule` and `envReader`, the host's checks of a call, `checkExecuteRequest`, `checkRefinement` and `sessionCalls`, `freezeContext` and `freezeData`, and the byte budgets `BATCH_MAX_BYTES` and `PAGE_MAX_BYTES` with `encodedRowBytes`, `rowsSource` and `pumpPage`, exported from `@libredb/provider-sdk/calls`.
 - `SqlGrammar` and its member types, the compatibility default `DEFAULT_SQL_GRAMMAR`, and `hashRunIsAmbiguous`, exported from `@libredb/provider-sdk/sql`.
 
 The package root exports every entry's surface.
@@ -763,6 +763,49 @@ The host passes every context and request through `freezeContext` and `freezeDat
 Both freeze in place, so the host builds a fresh context and request for each call, and a value it shares across calls ends frozen.
 The host core that does so arrives with the first host surface, and its test holds it; until then this clause is informative.
 
+### C-13 (normative): The byte budgets and the row measure
+
+The byte budgets of a result are `BATCH_MAX_BYTES`, for one batch, and `PAGE_MAX_BYTES`, for one page.
+A row's size is the UTF-8 length of its encoded JSON text, `encodedRowBytes`, and a batch's and a page's size is the sum of their rows' sizes.
+Measuring a row encodes every cell, so a cell outside the value codec's domain is refused by the codec's own error.
+
+- test `packages/provider-sdk/tests/calls/results.test.ts` "the batch and page budgets are one MiB and 32 MiB"
+- test `packages/provider-sdk/tests/calls/results.test.ts` "a row's size is the UTF-8 length of its encoded JSON text"
+
+### C-14 (normative): A result source answers within the limit it is asked for
+
+A result source answers each `next` with at most the rows and the bytes it is asked for, and never splits a row, so a batch of exactly one row may be larger than its byte limit and one row always makes progress.
+`rowsSource` does so over rows a driver already holds in memory.
+
+- test `packages/provider-sdk/tests/calls/results.test.ts` "a batch held to batch.maxBytes"
+- test `packages/provider-sdk/tests/calls/results.test.ts` "a row larger than the batch budget comes alone, and is refused only when no page can hold it"
+
+### C-15 (normative): The host pulls a page with pumpPage
+
+The host pulls a page from a result source with `pumpPage`, one batch at a time, the pull being the credit.
+Each pull asks for no more than the page has left, with a frozen limit.
+As it reads each batch, the pump refuses by a rule of `CALL_REFUSAL_RULES` a batch that breaks C-14 or is not a plain record of rows and done, a row that is not positional, a batch that brings nothing and is not done, and a row no page can hold.
+It cuts the page by size, ends it at its row limit or when the source is done, and closes the source exactly once on every path, losing no failure: when the close fails after another failure, both are thrown together.
+A limit that is not a positive safe integer is a host defect, refused before any pull.
+The pump never keeps a source open across pages, so a later page is a new execution with an offset, C-9.
+
+- test `packages/provider-sdk/tests/calls/results.test.ts` "a page cut by size at page.maxBytes"
+- test `packages/provider-sdk/tests/calls/results.test.ts` "a page ends at its row limit or when the source is done"
+- test `packages/provider-sdk/tests/calls/results.test.ts` "a batch a source should not have answered is refused by name, and the source is closed once"
+- test `packages/provider-sdk/tests/calls/results.test.ts` "a failure to pull or to close is thrown, and neither is lost"
+- test `packages/provider-sdk/tests/calls/results.test.ts` "the limits a source is asked for are frozen and within the page"
+- test `packages/provider-sdk/tests/calls/results.test.ts` "a pump limit that is not a positive safe integer is refused before any pull"
+- test `packages/provider-sdk/tests/calls/pump-bounds.test.ts` "a source that never progresses is refused after one pull, in a bounded child"
+- test `packages/provider-sdk/tests/calls/pump-bounds.test.ts` "a source that never ends is cut at the page's byte budget, in a bounded child"
+
+### C-16 (informative): What the byte budgets bound
+
+The pump runs in the host's copy of the SDK, so every package's batches are measured by one rule.
+The budgets bound what crosses from a provider, not what a driver buffers: a driver without a cursor materialises a page before the SDK sees it.
+A page of very small rows is bounded in the heap by the host's row limit, not by its bytes, so the host always passes a finite row limit.
+The pump measures a row once, as it reads the batch, and hands on the provider's own row arrays, so a source whose cells change after that read, through a getter or a later write, answers more than was measured; whether the host measures the frames it sends instead is decided with the first host surface.
+The host core that pumps every result arrives with the first host surface; until then this clause is informative.
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:
@@ -770,7 +813,7 @@ These chapters are added by the changes that bring their enforcers:
 - Connection string rows: their schemes, their URL TLS and paste readers, and their seed checks.
 - Editor and SQL text: execution UI, the SQL grammar facts as manifest data, SQL writing, migration DDL, generators, editor languages, explain formats and discovery fence tags.
 - Policy and MCP claims, each a request a provider makes that only Studio's review record grants, the agent overlay, and presentation (an icon and a colour).
-- Calls, continued: the memory test transport, the byte budgets, and the cancel, deadline and failure rules.
+- Calls, continued: the memory test transport, and the cancel, deadline and failure rules.
 - The API report of each SDK entry.
 
 ## Change notes
@@ -793,3 +836,4 @@ Against the manifest sketch the design started from:
   The sketch's dotted facet list is not adopted for calls, which are keyed by the path to their function.
 - A function the manifest names is a name, never code, M-31.
 - A refused field carries the sentence core refuses it with, M-38.
+- The sketch's frame cap is replaced by the byte budgets, since calls are unframed in process; the memory test transport keeps frames for tests only.

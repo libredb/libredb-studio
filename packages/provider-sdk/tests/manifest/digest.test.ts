@@ -18,16 +18,21 @@ import * as packageRoot from "@libredb/provider-sdk";
 import { decodeValue, encodeValue, ValueCodecError } from "@libredb/provider-sdk/values";
 import { ERROR_KINDS, PROVIDER_ERROR_KINDS, SQLSTATE_PATTERN } from "@libredb/provider-sdk/errors";
 import {
+  BATCH_MAX_BYTES,
   CALL_REFUSAL_RULES,
   CONSOLE_FACETS,
   checkExecuteRequest,
   checkProviderModule,
   checkRefinement,
   defineProvider,
+  encodedRowBytes,
   envReader,
   EXECUTE_REQUEST_FIELDS,
   freezeContext,
   freezeData,
+  PAGE_MAX_BYTES,
+  pumpPage,
+  rowsSource,
   sessionCalls,
 } from "@libredb/provider-sdk/calls";
 
@@ -98,5 +103,10 @@ describe("the manifest schema digest", () => {
     expect(packageRoot.CALL_REFUSAL_RULES).toBe(CALL_REFUSAL_RULES);
     expect(packageRoot.freezeContext).toBe(freezeContext);
     expect(packageRoot.freezeData).toBe(freezeData);
+    expect(packageRoot.pumpPage).toBe(pumpPage);
+    expect(packageRoot.rowsSource).toBe(rowsSource);
+    expect(packageRoot.encodedRowBytes).toBe(encodedRowBytes);
+    expect(packageRoot.BATCH_MAX_BYTES).toBe(BATCH_MAX_BYTES);
+    expect(packageRoot.PAGE_MAX_BYTES).toBe(PAGE_MAX_BYTES);
   });
 });

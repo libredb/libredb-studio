@@ -1,8 +1,8 @@
 /**
- * The defensive readers the calls share (docs/providers/CONTRACT.md, clause C-1).
+ * The defensive readers the calls share (docs/providers/CONTRACT.md, clauses C-1, C-10 and C-15).
  *
- * A provider module record is a value a package built, read by the host's copy of the SDK. It is read here by its own
- * property descriptors: a key a reader needs is read only when it is an own data property, and an accessor is reported
+ * A provider module record, a refinement `open` answers and a batch a result source answers are values a package
+ * built, read by the host's copy of the SDK. Each is read here by its own property descriptors: a key a reader needs is read only when it is an own data property, and an accessor is reported
  * as one, its getter never called. So a value the host checked is the value it then uses, and no package code runs
  * while the host reads a package's value.
  */
