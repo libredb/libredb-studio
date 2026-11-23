@@ -19,7 +19,7 @@
  * editor's sentence for it names the topic.
  */
 import { ByteBudgetRefusal, DatabaseConfigError, QueryError, TimeBudgetRefusal } from "@/lib/db/errors";
-import { byteBudgetSentence, measureResultBytes, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { byteBudgetSentence, measureResultBytes, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import {
   declareMetadataOnly,
   type MetadataOnlyDeclaration,

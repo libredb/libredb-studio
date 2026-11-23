@@ -22,7 +22,7 @@
  */
 import { ByteBudgetRefusal, QueryError, TimeBudgetRefusal } from "@/lib/db/errors";
 import { isTlsFailureCode } from "@/lib/db/http/node-transport";
-import { byteBudgetSentence, measureResultBytes, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { byteBudgetSentence, measureResultBytes, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import {
   declareMetadataOnly,
   type MetadataOnlyDeclaration,

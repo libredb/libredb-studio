@@ -12,7 +12,7 @@ import { S3_AGENT_FAILURE_SENTENCES } from "@/lib/db/providers/objectstore/s3/ag
 import { S3_AGENT_SENTENCES } from "@/lib/db/providers/objectstore/s3/agent-statement";
 import { S3_AGENT_SHAPE, S3_AGENT_WITHHELD } from "@/lib/db/providers/objectstore/s3/agent-surface";
 import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
-import { TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { s3Connection } from "../../../helpers/s3-connection";

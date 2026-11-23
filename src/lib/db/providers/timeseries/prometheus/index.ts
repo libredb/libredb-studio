@@ -70,7 +70,7 @@ import type {
   StorageStats,
   TableStats,
 } from "@/lib/db/types";
-import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
+import { assertReadOnlyBudget } from "@/lib/db/read-only-budget";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { noWritePath } from "@/lib/db/write-reach";
 import { projectAgentTransport } from "./agent-projection";

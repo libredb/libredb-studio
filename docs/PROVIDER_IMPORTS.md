@@ -96,6 +96,7 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/db/query-generators/shared.ts` | SDK /manifest | Pure pieces a query generator row shares. |
 | `src/lib/db/query-generators/types.ts` | SDK /manifest | The query generator row contract. |
 | `src/lib/db/read-allowance.ts` | host service: run bounds | The billed-read allowance is a ledger of one agent run or MCP call, which the host owns. |
+| `src/lib/db/read-only-budget.ts` | SDK /calls | The read-only call's budget check, the row, byte and time refusal openings and sentences, and the result byte measures, pure; every family's `queryReadOnly` reads it, so it sits in core beside the types and errors it reads rather than in the SQL family module, and the SDK's calls subpath already holds a result's byte budgets and row measure. |
 | `src/lib/db/redaction/metadata-only.ts` | SDK /redaction | Pure projection helpers for the metadata-only answer mode. |
 | `src/lib/db/sql-grammar/shared.ts` | SDK /manifest | Shared grammar values a SQL grammar row composes. |
 | `src/lib/db/sql-grammar/types.ts` | SDK /manifest | The SQL grammar row contract. |
@@ -171,7 +172,6 @@ These are a snapshot; they leave the provider tree only when their slice moves t
 
 | Imported module | Importers | Destination |
 |---|---|---|
-| `sql/read-only-budget.ts` | 37 units, and core | the SQL family, `src/lib/sql/`, in PR 8 sql |
 | `sql/sql-base.ts` | 18 units | the legacy SQL base class, retired with the legacy bridge |
 | `sql/column-types.ts` | 6 units | SDK `/sql`, as a pure column type reader |
 | `sql/pg-wire-cancel.ts` | postgres | moves into the postgres provider |
@@ -259,7 +259,6 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 | `src/lib/db/operations/promql-admission.ts` | 1 statement reader module | PR 8 promql | the promql family, `src/lib/languages/promql/` |
 | `src/lib/db/operations/qdrantapi-admission.ts` | 1 statement reader module | PR 8 qdrantapi | the qdrantapi family, `src/lib/languages/qdrantapi/` |
 | `src/lib/db/operations/rabbitread-admission.ts` | 1 statement reader module | PR 8 rabbitread | the rabbitread family, `src/lib/languages/rabbitread/` |
-| `src/lib/db/operations/read-only-statement.ts` | 1 SQL read-only budget reader | PR 8 sql | the SQL family, `src/lib/sql/` |
 | `src/lib/db/operations/rediscli-admission.ts` | 1 statement reader module | PR 8 rediscli | the rediscli family, `src/lib/languages/rediscli/` |
 | `src/lib/db/operations/s3api-admission.ts` | 1 statement reader module | PR 8 s3api | the s3api family, `src/lib/languages/s3api/` |
 | `src/lib/db/operations/snmpget-admission.ts` | 1 statement reader module | PR 8 snmpget | the snmpget family, `src/lib/languages/snmpget/` |

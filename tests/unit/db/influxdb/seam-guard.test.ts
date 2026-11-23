@@ -4,10 +4,8 @@
  * `src/lib/languages/influxql/`, is parsed, so a file a later task adds is held by the same rules without editing
  * this list.
  *
- * 1. No file imports a module under `src/lib/db/providers/` outside this directory, with exactly two exceptions: the
- *    specifier `@/lib/db/providers/sql/sql-base`, imported by `sql-provider.ts` (R15), and
- *    `@/lib/db/providers/sql/read-only-budget`, the budget refusals every agent read path shares, imported by
- *    `sql-agent-read.ts` and `influxql-agent-read.ts`.
+ * 1. No file imports a module under `src/lib/db/providers/` outside this directory, with exactly one exception: the
+ *    specifier `@/lib/db/providers/sql/sql-base`, imported by `sql-provider.ts` (R15).
  * 2. No `influxql-*` module imports an `sql-*` module, and no `sql-*` module imports an `influxql-*` module.
  * 3. No shared-layer module imports an `influxql-*` or `sql-*` module.
  *    For rules 2 and 3, a module of the influxql statement language's core family module, `src/lib/languages/influxql/`
@@ -52,7 +50,6 @@ const DIR = "src/lib/db/providers/timeseries/influxdb";
 const PROVIDERS = "src/lib/db/providers/";
 const FAMILY_DIR = statementLanguageFamilyDirectory("influxql");
 const SQL_BASE = "@/lib/db/providers/sql/sql-base";
-const READ_ONLY_BUDGET = "@/lib/db/providers/sql/read-only-budget";
 
 const SHARED = [
   "connection-options",
@@ -154,7 +151,7 @@ const OUTSIDE_VALUES: Readonly<Record<Layer, readonly string[]>> = {
     "src/lib/db/utils/bounded-limiter.ts",
     "src/lib/db/base-provider.ts",
     "src/lib/db/object-kinds.ts",
-    "src/lib/db/providers/sql/read-only-budget.ts",
+    "src/lib/db/read-only-budget.ts",
     // The shared write-reach declaration helpers, a pure module that names no engine.
     "src/lib/db/write-reach.ts",
   ],
@@ -170,7 +167,7 @@ const OUTSIDE_VALUES: Readonly<Record<Layer, readonly string[]>> = {
     "src/lib/db/utils/result-fields.ts",
     "src/lib/db/object-kinds.ts",
     "src/lib/db/providers/sql/sql-base.ts",
-    "src/lib/db/providers/sql/read-only-budget.ts",
+    "src/lib/db/read-only-budget.ts",
     "src/lib/db/write-reach.ts",
   ],
   // The grammar row reads the registry's contract and the SDK's SQL grammar facts (`@libredb/provider-sdk/sql`).
@@ -314,9 +311,7 @@ function seamFindings(file: string, text: string): string[] {
     const target = resolved(specifier, file);
 
     if (target.startsWith(PROVIDERS) && !inDirectory(target)) {
-      const excepted =
-        (name === "sql-provider" && specifier === SQL_BASE) ||
-        ((name === "sql-agent-read" || name === "influxql-agent-read") && specifier === READ_ONLY_BUDGET);
+      const excepted = name === "sql-provider" && specifier === SQL_BASE;
       if (!excepted) {
         findings.push(`rule 1: ${file} imports ${specifier}, a module of another provider directory`);
       }
@@ -491,8 +486,8 @@ describe("planted violations fail by name", () => {
     [
       "sql-provider.ts",
       "sql-policy.ts",
-      'import { readOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";\n',
-      `rule 1: ${DIR}/sql-provider.ts imports @/lib/db/providers/sql/read-only-budget, a module of another provider directory`,
+      'import { declaredColumnTypes } from "@/lib/db/providers/sql/column-types";\n',
+      `rule 1: ${DIR}/sql-provider.ts imports @/lib/db/providers/sql/column-types, a module of another provider directory`,
     ],
     [
       "influxql-agent-read.ts",

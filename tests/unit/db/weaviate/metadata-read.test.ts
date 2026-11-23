@@ -22,7 +22,7 @@ import {
   weaviateAgentFailure,
   weaviateProjectionOf,
 } from "@/lib/db/providers/vector/weaviate/metadata-read";
-import { measureResultBytes } from "@/lib/db/providers/sql/read-only-budget";
+import { measureResultBytes } from "@/lib/db/read-only-budget";
 import { readWeaviateAgentStatement } from "@/lib/languages/weaviateapi/metadata-request";
 import { type WeaviateAnswer, WeaviateError, type WeaviateRequest } from "@/lib/db/providers/vector/weaviate/client";
 import type { WeaviateAnswered } from "@/lib/db/providers/vector/weaviate/execute";

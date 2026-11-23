@@ -26,7 +26,7 @@ import {
 import type { RevivedMongoReadEnvelope } from "@/lib/db/providers/document/mongodb/extended-json";
 import { serializeMongoDocument } from "@/lib/db/providers/document/mongodb/values";
 import { runReadOnlyStatement } from "@/lib/db/operations/read-only-statement";
-import { byteBudgetSentence, MAX_STATEMENT_TIMEOUT_MS, measureRowBytes } from "@/lib/db/providers/sql/read-only-budget";
+import { byteBudgetSentence, MAX_STATEMENT_TIMEOUT_MS, measureRowBytes } from "@/lib/db/read-only-budget";
 import type { DatabaseProvider, ReadOnlyStatementBudget, ReadOnlyStatementMode } from "@/lib/db/types";
 import { AGENT_HANDOVER_BUDGET } from "@/lib/agent/execution-policy";
 import { rowBudgetIn } from "@/lib/agent/context-snapshot";

@@ -16,7 +16,7 @@
  * far, the 541 conversion close included.
  */
 import { ByteBudgetRefusal, QueryError, TimeBudgetRefusal, TimeoutError } from "@/lib/db/errors";
-import { byteBudgetSentence, measureResultBytes, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { byteBudgetSentence, measureResultBytes, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import {
   declareMetadataOnly,
   type MetadataOnlyDeclaration,

@@ -14,7 +14,7 @@ import type { QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { SqlGrammar } from "@libredb/provider-sdk/sql";
 import { readSqlSpan } from "@/lib/sql/spans";
 import { readSqlWord } from "@/lib/sql/words";
-import { byteBudgetSentence, measureResultBytes, rowBudgetSentence } from "../read-only-budget";
+import { byteBudgetSentence, measureResultBytes, rowBudgetSentence } from "@/lib/db/read-only-budget";
 import type { ClickHouseQueryResult } from "./transport";
 
 const MILLISECONDS_PER_SECOND = 1000;

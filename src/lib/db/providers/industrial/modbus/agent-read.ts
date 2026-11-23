@@ -41,7 +41,7 @@ import {
   measureResultBytes,
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
-} from "@/lib/db/providers/sql/read-only-budget";
+} from "@/lib/db/read-only-budget";
 import type { QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
 import { MODBUS_AGENT_DEVICE_GAP_MS, ModbusPacingTimeout, type ModbusDevicePacer, deviceKey } from "./agent-pacing";
 import { socketWire, type Dialer, type Endpoint, type ModbusSocket } from "./client";

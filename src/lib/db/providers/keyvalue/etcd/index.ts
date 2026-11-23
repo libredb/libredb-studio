@@ -65,7 +65,7 @@ import type {
   StorageStats,
   TableStats,
 } from "@/lib/db/types";
-import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
+import { assertReadOnlyBudget } from "@/lib/db/read-only-budget";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { type EtcdAgentAnswer, ETCD_METADATA_ONLY, etcdAgentFailure, etcdAgentResult } from "./agent-metadata-read";
 import { ETCD_PROOF_SENTENCES, etcdAgentUser, proveEtcdReadOnly } from "./agent-read-only-proof";

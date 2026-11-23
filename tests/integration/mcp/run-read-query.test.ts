@@ -22,7 +22,7 @@ import {
   TimeBudgetRefusal,
 } from "@/lib/db/errors";
 import { PROVIDER_TEXT_WITHHELD, providerAuthor } from "@/lib/db/operations/provider-text";
-import { rowBudgetSentence, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { rowBudgetSentence, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import { secretForms } from "@/lib/db/utils/server-text";
 import { LibreDBProvider } from "@/lib/db/providers/embedded/libredb";
 import { DuckDBProvider } from "@/lib/db/providers/sql/duckdb";

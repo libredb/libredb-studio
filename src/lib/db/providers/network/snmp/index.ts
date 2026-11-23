@@ -67,7 +67,7 @@ import { PDU_GET, PDU_GET_BULK, PDU_GET_NEXT } from "./valve";
 import type { ResponseVarbind } from "./message";
 import { allNotices } from "./mib";
 import { failureFromStatus } from "./errors";
-import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
+import { assertReadOnlyBudget } from "@/lib/db/read-only-budget";
 import { createSnmpAgentClient } from "./agent-client";
 import { runSnmpAgentReadWithin, snmpAgentResult } from "./agent-read";
 import { readSnmpAgentStatement, withheldReason, withheldSubtreeOf } from "./agent-statement";

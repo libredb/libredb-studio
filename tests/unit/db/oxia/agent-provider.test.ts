@@ -14,7 +14,7 @@ import { OXIA_AGENT_SENTENCES } from "@/lib/languages/oxiacli/agent-statement";
 import { OxiaError } from "@/lib/db/providers/keyvalue/oxia/errors";
 import { OxiaProvider } from "@/lib/db/providers/keyvalue/oxia/index";
 import { shardFor } from "@/lib/db/providers/keyvalue/oxia/routing";
-import { TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import type { ProviderExecutionContext } from "@/lib/db/types";
 import {
   createFakeOxiaClient,

@@ -25,7 +25,7 @@ import { configureAgentModel, restoreAgentModel } from "../../helpers/agent-mode
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { AGENT_ENABLED_ENV } from "@/lib/agent/config";
 import { AGENT_HANDOVER_BUDGET, AGENT_HANDOVER_READ_ALLOWANCE } from "@/lib/agent/execution-policy";
-import { byteBudgetSentence, rowBudgetSentence, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { byteBudgetSentence, rowBudgetSentence, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import { MSSQL_CUT_VALUE_PREFIX, MSSQL_SERIALISED_PREFIX } from "@/lib/sql/mssql-read-only-refusals";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import {

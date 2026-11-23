@@ -13,7 +13,7 @@ import {
 } from "@/lib/db/providers/keyvalue/etcd/agent-metadata-read";
 import { type EtcdErrorCategory, EtcdError, type EtcdStatus } from "@/lib/db/providers/keyvalue/etcd/client";
 import { MetadataProjectionError } from "@/lib/db/redaction/metadata-only";
-import { TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import {
   capturedAlarms,
   capturedError,

@@ -20,7 +20,7 @@
  * budget is refused with the row budget's sentence, and `limitBytes` never asks for more than the byte budget.
  */
 import { QueryError, RowBudgetRefusal } from "@/lib/db/errors";
-import { rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
+import { rowBudgetSentence } from "@/lib/db/read-only-budget";
 import { ACCEPT_JSON } from "../client";
 import type { IndexedResource } from "../discovery";
 import {

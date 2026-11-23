@@ -25,7 +25,7 @@ import { DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/d
 import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import type { HttpOrigin } from "@/lib/db/http/endpoint";
 import { createNodeTransport, type NodeTransport } from "@/lib/db/http/node-transport";
-import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
+import { assertReadOnlyBudget } from "@/lib/db/read-only-budget";
 import { engineLimiter } from "@/lib/db/utils/bounded-limiter";
 import type {
   ActiveSessionDetails,

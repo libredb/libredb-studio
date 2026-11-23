@@ -81,7 +81,12 @@ import {
   TimeBudgetRefusal,
 } from "@/lib/db/errors";
 import type { QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
-import { byteBudgetSentence, measureResultBytes, rowBudgetSentence, TIME_BUDGET_PREFIX } from "../read-only-budget";
+import {
+  byteBudgetSentence,
+  measureResultBytes,
+  rowBudgetSentence,
+  TIME_BUDGET_PREFIX,
+} from "@/lib/db/read-only-budget";
 
 type Rows = readonly Record<string, unknown>[];
 

@@ -88,7 +88,7 @@ import {
   measureResultBytes,
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
-} from "@/lib/db/providers/sql/read-only-budget";
+} from "@/lib/db/read-only-budget";
 import { couchbaseAgentStatementRefusal, verifyCouchbaseAgentProfile } from "./agent-boundary";
 import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { CouchbaseHttpTransport, type CouchbaseHttpTransportDeps } from "./http-transport";

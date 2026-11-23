@@ -64,7 +64,7 @@ import {
 import { analyzeQuery, assertRowBounds, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../../utils/query-limiter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
-import { assertReadOnlyBudget, TIME_BUDGET_PREFIX } from "../read-only-budget";
+import { assertReadOnlyBudget, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import { SQLBaseProvider } from "../sql-base";
 import {
   assertAgentColumnTypes,

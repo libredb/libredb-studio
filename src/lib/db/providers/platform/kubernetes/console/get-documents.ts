@@ -14,7 +14,7 @@
  */
 import { stringify } from "yaml";
 import { ByteBudgetRefusal, QueryError } from "@/lib/db/errors";
-import { byteBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
+import { byteBudgetSentence } from "@/lib/db/read-only-budget";
 import { ACCEPT_JSON } from "../client";
 import type { IndexedResource } from "../discovery";
 import { KubernetesRequestError, KubernetesResponseTooLargeError } from "../errors";

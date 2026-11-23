@@ -915,7 +915,7 @@ The proof runs in `connect()` only when the context sets both `readOnly` and `se
 | `cancel_http_readonly_queries_on_client_close` | `1` | a request the client abandons, at its deadline or at the body cap, is cancelled on the server: measured, the abandoned statement left `system.processes` with the setting, and was still running 3 s later without it |
 
 The transport reads the answer in chunks and stops at the byte budget plus a 1 MiB envelope allowance (`maxBodyBytes`), so an oversized answer is never held whole.
-The parsed rows are then held to the row and byte budgets again, and every refusal is the shared sentence of [`read-only-budget.ts`](../../src/lib/db/providers/sql/read-only-budget.ts).
+The parsed rows are then held to the row and byte budgets again, and every refusal is the shared sentence of [`read-only-budget.ts`](../../src/lib/db/read-only-budget.ts).
 An answer in a format the statement chose (`FORMAT TSV`) is refused, because its rows cannot be counted or measured.
 An estimating plan is the `EXPLAIN json = 1, indexes = 1` prefix the agent composes, sent in the ordinary execute mode; the estimate-plan session mode is refused.
 The run read allowance is not charged: ClickHouse does not bill per read.

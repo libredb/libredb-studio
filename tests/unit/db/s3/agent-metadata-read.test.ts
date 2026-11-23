@@ -21,7 +21,7 @@ import {
   S3_AGENT_BUCKET_CHECK_MAX,
 } from "@/lib/db/providers/objectstore/s3/constants";
 import { S3ServerError } from "@/lib/db/providers/objectstore/s3/errors";
-import { BYTE_BUDGET_PREFIX, ROW_BUDGET_PREFIX, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { BYTE_BUDGET_PREFIX, ROW_BUDGET_PREFIX, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import { MetadataProjectionError } from "@/lib/db/redaction/metadata-only";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { LimiterTicket, ProviderLimiter } from "@/lib/db/utils/bounded-limiter";

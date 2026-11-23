@@ -126,7 +126,7 @@ The fence refuses any name `system` followed by a `.` unless `influxdb_schema` f
 The server also reads a string before a `.` as a name (`'system'.queries` answers the rows of `system.queries`), so the fence refuses any string followed by a `.`, whatever it holds.
 What the read policy or the fence refuses is a `RefusedBeforeSendError`, since nothing was sent, so the agent rail shows it as refused before the database, in Studio's words, never as the server's error.
 The request's deadline is the budget's, and its response cap is three times the byte budget plus 64 KiB, since a jsonl line is at most three times the bytes of the row it becomes (a character outside ASCII written as a `\uXXXX` escape); an answer past the cap is refused as over the byte budget.
-The answer is shaped in the strict mode of `shapeJsonlBody`: a row past the row budget, or a row that takes the answer past the 250,000-cell budget, throws the shared row refusal of [`read-only-budget.ts`](../../src/lib/db/providers/sql/read-only-budget.ts), naming every row the answer holds and the rows the bound admits, and the shaped rows are held to the byte budget, all before anything is returned.
+The answer is shaped in the strict mode of `shapeJsonlBody`: a row past the row budget, or a row that takes the answer past the 250,000-cell budget, throws the shared row refusal of [`read-only-budget.ts`](../../src/lib/db/read-only-budget.ts), naming every row the answer holds and the rows the bound admits, and the shaped rows are held to the byte budget, all before anything is returned.
 A statement past its deadline is refused as over the time budget; the server's query is not cancelled (section 5.10).
 
 #### Boundary record

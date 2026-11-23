@@ -10,7 +10,7 @@
  */
 import { ByteBudgetRefusal, RowBudgetRefusal } from "@/lib/db/errors";
 import type { QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
-import { byteBudgetSentence, measureResultBytes, rowBudgetSentence } from "../read-only-budget";
+import { byteBudgetSentence, measureResultBytes, rowBudgetSentence } from "@/lib/db/read-only-budget";
 import type { LibSQLStatementResult } from "./transport";
 
 /**

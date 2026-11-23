@@ -11,7 +11,7 @@ import { ETCD_AGENT_SENTENCES } from "@/lib/db/providers/keyvalue/etcd/agent-sta
 import { type EtcdClient, EtcdError, type EtcdPermission } from "@/lib/db/providers/keyvalue/etcd/client";
 import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
 import { ALL_KEYS, fromHexId } from "@/lib/db/providers/keyvalue/etcd/keys";
-import { TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import type { ProviderExecutionContext } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { capturedClient, principalCapture } from "../../../helpers/etcd-agent";

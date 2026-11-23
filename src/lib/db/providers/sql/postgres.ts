@@ -93,7 +93,12 @@ import {
 import { mapDatabaseError } from "../../map-database-error";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import type { QueryResultSet } from "@/lib/types";
-import { assertReadOnlyBudget, byteBudgetSentence, measureResultBytes, rowBudgetSentence } from "./read-only-budget";
+import {
+  assertReadOnlyBudget,
+  byteBudgetSentence,
+  measureResultBytes,
+  rowBudgetSentence,
+} from "@/lib/db/read-only-budget";
 import { sendPgCancelRequest, type PgCancelTarget } from "./pg-wire-cancel";
 import { POSTGRES_CREATE_TABLE } from "./postgres-create-table";
 import { type PgFieldMetadata, postgresColumnTypes } from "./column-types";

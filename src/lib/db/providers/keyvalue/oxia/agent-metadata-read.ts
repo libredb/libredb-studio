@@ -16,7 +16,7 @@ import {
   measureResultBytes,
   ROW_BUDGET_PREFIX,
   TIME_BUDGET_PREFIX,
-} from "@/lib/db/providers/sql/read-only-budget";
+} from "@/lib/db/read-only-budget";
 import {
   declareMetadataOnly,
   type MetadataOnlyDeclaration,

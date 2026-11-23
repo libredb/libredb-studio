@@ -11,7 +11,7 @@
  * events did not all fit the read is refused, never answered with only some of them.
  */
 import { QueryError, RowBudgetRefusal } from "@/lib/db/errors";
-import { rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
+import { rowBudgetSentence } from "@/lib/db/read-only-budget";
 import { ACCEPT_JSON, ACCEPT_TABLE } from "../client";
 import type { IndexedResource } from "../discovery";
 import { KubernetesRequestError } from "../errors";

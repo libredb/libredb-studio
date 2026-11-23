@@ -13,7 +13,7 @@ import {
   redisAgentResult,
 } from "@/lib/db/providers/keyvalue/redis-metadata-read";
 import { MetadataProjectionError } from "@/lib/db/redaction/metadata-only";
-import { BYTE_BUDGET_PREFIX, ROW_BUDGET_PREFIX, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { BYTE_BUDGET_PREFIX, ROW_BUDGET_PREFIX, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import { principalCapture, REDIS_CAPTURE_VERSIONS, stepFor } from "../../../helpers/redis-agent";
 import { errorKind } from "@/lib/db/error-record";

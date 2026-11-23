@@ -27,7 +27,7 @@ import {
   RefusedBeforeSendError,
   TimeBudgetRefusal,
 } from "@/lib/db/errors";
-import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
+import { assertReadOnlyBudget } from "@/lib/db/read-only-budget";
 import type {
   ActiveSessionDetails,
   Container,

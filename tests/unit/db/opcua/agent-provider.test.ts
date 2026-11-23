@@ -40,7 +40,7 @@ import type {
   OpcuaReference,
 } from "@/lib/db/providers/industrial/opcua/client";
 import { OpcuaProvider } from "@/lib/db/providers/industrial/opcua/index";
-import { ROW_BUDGET_PREFIX, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { ROW_BUDGET_PREFIX, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 

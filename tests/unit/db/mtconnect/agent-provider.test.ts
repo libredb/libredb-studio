@@ -39,7 +39,7 @@ import {
 } from "@/lib/db/providers/industrial/mtconnect/agent-withheld";
 import { MTConnectProvider, MTCONNECT_STATEMENT_LANGUAGE } from "@/lib/db/providers/industrial/mtconnect/index";
 import { MTC_ROUTES } from "@/lib/db/providers/industrial/mtconnect/routes";
-import { ROW_BUDGET_PREFIX, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { ROW_BUDGET_PREFIX, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";

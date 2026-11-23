@@ -33,7 +33,7 @@ import {
   byteBudgetSentence,
   measureResultBytes,
   rowBudgetSentence,
-} from "@/lib/db/providers/sql/read-only-budget";
+} from "@/lib/db/read-only-budget";
 import { GRAPH_CONTAINER_LEVELS, GRAPH_OBJECT_KINDS } from "@/lib/db/graph/objects";
 import type {
   ActiveSessionDetails,

@@ -1258,7 +1258,7 @@ A check read that fails, past the deadline included, is reported as a connection
   A session keeps what a statement set on it, and the `USER_*` views the check reads follow `CURRENT_SCHEMA`: measured, an agent's `ALTER SESSION SET CURRENT_SCHEMA = APP_OWNER` ran, and on a pooled session the next calls read `APP_OWNER` as their schema.
   The Thin driver of node-oracledb 6.10 returns a pooled session to its pool even when `close({ drop: true })` asks it to drop it (measured), so the session is never taken from the pool at all.
 
-Every refusal is a sentence of [`read-only-budget.ts`](../../src/lib/db/providers/sql/read-only-budget.ts) or the server's own error.
+Every refusal is a sentence of [`read-only-budget.ts`](../../src/lib/db/read-only-budget.ts) or the server's own error.
 The estimate-plan session mode is refused: `EXPLAIN PLAN` writes its rows into `PLAN_TABLE`, a write the READ ONLY user is refused, so the agent composes no estimating plan here (B147).
 The run read allowance is not charged: Oracle does not bill per read.
 

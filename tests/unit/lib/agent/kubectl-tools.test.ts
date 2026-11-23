@@ -22,7 +22,7 @@ import { createTargetScope } from "@/lib/db/operations/policy";
 import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes";
 import { AGENT_PAGING_SENTENCE } from "@/lib/languages/kubectl/paging";
 import { CLUSTER_USAGE_FIELDS, WORKLOAD_PROFILE_FIELDS } from "@/lib/db/providers/platform/kubernetes/agent-readings";
-import { measureRowBytes, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { measureRowBytes, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import type {
   ClusterUsageReading,

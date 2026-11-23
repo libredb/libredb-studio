@@ -16,7 +16,7 @@
  * request's own page, so the answer says that more follow, and how to read on, without naming what follows.
  */
 import { ByteBudgetRefusal, QueryError, TimeBudgetRefusal } from "@/lib/db/errors";
-import { byteBudgetSentence, measureResultBytes, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { byteBudgetSentence, measureResultBytes, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import {
   declareMetadataOnly,
   type MetadataOnlyDeclaration,

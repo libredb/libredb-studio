@@ -24,7 +24,7 @@ import { ALLOWED_OPERATIONS } from "@/lib/db/providers/network/netconf/requests"
 import { NetconfSessionError } from "@/lib/db/providers/network/netconf/session";
 import { netconfXmlPort } from "@/lib/db/providers/network/netconf/xml";
 import { MetadataProjectionError } from "@/lib/db/redaction/metadata-only";
-import { byteBudgetSentence, rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
+import { byteBudgetSentence, rowBudgetSentence } from "@/lib/db/read-only-budget";
 import {
   FAKE_HASH,
   FAKE_MODULES,

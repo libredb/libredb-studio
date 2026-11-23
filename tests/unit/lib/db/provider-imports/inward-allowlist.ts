@@ -517,10 +517,6 @@ export const INWARD_IMPORTS: readonly AllowlistEntry[] = [
     modules: ["stream/rabbitmq/agent-statement.ts"],
   },
   {
-    file: "src/lib/db/operations/read-only-statement.ts",
-    modules: ["sql/read-only-budget.ts"],
-  },
-  {
     file: "src/lib/db/operations/rediscli-admission.ts",
     modules: ["keyvalue/redis-agent-statement.ts"],
   },

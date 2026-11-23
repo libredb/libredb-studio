@@ -68,7 +68,12 @@ import {
   TimeBudgetRefusal,
 } from "../../errors";
 import { mapDatabaseError } from "../../map-database-error";
-import { assertReadOnlyBudget, byteBudgetSentence, measureResultBytes, rowBudgetSentence } from "./read-only-budget";
+import {
+  assertReadOnlyBudget,
+  byteBudgetSentence,
+  measureResultBytes,
+  rowBudgetSentence,
+} from "@/lib/db/read-only-budget";
 import {
   MSSQL_CUT_VALUE_PREFIX,
   MSSQL_SERIALISED_PREFIX,

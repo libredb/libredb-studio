@@ -13,7 +13,7 @@ import {
 } from "@/lib/db/providers/keyvalue/oxia/agent-metadata-read";
 import type { OxiaRecordView, OxiaSnapshot } from "@/lib/db/providers/keyvalue/oxia/client";
 import { OxiaError } from "@/lib/db/providers/keyvalue/oxia/errors";
-import { BYTE_BUDGET_PREFIX, ROW_BUDGET_PREFIX, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { BYTE_BUDGET_PREFIX, ROW_BUDGET_PREFIX, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import { MetadataProjectionError } from "@/lib/db/redaction/metadata-only";
 import { errorKind } from "@/lib/db/error-record";
 
