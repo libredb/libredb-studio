@@ -18,7 +18,17 @@
     "refused": [],
     "connectionString": {
       "accepted": true,
-      "dialogOffersUri": true
+      "dialogOffersUri": true,
+      "scheme": "couchbase",
+      "urlTls": null,
+      "paste": {
+        "reader": "pasteReader",
+        "catchAll": false,
+        "formats": [
+          "couchbase://"
+        ]
+      },
+      "seedCheck": null
     },
     "tls": "offered",
     "sshTunnel": {

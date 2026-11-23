@@ -114,12 +114,12 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     module: "src/lib/db/connection-string/index.ts",
     name: "CONNECTION_STRING",
     destination:
-      "planned segment: connection string rows, the schemes, their URL TLS and paste readers and seed checks",
+      "engine declaration: connection.connectionString, its scheme, urlTls, paste with its reader, catch-all and formats, and seedCheck, each function named by the slot it fills",
   },
   {
     module: "src/lib/db/connection-string/index.ts",
     name: "ENGINE_URI_SCHEMES",
-    destination: "planned segment: connection string rows, the URI schemes derived from them",
+    destination: "engine declaration: connection.connectionString.scheme, from which core derives the map",
   },
   {
     module: "src/lib/db/credential-warnings.ts",

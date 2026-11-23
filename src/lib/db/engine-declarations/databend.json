@@ -19,7 +19,17 @@
     "refused": [],
     "connectionString": {
       "accepted": false,
-      "dialogOffersUri": false
+      "dialogOffersUri": false,
+      "scheme": "databend",
+      "urlTls": null,
+      "paste": {
+        "reader": "pasteReader",
+        "catchAll": false,
+        "formats": [
+          "databend://"
+        ]
+      },
+      "seedCheck": null
     },
     "tls": "offered",
     "sshTunnel": {

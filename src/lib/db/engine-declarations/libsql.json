@@ -17,7 +17,17 @@
     "refused": [],
     "connectionString": {
       "accepted": true,
-      "dialogOffersUri": true
+      "dialogOffersUri": true,
+      "scheme": "libsql",
+      "urlTls": null,
+      "paste": {
+        "reader": "pasteReader",
+        "catchAll": false,
+        "formats": [
+          "libsql://"
+        ]
+      },
+      "seedCheck": null
     },
     "tls": "offered",
     "sshTunnel": {

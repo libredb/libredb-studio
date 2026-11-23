@@ -56,6 +56,8 @@ export const SCHEMA_REFUSAL_RULES = Object.freeze([
   "pattern-invalid",
   "char-range-inverted",
   "host-reader-without-host",
+  "scheme-without-paste",
+  "url-tls-without-paste",
 ] as const);
 
 export type SchemaRefusalRule = (typeof SCHEMA_REFUSAL_RULES)[number];
@@ -162,7 +164,9 @@ function ordered(refusals: readonly SchemaRefusal[]): SchemaRefusal[] {
 /**
  * ajv's errors as refusals. A failed `oneOf` is one `no-variant` refusal at its pointer, and every error at or under
  * that pointer, which only its branches can report since the schema's generator keeps `oneOf` alone in its schema, is
- * dropped. A keyword no rule maps is thrown by name: it means the schema uses a keyword this validator does not read.
+ * dropped. A repeated item is refused at the later of the two indices ajv names, `i` and `j`, whose order depends on
+ * whether the list's items schema states a type. A keyword no rule maps is thrown by name: it means the schema uses a
+ * keyword this validator does not read.
  */
 export function refusalsOf(errors: readonly AjvError[]): SchemaRefusal[] {
   const variants = errors.filter((error) => error.keyword === "oneOf").map((error) => error.instancePath);
@@ -181,8 +185,9 @@ export function refusalsOf(errors: readonly AjvError[]): SchemaRefusal[] {
       refusals.push(schemaRefusal(rule, error.instancePath, String(params.additionalProperty)));
     else if (rule === "missing-key")
       refusals.push(schemaRefusal(rule, error.instancePath, String(params.missingProperty)));
-    else if (rule === "duplicate") refusals.push(schemaRefusal(rule, `${error.instancePath}/${String(params.i)}`));
-    else refusals.push(schemaRefusal(rule, error.instancePath));
+    else if (rule === "duplicate") {
+      refusals.push(schemaRefusal(rule, `${error.instancePath}/${Math.max(Number(params.i), Number(params.j))}`));
+    } else refusals.push(schemaRefusal(rule, error.instancePath));
   }
   return ordered(refusals);
 }
@@ -350,6 +355,21 @@ function fieldRuleRefusals(connection: EngineDeclaration["connection"], at: stri
   return refusals;
 }
 
+/**
+ * The rules of an engine's connection string the schema cannot state, at pointers under `at`: a scheme and a URL TLS
+ * reader only on an engine whose connection string names a paste reader, since Studio shows a scheme as one a paste of
+ * it reads, and only the paste reader reads a URL's query.
+ */
+function connectionStringRuleRefusals(connection: EngineDeclaration["connection"], at: string): SchemaRefusal[] {
+  const refusals: SchemaRefusal[] = [];
+  const { connectionString } = connection;
+  const pointer = `${at}/connection/connectionString`;
+  if (connectionString.paste !== null) return refusals;
+  if (connectionString.scheme !== null) refusals.push(schemaRefusal("scheme-without-paste", `${pointer}/scheme`));
+  if (connectionString.urlTls !== null) refusals.push(schemaRefusal("url-tls-without-paste", `${pointer}/urlTls`));
+  return refusals;
+}
+
 /** The rules of one engine's connection the schema cannot state, at pointers under `at`. */
 function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies: FieldVocabularies): SchemaRefusal[] {
   const seedOnlyNames = vocabularies.seedOnly;
@@ -377,6 +397,7 @@ function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies:
   refusals.push(...dialogRuleRefusals(connection, at, vocabularies));
   refusals.push(...hostAndWarningRuleRefusals(connection, at));
   refusals.push(...fieldRuleRefusals(connection, at));
+  refusals.push(...connectionStringRuleRefusals(connection, at));
   return refusals;
 }
 
@@ -564,5 +585,9 @@ export function refusalSentence(refusal: ManifestRefusal): string {
       return `The character range at ${at} has a minimum greater than its maximum.`;
     case "host-reader-without-host":
       return `The Host text reader at ${at} is named for an engine that takes no host field.`;
+    case "scheme-without-paste":
+      return `The scheme at ${at} is declared for an engine whose connection string names no paste reader.`;
+    case "url-tls-without-paste":
+      return `The URL TLS reader at ${at} is named for an engine whose connection string names no paste reader.`;
   }
 }

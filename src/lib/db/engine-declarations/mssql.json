@@ -18,7 +18,18 @@
     "refused": [],
     "connectionString": {
       "accepted": false,
-      "dialogOffersUri": false
+      "dialogOffersUri": false,
+      "scheme": "mssql",
+      "urlTls": "urlTls",
+      "paste": {
+        "reader": "pasteReader",
+        "catchAll": false,
+        "formats": [
+          "mssql://",
+          "Server=… (ADO.NET)"
+        ]
+      },
+      "seedCheck": null
     },
     "tls": "offered",
     "sshTunnel": {

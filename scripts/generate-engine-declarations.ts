@@ -19,9 +19,11 @@
  *
  * Any other function a table holds is named, never carried, and named by the slot it fills, one convention for every
  * engine: `<field>Check` for a field rule's check (`hostCheck`), `hostHint` and `hostIdentity` for the Host text
- * readers, and `importer` for the connection import's parser. The name is read from where the function sits, never from
- * the function itself, so this script imports no provider module and reads no function's `name`; the census resolves
- * each name with a table of its own and holds it, by identity, to the function the connection form runs.
+ * readers, `importer` for the connection import's parser, `urlTls` for the connection string's URL TLS reader,
+ * `pasteReader` for its paste reader (one name for the reader's claims, names and parse) and `seedCheck` for its seed
+ * load check. The name is read from where the function sits, never from the function itself, so this script imports no
+ * provider module directly and reads no function's `name`; the census resolves each name with a table of its own and
+ * holds it, by identity, to the function the connection form or the connection string row holds.
  *
  * Run: bun scripts/generate-engine-declarations.ts --write | --check [--out <directory>]
  * --write writes every declaration and removes a `.json` file for an id no longer shipped, --check exits 1 naming each
@@ -33,6 +35,7 @@ import path from "node:path";
 import type {
   BoundedPattern,
   ConnectionDialog,
+  ConnectionStringOffer,
   CredentialWarning as ManifestCredentialWarning,
   EngineDeclaration,
   FieldName,
@@ -63,6 +66,7 @@ import {
   SEED_ONLY_FIELDS,
 } from "../src/lib/db/connection-fields";
 import { CONNECTION_FORM, type ConnectionFormSpec, offersSslPanel } from "../src/lib/db/connection-form";
+import { CONNECTION_STRING } from "../src/lib/db/connection-string";
 import { CREDENTIAL_WARNINGS } from "../src/lib/db/credential-warnings";
 import { ENGINE_FACETS } from "../src/lib/db/engine-facets";
 import type { DatabaseType } from "../src/lib/types";
@@ -234,6 +238,25 @@ export function buildFieldRules(
 }
 
 /**
+ * One engine's connection string: what the provider accepts and the dialog offers, then its row in `CONNECTION_STRING`,
+ * the scheme as written, the paste's catch-all flag and formats in order, and each function named by its slot.
+ */
+function buildConnectionString(type: DatabaseType): ConnectionStringOffer {
+  const row = CONNECTION_STRING[type];
+  return {
+    accepted: CONNECTION_STRING_ACCEPTED[type],
+    dialogOffersUri: CONNECTION_FORM_URI_MODE[type],
+    scheme: row.scheme,
+    urlTls: row.readTls === null ? null : "urlTls",
+    paste:
+      row.paste === null
+        ? null
+        : { reader: "pasteReader", catchAll: row.paste.catchAll, formats: [...row.paste.formats] },
+    seedCheck: row.validateSeed === null ? null : "seedCheck",
+  };
+}
+
+/**
  * The engine's credential warnings, read from `CREDENTIAL_WARNINGS` rather than the form's getter over it, so the
  * declaration names the record it comes from; each written member by member, so every declaration orders them alike.
  */
@@ -281,7 +304,7 @@ export function buildEngineDeclaration(type: DatabaseType): EngineDeclaration {
         field: fieldName(field, type),
         refusal,
       })),
-      connectionString: { accepted: CONNECTION_STRING_ACCEPTED[type], dialogOffersUri: CONNECTION_FORM_URI_MODE[type] },
+      connectionString: buildConnectionString(type),
       tls: offersSslPanel(type) ? "offered" : "not-offered",
       sshTunnel: sshRefusal === null ? { offered: true } : { offered: false, refusal: sshRefusal },
       hostPathFields: [...HOST_PATH_FIELDS[type]],

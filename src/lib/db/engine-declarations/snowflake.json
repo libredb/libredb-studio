@@ -22,7 +22,19 @@
     "refused": [],
     "connectionString": {
       "accepted": false,
-      "dialogOffersUri": false
+      "dialogOffersUri": false,
+      "scheme": null,
+      "urlTls": null,
+      "paste": {
+        "reader": "pasteReader",
+        "catchAll": false,
+        "formats": [
+          "jdbc:snowflake://",
+          "snowflake://",
+          "a Snowflake account URL or host"
+        ]
+      },
+      "seedCheck": "seedCheck"
     },
     "tls": "not-offered",
     "sshTunnel": {

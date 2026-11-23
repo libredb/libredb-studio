@@ -36,6 +36,8 @@ import {
 } from "../../../scripts/generate-engine-declarations";
 import { AGENT_STATEMENT_LANGUAGE, type AgentStatementLanguageId } from "@/lib/agent/agent-manifest";
 import type { HostUriScheme } from "@/lib/connection-host-uri";
+import { PASTE_FORMATS_TEXT } from "@/lib/connection-paste-formats";
+import { detectConnectionStringType, parseConnectionString, pasteText } from "@/lib/connection-string-parser";
 import {
   CONNECTION_FORM_URI_MODE,
   CONNECTION_STRING_ACCEPTED,
@@ -62,22 +64,45 @@ import {
 } from "@/lib/db/connection-fields";
 import {
   CONNECTION_FORM,
+  CONNECTION_PICKER_ORDER,
   type ConnectionFieldRule,
   type ConnectionFormSpec,
   connectionFieldRefusal,
   connectionFieldShown,
   offersSslPanel,
 } from "@/lib/db/connection-form";
+import {
+  CONNECTION_STRING,
+  CONNECTION_STRING_PASTE_ORDER,
+  CONNECTION_STRING_PASTE_OVERLAPS,
+  ENGINE_URI_SCHEMES,
+} from "@/lib/db/connection-string";
+import type { ConnectionStringPaste, ConnectionStringSpec } from "@/lib/db/connection-string/types";
 import { CREDENTIAL_WARNINGS, type CredentialWarning } from "@/lib/db/credential-warnings";
 import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import { MONITORING_PANELS } from "@/lib/db/engine-facets/types";
 import { CURATED_OPERATION_KINDS } from "@/lib/db/operations/descriptors";
 import { refusedFieldRefusal } from "@/lib/db/provider-connection";
+import { COUCHBASE_CONNECTION_STRING } from "@/lib/db/providers/document/couchbase/connection-string";
+import { MONGODB_CONNECTION_STRING } from "@/lib/db/providers/document/mongodb/connection-string";
+import { OPCUA_CONNECTION_STRING } from "@/lib/db/providers/industrial/opcua/connection-string";
+import { ETCD_CONNECTION_STRING } from "@/lib/db/providers/keyvalue/etcd/connection-string";
+import { REDIS_CONNECTION_STRING } from "@/lib/db/providers/keyvalue/redis-connection-string";
+import { CLICKHOUSE_CONNECTION_STRING } from "@/lib/db/providers/sql/clickhouse/connection-string";
+import { DATABEND_CONNECTION_STRING } from "@/lib/db/providers/sql/databend/connection-string";
+import { DB2_CONNECTION_STRING } from "@/lib/db/providers/sql/db2/connection-string";
+import { LIBSQL_CONNECTION_STRING } from "@/lib/db/providers/sql/libsql/connection-string";
+import { MSSQL_CONNECTION_STRING } from "@/lib/db/providers/sql/mssql-connection-string";
+import { MYSQL_CONNECTION_STRING } from "@/lib/db/providers/sql/mysql-connection-string";
+import { ORACLE_CONNECTION_STRING } from "@/lib/db/providers/sql/oracle-connection-string";
+import { POSTGRES_CONNECTION_STRING } from "@/lib/db/providers/sql/postgres-connection-string";
 import {
   snowflakeAccountRefusal,
   snowflakeHostHint,
   snowflakeHostIdentity,
 } from "@/lib/db/providers/sql/snowflake/account-host";
+import { SNOWFLAKE_CONNECTION_STRING } from "@/lib/db/providers/sql/snowflake/connection-string";
+import { SPARK_CONNECTION_STRING } from "@/lib/db/providers/sql/spark/connection-string";
 import type { MaintenanceOperation } from "@/lib/db/types";
 import { importKubeconfig } from "@/lib/kubernetes/kubeconfig-import";
 import { CONNECTION_FIELDS as FIELD_CLASSES } from "@/lib/storage/secret-fields";
@@ -142,10 +167,34 @@ function sameValue(a: unknown, b: unknown): boolean {
  * The census's own resolver of the functions a declaration names: per engine, each name mapped to the function Studio
  * exports, imported here from its own module. It is written apart from the generator and the inventory, so a name is
  * held to the function the connection form runs by identity, and never by a function's `name`.
+ *
+ * A connection string name resolves to the slot of the engine's own connection string row, imported from its provider
+ * module rather than from the registry index the generator reads: every URL TLS reader, paste reader and seed check is
+ * private to its module, so the row's slot is the binding there is, and the census holds it to the slot core runs.
  */
 const NAMED_FUNCTIONS: Readonly<Partial<Record<DatabaseType, Readonly<Record<string, unknown>>>>> = {
-  snowflake: { hostCheck: snowflakeAccountRefusal, hostHint: snowflakeHostHint, hostIdentity: snowflakeHostIdentity },
+  snowflake: {
+    hostCheck: snowflakeAccountRefusal,
+    hostHint: snowflakeHostHint,
+    hostIdentity: snowflakeHostIdentity,
+    pasteReader: SNOWFLAKE_CONNECTION_STRING.paste,
+    seedCheck: SNOWFLAKE_CONNECTION_STRING.validateSeed,
+  },
   kubernetes: { importer: importKubeconfig },
+  clickhouse: { pasteReader: CLICKHOUSE_CONNECTION_STRING.paste },
+  couchbase: { pasteReader: COUCHBASE_CONNECTION_STRING.paste },
+  databend: { pasteReader: DATABEND_CONNECTION_STRING.paste },
+  db2: { urlTls: DB2_CONNECTION_STRING.readTls, pasteReader: DB2_CONNECTION_STRING.paste },
+  etcd: { seedCheck: ETCD_CONNECTION_STRING.validateSeed },
+  libsql: { pasteReader: LIBSQL_CONNECTION_STRING.paste },
+  mongodb: { pasteReader: MONGODB_CONNECTION_STRING.paste },
+  mssql: { urlTls: MSSQL_CONNECTION_STRING.readTls, pasteReader: MSSQL_CONNECTION_STRING.paste },
+  mysql: { urlTls: MYSQL_CONNECTION_STRING.readTls, pasteReader: MYSQL_CONNECTION_STRING.paste },
+  opcua: { seedCheck: OPCUA_CONNECTION_STRING.validateSeed },
+  oracle: { pasteReader: ORACLE_CONNECTION_STRING.paste },
+  postgres: { urlTls: POSTGRES_CONNECTION_STRING.readTls, pasteReader: POSTGRES_CONNECTION_STRING.paste },
+  redis: { pasteReader: REDIS_CONNECTION_STRING.paste },
+  spark: { pasteReader: SPARK_CONNECTION_STRING.paste },
 };
 
 /** The function `name` resolves to for `type` through the census's resolver, or undefined where it names none. */
@@ -172,6 +221,26 @@ function namedSlotPaths(d: EngineDeclaration): string[] {
     ...(connection.hostHint === null ? [] : ["hostHint"]),
     ...(connection.hostIdentity === null ? [] : ["hostIdentity"]),
     ...(connection.import === null ? [] : ["connectionImport.load"]),
+  ];
+}
+
+/** The slots of a connection string row whose function the declaration names, as `functionPaths` spells them. */
+function connectionStringSlotPaths(d: EngineDeclaration): string[] {
+  const { urlTls, paste, seedCheck } = d.connection.connectionString;
+  return [
+    ...(urlTls === null ? [] : ["readTls"]),
+    ...(paste === null ? [] : ["paste.claims", "paste.names", "paste.parse"]),
+    ...(seedCheck === null ? [] : ["validateSeed"]),
+  ];
+}
+
+/** The connection string function names a declaration states. */
+function connectionStringNames(d: EngineDeclaration): string[] {
+  const { urlTls, paste, seedCheck } = d.connection.connectionString;
+  return [
+    ...(urlTls === null ? [] : [urlTls]),
+    ...(paste === null ? [] : [paste.reader]),
+    ...(seedCheck === null ? [] : [seedCheck]),
   ];
 }
 
@@ -747,6 +816,7 @@ describe("the census", () => {
         ...(connection.hostHint === null ? [] : [connection.hostHint]),
         ...(connection.hostIdentity === null ? [] : [connection.hostIdentity]),
         ...(connection.import === null ? [] : [connection.import.importer]),
+        ...connectionStringNames(declared(type)),
       ];
     };
     const unnamed = Object.entries(NAMED_FUNCTIONS).flatMap(([type, table]) =>
@@ -818,6 +888,199 @@ describe("the census", () => {
     expect(differing((_type, d) => Object.values(declaredAt).every((member) => at(d, member) !== undefined))).toEqual(
       [],
     );
+  });
+
+  test("connection.connectionString.scheme is the row's scheme", () => {
+    expect(differing((type, d) => d.connection.connectionString.scheme === CONNECTION_STRING[type].scheme)).toEqual([]);
+    expect(
+      SHIPPED_DATABASE_TYPES.filter((type) => declared(type).connection.connectionString.scheme !== null).length,
+    ).toBe(11);
+  });
+
+  test("connection.connectionString names a URL TLS reader, a paste reader and a seed check exactly where the row has one, the paste with its catch-all and formats in order", () => {
+    const matches = (type: DatabaseType, d: EngineDeclaration): boolean => {
+      const row = CONNECTION_STRING[type];
+      const { urlTls, paste, seedCheck } = d.connection.connectionString;
+      const pasteMatches =
+        row.paste === null || paste === null
+          ? row.paste === paste
+          : paste.catchAll === row.paste.catchAll && sameList(paste.formats, row.paste.formats);
+      return (
+        (urlTls !== null) === (row.readTls !== null) &&
+        (seedCheck !== null) === (row.validateSeed !== null) &&
+        pasteMatches
+      );
+    };
+    const count = (has: (offer: EngineDeclaration["connection"]["connectionString"]) => boolean) =>
+      SHIPPED_DATABASE_TYPES.filter((type) => has(declared(type).connection.connectionString)).length;
+
+    expect(differing(matches)).toEqual([]);
+    expect(count((offer) => offer.paste !== null)).toBe(13);
+    expect(count((offer) => offer.urlTls !== null)).toBe(4);
+    expect(count((offer) => offer.seedCheck !== null)).toBe(3);
+    expect(
+      count(
+        (offer) => offer.scheme === null && offer.urlTls === null && offer.paste === null && offer.seedCheck === null,
+      ),
+    ).toBe(28);
+  });
+
+  test("every function a connection string row holds is, through the census's own resolver, the very slot its declaration names", () => {
+    const matches = (type: DatabaseType, d: EngineDeclaration): boolean => {
+      const row = CONNECTION_STRING[type];
+      const { urlTls, paste, seedCheck } = d.connection.connectionString;
+      const same = (name: string | null, held: unknown) =>
+        name === null ? held === null : held !== null && resolveNamed(type, name) === held;
+      const reader =
+        paste === null ? undefined : (resolveNamed(type, paste.reader) as ConnectionStringPaste | undefined);
+      const readerOperations =
+        reader === undefined ||
+        (typeof reader.claims === "function" &&
+          typeof reader.names === "function" &&
+          typeof reader.parse === "function");
+      return (
+        same(urlTls, row.readTls) &&
+        same(paste?.reader ?? null, row.paste) &&
+        same(seedCheck, row.validateSeed) &&
+        readerOperations
+      );
+    };
+
+    expect(differing(matches)).toEqual([]);
+    expect(resolveNamed("postgres", "urlTls")).toBe(CONNECTION_STRING.postgres.readTls);
+    expect(resolveNamed("snowflake", "seedCheck")).toBe(CONNECTION_STRING.snowflake.validateSeed);
+  });
+
+  test("every function a connection string row holds is named by its engine's declaration", () => {
+    expect(
+      differing((type, d) =>
+        sameValue(sorted(functionPaths(CONNECTION_STRING[type], "")), sorted(connectionStringSlotPaths(d))),
+      ),
+    ).toEqual([]);
+    expect(SHIPPED_DATABASE_TYPES.flatMap((type) => connectionStringSlotPaths(declared(type))).length).toBe(
+      13 * 3 + 4 + 3,
+    );
+  });
+
+  test("ENGINE_URI_SCHEMES is the scheme of each declaration that states one", () => {
+    const fromDeclarations = Object.fromEntries(
+      SHIPPED_DATABASE_TYPES.flatMap((type) => {
+        const { scheme } = declared(type).connection.connectionString;
+        return scheme === null ? [] : [[type, scheme]];
+      }),
+    );
+
+    expect(sameValue(ENGINE_URI_SCHEMES, fromDeclarations)).toBe(true);
+  });
+
+  test("the Paste URL box's formats are the declarations' formats in the engine picker's order", () => {
+    const fromDeclarations = CONNECTION_PICKER_ORDER.flatMap(
+      (type) => declared(type).connection.connectionString.paste?.formats ?? [],
+    ).join(", ");
+
+    expect(PASTE_FORMATS_TEXT).toBe(fromDeclarations);
+  });
+
+  test("core's paste order walks exactly the engines whose declaration names a paste reader, every catch-all after the rest", () => {
+    const pasteOf = (type: DatabaseType) => declared(type).connection.connectionString.paste;
+    const readers = SHIPPED_DATABASE_TYPES.filter((type) => pasteOf(type) !== null);
+    const catchAlls = CONNECTION_STRING_PASTE_ORDER.map((type) => pasteOf(type)?.catchAll === true);
+    const firstCatchAll = catchAlls.indexOf(true);
+
+    expect(sorted(CONNECTION_STRING_PASTE_ORDER)).toEqual(sorted(readers));
+    expect(new Set(CONNECTION_STRING_PASTE_ORDER).size).toBe(CONNECTION_STRING_PASTE_ORDER.length);
+    expect(firstCatchAll).toBeGreaterThan(0);
+    expect(catchAlls.slice(firstCatchAll).every(Boolean)).toBe(true);
+    expect(
+      CONNECTION_STRING_PASTE_OVERLAPS.filter(
+        ({ first, second }) => pasteOf(first) === null || pasteOf(second) === null,
+      ),
+    ).toEqual([]);
+  });
+
+  test("a parser walking core's paste order over the readers the declarations name parses and detects as the parser does", () => {
+    const rows = CONNECTION_STRING_PASTE_ORDER.map((type) => {
+      const paste = declared(type).connection.connectionString.paste;
+      return {
+        type,
+        reader: (paste === null ? undefined : resolveNamed(type, paste.reader)) as ConnectionStringPaste,
+      };
+    });
+    const parse = (input: string) => {
+      const text = pasteText(input);
+      if (!text) return null;
+      const row = rows.find(({ reader }) => reader.claims(text));
+      return row === undefined ? null : row.reader.parse(text);
+    };
+    const detect = (input: string) => {
+      const text = input.trim().toLowerCase();
+      return rows.find(({ reader }) => reader.names(text))?.type ?? null;
+    };
+    const schemes = SHIPPED_DATABASE_TYPES.flatMap((type) => {
+      const { scheme } = declared(type).connection.connectionString;
+      return scheme === null ? [] : [`${scheme}://h:1/d`];
+    });
+    const corpus = [
+      ...CONNECTION_STRING_PASTE_OVERLAPS.map((overlap) => overlap.text),
+      ...schemes,
+      "postgresql://h/d",
+      "mongodb+srv://h/d",
+      "rediss://h",
+      "couchbases://h",
+      "sqlserver://h",
+      "http://h",
+      "https://h:8443",
+      "Server=h;Database=d",
+      "BENDSQL_DSN=databend://u@h:8000/d",
+      "sc://h:15002",
+      "jdbc:sc://h:15002",
+      "jdbc:snowflake://x.snowflakecomputing.com",
+      "x.snowflakecomputing.com",
+      "a text with a space",
+      "",
+      crypto.randomUUID(),
+    ];
+
+    expect(schemes.length).toBe(11);
+    expect(corpus.filter((text) => !Bun.deepEquals(parse(text), parseConnectionString(text)))).toEqual([]);
+    expect(corpus.filter((text) => detect(text) !== detectConnectionStringType(text))).toEqual([]);
+    expect(corpus.filter((text) => parseConnectionString(text) !== null).length).toBeGreaterThan(20);
+  });
+
+  test("every member of a connection string row has its member in the declaration", () => {
+    const declaredAt: Readonly<Record<keyof ConnectionStringSpec, string>> = {
+      scheme: "scheme",
+      readTls: "urlTls",
+      paste: "paste",
+      validateSeed: "seedCheck",
+    };
+    const pasteDeclaredAt: Readonly<Record<keyof ConnectionStringPaste, string>> = {
+      catchAll: "catchAll",
+      claims: "reader",
+      names: "reader",
+      parse: "reader",
+      formats: "formats",
+    };
+
+    expect(
+      SHIPPED_DATABASE_TYPES.flatMap((type) => {
+        const row = CONNECTION_STRING[type];
+        return [
+          ...Object.keys(row).filter((member) => !Object.hasOwn(declaredAt, member)),
+          ...Object.keys(row.paste ?? {}).filter((member) => !Object.hasOwn(pasteDeclaredAt, member)),
+        ].map((member) => `${type}.${member}`);
+      }),
+    ).toEqual([]);
+    expect(
+      differing((_type, d) => {
+        const offer = d.connection.connectionString;
+        const paste = offer.paste;
+        return (
+          Object.values(declaredAt).every((member) => Object.hasOwn(offer, member)) &&
+          (paste === null || Object.values(pasteDeclaredAt).every((member) => Object.hasOwn(paste, member)))
+        );
+      }),
+    ).toEqual([]);
   });
 
   test("id is the file's type-id", () => {

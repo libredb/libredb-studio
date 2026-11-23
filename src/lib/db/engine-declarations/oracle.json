@@ -18,7 +18,17 @@
     "refused": [],
     "connectionString": {
       "accepted": true,
-      "dialogOffersUri": false
+      "dialogOffersUri": false,
+      "scheme": "oracle",
+      "urlTls": null,
+      "paste": {
+        "reader": "pasteReader",
+        "catchAll": false,
+        "formats": [
+          "oracle://"
+        ]
+      },
+      "seedCheck": null
     },
     "tls": "offered",
     "sshTunnel": {

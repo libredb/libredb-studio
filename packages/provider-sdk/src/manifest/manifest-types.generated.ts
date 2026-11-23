@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "049ca47eaab2064c66fcbbbcffcdfb5582016a456161b877431bb0c7feda9baf";
+export const MANIFEST_SCHEMA_SHA256 = "2d09cb7757d8ba6f681a5879207e75fca9f04567e139797c604af239592a69ef";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -322,11 +322,25 @@ export type SeedOnly = {
   readonly projectionRefusal: string | null;
 } | null;
 
-/** accepted: whether the provider opens what a connection string names. dialogOffersUri: whether the connection dialog offers a connection string box. */
+/** What an engine's connection string is. accepted: whether the provider opens what a connection string names. dialogOffersUri: whether the connection dialog offers a connection string box. scheme: the one URI scheme shown for the engine. urlTls: the function that reads the TLS a URL's query carries. paste: how the engine reads a connection string pasted into the dialog's Paste URL box. seedCheck: the function Studio runs on a seed file's connection before any socket. */
 export interface ConnectionStringOffer {
   readonly accepted: boolean;
   readonly dialogOffersUri: boolean;
+  /** The one URI scheme shown for the engine, lower-case as the parser reads a pasted scheme, of a form the engine's paste reader reads; null where the engine has none. It names no alias the reader also accepts. */
+  readonly scheme: string | null;
+  /** The function that reads the TLS a URL's query carries into a mode the connection form can hold, or keeps the parameter as written where no mode expresses it, never a weaker mode than the engine's driver applies; only the engine's paste reader calls it. Null where the engine's URL carries no TLS in its query. */
+  readonly urlTls: FunctionName | null;
+  readonly paste: ConnectionStringPaste;
+  /** The function Studio runs when it loads a seed file, on the fields the file writes for a connection of the engine, before any socket: it leaves a field written as a reference unjudged and answers each refusal as a field and a sentence that never quotes the value. Null where the engine is not checked at load. */
+  readonly seedCheck: FunctionName | null;
 }
+
+/** How an engine reads a pasted connection string; null where the Paste URL box never names the engine. reader: the one function name for the reader's three operations, claims (whether it reads the paste trimmed with its scheme lower-cased), names (whether the paste trimmed and lower-cased whole is a spelling the engine connects with) and parse (the form's fields, or a refusal, for a text claims accepted, and only for such a text). catchAll: whether it claims generic transport schemes other readers may claim on their own hosts, so Studio offers it a paste after every other reader. formats: the forms the Paste URL box names for the engine, each one that parse connects with. */
+export type ConnectionStringPaste = {
+  readonly reader: FunctionName;
+  readonly catchAll: boolean;
+  readonly formats: readonly string[];
+} | null;
 
 /** offered: the engine, or for a call the package's code, has something to read or do for it. not-offered: it has nothing, so no surface draws it and no call is made. */
 export type FacetOffer = "offered" | "not-offered";
