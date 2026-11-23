@@ -21,6 +21,7 @@ import {
   BATCH_MAX_BYTES,
   CALL_REFUSAL_RULES,
   CONSOLE_FACETS,
+  checkConsoleFacet,
   checkExecuteRequest,
   checkProviderModule,
   checkRefinement,
@@ -98,6 +99,7 @@ describe("the manifest schema digest", () => {
     expect(packageRoot.CONSOLE_FACETS).toBe(CONSOLE_FACETS);
     expect(packageRoot.EXECUTE_REQUEST_FIELDS).toBe(EXECUTE_REQUEST_FIELDS);
     expect(packageRoot.checkExecuteRequest).toBe(checkExecuteRequest);
+    expect(packageRoot.checkConsoleFacet).toBe(checkConsoleFacet);
     expect(packageRoot.checkRefinement).toBe(checkRefinement);
     expect(packageRoot.sessionCalls).toBe(sessionCalls);
     expect(packageRoot.CALL_REFUSAL_RULES).toBe(CALL_REFUSAL_RULES);

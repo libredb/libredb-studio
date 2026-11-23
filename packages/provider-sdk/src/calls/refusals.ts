@@ -1,5 +1,5 @@
 /**
- * What the host refuses of a call or of its answer (docs/providers/CONTRACT.md, clauses C-9, C-10 and C-15).
+ * What the host refuses of a call or of its answer (docs/providers/CONTRACT.md, clauses C-9, C-10, C-15 and C-17).
  *
  * One vocabulary for every such refusal, each naming its rule and a JSON Pointer rooted at the thing it names, stated
  * beside each rule. No refusal and no sentence carries a value of a request, a refinement or a row: a sentence names
@@ -13,6 +13,8 @@ export const CALL_REFUSAL_RULES = Object.freeze([
   "request-field-not-honoured",
   /** A `scope` sent to a session that does not offer `console.endScope`; the pointer is into the request. */
   "request-scope-not-offered",
+  /** A console facet the session's calls do not offer; the pointer is into the calls, `name` the facet's call name. */
+  "facet-not-offered",
   /** A key a refinement cannot have; the pointer is into the refinement, `name` the key. */
   "refinement-key-unknown",
   /** A refinement value of the wrong type, an accessor or a repeated field; the pointer is into the refinement. */
@@ -40,7 +42,10 @@ export interface CallRefusal {
   readonly rule: CallRefusalRule;
   /** A JSON Pointer into the thing the rule names; the empty string is that thing itself. */
   readonly pointer: string;
-  /** The request field, for a field not honoured, or the key, for a key a refinement cannot have. */
+  /**
+   * The request field, for a field not honoured, the facet's call name, for a facet not offered, or the key, for a key
+   * a refinement cannot have.
+   */
   readonly name?: string;
   /** For a budget, what was asked for: a count of rows or of bytes. */
   readonly limit?: number;
@@ -76,6 +81,8 @@ export function callRefusalSentence(refusal: CallRefusal): string {
       return `The request carries the field ${name} at ${at}, which the session's execute does not honour, so the call was not made.`;
     case "request-scope-not-offered":
       return `The request carries a scope at ${at}, and the session does not offer console.endScope, so the call was not made.`;
+    case "facet-not-offered":
+      return `The session does not offer the console facet ${name} at ${at}, so the call was not made.`;
     case "refinement-key-unknown":
       return `The refinement open answered has the key ${name} at ${at}, which a refinement cannot have.`;
     case "refinement-unreadable":

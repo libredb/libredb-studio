@@ -12,6 +12,7 @@ import {
   type CallRefusal,
   CallRefusalError,
   callRefusalSentence,
+  checkConsoleFacet,
   checkExecuteRequest,
   type ExecuteRequest,
   sessionCalls,
@@ -67,6 +68,30 @@ describe("checkExecuteRequest", () => {
     expect(checkExecuteRequest(narrowed, laterPage)).toEqual([OFFSET]);
     expect(checkExecuteRequest(narrowed, scoped)).toEqual([SCOPE]);
     expect(checkExecuteRequest(sessionCalls(EVERYTHING, undefined), allThree)).toEqual([]);
+  });
+});
+
+describe("checkConsoleFacet", () => {
+  test("a console facet the session does not offer is refused before the call", () => {
+    const declaredOnly = sessionCalls(NOTHING, undefined);
+    const narrowed = sessionCalls(EVERYTHING, { calls: { console: { endScope: "not-offered" } } });
+    const cancel: CallRefusal = { rule: "facet-not-offered", pointer: "/console/cancel", name: "console.cancel" };
+    const endScope: CallRefusal = { rule: "facet-not-offered", pointer: "/console/endScope", name: "console.endScope" };
+
+    expect(checkConsoleFacet(declaredOnly, "cancel")).toEqual([cancel]);
+    expect(checkConsoleFacet(declaredOnly, "endScope")).toEqual([endScope]);
+    expect(checkConsoleFacet(narrowed, "endScope")).toEqual([endScope]);
+    expect(callRefusalSentence(cancel)).toBe(
+      'The session does not offer the console facet "console.cancel" at "/console/cancel", so the call was not made.',
+    );
+  });
+
+  test("a console facet the session offers is called", () => {
+    const narrowed = sessionCalls(EVERYTHING, { calls: { console: { endScope: "not-offered" } } });
+
+    expect(checkConsoleFacet(EVERYTHING, "cancel")).toEqual([]);
+    expect(checkConsoleFacet(EVERYTHING, "endScope")).toEqual([]);
+    expect(checkConsoleFacet(narrowed, "cancel")).toEqual([]);
   });
 });
 

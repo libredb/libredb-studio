@@ -1,15 +1,16 @@
 /**
- * A session's calls and the requests the host sends it (docs/providers/CONTRACT.md, clauses C-9 and C-10).
+ * A session's calls and the requests the host sends it (docs/providers/CONTRACT.md, clauses C-9, C-10 and C-17).
  *
  * The manifest's `calls` declares what a package answers; `open` may answer a refinement that narrows it for one
  * session, which `checkRefinement` reads and `sessionCalls` applies. The host keeps the session's calls with the
  * session, with no cache and no invalidation event, and holds every request to them with `checkExecuteRequest` before
- * the call, so a package is never sent a field it does not honour.
+ * the call, so a package is never sent a field it does not honour, and every console facet call to it with
+ * `checkConsoleFacet`, so a package is never called on a facet the session does not offer.
  */
 import type { Calls, ExecuteRequestField, FacetOffer } from "../manifest/manifest-types.generated";
 import { isPlainRecord, pointerTo, readOwn } from "./records";
 import { type CallRefusal, CallRefusalError } from "./refusals";
-import { EXECUTE_REQUEST_FIELDS, type ExecuteRequest, type Refinement } from "./types";
+import { type ConsoleFacet, EXECUTE_REQUEST_FIELDS, type ExecuteRequest, type Refinement } from "./types";
 
 /**
  * Every way `request` sends what `calls` does not take, in request order: a `params` key, of any length, to a session
@@ -29,6 +30,16 @@ export function checkExecuteRequest(calls: Calls, request: ExecuteRequest): read
     refusals.push({ rule: "request-scope-not-offered", pointer: "/scope" });
   }
   return refusals;
+}
+
+/**
+ * The refusal of a call to the console facet `facet` when `calls`, the session's calls, do not offer it, a refinement's
+ * narrowing included: one `facet-not-offered` at the facet's pointer into the calls, named by its call name; none when
+ * the session offers it.
+ */
+export function checkConsoleFacet(calls: Calls, facet: ConsoleFacet): readonly CallRefusal[] {
+  if (calls.console[facet] === "offered") return [];
+  return [{ rule: "facet-not-offered", pointer: pointerTo("/console", facet), name: `console.${facet}` }];
 }
 
 const OFFERS: readonly unknown[] = Object.freeze(["offered", "not-offered"] satisfies FacetOffer[]);
