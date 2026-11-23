@@ -481,9 +481,16 @@ describe("the backend child against PostgreSQL, SQL Server, MySQL and MongoDB", 
     console.log(`pg-short: ${error.code} ${JSON.stringify(error.data)} "${error.message}" after ${took} ms`);
     assert.ok(took < 4000, `the run ended after ${took} ms`);
     // Measured 2026-10-20 on postgres:18: the pool's statement_timeout ends the statement with SQLSTATE 57014, which
-    // the error mapping of src/lib/db/errors.ts reads as a TimeoutError, answered 504 TIMEOUT_ERROR.
+    // the error mapping of src/lib/db/errors.ts reads as a TimeoutError, answered 504 TIMEOUT_ERROR with that SQLSTATE,
+    // as the query route's body answers it.
     assert.equal(error.code, 504);
-    assert.deepEqual(error.data, { code: "TIMEOUT_ERROR", kind: "timeout", outcome: "unknown", retryable: true });
+    assert.deepEqual(error.data, {
+      code: "TIMEOUT_ERROR",
+      kind: "timeout",
+      outcome: "unknown",
+      retryable: true,
+      sqlState: "57014",
+    });
   });
 
   /** A fresh child with a PostgreSQL session open in libredb_it_lifecycle, which psql sees. */

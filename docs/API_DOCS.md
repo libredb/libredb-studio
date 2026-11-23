@@ -2307,6 +2307,7 @@ one: `401 { "error": "A valid agent drive credential is required" }`, audited as
 `permission_denied` event. `404` for an unknown run, `409` for a run that has already ended (the
 message is not retryable, so a queue should stop delivering it).
 A run whose ledger names an id this Studio does not have answers `409` with code `AGENT_RUN_UNAVAILABLE` too, before its connection is resolved or a provider or model is built, for the same reason: no delivery to this server can drive it.
+Any other failure answers as the agent runs route does, with its own status, code, kind and outcome, and a text that held a credential of the run's connection replaced by Studio's sentence.
 
 Nothing in the product produces a drive delivery yet, so this route's callers today are its tests.
 
@@ -2891,8 +2892,9 @@ interface ActiveSession {
 }
 ```
 
-On `POST /api/db/query`, `POST /api/db/multi-query`, `POST /api/db/transaction`, `POST /api/db/test-connection`, `POST /api/agent/runs` and `POST /api/agent/runs/{runId}/handover`, a database error whose text holds a credential of the request's connection, in any form Studio derives from it, answers Studio's own sentence in `error`, naming the error's class and saying its text was withheld.
-`details` then keeps only `position`, and `fixStatement` is left out, while the HTTP status, `code`, `kind`, `outcome` and `retryable` are the error's own.
+On `POST /api/db/query`, `POST /api/db/multi-query`, `POST /api/db/transaction`, `POST /api/db/test-connection`, `POST /api/agent/runs`, `POST /api/agent/runs/{runId}/handover` and `POST /api/agent/drive`, an error of any class whose text holds a credential of the request's connection, in any form Studio derives from it, answers Studio's own sentence in `error`, naming the error's class and saying its text was withheld, and the server log line written for it carries that sentence in place of the error.
+The HTTP status, `code`, `kind`, `outcome` and `retryable` are the error's own, and an answer that is already a fixed sentence of Studio's keeps it.
+A database error's `details` then keeps only `position`, and `fixStatement` is left out.
 A script statement's `error` and every warning's `message`, string `code` and `severity` follow the same rule, and a warning field that holds such a form answers `(Studio withheld this text because it contained a credential of this connection)`.
 
 ### Error Codes
@@ -2962,7 +2964,7 @@ directly by the request middleware (`src/proxy.ts`), before a request ever reach
 Every database error body `createErrorResponse` answers carries `kind` and `outcome` beside `code`.
 An answer without them is not a database error's: an unhandled error (`INTERNAL_ERROR`) and the codes a route or the middleware answers itself carry neither.
 Both are closed vocabularies and never hold the error's text.
-A route that resolves the calling connection (the editor's query, script and transaction routes, the connection test, the agent runs route and the hand-over route) also answers `sqlState`, the SQLSTATE the driver reported, when there is one and the error's text was not withheld.
+A route that resolves the calling connection (the editor's query, script and transaction routes, the connection test, the agent runs route, the hand-over route and the agent drive route) also answers `sqlState`, the SQLSTATE the driver reported, when there is one and the error's text was not withheld.
 An MCP tool's error answer built from a failure carries the same record, `kind`, `code`, `outcome` and that `sqlState`, in `structuredContent.error` ([MCP](MCP.md)); there every kind can appear, and `code` is the deny code of an `execution-profile` or `studio-profile-refusal` failure.
 
 `kind` names the class of failure, so a client can branch on it without reading the sentence:

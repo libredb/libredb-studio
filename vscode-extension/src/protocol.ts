@@ -51,6 +51,11 @@ export interface BackendErrorData {
   /** On a database error only: its kind and whether the statement may have reached the database, as the route body. */
   kind?: ErrorKind;
   outcome?: ExecuteOutcome;
+  /**
+   * On a database error of a provider step only: the SQLSTATE the driver reported, when there is one and the error's
+   * text was not withheld, as the route body.
+   */
+  sqlState?: string;
   /** On a CONFIRMATION_REQUIRED only: the 428's offer, the token to send back and what the gate asks. */
   confirmation?: RunConfirmationOffer;
 }

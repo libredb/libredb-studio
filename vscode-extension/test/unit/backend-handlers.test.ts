@@ -155,6 +155,20 @@ function refusedNow(call: () => unknown, code: number, message: string, data?: u
   assert.throws(call, (error) => isRefusal(error, code, message, data));
 }
 
+/** The answer to a provider step's failure on c1: `toResponseError` with the connection's scrub, as `answeringFor` gives. */
+function answeredWithScrub(failure: unknown) {
+  return toResponseError(failure, providerTextScrub(REVIVED, "any")).toJson();
+}
+
+/** Rejects-with for a provider step's failure on c1, answered as `answeredWithScrub` answers it. */
+async function answeredAs(call: Promise<unknown>, failure: unknown): Promise<void> {
+  await assert.rejects(call, (error) => {
+    assert.ok(error instanceof ResponseError, `expected a ResponseError, got ${String(error)}`);
+    assert.deepEqual(error.toJson(), answeredWithScrub(failure));
+    return true;
+  });
+}
+
 describe("the child's refusals", () => {
   it("answers InvalidParams with no data, and its own refusals with a status and a code", () => {
     const params = invalidParams("connectionId must be a non-empty string");
@@ -302,15 +316,11 @@ describe("connection/test", () => {
       const { handlers } = backend(fakeProvider(), { testConnection: () => new Promise(() => undefined) });
       const answer = handlers.testConnection({ connection: WIRE, posture: POSTURE });
       const settled = assert.rejects(answer, (error) => {
-        assert.ok(error instanceof ConnectionError);
-        assert.equal(error.provider, "postgres");
-        assert.equal(
-          error.message,
-          "The connection test got no answer within 11 seconds: check the address, the port, the network path and that the server is running.",
-        );
-        assert.deepEqual(toResponseError(error).toJson(), {
+        assert.ok(error instanceof ResponseError);
+        assert.deepEqual(error.toJson(), {
           code: 503,
-          message: error.message,
+          message:
+            "The connection test got no answer within 11 seconds: check the address, the port, the network path and that the server is running.",
           data: { code: "CONNECTION_ERROR", retryable: true, kind: "connection", outcome: "unknown" },
         });
         return true;
@@ -334,21 +344,20 @@ describe("connection/test", () => {
       assert.equal(signal?.aborted, false);
       await clock.tickAsync(1);
       const error = await answer;
-      assert.ok(error instanceof ConnectionError);
       assert.equal(signal?.aborted, true);
-      assert.equal(signal?.reason, error);
+      assert.ok(signal?.reason instanceof ConnectionError);
+      assert.equal(signal.reason.provider, "postgres");
+      assert.ok(error instanceof ResponseError);
+      assert.deepEqual(error.toJson(), answeredWithScrub(signal.reason));
     });
 
-    it("answers the core's own answer or error when it settles first, and leaves no timer", async () => {
+    it("answers the core's own answer, or its error as toResponseError answers it with the connection's scrub, when it settles first, and leaves no timer", async () => {
       const { handlers } = backend();
       assert.equal((await handlers.testConnection({ connection: WIRE, posture: POSTURE })).success, true);
       assert.equal(clock.countTimers(), 0);
       const denied = new AuthenticationError("password authentication failed", "postgres");
       const refusing = backend(fakeProvider(), { testConnection: () => Promise.reject(denied) });
-      await assert.rejects(refusing.handlers.testConnection({ connection: WIRE, posture: POSTURE }), (error) => {
-        assert.equal(error, denied);
-        return true;
-      });
+      await answeredAs(refusing.handlers.testConnection({ connection: WIRE, posture: POSTURE }), denied);
       assert.equal(clock.countTimers(), 0);
     });
   });
@@ -424,7 +433,7 @@ describe("connection/open", () => {
     assert.equal(registry.get(SQLITE_WIRE.id), undefined);
   });
 
-  it("stores nothing when the open fails, and passes the factory's error on as it is", async () => {
+  it("stores nothing when the open fails, and answers the factory's error as toResponseError answers it with the connection's scrub", async () => {
     const failure = new ConnectionError("connect ECONNREFUSED 127.0.0.1:5432", "postgres");
     const { handlers, factory, calls, registry } = backend();
     const open = factory.getOrCreateProvider;
@@ -434,16 +443,13 @@ describe("connection/open", () => {
       calls.push(["getOrCreateProvider", ...args]);
       throw failure;
     };
-    await assert.rejects(handlers.openConnection({ connection: WIRE, posture: POSTURE }), (error) => error === failure);
+    await answeredAs(handlers.openConnection({ connection: WIRE, posture: POSTURE }), failure);
     assert.equal(registry.get("c1"), undefined);
 
     fail = false;
     await handlers.openConnection({ connection: WIRE, posture: POSTURE });
     fail = true;
-    await assert.rejects(
-      handlers.openConnection({ connection: { ...WIRE, password: "n3w" }, posture: POSTURE }),
-      (error) => error === failure,
-    );
+    await answeredAs(handlers.openConnection({ connection: { ...WIRE, password: "n3w" }, posture: POSTURE }), failure);
     assert.deepEqual(calls.at(-2), ["removeProvider", "c1"]);
     assert.equal(registry.get("c1"), undefined);
   });
@@ -605,17 +611,29 @@ describe("object reads", () => {
     assert.equal(calls.length, before);
   });
 
-  it("passes a provider's error on as it is", async () => {
+  it("answers a provider's error as toResponseError answers it with the connection's scrub", async () => {
     const denied = new PermissionDeniedError("permission denied for schema app", "postgres");
     const { handlers } = await opened({
       listObjects: async () => {
         throw denied;
       },
     });
-    await assert.rejects(
-      handlers.listObjects({ connectionId: "c1", container: ["app"], kind: "table" }),
-      (error) => error === denied,
-    );
+    await answeredAs(handlers.listObjects({ connectionId: "c1", container: ["app"], kind: "table" }), denied);
+  });
+
+  it("answers a provider error's SQLSTATE in data", async () => {
+    const missing = new QueryError('relation "app" does not exist', "postgres");
+    missing.sqlstate = "42P01";
+    const { handlers } = await opened({
+      listContainers: async () => {
+        throw missing;
+      },
+    });
+    await assert.rejects(handlers.listContainers({ connectionId: "c1" }), (error) => {
+      assert.ok(error instanceof ResponseError);
+      assert.equal((error.data as BackendErrorData).sqlState, "42P01");
+      return true;
+    });
   });
 });
 
@@ -737,12 +755,12 @@ describe("query/run", () => {
     assert.deepEqual(methodsOf(sales), ["prepareQuery", "prepareQuery", "query"]);
 
     const { handlers } = await openedOn();
-    await assert.rejects(
+    await answeredAs(
       handlers.runQuery({ ...RUN, catalog: "sales" }, idle),
-      (error) =>
-        error instanceof DatabaseConfigError &&
-        error.message ===
-          'This postgres connection runs every request in its own database and cannot run one in "sales"',
+      new DatabaseConfigError(
+        'This postgres connection runs every request in its own database and cannot run one in "sales"',
+        "postgres",
+      ),
     );
     await refused(handlers.runQuery({ ...RUN, catalog: "" }, idle), -32602, "catalog must be a non-empty string");
   });
@@ -813,16 +831,33 @@ describe("query/run", () => {
     );
     const cancelled = new QueryCancelledError("The query was cancelled.", "postgres");
     fail(cancelled);
-    await assert.rejects(run, (error) => error === cancelled);
+    await answeredAs(run, cancelled);
+  });
+
+  it("answers a provider error's SQLSTATE in data", async () => {
+    const missing = new QueryError('relation "t" does not exist', "postgres");
+    missing.sqlstate = "42P01";
+    const { handlers } = await openedOn(
+      fakeProvider({
+        query: async () => {
+          throw missing;
+        },
+      }),
+    );
+    await assert.rejects(handlers.runQuery(RUN, idle), (error) => {
+      assert.ok(error instanceof ResponseError);
+      assert.equal((error.data as BackendErrorData).sqlState, "42P01");
+      return true;
+    });
   });
 
   it("starts nothing for a request already cancelled", async () => {
     const { handlers, provider } = await openedOn();
     const source = new CancellationTokenSource();
     source.cancel();
-    await assert.rejects(
+    await answeredAs(
       handlers.runQuery(RUN, source.token),
-      (error) => error instanceof QueryCancelledError && error.message === "The query was cancelled.",
+      new QueryCancelledError("The query was cancelled.", "postgres"),
     );
     assert.equal(methodsOf(provider).includes("query"), false);
   });
@@ -1434,13 +1469,13 @@ describe("query/target", () => {
     );
   });
 
-  it("passes a provider's error on as it is", async () => {
+  it("answers a provider's error as toResponseError answers it with the connection's scrub", async () => {
     const broken = new Error("capabilities unreadable");
     const { handlers, provider } = await on();
     (provider as unknown as { getCapabilities: () => never }).getCapabilities = () => {
       throw broken;
     };
-    await assert.rejects(target(handlers, TEXT, 0), (error) => error === broken);
+    await answeredAs(target(handlers, TEXT, 0), broken);
   });
 });
 
@@ -1597,6 +1632,12 @@ describe("toResponseError", () => {
     }
     assert.deepEqual(toResponseError(new Error("boom")).data, { code: "INTERNAL_ERROR" });
   });
+
+  it("without a scrub no data carries a SQLSTATE", () => {
+    const missing = new QueryError('relation "orders" does not exist', "postgres");
+    missing.sqlstate = "42P01";
+    assert.equal(Object.hasOwn(toResponseError(missing).data ?? {}, "sqlState"), false);
+  });
 });
 
 describe("toResponseError with the connection's scrub", () => {
@@ -1639,6 +1680,34 @@ describe("toResponseError with the connection's scrub", () => {
     assert.equal(plain.message, withheldErrorMessage("Error"));
     for (const error of [withheld, detailed, fix, plain]) {
       assert.equal(JSON.stringify({ message: error.message, data: error.data }).includes(password), false);
+    }
+  });
+
+  it("a database error's data carries the SQLSTATE its record carries, after its outcome", () => {
+    const missing = new QueryError('relation "orders" does not exist', "postgres");
+    missing.sqlstate = "42P01";
+    const answered = toResponseError(missing, scrub);
+    assert.equal(answered.code, 400);
+    assert.deepEqual(answered.data, { code: "QUERY_ERROR", kind: "query", outcome: "unknown", sqlState: "42P01" });
+    assert.deepEqual(Object.keys(answered.data ?? {}), ["code", "kind", "outcome", "sqlState"]);
+  });
+
+  it("a withheld error's data carries no SQLSTATE", () => {
+    const missing = new QueryError(`relation "orders" does not exist for ${password}`, "postgres");
+    missing.sqlstate = "42P01";
+    const withheld = toResponseError(missing, scrub);
+    assert.equal(withheld.message, withheldErrorMessage("QueryError"));
+    assert.deepEqual(withheld.data, { code: "QUERY_ERROR", kind: "query", outcome: "unknown" });
+  });
+
+  it("an internal error and the extension's own refusals carry no SQLSTATE", () => {
+    for (const error of [
+      toResponseError(new Error("boom"), scrub),
+      toResponseError("boom", scrub),
+      toResponseError(refusal(404, "CONNECTION_NOT_OPEN", "not open"), scrub),
+      toResponseError(refusal(413, "TEXT_TOO_LARGE", "too large"), scrub),
+    ]) {
+      assert.equal(Object.hasOwn(error.data ?? {}, "sqlState"), false);
     }
   });
 
@@ -1934,6 +2003,25 @@ describe("registerHandlers", () => {
         assert.deepEqual([answer.code, answer.message, answer.data?.code], [route.statusCode, route.error, route.code]);
       }),
     );
+  });
+
+  it("a provider error's SQLSTATE reaches the client in data.sqlState", async () => {
+    const missing = new QueryError('relation "app" does not exist', "postgres");
+    missing.sqlstate = "42P01";
+    const made = fakeFactory(
+      fakeProvider({
+        listContainers: async () => {
+          throw missing;
+        },
+      }),
+    );
+    const { host } = await initialized({}, made);
+    await host.sendRequest(METHODS.openConnection, { connection: WIRE, posture: POSTURE });
+    assert.deepEqual(await answeredError(host, METHODS.listContainers, { connectionId: "c1" }), {
+      code: 400,
+      message: 'relation "app" does not exist',
+      data: { code: "QUERY_ERROR", kind: "query", outcome: "unknown", sqlState: "42P01" },
+    });
   });
 
   it("passes the extension's own refusals on with their code and data, and InvalidParams with none", async () => {

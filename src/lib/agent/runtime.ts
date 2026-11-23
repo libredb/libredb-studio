@@ -34,7 +34,7 @@ import { type ExecutionArtifact, ExecutionArtifactStore } from "@/lib/db/operati
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
-import { providerTextScrub, withholdProviderError } from "@/lib/db/operations/provider-text";
+import { type ProviderTextScrub, providerTextScrub, withholdProviderError } from "@/lib/db/operations/provider-text";
 import { LLMAuthError, LLMError, LLMRateLimitError } from "@/lib/llm/types";
 import { type ExecutionProfileDenyCode, ExecutionProfileError, UnknownProviderError } from "@/lib/db/errors";
 import { logger } from "@/lib/logger";
@@ -136,8 +136,31 @@ export async function getAgentRunService(): Promise<AgentRunService> {
 }
 
 /**
+ * How a drive ended for a caller that answers a body: the run's result, or the failure that ended it after the run's
+ * connection resolved, as it was raised, beside the scrub of that connection. The outcome holds the scrub's forms, so
+ * it is never logged or spread into a log context; the failure is answered or logged only through the scrub.
+ */
+export type AgentDriveOutcome =
+  | { readonly kind: "finished"; readonly result: AgentInvestigationResult }
+  | { readonly kind: "failed"; readonly error: unknown; readonly scrub: ProviderTextScrub };
+
+/**
+ * Drives one run to its conclusion, for the callers that only log a failure (the start, unpause and resume paths):
+ * the result of `driveAgentRunOutcome`, or its failure withheld with the run's scrub, so a log line never holds a
+ * credential of the run's connection.
+ *
+ * @throws what `driveAgentRunOutcome` throws, and a failure it answers, withheld (`withholdProviderError`).
+ */
+export async function driveAgentRun(runId: string): Promise<AgentInvestigationResult> {
+  const outcome = await driveAgentRunOutcome(runId);
+  if (outcome.kind === "finished") return outcome.result;
+  throw withholdProviderError(outcome.scrub, outcome.error);
+}
+
+/**
  * Drives one run to its conclusion: start it if it is queued, resume it if a
- * previous process left it running.
+ * previous process left it running. For the drive route, which answers a failure with its own class: a failure after
+ * the run's connection resolved is answered as the `failed` outcome, recorded on the run first.
  *
  * Called two ways, and both must behave identically — in-process right after the
  * run is opened, and from the authenticated drive callback when the durable
@@ -151,7 +174,7 @@ export async function getAgentRunService(): Promise<AgentRunService> {
  * @throws SeedConnectionError when the run's connection is no longer resolvable —
  *         it was removed, or the actor's role no longer reaches it.
  */
-export async function driveAgentRun(runId: string): Promise<AgentInvestigationResult> {
+export async function driveAgentRunOutcome(runId: string): Promise<AgentDriveOutcome> {
   const service = await getAgentRunService();
   const report = await service.status(runId);
   if (report === null) {
@@ -175,9 +198,9 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
     throw error;
   }
 
-  // From here a provider may be built, so a failure that leaves the drive passes core's scrub of the run's connection
-  // on its way to the callers' log lines and error responses, which do not hold the connection. The ledger still
-  // records the failure from the original error, by its class and code. The scrub covers every provider of the
+  // From here a provider may be built, so a failure leaves the drive beside core's scrub of the run's connection, for
+  // the callers' log lines and error responses, which do not hold the connection. The ledger still records the
+  // failure from the original error, by its class and code. The scrub covers every provider of the
   // connection ("any"): the capability read below is built from the connection's own credential, the statement
   // providers from the agent's.
   const scrub = providerTextScrub(connection, "any");
@@ -214,7 +237,7 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
     });
     runResources().artifacts.setRunAllowance(runId, ceilings.artifactAllowance);
 
-    return await runInvestigation(runId, {
+    const result = await runInvestigation(runId, {
       service,
       model: await createAgentModel(),
       resources: {
@@ -237,9 +260,10 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
           acquireExecutionProfileProvider(target, profile, {}, editorExecutionContext(actor, target)),
       },
     });
+    return { kind: "finished", result };
   } catch (error) {
     await recordUnlessDrivenElsewhere(service, runId, error);
-    throw withholdProviderError(scrub, error);
+    return { kind: "failed", error, scrub };
   }
 }
 
