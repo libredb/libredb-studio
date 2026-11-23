@@ -116,7 +116,7 @@ a SQL dialect is expressed through `queryLanguage: "sql"`, not through the class
 
 - **State machine** — `setConnected()`, `setError()`, `isConnected()`, `ensureConnected()`.
 - **Instrumentation** — `trackQuery()` (active-query counter) and `measureExecution()` (wall clock).
-- **Helpers** — `formatDuration()`, `getSafeConfig()` (password-stripped logging), `mapError()`.
+- **Helpers** — `formatDuration()`, `mapError()`.
 - **Default `getMonitoringData()`** — orchestrates `getOverview` + `getPerformanceMetrics` +
   `getSlowQueries` + `getActiveSessions` (+ tables/indexes/storage) concurrently.
 

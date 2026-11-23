@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D495, U17 · 364
+- [Drivers and connections](#drivers-and-connections) — D1-D495, U17 · 363
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -3482,15 +3482,6 @@ A seed that writes a Snowflake `privateKey` or `privateKeyPassphrase`, or any ot
 Found 2026-10-12 while designing the Snowflake provider.
 
 **Done when:** the warning is derived from the secret fields of `CONNECTION_FIELDS`, so every secret field written in plain text warns once per connection, with a test over each secret field.
-
-### D333. The connection-string redactor misses several credential names, and `getConnectionInfo` is never called
-
-`redactConnectionString` in `src/lib/db/base-provider.ts` masks a parameter whose name holds `password`, `token`, `sslkey` or `secret`, so `pwd`, `passphrase` and a PEM block written into a parameter pass through.
-`getConnectionInfo`, the only caller of that redactor in the base provider, is declared and called nowhere.
-
-Found 2026-10-12 while designing the Snowflake provider.
-
-**Done when:** the redactor masks `pwd`, `passphrase` and PEM armour with tests, and `getConnectionInfo` is either used where connection details are shown or removed.
 
 ### D334. No census records which fields each engine's connection identity frames
 
