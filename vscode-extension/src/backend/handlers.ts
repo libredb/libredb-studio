@@ -1,6 +1,7 @@
 // The child's request handlers: each reads its params at the edge, then calls the provider layer as the route it
-// mirrors does (part 1, "The backend interface"). A provider-reaching step runs inside `answeringFor`, so a provider's
-// error whose text holds a credential of the connection is answered withheld, as the routes answer it.
+// mirrors does (part 1, "The backend interface"). A provider-reaching step runs inside `answeringFor`, so its failure is
+// answered with the connection's scrub, as the routes answer it: withheld when its text holds a credential of the
+// connection, with its SQLSTATE otherwise.
 // The factory functions arrive as one parameter object, which main.ts fills with the real ones and the unit leg with
 // fakes, so this module value-imports neither src/lib/db/factory.ts nor src/lib/api/test-connection.ts.
 import { type CancellationToken, ErrorCodes, type MessageConnection, ResponseError } from "vscode-jsonrpc";
@@ -13,7 +14,12 @@ import type { testConnection } from "@/lib/api/test-connection";
 import { parseConnectionString } from "@/lib/connection-string-parser";
 import { scopeToCatalog } from "@/lib/db/catalog-scope";
 import { CONNECTION_FORM } from "@/lib/db/connection-form";
-import { type ProviderTextScrub, providerTextScrub, withheldProviderError } from "@/lib/db/operations/provider-text";
+import {
+  errorRecord,
+  type ProviderTextScrub,
+  providerTextScrub,
+  withheldProviderError,
+} from "@/lib/db/operations/provider-text";
 import { ConnectionError, waitedSeconds } from "@/lib/db/errors";
 import { executionUiFor } from "@/lib/db/execution-ui";
 import type { clearProviderCache, enabledProviderTypes, getOrCreateProvider } from "@/lib/db/factory";
@@ -210,19 +216,17 @@ function readConnectionParams(params: unknown): OpenRecord {
 }
 
 /**
- * Runs `work`, a handler's provider-reaching step on `connection`, and answers a failure whose text holds a credential
- * of the connection (core's scrub, `providerTextScrub(connection, "any")`) as `toResponseError` answers it with that
- * scrub: the error's own status, code, kind, outcome and retryable, with only its texts replaced. Any other failure,
- * a `ResponseError` of the child's own included, is rethrown as it is, and `registerHandlers` answers it.
+ * Runs `work`, a handler's provider-reaching step on `connection`, and answers every failure of it as `toResponseError`
+ * answers it with the connection's scrub (core's scrub, `providerTextScrub(connection, "any")`): the error's own status,
+ * code, kind, outcome and retryable, with its texts replaced when they hold a credential of the connection and its
+ * SQLSTATE beside them when they do not. A `ResponseError` of the child's own is rethrown as it is.
  */
 async function answeringFor<T>(connection: DatabaseConnection, work: () => Promise<T>): Promise<T> {
   try {
     return await work();
   } catch (error) {
     if (error instanceof ResponseError) throw error;
-    const scrub = providerTextScrub(connection, "any");
-    if (withheldProviderError(scrub, error) === null) throw error;
-    throw toResponseError(error, scrub);
+    throw toResponseError(error, providerTextScrub(connection, "any"));
   }
 }
 
@@ -566,7 +570,9 @@ export function createHandlers(
  * Part 1 "Error classification": a ResponseError passes through; a database error answers P3's status, sentence and
  * code, with its error kind and outcome as the route body carries them; anything else is 500 INTERNAL_ERROR. With the
  * connection's `scrub`, an error whose text holds a credential of the connection answers the same status and data
- * with only its texts replaced (`withWithheldText`), as the routes answer it.
+ * with only its texts replaced (`withWithheldText`), as the routes answer it, and a database error's data also carries
+ * the `sqlState` of its error record (`errorRecord`), which the record holds only when the text was not withheld.
+ * Without a scrub no data carries one, as a route's body before its connection resolves.
  */
 export function toResponseError(error: unknown, scrub?: ProviderTextScrub): ResponseError<BackendErrorData | void> {
   if (error instanceof ResponseError) return error;
@@ -582,6 +588,7 @@ export function toResponseError(error: unknown, scrub?: ProviderTextScrub): Resp
     kind,
     outcome,
   } = withheld === null ? body : withWithheldText(body, withheld.message);
+  const sqlState = scrub === undefined ? undefined : errorRecord(scrub, error).sqlState;
   return new ResponseError<BackendErrorData>(statusCode, message, {
     // Both bodies always carry a code; the type leaves it optional for the routes' other answers.
     code: code as BackendErrorCode,
@@ -590,6 +597,7 @@ export function toResponseError(error: unknown, scrub?: ProviderTextScrub): Resp
     ...(fixStatement !== undefined && { fixStatement }),
     ...(kind !== undefined && { kind }),
     ...(outcome !== undefined && { outcome }),
+    ...(sqlState !== undefined && { sqlState }),
   });
 }
 

@@ -398,7 +398,6 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   [routeEvents, "failure", "withheldProviderError"],
   [childHandlers, "runQuery", "providerTextScrub"],
   [childHandlers, "answeringFor", "providerTextScrub"],
-  [childHandlers, "answeringFor", "withheldProviderError"],
   [childHandlers, "answeringFor", "toResponseError"],
   [childHandlers, "toResponseError", "withheldProviderError"],
   [childHandlers, "toResponseError", "withWithheldText"],
