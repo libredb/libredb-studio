@@ -219,6 +219,7 @@ The list is `tests/unit/db/engine-declarations/inventory.ts`.
 A workspace package's source and tests import their own files, Node built-ins, the names their `package.json` declares and `@libredb/provider-sdk`, and its tests may import a Bun runtime module.
 No package imports a path into Studio's own source or out of its own directory, so no package depends on another package's internals.
 Studio reaches a package only by its package name, never by a path into `packages/`.
+A package depends on no other provider package, C-42.
 
 - test `tests/unit/package-imports.test.ts` "the repository's packages import only what they declare"
 - test `tests/unit/package-imports.test.ts` "core reaches no workspace package by path"
@@ -924,7 +925,7 @@ A served result source asks the provider for exactly the limit it is pulled with
 
 The memory transport keeps frames for tests only, so a test, the kit and the host core's tests see what crossing a JSON boundary does to a call.
 The kit's run in memory calls `serve`, and whether any of the transport's checks run in production is decided with the first host surface.
-Deadlines, cancellation and the failure matrix over `serve` arrive with the calls chapter's next part.
+Its deadline and cancellation rules are C-26 to C-30, and the failure matrix is C-34.
 
 ### C-26 (normative): One deadline, owned by the host
 
@@ -1091,6 +1092,19 @@ If a provider ever needs dialog actions or dynamic select options, both come thr
 If a provider ever answers a classification, it is read from a closed set, and any other answer, an error or a timeout asks for a confirmation.
 No such call exists yet, so nothing checks this.
 
+### C-42 (normative): A package depends on no other provider package
+
+No workspace package but the kit imports, in its source or its tests, or declares, in any dependency field of its `package.json`, a name starting `@libredb/provider-` other than `@libredb/provider-sdk` and its own.
+The kit, `@libredb/provider-kit`, is admitted only in a package's tests and its `devDependencies`.
+
+- test `tests/unit/package-imports.test.ts` "no workspace package imports or declares another provider package"
+- test `tests/unit/package-imports.test.ts` "a planted package that imports or declares another provider package fails by file and name, the kit admitted in its tests only"
+
+### C-43 (informative): A provider depends on no load order
+
+The order of the entries in the lock carries no meaning, and no provider is required for Studio to start.
+The loader holds this, and it does not exist yet.
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:
@@ -1098,7 +1112,6 @@ These chapters are added by the changes that bring their enforcers:
 - Connection string rows: their schemes, their URL TLS and paste readers, and their seed checks.
 - Editor and SQL text: execution UI, the SQL grammar facts as manifest data, SQL writing, migration DDL, generators, editor languages, explain formats and discovery fence tags.
 - Policy and MCP claims, each a request a provider makes that only Studio's review record grants, the agent overlay, and presentation (an icon and a colour).
-- Calls, continued: the cancel, deadline and failure rules.
 - The API report of each SDK entry.
 
 ## Change notes
