@@ -17,6 +17,7 @@ import {
   isAuthenticationError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 
 const { readProviderDeclarations: realReadProviderDeclarations } = await import("@/lib/db/factory");
 
@@ -115,6 +116,28 @@ describe("POST /api/db/provider-meta", () => {
     mockGetSession.mockImplementation(
       async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
     );
+  });
+
+  test("an error that holds the connection's credential keeps its status and code and holds none of it", async () => {
+    const password = crypto.randomUUID();
+    const connection = { ...validConnection, password };
+    const send = () =>
+      POST(createMockRequest("/api/db/provider-meta", { method: "POST", body: { connection } }) as never);
+    mockReadProviderDeclarations.mockRejectedValueOnce(
+      new DatabaseConfigError(`the file ${password} is not a database`, "postgres"),
+    );
+    const withheld = await send();
+    const body = await parseResponseJSON<Record<string, unknown>>(withheld);
+    expect(withheld.status).toBe(400);
+    expect(body).toMatchObject({ code: "CONFIG_ERROR", error: withheldErrorMessage("DatabaseConfigError") });
+    expect(JSON.stringify(body)).not.toContain(password);
+
+    mockReadProviderDeclarations.mockRejectedValueOnce(
+      new DatabaseConfigError("the file is not a database", "postgres"),
+    );
+    const clean = await send();
+    expect(clean.status).toBe(400);
+    expect(await parseResponseJSON(clean)).toMatchObject({ code: "CONFIG_ERROR", error: "the file is not a database" });
   });
 
   test("returns 401 when no session exists", async () => {

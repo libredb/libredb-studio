@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db";
 import type { MonitoringOptions } from "@/lib/db/types";
 import { createErrorResponse } from "@/lib/api/errors";
+import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
 import { INVALID_REQUEST_BODY, isJsonObject } from "@/lib/api/json-object-body";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/require-session";
@@ -29,6 +30,9 @@ export async function POST(req: NextRequest) {
     return adminRequiredResponse();
   }
 
+  // Core's scrub of the resolved connection, held out here for the `catch` below: before the connection resolves no
+  // provider ran.
+  let scrub: ProviderTextScrub | undefined;
   try {
     // Handle empty or aborted requests
     let body;
@@ -54,6 +58,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "options must be an object" }, { status: 400 });
     }
     const connection = await resolveConnection(body, guard.session);
+    scrub = providerTextScrub(connection, "any");
 
     if (!connection.type) {
       return NextResponse.json({ error: "Valid connection configuration is required" }, { status: 400 });
@@ -85,6 +90,6 @@ export async function POST(req: NextRequest) {
       return new Response(null, { status: 499 }); // Client Closed Request
     }
 
-    return createErrorResponse(error, { route: "api/db/monitoring" });
+    return createErrorResponse(error, { route: "api/db/monitoring", scrub });
   }
 }

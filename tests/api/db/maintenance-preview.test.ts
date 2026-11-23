@@ -19,6 +19,7 @@ import {
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { SYNTHETIC_ENTITY_CAPABILITIES, SYNTHETIC_PREVIEW } from "../../fixtures/maintenance-entity-operations";
+import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 
 /**
  * `POST /api/db/maintenance/preview` (spec 3.11, E36): an admin-only read beside the maintenance route. It makes the
@@ -381,6 +382,30 @@ describe("POST /api/db/maintenance/preview", () => {
     expect(await errorOf(res)).toContain("No object named orders in app");
     expect(mockPreviewMaintenance).toHaveBeenCalledTimes(1);
     expect(calledMethods()).toEqual(["getCapabilities", "previewMaintenance"]);
+  });
+
+  test("an error that holds the connection's credential keeps its status and code and holds none of it", async () => {
+    const password = crypto.randomUUID();
+    const connection = { ...validConnection, password };
+    const send = () => preview({ type: "compact", target: "orders", container: "app", connection });
+    mockPreviewMaintenance.mockImplementationOnce(async () => {
+      throw new QueryError(`No object named orders for ${password}`, "postgres");
+    });
+    const withheld = await send();
+    const body = await parseResponseJSON<Record<string, unknown>>(withheld);
+    expect(withheld.status).toBe(400);
+    expect(body).toMatchObject({ code: "QUERY_ERROR", error: withheldErrorMessage("QueryError") });
+    expect(JSON.stringify(body)).not.toContain(password);
+
+    mockPreviewMaintenance.mockImplementationOnce(async () => {
+      throw new QueryError("No object named orders in app", "postgres");
+    });
+    const clean = await send();
+    expect(clean.status).toBe(400);
+    expect(await parseResponseJSON(clean)).toMatchObject({
+      code: "QUERY_ERROR",
+      error: "No object named orders in app",
+    });
   });
 
   test("a provider failure answers what it maps to", async () => {

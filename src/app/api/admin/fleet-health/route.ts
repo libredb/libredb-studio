@@ -3,11 +3,11 @@ import { getOrCreateProvider, readProviderDeclarations } from "@/lib/db";
 import { engineFacetsFor } from "@/lib/db/engine-facets";
 import type { DatabaseConnection } from "@/lib/types";
 import { createErrorResponse } from "@/lib/api/errors";
+import { type ProviderTextScrub, providerTextScrub, withheldProviderError } from "@/lib/db/operations/provider-text";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { buildConnectionPayload } from "@/hooks/use-connection-payload";
 import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
-import { logger } from "@/lib/logger";
 
 /**
  * The widest fan-out one request may ask for. guardRoute bounds how OFTEN this route is called,
@@ -74,6 +74,9 @@ export async function POST(request: Request) {
     const results: FleetHealthItem[] = await Promise.all(
       connections.map(async (conn): Promise<FleetHealthItem> => {
         const start = Date.now();
+        // Core's scrub of this item's resolved connection, held out here for the `catch` below: before the connection
+        // resolves no provider ran.
+        let scrub: ProviderTextScrub | undefined;
         try {
           /*
            * Every item goes through `resolveConnection`, the caller's own connections included: a
@@ -85,6 +88,7 @@ export async function POST(request: Request) {
            * refused item is reported as that item's error, beside the health of the rest.
            */
           const resolved = await resolveConnection(buildConnectionPayload(conn), guard.session);
+          scrub = providerTextScrub(resolved, "any");
           const execution = editorExecutionContext(guard.session, resolved);
           /*
            * The capability is read through `readProviderDeclarations`, the provider-meta pattern, which
@@ -144,7 +148,14 @@ export async function POST(request: Request) {
             environment: conn.environment,
             status: "error",
             latencyMs: Date.now() - start,
-            error: err instanceof Error ? err.message : "Connection failed",
+            // A failure whose text holds a credential of the item's connection answers Studio's sentence naming its
+            // class.
+            error:
+              err instanceof Error
+                ? scrub === undefined
+                  ? err.message
+                  : (withheldProviderError(scrub, err)?.message ?? err.message)
+                : "Connection failed",
           };
         }
       }),

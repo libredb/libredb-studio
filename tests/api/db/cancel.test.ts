@@ -17,6 +17,7 @@ import {
   isAuthenticationError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 
 // ─── Create mock objects ────────────────────────────────────────────────────
 const baseMockProvider = createMockProvider();
@@ -124,6 +125,26 @@ describe("POST /api/db/cancel", () => {
     mockGetSession.mockImplementation(
       async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
     );
+  });
+
+  test("an error that holds the connection's credential keeps its status and code and holds none of it", async () => {
+    const password = crypto.randomUUID();
+    const connection = { ...validConnection, password };
+    const send = () =>
+      POST(
+        createMockRequest("/api/db/cancel", { method: "POST", body: { queryId: "query-123", connection } }) as never,
+      );
+    mockCancelProvider.cancelQuery.mockRejectedValueOnce(new QueryError(`cancel refused for ${password}`, "postgres"));
+    const withheld = await send();
+    const body = await parseResponseJSON<Record<string, unknown>>(withheld);
+    expect(withheld.status).toBe(400);
+    expect(body).toMatchObject({ code: "QUERY_ERROR", error: withheldErrorMessage("QueryError") });
+    expect(JSON.stringify(body)).not.toContain(password);
+
+    mockCancelProvider.cancelQuery.mockRejectedValueOnce(new QueryError("cancel refused", "postgres"));
+    const clean = await send();
+    expect(clean.status).toBe(400);
+    expect(await parseResponseJSON(clean)).toMatchObject({ code: "QUERY_ERROR", error: "cancel refused" });
   });
 
   test("returns 401 when no session exists", async () => {

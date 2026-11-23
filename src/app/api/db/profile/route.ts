@@ -12,6 +12,7 @@ import {
 } from "@/lib/db/errors";
 import { type DatabaseProvider, offersColumnProfiling } from "@/lib/db/types";
 import { createErrorResponse } from "@/lib/api/errors";
+import { type ProviderTextScrub, providerTextScrub, withheldProviderError } from "@/lib/db/operations/provider-text";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
@@ -62,9 +63,12 @@ function valueText(value: unknown): string | undefined {
 /**
  * Why a statement failed, as the user may read it: an engine's own message, which is what the
  * editor shows for the same statement, and nothing from an error this server raised itself.
+ * The engine's message is answered through the connection's scrub: one that holds a credential of
+ * the connection answers Studio's sentence naming the error's class instead.
  */
-function reasonOf(error: unknown): string {
-  return error instanceof DatabaseError ? error.message : "Could not profile this column";
+function reasonOf(scrub: ProviderTextScrub, error: unknown): string {
+  if (!(error instanceof DatabaseError)) return "Could not profile this column";
+  return withheldProviderError(scrub, error)?.message ?? error.message;
 }
 
 /**
@@ -89,9 +93,9 @@ const ENDS_PROFILE = [
  * profile. Anything else is read as a refusal, the shape in which a type that does not take an
  * aggregate fails, whichever class its provider raised it as.
  */
-function refusalOf(error: unknown): string {
+function refusalOf(scrub: ProviderTextScrub, error: unknown): string {
   if (ENDS_PROFILE.some((kind) => error instanceof kind)) throw error;
-  return reasonOf(error);
+  return reasonOf(scrub, error);
 }
 
 /**
@@ -111,6 +115,7 @@ function refusalOf(error: unknown): string {
  */
 async function profileSqlColumn(
   provider: DatabaseProvider,
+  scrub: ProviderTextScrub,
   table: string,
   name: string,
   column: string,
@@ -126,11 +131,11 @@ async function profileSqlColumn(
   try {
     row = await read(`${counts}, ${distinct}, ${range}`);
   } catch (error) {
-    refusalOf(error);
+    refusalOf(scrub, error);
     try {
       row = { ...(await read(counts)) };
     } catch (countError) {
-      const countRefusal = refusalOf(countError);
+      const countRefusal = refusalOf(scrub, countError);
       // A large-object type takes no aggregate at all (SQL Server `text`: "Operand data type
       // text is invalid for count operator"; Oracle CLOB: ORA-22849), but IS NULL still
       // reads it, so its nulls are counted in a filter against the table's own total. The
@@ -140,7 +145,7 @@ async function profileSqlColumn(
       try {
         nulls = (await provider.query(`SELECT COUNT(*) AS null_count FROM ${table} WHERE ${column} IS NULL`)).rows[0];
       } catch (nullError) {
-        return { name, totalRows, error: refusalOf(nullError) };
+        return { name, totalRows, error: refusalOf(scrub, nullError) };
       }
       const nullCount = field(nulls, "null_count");
       if (nullCount === undefined) return { name, totalRows, error: countRefusal };
@@ -156,7 +161,7 @@ async function profileSqlColumn(
       try {
         Object.assign(row, await read(projection));
       } catch (measureError) {
-        warnings.push(`${label}: ${refusalOf(measureError)}`);
+        warnings.push(`${label}: ${refusalOf(scrub, measureError)}`);
       }
     }
   }
@@ -186,6 +191,9 @@ export async function POST(req: NextRequest) {
   const guard = await guardRoute({ route: "POST /api/db/profile", bucket: "query", request: req });
   if ("response" in guard) return guard.response;
 
+  // Core's scrub of the resolved connection, held out here for the `catch` below: before the connection resolves no
+  // provider ran.
+  let scrub: ProviderTextScrub | undefined;
   try {
     // A body that is not a JSON object is a malformed request, refused before any connection resolves.
     const body = await readJsonObject(req);
@@ -195,6 +203,8 @@ export async function POST(req: NextRequest) {
     const { tablePath, columns } = body;
 
     const connection = await resolveConnection(body, guard.session);
+    const connectionScrub = providerTextScrub(connection, "any");
+    scrub = connectionScrub;
 
     // The object's ADDRESS, one element per segment, and it is checked element by element
     // rather than by `Array.isArray` alone: an array is not a path if it holds anything but
@@ -338,6 +348,7 @@ export async function POST(req: NextRequest) {
           columnProfiles.push(
             await profileSqlColumn(
               provider,
+              connectionScrub,
               safeTable,
               col,
               quoteIdentifier(col, provider.type, capabilities, { always: true }),
@@ -378,6 +389,6 @@ export async function POST(req: NextRequest) {
       });
     }
   } catch (error) {
-    return createErrorResponse(error, { route: "api/db/profile" });
+    return createErrorResponse(error, { route: "api/db/profile", scrub });
   }
 }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { INVALID_REQUEST_BODY, readJsonObject } from "@/lib/api/json-object-body";
 import { getOrCreateProvider } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
+import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
@@ -13,6 +14,9 @@ export async function POST(req: NextRequest) {
   const guard = await guardRoute({ route: "POST /api/db/cancel", bucket: "query", request: req });
   if ("response" in guard) return guard.response;
 
+  // Core's scrub of the resolved connection, held out here for the `catch` below: before the connection resolves no
+  // provider ran.
+  let scrub: ProviderTextScrub | undefined;
   try {
     // A body that is not a JSON object is a malformed request, refused before any connection resolves.
     const body = await readJsonObject(req);
@@ -22,6 +26,7 @@ export async function POST(req: NextRequest) {
     const { queryId } = body;
 
     const connection = await resolveConnection(body, guard.session);
+    scrub = providerTextScrub(connection, "any");
 
     if (!queryId) {
       return NextResponse.json({ error: "Connection and queryId are required" }, { status: 400 });
@@ -45,6 +50,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ cancelled });
   } catch (error) {
-    return createErrorResponse(error, { route: "api/db/cancel" });
+    return createErrorResponse(error, { route: "api/db/cancel", scrub });
   }
 }
