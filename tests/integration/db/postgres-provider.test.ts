@@ -4258,6 +4258,34 @@ describe("PostgresProvider", () => {
       },
     );
 
+    test.each(["queryInTransaction", "commitTransaction", "rollbackTransaction"] as const)(
+      "%s on a held transaction whose session already ended answers TRANSACTION_LOST with outcome not-sent and sends nothing",
+      async (call) => {
+        provider = new PostgresProvider(makePgConfig());
+        await provider.connect();
+        await provider.beginTransaction();
+        endSession(session!, "terminating connection due to administrator command", "57P01");
+
+        mockWire = [];
+        const lost = await (call === "queryInTransaction"
+          ? provider.queryInTransaction("SELECT 1")
+          : provider[call]()
+        ).catch((error: unknown) => error);
+
+        expect(lost).toBeInstanceOf(TransactionLostError);
+        expect((lost as TransactionLostError).outcome).toBe("not-sent");
+        expect(mockWire).toEqual([]);
+        const response = createErrorResponse(lost, { route: "api/db/transaction" });
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({
+          code: ApiErrorCode.TRANSACTION_LOST,
+          statusCode: 503,
+          kind: "transaction-lost",
+          outcome: "not-sent",
+        });
+      },
+    );
+
     test("the first error a session reports is the cause named, and each event is logged once", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();

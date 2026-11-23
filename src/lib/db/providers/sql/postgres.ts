@@ -3807,7 +3807,8 @@ export class PostgresProvider extends SQLBaseProvider {
    * session's error, so the pool discards it, and the provider holds no transaction from here on:
    * this call reports the loss and the next one answers `NO_ACTIVE_TRANSACTION`. A
    * `TransactionLostError`, a `ConnectionError`, because the connection and not the statement is
-   * what failed.
+   * what failed, raised with `beforeSend`, so it answers `not-sent`: the session is read before any
+   * `client.query`, and `pg` refuses a query on a client whose connection ended without writing it.
    */
   private refuseLostTransaction(client: PoolClient): void {
     const ended = endedSessions.get(client);
@@ -3816,7 +3817,9 @@ export class PostgresProvider extends SQLBaseProvider {
     this.txClient = null;
     this.txActive = false;
     client.release(ended);
-    throw new TransactionLostError(transactionLostSentence(ended), "postgres", this.config.host, this.config.port);
+    throw new TransactionLostError(transactionLostSentence(ended), "postgres", this.config.host, this.config.port, {
+      beforeSend: true,
+    });
   }
 
   /**

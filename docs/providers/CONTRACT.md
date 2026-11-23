@@ -869,7 +869,7 @@ A record holds no message, detail, statement or identifier of the error.
 ### E-5 (normative): Only a statement that cannot have reached the database is not-sent
 
 `outcome` is `not-sent` only when the statement cannot have reached the database.
-The host marks every failure of a provider's connect, and a provider claims not-sent only by raising `refused-before-send`, whose class marks it, or by taking its connection or session through `checkoutPhase` before it sends anything, which marks what the checkout raised and turns a deadline the checkout met into a `ConnectionError` naming the wait.
+The host marks every failure of a provider's connect, and a provider claims not-sent only by raising `refused-before-send`, whose class marks it, by taking its connection or session through `checkoutPhase` before it sends anything, which marks what the checkout raised and turns a deadline the checkout met into a `ConnectionError` naming the wait, or by raising `transaction-lost` with `beforeSend` for a call on a held transaction whose session it found already ended, which the class then marks.
 The host also marks not-sent a console call it refuses before making it, a deadline already passed or a caller already gone, C-51.
 No provider writes an error's `outcome` itself, and every other failure is `unknown`.
 
@@ -887,6 +887,8 @@ No provider writes an error's `outcome` itself, and every other failure is `unkn
 - test `tests/integration/db/postgres-provider.test.ts` "a begin whose pool checkout fails answers its mapped class with outcome not-sent, sends nothing and holds no transaction"
 - test `tests/integration/db/mysql-provider.test.ts` "a begin whose pool checkout fails answers its mapped class with outcome not-sent, not an internal error"
 - test `tests/integration/db/oracle-provider.test.ts` "a begin whose pool checkout fails answers its mapped class with outcome not-sent and holds no transaction"
+- test `tests/unit/db/errors.test.ts` "a TransactionLostError raised before anything was sent answers not-sent, and one raised without beforeSend answers unknown"
+- test `tests/integration/db/postgres-provider.test.ts` "%s on a held transaction whose session already ended answers TRANSACTION_LOST with outcome not-sent and sends nothing"
 - test `tests/unit/lib/provider-host/host-rules.test.ts` "a checkout failure inside execute answers not-sent"
 - test `tests/unit/lib/provider-host/access.test.ts` "a call the caller left is answered as QueryCancelledError, not-sent before the call and unknown after it"
 - test `tests/unit/lib/provider-host/access.test.ts` "a call past its deadline is answered as StudioTimeoutRefusal, not-sent before the call and unknown after it"
@@ -2130,4 +2132,5 @@ Against the manifest sketch the design started from:
 Against this contract's earlier text:
 
 - A provider may claim not-sent for a failure of its checkout of a connection or session before it sends, E-5, where only `refused-before-send` could.
+- A provider may claim not-sent for a call on a held transaction whose session it found ended before it sent anything, by raising `transaction-lost` with `beforeSend`, E-5, and a transaction's begin takes its connection through `checkoutPhase` like a statement.
 - A row is measured once on the host's path: the pump hands each pull its own measure and takes the size it recorded for the row a source answers, C-13 to C-16 and C-50, where a source and the pump each measured every row.

@@ -38,7 +38,7 @@ import {
   ExecutionProfileError,
 } from "@/lib/db/errors";
 import * as errorsModule from "@/lib/db/errors";
-import { errorKind } from "@/lib/db/error-record";
+import { errorKind, errorOutcome } from "@/lib/db/error-record";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { rowBudgetSentence } from "@/lib/db/read-only-budget";
 import {
@@ -208,6 +208,22 @@ describe("TransactionLostError", () => {
     expect(err.provider).toBe("postgres");
     expect(err.host).toBe("db.internal");
     expect(err.port).toBe(5432);
+  });
+
+  test("a TransactionLostError raised before anything was sent answers not-sent, and one raised without beforeSend answers unknown", () => {
+    const beforeSend = new TransactionLostError("The transaction was lost", "postgres", "db.internal", 5432, {
+      beforeSend: true,
+    });
+    const during = new TransactionLostError("The transaction was lost", "postgres", "db.internal", 5432);
+
+    expect(Object.hasOwn(beforeSend, "outcome")).toBe(true);
+    expect(beforeSend.outcome).toBe("not-sent");
+    expect(Object.hasOwn(during, "outcome")).toBe(false);
+    expect(errorOutcome(during)).toBe("unknown");
+    for (const err of [beforeSend, during]) {
+      expect(errorKind(err)).toBe("transaction-lost");
+      expect(err.code).toBe("TRANSACTION_LOST");
+    }
   });
 });
 
