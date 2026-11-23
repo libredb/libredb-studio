@@ -148,7 +148,8 @@
     "import": {
       "label": "Import kubeconfig",
       "importer": "importer"
-    }
+    },
+    "connectBudgetMs": null
   },
   "facets": {
     "monitoring": {

@@ -28,6 +28,7 @@ import {
   checkExecuteRequest,
   checkProviderModule,
   checkRefinement,
+  DEFAULT_CONNECT_BUDGET_MS,
   deadlineSignal,
   defineProvider,
   encodedRowBytes,
@@ -118,6 +119,7 @@ describe("the manifest schema digest", () => {
     expect(packageRoot.deadlineSignal).toBe(deadlineSignal);
     expect(packageRoot.checkCallStart).toBe(checkCallStart);
     expect(packageRoot.awaitWithin).toBe(awaitWithin);
+    expect(packageRoot.DEFAULT_CONNECT_BUDGET_MS).toBe(DEFAULT_CONNECT_BUDGET_MS);
   });
 
   test("the package root does not export the testing surface", () => {

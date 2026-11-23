@@ -28,6 +28,9 @@
  * provider module directly and reads no function's `name`; the census resolves each name with a table of its own and
  * holds it, by identity, to the function the connection form or the connection string row holds.
  *
+ * The connect budget, `connection.connectBudgetMs`, is the engine's row in `CONNECT_BUDGET`, null where the engine
+ * takes the host's default.
+ *
  * The SQL text facts come from the engine's row in `SQL_GRAMMAR`. A grammar fact the SDK's `SqlGrammar` type may leave
  * out is written at the reading its readers give that absence, false, an empty list, true for `dollarTags`,
  * `postgresql` for the formatter language and two empty lists for the completion words, except the two backslash
@@ -138,6 +141,7 @@ import {
   SEED_ONLY_FIELD_NAMES,
   SEED_ONLY_FIELDS,
 } from "../src/lib/db/connection-fields";
+import { CONNECT_BUDGET } from "../src/lib/db/connect-budget";
 import { CONNECTION_FORM, type ConnectionFormSpec, offersSslPanel } from "../src/lib/db/connection-form";
 import { CONNECTION_STRING } from "../src/lib/db/connection-string";
 import { CREDENTIAL_WARNINGS } from "../src/lib/db/credential-warnings";
@@ -1093,6 +1097,7 @@ export function buildEngineDeclaration(type: DatabaseType, capabilities: Provide
       hostHint: form.hostHint === undefined ? null : "hostHint",
       hostIdentity: form.hostIdentity === undefined ? null : "hostIdentity",
       import: form.connectionImport === undefined ? null : { label: form.connectionImport.label, importer: "importer" },
+      connectBudgetMs: CONNECT_BUDGET[type],
     },
     facets: {
       // Written out panel by panel, in MONITORING_PANELS order, so every declaration lists them alike and a panel the

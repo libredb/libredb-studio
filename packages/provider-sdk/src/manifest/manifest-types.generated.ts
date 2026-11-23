@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "ae5d6abfb3e73ffb8dcba49e0e93343f1f68b93d017c881c5f2a6f152f315ee2";
+export const MANIFEST_SCHEMA_SHA256 = "9ae515120381dea2f2f24c74460d68cf013e9e5a6f31c842493e67428d660a65";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -148,6 +148,7 @@ export interface Connection {
   /** The function that answers the server a Host text names, for telling whether a pasted connection string names the server already in the box; null where the text trimmed and lower-cased is its identity. */
   readonly hostIdentity: FunctionName | null;
   readonly import: ConnectionImport;
+  readonly connectBudgetMs: ConnectBudget;
 }
 
 /** The name of a function the package exports, which the manifest names and never carries, local to its engine: a lower-case letter, then up to 63 letters or digits. */
@@ -183,6 +184,9 @@ export type FieldCharRange = {
   readonly max: number;
   readonly sentence: string;
 } | null;
+
+/** How long the host waits for an open of the engine and for its Test connection, in milliseconds from the open's start: at least 30,000, an SSH tunnel's 20 s handshake bound plus 10 s for the connect, and at most 300,000; null where the engine takes the host's default, DEFAULT_CONNECT_BUDGET_MS, 70,000. */
+export type ConnectBudget = number | null;
 
 /** An import the connection dialog offers for a new connection: the action's label, and the function that reads a pasted text into entries, one of which fills the form, without throwing; null where the dialog offers none. */
 export type ConnectionImport = {

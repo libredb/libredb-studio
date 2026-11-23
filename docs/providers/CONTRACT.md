@@ -11,7 +11,7 @@ The SDK package `@libredb/provider-sdk`, under [`packages/provider-sdk`](../../p
 - `compileManifestValidator`, `refusalSentence` and the refusal types, exported from `@libredb/provider-sdk/manifest`.
 - [`codec.ts`](../../packages/provider-sdk/src/values/codec.ts), the value codec, exported from `@libredb/provider-sdk/values`.
 - [`errors/index.ts`](../../packages/provider-sdk/src/errors/index.ts), the error record's shape and vocabularies, the kinds a provider may raise and the driver error row contract, exported from `@libredb/provider-sdk/errors`.
-- [`calls/index.ts`](../../packages/provider-sdk/src/calls/index.ts), the call and context types, `defineProvider`, `checkProviderModule` and `envReader`, the host's checks of a call, `checkExecuteRequest`, `checkConsoleFacet`, `checkRefinement` and `sessionCalls`, `freezeContext` and `freezeData`, the byte budgets `BATCH_MAX_BYTES` and `PAGE_MAX_BYTES` with `encodedRowBytes`, `rowsSource` and `pumpPage`, and a call's deadline, `deadlineSignal`, `checkCallStart` and `awaitWithin`, exported from `@libredb/provider-sdk/calls`.
+- [`calls/index.ts`](../../packages/provider-sdk/src/calls/index.ts), the call and context types, `defineProvider`, `checkProviderModule` and `envReader`, the host's checks of a call, `checkExecuteRequest`, `checkConsoleFacet`, `checkRefinement` and `sessionCalls`, `freezeContext` and `freezeData`, the byte budgets `BATCH_MAX_BYTES` and `PAGE_MAX_BYTES` with `encodedRowBytes`, `rowsSource` and `pumpPage`, and a call's deadline, `deadlineSignal`, `checkCallStart` and `awaitWithin`, and the host's default connect budget, `DEFAULT_CONNECT_BUDGET_MS`, exported from `@libredb/provider-sdk/calls`.
 - `SqlGrammar` and its member types, the compatibility default `DEFAULT_SQL_GRAMMAR`, and `hashRunIsAmbiguous`, exported from `@libredb/provider-sdk/sql`.
 - [`testing/index.ts`](../../packages/provider-sdk/src/testing/index.ts), `serve`, `readFrame`, `roundTripRefusals` and the frame refusals, exported from `@libredb/provider-sdk/testing` only.
 
@@ -635,6 +635,28 @@ The editor opens the engine's tabs under the dialect's name, so a manifest state
 - test `tests/unit/db/kubernetes/history-mask.test.ts` "the dialect declares exactly the console's credential flags"
 - test `tests/unit/editor/tab-language-registry.test.ts` "resolveTabType answers the registry record's tabType before reading the language"
 - test `tests/unit/db/dialect-gates-registry.test.ts` "a record that offers profiling, code generation and a count is offered all three"
+
+### M-51 (normative): The connect budget
+
+An engine states, in `connection.connectBudgetMs`, how long the host waits for an open of the engine and for its Test connection, in milliseconds from the open's start.
+The budget is a whole number from 30,000 to 300,000, or null where the engine takes the host's default, `DEFAULT_CONNECT_BUDGET_MS`, 70,000, which `@libredb/provider-sdk/calls` exports.
+The minimum is an SSH tunnel's 20 s handshake bound plus 10 s for the connect, so no budget ends an open before a legitimate tunnel could open; the maximum bounds the longest any caller waits for an open to five minutes.
+An engine states a budget of its own when its own connect bound at Studio's default statement timeout, plus 10 s for its answer to arrive, is longer than the default, so a provider that bounds its connect answers in its own words before the host does.
+Studio declares each engine's budget in one central table, `CONNECT_BUDGET` in `src/lib/db/connect-budget.ts`, which the generator writes into each declaration and the census reads back.
+
+- schema `/$defs/connectBudget`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a connect budget of null or within 30,000 to 300,000 ms is admitted"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a connect budget below 30,000 ms or above 300,000 ms is refused as out-of-range at the connection's connectBudgetMs"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a connect budget that is not a whole number is refused as wrong-type"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a connection without connectBudgetMs is refused as missing-key"
+- test `packages/provider-sdk/tests/calls/deadline.test.ts` "the host's default connect budget is 70 s, inside the bounds the schema gives a declared one"
+- test `tests/unit/db/engine-declarations.test.ts` "connection.connectBudgetMs is the engine's CONNECT_BUDGET row"
+- test `tests/unit/db/engine-declarations.test.ts` "connectBudgetFor answers, for every engine, the budget its declaration states, or the host's default where it states null"
+- test `tests/unit/db/connect-budget.test.ts` "the host's default is the pools' 60 s acquire bound plus 10 s"
+- test `tests/unit/db/connect-budget.test.ts` "only BigQuery and Snowflake declare a connect budget of their own"
+- test `tests/unit/db/connect-budget.test.ts` "the document of each engine that declares a connect budget states it in seconds, and no other provider document states one"
+- test `tests/unit/db/bigquery/connect-budget.test.ts` "BigQuery's connect budget covers its connect's dataset list and probe job at the default statement timeout, plus 10 s"
+- test `tests/unit/db/snowflake/connect-budget.test.ts` "Snowflake's connect budget covers its connect's two Studio statements at their deadline, plus 10 s"
 
 ## Values
 
@@ -1903,6 +1925,7 @@ Against the manifest sketch the design started from:
 - An engine's own id is always one of its fence tags, so a manifest lists only its other tags, and the tags of a language several engines speak are the contract's, M-46.
 - The explain format a manifest states is the one before a connection is measured, M-48.
 - A dialect's tabs are named by the dialect, so a manifest states the name once, M-50.
+- An engine's connect budget is a number of milliseconds or null for the host's default, declared in one central table rather than beside each provider, M-51.
 - An engine's SQL grammar row is one segment, `sqlText`, S-3.
 - A fact the SDK's grammar type may leave out is written at the reading its absence has, and three facts are null where a reading of their own applies, S-4.
 - A trailing limit clause is a pattern's source and flags, S-5.

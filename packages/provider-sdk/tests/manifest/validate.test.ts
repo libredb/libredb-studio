@@ -1773,6 +1773,36 @@ describe("schema refusals", () => {
     expect(refusalsFor(flag)).toEqual([refusal("wrong-type", `${LANGUAGE}/console`)]);
   });
 
+  test("a connect budget of null or within 30,000 to 300,000 ms is admitted", () => {
+    const budgeting = (budget: unknown) => manifest((m) => (connectionOf(m).connectBudgetMs = budget));
+
+    expect(connectionOf(manifest()).connectBudgetMs).toBeNull();
+    expect(refusalsFor(manifest())).toEqual([]);
+    expect(connectionOf(kafkaManifest()).connectBudgetMs).toBeNull();
+    expect(refusalsFor(kafkaManifest())).toEqual([]);
+    for (const budget of [30_000, 140_000, 300_000]) expect(refusalsFor(budgeting(budget))).toEqual([]);
+  });
+
+  test("a connect budget below 30,000 ms or above 300,000 ms is refused as out-of-range at the connection's connectBudgetMs", () => {
+    for (const budget of [29_999, 300_001, 0]) {
+      const changed = manifest((m) => (connectionOf(m).connectBudgetMs = budget));
+      expect(refusalsFor(changed)).toEqual([refusal("out-of-range", "/engines/0/connection/connectBudgetMs")]);
+    }
+  });
+
+  test("a connect budget that is not a whole number is refused as wrong-type", () => {
+    for (const budget of [45_000.5, "70000", true]) {
+      const changed = manifest((m) => (connectionOf(m).connectBudgetMs = budget));
+      expect(refusalsFor(changed)).toEqual([refusal("wrong-type", "/engines/0/connection/connectBudgetMs")]);
+    }
+  });
+
+  test("a connection without connectBudgetMs is refused as missing-key", () => {
+    const changed = manifest((m) => delete connectionOf(m).connectBudgetMs);
+
+    expect(refusalsFor(changed)).toEqual([refusal("missing-key", "/engines/0/connection", "connectBudgetMs")]);
+  });
+
   test("several failures are each refused, ordered by pointer", () => {
     const changed = manifest((m) => {
       m.bogus = true;

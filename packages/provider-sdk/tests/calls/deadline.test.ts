@@ -10,6 +10,8 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { getEventListeners } from "node:events";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import {
   awaitWithin,
   CallRefusalError,
@@ -17,6 +19,7 @@ import {
   CLEANUP_DEADLINE_MS,
   checkCallStart,
   cleanupContext,
+  DEFAULT_CONNECT_BUDGET_MS,
   deadlineSignal,
   envReader,
   type LateOutcome,
@@ -287,5 +290,19 @@ describe("cleanupContext", () => {
     expect(ctx.env).toBe(env);
     expect(checkCallStart(ctx)).toEqual([]);
     expect(cleanupContext(env).signal).not.toBe(ctx.signal);
+  });
+});
+
+describe("DEFAULT_CONNECT_BUDGET_MS", () => {
+  test("the host's default connect budget is 70 s, inside the bounds the schema gives a declared one", () => {
+    const schema = JSON.parse(
+      readFileSync(path.join(import.meta.dir, "../../src/manifest/manifest.schema.json"), "utf8"),
+    );
+    const declared = schema.$defs.connectBudget;
+
+    expect(DEFAULT_CONNECT_BUDGET_MS).toBe(70_000);
+    expect(declared.type).toEqual(["integer", "null"]);
+    expect(DEFAULT_CONNECT_BUDGET_MS).toBeGreaterThanOrEqual(declared.minimum);
+    expect(DEFAULT_CONNECT_BUDGET_MS).toBeLessThanOrEqual(declared.maximum);
   });
 });

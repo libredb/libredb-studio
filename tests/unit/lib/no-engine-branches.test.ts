@@ -109,6 +109,12 @@ export const REGISTRIES: readonly Listed[] = [
     count: 1,
     reason: FIELDS,
   })),
+  {
+    path: "src/lib/db/connect-budget.ts",
+    declaration: "CONNECT_BUDGET",
+    count: 1,
+    reason: "the UI-free connect budget table, compile-enforced over the type-id union",
+  },
   ...[
     ["src/lib/db/connection-string/index.ts", "CONNECTION_STRING"],
     ["src/lib/db/engine-facets/index.ts", "ENGINE_FACETS"],
