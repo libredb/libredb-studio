@@ -57,7 +57,13 @@ export type AgentStatementLanguageId =
   | "mqttread"
   | "sparkplugread";
 
-/** Literal-typed, so `AgentEngineFamily` in `languages/pack.ts` reads each engine's language by type. */
+/**
+ * Literal-typed, so `AgentEngineFamily` in `languages/pack.ts` reads each engine's language by type.
+ *
+ * This table is Studio's review record of the claim an engine declaration requests at `agent.statementLanguage`, and every
+ * gate reads it: the declaration states each shipped engine's request as this table's row, and the table is never a
+ * projection of declarations (docs/providers/CONTRACT.md, clauses M-52 and M-53).
+ */
 export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
   postgres: "sql",
   bigquery: null,

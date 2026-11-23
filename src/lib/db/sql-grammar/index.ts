@@ -49,6 +49,12 @@ import { typeIdRow } from "@/lib/db/type-id";
 /**
  * Every engine's SQL grammar facts, one row per type id, each declared in a module beside its provider (spec 5.3).
  * Being total over `DatabaseType` is what makes a new type id without a module a compile error here.
+ *
+ * The rows' `redaction` is Studio's review record of the claim an engine declaration requests at `sqlText.redaction`,
+ * and every gate reads it: the declaration states each shipped engine's request as its row, and the rows are never a
+ * projection of declarations (docs/providers/CONTRACT.md, clauses M-52 and M-53). The rows stay in Studio's source:
+ * the change that moves a provider into a package, or first makes Studio read the claim from a declaration, keeps the
+ * claim's row in a core record keyed by the engine, so a package never carries its own grant (M-54).
  */
 export const SQL_GRAMMAR: Readonly<Record<DatabaseType, SqlGrammarSpec>> = Object.freeze({
   bigquery: BIGQUERY_SQL_GRAMMAR,

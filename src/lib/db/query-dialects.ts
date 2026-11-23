@@ -48,6 +48,9 @@ export interface DialectSpec {
  * dialect has a profile statement in its grammar, and Firestore's alone has a count statement, written by its
  * `DIALECT_GENERATORS` record. Kafka renders in Monaco's built-in `json`
  * mode, which `DIALECT_EDITORS` says, and not here: this record is keyed by dialect, that one by tab type.
+ *
+ * The answers are Studio's: a declaration restates the row of the dialect it names, and Studio reads them from this
+ * record, never from a declaration (docs/providers/CONTRACT.md, clause M-50).
  */
 export const QUERY_DIALECTS: Readonly<Record<QueryDialect, DialectSpec>> = Object.freeze({
   libredb: Object.freeze({

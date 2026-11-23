@@ -74,6 +74,8 @@
  * declaration states each shipped engine's request as its record's row. `READ_ONLY_ENFORCED` has no member, since Studio
  * derives it from the write reach, and `connection.readsTrustMaterial`, which is no claim, is `READS_TRUST_MATERIAL`'s
  * row.
+ * The claims of the connection, facets, agent and SQL text segments are written the same way: each is the row of the
+ * review record docs/providers/CONTRACT.md, clause M-53, names for it.
  *
  * The editor facts come from `EXECUTION_UI`, the fence tag tables (`ALIAS_ENGINES` and `QUERY_FENCE_ALIASES`),
  * `QUERY_DIALECTS`, the editor language tables (`EDITOR_LANGUAGES` and `DIALECT_EDITORS`) and each engine's

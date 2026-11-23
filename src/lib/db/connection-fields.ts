@@ -766,6 +766,10 @@ const DEDICATED_PAIR: SeedAgentCredential = Object.freeze({ form: "dedicated-pai
  * engine that has no field to put one in (no password: SQLite, DuckDB, MTConnect, Modbus, Sparkplug B), signs in with
  * a secret and no user (Spark, Oxia, Firestore, SNMP), or would not be narrowed by one (Snowflake, whose key-pair
  * sign-in ignores the password and whose statements all run as the connection's role).
+ *
+ * This table is Studio's review record of the claim an engine declaration requests at `connection.agentCredential`, and
+ * every gate reads it: the declaration states each shipped engine's request as this table's row, and the table is never
+ * a projection of declarations (docs/providers/CONTRACT.md, clauses M-52 and M-53).
  */
 export const SEED_AGENT_CREDENTIAL: Readonly<Record<DatabaseType, SeedAgentCredential | null>> = Object.freeze({
   postgres: PAIR,
