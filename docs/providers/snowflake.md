@@ -82,6 +82,10 @@ An empty or malformed field is refused in the dialog and again by `connect()`, b
 - `Enter the programmatic access token. Nothing was sent.`
 - `Choose Key pair or Programmatic access token for Sign-in. Nothing was sent.`, by `connect()` and the seed load only, since the dialog's select offers only the two methods
 
+A private key or access token that holds only whitespace is empty, in the dialog as at connect.
+Studio refuses a connection whose Sign-in needs a private key or an access token it does not hold before it builds the provider, with the same sentence, on every path that builds a provider to connect it; an absent Sign-in reads as Key pair there too.
+Reading what a connection declares, without connecting it, does not refuse it.
+
 ### 2.2 The Account field
 
 Account takes:
@@ -753,6 +757,7 @@ Studio holds 4 statements per connection, 8 across all Snowflake connections of 
 A host that embeds Studio renders the exported `ConnectionModal`, whose `onTestConnection` adapter may return `fixStatement` (the registration statement the dialog shows with a copy button); a `warnings` array it adds (the Test connection cautions of [section 2.5](#25-test-connection)) is shown too, though the exported prop type does not declare it.
 `WorkspaceProps.onTestConnection` takes a fixed set of fields that has none of Snowflake's, so a host tests a Snowflake connection through `ConnectionModal`.
 The embedded package mounts no route, so a host that runs statements from its own backend must call `cancelQuery` itself when its user stops or leaves; until it does, an abandoned statement runs until its `timeout`.
+`createDatabaseProvider` refuses a Snowflake connection without the private key or access token its Sign-in needs with a `DatabaseConfigError` carrying the sentence of [section 2.1](#21-fields), before it builds the provider; a `SnowflakeProvider` constructed directly refuses it at `connect()`.
 
 ## 13. Evidence
 

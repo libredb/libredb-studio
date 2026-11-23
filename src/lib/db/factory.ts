@@ -38,6 +38,7 @@ import {
   REFUSES_DENIED_FILE_ACCESS,
 } from "./compatibility";
 import { assertStatementsReviewed } from "./statement-review";
+import { requiredSecretRefusal } from "./connection-form";
 import { assertDatabaseType, typeIdRow } from "./type-id";
 import { enabledProviderTypes } from "./enabled-providers";
 import { TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
@@ -114,6 +115,11 @@ import * as path from "path";
  *   if an OPC UA connection's client certificate or private key path names one of Studio's own storage files, holds a
  *   NUL byte, is not text or cannot be checked, naming the field (see admittedHostPathConnection),
  *   or if an OPC UA connection is built while `LIBREDB_OPCUA_PKI_ROOT` is relative (see opcuaPkiRoot)
+ * @throws DatabaseConfigError if the engine's form entry declares a required secret the connection shows and leaves
+ *   absent, not text or only whitespace (Snowflake's private key under Key pair, an absent Sign-in read as Key pair,
+ *   and its access token under a programmatic access token), with the entry's sentence for it, which names the field,
+ *   before the provider is built (see assertRequiredSecretsPresent); a provider constructed directly refuses it at
+ *   `connect()`
  *
  * @example
  * // SQL Database
@@ -295,7 +301,7 @@ export async function createDatabaseProvider(
   options: ProviderOptions = {},
   execution: ProviderExecutionContext = {},
 ): Promise<DatabaseProvider> {
-  return await buildProvider(connection, options, execution, true);
+  return await buildProvider(connection, options, execution, "connect");
 }
 
 /**
@@ -315,16 +321,17 @@ export interface ProviderDeclarations {
  *
  * It runs every check `createDatabaseProvider` runs, so a connection that one refuses for its type, its read-only
  * mode, its execution context or its tunnel (a malformed tunnel, an engine that takes none, a tunnel with nothing to
- * forward to) is refused here by the same sentence, except one: a tunnel that is on and was not opened. It builds the
- * provider from such a connection, reads it and lets it go, so the provider, whose `host` and `port` are the
- * database's own, is never handed out and can never be connected past the tunnel. It is not exported from the
+ * forward to) is refused here by the same sentence, except two: a tunnel that is on and was not opened, and a required
+ * secret its engine declares left blank (`assertRequiredSecretsPresent`), since reading what a connection declares
+ * never signs in. It builds the provider from such a connection, reads it and lets it go, so the provider, whose
+ * `host` and `port` are the database's own, is never handed out and can never be connected past the tunnel. It is not exported from the
  * package (`src/exports/`); an embedder reads a tunnelled connection's declarations inside `withOneShotTunnel`.
  */
 export async function readProviderDeclarations(
   connection: DatabaseConnection,
   execution: ProviderExecutionContext = {},
 ): Promise<ProviderDeclarations> {
-  const provider = await buildProvider(connection, {}, execution, false);
+  const provider = await buildProvider(connection, {}, execution, "declarations");
   return {
     capabilities: provider.getCapabilities(),
     labels: provider.getLabels(),
@@ -333,14 +340,31 @@ export async function readProviderDeclarations(
 }
 
 /**
- * The build `createDatabaseProvider` and `readProviderDeclarations` share: every check, then the provider. Only the
- * tunnel rule differs between them, `requireOpenedTunnel` (see `assertProviderTunnel` in ./tunnel-decision).
+ * Refuse a connection to be built to connect when its engine's form entry declares a required secret that it shows and
+ * leaves blank (`requiredSecretRefusal` in ./connection-form), with the entry's own sentence, which names the field as
+ * the dialog labels it. Read on the copy the provider would receive, so an agent credential core substituted is the
+ * one read. It names no type id: the declaration is the entry's. The refusal answers `outcome` `not-sent`, as the
+ * provider's own connect refusal does through `connectPhase`: nothing was sent, though it is raised before that phase.
+ */
+function assertRequiredSecretsPresent(connection: DatabaseConnection): void {
+  const refusal = requiredSecretRefusal(connection.type, connection);
+  if (refusal === undefined) return;
+  const error = new DatabaseConfigError(refusal, connection.type);
+  error.outcome = "not-sent";
+  throw error;
+}
+
+/**
+ * The build `createDatabaseProvider` and `readProviderDeclarations` share: every check, then the provider. Two rules
+ * differ by `purpose`: a tunnel that is on must have been opened (see `assertProviderTunnel` in ./tunnel-decision),
+ * and a required secret the engine declares must not be blank (`assertRequiredSecretsPresent`), each only for
+ * `"connect"`, the build of a provider that may be connected.
  */
 async function buildProvider(
   connection: DatabaseConnection,
   options: ProviderOptions,
   execution: ProviderExecutionContext,
-  requireOpenedTunnel: boolean,
+  purpose: "connect" | "declarations",
 ): Promise<DatabaseProvider> {
   // First, before every other check, the log line and the switch below: a type that names no provider is refused by
   // name, and no other refusal or default speaks for it (FND-1).
@@ -356,7 +380,7 @@ async function buildProvider(
   assertFileAccessPostureHonoured(connection, execution);
   // Core's decision about the tunnel (./tunnel-decision), before anything is built: a tunnel that is on is built only
   // when core opened it, so no provider can reach its server past the tunnel the connection asked for.
-  assertProviderTunnel(connection, requireOpenedTunnel);
+  assertProviderTunnel(connection, purpose === "connect");
   const egress = egressDecision();
   // Studio's storage location, taken here on every call so the first provider built in a process with no boot hook
   // takes it, whatever its engine, before a later working directory could move it (FND-2 slice 3, docs/SECURITY.md
@@ -369,6 +393,11 @@ async function buildProvider(
   // acquireExecutionProfileProvider, withOneShotTunnel), it dials with those before it calls this function; a tunnel that is on and was not opened was
   // refused above, except for readProviderDeclarations, which never hands its provider out.
   connection = providerConnection(connection);
+  // A provider built to connect is never built without a secret its engine declares it cannot sign in without
+  // (Snowflake's key under Key pair, its token under a programmatic access token): refused by name here, on the copy
+  // above, before any file is admitted, the build context is made or the creation is logged (FND-2 slice 6b,
+  // docs/SECURITY.md 3.41). Reading declarations never signs in, so it does not refuse.
+  if (purpose === "connect") assertRequiredSecretsPresent(connection);
   // A SQLite, DuckDB or LibreDB connection (`OPENS_LOCAL_FILE`) is handed the file core admitted, resolved against the
   // working directory now; one of Studio's own storage files, a path the reserved check cannot read, a NUL byte, a
   // connection string that names no file after `file:` or a name that is not text is refused here, by name, before any

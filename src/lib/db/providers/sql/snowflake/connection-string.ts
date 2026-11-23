@@ -1,5 +1,9 @@
 import type { ConnectionStringSpec, SeedCheckedFields, SeedFieldRefusal } from "@/lib/db/connection-string/types";
-import { checkSnowflakeAccount, SNOWFLAKE_FIELD_SENTENCES } from "@/lib/db/providers/sql/snowflake/account-host";
+import {
+  checkSnowflakeAccount,
+  SNOWFLAKE_FIELD_SENTENCES,
+  SNOWFLAKE_SIGN_IN_DEFAULT,
+} from "@/lib/db/providers/sql/snowflake/account-host";
 import { isSnowflakePaste, parseSnowflakeURL } from "@/lib/db/providers/sql/snowflake/paste";
 
 const blank = (value: string | undefined): boolean => value === undefined || value.trim() === "";
@@ -22,7 +26,7 @@ function snowflakeLoadRefusals(
   }
   if (judgeable(conn.user) && blank(conn.user))
     found.push({ field: "user", sentence: SNOWFLAKE_FIELD_SENTENCES.userEmpty });
-  const method = conn.authMethod ?? "keypair";
+  const method = conn.authMethod ?? SNOWFLAKE_SIGN_IN_DEFAULT;
   if (judgeable(method)) {
     if (method !== "keypair" && method !== "pat") {
       found.push({ field: "authMethod", sentence: SNOWFLAKE_FIELD_SENTENCES.method });

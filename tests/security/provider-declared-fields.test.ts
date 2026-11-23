@@ -11,17 +11,23 @@
  *
  * The second describe holds that a field an engine receives only to refuse it (`REFUSED_CONNECTION_FIELDS`) is still
  * refused by name through the factory, at connect and before any socket, against 127.0.0.1 port 1.
+ *
+ * The third holds that a connection whose engine declares a required secret (a `fieldRules` entry with `required` on a
+ * field the storage classification calls secret) is refused by `createDatabaseProvider` with the declared sentence
+ * when that secret is blank, before any provider is built, while `readProviderDeclarations` still reads it.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
-import { REFUSED_CONNECTION_FIELDS } from "@/lib/db/connection-fields";
+import { REFUSED_CONNECTION_FIELDS, type ConnectionField } from "@/lib/db/connection-fields";
+import { CONNECTION_FORM } from "@/lib/db/connection-form";
 import { DatabaseConfigError } from "@/lib/db/errors";
-import { createDatabaseProvider } from "@/lib/db/factory";
+import { createDatabaseProvider, readProviderDeclarations } from "@/lib/db/factory";
 import { providerFields } from "@/lib/db/provider-connection";
 import type { DatabaseConnection } from "@/lib/db/types";
+import { CONNECTION_FIELDS as FIELD_CLASS } from "@/lib/storage/secret-fields";
 import {
   ADMITTED_FILE,
   ADMITTED_HOST_PATHS,
@@ -236,6 +242,96 @@ describe("a field an engine receives only to refuse it is still refused by name 
         expect(other).toBeInstanceOf(Error);
         expect((other as Error).message).not.toBe(sentence);
       }
+    },
+  );
+});
+
+interface RequiredSecret {
+  readonly type: DatabaseType;
+  readonly field: ConnectionField;
+  readonly sentence: string;
+  /** The field and value that show it, when a `fieldShownWhen` condition does. */
+  readonly shownWhen?: { readonly field: ConnectionField; readonly equals: string };
+  /** Whether that value is the controlling field's declared default, so a record without the field shows it too. */
+  readonly byDefault: boolean;
+}
+
+/** Every declared required secret of every form entry, with the condition that shows it. */
+const REQUIRED_SECRETS: readonly RequiredSecret[] = Object.entries(CONNECTION_FORM).flatMap(([type, config]) =>
+  config.connectionFields.flatMap((field) => {
+    const sentence = config.fieldRules?.[field]?.required;
+    if (sentence === undefined || FIELD_CLASS[field] !== "secret") return [];
+    const shownWhen = config.fieldShownWhen?.[field];
+    const byDefault = shownWhen !== undefined && config.fieldDefaults?.[shownWhen.field] === shownWhen.equals;
+    return [{ type: type as DatabaseType, field, sentence, shownWhen, byDefault }];
+  }),
+);
+
+/** The blank forms of a secret: absent, empty, only whitespace and not text. */
+const BLANKS: readonly (readonly [string, unknown])[] = [
+  ["absent", undefined],
+  ["empty", ""],
+  ["whitespace", " \n\t "],
+  ["null", null],
+];
+
+/** The census record of the secret's type, its controlling field set (or removed) and the secret set to `value`. */
+function secretRecord(secret: RequiredSecret, value: unknown, selector: "set" | "absent"): DatabaseConnection {
+  const record: Record<string, unknown> = { ...CENSUS_CONNECTION[secret.type] };
+  if (secret.shownWhen !== undefined) {
+    if (selector === "set") record[secret.shownWhen.field] = secret.shownWhen.equals;
+    else delete record[secret.shownWhen.field];
+  }
+  delete record[secret.field];
+  if (value !== undefined) record[secret.field] = value;
+  return record as unknown as DatabaseConnection;
+}
+
+const SECRET_CASES = REQUIRED_SECRETS.flatMap((secret) =>
+  (secret.byDefault ? (["set", "absent"] as const) : (["set"] as const)).flatMap((selector) =>
+    BLANKS.map(([form, value]) => [`${secret.type}.${secret.field}`, form, selector, secret, value] as const),
+  ),
+);
+
+describe("a connection whose declared required secret is blank is refused by name before the provider is built (FND-2 slice 6b)", () => {
+  test("the declared required secrets are Snowflake's key under Key pair and its token under a programmatic access token", () => {
+    expect(
+      REQUIRED_SECRETS.map(({ type, field, shownWhen, byDefault }) => ({ type, field, shownWhen, byDefault })),
+    ).toEqual([
+      {
+        type: "snowflake",
+        field: "privateKey",
+        shownWhen: { field: "authMethod", equals: "keypair" },
+        byDefault: true,
+      },
+      { type: "snowflake", field: "password", shownWhen: { field: "authMethod", equals: "pat" }, byDefault: false },
+    ]);
+  });
+
+  test.each(SECRET_CASES)(
+    "%s %s, its selector %s: createDatabaseProvider refuses it with the declared sentence, readProviderDeclarations reads it",
+    async (_name, _form, selector, secret, value) => {
+      const record = secretRecord(secret, value, selector);
+      const before = structuredClone(record);
+      const error: unknown = await createDatabaseProvider(record).then(
+        () => undefined,
+        (caught: unknown) => caught,
+      );
+      expect(error).toBeInstanceOf(DatabaseConfigError);
+      expect((error as DatabaseConfigError).message).toBe(secret.sentence);
+      expect((error as DatabaseConfigError).provider).toBe(secret.type);
+      expect(record).toEqual(before);
+      const declarations = await readProviderDeclarations(record);
+      expect(declarations.capabilities).toBeDefined();
+      expect(declarations.labels).toBeDefined();
+    },
+  );
+
+  test.each(REQUIRED_SECRETS.map((secret) => [`${secret.type}.${secret.field}`, secret] as const))(
+    "%s holding a generated secret builds an unconnected provider",
+    async (_name, secret) => {
+      const provider = await createDatabaseProvider(secretRecord(secret, crypto.randomUUID(), "set"));
+      expect(provider.isConnected()).toBe(false);
     },
   );
 });

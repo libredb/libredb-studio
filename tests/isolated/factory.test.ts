@@ -1566,6 +1566,8 @@ describe("createDatabaseProvider", () => {
       trino: { port: 8080, database: "tpch" },
       cassandra: { port: 9042, database: "probe", localDataCenter: "datacenter1" } as Partial<DatabaseConnection>,
       libredb: { database: CENSUS_LIBREDB_FILE },
+      // The shared password is the access token: a key-pair connection with no key is refused before the build.
+      snowflake: { authMethod: "pat" },
     };
 
     const declaringTypes: string[] = [];
@@ -1623,6 +1625,8 @@ describe("createDatabaseProvider", () => {
       trino: { port: 8080, database: "tpch" },
       cassandra: { port: 9042, database: "probe", localDataCenter: "datacenter1" } as Partial<DatabaseConnection>,
       libredb: { database: CENSUS_LIBREDB_FILE },
+      // The shared password is the access token: a key-pair connection with no key is refused before the build.
+      snowflake: { authMethod: "pat" },
     };
 
     const cannotCancel: string[] = [];
@@ -6185,6 +6189,9 @@ test("a denied SQLite caller cannot borrow a cached administrator handle", async
 
 // Imported after the factory, which this file must evaluate first (the docblock above).
 const { SnowflakeProvider } = await import("@/lib/db/providers/sql/snowflake/index");
+const { SNOWFLAKE_FIELD_SENTENCES } = await import("@/lib/db/providers/sql/snowflake/account-host");
+const { testConnection } = await import("@/lib/api/test-connection");
+const { databaseErrorBody } = await import("@/lib/api/error-body");
 
 describe("the Snowflake provider in the factory", () => {
   /**
@@ -6264,6 +6271,42 @@ describe("the Snowflake provider in the factory", () => {
       connect.mockRestore();
       disconnect.mockRestore();
     }
+  });
+
+  test("a key-pair connection with no key is refused by core before the provider is built, on every connect path", async () => {
+    const connect = stubConnect();
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const record = snowflake({ id: "sf-no-key", authMethod: "keypair", password: undefined });
+      for (const attempt of [
+        () => createDatabaseProvider(record),
+        () => getOrCreateProvider(record),
+        () => acquireExecutionProfileProvider(record, "agent-operations"),
+        () => testConnection(record, {}, "/api/db/test-connection"),
+      ]) {
+        // oxlint-disable-next-line no-await-in-loop -- each path is refused before the next is tried.
+        const error: unknown = await attempt().catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(DatabaseConfigError);
+        expect((error as Error).message).toBe(SNOWFLAKE_FIELD_SENTENCES.keyEmpty);
+        // Nothing was sent, and the API answer says so: a client is never told to check its data after this refusal.
+        expect(databaseErrorBody(error)?.body.outcome).toBe("not-sent");
+      }
+      expect(log.mock.calls.some(([line]) => String(line).startsWith("[DB] Creating snowflake provider"))).toBe(false);
+      expect(getProviderCacheStats().size).toBe(0);
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+      expect(connect).not.toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+      connect.mockRestore();
+    }
+  });
+
+  test("readProviderDeclarations answers for that connection", async () => {
+    const declarations = await readProviderDeclarations(
+      snowflake({ id: "sf-no-key-read", authMethod: undefined, password: undefined }),
+    );
+    // What the provider built with its token declares: reading declarations never connects, so it never refuses.
+    expect(declarations.capabilities).toEqual((await createDatabaseProvider(snowflake())).getCapabilities());
   });
 
   test.each(["agent-read-only", "agent-handover"] as const)(

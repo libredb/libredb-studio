@@ -96,9 +96,10 @@ export const CENSUS_CONNECTION: Readonly<Record<DatabaseType, DatabaseConnection
   // Warehouse's among them, run in connect(), which no census reaches.
   databend: unconnected("databend"),
   bigquery: unconnected("bigquery"),
-  // No field beyond UNCONNECTED: the constructor validates nothing and opens nothing; the account, the key and the role
-  // are read at connect, which no census reaches.
-  snowflake: unconnected("snowflake"),
+  // Sign-in is a programmatic access token, so the shared password is the token: a key-pair row without a key is
+  // refused by core before the build. The constructor validates nothing and opens nothing; the account, the token and
+  // the role are read at connect, which no census reaches.
+  snowflake: { ...unconnected("snowflake"), authMethod: "pat" },
   // No field beyond UNCONNECTED: the constructor validates nothing and opens nothing; the host, the token, the catalog
   // and the namespace are read at connect, which no census reaches.
   spark: unconnected("spark"),
