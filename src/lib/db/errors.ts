@@ -26,8 +26,9 @@ export class DatabaseError extends Error {
 
   /**
    * `not-sent` when the statement this error answers never reached the database: set by the constructor of
-   * `RefusedBeforeSendError`, so every refusal before send carries it, and by `connectPhase` on what a provider's
-   * connect raised, its one writer outside a constructor. Absent otherwise, which `errorOutcome` in ./error-record
+   * `RefusedBeforeSendError`, so every refusal before send carries it, by `connectPhase` on what a provider's
+   * connect raised, and by `assertRequiredSecretsPresent` in ./factory on its refusal of a required secret left blank,
+   * each outside a constructor. Absent otherwise, which `errorOutcome` in ./error-record
    * reads as `unknown`, because the statement may have run. An own field only when set, so every other error keeps
    * the own keys it had. An instance a failed connect raised is never raised by a later statement: the factory keeps
    * no provider whose connect failed.

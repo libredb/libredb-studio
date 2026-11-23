@@ -504,6 +504,7 @@ So it carries no `agentUser`, `agentPassword`, `createdAt`, `color`, `environmen
 A field the engine does not declare is dropped, never refused.
 Every connection must be plain data, with or without a tunnel: a class instance, an inherited field, an accessor or a field that is not enumerable is refused with a `DatabaseConfigError` and nothing is built.
 An MSSQL connection that names only a connection string is refused by name, because SQL Server builds from its host and database fields.
+A connection without a secret its engine declares required (today Snowflake's private key under Key pair and its access token under a programmatic access token) is refused with a `DatabaseConfigError` carrying the dialog's sentence for it, before the provider is built, when that secret is absent, not text or only whitespace; before, the provider was built and `connect()` refused.
 
 `createDatabaseProvider`, `getOrCreateProvider`, `acquireExecutionProfileProvider` and `withOneShotTunnel` take the process's egress decision before they look in a cache, dial a tunnel or build a provider.
 The first call reads `DB_HTTP_BLOCK_PRIVATE_HOSTS`, logs which way it decided and whether that is the default in one info line, which a `LOG_LEVEL` of `warn` or `error` hides, and keeps the decision for the life of the process, so set the variable before the first call: a later change takes effect when the process restarts.

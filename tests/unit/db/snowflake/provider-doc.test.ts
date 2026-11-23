@@ -278,6 +278,20 @@ describe("docs/providers/snowflake.md", () => {
     expect(flat(sectionOf(DOC, "## 2. Connecting"))).toContain(SECONDARY_ROLES_SENTENCE);
   });
 
+  test("says Studio refuses a connection without the secret its Sign-in needs before it builds the provider, and connect() refuses it too", () => {
+    const fields = flat(sectionOf(DOC, "### 2.1 Fields"));
+    for (const sentence of [
+      "A private key or access token that holds only whitespace is empty, in the dialog as at connect.",
+      "Studio refuses a connection whose Sign-in needs a private key or an access token it does not hold before it builds the provider, with the same sentence, on every path that builds a provider to connect it; an absent Sign-in reads as Key pair there too.",
+      "Reading what a connection declares, without connecting it, does not refuse it.",
+    ]) {
+      expect(fields).toContain(sentence);
+    }
+    expect(flat(sectionOf(DOC, "## 12. Embedded package"))).toContain(
+      "`createDatabaseProvider` refuses a Snowflake connection without the private key or access token its Sign-in needs with a `DatabaseConfigError` carrying the sentence of [section 2.1](#21-fields), before it builds the provider; a `SnowflakeProvider` constructed directly refuses it at `connect()`.",
+    );
+  });
+
   test("the role check runs in connect(), needs no warehouse, and no sentence still times it at the first query", () => {
     const row = sectionOf(DOC, "### 5.1 Every billed surface")
       .split("\n")

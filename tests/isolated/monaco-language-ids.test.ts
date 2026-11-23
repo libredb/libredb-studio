@@ -228,8 +228,14 @@ async function everyDeclaredSourceLanguage(): Promise<
   for (const type of [...EXTERNAL_DATABASE_TYPES, "libredb"] as readonly DatabaseType[]) {
     // Db2 reads a stored connection string at construction and refuses one that is not db2://
     // (#786), so it is built without the shared MongoDB string.
+    // Snowflake is built with a programmatic access token, so the shared password is its token: a key-pair connection
+    // without a key is refused before the build.
     const built = await createDatabaseProvider(
-      type === "db2" ? { ...unconnected(type), connectionString: undefined } : unconnected(type),
+      type === "db2"
+        ? { ...unconnected(type), connectionString: undefined }
+        : type === "snowflake"
+          ? { ...unconnected(type), authMethod: "pat" }
+          : unconnected(type),
     );
     const provider = type === MARIADB_CAPABLE_TYPE ? withMeasuredMariaDBFlavour(built) : built;
     for (const kind of declaredKinds(provider.getCapabilities())) {

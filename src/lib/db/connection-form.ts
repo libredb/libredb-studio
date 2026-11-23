@@ -1539,6 +1539,30 @@ export function connectionFieldRefusal(config: ConnectionFormSpec, connection: D
 }
 
 /**
+ * The sentence of the first required secret the engine's form entry declares that `connection` shows and leaves blank,
+ * or `undefined` when there is none: a `fieldRules` entry with `required` on a field the storage classification calls
+ * `secret`, shown by `connectionFieldShown` (an absent controlling field read as its `fieldDefaults` value), and blank
+ * as `connectionFieldRefusal` reads it, not text or only whitespace. The fields are read in `connectionFields` order,
+ * and only these: every other rule is the dialog's and the provider's. Core reads it before it builds a provider to
+ * connect (`createDatabaseProvider` in ./factory), so a provider is never built without a secret its engine declares
+ * it cannot sign in without. The entry is read through `typeIdRow` (FND-1), so a type outside the `DatabaseType` union
+ * is refused by name.
+ *
+ * @throws {UnknownProviderError} When `type` is absent, not text, or names no provider.
+ */
+export function requiredSecretRefusal(type: DatabaseType, connection: DatabaseConnection): string | undefined {
+  const config = typeIdRow(CONNECTION_FORM, type);
+  const values = connection as Partial<Record<ConnectionField, unknown>>;
+  for (const field of config.connectionFields) {
+    const required = config.fieldRules?.[field]?.required;
+    if (required === undefined || FIELD_CLASS[field] !== "secret") continue;
+    if (!connectionFieldShown(config, field, values)) continue;
+    if (blankForRequired(field, values[field])) return required;
+  }
+  return undefined;
+}
+
+/**
  * The sentence under the Read-only toggle, which the dialog draws where every write path of the engine is gated
  * (`WRITE_REACH` `guarded`): there the mode changes what the connection may send, and it can be turned off.
  */

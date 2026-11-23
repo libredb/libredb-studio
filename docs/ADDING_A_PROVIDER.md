@@ -616,6 +616,11 @@ The import keeps the user's choices about how to connect (read-only, the object 
 The parser runs in the browser: it imports no `node:` module and no provider, never throws, and never keeps or prints a parser error, which can quote a credential.
 A declaring type is listed in `DECLARING` in `tests/unit/lib/connection-import-declaration.test.ts`.
 
+A secret your provider cannot sign in without is a `fieldRules` entry with `required` on a field the storage classification (`src/lib/storage/secret-fields.ts`) calls secret.
+Its sentence names the field as the dialog labels it, and `tests/unit/lib/db-ui-config.test.ts` pins the set of such declarations.
+Where it depends on another field, declare `fieldShownWhen`, and declare the other field's `fieldDefaults`: the value your provider reads when that field is absent.
+A value that is absent, not text or only whitespace is blank: the dialog refuses it before Test connection and Save, `createDatabaseProvider` refuses it before your provider is built, and your provider keeps its own refusal for a provider built directly.
+
 ## Step 5: Install the Driver
 
 ```bash

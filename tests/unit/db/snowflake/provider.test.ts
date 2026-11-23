@@ -6,6 +6,7 @@
  */
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { KeyObject } from "node:crypto";
+import { requiredSecretRefusal } from "@/lib/db/connection-form";
 import { enumerateContainers, scopeGroundingContainers } from "@/lib/db/container-walk";
 import {
   AuthenticationError,
@@ -232,6 +233,46 @@ describe("connect() validates the configuration before any socket", () => {
     const entry = build({ privateKey: "not a key" });
     expect(await caught(entry.provider.connect())).toBeInstanceOf(DatabaseConfigError);
     expect(entry.transports.requests).toHaveLength(0);
+  });
+});
+
+describe("core reads a required secret as connect() does", () => {
+  const signIns: readonly unknown[] = [undefined, null, "keypair", "pat", "", "oauth"];
+  const blanks: readonly unknown[] = [undefined, "", " \n\t", null, 42];
+  for (const authMethod of signIns) {
+    for (const blank of blanks) {
+      test(`Sign-in ${JSON.stringify(authMethod) ?? "absent"} with the secret ${JSON.stringify(blank) ?? "absent"}`, async () => {
+        const overrides = { authMethod, privateKey: blank, password: blank };
+        const entry = build(overrides);
+        const refused = ((await caught(entry.provider.connect())) as Error).message;
+        expect(entry.transports.requests).toHaveLength(0);
+        const core = requiredSecretRefusal("snowflake", connection(overrides));
+        if (refused === SNOWFLAKE_FIELD_SENTENCES.method) {
+          expect(core).toBeUndefined();
+        } else {
+          const secretSentences: readonly string[] = [
+            SNOWFLAKE_FIELD_SENTENCES.keyEmpty,
+            SNOWFLAKE_FIELD_SENTENCES.tokenEmpty,
+          ];
+          expect(secretSentences).toContain(refused);
+          expect(core).toBe(refused);
+        }
+      });
+    }
+  }
+
+  test("a present secret is not core's to refuse: a key that is no PEM is refused by connect() for its shape, nothing sent", async () => {
+    const key = { authMethod: "keypair", privateKey: crypto.randomUUID() };
+    expect(requiredSecretRefusal("snowflake", connection(key))).toBeUndefined();
+    const entry = build(key);
+    const error = await caught(entry.provider.connect());
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect((error as Error).message).not.toBe(SNOWFLAKE_FIELD_SENTENCES.keyEmpty);
+    expect(entry.transports.requests).toHaveLength(0);
+    // A token is never connected here: a present one would reach the transport.
+    expect(
+      requiredSecretRefusal("snowflake", connection({ authMethod: "pat", password: crypto.randomUUID() })),
+    ).toBeUndefined();
   });
 });
 
