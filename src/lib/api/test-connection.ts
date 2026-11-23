@@ -4,7 +4,9 @@ import {
   isSingleWriterFileOpen,
   withOneShotTunnel,
 } from "@/lib/db/factory";
-import { connectPhase } from "@/lib/db/errors";
+import { deadlineSignal } from "@libredb/provider-sdk/calls";
+import { connectBudgetFor } from "@/lib/db/connect-budget";
+import { ConnectionError, connectPhase, waitedSeconds } from "@/lib/db/errors";
 import {
   type ProviderTextScrub,
   providerTextScrub,
@@ -48,8 +50,8 @@ export type TestConnectionAnswer =
  * chose to give, and the user is told in the core's own words that a caution may be missing.
  * A resolution that is not an array is the same defect and gets the same answer.
  *
- * No deadline of its own is put on the call: the provider bounds its probes, as its
- * contract says, the same way `getHealth()` below is awaited unbounded.
+ * No deadline of its own is put on the call: the test's deadline bounds it, as it bounds
+ * `getHealth()` below.
  */
 async function testConnectionCautions(
   provider: DatabaseProvider,
@@ -72,14 +74,22 @@ async function testConnectionCautions(
   }
 }
 
-/** Settles as `work` does, or rejects with the signal's reason when the signal aborts first. */
-function untilAborted<T>(work: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
-  if (signal === undefined) return work;
+/**
+ * Settles as `work` does, or rejects with `expired()` when `deadline` aborts first; `work` keeps its handlers, so a
+ * late rejection is never a detached one.
+ */
+function untilDeadline<T>(work: Promise<T>, deadline: AbortSignal, expired: () => ConnectionError): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(signal.reason);
-    signal.addEventListener("abort", onAbort, { once: true });
-    void work.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+    const onDeadline = () => reject(expired());
+    if (deadline.aborted) onDeadline();
+    else deadline.addEventListener("abort", onDeadline, { once: true });
+    void work.then(resolve, reject).finally(() => deadline.removeEventListener("abort", onDeadline));
   });
+}
+
+/** The test's sentence for a test its engine's connect budget of `budgetMs` ended. */
+function testDeadlineSentence(budgetMs: number): string {
+  return `The connection test got no answer within ${waitedSeconds(budgetMs)}: check the address, the port, the network path and that the server is running.`;
 }
 
 /**
@@ -91,11 +101,13 @@ function untilAborted<T>(work: Promise<T>, signal: AbortSignal | undefined): Pro
  * A failed connect rejects with the provider's error, a `ConnectionError` naming the wait on a
  * deadline; the caller classifies it.
  *
- * `signal` is a deadline of the caller's own, which the route does not set and the VS Code
- * extension's child does (D276). Once it aborts, the test stops waiting for the connect and
- * rejects with the signal's reason, so a one-shot tunnel closes at once, and the provider it built
- * is closed when that connect settles: no provider promises a disconnect during its connect, and
- * one measured there (PostgreSQL, SQL Server) frees nothing sooner.
+ * The whole test, the tunnel, the build, the connect, the test-only checks and the health read,
+ * answers within its engine's connect budget from `now` (`connectBudgetFor`, src/lib/db/connect-budget.ts;
+ * docs/providers/CONTRACT.md, clause C-56). At that deadline it rejects with a `ConnectionError`
+ * naming the budget, never a caution or a degraded success: a one-shot tunnel closes at once, and
+ * the provider it built is closed once its connect settles, since no provider promises a
+ * disconnect during its connect, and one measured there (PostgreSQL, SQL Server) frees nothing
+ * sooner; a provider already connected is closed at once.
  *
  * Every provider text the answer carries passes core's scrub of `connection`
  * (`providerTextScrub(connection, "any")`): a caution field and the health failure's sentence that
@@ -105,17 +117,25 @@ export async function testConnection(
   connection: DatabaseConnection,
   execution: EditorExecutionContext,
   route: string,
-  signal?: AbortSignal,
+  now: number = Date.now(),
 ): Promise<TestConnectionAnswer> {
   const scrub = providerTextScrub(connection, "any");
+  const budget = connectBudgetFor(connection.type);
+  const deadline = deadlineSignal(now + budget);
+  let late: ConnectionError | undefined;
+  const expired = (): ConnectionError => {
+    late ??= new ConnectionError(testDeadlineSentence(budget), connection.type);
+    return late;
+  };
+  const within = <T>(work: Promise<T>): Promise<T> => untilDeadline(work, deadline, expired);
   // Through the tunnel, never around it (#457). This builds its provider directly rather than
   // through `getOrCreateProvider`, so it does not inherit that path's tunnel handling and has to
   // ask for it. `withOneShotTunnel` owns the tunnel's whole lifetime because nothing here is
   // cached, so no eviction would ever close a pooled one - and every failed test click would
   // strand it.
-  return await withOneShotTunnel(connection, async (effective): Promise<TestConnectionAnswer> => {
-    // A caller that stopped waiting while the tunnel opened gets nothing built.
-    signal?.throwIfAborted();
+  const tested = withOneShotTunnel(connection, async (effective): Promise<TestConnectionAnswer> => {
+    // A deadline that passed while the tunnel opened gets nothing built.
+    if (deadline.aborted) throw expired();
     /*
       The handle already holding this connection's file, on an engine that admits
       only one (`ProviderCapabilities.singleWriterFile`; #498).
@@ -146,7 +166,7 @@ export async function testConnection(
     // Both declared inside the scope so a provider this test opened is always torn
     // down before the tunnel it runs over, on the success and the failure path alike.
     let provider = borrowed;
-    /** The connect of a provider this test built, which a close after the caller's abort waits for. */
+    /** The connect of a provider this test built, which a close after the deadline waits for. */
     let connecting: Promise<void> = Promise.resolve();
     const release = async () => {
       const own = borrowed ? null : provider;
@@ -161,15 +181,15 @@ export async function testConnection(
           besideWriter ? { readOnly: true } : execution,
         );
         provider = opened;
-        // A caller that stopped waiting meanwhile gets no connect started.
-        signal?.throwIfAborted();
+        // A deadline that passed meanwhile gets no connect started.
+        if (deadline.aborted) throw expired();
         // The connection itself: every provider's connect() reaches the server and is
         // refused by a wrong host, port, credential or database - the SQL ones borrow a
         // pooled client, and the HTTP ones send a probe statement. So a connect that
         // returns is the fact this test exists to establish.
         // A deadline met here is a ConnectionError naming the wait (connectPhase), never the query sentence.
         connecting = connectPhase(() => opened.connect());
-        await untilAborted(connecting, signal);
+        await within(connecting);
       }
 
       // A connect can succeed onto something other than what was asked for, and the
@@ -182,7 +202,7 @@ export async function testConnection(
       // not the connection under test.
       const cautions = scrubProviderWarnings(scrub, [
         ...(provider.connectWarnings?.() ?? []),
-        ...(borrowed ? [] : await testConnectionCautions(provider, route, scrub)),
+        ...(borrowed ? [] : await within(testConnectionCautions(provider, route, scrub))),
       ]);
       const warnings = cautions.length > 0 ? { warnings: cautions } : {};
 
@@ -204,8 +224,10 @@ export async function testConnection(
       */
       const startTime = Date.now();
       try {
-        await provider.getHealth();
+        await within(provider.getHealth());
       } catch (healthError) {
+        // The deadline is the test's answer, never a degraded success.
+        if (healthError === late) throw healthError;
         await release();
 
         const withheld = withheldProviderError(scrub, healthError);
@@ -240,11 +262,13 @@ export async function testConnection(
             /* ignore */
           }
         };
-        // After the caller's abort the connect may still be pending: the provider is closed once
+        // After the deadline the connect may still be pending: the provider is closed once
         // it settles, and the rejection does not wait for that.
-        if (signal?.aborted) void connecting.then(close, close);
+        if (deadline.aborted) void connecting.then(close, close);
         else await close();
       }
     }
   });
+  // The tunnel's own open is inside the deadline too: the answer does not wait for a tunnel still opening.
+  return await within(tested);
 }

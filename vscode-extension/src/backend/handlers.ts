@@ -22,7 +22,6 @@ import {
   scrubObjectDetail,
   withheldProviderError,
 } from "@/lib/db/operations/provider-text";
-import { ConnectionError, waitedSeconds } from "@/lib/db/errors";
 import { executionUiFor } from "@/lib/db/execution-ui";
 import type { clearProviderCache, enabledProviderTypes, getOrCreateProvider } from "@/lib/db/factory";
 import { findKind, kindHasColumns } from "@/lib/db/object-kinds";
@@ -79,15 +78,6 @@ export const TEST_ROUTE = "vscode/connection/test";
 export const RUN_ROUTE = "vscode/query/run";
 /** The label a failure after a cancel stopped waiting is logged under. */
 const CANCEL_ROUTE = "vscode/query/cancel";
-
-/**
- * How long connection/test waits for the test connection core: the 10 s queryTimeout the core gives the provider, plus
- * a second, so a provider that honours that deadline answers in its own words.
- * PostgreSQL's and SQL Server's connect waits for its pool's 60 s acquireTimeout instead (60,242 ms measured against a
- * listener that never answers, where MySQL and MongoDB answered at 10.2 s), and the provider layer is not this
- * channel's to change (D276).
- */
-export const TEST_DEADLINE_MS = 11_000;
 
 /** The user the run gate's advisory warning names for this child: it serves one VS Code window and has no login. */
 export const RUN_CONFIRMATION_USER = "vscode-extension";
@@ -330,31 +320,13 @@ export function createHandlers(
       };
     },
 
-    // At the deadline the signal the core was handed aborts: the core closes a one-shot tunnel at once and the provider
-    // it built once the driver's connect settles, and the answer waits for neither. The race stays, since the core
-    // cannot stop a tunnel that is still opening.
+    // The core bounds the whole test by its own deadline, the engine's connect budget (docs/providers/CONTRACT.md,
+    // clause C-56): at it the core answers a ConnectionError naming the budget, closes a one-shot tunnel at once and
+    // the provider it built once the driver's connect settles.
     async testConnection(params) {
       const { connection, posture } = readConnectionParams(params);
       checkEnabledLocalFile(connection, posture);
-      const stop = new AbortController();
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const deadline = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
-          const late = new ConnectionError(
-            `The connection test got no answer within ${waitedSeconds(TEST_DEADLINE_MS)}: check the address, the port, the network path and that the server is running.`,
-            connection.type,
-          );
-          stop.abort(late);
-          reject(late);
-        }, TEST_DEADLINE_MS);
-      });
-      try {
-        return await answeringFor(connection, () =>
-          Promise.race([factory.testConnection(connection, posture, TEST_ROUTE, stop.signal), deadline]),
-        );
-      } finally {
-        clearTimeout(timer);
-      }
+      return await answeringFor(connection, () => factory.testConnection(connection, posture, TEST_ROUTE));
     },
 
     async openConnection(params) {

@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { PassThrough } from "node:stream";
-import { type Clock, install } from "@sinonjs/fake-timers";
 import { type CancellationToken, CancellationTokenSource, ResponseError } from "vscode-jsonrpc";
 import {
   createMessageConnection,
@@ -57,7 +56,6 @@ import {
   RUN_ROUTE,
   refusal,
   registerHandlers,
-  TEST_DEADLINE_MS,
   TEST_ROUTE,
   toResponseError,
 } from "../../src/backend/handlers";
@@ -262,12 +260,7 @@ describe("connection/test", () => {
       latency: 12,
     });
     assert.equal(TEST_ROUTE, "vscode/connection/test");
-    assert.deepEqual(
-      calls.map((call) => call.slice(0, 4)),
-      [["testConnection", REVIVED, { allowExternalFileAccess: true }, "vscode/connection/test"]],
-    );
-    assert.ok(calls[0][4] instanceof AbortSignal);
-    assert.equal(calls[0][4].aborted, false);
+    assert.deepEqual(calls, [["testConnection", REVIVED, { allowExternalFileAccess: true }, "vscode/connection/test"]]);
     assert.equal(registry.get("c1"), undefined);
   });
 
@@ -315,64 +308,33 @@ describe("connection/test", () => {
   });
 
   describe("its deadline", () => {
-    let clock: Clock;
-
-    beforeEach(() => {
-      clock = install({ toFake: ["setTimeout", "clearTimeout"] });
+    it("hands the core the connection, posture and route only, so the core's deadline bounds the test", async () => {
+      const handed: unknown[][] = [];
+      const { handlers } = backend(fakeProvider(), {
+        testConnection: async (...args) => {
+          handed.push(args);
+          return { success: true, message: "Connection successful", latency: 1 };
+        },
+      });
+      await handlers.testConnection({ connection: WIRE, posture: POSTURE });
+      assert.deepEqual(handed, [[REVIVED, { allowExternalFileAccess: true }, TEST_ROUTE]]);
     });
 
-    afterEach(() => {
-      clock.uninstall();
-    });
-
-    it("answers CONNECTION_ERROR when the core has not settled 11 s in, as a driver's unbounded connect leaves it", async () => {
-      assert.equal(TEST_DEADLINE_MS, 11_000);
-      const { handlers } = backend(fakeProvider(), { testConnection: () => new Promise(() => undefined) });
-      const answer = handlers.testConnection({ connection: WIRE, posture: POSTURE });
-      const settled = assert.rejects(answer, (error) => {
+    it("answers the core's deadline error as CONNECTION_ERROR with its sentence, its own status and code", async () => {
+      const late = new ConnectionError(
+        "The connection test got no answer within 70 seconds: check the address, the port, the network path and that the server is running.",
+        "postgres",
+      );
+      const { handlers } = backend(fakeProvider(), { testConnection: () => Promise.reject(late) });
+      await assert.rejects(handlers.testConnection({ connection: WIRE, posture: POSTURE }), (error) => {
         assert.ok(error instanceof ResponseError);
         assert.deepEqual(error.toJson(), {
           code: 503,
-          message:
-            "The connection test got no answer within 11 seconds: check the address, the port, the network path and that the server is running.",
+          message: late.message,
           data: { code: "CONNECTION_ERROR", retryable: true, kind: "connection", outcome: "unknown" },
         });
         return true;
       });
-      await clock.tickAsync(TEST_DEADLINE_MS - 1);
-      assert.equal(clock.countTimers(), 1);
-      await clock.tickAsync(1);
-      await settled;
-    });
-
-    it("aborts the signal it handed the core at the deadline, with the error it answers, so the core closes what it opened", async () => {
-      let signal: AbortSignal | undefined;
-      const { handlers } = backend(fakeProvider(), {
-        testConnection: (_connection, _execution, _route, handed) => {
-          signal = handed;
-          return new Promise(() => undefined);
-        },
-      });
-      const answer = handlers.testConnection({ connection: WIRE, posture: POSTURE }).catch((error: unknown) => error);
-      await clock.tickAsync(TEST_DEADLINE_MS - 1);
-      assert.equal(signal?.aborted, false);
-      await clock.tickAsync(1);
-      const error = await answer;
-      assert.equal(signal?.aborted, true);
-      assert.ok(signal?.reason instanceof ConnectionError);
-      assert.equal(signal.reason.provider, "postgres");
-      assert.ok(error instanceof ResponseError);
-      assert.deepEqual(error.toJson(), answeredWithScrub(signal.reason));
-    });
-
-    it("answers the core's own answer, or its error as toResponseError answers it with the connection's scrub, when it settles first, and leaves no timer", async () => {
-      const { handlers } = backend();
-      assert.equal((await handlers.testConnection({ connection: WIRE, posture: POSTURE })).success, true);
-      assert.equal(clock.countTimers(), 0);
-      const denied = new AuthenticationError("password authentication failed", "postgres");
-      const refusing = backend(fakeProvider(), { testConnection: () => Promise.reject(denied) });
-      await answeredAs(refusing.handlers.testConnection({ connection: WIRE, posture: POSTURE }), denied);
-      assert.equal(clock.countTimers(), 0);
     });
   });
 });

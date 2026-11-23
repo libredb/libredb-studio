@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D505, U17 · 369
+- [Drivers and connections](#drivers-and-connections) — D1-D505, U17 · 368
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -2848,19 +2848,6 @@ A `disconnect()` that runs while the probe is in flight finds no stored session,
 Found 2026-10-10 by the review of the S3 provider; not reached by any shipped flow, which awaits `connect()` before it can call `disconnect()`.
 
 **Done when:** a `disconnect()` during `connect()`'s probe leaves the provider disconnected and the probe's transport closed once the probe settles, with a test that holds the probe, disconnects, releases it, and expects no stored session and one closed transport.
-
-### D276. No deadline bounds a provider's `connect()` as a whole
-
-`testConnection` (`src/lib/api/test-connection.ts`), which both Test Connection and the VS Code extension's `connection/test` reach, awaits `provider.connect()` with no deadline of its own; the `queryTimeout` it passes bounds each request a provider makes, not the sum of them.
-A provider whose `connect()` makes several requests in turn (discovery, reviews, a paged list) can therefore hold Test Connection for many query timeouts, and a provider that loops on what a server answers holds it until the loop ends.
-The Kubernetes provider bounds its own walks (one deadline per walk and a count of empty pages), and a `disconnect()` closes a session still being opened, but no rule says every provider must.
-Measured 2026-10-21 for the VS Code extension's backend, against a listener on 127.0.0.1 that accepts TCP and never answers, with four engines tested through `testConnection` at once: MongoDB settled at 10,232 ms and MySQL at 10,249 ms on deadlines of their own, while PostgreSQL ("Connection terminated due to connection timeout") and SQL Server ("Failed to connect to 127.0.0.1:<port> in 60000ms") both settled at 60,242 ms, on the 60 s `acquireTimeout` their pools are built with rather than the 10 s `queryTimeout` the test passes.
-A `disconnect()` during that pending connect frees nothing sooner: PostgreSQL's `pool.end()` waited for the pending client until 60,153 ms, and SQL Server's `pool.close()` returned at once while tedious held its socket until its own 60 s connect timeout.
-The extension's `connection/test` answers `CONNECTION_ERROR` after 11 s instead (`TEST_DEADLINE_MS` in `vscode-extension/src/backend/handlers.ts`) and has `testConnection` close the provider when its connect settles, so a PostgreSQL or SQL Server server that takes between 11 and 60 seconds to accept a connection fails that channel's test and passes the web route's.
-
-Found 2026-10-11 by the review of the Kubernetes provider.
-
-**Done when:** the Test Connection route, or `BaseDatabaseProvider`, gives `connect()` one deadline derived from the query timeout, a connect past it is answered with a timeout sentence and its provider disconnected, a test holds a connect open and expects the sentence and the disconnect, and the extension's own `TEST_DEADLINE_MS` race is removed in favour of it.
 
 ### D277. Kubernetes watch and logs are bounded snapshots, never a live stream
 

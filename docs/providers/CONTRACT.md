@@ -1919,6 +1919,24 @@ A provider that bounds nothing of its own on a server that accepts and never ans
 - test `tests/isolated/factory.test.ts` "a cache clear names an open its deadline ended that is still connecting at the cut"
 - test `tests/api/db/query-open-wait.test.ts` "a connection whose open never settles is opened afresh by the next request after its connect budget"
 
+### C-56 (normative): Test connection answers within its engine's connect budget
+
+A Test connection has one deadline, its engine's connect budget from the test's start, M-51, over the whole test: the tunnel's open, the provider's build, its connect, the checks a provider runs only for a test and the health read.
+At that deadline the test answers a connection error naming the budget, never a caution or a degraded success.
+A one-shot tunnel closes at once, a provider already connected is closed at once, and a provider still connecting is closed once its connect settles, since no provider promises a disconnect during its connect.
+The same deadline holds on the Test connection route and in the VS Code backend's `connection/test`, which keeps no deadline of its own.
+
+- test `tests/unit/lib/api/test-connection.test.ts` "a connect still pending at the engine's connect budget rejects with the test's ConnectionError, and its provider is closed once the connect settles"
+- test `tests/unit/lib/api/test-connection.test.ts` "a connect that fails after the deadline gets its provider closed too, and its failure goes nowhere"
+- test `tests/unit/lib/api/test-connection.test.ts` "a deadline that passed while the tunnel opened builds nothing"
+- test `tests/unit/lib/api/test-connection.test.ts` "a deadline that passed while the provider was built starts no connect, and closes what was built"
+- test `tests/unit/lib/api/test-connection.test.ts` "checks or a health read still pending at the deadline answer the test's ConnectionError, never a caution or a degraded success"
+- test `tests/unit/lib/api/test-connection.test.ts` "the deadline names the engine's own budget"
+- test `tests/unit/lib/api/test-connection-bounds.test.ts` "a connect that never settles is cut at the test's deadline"
+- test `tests/api/db/test-connection.test.ts` "a test with no answer within the engine's connect budget answers 503 CONNECTION_ERROR with the test's sentence, and closes its provider once the connect settles"
+- test `vscode-extension/test/unit/backend-handlers.test.ts` "hands the core the connection, posture and route only, so the core's deadline bounds the test"
+- test `vscode-extension/test/unit/backend-handlers.test.ts` "answers the core's deadline error as CONNECTION_ERROR with its sentence, its own status and code"
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:

@@ -5,6 +5,7 @@ import { type AddressInfo, createServer, type Socket } from "node:net";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { type CancellationToken, CancellationTokenSource, ErrorCodes, ResponseError } from "vscode-jsonrpc/node";
+import { connectBudgetFor } from "@/lib/db/connect-budget";
 import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import type { Container, DatabaseObject, KindCount, ObjectDetail } from "@/lib/db/types";
 import { ENABLED_PROVIDERS } from "../../src/host/channel";
@@ -432,7 +433,7 @@ describe("the backend child against PostgreSQL, SQL Server, MySQL and MongoDB", 
     assert.doesNotMatch(session.stderr(), /Cannot find module/);
   });
 
-  it("ends connection/test against a listener that never answers, and keeps serving other connections", async () => {
+  it("ends connection/test against a listener that never answers within its engine's connect budget, and keeps serving other connections", async () => {
     const child = sharedChild();
     const held: Socket[] = [];
     const silent = createServer((socket) => {
@@ -461,7 +462,9 @@ describe("the backend child against PostgreSQL, SQL Server, MySQL and MongoDB", 
         assert.equal(error.code, 503, `${service}: ${error.message}`);
         assert.equal(error.data?.code, "CONNECTION_ERROR", service);
         assert.equal(error.data?.retryable, true, service);
-        assert.ok(took < 12_000, `${service} answered after ${took} ms`);
+        // Each engine ends its own connect against the silent listener, PostgreSQL and SQL Server at their pools' 60 s
+        // acquire bound and MySQL and MongoDB at 10 s, inside the connect budget the host waits for Test connection.
+        assert.ok(took < connectBudgetFor(service), `${service} answered after ${took} ms`);
       }
       assert.ok(selectTook < 2000, `select 1 took ${selectTook} ms`);
     } finally {

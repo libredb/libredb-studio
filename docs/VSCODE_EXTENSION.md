@@ -305,7 +305,7 @@ The child builds the catalogue with `engineCatalog` from `CONNECTION_PICKER_ORDE
 2. Pick a method, when the engine has a connection string scheme: paste a connection string or enter the details.
 3. Paste the string (parsed in the child by `connection/parse` with `parseConnectionString`), or answer one input box per field, with secret fields masked.
 4. Optionally open Review with the gear button, for SSL mode and advanced fields.
-5. Test: `connection/test` runs Studio's `testConnection` within `TEST_DEADLINE_MS` (11 s).
+5. Test: `connection/test` runs Studio's `testConnection`, which answers within the engine's connect budget, 70 s unless the engine's document states another ([`docs/providers/CONTRACT.md`](providers/CONTRACT.md), clause C-56): at it the test answers `CONNECTION_ERROR` naming the budget, and the provider it built is closed once its connect settles.
    A failed test offers Test Again or Back to Review; a degraded answer or one with warnings offers Save Anyway or Back to Review.
 6. Name the connection, then save.
 

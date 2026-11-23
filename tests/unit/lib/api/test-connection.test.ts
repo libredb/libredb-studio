@@ -17,6 +17,8 @@ let built: DatabaseProvider;
 let borrowed: DatabaseProvider | null = null;
 /** Whether a handle of any posture holds the file. */
 let fileOpen = false;
+/** What `createDatabaseProvider` waits for before it answers; settled unless a case holds the build. */
+let building: Promise<void> = Promise.resolve();
 
 const findOpenSingleWriterProvider = mock((connection: unknown, allowExternalFileAccess: boolean) => {
   void connection;
@@ -40,6 +42,7 @@ mock.module("@/lib/db/factory", () => ({
   createDatabaseProvider: async (...args: unknown[]) => {
     created.push(args);
     steps.push("create");
+    await building;
     return built;
   },
   findOpenSingleWriterProvider,
@@ -95,6 +98,7 @@ beforeEach(() => {
   created = [];
   borrowed = null;
   fileOpen = false;
+  building = Promise.resolve();
   findOpenSingleWriterProvider.mockClear();
   getOrCreateProvider.mockClear();
 });
@@ -270,55 +274,150 @@ describe("testConnection", () => {
     await expect(testConnection(connection, execution, route)).rejects.toThrow("refused");
   });
 
-  describe("the caller's signal", () => {
-    /** Lets the core run up to the connect it awaits. */
-    const turn = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+  describe("the test's deadline, its engine's connect budget", () => {
+    /** The test's sentence for a test its engine's budget of `seconds` ended. */
+    const SENTENCE = (seconds: number) =>
+      `The connection test got no answer within ${seconds} seconds: check the address, the port, the network path and that the server is running.`;
+    /** A `now` that puts the deadline of an engine with budget `budgetMs` `aheadMs` from now. */
+    const deadlineIn = (aheadMs: number, budgetMs = 70_000) => Date.now() - budgetMs + aheadMs;
+    /** A `now` so far back that the budget of any engine had passed before the test started. */
+    const passed = () => Date.now() - 400_000;
+    /** Resolves once `condition` holds, read after each turn of the event loop, never a timer. */
+    async function until(condition: () => boolean, what: string): Promise<void> {
+      for (let turn = 0; !condition(); turn += 1) {
+        if (turn === 1_000) throw new Error(`${what} did not happen within 1000 turns of the event loop`);
+        // oxlint-disable-next-line no-await-in-loop -- each turn reads the condition again after what it let run.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+    }
+    /** A disconnect that records its step and resolves `closed` when it runs. */
+    function closing() {
+      const closed = Promise.withResolvers<void>();
+      return {
+        closed: closed.promise,
+        disconnect: async () => {
+          closed.resolve();
+        },
+      };
+    }
 
-    test("an abort during the connect rejects at once with its reason and closes the tunnel, and the provider is closed once the connect settles", async () => {
+    test("a connect still pending at the engine's connect budget rejects with the test's ConnectionError, and its provider is closed once the connect settles", async () => {
       const pending = Promise.withResolvers<void>();
-      built = recording({ connect: () => pending.promise });
-      const stop = new AbortController();
-      const reason = new ConnectionError("The connection test got no answer within 11 seconds.", "postgres");
-      const answer = testConnection(connection, execution, route, stop.signal).catch((error: unknown) => error);
-      await turn();
-      expect(steps).toEqual(["tunnel open", "create", "connect"]);
-      stop.abort(reason);
-      expect(await answer).toBe(reason);
+      const close = closing();
+      built = recording({ connect: () => pending.promise, disconnect: close.disconnect });
+
+      const caught = await testConnection(connection, execution, route, deadlineIn(30)).catch(
+        (error: unknown) => error,
+      );
+
+      expect(caught).toBeInstanceOf(ConnectionError);
+      expect((caught as Error).message).toBe(SENTENCE(70));
+      await until(() => steps.includes("tunnel close"), "the tunnel's close");
       expect(steps).toEqual(["tunnel open", "create", "connect", "tunnel close"]);
       pending.resolve();
-      await turn();
+      await close.closed;
       expect(steps).toEqual(["tunnel open", "create", "connect", "tunnel close", "disconnect"]);
       expect(callsOf(built.getHealth)).toHaveLength(0);
     });
 
-    test("a connect that fails after the abort gets its provider closed too, and its failure goes nowhere", async () => {
+    test("a connect that fails after the deadline gets its provider closed too, and its failure goes nowhere", async () => {
       const pending = Promise.withResolvers<void>();
-      built = recording({ connect: () => pending.promise });
-      const stop = new AbortController();
-      const answer = testConnection(connection, execution, route, stop.signal).catch((error: unknown) => error);
-      await turn();
-      stop.abort(new Error("deadline"));
-      expect(((await answer) as Error).message).toBe("deadline");
+      const close = closing();
+      built = recording({ connect: () => pending.promise, disconnect: close.disconnect });
+
+      const caught = await testConnection(connection, execution, route, deadlineIn(30)).catch(
+        (error: unknown) => error,
+      );
+
+      expect((caught as Error).message).toBe(SENTENCE(70));
       pending.reject(new Error("refused"));
-      await turn();
+      await close.closed;
       expect(steps.at(-1)).toBe("disconnect");
     });
 
-    test("a signal that aborted before the tunnel's callback ran builds nothing", async () => {
+    test("a deadline that passed while the tunnel opened builds nothing", async () => {
       built = recording();
-      const stop = new AbortController();
-      const reason = new Error("deadline");
-      stop.abort(reason);
-      expect(await testConnection(connection, execution, route, stop.signal).catch((error: unknown) => error)).toBe(
-        reason,
-      );
+
+      const caught = await testConnection(connection, execution, route, passed()).catch((error: unknown) => error);
+
+      expect(caught).toBeInstanceOf(ConnectionError);
+      expect((caught as Error).message).toBe(SENTENCE(70));
+      await until(() => steps.includes("tunnel close"), "the tunnel's close");
       expect(steps).toEqual(["tunnel open", "tunnel close"]);
       expect(created).toHaveLength(0);
     });
 
-    test("a signal that never aborts changes nothing", async () => {
+    test("a deadline that passed while the provider was built starts no connect, and closes what was built", async () => {
+      const build = Promise.withResolvers<void>();
+      building = build.promise;
+      const close = closing();
+      built = recording({ disconnect: close.disconnect });
+
+      const caught = await testConnection(connection, execution, route, deadlineIn(30)).catch(
+        (error: unknown) => error,
+      );
+
+      expect((caught as Error).message).toBe(SENTENCE(70));
+      build.resolve();
+      await close.closed;
+      await until(() => steps.includes("tunnel close"), "the tunnel's close");
+      expect(steps).toEqual(["tunnel open", "create", "disconnect", "tunnel close"]);
+    });
+
+    test("checks or a health read still pending at the deadline answer the test's ConnectionError, never a caution or a degraded success", async () => {
+      const checks = closing();
+      built = recording({
+        testConnectionWarnings: () => new Promise<never>(() => {}),
+        disconnect: checks.disconnect,
+      });
+      const inChecks = await testConnection(connection, execution, route, deadlineIn(30)).catch(
+        (error: unknown) => error,
+      );
+      expect(inChecks).toBeInstanceOf(ConnectionError);
+      expect((inChecks as Error).message).toBe(SENTENCE(70));
+      await checks.closed;
+      await until(() => steps.includes("tunnel close"), "the tunnel's close");
+      // A provider already connected is closed at once, before the tunnel it runs over.
+      expect(steps).toEqual([
+        "tunnel open",
+        "create",
+        "connect",
+        "testConnectionWarnings",
+        "disconnect",
+        "tunnel close",
+      ]);
+
+      steps = [];
+      const health = closing();
+      built = recording({ getHealth: () => new Promise<never>(() => {}), disconnect: health.disconnect });
+      const inHealth = await testConnection(connection, execution, route, deadlineIn(30)).catch(
+        (error: unknown) => error,
+      );
+      expect(inHealth).toBeInstanceOf(ConnectionError);
+      expect((inHealth as Error).message).toBe(SENTENCE(70));
+      await health.closed;
+      await until(() => steps.includes("tunnel close"), "the tunnel's close");
+      expect(steps).toEqual(["tunnel open", "create", "connect", "getHealth", "disconnect", "tunnel close"]);
+    });
+
+    test("the deadline names the engine's own budget", async () => {
+      const pending = Promise.withResolvers<void>();
+      built = recording({ connect: () => pending.promise });
+      const bigquery = { ...connection, type: "bigquery" } as DatabaseConnection;
+
+      const caught = await testConnection(bigquery, execution, route, deadlineIn(30, 140_000)).catch(
+        (error: unknown) => error,
+      );
+
+      expect(caught).toBeInstanceOf(ConnectionError);
+      expect((caught as Error).message).toBe(SENTENCE(140));
+      expect((caught as ConnectionError).provider).toBe("bigquery");
+      pending.resolve();
+    });
+
+    test("a test that answers within its budget answers as before", async () => {
       built = recording();
-      const answer = await testConnection(connection, execution, route, new AbortController().signal);
+      const answer = await testConnection(connection, execution, route);
       expect(answer.success).toBe(true);
       expect(steps).toEqual(["tunnel open", "create", "connect", "getHealth", "disconnect", "tunnel close"]);
     });
