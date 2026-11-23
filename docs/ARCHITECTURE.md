@@ -435,6 +435,7 @@ An object member whose value is `undefined` is left out, as JSON leaves it out, 
 Nesting is bounded at `MAX_VALUE_DEPTH` arrays and objects on encode and decode, so a deep or cyclic value is refused by name instead of overflowing the stack.
 The module uses no Node-only global, so it loads in the browser as well as on the server.
 The SQLite worker's line is the hop that carries it: the parent encodes parameters and decodes answers with the module, and the child's bootstrap carries a restricted copy ([`docs/providers/sqlite.md`](providers/sqlite.md#34-no-transactions-api-no-pool-cancellation-via-the-child-process-worker)).
+MCP's statement tools answer each row in it ([`docs/MCP.md`](MCP.md#limits)).
 
 ### 4.14. Error records (`src/lib/db/error-record.ts`)
 

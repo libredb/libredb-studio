@@ -1,3 +1,4 @@
+import type { ValueTag } from "@libredb/provider-sdk/values";
 import { errorRecord, type ProviderTextScrub, scrubProviderText } from "@/lib/db/operations/provider-text";
 import { logger } from "@/lib/logger";
 import { MCP_AUDIT_FAILURE_TEXT } from "./audit";
@@ -42,6 +43,33 @@ export const MCP_ENGINE_MESSAGE_CAP_BYTES = 4_096;
 export const MCP_TABLE_COMMENT_CAP_BYTES = 2_048;
 export const MCP_ENGINE_MESSAGE_CUT_SUFFIX = " (message cut at 4 KiB)";
 export const MCP_ENGINE_ERROR_PREFIX = "The database refused or failed the call: ";
+/**
+ * The lead of the refusal of an answer that holds a value outside the value codec (a class instance, a typed array
+ * other than bytes, an invalid date, nesting past the codec's bound): the codec's own sentence follows it, naming the
+ * kind and the place, never the value. The place quotes column names and document keys, so the refusal stands behind
+ * the notice naming the provider, as an engine message does.
+ */
+export const MCP_CELL_REFUSED_PREFIX = "The result holds a value this server cannot answer: ";
+
+/** What each tag's payload is, by tag: a `Record` over `ValueTag`, so a tag the schema adds must be described here. */
+const CELL_TAG_PAYLOADS: Record<ValueTag, string> = {
+  i64: "a 64-bit integer, as its decimal digits",
+  bytes: "binary data, as standard padded base64",
+  ts: "an instant, as ISO 8601 UTC text (toISOString)",
+  nf: "NaN, Infinity or -Infinity, as that word",
+  obj: "a value whose own keys are exactly $ and v, as that object with its two values encoded",
+};
+
+/**
+ * How a statement tool's `rows` carry each cell, stated on the output schema's `rows` so a client reads it in
+ * tools/list: plain JSON, or a tagged value as `@libredb/provider-sdk/values` writes it. docs/MCP.md, Limits, states
+ * the same.
+ */
+export const MCP_CELL_FORM = `Each cell is plain JSON, or a tagged value {"$": tag, "v": payload} as @libredb/provider-sdk/values writes it. ${Object.entries(
+  CELL_TAG_PAYLOADS,
+)
+  .map(([tag, payload]) => `${tag}: ${payload}.`)
+  .join(" ")}`;
 export const MCP_READ_ONLY_ANNOTATIONS = { readOnlyHint: true, openWorldHint: false } as const;
 /** The same answer for a connection id that exists and one that does not, so no id can be probed. */
 export const MCP_NOT_VISIBLE_TEXT =

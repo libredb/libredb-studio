@@ -201,7 +201,6 @@ describe("the module's imports", () => {
       "src/lib/logged-text.ts",
       "src/lib/logger.ts",
       "src/lib/mcp/serializer.ts",
-      "src/lib/non-finite.ts",
       "src/lib/query-events/queued.ts",
       "src/lib/uncaught-exception.ts",
     ]);
