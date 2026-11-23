@@ -1,3 +1,4 @@
+import { encodeValue, type WireValue } from "@libredb/provider-sdk/values";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { getDBConfig } from "@/lib/db-ui-config";
@@ -35,6 +36,8 @@ import {
   engineError,
   MCP_CALL_READ_ALLOWANCE,
   MCP_CANCELLED_TEXT,
+  MCP_CELL_FORM,
+  MCP_CELL_REFUSED_PREFIX,
   MCP_ENGINE_ERROR_PREFIX,
   MCP_NOT_VISIBLE_TEXT,
   MCP_PROVIDER_BYTE_CAP,
@@ -49,7 +52,7 @@ import {
   withByteSize,
   type ToolResult,
 } from "../output";
-import { redactErrorMessage, safeSerialize } from "../serializer";
+import { redactErrorMessage } from "../serializer";
 import { databaseRequiredAnswer, McpDatabaseChoiceError, providerInDatabase } from "./database-choice";
 import {
   classifyReadQueryFailure,
@@ -91,7 +94,10 @@ import {
  * already running (docs/BACKLOG.md D128), they end the wait.
  *
  * Rows are fetched one past the page where the arm pages, so the extra row proves more exist, cut to max_rows, then
- * cut to the result cap by binary search. offset on a query the provider did not rewrite is refused before anything
+ * cut to the result cap by binary search. The rows an answer can carry, the first max_rows, are written in the value
+ * codec's wire form (`encodeValue` of `@libredb/provider-sdk/values`, `MCP_CELL_FORM`), in structuredContent and in the
+ * JSON text block alike; a value outside the codec refuses the whole answer by the codec's sentence, behind the notice
+ * naming the provider, since its place quotes column names and document keys. offset on a query the provider did not rewrite is refused before anything
  * runs, because the provider would answer the first page labelled with the requested offset; so is an offset the
  * provider's prepareQuery refuses by throwing OffsetUnsupportedError, answered in its words behind a notice naming
  * it, and any offset on an engine whose accepted-forms row says its SQL has none, refused before prepareQuery with the
@@ -116,7 +122,7 @@ const StatementOutputSchema = z.object({
   connection_id: z.string(),
   database: z.string().optional(),
   columns: z.array(z.object({ name: z.string(), type: z.string().optional() })),
-  rows: z.array(z.record(z.string(), z.unknown())),
+  rows: z.array(z.record(z.string(), z.unknown())).describe(MCP_CELL_FORM),
   row_count: z.number().int(),
   truncated: z.boolean(),
   truncated_by: z.enum(["max_rows", "result_bytes"]).nullable(),
@@ -210,17 +216,28 @@ function profileRefusal(call: StatementCall, error: ExecutionProfileError, scrub
   ];
 }
 
-function resultOf(call: StatementCall, type: DatabaseType, prepared: PreparedQuery, raw: QueryResult): Answer {
+function resultOf(
+  call: StatementCall,
+  type: DatabaseType,
+  prepared: PreparedQuery,
+  raw: QueryResult,
+  scrub: ProviderTextScrub,
+): Answer {
   const { args, arm, offset } = call;
-  const all = safeSerialize(raw.rows);
-  const page = all.slice(0, args.max_rows);
+  // Only the rows an answer can carry: a value in the row past the page, which proves more exist, never refuses it.
+  let page: { [column: string]: WireValue }[];
+  try {
+    page = encodeValue(raw.rows.slice(0, args.max_rows)) as { [column: string]: WireValue }[];
+  } catch (error) {
+    return [engineError(MCP_CELL_REFUSED_PREFIX, error, scrub, providerAuthor(type)), "mcp_execution_failed"];
+  }
   const columns = raw.fields.map((name) => {
     const type = raw.columnTypes?.[name];
     return type === undefined ? { name } : { name, type };
   });
   const build = (count: number) => {
-    const truncatedBy = count < page.length ? "result_bytes" : all.length > args.max_rows ? "max_rows" : null;
-    const hasMore = all.length > count;
+    const truncatedBy = count < page.length ? "result_bytes" : raw.rows.length > args.max_rows ? "max_rows" : null;
+    const hasMore = raw.rows.length > count;
     // Only a query the provider paged, on an engine whose SQL has an offset to page the next call with.
     const nextOffset = hasMore && prepared.wasLimited && pagesWithOffset(type) ? offset + count : null;
     return withByteSize(
@@ -405,7 +422,7 @@ async function executeOpened(
   // so it goes behind a notice naming the provider, scrubbed, redacted and cut as an engine message is.
   if (executed.kind === "failed") return acquisitionFailure(call, executed, deadline, record, scrub);
   // The notes an arm answers are the provider's text too, scrubbed before the answer is built.
-  return resultOf(call, connection.type, prepared.prepared, withScrubbedWarnings(scrub, executed.value));
+  return resultOf(call, connection.type, prepared.prepared, withScrubbedWarnings(scrub, executed.value), scrub);
 }
 
 /** The sentence an engine this arm does not serve is refused with, naming the tool that does serve it. */

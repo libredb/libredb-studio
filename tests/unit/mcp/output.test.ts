@@ -4,6 +4,7 @@
  * handler result and sits inside it twice.
  */
 import { describe, expect, spyOn, test } from "bun:test";
+import manifestSchema from "@libredb/provider-sdk/manifest.schema.json";
 import { logger } from "@/lib/logger";
 import {
   cutUtf8,
@@ -12,6 +13,7 @@ import {
   engineMessage,
   MCP_BYTE_SIZE_MAX_ROUNDS,
   MCP_CANCELLED_TEXT,
+  MCP_CELL_FORM,
   MCP_ENGINE_ERROR_PREFIX,
   MCP_NOT_VISIBLE_TEXT,
   MCP_ENGINE_MESSAGE_CAP_BYTES,
@@ -60,6 +62,15 @@ describe("the constants", () => {
       "No connection with that id is available to this token. Call list_connections for the ids you can use.",
     );
     expect(MCP_CANCELLED_TEXT).toBe("The call was cancelled before it finished.");
+  });
+});
+
+describe("the cell form", () => {
+  test("MCP_CELL_FORM names every tag of the manifest schema's valueTag, and its payload", () => {
+    const tags = manifestSchema.$defs.valueTag.enum;
+    expect(tags.length).toBeGreaterThan(0);
+    for (const tag of tags) expect(MCP_CELL_FORM, tag).toMatch(new RegExp(` ${tag}: [^.]+\\.`));
+    expect(MCP_CELL_FORM).toStartWith('Each cell is plain JSON, or a tagged value {"$": tag, "v": payload}');
   });
 });
 

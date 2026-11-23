@@ -476,7 +476,7 @@ The tags are the schema's `valueTag`, typed `ValueTag`, and the codec's module c
 
 ### V-2 (normative): Every tag round-trips
 
-A value the codec encodes decodes to the same value, and a JSON value with no tagged kind crosses unchanged.
+A value the codec encodes decodes to the same value, an object member left out under V-9 aside, and a JSON value with no tagged kind crosses unchanged.
 
 - test `packages/provider-sdk/tests/values/codec.test.ts` "every bigint from -2^63 to 2^64 - 1 round-trips as its decimal digits"
 - test `packages/provider-sdk/tests/values/codec.test.ts` "every Uint8Array and Buffer round-trips as canonical base64, byte for byte"
@@ -522,10 +522,22 @@ A later minor of the contract adds such a tag together with the provider that ne
 The codec uses no Node-only global, so it loads in a browser as well as on the server.
 Nothing checks this yet.
 
-### V-8 (informative): Nesting depth is not bounded
+### V-8 (normative): Nesting depth is bounded
 
-A value nested deeper than the stack allows throws a `RangeError`, not a `ValueCodecError`.
-A reader that takes documents from outside bounds their depth before it decodes them.
+An array or a data object nested inside `MAX_VALUE_DEPTH` others is refused on encode and on decode with a `ValueCodecError` naming its JSON Pointer, so a deep or cyclic value is refused by name and never overflows the stack.
+A tagged value counts as the one value it carries: the wire's tag wrapper adds no level, and an `obj` payload is the data object the bound counts.
+
+- test `packages/provider-sdk/tests/values/codec.test.ts` "a value inside MAX_VALUE_DEPTH arrays and objects round-trips, and one level more is refused on encode and decode, naming its path"
+- test `packages/provider-sdk/tests/values/codec.test.ts` "a tagged value adds no level, so the bound counts the value's own arrays and objects"
+- test `packages/provider-sdk/tests/values/codec-depth.test.ts` "a value nested far past any stack is refused by the depth rule in a bounded Node child, never a RangeError"
+
+### V-9 (normative): An object member whose value is undefined is left out
+
+An object member whose value is `undefined` is left out on encode, as JSON leaves it out, and the `obj` escape is decided on the members written.
+`undefined` at the root or as an array element is refused.
+
+- test `packages/provider-sdk/tests/values/codec.test.ts` "an object member whose value is undefined is left out, and undefined anywhere else is refused"
+- test `packages/provider-sdk/tests/values/codec.test.ts` "the obj escape is decided on the members written"
 
 ## Errors
 
@@ -843,7 +855,8 @@ The package root never re-exports it, and Studio's runtime source under `src/`, 
 `serve` puts a provider module record behind the memory test transport: every call crosses as one request frame and one answer frame, each the JSON text of what `encodeValue` wrote, parsed and decoded with `decodeValue` on the other side.
 The provider receives decoded copies, its context frozen by `freezeContext` with the host's `signal` and `env` attached by reference, and its request by `freezeData`, and the host's own context and request are left as the host built them.
 The host receives decoded copies of each answer.
-A value outside the codec's domain, an `undefined` optional member included, fails where it is encoded, with the codec's own `ValueCodecError`, before the other side is called, and a frame that `readFrame` or `roundTripRefusals` refuses fails as one `FrameRefusalError`.
+A value outside the codec's domain fails where it is encoded, with the codec's own `ValueCodecError`, before the other side is called.
+An `undefined` optional member, which the codec leaves out (V-9), is refused by the round trip as `round-trip-changed` at its pointer, and a frame that `readFrame` or `roundTripRefusals` refuses fails as one `FrameRefusalError`.
 An error either side throws crosses by reference.
 `serve` checks the module with `checkProviderModule` first and serves nothing it refuses, and what it serves is itself an implementation of the module's manifest, with the module's facets.
 

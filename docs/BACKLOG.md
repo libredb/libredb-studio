@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D498, U17 · 366
+- [Drivers and connections](#drivers-and-connections) — D1-D499, U17 · 367
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -4906,6 +4906,18 @@ So a connection whose secret-class value holds one fails wherever its scrub is c
 Found 2026-11-23 in the review of FND-6 slice 5c3, probed under Bun.
 
 **Done when:** such a secret is refused with a sentence that names its field, or its scrub states why the form that cannot be URI-encoded is absent, with a test either way.
+
+### D499. Over MCP, an Oracle VECTOR of numbers and a MongoDB undefined inside an array refuse the whole answer
+
+MCP answers every cell through the value codec, which refuses a value outside its domain by name.
+node-oracledb hands a `VECTOR` column of `FLOAT32`, `FLOAT64` or `INT8` values as a `Float32Array`, `Float64Array` or `Int8Array`, which the codec refuses, so a statement that selects one answers "The result holds a value this server cannot answer:" in place of its rows; a `BINARY` vector is a `Uint8Array` and crosses as bytes.
+The Oracle provider sets no fetch type handler for `VECTOR` (`src/lib/db/providers/sql/oracle/index.ts`).
+MongoDB can hand BSON `undefined` inside an array, where the codec refuses `undefined`, while an object member whose value is `undefined` is left out (clause V-9 in `docs/providers/CONTRACT.md`).
+Selecting the column as text, or leaving it out, answers.
+
+Found 2026-11-23 while planning FND-6 slice 5e, by reading the code, not measured against a server.
+
+**Done when:** the Oracle provider hands a numeric `VECTOR` as an array of numbers and the MongoDB provider hands an array's `undefined` as `null`, each held by an integration test, and an MCP answer that selects them carries their rows.
 
 ## Value interpolation
 

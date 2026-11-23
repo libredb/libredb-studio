@@ -1,7 +1,8 @@
 /**
  * The MCP protocol layer (#246), served by the SDK's createMcpHandler and driven by the SDK's
  * own client in process: both eras, the revisions served, the capability objects, GET and
- * DELETE, ping, notifications, and how a cancel reaches a running call.
+ * DELETE, ping, notifications, how a cancel reaches a running call, and the cells of an answer
+ * as a client reads them.
  *
  * Everything here calls the production handler directly with an identity built in the test;
  * the route's own admission is tested through the route.
@@ -10,9 +11,13 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, te
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { decodeValue, MAX_VALUE_DEPTH } from "@libredb/provider-sdk/values";
 import { getServerAuditBuffer } from "@/lib/audit";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { DuckDBProvider } from "@/lib/db/providers/sql/duckdb";
+import type { QueryResult } from "@/lib/types";
 import { logger } from "@/lib/logger";
+import { databaseContentNotice, MCP_CELL_FORM, MCP_CELL_REFUSED_PREFIX } from "@/lib/mcp/output";
 import { listedStatementArms } from "@/lib/mcp/tools/statement-arms";
 import {
   APP_VERSION,
@@ -51,6 +56,8 @@ beforeAll(async () => {
   createSqliteFile(join(dir, "shop.db"), [
     "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)",
     "INSERT INTO users VALUES (1, 'Ada'), (2, 'Grace')",
+    "CREATE TABLE blobs (data BLOB)",
+    "INSERT INTO blobs VALUES (x'00ff10')",
   ]);
   await createDuckdbFile(join(dir, "slow.duckdb"), [
     "CREATE TABLE answers (answer INTEGER)",
@@ -376,6 +383,186 @@ describe("an error answer's record", () => {
         });
         expect(result.isError).toBe(true);
         expect(result.structuredContent).toBeUndefined();
+      } finally {
+        await session.close();
+      }
+    },
+  );
+});
+
+describe("the cells of an answer", () => {
+  /** One run_read_query call through the SDK's own client, answered as the client reads it. */
+  const callRows = async (connection: string, sql: string, extra: Record<string, unknown> = {}) => {
+    const session = await connectClient(serve);
+    try {
+      return await session.client.callTool({
+        name: "run_read_query",
+        arguments: { connection_id: connection, sql, ...extra },
+      });
+    } finally {
+      await session.close();
+    }
+  };
+
+  /** Runs `run` while DuckDB's queryReadOnly answers `rows`, as a driver that hands those values would. */
+  const withDuckdbRows = async <T>(rows: Record<string, unknown>[], run: () => Promise<T>): Promise<T> => {
+    const original = DuckDBProvider.prototype.queryReadOnly;
+    DuckDBProvider.prototype.queryReadOnly = async (): Promise<QueryResult> => ({
+      rows,
+      fields: Object.keys(rows[0]),
+      rowCount: rows.length,
+      executionTime: 1,
+    });
+    try {
+      return await run();
+    } finally {
+      DuckDBProvider.prototype.queryReadOnly = original;
+    }
+  };
+
+  const lastRunEvent = () =>
+    getServerAuditBuffer()
+      .getAll()
+      .filter((event) => event.action === "run_read_query")
+      .at(-1);
+
+  test("a real SQLite BLOB and infinite REAL reach the client as bytes and nf tagged values", async () => {
+    const result = await callRows("seed:shop", "SELECT data, 1e999 AS p, -1e999 AS n FROM blobs");
+    expect(result.isError ?? false).toBe(false);
+    const rows = (result.structuredContent as { rows: unknown }).rows;
+    expect(rows).toEqual([
+      { data: { $: "bytes", v: "AP8Q" }, p: { $: "nf", v: "Infinity" }, n: { $: "nf", v: "-Infinity" } },
+    ]);
+    const content = result.content as { type: string; text: string }[];
+    expect(content[1].text).toBe(JSON.stringify(result.structuredContent));
+    expect(decodeValue(rows)).toEqual([
+      { data: new Uint8Array([0, 255, 16]), p: Number.POSITIVE_INFINITY, n: Number.NEGATIVE_INFINITY },
+    ]);
+  });
+
+  test("a row whose columns are exactly $ and v reaches the client in the obj escape", async () => {
+    const result = await callRows("seed:shop", `SELECT 'i64' AS "$", '9' AS v`);
+    expect(result.isError ?? false).toBe(false);
+    const rows = (result.structuredContent as { rows: unknown }).rows;
+    expect(rows).toEqual([{ $: "obj", v: { $: "i64", v: "9" } }]);
+    expect(decodeValue(rows)).toEqual([{ $: "i64", v: "9" }]);
+  });
+
+  test("every tag reaches the client as the codec writes it, and decodes to the value the provider handed", async () => {
+    const row = {
+      big: BigInt("9007199254740993"),
+      at: new Date("2026-09-20T21:00:00.000Z"),
+      u8: new Uint8Array([1, 2]),
+      buf: Buffer.from([0, 255]),
+      nan: Number.NaN,
+      negzero: -0,
+      doc: { a: [1, { b: new Date(0) }] },
+      lookalike: { $: "x", v: 1 },
+      absent: undefined,
+    };
+    const result = await withDuckdbRows([row], () => callRows("seed:slow", "SELECT answer FROM answers"));
+    expect(result.isError ?? false).toBe(false);
+    const rows = (result.structuredContent as { rows: unknown }).rows;
+    expect(rows).toEqual([
+      {
+        big: { $: "i64", v: "9007199254740993" },
+        at: { $: "ts", v: "2026-09-20T21:00:00.000Z" },
+        u8: { $: "bytes", v: "AQI=" },
+        buf: { $: "bytes", v: "AP8=" },
+        nan: { $: "nf", v: "NaN" },
+        negzero: 0,
+        doc: { a: [1, { b: { $: "ts", v: "1970-01-01T00:00:00.000Z" } }] },
+        lookalike: { $: "obj", v: { $: "x", v: 1 } },
+      },
+    ]);
+    expect(Object.keys((rows as object[])[0])).not.toContain("absent");
+    expect(decodeValue(rows)).toEqual([
+      {
+        big: BigInt("9007199254740993"),
+        at: new Date("2026-09-20T21:00:00.000Z"),
+        u8: new Uint8Array([1, 2]),
+        buf: new Uint8Array([0, 255]),
+        nan: Number.NaN,
+        negzero: 0,
+        doc: { a: [1, { b: new Date(0) }] },
+        lookalike: { $: "x", v: 1 },
+      },
+    ]);
+  });
+
+  class Point {
+    constructor(
+      readonly x: number,
+      readonly y: number,
+    ) {}
+  }
+  class Stamp {
+    toJSON(): string {
+      return "stamp-text";
+    }
+  }
+  const outsideTheCodec: [string, () => unknown, string][] = [
+    ["a class instance", () => new Point(1, 2), "an instance of the class Point"],
+    ["a class instance with toJSON", () => new Stamp(), "an instance of the class Stamp"],
+    ["a typed array other than bytes", () => new Float32Array([0.5]), "a Float32Array"],
+    ["a Map", () => new Map(), "a Map"],
+    ["an invalid Date", () => new Date(Number.NaN), "an invalid Date"],
+  ];
+
+  /** The refusal of an answer whose cell at `path` is `kind`: the notice, the prefix and the codec's sentence, and the record. */
+  const expectRefused = (result: Awaited<ReturnType<typeof callRows>>, kind: string, path: string) => {
+    expect(result.isError).toBe(true);
+    expect(result.content).toEqual([
+      { type: "text", text: databaseContentNotice(providerAuthor("duckdb")) },
+      { type: "text", text: `${MCP_CELL_REFUSED_PREFIX}The value codec cannot encode ${kind}, at "${path}".` },
+    ]);
+    expect(result.structuredContent).toEqual({
+      error: { kind: "internal", code: "INTERNAL_ERROR", outcome: "unknown" },
+    });
+    expect(lastRunEvent()).toMatchObject({ result: "failure", reason: "mcp_execution_failed" });
+  };
+
+  test("a class instance, with or without toJSON, a typed array, a Map and an invalid Date each refuse the answer by name behind the notice, with its record", async () => {
+    for (const [, make, kind] of outsideTheCodec) {
+      // oxlint-disable-next-line no-await-in-loop -- each case swaps the DuckDB prototype's rows and reads the last audit event, so the cases run one at a time.
+      const result = await withDuckdbRows([{ c: make() }], () => callRows("seed:slow", "SELECT answer FROM answers"));
+      expectRefused(result, kind, "/0/c");
+    }
+  });
+
+  test("a document nested deeper than MAX_VALUE_DEPTH refuses the answer by the depth rule", async () => {
+    let doc: unknown = 1;
+    for (let level = 0; level < 300; level++) doc = { a: doc };
+    const result = await withDuckdbRows([{ c: doc }], () => callRows("seed:slow", "SELECT answer FROM answers"));
+    // The rows and the row are the first two of the arrays and objects the bound counts.
+    expectRefused(
+      result,
+      `a value nested deeper than ${MAX_VALUE_DEPTH} arrays and objects`,
+      `/0/c${"/a".repeat(MAX_VALUE_DEPTH - 2)}`,
+    );
+  });
+
+  test("a value in a row past max_rows is never encoded", async () => {
+    const rows = [{ c: 1 }, { c: new Point(1, 2) }, { c: 3 }];
+    const result = await withDuckdbRows(rows, () =>
+      callRows("seed:slow", "SELECT answer FROM answers", { max_rows: 1 }),
+    );
+    expect(result.isError ?? false).toBe(false);
+    expect(result.structuredContent).toMatchObject({ rows: [{ c: 1 }], row_count: 1, truncated_by: "max_rows" });
+  });
+
+  test.each([
+    ["default legacy (2025-11-25)", {}],
+    ["modern pinned (2026-07-28)", { negotiation: "pinned" }],
+  ] as [string, Parameters<typeof connectClient>[1]][])(
+    "tools/list states the cell form on the statement tools' rows (%s)",
+    async (_label, options) => {
+      const session = await connectClient(serve, options);
+      try {
+        const tools = (await session.client.listTools()).tools;
+        const tool = tools.find((listed) => listed.name === "run_read_query");
+        const rows = (tool?.outputSchema?.properties as Record<string, { description?: string }> | undefined)?.rows;
+        expect(rows?.description).toBe(MCP_CELL_FORM);
       } finally {
         await session.close();
       }

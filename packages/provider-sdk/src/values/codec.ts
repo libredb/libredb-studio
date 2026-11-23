@@ -23,15 +23,18 @@
  * The domain is closed. `encodeValue` accepts the values above, the JSON values, arrays
  * without holes and objects whose prototype is `Object.prototype` or `null` (read by
  * their own enumerable string keys; no `toJSON` is called), and writes `-0` as `0`, as
- * JSON does. Anything else (`undefined`, a function, a symbol, an invalid `Date`, a
- * typed array other than `Uint8Array`, an `ArrayBuffer`, a `Map`, a `Set`, an `Error`,
- * a boxed primitive, a class instance, an array hole, a wider `bigint`) is refused with
- * a `ValueCodecError` naming the kind and the JSON Pointer of the place, never the value.
+ * JSON does. An object member whose value is `undefined` is left out, as JSON leaves it
+ * out, and the `obj` escape is decided on the members written. Anything else (`undefined`
+ * at the root or in an array, a function, a symbol, an invalid `Date`, a typed array other
+ * than `Uint8Array`, an `ArrayBuffer`, a `Map`, a `Set`, an `Error`, a boxed primitive, a
+ * class instance, an array hole, a wider `bigint`, an array or object nested inside
+ * `MAX_VALUE_DEPTH` others, which a cycle always is) is refused with a `ValueCodecError`
+ * naming the kind and the JSON Pointer of the place, never the value.
  *
  * `decodeValue` is strict and canonical: an unknown tag, a payload of the wrong type or
- * in a non-canonical spelling, and any value `JSON.parse` cannot produce (meeting one
- * means a value skipped the encoder) are refused the same way. Decoded bytes are a plain
- * `Uint8Array`; decoded objects have `Object.prototype` and own data properties, so a
+ * in a non-canonical spelling, any value `JSON.parse` cannot produce (meeting one means
+ * a value skipped the encoder) and nesting past `MAX_VALUE_DEPTH` are refused the same
+ * way. Decoded bytes are a plain `Uint8Array`; decoded objects have `Object.prototype` and own data properties, so a
  * `__proto__` key stays a key. A refusal's path points into the VALUE: a tagged value
  * counts as the one value it carries, so `/0/k` names the same place on both sides.
  *
@@ -59,6 +62,16 @@ export class ValueCodecError extends Error {
   }
 }
 
+/**
+ * The most arrays and objects a value may be nested inside (CONTRACT.md V-8). An array or a data object inside this
+ * many others is refused on encode and on decode, so a deep or cyclic value is refused by name and never overflows the
+ * stack. A tagged value counts as the one value it carries: the wire's tag wrapper adds no level. 256 clears every
+ * engine's own JSON nesting limit (MongoDB and MySQL nest at most 100 levels, SQL Server 128) with room for the rows
+ * around a document, and sits ten times below the shallowest stack overflow measured (2721 objects, encoding on
+ * Node 24).
+ */
+export const MAX_VALUE_DEPTH = 256;
+
 const MIN_I64 = -(BigInt(2) ** BigInt(63));
 const MAX_U64 = BigInt(2) ** BigInt(64) - BigInt(1);
 /** The longest canonical digits in range: "-9223372036854775808" and "18446744073709551615". */
@@ -84,6 +97,13 @@ function refuse(verb: "encode" | "decode", kind: string, segments: readonly stri
     `The value codec cannot ${verb} ${kind}, at ${path === "" ? "the root" : `"${path}"`}.`,
     path,
   );
+}
+
+/** Refuse an array or a data object that `segments` places inside MAX_VALUE_DEPTH others. */
+function boundDepth(verb: "encode" | "decode", segments: readonly string[]): void {
+  if (segments.length >= MAX_VALUE_DEPTH) {
+    refuse(verb, `a value nested deeper than ${MAX_VALUE_DEPTH} arrays and objects`, segments);
+  }
 }
 
 function isDataObject(value: object): boolean {
@@ -225,6 +245,7 @@ function encodeAt(value: unknown, segments: string[]): WireValue {
   if (value === null) return null;
   const object = value as object;
   if (Array.isArray(object)) {
+    boundDepth("encode", segments);
     const out: WireValue[] = new Array(object.length);
     for (let index = 0; index < object.length; index++) {
       segments.push(String(index));
@@ -237,16 +258,19 @@ function encodeAt(value: unknown, segments: string[]): WireValue {
   if (object instanceof Uint8Array) return { $: "bytes", v: bytesToBase64(object) };
   if (object instanceof Date && !Number.isNaN(object.getTime())) return { $: "ts", v: object.toISOString() };
   if (!isDataObject(object)) refuse("encode", objectKind(object), segments);
+  boundDepth("encode", segments);
   const record = object as Record<string, unknown>;
-  const keys = Object.keys(record);
-  const entries = keys.map((key): [string, WireValue] => {
+  // A member whose value is undefined is left out, as JSON leaves it out (V-9); the escape is decided on the rest.
+  const entries: [string, WireValue][] = [];
+  for (const key of Object.keys(record)) {
+    const member = record[key];
+    if (member === undefined) continue;
     segments.push(key);
-    const encoded = encodeAt(record[key], segments);
+    entries.push([key, encodeAt(member, segments)]);
     segments.pop();
-    return [key, encoded];
-  });
+  }
   const out = Object.fromEntries(entries) as { [key: string]: WireValue };
-  return hasTagKeys(keys) ? { $: "obj", v: out } : out;
+  return hasTagKeys(entries.map(([key]) => key)) ? { $: "obj", v: out } : out;
 }
 
 /** Encode one value into its wire form; refuses a value outside the domain with `ValueCodecError`. */
@@ -296,7 +320,9 @@ function decodeTag(tag: unknown, payload: unknown, segments: string[]): unknown 
   }
 }
 
+/** A data object's members, decoded: a plain object, or the payload of an `obj` escape. */
 function decodeEntries(record: Record<string, unknown>, segments: string[]): Record<string, unknown> {
+  boundDepth("decode", segments);
   return Object.fromEntries(
     Object.keys(record).map((key) => {
       segments.push(key);
@@ -326,6 +352,7 @@ function decodeAt(value: unknown, segments: string[]): unknown {
   if (value === null) return null;
   const object = value as object;
   if (Array.isArray(object)) {
+    boundDepth("decode", segments);
     const out: unknown[] = new Array(object.length);
     for (let index = 0; index < object.length; index++) {
       segments.push(String(index));

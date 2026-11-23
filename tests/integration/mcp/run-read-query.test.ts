@@ -232,7 +232,7 @@ describe("the answer", () => {
   test("an infinite REAL on an on-disk SQLite seed answers Infinity and -Infinity, not null", async () => {
     const result = await query({ connection_id: "seed:shop", sql: "SELECT 1e999 AS p, -1e999 AS n" });
     expect(result.isError ?? false).toBe(false);
-    expect(result.structuredContent?.rows).toEqual([{ p: "Infinity", n: "-Infinity" }]);
+    expect(result.structuredContent?.rows).toEqual([{ p: { $: "nf", v: "Infinity" }, n: { $: "nf", v: "-Infinity" } }]);
   });
 
   test("carries none of the provider's warnings, since this arm's facet does not answer them", async () => {

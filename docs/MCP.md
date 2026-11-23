@@ -672,7 +672,13 @@ OpenAI's [plugin guide](https://developers.openai.com/plugins/build/plugins) sai
   A provider's `TimeoutError` that settles before the call's deadline is the engine's too, since its class says some timeout fired but not that it was `timeout_ms` (a Cassandra coordinator's own read timeout, a connection's configured query timeout), and its text says which; any failure at or after the deadline is the timeout answer.
 - On an engine that bills every read, one statement call may spend at most 2000 billed reads (`MCP_CALL_READ_ALLOWANCE`), and each call gets its own allowance; a read past it is refused before it is sent. No engine served by MCP bills its reads yet.
 - A statement a provider's own read-only fence refuses before sending it is answered "The statement was refused before it reached the database:" with the provider's sentence, after a notice naming the provider that wrote it, never as the database's error.
-- A NaN, Infinity or -Infinity cell in a `run_read_query` answer is the string `"NaN"`, `"Infinity"` or `"-Infinity"`; it used to be `null`, which a client could not tell from SQL NULL. A text cell holding one of those words looks the same.
+- Every cell of a statement tool's `rows` is plain JSON, or a tagged value `{"$": tag, "v": payload}` as `@libredb/provider-sdk/values` writes it, and the output schema's `rows` states the same.
+  `i64` carries a 64-bit integer as its decimal digits, `bytes` binary data as standard padded base64, `ts` an instant as ISO 8601 UTC text, `nf` NaN, Infinity or -Infinity as that word, and `obj` a value whose own keys are exactly `$` and `v`, as that object.
+  They replace MCP's own forms: digits, `"[Blob: n bytes]"`, ISO text and the non-finite words as plain strings a text cell could also hold, and an unwrapped object with keys `$` and `v` that read as a tag.
+  A binary cell carries its bytes, so a row with a wide one can pass 32 KiB and is refused as any wide row is.
+  An object member whose value is undefined is left out.
+  A value outside the codec, such as a class instance, a typed array other than bytes, an invalid date or a cell nested inside more than 254 arrays and objects (the codec's bound is 256, and the answer's rows and each row take two), refuses the whole answer with "The result holds a value this server cannot answer:" and the place it stood; selecting that column as text, or leaving it out, answers.
+  Only the rows an answer can carry, the first `max_rows`, are read for this.
 - A query with its own `LIMIT` or `TOP`, and `VALUES`, `TABLE` or `EXPLAIN`, cannot be paged with `offset`; the answer says how to page it in that engine's SQL.
 - `inspect_schema` and `list_connections` fit each page to 32 KiB, and `has_more` and `next_offset` say where the next page starts.
 - Every `POST` spends one slot of the same per-user budget the database routes use (`RATE_LIMIT_QUERY_MAX`, 120 a minute by default), so a session and an MCP token of one person share it.
