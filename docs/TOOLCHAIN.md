@@ -629,7 +629,7 @@ smoke-tested functionally in `tests/isolated/exports-shim.test.ts`.
 
 The root `package.json` declares `"workspaces": ["packages/*"]`, and [`packages/README.md`](../packages/README.md) states the layout: a package is `packages/<name>/` with a `package.json`, its source under `src/` and its tests under `tests/`.
 `scripts/workspace-packages.mjs` lists the packages for every gate that needs the list, and refuses by name a directory under `packages/` without a `package.json` and a link there.
-No package exists yet; the gates were widened first, so the first package cannot fall silently out of any of them.
+The gates were widened before any package existed, so the first package, `packages/provider-sdk`, could not fall silently out of any of them.
 
 ### The linker
 
@@ -661,6 +661,23 @@ The builder asserts that `.next/standalone/packages` does not exist, and `script
 - The library: `tsup.config.ts` bundles every package, its code through `noExternal` and its declarations through `dts.resolve`, both read from `workspacePackageNames` in `scripts/workspace-packages.mjs`, because `@libredb/studio` on npm cannot depend on an unpublished package.
   tsup's declaration resolver reads a package's `types` field, not its `exports`, so a package points `types` under its `src/`; without it the declarations keep a bare import of the package.
   `bun run lib:load` fails by name on that bare import, on a packed manifest that names a package, and on a package dependency the root does not declare ("The packed library loads (`lib:load`)").
+
+### The package import rule
+
+A package's source and tests import their own files, Node built-ins, the names their `package.json` declares and `@libredb/provider-sdk`, and its tests may also import a Bun runtime module; nothing in a package imports an `@/` path or a path out of its directory.
+Core, under `src/`, `bin/`, `scripts/`, `tests/`, `e2e/` and `vscode-extension/src/`, reaches a package only by its name.
+`tests/unit/package-imports.test.ts` reads the specifiers with the TypeScript compiler's `preProcessFile`, through the provider import scanner, and plants a package and core files that break each rule.
+A root file that imports a package by name needs the package in the root `devDependencies` as `"workspace:*"`: knip reports it as an unlisted dependency otherwise (measured with knip 6 on the SDK, 2026-11-23).
+
+### The SDK's generated files
+
+Two generators keep the SDK's contract and Studio's tables in step, each committed output held byte for byte by a test that renders it in memory, as the governance manifest is:
+
+- `bun run manifest:types` (`scripts/generate-manifest-types.ts`) renders the manifest's TypeScript types and the schema's digest from `packages/provider-sdk/src/manifest/manifest.schema.json`; `tests/unit/provider-sdk/manifest-types.test.ts` fails on drift.
+- `bun run engines:generate` (`scripts/generate-engine-declarations.ts`) writes `src/lib/db/engine-declarations/<type-id>.json` from the per-engine tables; `tests/unit/db/engine-declarations.test.ts` fails on drift.
+
+Both run inside `bun run test`, so neither needs a CI step of its own.
+The generators live in `scripts/`, which the coverage merge does not measure, so their tests are what holds them.
 
 Tests resolve source: `tests/unit/source-plane.test.ts` holds every package's entry points (`exports`, `main`, `module`, `types`) under its `src/`, and fails a test under `tests/` or `packages/<name>/tests/` that imports a `dist/` path, the root package by name or a package's `dist/` subpath, so `lib:load` is the only path through a built artifact.
 
