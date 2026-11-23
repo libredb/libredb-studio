@@ -31,10 +31,6 @@ export const INWARD_IMPORTS: readonly AllowlistEntry[] = [
     modules: ["document/firestore/agent-statement.ts"],
   },
   {
-    file: "src/lib/agent/languages/influxql/adapter.ts",
-    modules: ["timeseries/influxdb/influxql-agent-statement.ts", "timeseries/influxdb/influxql-lexer.ts"],
-  },
-  {
     file: "src/lib/agent/languages/kafkaread/adapter.ts",
     modules: ["stream/kafka/agent-statement.ts"],
   },
@@ -121,10 +117,6 @@ export const INWARD_IMPORTS: readonly AllowlistEntry[] = [
   {
     file: "src/lib/agent/languages/opcuaread/server.ts",
     modules: ["industrial/opcua/agent-roots.ts"],
-  },
-  {
-    file: "src/lib/agent/languages/oxiacli/adapter.ts",
-    modules: ["keyvalue/oxia/agent-statement.ts"],
   },
   {
     file: "src/lib/agent/languages/promql/adapter.ts",
@@ -248,10 +240,8 @@ export const INWARD_IMPORTS: readonly AllowlistEntry[] = [
     modules: [
       "document/firestore/destructive.ts",
       "keyvalue/etcd/destructive.ts",
-      "keyvalue/oxia/destructive.ts",
       "objectstore/s3/destructive.ts",
       "platform/kubernetes/destructive.ts",
-      "timeseries/influxdb/influxdb-destructive.ts",
       "vector/milvus/destructive.ts",
       "vector/qdrant/destructive.ts",
       "vector/weaviate/destructive.ts",
@@ -501,10 +491,6 @@ export const INWARD_IMPORTS: readonly AllowlistEntry[] = [
     modules: ["document/firestore/agent-statement.ts"],
   },
   {
-    file: "src/lib/db/operations/influxql-admission.ts",
-    modules: ["timeseries/influxdb/influxql-agent-statement.ts"],
-  },
-  {
     file: "src/lib/db/operations/kafkaread-admission.ts",
     modules: ["stream/kafka/agent-statement.ts"],
   },
@@ -543,10 +529,6 @@ export const INWARD_IMPORTS: readonly AllowlistEntry[] = [
   {
     file: "src/lib/db/operations/opcuaread-admission.ts",
     modules: ["industrial/opcua/agent-statement.ts"],
-  },
-  {
-    file: "src/lib/db/operations/oxiacli-admission.ts",
-    modules: ["keyvalue/oxia/agent-statement.ts"],
   },
   {
     file: "src/lib/db/operations/promql-admission.ts",

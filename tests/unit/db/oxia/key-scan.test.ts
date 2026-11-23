@@ -7,7 +7,7 @@ import { describe, expect, test } from "bun:test";
 import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import type { KeyScanOptions, KeyScanPage } from "@/lib/db/types";
 import type { OxiaCallOptions, OxiaSnapshot } from "@/lib/db/providers/keyvalue/oxia/client";
-import { OXIA_INTERNAL_KEY_SENTENCE } from "@/lib/db/providers/keyvalue/oxia/commands";
+import { OXIA_INTERNAL_KEY_SENTENCE } from "@/lib/languages/oxiacli/commands";
 import {
   encodeOxiaCursor,
   OXIA_CURSOR_FOREIGN_REFUSAL,

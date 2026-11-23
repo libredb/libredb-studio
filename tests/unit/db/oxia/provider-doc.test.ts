@@ -41,7 +41,7 @@ import {
   type OxiaParseContext,
   parseOxiaCommand,
   writeCommandSentence,
-} from "@/lib/db/providers/keyvalue/oxia/commands";
+} from "@/lib/languages/oxiacli/commands";
 import {
   admitLeaders,
   buildOxiaConnectionOptions,
@@ -50,28 +50,30 @@ import {
   oxiaErrorConnection,
 } from "@/lib/db/providers/keyvalue/oxia/connection-options";
 import {
-  OXIA_CELL_LIMIT,
   OXIA_DEFAULT_PORT,
+  OXIA_INTERNAL_PREFIX,
+  OXIA_LIST_DEFAULT_LIMIT,
+  OXIA_MAX_LIMIT,
+  OXIA_MAX_TEXT_BYTES,
+  OXIA_SCAN_DEFAULT_LIMIT,
+} from "@/lib/languages/oxiacli/constants";
+import {
+  OXIA_CELL_LIMIT,
   OXIA_DISCOVERY_DEADLINE_MS,
   OXIA_DISCOVERY_MAX_CALLS,
   OXIA_DISCOVERY_MAX_ROUNDS,
-  OXIA_INTERNAL_PREFIX,
   OXIA_KEY_SCAN_DEFAULT_COUNT,
   OXIA_KEY_SCAN_MAX_COUNT,
   OXIA_LEADER_MAX_BYTES,
   OXIA_LIMITER_OPTIONS,
-  OXIA_LIST_DEFAULT_LIMIT,
   OXIA_MAX_DATA_SERVERS,
-  OXIA_MAX_LIMIT,
   OXIA_MAX_SHARD_STREAMS,
   OXIA_MAX_SHARDS,
-  OXIA_MAX_TEXT_BYTES,
   OXIA_NAMESPACE_MAX_BYTES,
   OXIA_PAGE_KEPT_BYTES,
   OXIA_PAGE_STREAM_BYTES,
   OXIA_RECEIVE_CAP_BYTES,
   OXIA_RUN_BYTE_BUDGET,
-  OXIA_SCAN_DEFAULT_LIMIT,
   OXIA_SOURCE_HEX_BYTES,
 } from "@/lib/db/providers/keyvalue/oxia/constants";
 import { OXIA_CURSOR_FOREIGN_REFUSAL, OXIA_CURSOR_ORDER_REFUSAL } from "@/lib/db/providers/keyvalue/oxia/cursor";
@@ -108,12 +110,15 @@ import type { OxiaSurface } from "@/lib/db/providers/keyvalue/oxia/walks";
 import { SeedConfigSchema } from "@/lib/seed/types";
 import { type DatabaseConnection, TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
 import { oxiaConnection } from "../../../helpers/oxia-connection";
+import { statementLanguageFamilyDirectory } from "../../../helpers/statement-language-family";
 import { loadTlsFixtures } from "../../../helpers/tls-fixtures";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
 const DOC = read("docs/providers/oxia.md");
 const PROVIDER_DIRECTORY = "src/lib/db/providers/keyvalue/oxia";
+/** The oxiacli statement language's core family module, whose modules the doc's table names by repository path. */
+const FAMILY_DIRECTORY = statementLanguageFamilyDirectory("oxiacli");
 
 const provider = new OxiaProvider(oxiaConnection(), {}, {}, () => {
   throw new Error("the doc test never connects");
@@ -231,18 +236,22 @@ const OUTLINE: readonly string[] = [
   "### 15.5 Tests",
 ];
 
-/** The modules of the browser set (the Global Constraints of the plan): the rest run on the server. */
+/**
+ * The modules of the browser set (the Global Constraints of the plan): the rest run on the server. A module of the
+ * provider directory is named by its path there, a module of the family directory by its repository path.
+ */
 const BROWSER_SET: ReadonlySet<string> = new Set([
   "constants.ts",
-  "lexer.ts",
-  "commands.ts",
-  "guard.ts",
+  `${FAMILY_DIRECTORY}/constants.ts`,
+  `${FAMILY_DIRECTORY}/lexer.ts`,
+  `${FAMILY_DIRECTORY}/commands.ts`,
+  `${FAMILY_DIRECTORY}/guard.ts`,
+  `${FAMILY_DIRECTORY}/destructive.ts`,
   "labels.ts",
   "generators.ts",
   "order.ts",
   "cursor.ts",
   "sql-writing.ts",
-  "destructive.ts",
   "connection-string.ts",
   "execution-ui.ts",
   "engine-facets.ts",
@@ -448,9 +457,12 @@ describe("docs/providers/oxia.md quotes what the provider's modules say", () => 
     );
   });
 
-  test("2. the module table names every module of the provider directory, and where it runs", () => {
+  test("2. the module table names every module of the provider directory and of the family directory, and where it runs", () => {
     const modules = sectionOf(DOC, "### 2.2 Modules");
-    const files = typescriptFiles(PROVIDER_DIRECTORY);
+    const files = [
+      ...typescriptFiles(PROVIDER_DIRECTORY),
+      ...typescriptFiles(FAMILY_DIRECTORY).map((file) => `${FAMILY_DIRECTORY}/${file}`),
+    ];
     expect(files).toContain("proto/descriptor.ts");
     for (const file of files) {
       const row = rowOf(modules, `\`${file}\``);
@@ -985,8 +997,8 @@ describe("docs/providers/oxia.md quotes what the registered type-id declares (pa
         control: CONTROL_3_15,
         enforcedIn: [
           `${PROVIDER_DIRECTORY}/grpc-client.ts`,
-          `${PROVIDER_DIRECTORY}/commands.ts`,
-          `${PROVIDER_DIRECTORY}/guard.ts`,
+          `${FAMILY_DIRECTORY}/commands.ts`,
+          `${FAMILY_DIRECTORY}/guard.ts`,
         ],
         verifiedBy: [
           "tests/unit/db/oxia/seam-guard.test.ts",
@@ -1012,7 +1024,7 @@ describe("docs/providers/oxia.md quotes what the registered type-id declares (pa
 
   test("P9. row 3.8 and its note name Oxia", () => {
     const row = controlRow("3.8");
-    expect(row.enforcedIn).toContain(`${PROVIDER_DIRECTORY}/guard.ts`);
+    expect(row.enforcedIn).toContain(`${FAMILY_DIRECTORY}/guard.ts`);
     expect(row.enforcedIn).toContain(`${PROVIDER_DIRECTORY}/grpc-client.ts`);
     expect(row.verifiedBy).toContain("tests/unit/db/oxia/read-only-end-to-end.test.ts");
     const start = SECURITY.indexOf("**3.8.**");

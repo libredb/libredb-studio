@@ -94,7 +94,7 @@ src/lib/db/
 │   ├── keyvalue/               # Key-Value Providers
 │   │   ├── redis.ts            # Redis Strategy
 │   │   ├── etcd/               # etcd Strategy (client.ts, grpc-client.ts, lexer.ts, commands.ts, objects.ts, ... index.ts)
-│   │   └── oxia/               # Oxia Strategy (client.ts, grpc-client.ts, routing.ts, walks.ts, commands.ts, ... index.ts)
+│   │   └── oxia/               # Oxia Strategy (client.ts, grpc-client.ts, routing.ts, walks.ts, ... index.ts)
 │   ├── timeseries/             # Time-Series Providers
 │   │   ├── prometheus/         # Prometheus Strategy (PromQL over the Prometheus HTTP API, no driver)
 │   │       ├── index.ts        #   PrometheusProvider: lifecycle and composition only
@@ -116,7 +116,7 @@ src/lib/db/
 │   │       ├── client.ts       #   the route-table client over the shared node transport
 │   │       ├── versions.ts     #   the reported version and the per-generation table
 │   │       ├── run-database.ts #   the database a run reads, and the _internal rule
-│   │       ├── influxql-lexer.ts, influxql-policy.ts, influxql-quote.ts, influxql-generators.ts # browser-safe InfluxQL core
+│   │       ├── influxql-quote.ts, influxql-generators.ts # browser-safe InfluxQL quoting and generators
 │   │       ├── sql-policy.ts   #   the influxdb3 read policy under the DataFusion grammar row
 │   │       ├── influxql-results.ts, sql-results.ts # answers -> rows and fields
 │   │       ├── influxql-objects.ts, sql-objects.ts # kinds and the object surface of each type

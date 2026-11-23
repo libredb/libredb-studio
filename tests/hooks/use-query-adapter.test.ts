@@ -5,7 +5,7 @@ import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../helpers/stand-in-vocabulary";
 import qdrantDocs from "../fixtures/vector/corpus/qdrant-docs.json";
 import { qdrantRefusal } from "@/lib/db/providers/vector/qdrant/guard";
-import { influxqlRefusal } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+import { influxqlRefusal } from "@/lib/languages/influxql/policy";
 import { renderHook, act } from "@testing-library/react";
 
 import {

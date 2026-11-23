@@ -17,7 +17,7 @@ import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
 import { Neo4jProvider } from "@/lib/db/providers/graph/neo4j/index";
 import { graphObjectSegment } from "@/lib/db/graph/objects";
 import { InfluxDB3Provider, InfluxDBProvider } from "@/lib/db/providers/timeseries/influxdb/index";
-import { evaluateInfluxql } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+import { evaluateInfluxql } from "@/lib/languages/influxql/policy";
 import { CypherNameError } from "@/lib/db/graph/cypher/quote";
 import type { generateRowActionQuery } from "@/lib/query-generators";
 

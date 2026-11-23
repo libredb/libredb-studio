@@ -18,7 +18,7 @@
  * so the policy refuses every one of them.
  */
 import { describe, expect, test } from "bun:test";
-import { evaluateInfluxql } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+import { evaluateInfluxql } from "@/lib/languages/influxql/policy";
 import {
   INFLUX_FIXTURE_VERSIONS,
   type InfluxCapture,

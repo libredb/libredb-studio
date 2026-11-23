@@ -22,8 +22,9 @@ import type {
   ObjectSourcePart,
 } from "@/lib/db/types";
 import type { OxiaCallOptions, OxiaRecordView, OxiaShard } from "./client";
-import { OXIA_INTERNAL_KEY_SENTENCE } from "./commands";
-import { OXIA_INTERNAL_PREFIX, OXIA_RECEIVE_CAP_BYTES, OXIA_SOURCE_HEX_BYTES, OXIA_TYPE } from "./constants";
+import { OXIA_INTERNAL_KEY_SENTENCE } from "@/lib/languages/oxiacli/commands";
+import { OXIA_INTERNAL_PREFIX } from "@/lib/languages/oxiacli/constants";
+import { OXIA_RECEIVE_CAP_BYTES, OXIA_SOURCE_HEX_BYTES, OXIA_TYPE } from "./constants";
 import { keyOrderWords } from "./labels";
 import { hexDump, isoFromEpochMs, shownKey, viewOxiaValue } from "./values";
 import { type OxiaSurface, readKeyAnywhere } from "./walks";

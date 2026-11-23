@@ -6,7 +6,7 @@
  * fails here too. R31's after-dot forms are among them.
  */
 import { describe, expect, test } from "bun:test";
-import { evaluateInfluxql } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+import { evaluateInfluxql } from "@/lib/languages/influxql/policy";
 import {
   INFLUX_SYSTEM_DATABASES,
   RUN_DATABASE_SENTENCES,

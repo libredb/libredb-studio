@@ -27,7 +27,7 @@ import type { ColumnSchema } from "@/lib/types";
 import type { InfluxSend } from "./client";
 import { INFLUX_LIST_CAP } from "./connection-options";
 import { InfluxAnswerError, InfluxAnswerShapeError } from "./errors";
-import { evaluateInfluxql } from "./influxql-policy";
+import { evaluateInfluxql } from "@/lib/languages/influxql/policy";
 import { quoteInfluxqlIdentifier } from "./influxql-quote";
 import { readInfluxqlCatalogRows } from "./influxql-results";
 import { INFLUXQL_ROUTES } from "./routes";

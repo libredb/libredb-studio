@@ -12,7 +12,7 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { parseOxiaCommand } from "@/lib/db/providers/keyvalue/oxia/commands";
+import { parseOxiaCommand } from "@/lib/languages/oxiacli/commands";
 import { namespaceNotFoundSentence, receiveCapNotice, runBudgetNotice } from "@/lib/db/providers/keyvalue/oxia/errors";
 import { createGrpcOxiaClient } from "@/lib/db/providers/keyvalue/oxia/grpc-client";
 import { OxiaProvider } from "@/lib/db/providers/keyvalue/oxia/index";

@@ -20,7 +20,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { parse as parseYaml } from "yaml";
-import { OXIA_DEFAULT_PORT } from "@/lib/db/providers/keyvalue/oxia/constants";
+import { OXIA_DEFAULT_PORT } from "@/lib/languages/oxiacli/constants";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const OXIA_DIR = path.join(ROOT, "docker/oxia");

@@ -4,7 +4,7 @@
  * admin read after the run that must prove the database that does not exist holds nothing (E22), which policy a plan
  * text is judged by (E22), and the fixed test credentials, read from the files that set them (spec 8).
  */
-import { evaluateInfluxql } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+import { evaluateInfluxql } from "@/lib/languages/influxql/policy";
 import { evaluateInfluxSql } from "@/lib/db/providers/timeseries/influxdb/sql-policy";
 import { parse } from "yaml";
 import type { InfluxCapture } from "../helpers/influxdb-fixtures";

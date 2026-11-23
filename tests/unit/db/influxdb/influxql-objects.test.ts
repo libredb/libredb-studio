@@ -9,7 +9,7 @@ import { QueryError } from "@/lib/db/errors";
 import type { InfluxAnswer, InfluxRequest } from "@/lib/db/providers/timeseries/influxdb/client";
 import { INFLUX_LIST_CAP } from "@/lib/db/providers/timeseries/influxdb/connection-options";
 import { InfluxAnswerError, InfluxAnswerShapeError } from "@/lib/db/providers/timeseries/influxdb/errors";
-import { lexInfluxql } from "@/lib/db/providers/timeseries/influxdb/influxql-lexer";
+import { lexInfluxql } from "@/lib/languages/influxql/lexer";
 import {
   countInfluxqlMeasurements,
   describeInfluxqlMeasurement,
@@ -20,7 +20,7 @@ import {
   readInfluxqlDatabaseListing,
   readInfluxqlDatabases,
 } from "@/lib/db/providers/timeseries/influxdb/influxql-objects";
-import { evaluateInfluxql, INFLUXQL_POLICY_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+import { evaluateInfluxql, INFLUXQL_POLICY_SENTENCES } from "@/lib/languages/influxql/policy";
 import { INFLUXQL_ROUTES } from "@/lib/db/providers/timeseries/influxdb/routes";
 import { RUN_DATABASE_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/run-database";
 import type { InfluxGeneration } from "@/lib/db/providers/timeseries/influxdb/versions";

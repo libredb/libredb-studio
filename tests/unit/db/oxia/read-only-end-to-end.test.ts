@@ -11,7 +11,7 @@ import { describe, expect, test } from "bun:test";
 import { READ_ONLY_FIXED_HINT } from "@/lib/db-ui-config";
 import { WRITE_REACH } from "@/lib/db/compatibility";
 import { QueryError } from "@/lib/db/errors";
-import { writeCommandSentence } from "@/lib/db/providers/keyvalue/oxia/commands";
+import { writeCommandSentence } from "@/lib/languages/oxiacli/commands";
 import { OxiaProvider } from "@/lib/db/providers/keyvalue/oxia/index";
 import { createFakeOxiaClient } from "../../../helpers/oxia-fake-client";
 import { oxiaConnection } from "../../../helpers/oxia-connection";

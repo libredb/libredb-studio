@@ -319,9 +319,9 @@ export const WRITE_REACH: Readonly<Record<DatabaseType, WriteReach>> = Object.fr
   // As Qdrant (#1566 spec 3.5): every console request is a read, the provider has no maintenance operation, and it
   // refuses every route that is not a read, and every request that would wake a cold tenant, before any request.
   weaviate: "none",
-  // Read-only whatever the flag says: on 1.x and 2.x the InfluxQL lexer policy (`influxql-policy.ts`) is the only
-  // boundary between a Studio user and `DROP DATABASE`, so it refuses every statement that is not one `SELECT`, `SHOW`
-  // or `EXPLAIN` before any request; the route table reaches no write endpoint.
+  // Read-only whatever the flag says: on 1.x and 2.x the InfluxQL lexer policy (`src/lib/languages/influxql/policy.ts`)
+  // is the only boundary between a Studio user and `DROP DATABASE`, so it refuses every statement that is not one
+  // `SELECT`, `SHOW` or `EXPLAIN` before any request; the route table reaches no write endpoint.
   influxdb: "none",
   // Read-only whatever the flag says: the closed route table reaches no write, configure, token, cache or plugin
   // endpoint, the SQL policy refuses every statement that does not lead with a read keyword before any request, and

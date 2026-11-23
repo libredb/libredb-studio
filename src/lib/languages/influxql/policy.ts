@@ -30,7 +30,7 @@
  * `_internal` on a server that hides it.
  */
 
-import { type InfluxqlLexFault, type InfluxqlToken, lexInfluxql, normaliseInfluxqlNewlines } from "./influxql-lexer";
+import { type InfluxqlLexFault, type InfluxqlToken, lexInfluxql, normaliseInfluxqlNewlines } from "./lexer";
 
 export type InfluxqlStatementKind = "SELECT" | "SHOW" | "EXPLAIN";
 

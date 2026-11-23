@@ -17,13 +17,9 @@ import {
 } from "@/lib/db/destructive-commands";
 import { etcdTypedConfirmation } from "@/lib/db/providers/keyvalue/etcd/guard";
 import { redisRefusal } from "@/lib/languages/rediscli/command-text";
-import {
-  INFLUXQL_MAX_TEXT_BYTES,
-  INFLUXQL_POLICY_SENTENCES,
-  influxqlRefusal,
-} from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
-import { OXIA_MAX_TEXT_BYTES } from "@/lib/db/providers/keyvalue/oxia/constants";
-import { oxiaRefusal, OXIA_DESTRUCTIVE_OPERATIONS, readOxiaOperations } from "@/lib/db/providers/keyvalue/oxia/guard";
+import { INFLUXQL_MAX_TEXT_BYTES, INFLUXQL_POLICY_SENTENCES, influxqlRefusal } from "@/lib/languages/influxql/policy";
+import { OXIA_MAX_TEXT_BYTES } from "@/lib/languages/oxiacli/constants";
+import { oxiaRefusal, OXIA_DESTRUCTIVE_OPERATIONS, readOxiaOperations } from "@/lib/languages/oxiacli/guard";
 import { KUBECTL_MAX_TEXT_BYTES } from "@/lib/db/providers/platform/kubernetes/console/commands";
 import { kubectlRefusal } from "@/lib/db/providers/platform/kubernetes/console/guard";
 import { firestoreRefusal } from "@/lib/db/providers/document/firestore/console/guard";

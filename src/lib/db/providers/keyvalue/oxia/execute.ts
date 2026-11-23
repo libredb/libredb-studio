@@ -9,7 +9,7 @@
  * caller; every failure of a call is the walks' `OxiaError`, which the provider words (SB2-5.5).
  */
 import type { OxiaCallOptions, OxiaComparison, OxiaRange } from "./client";
-import type { OxiaCommand, OxiaCommandComparison, ParsedOxiaCommand } from "./commands";
+import type { OxiaCommand, OxiaCommandComparison, ParsedOxiaCommand } from "@/lib/languages/oxiacli/commands";
 import type { OxiaOutcome } from "./results";
 import {
   comparisonGet,

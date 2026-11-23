@@ -7,7 +7,7 @@
  * Turkish host gives every call without an argument.
  */
 import { afterAll, beforeAll, describe, expect, type Mock, spyOn, test } from "bun:test";
-import { evaluateInfluxql } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+import { evaluateInfluxql } from "@/lib/languages/influxql/policy";
 
 const originalUpper = String.prototype.toLocaleUpperCase;
 const originalLower = String.prototype.toLocaleLowerCase;

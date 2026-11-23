@@ -10,8 +10,8 @@ import {
   INFLUXQL_AGENT_SENTENCES,
   INFLUXQL_AGENT_SHOW_KINDS,
   readInfluxqlAgentStatement,
-} from "@/lib/db/providers/timeseries/influxdb/influxql-agent-statement";
-import { INFLUXQL_POLICY_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+} from "@/lib/languages/influxql/agent-statement";
+import { INFLUXQL_POLICY_SENTENCES } from "@/lib/languages/influxql/policy";
 import { loadInfluxCapture } from "../../../helpers/influxdb-fixtures";
 import { INFLUXQL_QUERY_TEXT_SPELLINGS } from "../../../helpers/influxql-query-text-spellings";
 

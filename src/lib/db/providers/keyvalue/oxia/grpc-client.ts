@@ -37,8 +37,8 @@ import {
   type OxiaVersion,
 } from "./client";
 import { admitLeaders, type OxiaConnectionOptions, oxiaLeaderParser } from "./connection-options";
+import { OXIA_INTERNAL_PREFIX } from "@/lib/languages/oxiacli/constants";
 import {
-  OXIA_INTERNAL_PREFIX,
   OXIA_IP_SERVER_NAME,
   OXIA_LEADER_MAX_BYTES,
   OXIA_READ_BATCH_GETS,

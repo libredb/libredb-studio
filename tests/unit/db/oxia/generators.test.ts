@@ -4,7 +4,7 @@
  * comment.
  */
 import { describe, expect, test } from "bun:test";
-import { parseOxiaCommand } from "@/lib/db/providers/keyvalue/oxia/commands";
+import { parseOxiaCommand } from "@/lib/languages/oxiacli/commands";
 import { oxiaSelectQuery, oxiaTableQuery } from "@/lib/db/providers/keyvalue/oxia/generators";
 
 const CR_NOTE = "# This key holds a carriage return, which a command line cannot spell: open it from the Keys panel.";

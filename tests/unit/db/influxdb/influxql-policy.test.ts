@@ -17,7 +17,7 @@ import {
   type InfluxqlRefusalReason,
   influxqlRefusal,
   readInfluxqlOperations,
-} from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+} from "@/lib/languages/influxql/policy";
 
 const FLUX_SENTENCE =
   "This is Flux, which Studio does not run: Flux can make the server open network connections even with a read-only token. Write it in InfluxQL; docs/providers/influxdb.md, section Coming from InfluxDB 2.x and Flux, has a translation table.";

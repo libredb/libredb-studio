@@ -4,8 +4,8 @@
  */
 import { createHash } from "node:crypto";
 import { admitInfluxqlStatement } from "@/lib/db/operations/influxql-admission";
-import { lexInfluxql } from "@/lib/db/providers/timeseries/influxdb/influxql-lexer";
-import { readInfluxqlAgentStatement } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-statement";
+import { lexInfluxql } from "@/lib/languages/influxql/lexer";
+import { readInfluxqlAgentStatement } from "@/lib/languages/influxql/agent-statement";
 import type { AgentLanguageServerAdapter } from "../pack";
 import { canonicalText } from "../shared";
 

@@ -3,8 +3,8 @@
  * refuses with the browser's context, the gate refuses with the same sentence; a read is named by its verb.
  */
 import { describe, expect, test } from "bun:test";
-import { parseOxiaCommand } from "@/lib/db/providers/keyvalue/oxia/commands";
-import { OXIA_DESTRUCTIVE_OPERATIONS, oxiaRefusal, readOxiaOperations } from "@/lib/db/providers/keyvalue/oxia/guard";
+import { parseOxiaCommand } from "@/lib/languages/oxiacli/commands";
+import { OXIA_DESTRUCTIVE_OPERATIONS, oxiaRefusal, readOxiaOperations } from "@/lib/languages/oxiacli/guard";
 
 describe("OXIA_DESTRUCTIVE_OPERATIONS", () => {
   test("is empty: no Oxia command asks for a confirmation in v1", () => {

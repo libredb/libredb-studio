@@ -17,7 +17,7 @@ import {
   INFLUXQL_AGENT_QUERY_TEXT_SENTENCE,
   INFLUXQL_AGENT_WIRE_EXPANSION,
 } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-read";
-import { INFLUXQL_AGENT_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-statement";
+import { INFLUXQL_AGENT_SENTENCES } from "@/lib/languages/influxql/agent-statement";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -42,14 +42,14 @@ import {
   influxqlSelectQuery,
   influxqlTableQuery,
 } from "@/lib/db/providers/timeseries/influxdb/influxql-generators";
-import { INFLUXQL_KEYWORDS } from "@/lib/db/providers/timeseries/influxdb/influxql-lexer";
+import { INFLUXQL_KEYWORDS } from "@/lib/languages/influxql/lexer";
 import { describeInfluxqlMeasurement } from "@/lib/db/providers/timeseries/influxdb/influxql-objects";
 import {
   evaluateInfluxql,
   INFLUXQL_MAX_TEXT_BYTES,
   INFLUXQL_POLICY_SENTENCES,
   type InfluxqlRefusalReason,
-} from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+} from "@/lib/languages/influxql/policy";
 import { InfluxDBProvider } from "@/lib/db/providers/timeseries/influxdb/index";
 import { INFLUXQL_CHUNK_SIZE, INFLUXQL_ROUTES, type InfluxRoute } from "@/lib/db/providers/timeseries/influxdb/routes";
 import { INFLUX_SYSTEM_DATABASES, RUN_DATABASE_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/run-database";

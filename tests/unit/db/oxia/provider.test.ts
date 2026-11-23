@@ -9,7 +9,7 @@ import { ConnectionError, DatabaseConfigError, QueryCancelledError, QueryError, 
 import { DEFAULT_QUERY_TIMEOUT } from "@/lib/db/types";
 import { DuplicateRunError } from "@/lib/db/utils/bounded-limiter";
 import type { OxiaCallOptions, OxiaClient, OxiaSnapshot } from "@/lib/db/providers/keyvalue/oxia/client";
-import { writeCommandSentence } from "@/lib/db/providers/keyvalue/oxia/commands";
+import { writeCommandSentence } from "@/lib/languages/oxiacli/commands";
 import {
   buildOxiaConnectionOptions,
   type OxiaConnectionOptions,

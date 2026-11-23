@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type * as Monaco from "monaco-editor";
-import { INFLUXQL_KEYWORDS } from "@/lib/db/providers/timeseries/influxdb/influxql-lexer";
-import { evaluateInfluxql } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+import { INFLUXQL_KEYWORDS } from "@/lib/languages/influxql/lexer";
+import { evaluateInfluxql } from "@/lib/languages/influxql/policy";
 import {
   type InfluxqlCompletionSchema,
   influxqlCompletionContext,

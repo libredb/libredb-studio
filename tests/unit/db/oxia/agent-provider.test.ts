@@ -10,7 +10,7 @@ import {
   OXIA_AGENT_COUNT_SENTENCES,
   OXIA_AGENT_FAILURE_SENTENCES,
 } from "@/lib/db/providers/keyvalue/oxia/agent-metadata-read";
-import { OXIA_AGENT_SENTENCES } from "@/lib/db/providers/keyvalue/oxia/agent-statement";
+import { OXIA_AGENT_SENTENCES } from "@/lib/languages/oxiacli/agent-statement";
 import { OxiaError } from "@/lib/db/providers/keyvalue/oxia/errors";
 import { OxiaProvider } from "@/lib/db/providers/keyvalue/oxia/index";
 import { shardFor } from "@/lib/db/providers/keyvalue/oxia/routing";

@@ -26,7 +26,7 @@ mock.module("@/components/QuerySafetyDialog", () => ({
 
 import { useQueryExecution } from "@/hooks/use-query-execution";
 import { onSessionEnded } from "@/lib/config/base-path";
-import { oxiaRefusal } from "@/lib/db/providers/keyvalue/oxia/guard";
+import { oxiaRefusal } from "@/lib/languages/oxiacli/guard";
 import { milvusRefusal } from "@/lib/db/providers/vector/milvus/guard";
 import { qdrantRefusal } from "@/lib/db/providers/vector/qdrant/guard";
 import { statementRefusal } from "@/lib/db/destructive-commands";

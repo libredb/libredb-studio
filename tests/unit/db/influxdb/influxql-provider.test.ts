@@ -33,11 +33,7 @@ import {
   INFLUX_CONTAINER_LEVELS,
   INFLUXQL_OBJECT_KINDS,
 } from "@/lib/db/providers/timeseries/influxdb/influxql-objects";
-import {
-  evaluateInfluxql,
-  INFLUXQL_MAX_TEXT_BYTES,
-  INFLUXQL_POLICY_SENTENCES,
-} from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+import { evaluateInfluxql, INFLUXQL_MAX_TEXT_BYTES, INFLUXQL_POLICY_SENTENCES } from "@/lib/languages/influxql/policy";
 import { InfluxDBProvider } from "@/lib/db/providers/timeseries/influxdb/influxql-provider";
 import { INFLUXQL_LABELS } from "@/lib/db/providers/timeseries/influxdb/labels";
 import { toInfluxHealth } from "@/lib/db/providers/timeseries/influxdb/monitoring";
@@ -264,7 +260,7 @@ describe("declarations", () => {
       writeReach: {
         editor: {
           reach: "absent",
-          proof: { module: "src/lib/db/providers/timeseries/influxdb/influxql-policy.ts", symbol: "evaluateInfluxql" },
+          proof: { module: "src/lib/languages/influxql/policy.ts", symbol: "evaluateInfluxql" },
         },
         objectEdit: { reach: "absent" },
         maintenance: { reach: "absent" },

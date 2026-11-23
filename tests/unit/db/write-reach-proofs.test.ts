@@ -54,7 +54,7 @@ describe("every write-reach gate and proof names a real export", () => {
   test.each(NAMED.map((entry) => [`${entry.type} ${entry.path}`, entry] as const))(
     "%s: resolves to an exported function or frozen table",
     async (_label, { proof }) => {
-      expect(proof.module).toMatch(/^src\/lib\/db\/.+\.ts$/);
+      expect(proof.module).toMatch(/^src\/lib\/(db|languages)\/.+\.ts$/);
       expect(existsSync(join(ROOT, proof.module))).toBe(true);
       const loaded = (await import(join(ROOT, proof.module))) as Record<string, unknown>;
       const exported = loaded[proof.symbol];

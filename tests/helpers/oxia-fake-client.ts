@@ -29,8 +29,8 @@ import type {
   OxiaStreamOptions,
   OxiaVersion,
 } from "@/lib/db/providers/keyvalue/oxia/client";
+import { OXIA_INTERNAL_PREFIX } from "@/lib/languages/oxiacli/constants";
 import {
-  OXIA_INTERNAL_PREFIX,
   OXIA_READ_BATCH_GETS,
   OXIA_RECEIVE_CAP_BYTES,
   OXIA_RUN_BYTE_BUDGET,

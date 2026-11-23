@@ -131,6 +131,13 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/explain/bigquery-dryrun.ts` | SDK /manifest | A marker the explain strategy writes and the provider reads, which belongs in the provider's explain row. |
 | `src/lib/explain/firestore-explain.ts` | SDK /manifest | A marker the explain strategy writes and the provider reads, which belongs in the provider's explain row. |
 | `src/lib/is-record.ts` | SDK /util | A pure type guard. |
+| `src/lib/languages/influxql/agent-statement.ts` | SDK /influxql | The agent's reader of one InfluxQL statement, pure; the influxdb provider's agent profile runs it and the admission reads it. |
+| `src/lib/languages/influxql/lexer.ts` | SDK /influxql | InfluxQL read as tokens as the server's scanner reads it, pure; the provider, the editor language and the policy read it. |
+| `src/lib/languages/influxql/policy.ts` | SDK /influxql | The InfluxQL read policy, pure; the provider and the confirmation gate ask the same function. |
+| `src/lib/languages/oxiacli/agent-statement.ts` | SDK /oxiacli | The agent's reader of one oxia client command. |
+| `src/lib/languages/oxiacli/commands.ts` | SDK /oxiacli | The oxia client command table and parser the provider and the gate read. |
+| `src/lib/languages/oxiacli/constants.ts` | SDK /oxiacli | The numbers and fixed names the oxia command language reads: the CLI's default port, the internal key prefix, the list and scan limits, the text bound and the echo width. |
+| `src/lib/languages/oxiacli/lexer.ts` | SDK /oxiacli | The oxia command line's tokens and shell words, read by the editor syntax and the parser. |
 | `src/lib/languages/rediscli/command-text.ts` | SDK /rediscli | The Redis command line reader of the rediscli statement language family, pure code the redis provider runs and the confirmation gate reads; the SDK republishes a family's readers under the language's subpath. |
 | `src/lib/logger.ts` | host service: logging | The process logger, with its level filtering and the logged-text scrub. |
 | `src/lib/monitoring-cache-ratio.ts` | SDK /monitoring | Pure display text for a cache hit ratio. |
@@ -181,7 +188,6 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 | `src/lib/agent/languages/cypher/adapter.ts` | 1 statement reader module | PR 8 cypher | the Cypher family, `src/lib/db/graph/cypher/` |
 | `src/lib/agent/languages/etcdctl/adapter.ts` | 1 statement reader module | PR 8 etcdctl | the etcdctl family, `src/lib/languages/etcdctl/` |
 | `src/lib/agent/languages/fsquery/adapter.ts` | 1 statement reader module | PR 8 fsquery | the fsquery family, `src/lib/languages/fsquery/` |
-| `src/lib/agent/languages/influxql/adapter.ts` | 2 statement reader modules | PR 8 influxql | the influxql family, `src/lib/languages/influxql/` |
 | `src/lib/agent/languages/kafkaread/adapter.ts` | 1 statement reader module | PR 8 kafkaread | the kafkaread family, `src/lib/languages/kafkaread/` |
 | `src/lib/agent/languages/kubectl/adapter.ts` | 1 statement reader module | PR 8 kubectl | the kubectl family, `src/lib/languages/kubectl/` |
 | `src/lib/agent/languages/kubectl/definitions.ts` | 1 agent fact and reader module | PR 8 kubectl | the kubectl family, `src/lib/languages/kubectl/` |
@@ -204,7 +210,6 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 | `src/lib/agent/languages/opcuaread/adapter.ts` | 1 statement reader module | PR 8 opcuaread | the opcuaread family, `src/lib/languages/opcuaread/` |
 | `src/lib/agent/languages/opcuaread/definitions.ts` | 2 agent fact and reader modules | PR 8 opcuaread | the opcuaread family, `src/lib/languages/opcuaread/` |
 | `src/lib/agent/languages/opcuaread/server.ts` | 1 agent fact and reader module | PR 8 opcuaread | the opcuaread family, `src/lib/languages/opcuaread/` |
-| `src/lib/agent/languages/oxiacli/adapter.ts` | 1 statement reader module | PR 8 oxiacli | the oxiacli family, `src/lib/languages/oxiacli/` |
 | `src/lib/agent/languages/promql/adapter.ts` | 1 statement reader module | PR 8 promql | the promql family, `src/lib/languages/promql/` |
 | `src/lib/agent/languages/promql/server.ts` | 1 agent fact and reader module | PR 8 promql | the promql family, `src/lib/languages/promql/` |
 | `src/lib/agent/languages/qdrantapi/adapter.ts` | 1 statement reader module | PR 8 qdrantapi | the qdrantapi family, `src/lib/languages/qdrantapi/` |
@@ -222,7 +227,7 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 | `src/lib/connection-string-parser.ts` | 2 paste readers, re-exported (databend, snowflake) | PR 11 connection | the manifest's connection section |
 | `src/lib/db/connection-form.ts` | 1 snowflake account host reader | PR 11 connection | the manifest's connection section |
 | `src/lib/db/connection-string/index.ts` | 43 connection string rows | PR 11 connection | manifest rows: the PR 9 schema, collected by the PR 11 projection |
-| `src/lib/db/destructive-commands.ts` | 9 confirmation vocabulary rows | PR 8 etcdctl, PR 8 fsquery, PR 8 influxql, PR 8 kubectl, PR 8 milvusrpc, PR 8 oxiacli, PR 8 qdrantapi, PR 8 s3api, PR 8 weaviateapi | each row into its statement language's core family module |
+| `src/lib/db/destructive-commands.ts` | 7 confirmation vocabulary rows | PR 8 etcdctl, PR 8 fsquery, PR 8 kubectl, PR 8 milvusrpc, PR 8 qdrantapi, PR 8 s3api, PR 8 weaviateapi | each row into its statement language's core family module |
 | `src/lib/db/driver-errors/index.ts` | 7 driver error rows | PR 11 policy | manifest rows: the PR 9 schema, collected by the PR 11 projection |
 | `src/lib/db/editor-language/index.ts` | 15 editor language rows | PR 11 editor and SQL text | manifest rows: the PR 9 schema, collected by the PR 11 projection |
 | `src/lib/db/engine-facets/index.ts` | 43 engine facets rows | PR 11 policy | manifest rows: the PR 9 schema, collected by the PR 11 projection |
@@ -234,7 +239,6 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 | `src/lib/db/operations/descriptors.ts` | 1 mongodb envelope reader | PR 8 mongo | the mongo family, `src/lib/languages/mongo/` |
 | `src/lib/db/operations/etcdctl-admission.ts` | 1 statement reader module | PR 8 etcdctl | the etcdctl family, `src/lib/languages/etcdctl/` |
 | `src/lib/db/operations/fsquery-admission.ts` | 1 statement reader module | PR 8 fsquery | the fsquery family, `src/lib/languages/fsquery/` |
-| `src/lib/db/operations/influxql-admission.ts` | 1 statement reader module | PR 8 influxql | the influxql family, `src/lib/languages/influxql/` |
 | `src/lib/db/operations/kafkaread-admission.ts` | 1 statement reader module | PR 8 kafkaread | the kafkaread family, `src/lib/languages/kafkaread/` |
 | `src/lib/db/operations/kubectl-admission.ts` | 1 statement reader module | PR 8 kubectl | the kubectl family, `src/lib/languages/kubectl/` |
 | `src/lib/db/operations/libredbkv-admission.ts` | 1 statement reader module | PR 8 libredbkv | the libredbkv family, `src/lib/languages/libredbkv/` |
@@ -245,7 +249,6 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 | `src/lib/db/operations/mtconnectread-admission.ts` | 1 statement reader module | PR 8 mtconnectread | the mtconnectread family, `src/lib/languages/mtconnectread/` |
 | `src/lib/db/operations/netconfrpc-admission.ts` | 1 statement reader module | PR 8 netconfrpc | the netconfrpc family, `src/lib/languages/netconfrpc/` |
 | `src/lib/db/operations/opcuaread-admission.ts` | 1 statement reader module | PR 8 opcuaread | the opcuaread family, `src/lib/languages/opcuaread/` |
-| `src/lib/db/operations/oxiacli-admission.ts` | 1 statement reader module | PR 8 oxiacli | the oxiacli family, `src/lib/languages/oxiacli/` |
 | `src/lib/db/operations/promql-admission.ts` | 1 statement reader module | PR 8 promql | the promql family, `src/lib/languages/promql/` |
 | `src/lib/db/operations/qdrantapi-admission.ts` | 1 statement reader module | PR 8 qdrantapi | the qdrantapi family, `src/lib/languages/qdrantapi/` |
 | `src/lib/db/operations/rabbitread-admission.ts` | 1 statement reader module | PR 8 rabbitread | the rabbitread family, `src/lib/languages/rabbitread/` |
