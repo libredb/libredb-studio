@@ -14,7 +14,7 @@ declare module "mssql" {
 
 /**
  * `oracledb` ships NO type declarations of its own, and there is no `@types/oracledb`
- * in this project's dependency tree. Verified against the installed 6.10.0:
+ * in this project's dependency tree. Verified against the installed 26.0.0 (2026-11-23):
  * `node_modules/oracledb/package.json` has neither a `types` nor a `typings` field, and
  * `find node_modules/oracledb -name '*.d.ts'` matches nothing. So the driver's own types
  * cannot be imported, and this declaration is the only thing that can check the calls -
