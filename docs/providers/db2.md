@@ -616,7 +616,7 @@ On the measured database the check's eight reads take about 200 ms, and a whole 
 The deadline is the statement budget, over the whole call: past it the call answers the shared time refusal at once and the provider asks the call's connection to close (`boundByClose` in [`driver.ts`](../../src/lib/db/providers/sql/db2/driver.ts)), which ends the wait, not the work, as section 7.4 records for a transaction.
 No cancel reaches the server, so the statement runs there to its end, and only then does the connection close and Db2 roll the unit of work back: measured through MCP on 12.1.0.0, a cross join answered at a two-second `timeout_ms` ran 17.5 seconds more on the server in one run and 30.3 in another, as a statement whose client closed the call does ("MCP read" below).
 No server-side cancel is sent, so the agent user needs no `WLM_CANCEL_ACTIVITY` grant or monitoring privilege (D392).
-Every refusal is a sentence of [`read-only-budget.ts`](../../src/lib/db/providers/sql/read-only-budget.ts) or the server's own error.
+Every refusal is a sentence of [`read-only-budget.ts`](../../src/lib/db/read-only-budget.ts) or the server's own error.
 The estimate-plan session mode is refused: Db2's `EXPLAIN` writes its rows into the explain tables, a write the agent user is refused, so the agent composes no estimating plan here (B148).
 
 #### The agent user

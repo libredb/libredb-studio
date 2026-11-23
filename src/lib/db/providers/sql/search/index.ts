@@ -86,7 +86,7 @@ import {
   ROW_BUDGET_PREFIX,
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
-} from "../read-only-budget";
+} from "@/lib/db/read-only-budget";
 import {
   AuthenticationError,
   ByteBudgetRefusal,

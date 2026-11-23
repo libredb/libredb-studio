@@ -21,7 +21,7 @@ import {
   type KafkaOffsetPosition,
   type KafkaTopicMetadata,
 } from "@/lib/db/providers/stream/kafka/client";
-import { BYTE_BUDGET_PREFIX, measureResultBytes, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { BYTE_BUDGET_PREFIX, measureResultBytes, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import { errorKind } from "@/lib/db/error-record";
 

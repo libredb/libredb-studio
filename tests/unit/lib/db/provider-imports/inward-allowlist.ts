@@ -517,10 +517,6 @@ export const INWARD_IMPORTS: readonly AllowlistEntry[] = [
     modules: ["stream/rabbitmq/agent-statement.ts"],
   },
   {
-    file: "src/lib/db/operations/read-only-statement.ts",
-    modules: ["sql/read-only-budget.ts"],
-  },
-  {
     file: "src/lib/db/operations/rediscli-admission.ts",
     modules: ["keyvalue/redis-agent-statement.ts"],
   },
@@ -671,9 +667,5 @@ export const INWARD_IMPORTS: readonly AllowlistEntry[] = [
   {
     file: "src/lib/kubernetes/kubeconfig-import.ts",
     modules: ["platform/kubernetes/limits.ts"],
-  },
-  {
-    file: "src/lib/mcp/tools/read-query-limits.ts",
-    modules: ["sql/read-only-refusals.ts", "sql/read-query-forms.ts"],
   },
 ];

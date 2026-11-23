@@ -59,7 +59,7 @@ import {
   byteBudgetSentence,
   MAX_STATEMENT_TIMEOUT_MS,
   rowBudgetSentence,
-} from "../../sql/read-only-budget";
+} from "@/lib/db/read-only-budget";
 import type { ReadOnlyStatementBudget } from "../../../types";
 import { unionFields, uniquelyKeyedRows } from "../../../utils/result-fields";
 import type { RevivedMongoReadEnvelope } from "./extended-json";

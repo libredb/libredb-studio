@@ -67,7 +67,7 @@ import {
   QueryError,
   TimeBudgetRefusal,
 } from "@/lib/db/errors";
-import { assertReadOnlyBudget, byteBudgetSentence, TIME_BUDGET_PREFIX } from "../read-only-budget";
+import { assertReadOnlyBudget, byteBudgetSentence, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import {
   assertAgentConnection,
   assertReadOnlyClaims,

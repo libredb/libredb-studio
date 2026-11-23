@@ -120,7 +120,7 @@ import {
   measureResultBytes,
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
-} from "../read-only-budget";
+} from "@/lib/db/read-only-budget";
 import {
   proveTrinoAgentBoundary,
   readTrinoCatalogs,

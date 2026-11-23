@@ -32,7 +32,7 @@ import { RefusedBeforeSendError } from "@/lib/db/errors";
 import { createTargetScope } from "@/lib/db/operations/policy";
 import { PROVIDER_TEXT_WITHHELD } from "@/lib/db/operations/provider-text";
 import { secretForms } from "@/lib/db/utils/server-text";
-import { rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
+import { rowBudgetSentence } from "@/lib/db/read-only-budget";
 import { READ_ALLOWANCE_PREFIX, type RunReadAllowance } from "@/lib/db/read-allowance";
 import type { DatabaseProvider, ProviderCapabilities, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";

@@ -78,7 +78,7 @@ import {
   runUnderAgentDeadline,
   sampleWithinBudget,
 } from "./agent-read";
-import { assertReadOnlyBudget } from "../../sql/read-only-budget";
+import { assertReadOnlyBudget } from "@/lib/db/read-only-budget";
 import { AGENT_VERIFY_MAX_TIME_MS, agentHostsOf, verifyAgentProfile } from "./agent-boundary";
 import { parseExtendedJson, reviveEnvelope } from "./extended-json";
 import { readMongoCommand } from "./envelope";

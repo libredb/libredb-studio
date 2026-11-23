@@ -19,7 +19,7 @@ import {
   type KafkaTopicMetadata,
 } from "@/lib/db/providers/stream/kafka/client";
 import { KAFKA_TOPIC_COLUMNS } from "@/lib/db/providers/stream/kafka/objects";
-import { ROW_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { ROW_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { errorKind } from "@/lib/db/error-record";

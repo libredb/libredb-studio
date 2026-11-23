@@ -80,7 +80,7 @@ import { formatBytes } from "@/lib/db/utils/pool-manager";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { type SqlGrammar } from "@libredb/provider-sdk/sql";
 import { readStatementEnd } from "@/lib/sql/statement-end";
-import { assertReadOnlyBudget, byteBudgetSentence } from "../read-only-budget";
+import { assertReadOnlyBudget, byteBudgetSentence } from "@/lib/db/read-only-budget";
 import { verifyAgentProfile } from "./agent-boundary";
 import {
   agentBodyCap,

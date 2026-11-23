@@ -22,7 +22,7 @@ import {
   ROW_BUDGET_PREFIX,
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
-} from "@/lib/db/providers/sql/read-only-budget";
+} from "@/lib/db/read-only-budget";
 import {
   declareMetadataOnly,
   type MetadataOnlyDeclaration,

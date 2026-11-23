@@ -27,7 +27,7 @@ import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { ConnectionError, ExecutionProfileError, QueryError, RowBudgetRefusal } from "@/lib/db/errors";
 import { ERROR_KINDS, type ErrorKind } from "@libredb/provider-sdk/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
-import { measureResultBytes, rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
+import { measureResultBytes, rowBudgetSentence } from "@/lib/db/read-only-budget";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import {

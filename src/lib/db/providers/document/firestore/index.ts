@@ -31,7 +31,7 @@ import { googleCredentialSecrets } from "@/lib/db/auth/google/credentials";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError, QueryCancelledError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { requireEgressDecision } from "@/lib/db/http/egress-policy";
-import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
+import { assertReadOnlyBudget } from "@/lib/db/read-only-budget";
 import type {
   ActiveSessionDetails,
   Container,

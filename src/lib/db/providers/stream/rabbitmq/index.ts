@@ -26,7 +26,7 @@ import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { RefusedBeforeSendError } from "@/lib/db/errors";
 import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { createNodeTransport } from "@/lib/db/http/node-transport";
-import { assertReadOnlyBudget, rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
+import { assertReadOnlyBudget, rowBudgetSentence } from "@/lib/db/read-only-budget";
 import type {
   ActiveSessionDetails,
   Container,

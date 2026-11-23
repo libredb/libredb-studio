@@ -95,7 +95,7 @@ import {
   QueryError,
   RefusedBeforeSendError,
 } from "../../errors";
-import { assertReadOnlyBudget } from "../sql/read-only-budget";
+import { assertReadOnlyBudget } from "@/lib/db/read-only-budget";
 
 /**
  * Redis's identity for the shared container-path renderer.

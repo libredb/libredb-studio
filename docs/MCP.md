@@ -61,7 +61,7 @@ In the rest of this guide, `agent-read-only` is Studio's least-privilege read pr
     A connection that carries `unavailable` gets that sentence instead, from every statement tool, naming no tool.
     Elasticsearch SQL has no `OFFSET`, so there `pagination.nextOffset` is always `null`, an `offset` is refused before anything is sent, and the answer says to page by key instead: `ORDER BY` a unique field, and for the next page add `WHERE` that field `>` the last value read.
     CQL has no `OFFSET` either, so on Apache Cassandra `pagination.nextOffset` is always `null`, an `offset` is refused before anything is sent, and the answer says how to page without one: keep a `LIMIT`, and for the next page add `WHERE token(<partition key>) > token(<the last one read>)`, or within one partition `WHERE <clustering column> > <the last value read>`.
-    Each engine takes these, as its row in `src/lib/db/providers/sql/read-query-forms.ts` names them:
+    Each engine takes these, as its row in `src/lib/sql/read-query-forms.ts` names them:
     - PostgreSQL: a `SELECT` (a `WITH` is fine), `VALUES`, `TABLE`, or `EXPLAIN` without `ANALYZE`.
     - SQLite: a `SELECT` (a `WITH` is fine), `VALUES`, or `EXPLAIN`.
     - DuckDB: a `SELECT` (a `WITH` is fine), `VALUES`, `TABLE`, or `EXPLAIN` without `ANALYZE`.

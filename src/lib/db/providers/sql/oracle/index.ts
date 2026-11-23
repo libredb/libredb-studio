@@ -68,7 +68,7 @@ import { describeOracleClientLoadFailure } from "../oracle-driver-errors";
 import { formatBytes } from "../../../utils/pool-manager";
 import { analyzeQuery, assertRowBounds, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../../utils/query-limiter";
 import { measuredNullableAggregate } from "../../../utils/measured-aggregate";
-import { assertReadOnlyBudget } from "../read-only-budget";
+import { assertReadOnlyBudget } from "@/lib/db/read-only-budget";
 import { agentDeadlineRefusal, assertAgentColumnTypes, readAgentAnswer, verifyAgentPrincipal } from "./agent-read";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";

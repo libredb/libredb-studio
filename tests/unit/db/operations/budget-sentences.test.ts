@@ -1,7 +1,7 @@
 /**
  * The row and byte budget sentences are written by one shared module and built by every provider through it.
  *
- * `rowBudgetSentence` and `byteBudgetSentence` in src/lib/db/providers/sql/read-only-budget.ts format the refusal
+ * `rowBudgetSentence` and `byteBudgetSentence` in src/lib/db/read-only-budget.ts format the refusal
  * of a result past the row or byte field of a `ReadOnlyStatementBudget`. A reader decides that refusal by its class,
  * but `rowBudgetIn` in src/lib/agent/context-snapshot.ts, and through it the agent's row advice in
  * src/lib/agent/tools.ts, read the two numbers back out of the row sentence. So each provider with a `queryReadOnly`
@@ -19,11 +19,11 @@ import {
   byteBudgetSentence,
   ROW_BUDGET_PREFIX,
   rowBudgetSentence,
-} from "@/lib/db/providers/sql/read-only-budget";
+} from "@/lib/db/read-only-budget";
 
 const REPO = join(import.meta.dir, "../../../..");
 const read = (file: string): string => readFileSync(join(REPO, file), "utf8");
-const SHARED = "src/lib/db/providers/sql/read-only-budget.ts";
+const SHARED = "src/lib/db/read-only-budget.ts";
 const SHARED_PREFIXES = [ROW_BUDGET_PREFIX, BYTE_BUDGET_PREFIX];
 
 /** Each provider with a `queryReadOnly`, by the files that raise its row or byte refusal. */

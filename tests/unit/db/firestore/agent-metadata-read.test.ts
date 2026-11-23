@@ -37,7 +37,7 @@ import {
 import type { FirestoreAgentPlan } from "@/lib/db/providers/document/firestore/agent-statement";
 import { LIMITS } from "@/lib/db/providers/document/firestore/constants";
 import { FIRESTORE_TRANSPORT_SENTENCES } from "@/lib/db/providers/document/firestore/transport";
-import { ROW_BUDGET_PREFIX, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { ROW_BUDGET_PREFIX, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import { MetadataProjectionError } from "@/lib/db/redaction/metadata-only";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";

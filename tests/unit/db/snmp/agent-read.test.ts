@@ -22,7 +22,7 @@ import {
 import type { SnmpFailure } from "@/lib/db/providers/network/snmp/errors";
 import type { Response, ResponseVarbind } from "@/lib/db/providers/network/snmp/message";
 import { compareOid } from "@/lib/db/providers/network/snmp/objects";
-import { ROW_BUDGET_PREFIX, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { ROW_BUDGET_PREFIX, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 
 const BUDGET: ReadOnlyStatementBudget = { maxResultRows: 3, maxResultBytes: 10_000, statementTimeoutMs: 2_000 };

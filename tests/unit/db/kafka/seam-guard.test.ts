@@ -2574,7 +2574,7 @@ const AGENT_CLIENT_MEMBERS = ["listTopics", "metadata", "offsets"];
 const AGENT_IMPORTS: Readonly<Record<string, readonly string[] | "any">> = {
   "@/lib/db/errors": "any",
   "@/lib/db/object-kinds": ["findKind"],
-  "@/lib/db/providers/sql/read-only-budget": "any",
+  "@/lib/db/read-only-budget": "any",
   "@/lib/db/redaction/metadata-only": "any",
   "@/lib/db/types": "any",
   "@/lib/db/utils/json-repeated-key": ["repeatsAKey"],

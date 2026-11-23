@@ -80,7 +80,7 @@ import {
 import { isSourcePartUnavailable } from "@/lib/db/object-kinds";
 import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
-import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
+import { readQueryFormsOf } from "@/lib/sql/read-query-forms";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import { databaseContentNotice, providerTextNotice } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";

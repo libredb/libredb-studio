@@ -74,7 +74,12 @@ import {
 import { mapDatabaseError } from "../../map-database-error";
 import { MYSQL_ACCOUNT_LIMIT_ERRNOS } from "./mysql-driver-errors";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget, ReadOnlyStatementMode } from "../../types";
-import { assertReadOnlyBudget, byteBudgetSentence, measureRowBytes, rowBudgetSentence } from "./read-only-budget";
+import {
+  assertReadOnlyBudget,
+  byteBudgetSentence,
+  measureRowBytes,
+  rowBudgetSentence,
+} from "@/lib/db/read-only-budget";
 import {
   applySourceBound,
   assertContainerPathShape,

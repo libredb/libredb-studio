@@ -95,12 +95,7 @@ import {
 } from "@/lib/db/operations/provider-text";
 import { secretForms } from "@/lib/db/utils/server-text";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
-import {
-  byteBudgetSentence,
-  measureRowBytes,
-  rowBudgetSentence,
-  TIME_BUDGET_PREFIX,
-} from "@/lib/db/providers/sql/read-only-budget";
+import { byteBudgetSentence, measureRowBytes, rowBudgetSentence, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import { typeIdRefusal, unknownTypeSentence } from "@/lib/db/type-id";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
 import { TABLE_LABELS } from "../../../fixtures/provider-labels";

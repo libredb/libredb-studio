@@ -25,7 +25,7 @@ import { createErrorResponse } from "@/lib/api/errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { asBytes, binaryText } from "@/lib/export/binary";
-import { byteBudgetSentence, measureRowBytes } from "@/lib/db/providers/sql/read-only-budget";
+import { byteBudgetSentence, measureRowBytes } from "@/lib/db/read-only-budget";
 import { mysqlJsonStrategy } from "@/lib/explain/mysql-json";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { CATALOG_TYPE_RULES } from "@/lib/db/providers/sql/mysql";

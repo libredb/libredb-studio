@@ -13,7 +13,7 @@ import { FIRESTORE_PROVIDER_SENTENCES as S, FirestoreProvider } from "@/lib/db/p
 import { FIRESTORE_AGENT_FAILURE_SENTENCES as F } from "@/lib/db/providers/document/firestore/agent-metadata-read";
 import { FIRESTORE_AGENT_SENTENCES } from "@/lib/db/providers/document/firestore/agent-statement";
 import { FIRESTORE_AGENT_WITHHELD as W } from "@/lib/db/providers/document/firestore/agent-surface";
-import { TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import { READ_ALLOWANCE_PREFIX, RunReadAllowance } from "@/lib/db/read-allowance";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";

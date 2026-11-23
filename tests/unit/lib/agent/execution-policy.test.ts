@@ -13,7 +13,7 @@ import {
 } from "@/lib/agent/execution-policy";
 import type { AgentRunWorkflowType } from "@/lib/agent/types";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
-import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
+import { assertReadOnlyBudget } from "@/lib/db/read-only-budget";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import type { ExecutionActor, ExecutionPolicy, OperationRequest } from "@/lib/db/operations/policy";

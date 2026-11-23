@@ -617,7 +617,7 @@ keyword the user never typed, and dropping it silently returns page **one** whil
 it to what it already shows — duplicate rows presented as new ones, which is a wrong *answer*.
 `search/index.ts` refuses Elasticsearch's identical gap the same way.
 The refusal is an `OffsetUnsupportedError`, a `QueryError` of its own class (`src/lib/db/errors.ts`), so a caller can tell it from any other failure of `prepareQuery`.
-MCP `run_read_query` never reaches it: Cassandra's row in `src/lib/db/providers/sql/read-query-forms.ts` says its SQL has no offset, so an `offset` is refused before `prepareQuery` is asked, in the sentence that says how to page without one ([§14.7](#147-mcp-read)).
+MCP `run_read_query` never reaches it: Cassandra's row in `src/lib/sql/read-query-forms.ts` says its SQL has no offset, so an `offset` is refused before `prepareQuery` is asked, in the sentence that says how to page without one ([§14.7](#147-mcp-read)).
 
 **2. `ALLOW FILTERING` must stay last.**
 

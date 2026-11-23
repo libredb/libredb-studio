@@ -231,6 +231,13 @@ export const REGISTRIES: readonly Listed[] = [
     count: 1,
     reason: "the total name registry of code fence tags",
   },
+  {
+    path: "src/lib/sql/read-query-forms.ts",
+    declaration: "READ_QUERY_FORMS",
+    count: 1,
+    reason:
+      "the statements and paging clause run_read_query names for each engine, a total table compile-enforced over the type-id union",
+  },
   { path: "src/lib/agent/agent-manifest.ts", declaration: "AGENT_STATEMENT_LANGUAGE", count: 1, reason: AGENT_LEG },
   {
     path: "src/lib/agent/agent-manifest.ts",

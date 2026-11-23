@@ -11,8 +11,8 @@
  * parameters), so nothing that is not a positive integer may reach it.
  */
 
-import type { DatabaseType, ReadOnlyStatementBudget } from "../../types";
-import { QueryError } from "../../errors";
+import type { DatabaseType, ReadOnlyStatementBudget } from "./types";
+import { QueryError } from "./errors";
 
 /** PostgreSQL's statement_timeout is a 32-bit millisecond setting; the same
  * ceiling is applied everywhere: a timeout beyond ~24 days is not a budget.

@@ -39,7 +39,7 @@ import {
 import * as errorsModule from "@/lib/db/errors";
 import { errorKind } from "@/lib/db/error-record";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
-import { rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
+import { rowBudgetSentence } from "@/lib/db/read-only-budget";
 import {
   describeOracleClientLoadFailure,
   describeOracleThinModeRefusal,

@@ -100,7 +100,7 @@ import {
 } from "@/lib/db/object-kinds";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import type { DatabaseConnection } from "@/lib/types";
-import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
+import { readQueryFormsOf } from "@/lib/sql/read-query-forms";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import { databaseContentNotice, MCP_ENGINE_ERROR_PREFIX, providerTextNotice } from "@/lib/mcp/output";
 import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";

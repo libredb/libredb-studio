@@ -16,7 +16,7 @@ import {
   byteBudgetSentence,
   measureResultBytes,
   rowBudgetSentence,
-} from "@/lib/db/providers/sql/read-only-budget";
+} from "@/lib/db/read-only-budget";
 import type { QueryResult, ReadOnlyStatementBudget, ReadOnlyStatementMode } from "@/lib/db/types";
 import type { KubernetesSeams } from "./client";
 import { type ExplainCache, type KubectlContext, resultOf, statementCall } from "./console/context";

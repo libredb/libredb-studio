@@ -14,7 +14,7 @@ import {
   mqttAgentResult,
   runMqttAgentRead,
 } from "@/lib/db/providers/keyvalue/mqtt/agent-read";
-import { measureResultBytes } from "@/lib/db/providers/sql/read-only-budget";
+import { measureResultBytes } from "@/lib/db/read-only-budget";
 import { MQTT_AGENT_SENTENCES } from "@/lib/db/providers/keyvalue/mqtt/agent-statement";
 import { MQTT_AGENT_WITHHELD } from "@/lib/db/providers/keyvalue/mqtt/agent-surface";
 import {

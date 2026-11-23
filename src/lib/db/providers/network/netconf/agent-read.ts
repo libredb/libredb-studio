@@ -39,7 +39,7 @@ import {
   ROW_BUDGET_PREFIX,
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
-} from "@/lib/db/providers/sql/read-only-budget";
+} from "@/lib/db/read-only-budget";
 import { MetadataProjectionError } from "@/lib/db/redaction/metadata-only";
 import type { QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
 import { NetconfAgentError, type NetconfAgentClient, type NetconfAgentLibrary } from "./agent-client";

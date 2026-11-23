@@ -16,7 +16,7 @@ import { MODBUS_AGENT_WITHHELD } from "@/lib/db/providers/industrial/modbus/agen
 import { dialModbus, type Dialer } from "@/lib/db/providers/industrial/modbus/client";
 import { MAX_IDENTIFICATION_ROUNDS } from "@/lib/db/providers/industrial/modbus/constants";
 import { MODBUS_PROVIDER_SENTENCES, ModbusProvider } from "@/lib/db/providers/industrial/modbus/index";
-import { TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";

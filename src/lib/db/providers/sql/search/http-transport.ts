@@ -77,7 +77,7 @@ import { httpTransportFetch } from "@/lib/db/http/egress-policy";
 import type { DatabaseConnection, EgressDecision } from "@/lib/db/types";
 import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
 import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
-import { measureRowBytes } from "../read-only-budget";
+import { measureRowBytes } from "@/lib/db/read-only-budget";
 import {
   SearchBoundsError,
   type SearchClusterHealth,

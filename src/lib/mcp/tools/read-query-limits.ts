@@ -1,8 +1,8 @@
 import type { ErrorKind } from "@libredb/provider-sdk/errors";
 import { errorKind } from "@/lib/db/error-record";
 import type { ReadAllowanceExceededError, RefusedBeforeSendError } from "@/lib/db/errors";
-import { ENGINE_TOO_LARGE_TEXTS } from "@/lib/db/providers/sql/read-only-refusals";
-import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
+import { ENGINE_TOO_LARGE_TEXTS } from "@/lib/sql/read-only-refusals";
+import { readQueryFormsOf } from "@/lib/sql/read-query-forms";
 import { analyzeQuery } from "@/lib/db/utils/query-limiter";
 import type { DatabaseType } from "@/lib/types";
 
@@ -23,7 +23,7 @@ import type { DatabaseType } from "@/lib/types";
  * yet (docs/BACKLOG.md D128).
  *
  * The statements an engine takes and its own paging clause differ by engine, so every text that names either reads the
- * engine's row in src/lib/db/providers/sql/read-query-forms.ts rather than one engine's words for all.
+ * engine's row in src/lib/sql/read-query-forms.ts rather than one engine's words for all.
  */
 
 /** The kinds of read-only budget refusal a provider raises. */

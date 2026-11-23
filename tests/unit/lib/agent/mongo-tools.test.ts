@@ -39,12 +39,7 @@ import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
 import { QueryError } from "@/lib/db/errors";
-import {
-  byteBudgetSentence,
-  measureRowBytes,
-  rowBudgetSentence,
-  TIME_BUDGET_PREFIX,
-} from "@/lib/db/providers/sql/read-only-budget";
+import { byteBudgetSentence, measureRowBytes, rowBudgetSentence, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import type { DatabaseProvider, ReadOnlyCatalogReading, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type {

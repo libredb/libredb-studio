@@ -7,7 +7,7 @@
 import { describe, expect, test } from "bun:test";
 import { ExecutionProfileError, QueryError, TimeoutError } from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
-import { measureResultBytes } from "@/lib/db/providers/sql/read-only-budget";
+import { measureResultBytes } from "@/lib/db/read-only-budget";
 import { type QdrantAnswer, QdrantError, type QdrantProbe } from "@/lib/db/providers/vector/qdrant/client";
 import type { QdrantAnswered } from "@/lib/db/providers/vector/qdrant/execute";
 import {

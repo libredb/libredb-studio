@@ -77,7 +77,7 @@ import {
   measureRowBytes,
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
-} from "@/lib/db/providers/sql/read-only-budget";
+} from "@/lib/db/read-only-budget";
 import { type ProviderTextScrub, scrubProviderText } from "@/lib/db/operations/provider-text";
 import { assertStatementsReviewed } from "@/lib/db/statement-review";
 import type { DatabaseProvider, ReadOnlyStatementBudget, ReadOnlyStatementMode } from "@/lib/db/types";

@@ -10,11 +10,7 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { QueryCancelledError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
-import {
-  byteBudgetSentence,
-  MAX_STATEMENT_TIMEOUT_MS,
-  rowBudgetSentence,
-} from "@/lib/db/providers/sql/read-only-budget";
+import { byteBudgetSentence, MAX_STATEMENT_TIMEOUT_MS, rowBudgetSentence } from "@/lib/db/read-only-budget";
 import {
   RABBITMQ_AGENT_STOP_SENTENCES,
   rabbitmqAgentUnreadable,

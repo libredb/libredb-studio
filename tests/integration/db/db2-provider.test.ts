@@ -92,7 +92,7 @@ import type {
 import { TRUST_MATERIAL_MISSING } from "@/lib/db/utils/require-trust-material";
 import { TUNNEL_FAR_END } from "@/lib/types";
 import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
-import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
+import { readQueryFormsOf } from "@/lib/sql/read-query-forms";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import {
   databaseContentNotice,

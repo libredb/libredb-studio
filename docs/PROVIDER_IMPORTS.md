@@ -96,6 +96,7 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/db/query-generators/shared.ts` | SDK /manifest | Pure pieces a query generator row shares. |
 | `src/lib/db/query-generators/types.ts` | SDK /manifest | The query generator row contract. |
 | `src/lib/db/read-allowance.ts` | host service: run bounds | The billed-read allowance is a ledger of one agent run or MCP call, which the host owns. |
+| `src/lib/db/read-only-budget.ts` | SDK /calls | The read-only call's budget check, the row, byte and time refusal openings and sentences, and the result byte measures, pure; every family's `queryReadOnly` reads it, so it sits in core beside the types and errors it reads rather than in the SQL family module, and the SDK's calls subpath already holds a result's byte budgets and row measure. |
 | `src/lib/db/redaction/metadata-only.ts` | SDK /redaction | Pure projection helpers for the metadata-only answer mode. |
 | `src/lib/db/sql-grammar/shared.ts` | SDK /manifest | Shared grammar values a SQL grammar row composes. |
 | `src/lib/db/sql-grammar/types.ts` | SDK /manifest | The SQL grammar row contract. |
@@ -155,6 +156,7 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/sql/grammar.ts` | core only | `resolveSqlGrammar` and `readsSqlText` read core's SQL grammar registry, so a provider reads its own grammar row instead; the `SqlGrammar` type and the default grammar are SDK /sql's since the split. |
 | `src/lib/sql/identifier.ts` | core only | `quoteIdentifier` reads core's SQL writing registry by type-id; a provider quotes through its own SQL writing row. |
 | `src/lib/sql/leading-keyword.ts` | SDK /sql | A pure reader that takes the grammar as an argument; it reaches no provider module, which the guard holds. |
+| `src/lib/sql/mssql-read-only-refusals.ts` | SDK /errors | The openings of the cut-value, serialised-result and time refusals the mssql provider raises as the classes of those error kinds, pure text; the provider imports only the openings, and core reads the module's two too-large answers through `read-only-refusals.ts`. |
 | `src/lib/sql/operative-keyword.ts` | SDK /sql | A pure reader that takes the grammar as an argument; it reaches no provider module, which the guard holds. |
 | `src/lib/sql/result-order.ts` | core only | `hasResultOrder` resolves the grammar by type-id through core's registry; the SDK reader takes the grammar as an argument once PR 9 splits it. |
 | `src/lib/sql/spans.ts` | SDK /sql | A pure reader that takes the grammar as an argument; it reaches no provider module, which the guard holds. |
@@ -170,10 +172,8 @@ These are a snapshot; they leave the provider tree only when their slice moves t
 
 | Imported module | Importers | Destination |
 |---|---|---|
-| `sql/read-only-budget.ts` | 37 units, and core | the SQL family, `src/lib/sql/`, in PR 8 sql |
 | `sql/sql-base.ts` | 18 units | the legacy SQL base class, retired with the legacy bridge |
 | `sql/column-types.ts` | 6 units | SDK `/sql`, as a pure column type reader |
-| `sql/read-only-refusals.ts`, `sql/read-query-forms.ts`, `sql/mssql-read-only-refusals.ts` | core, and one another | the SQL family, `src/lib/sql/`, in PR 8 sql |
 | `sql/pg-wire-cancel.ts` | postgres | moves into the postgres provider |
 | `sql/sqlite-create-table.ts`, `sql/sqlite-int64.ts` | libsql | an SDK subpath shared by the two SQLite dialects, which PR 9 names |
 | `industrial/mtconnect/xml.ts`, `industrial/mtconnect/xml-bounds.ts` | netconf | SDK `/xml`, as a pure bounded XML reader |
@@ -259,7 +259,6 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 | `src/lib/db/operations/promql-admission.ts` | 1 statement reader module | PR 8 promql | the promql family, `src/lib/languages/promql/` |
 | `src/lib/db/operations/qdrantapi-admission.ts` | 1 statement reader module | PR 8 qdrantapi | the qdrantapi family, `src/lib/languages/qdrantapi/` |
 | `src/lib/db/operations/rabbitread-admission.ts` | 1 statement reader module | PR 8 rabbitread | the rabbitread family, `src/lib/languages/rabbitread/` |
-| `src/lib/db/operations/read-only-statement.ts` | 1 SQL read-only budget reader | PR 8 sql | the SQL family, `src/lib/sql/` |
 | `src/lib/db/operations/rediscli-admission.ts` | 1 statement reader module | PR 8 rediscli | the rediscli family, `src/lib/languages/rediscli/` |
 | `src/lib/db/operations/s3api-admission.ts` | 1 statement reader module | PR 8 s3api | the s3api family, `src/lib/languages/s3api/` |
 | `src/lib/db/operations/snmpget-admission.ts` | 1 statement reader module | PR 8 snmpget | the snmpget family, `src/lib/languages/snmpget/` |
@@ -269,7 +268,6 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 | `src/lib/db/sql-writing/index.ts` | 43 SQL writing rows | PR 11 editor and SQL text | manifest rows: the PR 9 schema, collected by the PR 11 projection |
 | `src/lib/explain/firestore-explain.ts` | 1 firestore console parser | PR 8 fsquery | the fsquery family, `src/lib/languages/fsquery/` |
 | `src/lib/kubernetes/kubeconfig-import.ts` | 1 kubernetes limits module | PR 11 connection | the manifest's connection section |
-| `src/lib/mcp/tools/read-query-limits.ts` | 2 SQL read readers (`read-only-refusals.ts`, `read-query-forms.ts`) | PR 8 sql | the SQL family, `src/lib/sql/` |
 
 ## Slices of PR 8
 

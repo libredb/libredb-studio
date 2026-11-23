@@ -21,7 +21,7 @@
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { plaintextSecretRefusal } from "@/lib/db/http/endpoint";
-import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
+import { assertReadOnlyBudget } from "@/lib/db/read-only-budget";
 import type {
   Container,
   DatabaseObject,

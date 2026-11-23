@@ -70,7 +70,7 @@ import {
   UNIT_ID_MIN,
 } from "./constants";
 import { dialModbus, socketWire, type Endpoint } from "./client";
-import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
+import { assertReadOnlyBudget } from "@/lib/db/read-only-budget";
 import { deviceKey, MODBUS_AGENT_PACER, ModbusPacingTimeout } from "./agent-pacing";
 import { modbusAgentResult, runModbusAgentRead, type ModbusAgentReadSeams } from "./agent-read";
 import { readModbusAgentStatement } from "./agent-statement";

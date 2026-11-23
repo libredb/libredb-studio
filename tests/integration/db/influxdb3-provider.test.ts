@@ -24,7 +24,7 @@ import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
 import { TransportError } from "@/lib/db/http/node-transport";
-import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
+import { readQueryFormsOf } from "@/lib/sql/read-query-forms";
 import { createInfluxClient, type InfluxClientFactory } from "@/lib/db/providers/timeseries/influxdb/client";
 import { buildInfluxConnectionOptions } from "@/lib/db/providers/timeseries/influxdb/connection-options";
 import { SQL_ROUTES } from "@/lib/db/providers/timeseries/influxdb/routes";

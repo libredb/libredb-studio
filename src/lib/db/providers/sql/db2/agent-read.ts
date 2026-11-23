@@ -74,7 +74,7 @@ import type { QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readSqlSpan } from "@/lib/sql/spans";
 import { readStatementEnd } from "@/lib/sql/statement-end";
-import { byteBudgetSentence, measureResultBytes, rowBudgetSentence } from "../read-only-budget";
+import { byteBudgetSentence, measureResultBytes, rowBudgetSentence } from "@/lib/db/read-only-budget";
 import type { Db2ColumnMeta } from "./driver";
 import { DB2_READING_FUNCTIONS } from "./reading-functions";
 import { db2TypeName } from "./values";

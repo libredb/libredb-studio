@@ -79,7 +79,7 @@ import {
   measureRowBytes,
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
-} from "../sql/read-only-budget";
+} from "@/lib/db/read-only-budget";
 import { type LibreDBReadCommand, readLibreDBReadCommand, tokenizeLibreDBCommand } from "./libredb-command";
 import {
   LibreDBNotAStoreError,

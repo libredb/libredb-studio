@@ -50,7 +50,7 @@ import { errorKind } from "@/lib/db/error-record";
 import { comparePaths } from "@/lib/db/object-path";
 import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
 import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
-import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
+import { readQueryFormsOf } from "@/lib/sql/read-query-forms";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import { databaseContentNotice, MCP_ENGINE_ERROR_PREFIX, providerTextNotice } from "@/lib/mcp/output";
 import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";

@@ -23,7 +23,7 @@ import {
   measureResultBytes,
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
-} from "@/lib/db/providers/sql/read-only-budget";
+} from "@/lib/db/read-only-budget";
 import type { QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { RedisAgentOperation } from "./redis-agent-statement";
 
