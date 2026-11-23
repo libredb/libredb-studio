@@ -1,4 +1,5 @@
-import { DEFAULT_SQL_GRAMMAR, NO_EXTRA_WORDS } from "./shared";
+import { NO_EXTRA_WORDS } from "./shared";
+import { DEFAULT_SQL_GRAMMAR } from "@libredb/provider-sdk/sql";
 import type { SqlGrammarSpec } from "./types";
 
 /**

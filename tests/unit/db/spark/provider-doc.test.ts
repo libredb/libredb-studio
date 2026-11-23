@@ -33,7 +33,8 @@ import { SPARK_STATEMENT_SENTENCES } from "@/lib/db/providers/sql/spark/statemen
 import { cellValue } from "@/lib/db/providers/sql/spark/values";
 import { DB_UI_CONFIG, SPARK_FIELD_HINTS } from "@/lib/db-ui-config";
 import { MAX_UNLIMITED_ROWS } from "@/lib/db/utils/query-limiter";
-import { type ConfirmCodeForm, resolveSqlGrammar } from "@/lib/sql/grammar";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { type ConfirmCodeForm } from "@libredb/provider-sdk/sql";
 import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
 import { captureBytes, readSparkCapture } from "../../../helpers/spark-captures";
 

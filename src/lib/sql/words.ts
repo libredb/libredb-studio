@@ -19,7 +19,7 @@
  * or one word at a time cannot backtrack at all.
  */
 
-import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "./grammar";
+import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "@libredb/provider-sdk/sql";
 import { IDENTIFIER_PART, IDENTIFIER_START, readSqlSpan } from "./spans";
 
 /** A word (identifier or keyword) and where it ends. */

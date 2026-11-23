@@ -1,5 +1,7 @@
-import { DEFAULT_SQL_GRAMMAR, NO_EXTRA_WORDS } from "@/lib/db/sql-grammar/shared";
-import type { SqlGrammar, SqlGrammarSpec } from "@/lib/db/sql-grammar/types";
+import { NO_EXTRA_WORDS } from "@/lib/db/sql-grammar/shared";
+import { DEFAULT_SQL_GRAMMAR } from "@libredb/provider-sdk/sql";
+import type { SqlGrammarSpec } from "@/lib/db/sql-grammar/types";
+import type { SqlGrammar } from "@libredb/provider-sdk/sql";
 
 /**
  * Db2 LUW, every fact probed 2026-10-03 on DB2/LINUXX8664 12.1.0.0 through db2-node 1.0.22, the

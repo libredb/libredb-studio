@@ -1,5 +1,6 @@
 import { isRecord } from "@/lib/is-record";
-import { DEFAULT_SQL_GRAMMAR, NO_EXTRA_WORDS, REDACTED_VALUE } from "@/lib/db/sql-grammar/shared";
+import { NO_EXTRA_WORDS, REDACTED_VALUE } from "@/lib/db/sql-grammar/shared";
+import { DEFAULT_SQL_GRAMMAR } from "@libredb/provider-sdk/sql";
 import type { SqlGrammarSpec } from "@/lib/db/sql-grammar/types";
 
 /**

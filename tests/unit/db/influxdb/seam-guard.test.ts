@@ -23,9 +23,10 @@
  *    and a file of no layer fails, so a new file is placed in one on purpose. The browser and InfluxQL server layers
  *    may take values from the influxql family module, which holds the lexer and the policy they read. The two SQL
  *    grammar modules (engine contract spec 5.3) are a layer of their own, which value-imports only the contract's
- *    building blocks under `src/lib/db/sql-grammar/`. Each type-id's migration DDL module
- *    (`<type-id>-migration-ddl.ts`) is a contract layer of its own: it may import values only from
- *    `@/lib/db/migration-ddl/*`, its contract's shared building blocks, and from none of this directory's modules.
+ *    building blocks under `src/lib/db/sql-grammar/` and the SDK's SQL grammar facts (`@libredb/provider-sdk/sql`).
+ *    Each type-id's migration DDL module (`<type-id>-migration-ddl.ts`) is a contract layer of its own: it may
+ *    import values only from `@/lib/db/migration-ddl/*`, its contract's shared building blocks, and from none of
+ *    this directory's modules.
  *    Each type-id's SQL writing module (`<type-id>-sql-writing.ts`) is a layer of its own in the same way: it may
  *    import values only from `@/lib/db/sql-writing/*`, its contract's shared building blocks, and from none of this
  *    directory's modules.
@@ -172,7 +173,8 @@ const OUTSIDE_VALUES: Readonly<Record<Layer, readonly string[]>> = {
     "src/lib/db/providers/sql/read-only-budget.ts",
     "src/lib/db/write-reach.ts",
   ],
-  grammar: ["src/lib/db/sql-grammar/"],
+  // The grammar row reads the registry's contract and the SDK's SQL grammar facts (`@libredb/provider-sdk/sql`).
+  grammar: ["src/lib/db/sql-grammar/", "packages/provider-sdk/src/sql/"],
   contract: ["src/lib/db/migration-ddl/"],
   writing: ["src/lib/db/sql-writing/"],
   family: [`${FAMILY_DIR}/`],

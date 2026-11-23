@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
-import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { type SqlGrammar } from "@libredb/provider-sdk/sql";
 import {
   cteListRuns,
   readCteBodyWrite,

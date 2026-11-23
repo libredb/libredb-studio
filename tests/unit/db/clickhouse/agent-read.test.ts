@@ -15,7 +15,7 @@ import {
 } from "@/lib/db/providers/sql/clickhouse/agent-read";
 import { CLICKHOUSE_SQL_GRAMMAR } from "@/lib/db/providers/sql/clickhouse/sql-grammar";
 import type { ClickHouseQueryResult } from "@/lib/db/providers/sql/clickhouse/transport";
-import { DEFAULT_SQL_GRAMMAR } from "@/lib/db/sql-grammar/shared";
+import { DEFAULT_SQL_GRAMMAR } from "@libredb/provider-sdk/sql";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 
 const BUDGET = { statementTimeoutMs: 2_500, maxResultRows: 3, maxResultBytes: 200 };

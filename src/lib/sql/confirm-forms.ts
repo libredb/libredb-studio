@@ -13,7 +13,7 @@
  * 1,000,000-unit Snowflake block cost seconds.
  */
 
-import type { ConfirmCodeForm, SqlGrammar } from "@/lib/sql/grammar";
+import type { ConfirmCodeForm, SqlGrammar } from "@libredb/provider-sdk/sql";
 import { ParenthesisedRuns } from "@/lib/sql/parenthesised";
 import { readSqlSpan } from "@/lib/sql/spans";
 import { type CodeWordIndex, type CodeWordQuery, findCodeWord, indexCodeWords, readSqlWord } from "@/lib/sql/words";

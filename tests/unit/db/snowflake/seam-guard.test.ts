@@ -19,7 +19,8 @@
  * 7. A value is imported from outside this directory only from `@/lib/db/http/*`, `@/lib/db/errors`,
  *    `@/lib/db/types`, `@/lib/db/utils/*`, `@/lib/db/object-kinds`, `@/lib/db/inventory-bounds`, `@/lib/sql/*`,
  *    `@/lib/types`, `@/lib/app-version`, `@/lib/logger`, `../sql-base`, `@/lib/db/sql-grammar/shared` (the SQL
- *    grammar contract's building blocks, for `sql-grammar.ts`), `jose`, `node:crypto` and `node:zlib`; types are
+ *    grammar contract's building blocks, for `sql-grammar.ts`), `@libredb/provider-sdk/sql` (the SDK's SQL grammar
+ *    facts, for `sql-grammar.ts`), `jose`, `node:crypto` and `node:zlib`; types are
  *    free. `execution-ui.ts`, the engine's execution UI contract module, may also import values from
  *    `@/lib/db/execution-ui/shared`, its contract's shared building block, `migration-ddl.ts`, the engine's
  *    migration DDL contract module, from `@/lib/db/migration-ddl/*`, its contract's shared building blocks, and
@@ -79,7 +80,8 @@ const CONTRACT_VALUES: Readonly<Record<string, string>> = {
   "typed-literals": "src/lib/db/sql-writing/",
   paste: "src/lib/db/connection-string/shared.ts",
 };
-const PACKAGE_VALUES = new Set(["jose"]);
+// `@libredb/provider-sdk/sql`: the SDK's SQL grammar facts, the grammar row's compatibility default.
+const PACKAGE_VALUES = new Set(["jose", "@libredb/provider-sdk/sql"]);
 const BUILTIN_VALUES = new Set(["node:crypto", "node:zlib"]);
 const SOCKET_FACTORIES = ["createNodeTransport", "createNodeByteTransport"];
 const SOCKET_FILES = new Set(["transport", "index"]);

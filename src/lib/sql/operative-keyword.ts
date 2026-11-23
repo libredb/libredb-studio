@@ -31,7 +31,7 @@
  * SAFE answer, the limiter needs a PRECISE one, so this reads the grammar.
  */
 
-import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "./grammar";
+import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "@libredb/provider-sdk/sql";
 import { readLeadingKeyword, type LeadingKeyword } from "./leading-keyword";
 import { ParenthesisedRuns } from "./parenthesised";
 import { readSqlSpan } from "./spans";

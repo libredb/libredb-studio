@@ -1,4 +1,4 @@
-import type { SqlGrammar } from "@/lib/sql/grammar";
+import type { SqlGrammar } from "@libredb/provider-sdk/sql";
 import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
 import { readSqlSpan } from "@/lib/sql/spans";
 import { splitStatements } from "@/lib/sql/statement-splitter";

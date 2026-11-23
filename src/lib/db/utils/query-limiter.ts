@@ -35,7 +35,8 @@
  */
 
 import { QueryError } from "@/lib/db/errors";
-import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { type SqlGrammar } from "@libredb/provider-sdk/sql";
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 import { readCteBodyWrite, readOperativeKeyword } from "@/lib/sql/operative-keyword";
 import { hasUnterminatedSpan, readSqlSpan } from "@/lib/sql/spans";

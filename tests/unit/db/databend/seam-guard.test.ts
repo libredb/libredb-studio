@@ -16,7 +16,8 @@
  * 7. A value is imported from outside this directory only from `@/lib/db/http/*`, `@/lib/db/errors`,
  *    `@/lib/db/utils/*`, `@/lib/sql/*`, `@/lib/types`, the base classes, `@/lib/db/object-kinds`,
  *    `@/lib/app-version` (I15), `@/lib/db/sql-grammar/shared` (the SQL grammar contract's building blocks, for
- *    `sql-grammar.ts`) and the runtime's `node:crypto`; types are free. The SSH tunnel's route comes from core under
+ *    `sql-grammar.ts`), `@libredb/provider-sdk/sql` (the SDK's SQL grammar facts, for `sql-grammar.ts`) and the
+ *    runtime's `node:crypto`; types are free. The SSH tunnel's route comes from core under
  *    `TUNNEL_ROUTE`, read through `requireTunnelRoute` of `@/lib/db/utils/require-tunnel-route`, so no value of
  *    `@/lib/db/connection-fingerprint` is allowed: this directory frames no route of its own (FND-2 slice 5b).
  *    `execution-ui.ts`, the engine's execution UI contract module, may also import values from
@@ -60,6 +61,8 @@ const OUTSIDE_VALUES = [
   "src/lib/db/object-kinds.ts",
   "src/lib/app-version.ts",
   "src/lib/db/sql-grammar/shared.ts",
+  // The SDK's SQL grammar facts (`@libredb/provider-sdk/sql`): the grammar row's compatibility default.
+  "packages/provider-sdk/src/sql/",
 ];
 /**
  * The per-engine contract modules, each with the contract module or directory whose shared building blocks it may

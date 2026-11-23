@@ -1,6 +1,6 @@
 import type { ProviderCapabilities } from "@/lib/db/types";
 import type { EditorLanguage } from "@/lib/editor/tab-language";
-import type { SqlGrammar } from "./grammar";
+import type { SqlGrammar } from "@libredb/provider-sdk/sql";
 import { countCodeStatements, type SplitStatement, splitCursorTargets } from "./statement-splitter";
 
 /**

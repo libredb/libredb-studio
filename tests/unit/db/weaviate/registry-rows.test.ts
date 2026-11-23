@@ -14,7 +14,7 @@ import { WEAVIATE_MIGRATION_DDL } from "@/lib/db/providers/vector/weaviate/migra
 import { WEAVIATE_SQL_GRAMMAR } from "@/lib/db/providers/vector/weaviate/sql-grammar";
 import { WEAVIATE_SQL_WRITING } from "@/lib/db/providers/vector/weaviate/sql-writing";
 import { SQL_GRAMMAR } from "@/lib/db/sql-grammar";
-import { DEFAULT_SQL_GRAMMAR } from "@/lib/db/sql-grammar/shared";
+import { DEFAULT_SQL_GRAMMAR } from "@libredb/provider-sdk/sql";
 import { SQL_WRITING } from "@/lib/db/sql-writing";
 import { identifierDoubleQuoted, literalStandard } from "@/lib/db/sql-writing/shared";
 

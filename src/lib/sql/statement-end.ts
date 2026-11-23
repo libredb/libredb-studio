@@ -31,7 +31,7 @@
  * failures of exactly that kind.
  */
 
-import { DEFAULT_SQL_GRAMMAR, hashRunIsAmbiguous, type SqlGrammar } from "./grammar";
+import { DEFAULT_SQL_GRAMMAR, hashRunIsAmbiguous, type SqlGrammar } from "@libredb/provider-sdk/sql";
 import { hasLoneCarriageReturnInLineComment, readSqlSpan, type SqlSpanKind } from "./spans";
 
 export interface StatementEnd {

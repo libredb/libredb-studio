@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
-import { DEFAULT_SQL_GRAMMAR, resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "@libredb/provider-sdk/sql";
 import { hasUnterminatedSpan, readSqlSpan } from "@/lib/sql/spans";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

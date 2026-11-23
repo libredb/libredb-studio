@@ -12,7 +12,7 @@ import { generateSelectQuery, generateTableQuery } from "@/lib/query-generators"
 import { statementRefusal } from "@/lib/db/destructive-commands";
 import { INFLUXQL_POLICY_SENTENCES } from "@/lib/languages/influxql/policy";
 import type { TypedConfirmationAsk } from "@/lib/db/types";
-import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "@/lib/sql/grammar";
+import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "@libredb/provider-sdk/sql";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../helpers/stand-in-vocabulary";
 import { OUTSIDE_THE_UNION, refusalOf } from "../helpers/outside-the-union";
 import { schemaContextOf } from "@/lib/db/detailed-object";

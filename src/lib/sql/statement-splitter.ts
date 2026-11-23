@@ -57,7 +57,7 @@
  *   T-SQL is the whole batch between separator lines.
  */
 
-import { DEFAULT_SQL_GRAMMAR, type ProceduralBlockGrammar, type SqlGrammar } from "./grammar";
+import { DEFAULT_SQL_GRAMMAR, type ProceduralBlockGrammar, type SqlGrammar } from "@libredb/provider-sdk/sql";
 import { readOperativeKeyword } from "./operative-keyword";
 import { IDENTIFIER_PART, readSqlSpan } from "./spans";
 import { readSqlWord, type SqlWord } from "./words";

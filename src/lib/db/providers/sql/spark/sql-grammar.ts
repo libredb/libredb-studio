@@ -1,5 +1,7 @@
-import { DEFAULT_SQL_GRAMMAR, NO_EXTRA_WORDS } from "@/lib/db/sql-grammar/shared";
-import type { SqlGrammar, SqlGrammarSpec } from "@/lib/db/sql-grammar/types";
+import { NO_EXTRA_WORDS } from "@/lib/db/sql-grammar/shared";
+import { DEFAULT_SQL_GRAMMAR } from "@libredb/provider-sdk/sql";
+import type { SqlGrammarSpec } from "@/lib/db/sql-grammar/types";
+import type { SqlGrammar } from "@libredb/provider-sdk/sql";
 
 /**
  * Apache Spark SQL, 4.1 and later. The lexical facts are read off Spark's lexer and parser at tag v4.2.0

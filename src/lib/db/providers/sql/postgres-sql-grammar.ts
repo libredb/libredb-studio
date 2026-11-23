@@ -1,5 +1,7 @@
-import { DEFAULT_SQL_GRAMMAR, NO_EXTRA_WORDS } from "@/lib/db/sql-grammar/shared";
-import type { SqlGrammar, SqlGrammarSpec } from "@/lib/db/sql-grammar/types";
+import { NO_EXTRA_WORDS } from "@/lib/db/sql-grammar/shared";
+import { DEFAULT_SQL_GRAMMAR } from "@libredb/provider-sdk/sql";
+import type { SqlGrammarSpec } from "@/lib/db/sql-grammar/types";
+import type { SqlGrammar } from "@libredb/provider-sdk/sql";
 
 // PostgreSQL quote_ident quotes every keyword except UNRESERVED_KEYWORD.
 // Source: PostgreSQL 18, src/include/parser/kwlist.h and

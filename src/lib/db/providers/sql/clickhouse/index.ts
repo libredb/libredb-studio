@@ -77,7 +77,8 @@ import {
 import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { formatCacheHitRatio } from "@/lib/monitoring-cache-ratio";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
-import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { type SqlGrammar } from "@libredb/provider-sdk/sql";
 import { readStatementEnd } from "@/lib/sql/statement-end";
 import { assertReadOnlyBudget, byteBudgetSentence } from "../read-only-budget";
 import { verifyAgentProfile } from "./agent-boundary";

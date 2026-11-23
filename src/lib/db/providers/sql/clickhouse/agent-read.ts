@@ -11,7 +11,7 @@
  */
 import { ByteBudgetRefusal, QueryError, RefusedBeforeSendError, RowBudgetRefusal } from "@/lib/db/errors";
 import type { QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
-import type { SqlGrammar } from "@/lib/sql/grammar";
+import type { SqlGrammar } from "@libredb/provider-sdk/sql";
 import { readSqlSpan } from "@/lib/sql/spans";
 import { readSqlWord } from "@/lib/sql/words";
 import { byteBudgetSentence, measureResultBytes, rowBudgetSentence } from "../read-only-budget";
