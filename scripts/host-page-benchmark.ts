@@ -74,7 +74,7 @@ async function bundle(directory: string): Promise<string> {
       `import { runCase } from ${JSON.stringify(CASE_MODULE)};`,
       `import { createHostCore } from ${JSON.stringify(HOST_CORE_MODULE)};`,
       `import { installHostCore } from ${JSON.stringify(INSTANCE_MODULE)};`,
-      "installHostCore(createHostCore());",
+      'installHostCore(createHostCore(), "benchmark-case");',
       "const report = await runCase(process.argv.slice(2));",
       'process.stdout.write(JSON.stringify(report) + "\\n");',
       "",

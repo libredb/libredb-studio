@@ -1474,16 +1474,20 @@ A refused offset and refused params of a session that refuses a field arrive wit
 
 ### C-52 (normative): One host core per process
 
-A process holds one host core, created by `createHostCore` and installed under a registered symbol once, by the process's composition root: the server's instrumentation and the VS Code backend's entry.
+A process holds one host core, created by `createHostCore` and installed under a registered symbol by the process's composition root, which the install names: the server's instrumentation and the VS Code backend's entry.
 The core holds plain functions, the console calls, and constructs no class, so a caller in any bundle of the process runs the core another bundle installed.
 The classes a caller tests with `instanceof` and the ports that read them stay the caller's, built per call, C-51.
-A call made before the core is installed fails by name, as a defect of how the process was composed, and nothing reaches the provider; a second install is refused the same way, so no second core is ever created.
+A call made before the core is installed fails by name, as a defect of how the process was composed, and nothing reaches the provider.
+A second install from the same composition root keeps the first core and changes nothing, so the server's `register()` may run again in one process.
+A second install from another composition root is refused by name, naming both roots, and the first core stays, so no second core is ever used.
 The library surface never reads the installed core, so an embedder composes nothing.
 The live check `tests/live/host-core-live.ts` holds the same rule against the built standalone server, in CI's "Host Core Live Check".
 
 - test `tests/unit/lib/provider-host/core/host-core.test.ts` "the host core holds the core's console calls, frozen, and nothing else"
 - test `tests/unit/lib/provider-host/instance.test.ts` "the host core is installed once per process, under a registered symbol"
-- test `tests/unit/lib/provider-host/instance.test.ts` "a second install is refused by name, and the first core stays"
+- test `tests/unit/lib/provider-host/instance.test.ts` "a second install from the same composition root keeps the first core, and throws nothing"
+- test `tests/unit/lib/provider-host/instance.test.ts` "a second install from another composition root is refused by name, naming both roots, and the first core stays"
+- test `tests/unit/instrumentation.test.ts` "register() installs the shutdown handler once, and before the auth bootstrap"
 - test `tests/unit/lib/provider-host/instance.test.ts` "a call made with no host core installed fails by name, and nothing reaches the provider"
 - test `tests/unit/lib/provider-host/instance.test.ts` "only a composition root creates the host core, and only the core reaches its console calls"
 - test `tests/unit/lib/provider-host/instance.test.ts` "no module the library entries reach reads the host core, so an embedder needs none"

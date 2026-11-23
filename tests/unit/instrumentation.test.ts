@@ -250,6 +250,7 @@ describe("instrumentation register()", () => {
     process.env.SQLITE_EMBEDDED_SAMPLE = "false";
     process.env.JWT_SECRET = "x".repeat(32);
     const listenersAtBootstrap: number[] = [];
+    const installedCores: unknown[] = [];
     let realBootstrap = true;
     const bootstrap = spyOn(authBootstrap, "bootstrapAuth");
     try {
@@ -259,16 +260,18 @@ describe("instrumentation register()", () => {
           realBootstrap = false;
         });
         await register();
-        // The host core is installed once per process and a second install is refused by name, so the second boot
-        // here, which only the handler's own install is about, starts from no core.
-        forgetHostCore();
+        installedCores.push(hostCore());
+        // A second register() in one process installs from the same composition root, which keeps the first core.
         await register();
+        installedCores.push(hostCore());
       });
 
       expect(realBootstrap).toBe(false);
       expect(listenersAtBootstrap).toEqual([2, 2]);
       expect([sigterm, sigint]).toEqual([1, 1]);
       expect(exits).toEqual([]);
+      expect(installedCores).toHaveLength(2);
+      expect(installedCores[1]).toBe(installedCores[0]);
     } finally {
       bootstrap.mockRestore();
     }
@@ -378,14 +381,15 @@ describe("instrumentation register()", () => {
       const rejectionsBefore = process.listeners("unhandledRejection");
       const errorSpy = spyOn(console, "error").mockImplementation(() => {});
       let rejectionsAfter: NodeJS.UnhandledRejectionListener[] = [];
+      const installedCores: unknown[] = [];
       try {
         const { exits, added } = await withRecordedExit(async (addedSoFar) => {
           setNodeEnv(nodeEnv);
           await register();
-          // The host core is installed once per process and a second install is refused by name, so the second boot
-          // here, which only the exit's own install is about, starts from no core.
-          forgetHostCore();
+          installedCores.push(hostCore());
+          // A second register() in one process installs from the same composition root, which keeps the first core.
           await register();
+          installedCores.push(hostCore());
           rejectionsAfter = process.listeners("unhandledRejection");
           // What an uncaught exception does: Node.js calls the listener with the error.
           for (const listener of addedSoFar()) listener(new TypeError("boom"), "uncaughtException");
@@ -394,6 +398,8 @@ describe("instrumentation register()", () => {
         expect(added).toHaveLength(1);
         expect(exits).toEqual([70]);
         expect(rejectionsAfter).toEqual(rejectionsBefore);
+        expect(installedCores).toHaveLength(2);
+        expect(installedCores[1]).toBe(installedCores[0]);
       } finally {
         setNodeEnv(savedNodeEnv);
         errorSpy.mockRestore();

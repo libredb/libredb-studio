@@ -103,7 +103,7 @@ export async function register(): Promise<void> {
   // bundle reads this one core; none creates its own.
   const { createHostCore } = await import("@/lib/provider-host/core/host-core");
   const { installHostCore } = await import("@/lib/provider-host/instance");
-  installHostCore(createHostCore());
+  installHostCore(createHostCore(), "server");
 
   // Governance snapshot (docs/GOVERNANCE.md#operating-notes): load the
   // governance source in the background and keep it current. Not awaited, so

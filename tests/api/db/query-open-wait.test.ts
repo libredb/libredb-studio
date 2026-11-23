@@ -38,7 +38,7 @@ const accepted: Socket[] = [];
 let dialed: () => void = () => {};
 
 beforeAll(async () => {
-  installHostCore(createHostCore());
+  installHostCore(createHostCore(), "test");
   listener = createServer((socket) => {
     accepted.push(socket);
     dialed();

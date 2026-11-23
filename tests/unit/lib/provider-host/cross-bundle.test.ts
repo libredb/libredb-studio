@@ -33,7 +33,7 @@ interface CoreShape {
 /** What the boot bundle exports: the composition root's install and its own copy of the errors. */
 interface BootBundle {
   boot(): CoreShape;
-  installHostCore(core: CoreShape): void;
+  installHostCore(core: CoreShape, root: "test"): void;
   forgetHostCore(): void;
   QueryCancelledError: new (message: string) => Error;
   StudioTimeoutRefusal: new (message: string) => Error;
@@ -74,7 +74,7 @@ beforeAll(async () => {
     `import { installHostCore } from ${source("lib", "provider-host", "instance.ts")};`,
     `export { forgetHostCore, installHostCore } from ${source("lib", "provider-host", "instance.ts")};`,
     `export { QueryCancelledError, QueryError, StudioTimeoutRefusal } from ${source("lib", "db", "errors.ts")};`,
-    "export function boot() { const core = createHostCore(); installHostCore(core); return core; }",
+    'export function boot() { const core = createHostCore(); installHostCore(core, "test"); return core; }',
     "",
   ]);
   route = await bundled<RouteBundle>("route", [
@@ -161,6 +161,7 @@ describe("one host core across two bundles", () => {
           return cancelCall(...args);
         },
       }),
+      "test",
     );
     const answered = await route.runEditorQuery(provider(oneRow), runOf());
     await route.cancelEditorRun(provider(oneRow), randomUUID(), new AbortController().signal, "test");

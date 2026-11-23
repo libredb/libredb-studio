@@ -9,7 +9,7 @@ import { installHostCore } from "@/lib/provider-host/instance";
 import { engines } from "../../../package.json";
 import { startBackend } from "./start";
 
-installHostCore(createHostCore());
+installHostCore(createHostCore(), "vscode-backend");
 startBackend(
   process,
   { getOrCreateProvider, removeProvider, clearProviderCache, enabledProviderTypes, testConnection },

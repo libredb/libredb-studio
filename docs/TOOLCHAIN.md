@@ -644,7 +644,7 @@ The whole-page `rowsWithNonFiniteWords` and the route's `JSON.stringify` are tod
 A 100,000-row wide page is larger than 32 MiB, so the host answers its first 32 MiB and today's path all of it; that case is printed and read by no threshold.
 
 The runner bundles its case module with `Bun.build` into a temporary directory under `node_modules/.cache`, so the bundle's external packages resolve from the repository's own `node_modules`, then runs one fresh Node child per case and path, one at a time, under `--expose-gc --max-old-space-size=3000` with a 300 s timeout.
-The child's entry is its composition root: it installs the process's host core (`installHostCore(createHostCore())`, `src/lib/provider-host/instance.ts`) before the case runs, as `register()` does for the server.
+The child's entry is its composition root: it installs the process's host core (`installHostCore(createHostCore(), "benchmark-case")`, `src/lib/provider-host/instance.ts`) before the case runs, as `register()` does for the server.
 It prints the machine, the runtime, every case and a pass or fail per threshold, and exits 1 when a threshold fails or a case failed.
 The lead runs it on the reference machine before a change to the host's query path, through `heavy` with the production Node: `HEAVY_RUN_MEMORY_MAX=4G heavy bun run bench:host-page -- --node <path to node 26.13.1>`.
 A failed threshold is the owner's decision, never a silent change of the threshold or of the path.

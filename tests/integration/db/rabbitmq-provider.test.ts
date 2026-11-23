@@ -722,7 +722,7 @@ describe("the three routes' full JSON bodies on Node (R-S5, R-S7)", () => {
         `import { createHostCore } from ${source("src/lib/provider-host/core/host-core.ts")};`,
         `import { installHostCore } from ${source("src/lib/provider-host/instance.ts")};`,
         // The child is its own process, so it installs the host core the query route reads, as a composition root does.
-        "installHostCore(createHostCore());",
+        'installHostCore(createHostCore(), "test");',
         'const routes = { query, "test-connection": testConnection, "objects/source": objectSource };',
         'const cases = JSON.parse(readFileSync(process.argv[2], "utf8"));',
         "const outcomes = {};",

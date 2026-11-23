@@ -179,7 +179,7 @@ async function answeredAs(call: Promise<unknown>, failure: unknown): Promise<voi
  * hook of every file.
  */
 function composeHostCore(): void {
-  before(() => installHostCore(createHostCore()));
+  before(() => installHostCore(createHostCore(), "test"));
   after(forgetHostCore);
 }
 

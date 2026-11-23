@@ -1,8 +1,8 @@
 /**
  * One host core per process (src/lib/provider-host/instance.ts; docs/providers/CONTRACT.md, clause C-52): a composition
  * root installs the core once under a registered symbol, the caller facade reads it at the start of every call, a call
- * made before the install fails by name, and a second install is refused by name. No module the library entries reach
- * reads the slot, so an embedder composes nothing.
+ * made before the install fails by name, a second install from the same root keeps the first core, and one from another
+ * root is refused by name. No module the library entries reach reads the slot, so an embedder composes nothing.
  *
  * Value imports are read with Bun's transpiler (tests/helpers/value-import-closure.ts), so a type-only import, which is
  * erased and loads nothing, is left out, and a path in a comment or a string is never one.
@@ -28,8 +28,8 @@ import { valueImportClosure, valueImportsOf } from "../../../helpers/value-impor
 const REPOSITORY_ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..");
 const NOT_INSTALLED =
   "The provider host core is not installed in this process, so Studio cannot make this call. A composition root installs it once when the process starts: src/instrumentation.ts for the server, the VS Code backend's entry for its child, and a test that runs the editor query installs it in its own setup.";
-const ALREADY_INSTALLED =
-  "The provider host core is already installed in this process: one composition root installs it once.";
+const ANOTHER_ROOT =
+  "The provider host core is already installed in this process by the server composition root, so the vscode-backend composition root cannot install another: one composition root installs it once.";
 /** The library entries the npm package publishes (tsup.config.ts). */
 const LIBRARY_ENTRIES = ["index", "providers", "types", "components", "workspace", "security"].map(
   (name) => `src/exports/${name}.ts`,
@@ -58,20 +58,32 @@ describe("one host core per process", () => {
   test("the host core is installed once per process, under a registered symbol", () => {
     const core = createHostCore();
 
-    installHostCore(core);
+    installHostCore(core, "server");
 
     expect(HOST_CORE_KEY as symbol).toBe(Symbol.for("libredb-studio.provider-host-core"));
-    expect((globalThis as Record<symbol, unknown>)[Symbol.for("libredb-studio.provider-host-core")]).toBe(core);
+    expect((globalThis as Record<symbol, unknown>)[Symbol.for("libredb-studio.provider-host-core")]).toEqual({
+      root: "server",
+      core,
+    });
     expect(hostCore()).toBe(core);
   });
 
-  test("a second install is refused by name, and the first core stays", () => {
+  test("a second install from the same composition root keeps the first core, and throws nothing", () => {
     const first = createHostCore();
-    installHostCore(first);
+    installHostCore(first, "server");
+
+    expect(() => installHostCore(createHostCore(), "server")).not.toThrow();
+
+    expect(hostCore()).toBe(first);
+  });
+
+  test("a second install from another composition root is refused by name, naming both roots, and the first core stays", () => {
+    const first = createHostCore();
+    installHostCore(first, "server");
 
     const caught = (() => {
       try {
-        installHostCore(createHostCore());
+        installHostCore(createHostCore(), "vscode-backend");
         return undefined;
       } catch (error) {
         return error;
@@ -80,7 +92,7 @@ describe("one host core per process", () => {
 
     expect(caught).toBeInstanceOf(HostCoreBootOrderError);
     expect((caught as Error).name).toBe("HostCoreBootOrderError");
-    expect((caught as Error).message).toBe(ALREADY_INSTALLED);
+    expect((caught as Error).message).toBe(ANOTHER_ROOT);
     expect(hostCore()).toBe(first);
   });
 
@@ -96,7 +108,7 @@ describe("one host core per process", () => {
       scrub: providerTextScrub(connection, "any"),
     };
 
-    installHostCore(createHostCore());
+    installHostCore(createHostCore(), "test");
     forgetHostCore();
     const [ran, cancelled] = await Promise.all([
       runEditorQuery(provider, run).catch((error: unknown) => error),
