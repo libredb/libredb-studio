@@ -740,6 +740,29 @@ A refinement is a call's answer, not a manifest fact, so the schema has no place
 - test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement value of the wrong type, an accessor or a repeated field is refused as refinement-unreadable"
 - test `packages/provider-sdk/tests/calls/refinement.test.ts` "no refinement refusal carries a value of the refinement"
 
+### C-11 (normative): The contexts and requests the host passes are frozen
+
+`freezeContext` freezes a context in place at every depth, except its `signal` and `env`, which stay exactly as the host passed them, because a frozen AbortSignal can no longer be aborted or listened to on Node.
+`freezeData` freezes a request in place at every depth, except its typed arrays and dates, since JavaScript cannot freeze a typed array's elements and a date's time is no property.
+Both walk every own key of every object they freeze, symbols included.
+Either refuses, by its JSON Pointer and then freezing nothing, an object outside the value codec's domain, a function, an invalid Date, which `encodeValue` refuses too, and an accessor property, whose getter it never calls, so no object behind a getter is left unfrozen.
+Either refuses a symbol-keyed property by the JSON Pointer of the object that holds it, since a pointer cannot name a symbol, and then freezes nothing.
+
+- test `packages/provider-sdk/tests/calls/freeze.test.ts` "a context is frozen at every depth, and a write to any of it throws"
+- test `packages/provider-sdk/tests/calls/freeze.test.ts` "the signal and the environment reader are left as the host passed them, and the signal still aborts"
+- test `packages/provider-sdk/tests/calls/freeze.test.ts` "a request is frozen at every depth, except its typed arrays and dates"
+- test `packages/provider-sdk/tests/calls/freeze.test.ts` "a value that holds itself is frozen once"
+- test `packages/provider-sdk/tests/calls/freeze.test.ts` "an object outside the value codec's domain is refused by its pointer"
+- test `packages/provider-sdk/tests/calls/freeze.test.ts` "an accessor property is refused by its pointer, its getter never runs, and nothing is frozen"
+- test `packages/provider-sdk/tests/calls/freeze.test.ts` "a symbol-keyed property is refused by the pointer of the object that holds it, and nothing is frozen"
+- test `packages/provider-sdk/tests/calls/freeze.test.ts` "an invalid Date is refused by its pointer, as the value codec refuses it, and nothing is frozen"
+
+### C-12 (informative): The host freezes on every call, in every environment
+
+The host passes every context and request through `freezeContext` and `freezeData` on every call, in every environment, production included, so a provider that writes to what the host passed fails the same way in a test and in production, at the line that writes.
+Both freeze in place, so the host builds a fresh context and request for each call, and a value it shares across calls ends frozen.
+The host core that does so arrives with the first host surface, and its test holds it; until then this clause is informative.
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:

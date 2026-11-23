@@ -26,6 +26,8 @@ import {
   defineProvider,
   envReader,
   EXECUTE_REQUEST_FIELDS,
+  freezeContext,
+  freezeData,
   sessionCalls,
 } from "@libredb/provider-sdk/calls";
 
@@ -94,5 +96,7 @@ describe("the manifest schema digest", () => {
     expect(packageRoot.checkRefinement).toBe(checkRefinement);
     expect(packageRoot.sessionCalls).toBe(sessionCalls);
     expect(packageRoot.CALL_REFUSAL_RULES).toBe(CALL_REFUSAL_RULES);
+    expect(packageRoot.freezeContext).toBe(freezeContext);
+    expect(packageRoot.freezeData).toBe(freezeData);
   });
 });
