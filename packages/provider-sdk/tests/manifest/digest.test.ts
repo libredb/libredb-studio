@@ -17,6 +17,13 @@ import {
 import * as packageRoot from "@libredb/provider-sdk";
 import { decodeValue, encodeValue, ValueCodecError } from "@libredb/provider-sdk/values";
 import { ERROR_KINDS, PROVIDER_ERROR_KINDS, SQLSTATE_PATTERN } from "@libredb/provider-sdk/errors";
+import {
+  CONSOLE_FACETS,
+  checkProviderModule,
+  defineProvider,
+  envReader,
+  EXECUTE_REQUEST_FIELDS,
+} from "@libredb/provider-sdk/calls";
 
 const SCHEMA_BYTES = readFileSync(path.join(import.meta.dir, "../../src/manifest/manifest.schema.json"));
 
@@ -71,5 +78,13 @@ describe("the manifest schema digest", () => {
     expect(packageRoot.ERROR_KINDS).toBe(ERROR_KINDS);
     expect(packageRoot.PROVIDER_ERROR_KINDS).toBe(PROVIDER_ERROR_KINDS);
     expect(packageRoot.SQLSTATE_PATTERN).toBe(SQLSTATE_PATTERN);
+  });
+
+  test("the package root exports the calls surface", () => {
+    expect(packageRoot.defineProvider).toBe(defineProvider);
+    expect(packageRoot.checkProviderModule).toBe(checkProviderModule);
+    expect(packageRoot.envReader).toBe(envReader);
+    expect(packageRoot.CONSOLE_FACETS).toBe(CONSOLE_FACETS);
+    expect(packageRoot.EXECUTE_REQUEST_FIELDS).toBe(EXECUTE_REQUEST_FIELDS);
   });
 });

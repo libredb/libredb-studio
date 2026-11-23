@@ -11,6 +11,7 @@ The SDK package `@libredb/provider-sdk`, under [`packages/provider-sdk`](../../p
 - `compileManifestValidator`, `refusalSentence` and the refusal types, exported from `@libredb/provider-sdk/manifest`.
 - [`codec.ts`](../../packages/provider-sdk/src/values/codec.ts), the value codec, exported from `@libredb/provider-sdk/values`.
 - [`errors/index.ts`](../../packages/provider-sdk/src/errors/index.ts), the error record's shape and vocabularies, the kinds a provider may raise and the driver error row contract, exported from `@libredb/provider-sdk/errors`.
+- [`calls/index.ts`](../../packages/provider-sdk/src/calls/index.ts), the call and context types, `defineProvider`, `checkProviderModule` and `envReader`, exported from `@libredb/provider-sdk/calls`.
 
 The package root exports every entry's surface.
 The schema, the generated types and the constants the SDK exports are the source for every vocabulary named here, and this document lists none of them by hand.
@@ -250,10 +251,16 @@ No manifest reader exists in Studio yet, so nothing checks this.
 The version rule under "Contract version" is applied by the loader's admission, which does not exist yet.
 Until it does, the validator serves exactly one contract, the one its schema names, and refuses every other.
 
-### M-22 (informative): How a package reads its declared environment
+### M-22 (normative): How a package reads its declared environment
 
 A package declares the environment variables it reads in `runtime.env`, so every setting it reads is listable before its code runs.
-The accessor that returns a declared name and refuses any other is a later part of the SDK; until it exists the declaration is the whole of this clause.
+It reads one only through `ctx.env.get`, which `envReader` builds over the declared names and a function the host passes to read the process environment.
+A declared name answers what the host's function reads; any other name is refused by name with an `UndeclaredEnvironmentError`, and the host's function is never called for it.
+There is no denylist and no grant: a package reads what Studio's own process reads.
+
+- test `packages/provider-sdk/tests/calls/env.test.ts` "a declared name is read through the host's reader"
+- test `packages/provider-sdk/tests/calls/env.test.ts` "an undeclared name is refused by name and never read"
+- test `packages/provider-sdk/tests/calls/env.test.ts` "a package that declares no environment reads none"
 
 ### M-23 (informative): The validator compiles code
 
@@ -495,6 +502,92 @@ Every read of the flag in Studio's source is a recorded copy that carries it to 
 
 - test `tests/unit/lib/api/retryable-readers.test.ts` "every read of an answer's retryable is a recorded copy, so nothing resends on it"
 
+## Calls
+
+The host calls a provider's implementation in its own process, as async functions.
+Every request and answer is data in the value codec's domain, except the session handle `open` answers, so the calls need no framing.
+The handle holds the session's state and is the package's own: the host never reads it, which a later part of this chapter checks.
+The manifest's `calls` segment declares what the package's code answers beyond the mandatory calls: the optional console facets and the optional request fields its execute honours.
+One implementation serves every engine the package declares, so `calls` is a fact of the package, a sibling of `runtime`, and never a fact of an engine.
+The shapes of each call, its request, its answer and the contexts the host passes are the types `@libredb/provider-sdk/calls` exports.
+Every other surface of today's provider interface, health among them, joins this chapter with the change that carries it.
+
+### C-1 (normative): A package's entry exports the record defineProvider returns
+
+A package's entry default-exports the record `defineProvider` returns, `{ contract, manifest, impl }`.
+`checkProviderModule` refuses any other value by a rule of `DEFINITION_REFUSAL_RULES`, each refusal naming a JSON Pointer into the record and never a value of the manifest or the implementation.
+The record is frozen, its implementation is frozen in place, and its manifest is a deep-frozen copy, so the package's own manifest object is never changed.
+The record is a plain object with no brand, because several copies of the SDK may share Studio's process.
+
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a provider whose implementation matches its declared calls is defined, and its record is frozen"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "the manifest in the record is a deep-frozen copy, and the package's own object is left as it was"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a value that is not a provider module record is refused as module-not-a-record"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a manifest or record built against another contract is refused as contract-not-served"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "no refusal and no message carries a value of the manifest or the implementation"
+
+### C-2 (informative): The loader checks the record with the host's SDK
+
+The loader reads only the entry's `default` export and runs `checkProviderModule` on it, so a record another copy of the SDK built is checked by the host's copy.
+Validating the manifest against the schema is the loader's too, since it holds the schema bytes.
+No loader exists yet, so nothing checks this.
+
+### C-3 (normative): The mandatory calls
+
+The mandatory calls are `open`, `close` and `console.execute`, each a function of the implementation's own, found at the path its name spells.
+An implementation defines no other key than the calls this contract defines.
+
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a mandatory call that is missing or no function is refused as call-missing"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an implementation key the contract does not define is refused as impl-key-unknown"
+
+### C-4 (normative): An optional facet is declared and implemented, both ways
+
+An optional console facet, one of `CONSOLE_FACETS`, is offered in the manifest's `calls.console` exactly when the implementation has its function.
+A facet is never discovered by calling it or by its shape.
+An engine facet for which this contract has no call yet, a monitoring panel, a maintenance operation or an agent reading, is refused when it is offered.
+
+- schema `/$defs/consoleCalls`
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an offered facet the implementation lacks is refused as facet-unimplemented"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an implemented facet the manifest does not offer is refused as facet-undeclared"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an engine facet this contract has no call for is refused as engine-facet-without-call"
+- test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the console facets and execute's request fields are the schema's"
+
+### C-5 (normative): A package declares the request fields its execute honours
+
+A package lists in `calls.console.execute.honours` the optional request fields, of `EXECUTE_REQUEST_FIELDS`, its execute honours.
+How the host and a provider use that list is C-8, which no test checks yet.
+
+- schema `/$defs/executeCall/properties/honours`
+- schema `/$defs/executeRequestField`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a request field execute does not know, or one listed twice, is refused"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a manifest without its calls is refused as missing-key"
+
+### C-6 (normative): A package never reads a proxy variable
+
+`runtime.env` cannot declare a proxy variable, in either case, so every route out of Studio's process is core's.
+Package source reads no environment variable itself, M-18.
+A later check of the kit runs each package in an environment poisoned with proxy variables; it does not exist yet.
+
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a proxy variable declared in runtime.env is refused as env-proxy-variable"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a lower-case proxy variable is refused by the name pattern"
+- test `tests/unit/provider-source-coupling-lint.test.ts` "process.env is refused in provider source, in each form a provider reads it today"
+
+### C-7 (normative): Today's provider inputs and console answer each have a place
+
+Every input a provider is built with today, and every member of today's console request and answer, has a place in the calls, or a stated reason it stays with the host.
+So a provider moves onto the contract without a behaviour change.
+A provider is built from the connection's fields and from the marks core sets beside them under symbol keys: the tunnel's far end and route, the literal seed-file mark, the file core admitted and the host paths core admitted.
+A census over Studio's own types holds this, one record over the connection's fields and one over its marks, and the shapes the open context shares with Studio, the TLS settings, the egress decision, the trust material, the pool settings, the tunnel's far end and the admitted host paths, are each mutually assignable with Studio's own.
+
+- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every input a provider is built with has a place in the open context or a reason it stays with the host"
+- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's console answer and request has a place in the console calls"
+- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "the context's shared shapes are Studio's own"
+
+### C-8 (informative): The host sends only the request fields a package honours
+
+The host sends a package no optional request field outside its `honours` list, and sends `scope` only to a package that offers `console.endScope`.
+A provider that receives a field it does not honour answers a named error and never ignores it.
+The host's refusal of an undeclared field arrives with the test transport, and the check of a provider's answer with the kit; until then this clause is informative.
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:
@@ -502,7 +595,7 @@ These chapters are added by the changes that bring their enforcers:
 - Connection rules and connection string rows: field rules as bounded patterns and named server checks, the host hint and identity readers, the connection import, the refusal sentence of each refused field, and the connection string rows with their schemes, URL TLS and paste readers and seed checks.
 - Editor and SQL text: execution UI, SQL grammar, SQL writing, migration DDL, generators, editor languages, explain formats and discovery fence tags.
 - Policy and MCP claims, each a request a provider makes that only Studio's review record grants, the agent overlay, and presentation (an icon and a colour).
-- Calls: how the host calls a provider in its own process, with its deadlines, cancellation and byte budgets.
+- Calls, continued: the memory test transport, refinements and the byte budgets, and the cancel, deadline and failure rules.
 - The API report of each SDK entry.
 
 ## Change notes
@@ -521,3 +614,5 @@ Against the manifest sketch the design started from:
 - Facet names keep Studio's own vocabulary, the seven monitoring panels, the maintenance operations and the curated agent readings, rather than new dotted names.
 - The connection dialog's per-field facts, its labels, hints, placeholders, placement, choices, conditions and absent values, are lists of entries that each name their field, rather than maps keyed by field, M-24.
 - A condition is one field equal to one value, with no list of values and no combination of conditions in this contract, M-25.
+- A `calls` segment declares the package's optional console facets and the request fields its execute honours.
+  The sketch's dotted facet list is not adopted for calls, which are keyed by the path to their function.

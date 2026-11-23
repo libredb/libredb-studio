@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "763cb73d9868bdcf61eb27f86a9c010b60304f5da6b34f46a21023a5aab8172f";
+export const MANIFEST_SCHEMA_SHA256 = "d9ff2edabf2b72f3688bc3034a0a21ed21dafd8e3cc028a082186026898328b9";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -13,6 +13,7 @@ export interface ProviderManifest {
   /** The provider contract the manifest was built against, the one this schema serves. */
   readonly contract: "0.1";
   readonly runtime: Runtime;
+  readonly calls: Calls;
   /** The engines the package serves, one declaration each. */
   readonly engines: readonly EngineDeclaration[];
   /** The products the package was measured against, one entry per product, each naming an engine the manifest declares. */
@@ -74,6 +75,27 @@ export interface EnvDeclaration {
   readonly name: string;
   readonly purpose: string;
 }
+
+/** What the package's code answers beyond the mandatory calls. One implementation serves every engine the package declares, so these are facts of the package, not of an engine; every key is required, written as not-offered or an empty list where the package answers nothing more. */
+export interface Calls {
+  readonly console: ConsoleCalls;
+}
+
+/** The console's calls: execute, which every package answers, and each optional console facet, keyed by the path to its function under the implementation's console. */
+export interface ConsoleCalls {
+  readonly execute: ExecuteCall;
+  readonly cancel: FacetOffer;
+  readonly endScope: FacetOffer;
+}
+
+/** What the package's console execute does with the optional fields of its request. */
+export interface ExecuteCall {
+  /** The optional request fields execute honours; the host sends no other. */
+  readonly honours: readonly ExecuteRequestField[];
+}
+
+/** An optional field of the console execute request. params: bound parameter values. offset: a page that starts past the first row. */
+export type ExecuteRequestField = "params" | "offset";
 
 /** An engine's type-id: a lower-case letter, then up to 31 lower-case letters or digits. */
 export type EngineId = string;
@@ -253,7 +275,7 @@ export interface ConnectionStringOffer {
   readonly dialogOffersUri: boolean;
 }
 
-/** offered: the engine has something to read or do for it. not-offered: it has nothing, so no surface draws it. */
+/** offered: the engine, or for a call the package's code, has something to read or do for it. not-offered: it has nothing, so no surface draws it and no call is made. */
 export type FacetOffer = "offered" | "not-offered";
 
 /** The engine's connections may run through an SSH tunnel. */
