@@ -524,6 +524,56 @@ describe("resolve-connection with a seed entry whose type names no provider (FND
   });
 });
 
+describe("resolve-connection and the operator's environment (FND-5 slice 6c)", () => {
+  const originalSeedPath = process.env.SEED_CONFIG_PATH;
+  let scratch: string;
+
+  beforeEach(() => {
+    scratch = mkdtempSync(path.join(tmpdir(), "libredb-resolve-environment-"));
+    const seedFile = path.join(scratch, "seed-connections.json");
+    writeFileSync(
+      seedFile,
+      JSON.stringify({
+        version: "1",
+        connections: [
+          {
+            id: "orders",
+            name: "Orders",
+            type: "postgres",
+            host: "orders.internal",
+            environment: "production",
+            roles: ["*"],
+          },
+        ],
+      }),
+    );
+    process.env.SEED_CONFIG_PATH = seedFile;
+    resetCache();
+  });
+
+  afterEach(() => {
+    process.env.SEED_CONFIG_PATH = originalSeedPath;
+    resetCache();
+    rmSync(scratch, { recursive: true, force: true });
+  });
+
+  // A guard of the property the production escalation relies on: the confirmation gate reads the resolved
+  // connection's environment, so for a seed it must be the operator's, never the caller's copy.
+  it("a seed id resolves with the operator's environment, whatever the caller's copy claims", async () => {
+    const session = { role: "user" as const, username: "test" };
+    expect((await resolveConnection({ connectionId: "seed:orders" }, session)).environment).toBe("production");
+    const claimed = {
+      id: "seed:orders",
+      name: "Orders",
+      type: "postgres",
+      host: "orders.internal",
+      environment: "development",
+      createdAt: new Date(),
+    } as DatabaseConnection;
+    expect((await resolveConnection({ connection: claimed }, session)).environment).toBe("production");
+  });
+});
+
 describe("resolve-connection with discovered connections", () => {
   const VAULT_REFERENCE = "${vault:secret/data/x#y}";
   const ADMIN = { role: "admin", username: "test" };

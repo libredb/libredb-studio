@@ -1680,6 +1680,18 @@ describe("POST /api/db/multi-query: query events under governance", () => {
     expect(await recordedEvents()).toEqual([]);
   });
 
+  test("governance: a script that writes on a production connection with no confirmation field is asked in advisory and records nothing", async () => {
+    resolveConnectionOverride = async () => ({ ...governedConnection, environment: "production" });
+    // A signed session carries its issue time, which the 428's token binds.
+    mockGetSession.mockImplementation(async () => ({ ...governedSession, iat: 1_700_000_000 }));
+
+    const res = await run({ connectionId: "seed:orders", sql: "SELECT 1; DELETE FROM orders" });
+
+    expect(res.status).toBe(428);
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(await recordedEvents()).toEqual([]);
+  });
+
   test("with governance off the route records nothing", async () => {
     process.env.GOVERNANCE_SOURCE = "";
 
@@ -1857,6 +1869,63 @@ describe("POST /api/db/multi-query: the server's confirmation of a run", () => {
       const res = await run(body as Record<string, unknown>);
       expect(res.status).toBe(400);
       nothingRan();
+    });
+  });
+
+  describe("server confirmation, production", () => {
+    test("advisory asks a script that writes on production and sends no field, and nothing runs", async () => {
+      const name = crypto.randomUUID();
+      const production = { ...validConnection, name, environment: "production" };
+      const res = await run({ connection: production, sql: "SELECT 1; DELETE FROM t" });
+      expect(res.status).toBe(428);
+      const { confirmation } = await parseResponseJSON<{
+        confirmation: { token: string; typedConfirmation: unknown };
+      }>(res);
+      expect(confirmation.token).toEqual(expect.any(String));
+      expect(confirmation.typedConfirmation).toEqual({ type: "connection-name", expected: name, targets: [] });
+      nothingRan();
+    });
+
+    test("advisory still runs a script that writes with no field off production, marked unconfirmed", async () => {
+      const staging = { ...validConnection, name: crypto.randomUUID(), environment: "staging" };
+      const res = await run({ connection: staging, sql: "SELECT 1; DELETE FROM t" });
+      expect(res.status).toBe(200);
+      expect((await parseResponseJSON<{ confirmation?: string }>(res)).confirmation).toBe("unconfirmed");
+    });
+
+    test("advisory runs a read script on production with no field", async () => {
+      const production = { ...validConnection, name: crypto.randomUUID(), environment: "production" };
+      const res = await run({ connection: production, sql: "SELECT 1; SELECT 2" });
+      expect(res.status).toBe(200);
+      expect(await parseResponseJSON<Record<string, unknown>>(res)).not.toHaveProperty("confirmation");
+    });
+
+    test("a script that writes on production asks for the name, and runs once with it", async () => {
+      const name = crypto.randomUUID();
+      const production = { ...validConnection, name, environment: "production" };
+      const script = "SELECT 1; DELETE FROM t";
+      const asked = await run({ connection: production, sql: script, confirmation: "ask" });
+      expect(asked.status).toBe(428);
+      const { confirmation } = await parseResponseJSON<{
+        confirmation: { token: string; typedConfirmation: unknown };
+      }>(asked);
+      expect(confirmation.typedConfirmation).toEqual({ type: "connection-name", expected: name, targets: [] });
+      const tokenOnly = await run({ connection: production, sql: script, confirmation: { token: confirmation.token } });
+      expect(tokenOnly.status).toBe(428);
+      const wrong = await run({
+        connection: production,
+        sql: script,
+        confirmation: { token: confirmation.token, typed: crypto.randomUUID() },
+      });
+      expect(wrong.status).toBe(400);
+      nothingRan();
+      const ran = await run({
+        connection: production,
+        sql: script,
+        confirmation: { token: confirmation.token, typed: name },
+      });
+      expect(ran.status).toBe(200);
+      expect(await parseResponseJSON<{ executedCount: number }>(ran)).toMatchObject({ executedCount: 2 });
     });
   });
 });

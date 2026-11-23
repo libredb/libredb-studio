@@ -190,6 +190,36 @@ describe("the run confirmation token (FND-5)", () => {
     ).toBe("this confirmation was issued for another reading of the statement");
   });
 
+  test("a token minted for one typed ask is refused for another reading: another name, another environment", async () => {
+    // A guard of the property the production escalation relies on (FND-5 slice 6c): the verdict digest binds the typed
+    // confirmation, so a rename or a change of environment changes the reading a token was minted for.
+    const confirm = binding().verdict;
+    if (confirm.decision !== "confirm") throw new Error("the fixture's verdict asks");
+    const name = crypto.randomUUID();
+    const production = {
+      ...confirm,
+      typedConfirmation: { type: "connection-name" as const, expected: name, targets: [] },
+    };
+    const token = await minted({ ...binding(), verdict: production });
+    const another = "this confirmation was issued for another reading of the statement";
+    // Another name.
+    expect(
+      await refusal(token, {
+        ...binding(),
+        verdict: {
+          ...production,
+          typedConfirmation: { ...production.typedConfirmation, expected: crypto.randomUUID() },
+        },
+      }),
+    ).toBe(another);
+    // Another environment: the same statement off production asks nothing typed.
+    expect(await refusal(token, { ...binding(), verdict: confirm })).toBe(another);
+    // And the reverse: a token minted off production is refused for the production reading.
+    const offProduction = await minted();
+    expect(await refusal(offProduction, { ...binding(), verdict: production })).toBe(another);
+    expect(await refusal(token, { ...binding(), verdict: production })).toBeUndefined();
+  });
+
   test("refused once expired", async () => {
     const token = await minted();
     expect(await refusal(token, binding(), at(NOW + (RUN_CONFIRMATION_TTL_SECONDS + 1) * 1000))).toBe(

@@ -34,7 +34,11 @@ import type { DatabaseConnection } from "@/lib/types";
 import type { QueryEventRow } from "@/lib/query-events/types";
 import type { QueryEventBatchWrite, QueryEventWriteFailure } from "@/lib/query-events/postgres-sink";
 import * as admission from "@/lib/query-events/admission";
-import { CONFIRMATION_FIELD_MESSAGE, CONFIRMATION_REQUIRED_MESSAGE } from "@/lib/api/run-confirmation";
+import {
+  CONFIRMATION_FIELD_MESSAGE,
+  CONFIRMATION_REQUIRED_MESSAGE,
+  CONFIRMATION_TYPED_MESSAGE,
+} from "@/lib/api/run-confirmation";
 import { forgetUsedRunConfirmations, mintRunConfirmation } from "@/lib/api/run-confirmation-token";
 import { INVALID_RUN_CONFIRMATION_SETTING } from "@/lib/config/run-confirmation";
 
@@ -2289,6 +2293,18 @@ describe("POST /api/db/query: query events under governance", () => {
     expect(await recordedEvents()).toEqual([]);
   });
 
+  test("governance: a write on a production connection with no confirmation field is asked in advisory and records nothing", async () => {
+    resolveConnectionOverride = async () => ({ ...governedConnection, environment: "production" });
+    // A signed session carries its issue time, which the 428's token binds.
+    mockGetSession.mockImplementation(async () => ({ ...governedSession, iat: 1_700_000_000 }));
+
+    const res = await run({ connectionId: "seed:orders", sql: "DELETE FROM orders" });
+
+    expect(res.status).toBe(428);
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(await recordedEvents()).toEqual([]);
+  });
+
   test("with governance off the route records nothing", async () => {
     process.env.GOVERNANCE_SOURCE = "";
 
@@ -2604,6 +2620,93 @@ describe("POST /api/db/query: the server's confirmation of a run", () => {
       declaresDatabases();
       const same = await run({ connectionId: "seed:test-redis", sql: "FLUSHDB", database: 3, confirmation: { token } });
       expect(same.status).toBe(200);
+    });
+  });
+
+  describe("server confirmation, production", () => {
+    let name: string;
+    let production: Record<string, unknown>;
+    const WRITE = "DELETE FROM t";
+
+    beforeEach(() => {
+      name = crypto.randomUUID();
+      production = { ...validConnection, name, environment: "production" };
+    });
+
+    async function typedAsk(res: Response): Promise<{ token: string; typedConfirmation: unknown }> {
+      expect(res.status).toBe(428);
+      const body = await parseResponseJSON<{
+        error: string;
+        confirmation: { token: string; typedConfirmation: unknown };
+      }>(res);
+      expect(body.error).toBe(CONFIRMATION_TYPED_MESSAGE);
+      return body.confirmation;
+    }
+
+    test.each([
+      ["advisory", undefined],
+      ["advisory", "ask"],
+      ["required", undefined],
+      ["required", "ask"],
+    ] as const)(
+      "a write without the typed name is answered 428 in %s mode (%p), and nothing runs",
+      async (mode, field) => {
+        process.env.LIBREDB_RUN_CONFIRMATION = mode;
+        const asked = await typedAsk(await run({ connection: production, sql: WRITE, confirmation: field }));
+        expect(asked.typedConfirmation).toEqual({ type: "connection-name", expected: name, targets: [] });
+        nothingRan();
+      },
+    );
+
+    test("the token alone is answered 428 again, and nothing runs", async () => {
+      const { token } = await typedAsk(await run({ connection: production, sql: WRITE, confirmation: "ask" }));
+      await typedAsk(await run({ connection: production, sql: WRITE, confirmation: { token } }));
+      nothingRan();
+    });
+
+    test("a wrong name is refused, and nothing runs", async () => {
+      const { token } = await typedAsk(await run({ connection: production, sql: WRITE, confirmation: "ask" }));
+      const res = await run({
+        connection: production,
+        sql: WRITE,
+        confirmation: { token, typed: crypto.randomUUID() },
+      });
+      expect(res.status).toBe(400);
+      expect(await parseResponseJSON(res)).toEqual({
+        error: "the typed confirmation does not match what this statement asks to be typed",
+        code: "CONFIRMATION_INVALID",
+      });
+      nothingRan();
+    });
+
+    test("the right name with its token runs once", async () => {
+      const { token } = await typedAsk(await run({ connection: production, sql: WRITE, confirmation: "ask" }));
+      const res = await run({ connection: production, sql: WRITE, confirmation: { token, typed: name } });
+      expect(res.status).toBe(200);
+      expect(await parseResponseJSON<Record<string, unknown>>(res)).not.toHaveProperty("confirmation");
+      expect(mockProvider.query).toHaveBeenCalledTimes(1);
+    });
+
+    test.each(["advisory", "required"])("a read runs with no field in %s mode", async (mode) => {
+      process.env.LIBREDB_RUN_CONFIRMATION = mode;
+      const res = await run({ connection: production, sql: "SELECT 1" });
+      expect(res.status).toBe(200);
+      expect(await parseResponseJSON<Record<string, unknown>>(res)).not.toHaveProperty("confirmation");
+      expect(mockProvider.query).toHaveBeenCalledTimes(1);
+    });
+
+    test("advisory still runs a write with no field on a staging connection, marked unconfirmed", async () => {
+      const res = await run({ connection: { ...production, environment: "staging" }, sql: WRITE });
+      expect(res.status).toBe(200);
+      expect((await parseResponseJSON<{ confirmation?: string }>(res)).confirmation).toBe("unconfirmed");
+      expect(mockProvider.query).toHaveBeenCalledTimes(1);
+    });
+
+    test("a write on a development connection is confirmed by the token alone, as before", async () => {
+      const development = { ...production, environment: "development" };
+      const token = await askedToken({ connection: development, sql: WRITE });
+      const res = await run({ connection: development, sql: WRITE, confirmation: { token } });
+      expect(res.status).toBe(200);
     });
   });
 });
