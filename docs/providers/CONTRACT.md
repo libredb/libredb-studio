@@ -770,6 +770,24 @@ No gate reads it, the material is the operator's public certificates, and a prov
 - test `tests/security/provider-trust-material.test.ts` "READS_TRUST_MATERIAL names db2 alone, the engine whose TLS the probe found outside Node's trust store"
 - test `tests/security/provider-trust-material.test.ts` "a caller's trust in the execution context never reaches a provider"
 
+### M-57 (normative): A built provider's own declaration of a claim this clause names reaches no gate
+
+A provider's capabilities restate, once it is built, some claims an engine declaration requests: its write reach on each write path, whether it reads the file-access posture, whether it keeps one handle per file, and the form the agent's own credential takes.
+Studio's gates read each from Studio's review record of the claim, never from the provider.
+Read-only mode reads `WRITE_REACH`, the file-access posture's cache key and borrow read `READS_FILE_ACCESS_POSTURE`, the provider cache key's owner and the single-writer borrow read `SINGLE_WRITER_FILE`, and every agent acquisition reads the agent credential's shape from `AGENT_CREDENTIAL_FORM`, null where the provider declares no form.
+So none of these claims moves a gate on the provider's word, as a claim a declaration requests never does, M-52.
+Two claims a built provider declares are not yet named here and still reach a gate on its word: the masking exemption, `maskingExemptColumns`, which Studio's producers of client capabilities pass on from the provider until they answer Studio's record of it, and catalog sessions, `catalogSessions`, which the provider answers per connection until the gates that honour a caller's catalog choice read that answer only as far as `OPENS_SERVER_LEVEL_WITHOUT_DATABASE` grants it; each joins this clause with the change that binds it, as "Not yet in this contract" lists.
+For every engine Studio ships, each provider's own declaration is its record's row.
+
+- test `tests/isolated/factory.test.ts` "a form a provider declares that Studio's record does not hold is never read: the record's pair refuses an agent secret alone"
+- test `tests/isolated/factory.test.ts` "the form Studio's record holds is read when the provider declares none: Kubernetes takes an agent token alone"
+- test `tests/isolated/factory.test.ts` "a provider that declares singleWriterFile on an engine Studio's record does not name registers no file, and no other connection is lent its handle"
+- test `tests/isolated/factory.test.ts` "Studio's record registers the file of a single-writer engine whose provider declares nothing, and another connection on the file is lent the open handle"
+- test `tests/unit/db/agent-credential-capability.test.ts` "%s: AGENT_CREDENTIAL_FORM is the form its provider declares, null where it declares none"
+- test `tests/unit/db/compatibility.test.ts` "SINGLE_WRITER_FILE matches the engines whose capabilities declare singleWriterFile"
+- test `tests/unit/db/write-reach-capability.test.ts` "%s: the record answers the summary of its provider's declaration"
+- test `tests/unit/db/reads-file-access-posture-capability.test.ts` "%s: the map answers what its provider declares"
+
 ## Values
 
 A value crosses a JSON boundary, between a provider and the host or between two of the host's own hops, in one form: the value codec of `@libredb/provider-sdk/values`.
@@ -2114,7 +2132,7 @@ No host call reads the state yet, which is why this clause is informative until 
 
 These chapters are added by the changes that bring their enforcers:
 
-- The policy facts and maintenance specs a provider declares once built, the agent overlay, and presentation (an icon and a colour).
+- The policy facts a provider declares once built, as a segment of its declaration; Studio's record of the masking exemption and of the catalog sessions a built provider declares; the maintenance specs; the agent overlay; and presentation (an icon and a colour).
 - The API report of each SDK entry.
 
 ## Change notes
@@ -2158,6 +2176,7 @@ Against the manifest sketch the design started from:
 - Policy and MCP claims are requests Studio reads as far as its review record or an operator's audited grant allows, never facts a declaration sets alone, M-52 to M-54.
 - Read-only enforcement is not declared: Studio derives it from the write reach, M-52.
 - The trust material a provider is handed is a connection fact, not a claim, M-56.
+- The write reach, file-access posture, single-writer file and agent credential form a built provider restates in its capabilities are read from Studio's records of them, never from the provider, M-57.
 - A connection, facets, agent or SQL text fact a gate reads is a claim only where a value loosens the gate on the strength of the provider's behaviour and a restrictive value exists, M-52 to M-54; a query dialect's answers are Studio's, M-50.
 - The sketch's frame cap is replaced by the byte budgets, since calls are unframed in process; the memory test transport keeps frames for tests only.
 - Transactions are one console facet, `transaction`, whose request names its action, and a statement inside a transaction is console execute sent with `transaction`; the sketch named four wire methods and a separate `session/state` read, C-57.
