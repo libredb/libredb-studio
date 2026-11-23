@@ -163,7 +163,8 @@ export const REGISTRIES: readonly Listed[] = [
     path: "src/lib/db/destructive-commands.ts",
     declaration: "NON_SQL_DESTRUCTIVE_VOCABULARY",
     count: 1,
-    reason: "the confirmation gate's registry, each row declared beside its provider",
+    reason:
+      "the confirmation gate's registry, each row declared in its statement language's family module or beside its provider",
   },
   {
     path: "src/lib/db/factory.ts",

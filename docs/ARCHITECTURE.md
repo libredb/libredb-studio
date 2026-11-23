@@ -517,7 +517,7 @@ src/
     │   │   ├── platform/    # kubernetes/ (a REST client of its own over the shared node transport behind a read-only request allowlist; a kubectl read-command console; namespaces and kinds in the tree, a YAML view of every object, Secret values redacted)
     │   │   └── embedded/    # libredb (built-in embedded provider for the sample connection)
     │   ├── graph/           # The graph layer a Cypher-over-Bolt engine extends (docs/ADDING_A_PROVIDER.md, "Adding a graph engine"):
-    │   │                    #   cypher/ (lexer, statements, quoting, read policy, generators), objects.ts, values.ts and
+    │   │                    #   cypher/ (lexer, statements, quoting, read policy, generators, the confirmation row), objects.ts, values.ts and
     │   │                    #   profile.ts are pure and browser-safe; bolt/ (the GraphClient seam, the URI, the one
     │   │                    #   neo4j-driver-lite client, driver values to JSON) and graph-base-provider.ts are server only
     │   ├── http/            # endpoint.ts: the validated URL builder every HTTP transport uses (no redirects); node-transport.ts: the shared node:http(s) transport a new REST provider takes (one keep-alive Agent per connection, no proxy variables, a streamed byte cap, an optional request signer and AWS JSON media types); node-transport.ts also holds the byte transport (GET and HEAD to an exact target, bytes, selected headers, a per-request signer)
@@ -551,6 +551,8 @@ src/
     ├── export/              # The writers behind every "save this to disk": RFC 4180 CSV,
     │                        #   the SQL INSERT/DDL forms, and the one blob-download path
     ├── sql/                 # Statement splitter, alias extractor
+    ├── languages/           # Statement language family modules, the core vocabulary every provider of a language reads;
+    │                        #   today each non-SQL language's confirmation row (docs/PROVIDER_IMPORTS.md)
     ├── seed/                # Seed connections: operator sources (sources/), operator loader, filter, credential resolver, CapRover and Kubernetes discovery + sample seeding
     ├── config/              # auth-env.ts — single JWT_SECRET reader (auth.ts, proxy.ts, oidc.ts)
     │                        #   custom-connections.ts: the ALLOW_CUSTOM_CONNECTIONS switch

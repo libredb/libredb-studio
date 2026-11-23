@@ -32,7 +32,7 @@ import {
 } from "../../object-kinds";
 import { EDIT_CHARACTER_LIMIT, userPositionOf } from "../../object-edit";
 import { connectionFingerprint } from "../../connection-fingerprint";
-import { readRedisCommandText } from "./redis-command-text";
+import { readRedisCommandText } from "@/lib/languages/rediscli/command-text";
 import { readRedisAgentStatement } from "./redis-agent-statement";
 import {
   REDIS_COMMAND_TIMED_OUT,

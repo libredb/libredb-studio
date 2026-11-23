@@ -145,7 +145,7 @@ describe("the plan-draft reader stays reachable from a browser", () => {
         : path.posix.join(path.posix.dirname(from), specifier);
       return fs.existsSync(path.join(ROOT, `${base}.ts`)) ? `${base}.ts` : `${base}/index.ts`;
     };
-    const LEAVES = new Set(["src/lib/is-record.ts", "src/lib/db/providers/keyvalue/redis-command-text.ts"]);
+    const LEAVES = new Set(["src/lib/is-record.ts", "src/lib/languages/rediscli/command-text.ts"]);
     const TYPE_ID_CHECK: Readonly<Record<string, readonly string[]>> = {
       "src/lib/db/type-id.ts": ["./compatibility", "./errors"],
       "src/lib/db/errors.ts": ["@/lib/api/error-codes"],

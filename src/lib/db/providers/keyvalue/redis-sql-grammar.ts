@@ -1,6 +1,6 @@
 import { DEFAULT_SQL_GRAMMAR, NO_EXTRA_WORDS, REDACTED_VALUE } from "@/lib/db/sql-grammar/shared";
 import type { SqlGrammarSpec } from "@/lib/db/sql-grammar/types";
-import { readRedisCommandText } from "./redis-command-text";
+import { readRedisCommandText } from "@/lib/languages/rediscli/command-text";
 
 /** The JSON command form of a Redis statement, before the provider checks it. */
 interface RedisJsonCommand {

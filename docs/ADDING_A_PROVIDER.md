@@ -1208,7 +1208,8 @@ Those three reach code and tests only; the four prose greps of the published blo
 **Also always, and not named above until the Kafka provider found them (#1088):** each is a record, a population or a pinned list no search above prints by itself.
 
 - [ ] `src/lib/db/destructive-commands.ts`: `NON_SQL_DESTRUCTIVE_VOCABULARY`, a row for every id whose grammar module declares `readsSqlText: false`, which `tests/unit/db/destructive-commands.test.ts` holds to exactly those ids.
-      The row is declared beside the provider, in its own `destructive.ts` module, and the table only imports it; the same test fails on a row written inline.
+      The row is declared in its statement language's family module, `destructive.ts` under `src/lib/languages/<language>/` (or `src/lib/db/graph/cypher/` for Cypher), and the table only imports it; the same test fails on a row written inline or taken from another language's family module.
+      A new row in a provider directory is refused by the provider import guard, because `src/lib/db/destructive-commands.ts` is not one of the collector entries that may grow ([`docs/PROVIDER_IMPORTS.md`](PROVIDER_IMPORTS.md), "The rule").
       A text that cannot write takes the row that names no operation and decides alone, the Prometheus and Kafka shape.
       A row that decides alone needs its claim in `CONFIRMATION_CLAIM_REVIEW` (`src/lib/db/confirmation-claim-review.ts`), with the reason it holds, in the same PR: the gate reads an unlisted claim as if it were not made, and `tests/unit/lib/db/confirmation-claim-review.test.ts` fails until the entry is written.
 - [ ] `src/lib/db/migration-ddl/index.ts`: the new id's row in `MIGRATION_DDL`, which the compiler holds complete.

@@ -1,5 +1,5 @@
 import { type DestructiveVocabulary, isJsonObject, type OperationReader } from "@/lib/db/destructive-vocabulary";
-import { readRedisCommandText, redisRefusal } from "@/lib/db/providers/keyvalue/redis-command-text";
+import { readRedisCommandText, redisRefusal } from "@/lib/languages/rediscli/command-text";
 
 /**
  * Redis commands whose effect is to remove a key or member, replace an existing
@@ -160,7 +160,7 @@ function redisNames(command: string, next: string | undefined): string[] {
  * with `{` takes the JSON path in the provider too, so a broken JSON body never
  * falls back to the plain reading; it is unreadable, and unreadable asks.
  *
- * The text is read by the provider's own `readRedisCommandText()`, so the command
+ * The text is read by `readRedisCommandText()`, the reading the provider runs, so the command
  * this names is the one that runs: each line is a command, `#` lines are dropped,
  * and the first blank line ends the read, which keeps the schema explorer's
  * cheatsheet of blank-line-separated alternatives from prompting about commands
@@ -195,7 +195,7 @@ const readRedisOperations: OperationReader = (query) => {
  * Redis's row of the confirmation gate's vocabulary.
  *
  * Each line of the text is one command (docs/providers/redis.md 3.4a), and a second command is refused in the editor
- * with the provider's own reading, before anything is sent, rather than run as one merged command.
+ * with the reading the provider runs, before anything is sent, rather than run as one merged command.
  */
 export const REDIS_DESTRUCTIVE_VOCABULARY: DestructiveVocabulary = {
   operations: REDIS_DESTRUCTIVE_COMMANDS,
