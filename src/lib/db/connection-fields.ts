@@ -5,7 +5,9 @@
  * order the dialog draws them unless the type's form entry declares a `dialogOrder`; `CONNECTION_FORM` (src/lib/db/connection-form.ts) takes each type's array from here by
  * reference, so the list exists once, and the reason a list holds what it does stays beside that type's entry there.
  * `SEED_ONLY_FIELDS` names, per type, the fields a seed of any other type is refused for, with the sentence it is
- * refused with.
+ * refused with. `REFUSED_CONNECTION_FIELDS` names, per type, the fields its provider receives only to refuse them by
+ * name; with the rows above it declares what a provider is built from (`providerFields` in
+ * src/lib/db/provider-connection.ts).
  *
  * `CONNECTION_FIELD_DESCRIPTORS` says how the dialog draws each field, as data its one renderer reads.
  *
@@ -648,6 +650,72 @@ export const SEED_ONLY_FIELDS: Readonly<Record<DatabaseType, SeedOnlyFields | nu
   snmp: null,
   sparkplug: null,
   libredb: null,
+});
+
+const NONE: readonly ConnectionField[] = Object.freeze([]);
+
+/**
+ * The fields each type's provider receives only to refuse a value in them by name, fields its dialog never draws
+ * (FND-2 slice 6). They are part of what the provider is built from (`providerFields` in
+ * src/lib/db/provider-connection.ts), so the provider's own refusal, with its documented sentence, still runs on a
+ * record that carries one; every other field the engine does not declare is dropped before the provider is built.
+ * A later slice moves these refusals into core, before the build, and takes the fields out of what the provider
+ * receives.
+ */
+export const REFUSED_CONNECTION_FIELDS: Readonly<Record<DatabaseType, readonly ConnectionField[]>> = Object.freeze({
+  postgres: NONE,
+  mysql: NONE,
+  sqlite: NONE,
+  duckdb: NONE,
+  libsql: NONE,
+  mongodb: NONE,
+  redis: NONE,
+  oracle: NONE,
+  db2: NONE,
+  mssql: NONE,
+  couchbase: NONE,
+  clickhouse: NONE,
+  druid: NONE,
+  elasticsearch: NONE,
+  // The API key pair is Elasticsearch's alone: the transport both types share refuses it on OpenSearch rather than
+  // fall back to user and password with no error.
+  opensearch: Object.freeze(["apiKeyId", "apiKeySecret"] as const),
+  trino: NONE,
+  cassandra: NONE,
+  prometheus: NONE,
+  kafka: NONE,
+  etcd: NONE,
+  neo4j: NONE,
+  milvus: NONE,
+  // No user name: an API key is the password. The provider refuses a user by name.
+  qdrant: Object.freeze(["user"] as const),
+  // No user name: an API key or an OIDC access token is the password. The provider refuses a user by name.
+  weaviate: Object.freeze(["user"] as const),
+  influxdb: NONE,
+  // No user name: the token is the password. The connection layer it shares with InfluxDB refuses a user on it.
+  influxdb3: Object.freeze(["user"] as const),
+  // No user name: a bearer token is the password. The provider refuses a user by name.
+  oxia: Object.freeze(["user"] as const),
+  databend: NONE,
+  bigquery: NONE,
+  snowflake: NONE,
+  // No user name: every request uses one fixed Spark Connect user id. The provider refuses a user by name.
+  spark: Object.freeze(["user"] as const),
+  s3: NONE,
+  // No user name: basic authentication is refused, a bearer token is the password. The provider refuses a user by name.
+  kubernetes: Object.freeze(["user"] as const),
+  mqtt: NONE,
+  firestore: NONE,
+  // No database (virtual hosts are discovered), and the namespaces and TLS server name are Kubernetes's boxes. The
+  // provider refuses each by name.
+  rabbitmq: Object.freeze(["database", "namespaces", "tlsServerName"] as const),
+  opcua: NONE,
+  mtconnect: NONE,
+  modbus: NONE,
+  netconf: NONE,
+  snmp: NONE,
+  sparkplug: NONE,
+  libredb: NONE,
 });
 
 /**

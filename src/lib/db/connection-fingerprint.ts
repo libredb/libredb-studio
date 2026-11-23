@@ -151,6 +151,12 @@ export function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
  *
  * `region` (S3) is NOT in the frame either: it changes how a request is signed, never which server receives it;
  * `src/lib/db/provider-cache-key.ts` frames it.
+ *
+ * WHICH SIDE FRAMES WHICH CONNECTION. A provider frames its own config, the copy `providerConnection`
+ * (`src/lib/db/provider-connection.ts`) built it from, which holds only the fields its engine declares. The edit-plan
+ * and edit-apply routes frame `providerConnection` of the connection their request resolved, so both sides digest the
+ * same fields: a field the frame names that the engine does not receive, such as `schema` on PostgreSQL, is absent on
+ * both. The provider cache key and the run-confirmation token frame the record itself, on one side only.
  */
 export async function connectionFingerprint(
   connection: DatabaseConnection & WithTunnelFarEnd & WithTunnelRoute,

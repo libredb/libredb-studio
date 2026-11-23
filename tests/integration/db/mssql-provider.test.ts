@@ -657,15 +657,16 @@ describe("MSSQLProvider", () => {
       }).toThrow(DatabaseConfigError);
     });
 
-    test("connectionString bypasses host/database validation", () => {
+    test("a connection string does not stand in for host and database", () => {
+      // The provider builds from its own fields only: a connection string is not among the fields SQL Server takes
+      // (`CONNECTION_STRING_ACCEPTED`), so it neither replaces a missing host nor a missing database.
+      const connectionString = "Server=db.example;Database=app;";
       expect(() => {
-        new MSSQLProvider({
-          ...baseConfig,
-          host: undefined,
-          database: undefined,
-          connectionString: "Server=localhost;Database=testdb;User Id=sa;Password=test;",
-        } as unknown as DatabaseConnection);
-      }).not.toThrow();
+        new MSSQLProvider({ ...baseConfig, host: undefined, connectionString } as unknown as DatabaseConnection);
+      }).toThrow("Host is required for SQL Server");
+      expect(() => {
+        new MSSQLProvider({ ...baseConfig, database: undefined, connectionString } as unknown as DatabaseConnection);
+      }).toThrow("Database name is required for SQL Server");
     });
   });
 

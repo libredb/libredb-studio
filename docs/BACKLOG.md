@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D493, U17 · 363
+- [Drivers and connections](#drivers-and-connections) — D1-D494, U17 · 364
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -4871,6 +4871,16 @@ The VS Code extension's backend does not re-check its `query/target` verdict on 
 Found 2026-11-22 when the run routes started to classify every run on the server.
 
 **Done when:** `required` is the default in a release whose notes name the change, the VS Code backend's `query/run` enforces a confirmation it issued under the same mode, and the embedded workspace's host contract carries the confirmation round (the VS Code and embedded workspace steps of the same work, then the default switch).
+
+### D494. SQLite, DuckDB and LibreDB declare TLS settings their providers never read
+
+A provider receives the TLS settings (`ssl`) where its form entry offers the TLS panel (`offersSslPanel` in `src/lib/db/connection-form.ts`, read by `providerFields` in `src/lib/db/provider-connection.ts`).
+The form entries of SQLite, DuckDB and LibreDB leave `showSslPanel` unset, so their declaration takes `ssl`, while the connection dialog hides the panel for a file-based engine and none of the three providers reads the field.
+The census of the fields provider modules read (`tests/unit/lib/db/provider-field-census.test.ts`) names the three by hand, as declared fields no module reads.
+
+Found 2026-11-23 while planning FND-2 slice 6.
+
+**Done when:** the three form entries declare `showSslPanel: false`, the dialog's rendering of the three is unchanged, and the census's list of declared fields no module reads is empty.
 
 ## Value interpolation
 

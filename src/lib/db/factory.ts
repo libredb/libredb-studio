@@ -19,7 +19,11 @@ import { createSSHTunnel, closeSSHTunnel, releaseUnopenedTunnel, tunnelProviderO
 import type { TunnelInfo } from "@/lib/ssh/tunnel";
 import { isEnvelopeClaim } from "@/lib/storage/envelope-claim";
 import { providerCacheKey, providerOwner } from "./provider-cache-key";
-import { assertExecutionContextIsPlainData, providerConnection } from "./provider-connection";
+import {
+  assertConnectionIsPlainData,
+  assertExecutionContextIsPlainData,
+  providerConnection,
+} from "./provider-connection";
 import { assertProviderTunnel, decideTunnel } from "./tunnel-decision";
 import { supportsQueryCancel } from "./query-cancel";
 import { storageLocation } from "@/lib/data-dir";
@@ -49,9 +53,12 @@ import * as path from "path";
  * Create a database provider based on connection configuration
  * Uses dynamic imports to load providers on-demand, reducing initial memory usage
  *
- * @param connection - Database connection configuration. The provider is built from `providerConnection(connection)`
- *   (./provider-connection): a copy without `sshTunnel`, the tunnel's route under `TUNNEL_ROUTE` instead, so every
- *   tunnel field, its password, private key and passphrase among them, stays in the record the caller passed. Core's decision about the
+ * @param connection - Database connection configuration, plain data. The provider is built from
+ *   `providerConnection(connection)` (./provider-connection): a new object holding only the fields the engine declares
+ *   (`providerFields`) and core's markers, the tunnel's route under `TUNNEL_ROUTE` for a record that carries a tunnel,
+ *   so every tunnel field, its password, private key and passphrase among them, the agent credential and every field
+ *   the engine does not declare stay in the record the caller passed; a connection that is not plain data is refused
+ *   with a `DatabaseConfigError` and nothing is built. Core's decision about the
  *   tunnel (`decideTunnel` in ./tunnel-decision) is taken before anything is built: a malformed `sshTunnel`, a tunnel
  *   that is on for an engine that takes none or for a connection with no host and port, a tunnel that is on and was not
  *   opened (no `TUNNEL_FAR_END`: build inside `withOneShotTunnel` or use `getOrCreateProvider`), and a far end on a
@@ -355,9 +362,10 @@ async function buildProvider(
   // takes it, whatever its engine, before a later working directory could move it (FND-2 slice 3, docs/SECURITY.md
   // 3.45). On a standalone server the boot took it already, so this reads the kept location.
   storageLocation();
-  // Every provider is built from the connection `providerConnection` answers: the record without its `sshTunnel`, the
-  // tunnel's route under `TUNNEL_ROUTE` instead, so no provider receives the tunnel or its password, private key or
-  // passphrase (FND-2, docs/SECURITY.md 3.41). When core opens a tunnel (getOrCreateProvider,
+  // Every provider is built from the connection `providerConnection` answers: a copy holding only the fields its engine
+  // declares and core's markers, the tunnel's route under `TUNNEL_ROUTE` for a record that carries a tunnel, so no
+  // provider receives the tunnel or its password, private key or passphrase, the agent credential or a field its engine
+  // does not declare (FND-2, docs/SECURITY.md 3.41). When core opens a tunnel (getOrCreateProvider,
   // acquireExecutionProfileProvider, withOneShotTunnel), it dials with those before it calls this function; a tunnel that is on and was not opened was
   // refused above, except for readProviderDeclarations, which never hands its provider out.
   connection = providerConnection(connection);
@@ -847,6 +855,9 @@ export async function withOneShotTunnel<T>(
   assertDatabaseType(connection.type);
   assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
+  // Before the callback is handed the record or a copy of it: a copy of a record that is not plain data would reach the
+  // build as plain data (assertConnectionIsPlainData in ./provider-connection).
+  assertConnectionIsPlainData(connection);
   // Core's decision about the tunnel (./tunnel-decision), before the copy below and before anything is dialled: a
   // malformed tunnel, an engine that takes none and a tunnel with nothing to forward to are refused here, by name.
   const tunnelDecision = decideTunnel(connection);
@@ -1377,6 +1388,9 @@ export async function getOrCreateProvider(
   assertConnectionIdPresent(connection);
   assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
+  // Ahead of the cache key, so no cached provider is handed to a record that is not plain data, and of the copy made
+  // for the tunnel (assertConnectionIsPlainData in ./provider-connection).
+  assertConnectionIsPlainData(connection);
   // Core's decision about the tunnel (./tunnel-decision), ahead of the cache key, which frames the tunnel's route, and
   // of any bastion dial: the tunnel is opened below exactly when this answers `open`.
   const tunnelDecision = decideTunnel(connection);
@@ -1812,6 +1826,9 @@ export async function acquireExecutionProfileProvider(
   assertConnectionIdPresent(connection);
   assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
+  // As in getOrCreateProvider, and ahead of the copy that carries the agent credential, which would hand the build plain
+  // data (assertConnectionIsPlainData in ./provider-connection).
+  assertConnectionIsPlainData(connection);
   // Core's decision about the tunnel (./tunnel-decision), as in getOrCreateProvider, and ahead of the statement review
   // below, so an engine that takes no tunnel is refused for that first.
   const tunnelDecision = decideTunnel(connection);

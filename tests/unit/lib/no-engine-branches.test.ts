@@ -96,7 +96,13 @@ export const REGISTRIES: readonly Listed[] = [
     "OPENS_SERVER_LEVEL_WITHOUT_DATABASE",
     "SSH_TUNNEL_REFUSAL",
   ].map((declaration) => ({ path: "src/lib/db/compatibility.ts", declaration, count: 1, reason: COMPATIBILITY })),
-  ...["CONNECTION_FIELD_ROWS", "CONNECTION_FIELDS", "SEED_ONLY_FIELDS", "SEED_AGENT_CREDENTIAL"].map((declaration) => ({
+  ...[
+    "CONNECTION_FIELD_ROWS",
+    "CONNECTION_FIELDS",
+    "SEED_ONLY_FIELDS",
+    "REFUSED_CONNECTION_FIELDS",
+    "SEED_AGENT_CREDENTIAL",
+  ].map((declaration) => ({
     path: "src/lib/db/connection-fields.ts",
     declaration,
     count: 1,

@@ -1905,13 +1905,13 @@ export class MSSQLProvider extends SQLBaseProvider {
   public validate(): void {
     super.validate();
 
-    if (!this.config.connectionString) {
-      if (!this.config.host) {
-        throw new DatabaseConfigError("Host is required for SQL Server", "mssql");
-      }
-      if (!this.config.database) {
-        throw new DatabaseConfigError("Database name is required for SQL Server", "mssql");
-      }
+    // Built from its own fields only: SQL Server takes no connection string (`CONNECTION_STRING_ACCEPTED` in
+    // ../../compatibility), so host and database are required whatever else the connection carries.
+    if (!this.config.host) {
+      throw new DatabaseConfigError("Host is required for SQL Server", "mssql");
+    }
+    if (!this.config.database) {
+      throw new DatabaseConfigError("Database name is required for SQL Server", "mssql");
     }
   }
 

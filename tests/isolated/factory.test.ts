@@ -79,6 +79,7 @@ import { resetStorageEncryptionKey } from "@/lib/storage/encryption";
 import { projectSeedConnection } from "@/lib/seed/connection-filter";
 import { closeProviderCaches, resetShutdownHooks } from "@/lib/shutdown";
 import { TUNNEL_ROUTE, type SSHTunnelConfig, type WithTunnelRoute } from "@/lib/types";
+import { providerFields } from "@/lib/db/provider-connection";
 import { CassandraTransportError } from "@/lib/db/providers/sql/cassandra/transport";
 import { CouchbaseError } from "@/lib/db/providers/document/couchbase/transport";
 import { DruidTransportError } from "@/lib/db/providers/sql/druid/transport";
@@ -6501,5 +6502,203 @@ describe("createDatabaseProvider refuses an execution context that is not plain 
     } finally {
       constructed.mockRestore();
     }
+  });
+});
+
+describe("a provider receives only its engine's fields on every entry point (FND-2 slice 6)", () => {
+  const PLAIN_DATA_REFUSAL = "A connection must be a plain object of data fields; no provider was built.";
+
+  /** The provider's connection holds no field its engine does not receive. */
+  function expectOnlyReceivedFields(provider: DatabaseProvider): void {
+    const received: readonly string[] = providerFields(provider.config.type);
+    expect(Object.keys(provider.config).filter((key) => !received.includes(key))).toEqual([]);
+    expect(Object.hasOwn(provider.config, "agentUser")).toBe(false);
+    expect(Object.hasOwn(provider.config, "agentPassword")).toBe(false);
+  }
+
+  /** A managed PostgreSQL seed carrying an agent credential with a generated password. */
+  function seedWithAgent(
+    id: string,
+    agentPassword: string,
+    owner: { user: string; password: string },
+  ): DatabaseConnection {
+    return projectSeedConnection(
+      {
+        id,
+        name: id,
+        type: "postgres",
+        host: "localhost",
+        port: 5432,
+        database: "testdb",
+        ...owner,
+        agentUser: "agent_ro",
+        agentPassword,
+        roles: ["*"],
+      },
+      ["admin"],
+    );
+  }
+
+  test("the editor provider of a seed with an agent credential holds neither agent field, and signs in with the record's own user and password", async () => {
+    const agentPassword = crypto.randomUUID();
+    const owner = { user: "owner", password: crypto.randomUUID() };
+    const provider = await getOrCreateProvider(seedWithAgent("pg-s6-editor", agentPassword, owner));
+    expectOnlyReceivedFields(provider);
+    expect([provider.config.user, provider.config.password]).toEqual([owner.user, owner.password]);
+    expect(markersReachableFrom(provider, [agentPassword])).toEqual([]);
+  });
+
+  test("the profiled provider holds neither agent field, and signs in with the agent's user and password", async () => {
+    const agentPassword = crypto.randomUUID();
+    const owner = { user: "owner", password: crypto.randomUUID() };
+    const provider = await acquireExecutionProfileProvider(
+      seedWithAgent("pg-s6-profile", agentPassword, owner),
+      "agent-read-only",
+    );
+    expectOnlyReceivedFields(provider);
+    expect([provider.config.user, provider.config.password]).toEqual(["agent_ro", agentPassword]);
+    expect(markersReachableFrom(provider, [owner.password])).toEqual([]);
+  });
+
+  test("a secret-only engine's profiled provider signs in with the agent's secret as its password, and holds no agent field", async () => {
+    const agentPassword = crypto.randomUUID();
+    const conn = makeConnection("kubernetes", {
+      id: "k8s-s6-profile",
+      port: 6443,
+      database: undefined,
+      user: undefined,
+      password: crypto.randomUUID(),
+      agentPassword,
+    });
+    // Kubernetes' connect dials the API server, so its prototype's connect is stubbed for this test only.
+    const prototype = Object.getPrototypeOf(await createDatabaseProvider(conn)) as DatabaseProvider;
+    const spy = spyOn(prototype, "connect").mockImplementation(async function (this: DatabaseProvider) {
+      (this as unknown as { setConnected(value: boolean): void }).setConnected(true);
+    });
+    try {
+      const provider = await acquireExecutionProfileProvider(conn, "agent-operations");
+      expectOnlyReceivedFields(provider);
+      expect(provider.config.password).toBe(agentPassword);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("a provider built inside withOneShotTunnel holds only its engine's fields", async () => {
+    const agentPassword = crypto.randomUUID();
+    const stored = makeConnection("postgres", {
+      id: "pg-s6-one-shot",
+      host: "db.internal",
+      agentUser: "agent_ro",
+      agentPassword,
+      color: "red",
+      environment: "production",
+      schema: "elsewhere",
+      sshTunnel: {
+        enabled: true,
+        host: "bastion.internal",
+        port: 22,
+        username: "jump",
+        authMethod: "password",
+        password: crypto.randomUUID(),
+      },
+    });
+    const provider = await withOneShotTunnel(stored, async (effective) => await createDatabaseProvider(effective));
+    expectOnlyReceivedFields(provider);
+    expect(Object.hasOwn(provider.config, "schema")).toBe(false);
+    expect(markersReachableFrom(provider, [agentPassword])).toEqual([]);
+  });
+
+  test("a record that is not plain data is refused by every entry point, and nothing is cached", async () => {
+    class Connection {
+      id = "pg-s6-class";
+      name = "pg-s6-class";
+      type = "postgres" as const;
+      host = "localhost";
+      port = 5432;
+      database = "testdb";
+      user = "test";
+      createdAt = new Date(0);
+    }
+    const record = new Connection() as unknown as DatabaseConnection;
+    const refusals = await Promise.all(
+      [
+        () => rawGetOrCreateProvider(record),
+        () => rawAcquireExecutionProfileProvider(record, "agent-read-only"),
+        () => readProviderDeclarations(record),
+        () => createDatabaseProvider(record),
+      ].map((build) => build().catch((error: unknown) => error)),
+    );
+    for (const refusal of refusals) {
+      expect(refusal).toBeInstanceOf(DatabaseConfigError);
+      expect((refusal as Error).message).toBe(PLAIN_DATA_REFUSAL);
+    }
+    expect(getProviderCacheStats().size).toBe(0);
+    expect(getExecutionProfileCacheStats().size).toBe(0);
+  });
+  test("a class-instance record with an agent credential is refused by the profiled acquisition, and by withOneShotTunnel before its callback runs", async () => {
+    const agentPassword = crypto.randomUUID();
+    class ManagedConnection {
+      id = "pg-s6-class-agent";
+      name = "pg-s6-class-agent";
+      type = "postgres" as const;
+      host = "localhost";
+      port = 5432;
+      database = "testdb";
+      user = "owner";
+      managed = true;
+      agentUser = "agent_ro";
+      agentPassword = agentPassword;
+    }
+    const record = new ManagedConnection() as unknown as DatabaseConnection;
+    let ran = false;
+    const refusals = await Promise.all(
+      [
+        () => rawAcquireExecutionProfileProvider(record, "agent-read-only"),
+        () => rawAcquireExecutionProfileProvider(record, "agent-operations"),
+        () =>
+          withOneShotTunnel(record, async () => {
+            ran = true;
+          }),
+      ].map((build) => build().catch((error: unknown) => error)),
+    );
+    for (const refusal of refusals) {
+      expect(refusal).toBeInstanceOf(DatabaseConfigError);
+      expect((refusal as Error).message).toBe(PLAIN_DATA_REFUSAL);
+    }
+    expect(ran).toBe(false);
+    expect(getExecutionProfileCacheStats().size).toBe(0);
+  });
+
+  test("a record that is not plain data is refused even when a plain record with the same cache key is cached", async () => {
+    const fields = {
+      id: "pg-s6-class-cached",
+      name: "pg-s6-class-cached",
+      type: "postgres" as const,
+      host: "localhost",
+      port: 5432,
+      database: "testdb",
+      user: "test",
+      createdAt: new Date(0),
+    };
+    const plain: DatabaseConnection = { ...fields };
+    const writable = await rawGetOrCreateProvider(plain);
+    const profiled = await rawAcquireExecutionProfileProvider(plain, "agent-read-only");
+    expect(findCachedProvider(await editorCacheKey(plain))).toBe(writable);
+    // The same fields, inherited from a prototype: the cache key reads them as the plain record's.
+    const record = Object.create({ ...fields }) as DatabaseConnection;
+    expect(await editorCacheKey(record)).toBe(await editorCacheKey(plain));
+    const refusals = await Promise.all(
+      [() => rawGetOrCreateProvider(record), () => rawAcquireExecutionProfileProvider(record, "agent-read-only")].map(
+        (build) => build().catch((error: unknown) => error),
+      ),
+    );
+    for (const refusal of refusals) {
+      expect(refusal).toBeInstanceOf(DatabaseConfigError);
+      expect((refusal as Error).message).toBe(PLAIN_DATA_REFUSAL);
+    }
+    expect(getProviderCacheStats().size).toBe(1);
+    expect(getExecutionProfileCacheStats().size).toBe(1);
+    expect(profiled.isConnected()).toBe(true);
   });
 });

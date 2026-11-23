@@ -35,6 +35,7 @@ import {
   type DatabaseUIConfig,
 } from "@/lib/db-ui-config";
 import { SHIPPED_DATABASE_TYPES, SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
+import { REFUSED_CONNECTION_FIELDS } from "@/lib/db/connection-fields";
 import { UnknownProviderError } from "@/lib/db/errors";
 import { SHOWCASE_DATABASE_ORDER, SHOWCASE_RANK, listShowcaseDatabases } from "@/lib/db-showcase";
 import { readAmqpPort, readPathPrefix } from "@/lib/db/providers/stream/rabbitmq/connection-options";
@@ -569,11 +570,12 @@ describe("db-ui-config", () => {
      * refuses a non-empty `config.user` naming the field (Apache Spark). Weaviate has no user name either: an API
      * key and an OIDC access token are both a bearer token in the password, and its provider refuses a non-empty
      * `config.user` naming the field (#1566 spec 6.1).
-     * Listed by name, so the read stays visible.
+     * Read from `REFUSED_CONNECTION_FIELDS` (src/lib/db/connection-fields.ts), the row that declares the fields a
+     * provider receives only to refuse them, so one list names them.
      */
     const READ_ONLY_TO_REFUSE: Readonly<Record<"user" | "database", readonly DatabaseType[]>> = {
-      user: ["qdrant", "weaviate", "influxdb3", "oxia", "kubernetes", "spark"],
-      database: ["rabbitmq"],
+      user: ALL_TYPES.filter((type) => REFUSED_CONNECTION_FIELDS[type].includes("user")),
+      database: ALL_TYPES.filter((type) => REFUSED_CONNECTION_FIELDS[type].includes("database")),
     };
 
     test("every field read only to refuse it is really read and really not offered", () => {

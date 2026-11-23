@@ -17,6 +17,7 @@ import { describe, expect, test } from "bun:test";
 import { SHIPPED_DATABASE_TYPES, SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import { createDatabaseProvider } from "@/lib/db/factory";
+import { providerConnection } from "@/lib/db/provider-connection";
 import type { DatabaseConnection, DatabaseProvider } from "@/lib/db/types";
 import { SSH_TUNNEL_FIELDS } from "@/lib/storage/secret-fields";
 import {
@@ -96,8 +97,9 @@ async function expectBuiltWithoutTunnelSecrets(record: MarkedConnection, enabled
   expect(Object.hasOwn(provider.config, "sshTunnel")).toBe(false);
   expect(configOf(provider)[TUNNEL_ROUTE]).toBe(expectedRoute(enabled));
   expect(configOf(provider)[LITERAL_SEED_FILE]).toBe(true);
-  // The seal the edit plan frames, with the route from core's marker, is the record's.
-  expect(await connectionFingerprint(provider.config)).toBe(await connectionFingerprint(record));
+  // The seal the edit plan frames, with the route from core's marker, is the one the edit routes frame on
+  // `providerConnection` of the record (FND-2 slice 6).
+  expect(await connectionFingerprint(provider.config)).toBe(await connectionFingerprint(providerConnection(record)));
   // The caller's record keeps its credentials: core dials the tunnel with them.
   expect(record.sshTunnel?.password).toBe(TUNNEL_MARKER_ONE);
   expect(record.sshTunnel?.privateKey).toBe(TUNNEL_MARKER_TWO);

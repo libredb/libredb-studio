@@ -8,9 +8,13 @@
 import { describe, expect, test } from "bun:test";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import { DatabaseConfigError } from "@/lib/db/errors";
-import { assertTunnelRecordIsPlainData, providerConnection } from "@/lib/db/provider-connection";
+import { createDatabaseProvider } from "@/lib/db/factory";
+import { assertTunnelRecordIsPlainData, providerConnection, providerFields } from "@/lib/db/provider-connection";
 import type { DatabaseConnection } from "@/lib/db/types";
 import {
+  ADMITTED_FILE,
+  ADMITTED_HOST_PATHS,
+  type DatabaseType,
   LITERAL_SEED_FILE,
   TUNNEL_FAR_END,
   TUNNEL_ROUTE,
@@ -18,6 +22,7 @@ import {
   type WithTunnelFarEnd,
   type WithTunnelRoute,
 } from "@/lib/types";
+import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
 
 const TUNNEL_MARKER_ONE = "not-a-real-tunnel-marker-7f3a";
 const TUNNEL_MARKER_TWO = "not-a-real-tunnel-marker-91c2";
@@ -55,6 +60,8 @@ function record(overrides: Record<string, unknown> = {}): MarkedConnection {
     ...overrides,
   } as MarkedConnection;
 }
+
+const PLAIN_DATA_REFUSAL = "A connection must be a plain object of data fields; no provider was built.";
 
 /** `providerConnection` refuses `given` by naming its `sshTunnel`, and quotes none of the tunnel's values. */
 function expectTunnelRefused(given: DatabaseConnection): void {
@@ -132,10 +139,18 @@ describe("providerConnection, the connection a provider is built from (FND-2)", 
     expect(projected[TUNNEL_ROUTE]).toBe("4:true15:bastion.example2:224:jump");
   });
 
-  test.each([[undefined], [null]])("hands on a record whose sshTunnel is %p as the same object", (sshTunnel) => {
-    const given = record({ sshTunnel });
-    expect(providerConnection(given)).toBe(given);
-  });
+  test.each([[undefined], [null]])(
+    "hands on a record whose sshTunnel is %p as a copy of its received fields",
+    (sshTunnel) => {
+      const given = record({ sshTunnel });
+      const projected = providerConnection(given);
+      expect(projected).not.toBe(given);
+      expect(Object.keys(projected).sort()).toEqual(
+        ["id", "name", "type", "host", "port", "database", "user", "password", "ssl"].sort(),
+      );
+      expect(Object.getOwnPropertySymbols(projected)).toEqual([]);
+    },
+  );
 
   test.each([
     ["a string", "on"],
@@ -182,7 +197,7 @@ describe("providerConnection, the connection a provider is built from (FND-2)", 
     expect(projected[TUNNEL_ROUTE]).toBe("4:true15:bastion.example2:224:jump");
   });
 
-  test("refuses a record with a tunnel whose own fields a copy would drop, and hands it on as it is without one", () => {
+  test("refuses a record with a tunnel whose own fields a copy would drop, and refuses it without one too", () => {
     // A copy loses a prototype getter, so `readOnly` would reach the provider as undefined.
     class Connection {
       id = "fnd2";
@@ -201,7 +216,7 @@ describe("providerConnection, the connection a provider is built from (FND-2)", 
     }
     expectConnectionRefused(new Connection({ enabled: false, host: "bastion.example", password: TUNNEL_MARKER_ONE }));
     const withoutTunnel = new Connection(undefined) as unknown as DatabaseConnection;
-    expect(providerConnection(withoutTunnel)).toBe(withoutTunnel);
+    expect(() => providerConnection(withoutTunnel)).toThrow(PLAIN_DATA_REFUSAL);
 
     const hidden = record();
     Object.defineProperty(hidden, "readOnly", { value: true, enumerable: false });
@@ -267,15 +282,16 @@ describe("providerConnection, the connection a provider is built from (FND-2)", 
     expect(given.sshTunnel?.passphrase).toBe(TUNNEL_MARKER_THREE);
   });
 
-  test("keeps every other field, the database password and the TLS client key included", () => {
-    const given = record({ agentUser: "agent_ro" });
+  test("keeps every received field, the database password and the TLS client key included, and drops the agent credential", () => {
+    const given = record({ agentUser: "agent_ro", agentPassword: crypto.randomUUID() });
     const projected = providerConnection(given);
-    // With the route marker taken off and the record's own tunnel put back, the copy is the record: nothing but the
-    // missing `sshTunnel` and the marker differ.
-    const restored: Record<string | symbol, unknown> = { ...projected, sshTunnel: given.sshTunnel };
+    // With the route marker taken off, the copy is the record's received fields: the tunnel, the agent credential and
+    // `createdAt` are not among PostgreSQL's.
+    const restored: Record<string | symbol, unknown> = { ...projected };
     delete restored[TUNNEL_ROUTE];
     expect(Object.getOwnPropertySymbols(restored)).toEqual([]);
-    expect(restored).toEqual({ ...given });
+    const { sshTunnel: _tunnel, agentUser: _user, agentPassword: _password, createdAt: _created, ...received } = given;
+    expect(restored).toEqual(received);
     expect(projected.password).toBe(DATABASE_MARKER);
     expect(projected.ssl).toBe(given.ssl);
     expect(projected.ssl?.clientKey).toBe(CLIENT_MARKER);
@@ -308,6 +324,101 @@ describe("providerConnection, the connection a provider is built from (FND-2)", 
       const projected: MarkedConnection = providerConnection(given);
       expect(await connectionFingerprint(projected)).toBe(await connectionFingerprint(given));
       expect(projected[TUNNEL_ROUTE]).toBe(route);
+    },
+  );
+  test("hands a provider only its engine's received fields and core's markers", () => {
+    for (const type of ["postgres", "kafka", "opcua", "sqlite"] as const) {
+      const given: Record<string | symbol, unknown> = {
+        ...CENSUS_CONNECTION[type],
+        agentUser: "agent_ro",
+        agentPassword: crypto.randomUUID(),
+        color: "red",
+        environment: "production",
+        group: "team",
+        skipObjectScan: true,
+        schema: "other",
+        registerMap: "{}",
+      };
+      const projected = providerConnection(given as unknown as DatabaseConnection);
+      const received: readonly string[] = providerFields(type);
+      expect({ type, extra: Object.keys(projected).filter((key) => !received.includes(key)) }).toEqual({
+        type,
+        extra: [],
+      });
+      for (const key of Object.keys(projected)) expect(Reflect.get(projected, key)).toBe(given[key]);
+    }
+  });
+
+  test("keeps an absent received field absent, and a received field the record holds as undefined as it is", () => {
+    const projected = providerConnection(record({ sshTunnel: undefined, database: undefined }));
+    expect(Object.hasOwn(projected, "queryTimeout")).toBe(false);
+    expect(Object.hasOwn(projected, "readOnly")).toBe(false);
+    expect(Object.hasOwn(projected, "database")).toBe(true);
+    expect(projected.database).toBeUndefined();
+  });
+
+  test("drops a caller's symbol key that is not a core marker, and a caller's admitted-file markers", () => {
+    const embedder = Symbol("embedder");
+    const farEnd = { host: "db.internal", port: 5432 };
+    const given = {
+      ...record({ host: "127.0.0.1", port: 40000, [TUNNEL_FAR_END]: farEnd, [LITERAL_SEED_FILE]: true }),
+      [embedder]: crypto.randomUUID(),
+      [ADMITTED_FILE]: "/caller/file",
+      [ADMITTED_HOST_PATHS]: { clientCertificatePath: "/caller/cert" },
+    };
+    const projected: MarkedConnection = providerConnection(given);
+    expect(Object.getOwnPropertySymbols(projected).sort((a, b) => String(a).localeCompare(String(b)))).toEqual(
+      [LITERAL_SEED_FILE, TUNNEL_FAR_END, TUNNEL_ROUTE].sort((a, b) => String(a).localeCompare(String(b))),
+    );
+    expect(projected[TUNNEL_FAR_END]).toBe(farEnd);
+
+    const callerRouted: MarkedConnection = { ...given, sshTunnel: undefined, [TUNNEL_ROUTE]: "caller-route" };
+    const untunnelled = providerConnection(callerRouted);
+    expect(Object.getOwnPropertySymbols(untunnelled).sort((a, b) => String(a).localeCompare(String(b)))).toEqual(
+      [LITERAL_SEED_FILE, TUNNEL_FAR_END].sort((a, b) => String(a).localeCompare(String(b))),
+    );
+  });
+
+  test("refuses a record that is not plain data, with or without a tunnel, quoting no value", () => {
+    const marker = crypto.randomUUID();
+    class Connection {
+      id = "fnd2";
+      name = "fnd2";
+      type = "postgres" as const;
+      password = marker;
+    }
+    const inherited = Object.assign(Object.create({ readOnly: true }) as object, record({ sshTunnel: undefined }));
+    const accessor = record({ sshTunnel: undefined });
+    Object.defineProperty(accessor, "password", { get: () => marker, enumerable: true });
+    const hidden = record({ sshTunnel: null });
+    Object.defineProperty(hidden, "readOnly", { value: true, enumerable: false });
+    for (const given of [new Connection(), inherited, accessor, hidden]) {
+      let caught: unknown;
+      try {
+        providerConnection(given as DatabaseConnection);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(DatabaseConfigError);
+      expect((caught as Error).message).toBe(PLAIN_DATA_REFUSAL);
+      expect((caught as Error).message).not.toContain(marker);
+    }
+  });
+
+  test.each([
+    ["postgres", "schema"],
+    ["trino", "serviceName"],
+    ["redis", "serviceName"],
+    ["etcd", "database"],
+  ] as const)(
+    "the seal framed on the provider's copy equals the one framed on providerConnection of the record, for a %s record with %s, which its engine does not receive",
+    async (type: DatabaseType, field) => {
+      expect(providerFields(type)).not.toContain(field);
+      const given = { ...CENSUS_CONNECTION[type], [field]: "elsewhere" } as DatabaseConnection;
+      const provider = await createDatabaseProvider(given);
+      expect(await connectionFingerprint(provider.config)).toBe(await connectionFingerprint(providerConnection(given)));
+      // The field is framed by the seal, so a frame of the record itself would differ from the provider's.
+      expect(await connectionFingerprint(given)).not.toBe(await connectionFingerprint(provider.config));
     },
   );
 });

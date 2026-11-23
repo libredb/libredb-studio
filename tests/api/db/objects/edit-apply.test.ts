@@ -102,6 +102,15 @@ describe("POST /api/db/objects/edit-apply", () => {
     expect((await POST(request({ plan, planToken }))).status).toBe(400);
   });
 
+  test("a connection carrying a seal field its engine does not receive is sealed and verified on the provider's copy", async () => {
+    // PostgreSQL receives no `schema`, so the plan sealed on the provider's copy verifies against the copy this request
+    // resolved, and the apply runs.
+    const { plan, planToken } = await mintValidPlan();
+    mockResolveConnection.mockResolvedValueOnce({ ...CONNECTION, schema: "elsewhere" });
+    expect((await POST(request({ plan, planToken }))).status).toBe(200);
+    expect(provider.applyObjectEdit).toHaveBeenCalledTimes(1);
+  });
+
   test("a plan for a connection that differs ONLY in its URI is refused, with its control", async () => {
     // THE HOLE AN EXTERNAL REVIEW OF PR #831 FOUND, driven end to end at the route rather than only
     // at the digest. REPRODUCED against the five-field frame: both connections below answered

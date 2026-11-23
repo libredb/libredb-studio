@@ -9,7 +9,7 @@ import { dirname, join } from "node:path";
 import ts from "typescript";
 import { DB_UI_CONFIG } from "@/lib/db-ui-config";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
-import { CONNECTION_FIELDS, SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
+import { CONNECTION_FIELDS, REFUSED_CONNECTION_FIELDS, SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
 import type { DatabaseType } from "@/lib/types";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
@@ -77,6 +77,7 @@ describe("the connection-field records (src/lib/db/connection-fields.ts)", () =>
   test("each record has exactly one row per type-id", () => {
     expect(Object.keys(CONNECTION_FIELDS).sort()).toEqual(EVERY_TYPE);
     expect(Object.keys(SEED_ONLY_FIELDS).sort()).toEqual(EVERY_TYPE);
+    expect(Object.keys(REFUSED_CONNECTION_FIELDS).sort()).toEqual(EVERY_TYPE);
   });
 
   test("the dialog's table holds each engine's row by reference, never a copy", () => {
@@ -115,6 +116,32 @@ describe("the connection-field records (src/lib/db/connection-fields.ts)", () =>
   test("both records are frozen", () => {
     expect(Object.isFrozen(CONNECTION_FIELDS)).toBe(true);
     expect(Object.isFrozen(SEED_ONLY_FIELDS)).toBe(true);
+    expect(Object.isFrozen(REFUSED_CONNECTION_FIELDS)).toBe(true);
+    for (const row of Object.values(REFUSED_CONNECTION_FIELDS)) expect(Object.isFrozen(row)).toBe(true);
+  });
+
+  test("a refused field is in no row of its own engine's connection fields or seed-only fields", () => {
+    for (const id of EVERY_TYPE as DatabaseType[]) {
+      const declared: readonly string[] = [...CONNECTION_FIELDS[id], ...(SEED_ONLY_FIELDS[id]?.fields ?? [])];
+      const both = REFUSED_CONNECTION_FIELDS[id].filter((field) => declared.includes(field));
+      expect({ id, both }).toEqual({ id, both: [] });
+    }
+  });
+
+  test("the refused fields are the ones a provider reads only to refuse them, named per engine", () => {
+    const refusing = (EVERY_TYPE as DatabaseType[])
+      .filter((id) => REFUSED_CONNECTION_FIELDS[id].length > 0)
+      .map((id) => [id, [...REFUSED_CONNECTION_FIELDS[id]]]);
+    expect(Object.fromEntries(refusing)).toEqual({
+      influxdb3: ["user"],
+      kubernetes: ["user"],
+      opensearch: ["apiKeyId", "apiKeySecret"],
+      oxia: ["user"],
+      qdrant: ["user"],
+      rabbitmq: ["database", "namespaces", "tlsServerName"],
+      spark: ["user"],
+      weaviate: ["user"],
+    });
   });
 
   test("a fresh process loads the module on its own", () => {

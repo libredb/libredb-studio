@@ -5,6 +5,7 @@ import { EDIT_CHARACTER_LIMIT, EDIT_PLAN_EXECUTABLE_LIMIT } from "@/lib/db/objec
 import type { ObjectEditBuild } from "@/lib/db/types";
 import {
   POST_PLAN as POST,
+  CONNECTION,
   PLAN,
   PREIMAGE,
   REFUSAL,
@@ -12,6 +13,7 @@ import {
   VALID,
   mockGetOrCreateProvider,
   mockGetSession,
+  mockResolveConnection,
   planWithUnitOfLength,
   provider,
   request,
@@ -190,6 +192,15 @@ describe("POST /api/db/objects/edit-plan", () => {
     const response = await POST(request(VALID));
     expect(response.status).toBe(400);
     expect(await parseResponseJSON<{ planToken?: string }>(response)).not.toHaveProperty("planToken");
+  });
+
+  test("a connection carrying a seal field its engine does not receive is sealed and verified on the provider's copy", async () => {
+    // PostgreSQL receives no `schema` (providerFields in src/lib/db/provider-connection.ts), so the provider frames its
+    // seal without it, and the route frames the same copy of the connection this request resolved.
+    mockResolveConnection.mockResolvedValueOnce({ ...CONNECTION, schema: "elsewhere" });
+    const response = await POST(request(VALID));
+    expect(response.status).toBe(200);
+    expect(typeof (await parseResponseJSON<{ planToken?: string }>(response)).planToken).toBe("string");
   });
 
   test("THE BUILD ROUTE EMITS NO AUDIT EVENT", async () => {
