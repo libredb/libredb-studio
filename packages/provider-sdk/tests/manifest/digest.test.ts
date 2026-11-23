@@ -124,6 +124,7 @@ describe("the manifest schema digest", () => {
       "frameRefusalSentence",
       "readFrame",
       "roundTripRefusals",
+      "serve",
     ]);
     expect(surface.filter((name) => Object.hasOwn(packageRoot, name))).toEqual([]);
   });
