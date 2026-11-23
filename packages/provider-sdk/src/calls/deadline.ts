@@ -86,9 +86,9 @@ export type LateOutcome<T> =
  * The host's wait on `answer`, a provider's answer, ended by `signal`.
  *
  * When `answer` settles first, the wait settles the same way, a rejection with the same error, and its listener on
- * `signal` is removed, so a long-lived signal gathers none. When `signal` aborts first, or had aborted already, the wait
- * rejects with the signal's reason at once, and `answer` keeps a handler for its value and for its error that calls
- * `late` once with its outcome, by reference. The host's `late` closes what a late answer handed over and logs a late
+ * `signal` is removed, so a long-lived signal gathers none. When `signal` aborts first, or had aborted already, the
+ * wait rejects with the signal's reason at once, and `answer` keeps a handler for its value and for its error that
+ * calls `late` once with its outcome, by reference. The host's `late` closes what a late answer handed over and logs a late
  * failure. A `late` that throws is a host defect, and its error is a detached rejection.
  */
 export function awaitWithin<T>(

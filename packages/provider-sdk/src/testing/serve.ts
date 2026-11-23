@@ -1,6 +1,7 @@
 /**
- * The memory test transport (docs/providers/CONTRACT.md, clauses C-19 and C-22 to C-25): `serve` puts a provider
- * module record behind JSON frames, so a test calls a provider exactly as the contract says calls look.
+ * The memory test transport (docs/providers/CONTRACT.md, clauses C-19, C-22 to C-25, C-27 and C-31 to C-33): `serve`
+ * puts a provider module record behind JSON frames, so a test calls a provider exactly as the contract says calls
+ * look.
  *
  * Every call crosses as one request frame and one answer frame, each the JSON text of values `encodeValue` wrote,
  * parsed and decoded with `decodeValue` on the other side, read as the closed shape of its call type (`readFrame`) and
@@ -16,14 +17,22 @@
  * A token is looked up by identity, so a copy of one is foreign. A closed or foreign token, and a closed source, are
  * refused before any frame; a close takes its entry out of both tables whatever the provider's close answers.
  *
- * The host's side holds every call to the session's calls before any frame (`checkExecuteRequest`,
- * `checkConsoleFacet`), reads `open`'s refinement with `sessionCalls`, and closes what an answer it refuses handed
- * over: the session through the provider's `close`, each source through its own, every close run and no failure lost.
+ * The host's side refuses, before any frame and before anything else it checks, a call whose deadline has passed or
+ * whose signal has aborted (`checkCallStart`), the signal's reason as the error's cause, so the provider is never
+ * called and the tables are unchanged. It holds every call to the session's calls before any frame
+ * (`checkExecuteRequest`, `checkConsoleFacet`), reads `open`'s refinement with `sessionCalls`, and closes what an
+ * answer it refuses handed over: the session through the provider's `close`, each source through its own, every close
+ * run and no failure lost.
  * Every loop over a provider's array stops at its first hole, an execute answer's result that is not an object is
  * refused at its index like a hole, and a served source asks the provider for exactly the limit it is pulled with, so
  * a frame never grows past what the provider holds.
+ *
+ * `serve` races nothing: the host owns the deadline, and an answer the host stopped waiting for (`awaitWithin`) is
+ * delivered whole, its token and served sources included, for the host's late handler to close. Each served instance
+ * keeps its sessions in its own tables, so a token of one is foreign to another.
  */
 import type { Calls } from "../manifest/manifest-types.generated";
+import { refuseCallStart } from "../calls/deadline";
 import { checkProviderModule, ProviderDefinitionError } from "../calls/define-provider";
 import { freezeContext, freezeData } from "../calls/freeze";
 import { isPlainRecord, pointerTo, readOwn } from "../calls/records";
@@ -205,6 +214,7 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
     request: CancelRequest | EndScopeRequest,
     ctx: CallContext,
   ): Promise<Answer> {
+    refuseCallStart(ctx);
     const session = hostSession(call, handle);
     const refusals = checkConsoleFacet(session.calls, facet);
     if (refusals.length > 0) throw new CallRefusalError(refusals);
@@ -285,6 +295,7 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
   }
 
   async function open(ctx: OpenContext): Promise<OpenAnswer<ServedHandle>> {
+    refuseCallStart(ctx);
     const sent = cross("open", "to-provider", { call: "open", context: encodeValue(contextData(ctx)) });
     const providerCtx = providerContext<OpenContext>(receive("open", "context", sent.context, ctx, SERVICES), ctx);
     const answer: unknown = await provider.open.call(impl, providerCtx);
@@ -320,6 +331,7 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
   }
 
   async function close(handle: ServedHandle, ctx: CallContext): Promise<void> {
+    refuseCallStart(ctx);
     const session = hostSession("close", handle);
     const sent = cross("close", "to-provider", {
       call: "close",
@@ -337,6 +349,7 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
 
   async function execute(handle: ServedHandle, request: ExecuteRequest, ctx: CallContext): Promise<ExecuteAnswer> {
     const call = "console.execute";
+    refuseCallStart(ctx);
     const session = hostSession(call, handle);
     const requestRefusals = checkExecuteRequest(session.calls, request);
     if (requestRefusals.length > 0) throw new CallRefusalError(requestRefusals);

@@ -939,18 +939,21 @@ Node.js does not let the signal's timer keep a process alive, so nothing relies 
 - test `packages/provider-sdk/tests/calls/deadline.test.ts` "a deadline already past answers a signal already aborted"
 - test `packages/provider-sdk/tests/calls/deadline.test.ts` "a deadline that is not a finite number is a host defect, refused before any signal is built"
 - test `packages/provider-sdk/tests/calls/deadline.test.ts` "a deadline further ahead than a timer can wait is refused before any signal is built"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "the provider's context carries the host's deadline and signal, and its signal aborts at the deadline"
 
 ### C-27 (normative): No call starts after its signal aborted or its deadline passed
 
 The host checks each call with `checkCallStart` before it makes it, and refuses it by `call-deadline-passed` or `call-signal-aborted`, rules of `CALL_REFUSAL_RULES`, each at a JSON Pointer into the call's context.
 A refusal by `call-signal-aborted` is thrown with the signal's reason as the error's cause, never as a value of the refusal or of its sentence.
 The deadline is read by time, since a signal does not abort at once when its deadline has already passed.
+The served host side runs the check on every call, before any frame and before C-9 and C-17, so a refused call reaches no provider and leaves the session as it was.
 `pumpPage` checks before every pull, so no batch is pulled after either, and a refusal there is thrown after the source's one close, as any failure of a step is, C-15.
 
 - test `packages/provider-sdk/tests/calls/deadline.test.ts` "checkCallStart refuses a call whose deadline passed or whose signal aborted, naming each"
 - test `packages/provider-sdk/tests/calls/deadline.test.ts` "a CallRefusalError carries the signal's reason as its cause"
 - test `packages/provider-sdk/tests/calls/results.test.ts` "the pump pulls no batch once the call's signal aborted or its deadline passed, and closes the source once"
 - test `packages/provider-sdk/tests/calls/results.test.ts` "a call signal that aborts during a page stops the pump before its next pull"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a call whose signal aborted or whose deadline passed is refused before any frame, and the provider is never called"
 
 ### C-28 (normative): The host stops waiting at the signal, and an abandoned answer keeps its handler
 
@@ -960,10 +963,12 @@ When the signal aborts first, or had aborted already, the wait rejects with the 
 So no abandoned rejection goes unhandled, and the host's late handler closes what a late answer handed over and logs a late failure.
 A late handler that throws is a host defect, and its error is a detached rejection.
 A result source runs under the context of the execute call that answered it, so `next` takes no context, and the host's wait on a page is its wait on that call.
+The memory transport races nothing: an answer the host stopped waiting for is delivered whole, its session token and served sources included, so the late handler closes it once, and what the served host side refuses of a late answer it closes itself, C-23, and hands on as a failure.
 
 - test `packages/provider-sdk/tests/calls/deadline.test.ts` "the host's wait settles as the answer does when the answer comes first, and leaves no listener on the signal"
 - test `packages/provider-sdk/tests/calls/deadline.test.ts` "the host's wait ends at the signal, and the abandoned answer's outcome reaches the late handler once"
 - test `packages/provider-sdk/tests/calls/deadline.test.ts` "a signal aborted before the wait ends it at once, and the answer still reaches the late handler"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "an answer the host stopped waiting for reaches its late handler whole, and the host closes what it handed over once"
 
 ### C-29 (informative): What a provider does with the deadline and the signal
 
@@ -971,6 +976,40 @@ A provider derives every driver timeout from `ctx.deadline`, for checkout, conne
 It answers `cancelled: false` for a run it does not know.
 A result source's pulls honour the context of the execute call that answered it.
 The kit checks these, and no such check exists yet.
+
+### C-30 (normative): A session without console.cancel is reported as still running, without a call
+
+The host refuses a cancel to a session that does not offer `console.cancel` before the call, C-17, and reports the run as not cancelled.
+Studio's cancel route answers such a connection with `cancelled: false` and calls nothing.
+
+- test `packages/provider-sdk/tests/calls/request.test.ts` "a console facet the session does not offer is refused before the call"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a request field or a console facet the session does not offer is refused before any frame"
+- test `tests/api/db/cancel.test.ts` "provider without cancelQuery returns 400"
+
+### C-31 (normative): A throw inside a call fails only that call
+
+An error a provider's call throws reaches the host by reference, and that session and every other session keep serving.
+The host core's reading of such an error into an error record arrives with the first host surface.
+
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "an error a call or a source throws reaches the host as the same object"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a call that throws fails only that call, and its session and the served instance keep serving"
+
+### C-32 (normative): The SDK keeps sessions apart
+
+The SDK keeps no state across sessions and installs no process handler, since several copies of it share Studio's process, M-19.
+The memory transport keeps each served instance's sessions in tables of its own, and each call reaches only its own session's handle.
+
+- test `packages/provider-sdk/tests/sdk-purity.test.ts` "SDK source declares no top-level let or var"
+- test `packages/provider-sdk/tests/sdk-purity.test.ts` "SDK source creates no top-level Map, Set, WeakMap or WeakSet"
+- test `packages/provider-sdk/tests/sdk-purity.test.ts` "SDK source never reads process"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "two sessions of one served module reach only their own handles, and one session's error or close leaves the other serving"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "two served instances of one module share no session"
+
+### C-33 (informative): A provider keeps per-session state in its handle
+
+A provider keeps its per-session state, its connection, statement, cursor, transaction and schema, in the handle `open` answers, never in module scope.
+So two sessions opened by two owners exchange no result, handle, error or cached metadata.
+The kit's isolation case checks it, and no such case exists yet.
 
 ## Not yet in this contract
 
