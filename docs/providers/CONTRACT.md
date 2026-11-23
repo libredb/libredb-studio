@@ -495,6 +495,22 @@ Every read of the flag in Studio's source is a recorded copy that carries it to 
 
 - test `tests/unit/lib/api/retryable-readers.test.ts` "every read of an answer's retryable is a recorded copy, so nothing resends on it"
 
+## Calls
+
+The host calls a provider's implementation in its own process, as async functions.
+The manifest's `calls` segment declares what the package's code answers beyond the mandatory calls: the optional console facets and the optional request fields its execute honours.
+One implementation serves every engine the package declares, so `calls` is a fact of the package, a sibling of `runtime`, and never a fact of an engine.
+
+### C-6 (normative): A package never reads a proxy variable
+
+`runtime.env` cannot declare a proxy variable, in either case, so every route out of Studio's process is core's.
+Package source reads no environment variable itself, M-18.
+A later check of the kit runs each package in an environment poisoned with proxy variables; it does not exist yet.
+
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a proxy variable declared in runtime.env is refused as env-proxy-variable"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a lower-case proxy variable is refused by the name pattern"
+- test `tests/unit/provider-source-coupling-lint.test.ts` "process.env is refused in provider source, in each form a provider reads it today"
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:
@@ -521,3 +537,5 @@ Against the manifest sketch the design started from:
 - Facet names keep Studio's own vocabulary, the seven monitoring panels, the maintenance operations and the curated agent readings, rather than new dotted names.
 - The connection dialog's per-field facts, its labels, hints, placeholders, placement, choices, conditions and absent values, are lists of entries that each name their field, rather than maps keyed by field, M-24.
 - A condition is one field equal to one value, with no list of values and no combination of conditions in this contract, M-25.
+- A `calls` segment declares the package's optional console facets and the request fields its execute honours.
+  The sketch's dotted facet list is not adopted for calls, which are keyed by the path to their function.

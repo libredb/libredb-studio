@@ -616,6 +616,65 @@ describe("rules the schema cannot state", () => {
   });
 });
 
+describe("the calls segment", () => {
+  test("a manifest without its calls is refused as missing-key", () => {
+    expect(refusalsFor(manifest((m) => delete m.calls))).toEqual([refusal("missing-key", "", "calls")]);
+    expect(refusalsFor(manifest((m) => delete m.calls.console.cancel))).toEqual([
+      refusal("missing-key", "/calls/console", "cancel"),
+    ]);
+    expect(refusalsFor(manifest((m) => delete m.calls.console.execute.honours))).toEqual([
+      refusal("missing-key", "/calls/console/execute", "honours"),
+    ]);
+  });
+
+  test("a request field execute does not know, or one listed twice, is refused", () => {
+    expect(refusalsFor(manifest((m) => (m.calls.console.execute.honours = ["params", "params"])))).toEqual([
+      refusal("duplicate", "/calls/console/execute/honours/1"),
+    ]);
+    expect(refusalsFor(manifest((m) => (m.calls.console.execute.honours = ["rows"])))).toEqual([
+      refusal("value-not-allowed", "/calls/console/execute/honours/0"),
+    ]);
+    expect(refusalsFor(manifest((m) => (m.calls.console.execute.honours = ["params", "offset"])))).toEqual([]);
+  });
+
+  test("a console facet offer outside the vocabulary, or a key the calls segment does not define, is refused", () => {
+    expect(refusalsFor(manifest((m) => (m.calls.console.cancel = "maybe")))).toEqual([
+      refusal("value-not-allowed", "/calls/console/cancel"),
+    ]);
+    expect(refusalsFor(manifest((m) => (m.calls.objects = {})))).toEqual([refusal("unknown-key", "/calls", "objects")]);
+    expect(refusalsFor(manifest((m) => (m.calls.console.explain = "offered")))).toEqual([
+      refusal("unknown-key", "/calls/console", "explain"),
+    ]);
+  });
+});
+
+describe("proxy variables", () => {
+  const PROXY_VARIABLES = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"];
+  const purpose = `purpose-${randomUUID()}`;
+  const declared = (name: string) => ({ name, purpose });
+
+  test("a proxy variable declared in runtime.env is refused as env-proxy-variable", () => {
+    for (const name of PROXY_VARIABLES) {
+      const changed = manifest((m) => (m.runtime.env = [declared("EXAMPLEDB_HOME"), declared(name)]));
+
+      const refusals = refusalsFor(changed);
+
+      expect(refusals).toEqual([refusal("env-proxy-variable", "/runtime/env/1/name")]);
+      expect(JSON.stringify(refusals)).not.toContain(purpose);
+      expect(refusalSentence(refusals[0] as ManifestRefusal)).not.toContain(name);
+    }
+    expect(refusalsFor(manifest((m) => (m.runtime.env = [declared("EXAMPLEDB_PROXY_HOME")])))).toEqual([]);
+  });
+
+  test("a lower-case proxy variable is refused by the name pattern", () => {
+    for (const name of PROXY_VARIABLES.map((item) => item.toLowerCase())) {
+      const changed = manifest((m) => (m.runtime.env = [declared(name)]));
+
+      expect(refusalsFor(changed)).toEqual([refusal("pattern-mismatch", "/runtime/env/0/name")]);
+    }
+  });
+});
+
 describe("the contract a manifest was built against", () => {
   test("a manifest built against another contract is refused as PROVIDER_CONTRACT_UNSUPPORTED without schema refusals", () => {
     const changed = manifest((m) => {
@@ -708,6 +767,7 @@ describe("refusals carry no value", () => {
     changed.contract = "0.1";
     changed.engines[0].connection.defaults.port = planted;
     changed.engines[0].connection.seedOnly = plant(SEED_ONLY, planted);
+    changed.runtime.env = [{ name: "HTTPS_PROXY", purpose: planted }];
 
     const refusals = refusalsFor(changed);
     const engineVerdict = validator.validateEngine(changed.engines[0]);

@@ -3,6 +3,15 @@
   "runtime": {
     "entry": "dist/index.mjs"
   },
+  "calls": {
+    "console": {
+      "execute": {
+        "honours": []
+      },
+      "cancel": "not-offered",
+      "endScope": "not-offered"
+    }
+  },
   "engines": [
     {
       "id": "exampledb",

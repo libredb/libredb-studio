@@ -49,6 +49,7 @@ export const SCHEMA_REFUSAL_RULES = Object.freeze([
   "host-uri-schemes-without-host",
   "credential-warning-field-undeclared",
   "no-secret-warning-duplicate",
+  "env-proxy-variable",
 ] as const);
 
 export type SchemaRefusalRule = (typeof SCHEMA_REFUSAL_RULES)[number];
@@ -323,9 +324,23 @@ function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies:
   return refusals;
 }
 
-/** The rules of a whole manifest the schema cannot state: unique engine ids, and compatibility entries that match. */
+/**
+ * The proxy variables, upper-case, which `runtime.env` may not declare: a package never reads a proxy setting, so
+ * every route out of Studio's process is core's. The lower-case forms are already refused by the name pattern.
+ */
+const PROXY_VARIABLES: readonly string[] = Object.freeze(["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"]);
+
+/**
+ * The rules of a whole manifest the schema cannot state: no proxy variable in the environment, unique engine ids, and
+ * compatibility entries that match.
+ */
 function manifestRuleRefusals(manifest: ProviderManifest, vocabularies: FieldVocabularies): SchemaRefusal[] {
   const refusals: SchemaRefusal[] = [];
+  manifest.runtime.env?.forEach((variable, index) => {
+    if (PROXY_VARIABLES.includes(variable.name)) {
+      refusals.push(schemaRefusal("env-proxy-variable", `/runtime/env/${index}/name`));
+    }
+  });
   const declared = new Set<string>();
   const covered = new Set(manifest.compatibility.map((entry) => entry.engine));
   manifest.engines.forEach((engine, index) => {
@@ -479,5 +494,7 @@ export function refusalSentence(refusal: ManifestRefusal): string {
       return `The credential warning at ${at} reads a field that is not one of the engine's connection fields.`;
     case "no-secret-warning-duplicate":
       return `The credential warning at ${at} is a second no-secret warning of its engine.`;
+    case "env-proxy-variable":
+      return `The environment variable at ${at} is a proxy setting, which a package never reads.`;
   }
 }
