@@ -41,7 +41,10 @@ Rows live only in the window's memory, so reloading the window empties the view.
 **Run Query** sends the selected text, or the statement at the cursor when nothing is selected.
 A statement asks for confirmation first wherever the web editor asks: one that updates, deletes or merges rows, drops, truncates or alters an object, or changes permissions, each non-SQL engine's own destructive commands, and text the editor cannot read safely, such as MongoDB text that is not JSON.
 A plain INSERT or CREATE runs without asking, as it does in the web editor, while a form that replaces or upserts asks, such as PostgreSQL `INSERT ... ON CONFLICT DO UPDATE`, Snowflake `CREATE OR REPLACE TABLE` and Spark `INSERT OVERWRITE TABLE`.
-The question is one modal dialog: the web editor's AI risk analysis, and the typed confirmation it asks for before an etcd range delete or lease revoke, are not offered.
+The question is a modal dialog that shows the statement, then, where a value must be typed, one input box: the connection's name on a production connection, or the lease or key range of an etcd range delete or lease revoke.
+The web editor's AI risk analysis is not offered.
+**Select Rows** and Load More ask too where the statement needs a confirmation, and every run asks again: nothing is remembered.
+The LibreDB backend checks the confirmation itself, so a statement that needs one never runs without it.
 **Cancel Query** stops a running statement on an engine that can cancel one, such as PostgreSQL, SQL Server and MySQL.
 A MongoDB command cannot be cancelled once it is sent.
 
@@ -63,6 +66,7 @@ Those stay in VS Code's secret storage on each machine.
 A workspace's `.vscode/settings.json` never adds a connection.
 In Restricted Mode, every connection opens with external file access denied.
 A SQLite database opens only in a trusted workspace, and its file is named by an absolute path.
+A connection may carry `"environment"` with one of `production`, `staging`, `development`, `local` or `other`; on `production`, every statement that needs a confirmation also asks you to type the connection's name.
 
 ## Settings
 
