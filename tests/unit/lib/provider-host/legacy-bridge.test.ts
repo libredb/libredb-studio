@@ -17,6 +17,7 @@ import {
   freezeData,
   PAGE_MAX_BYTES,
   pumpPage,
+  type ResultSource,
 } from "@libredb/provider-sdk/calls";
 import type { DatabaseProvider, PreparedQuery, QueryPrepareOptions } from "@/lib/db/types";
 import { runEditorQuery } from "@/lib/api/editor-query";
@@ -214,7 +215,9 @@ describe("bridgedConsole", () => {
     expect(Object.hasOwn(single, "explainPlan")).toBe(false);
     const closed = single.results[0];
     await closed?.close();
-    expect(await failure(async () => closed?.next({ maxRows: 1, maxBytes: 1 }))).toBeInstanceOf(Error);
+    expect(
+      await failure(async () => closed?.next({ maxRows: 1, maxBytes: 1, measure: encodedRowBytes })),
+    ).toBeInstanceOf(Error);
   });
 
   test("a cell outside the value codec is measured in its JSON form and answered unchanged", async () => {
@@ -249,6 +252,35 @@ describe("bridgedConsole", () => {
       scrub: providerTextScrub({ id: "c", name: "c", type: "postgres", createdAt: new Date(0) }, "any"),
     });
     expect(JSON.stringify(body.rows)).toBe(JSON.stringify([row, clean]));
+  });
+
+  test("the bridge sizes every row it answers with the pull's measure, and answers that same array", async () => {
+    const rows = Array.from({ length: 5 }, () => ({ n: marker() }));
+    const answer = await bridgedConsole(fake(resultOf(rows)), {}).session.execute(requestOf(), contextOf());
+    const inner = answer.results[0] as ResultSource;
+    const measured: (readonly unknown[])[] = [];
+    const recording: ResultSource = {
+      columns: inner.columns,
+      next: (limit) =>
+        inner.next({
+          maxRows: limit.maxRows,
+          maxBytes: limit.maxBytes,
+          measure: (row) => {
+            measured.push(row);
+            return limit.measure(row);
+          },
+        }),
+      close: () => inner.close(),
+    };
+
+    // Each row is 40 bytes, so a 100-byte batch holds two and measures a third it does not answer.
+    const page = await pumpPage(recording, { ...PAGE, batchMaxBytes: 100 }, contextOf());
+
+    expect(page.end).toBe("done");
+    expect(page.rows).toEqual(rows.map((row) => [row.n]));
+    expect(page.bytes).toBe(rows.length * 40);
+    expect(measured).toHaveLength(rows.length + 2);
+    for (const row of page.rows) expect(measured.includes(row)).toBe(true);
   });
 
   test("a measuring error other than the codec's passes as the same object", async () => {

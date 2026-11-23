@@ -580,6 +580,80 @@ describe("runEditorQuery on the host core", () => {
     if (held.kind === "page") held.release();
   });
 
+  test("a page whose reading its deadline ends answers StudioTimeoutRefusal saying the statement answered, outcome unknown", async () => {
+    // The facade's deadline is at least EXECUTE_SLACK_MS ahead and a bridged pull never blocks, so a core of the
+    // test's answers the stop marked as waiting for the page; its cancel is the real core's.
+    const real = hostCore();
+    const deadlineReason = new DOMException("The call's deadline has passed.", "TimeoutError");
+    const caller = new AbortController();
+    const callerReason = new DOMException("The request went away.", "AbortError");
+    caller.abort(callerReason);
+    const answers = [deadlineReason, callerReason];
+    const queryTimeout = 2_000;
+    forgetHostCore();
+    installHostCore(
+      {
+        executeCall: async () => ({ kind: "stopped", reason: answers.shift(), waitingFor: "page" }),
+        cancelCall: real.cancelCall,
+      },
+      "test",
+    );
+    let timedOut: unknown;
+    let left: unknown;
+    try {
+      const provider = Object.assign(fake(resultOf(rowsOf(1))), { config: connectionWith({ queryTimeout }) });
+      timedOut = await runEditorQuery(provider, runOf()).catch((error: unknown) => error);
+      left = await runEditorQuery(provider, runOf({ signal: caller.signal })).catch((error: unknown) => error);
+    } finally {
+      forgetHostCore();
+      installHostCore(real, "test");
+    }
+
+    expect(timedOut).toBeInstanceOf(StudioTimeoutRefusal);
+    expect((timedOut as Error).message).toBe(
+      `The statement answered, but Studio did not finish reading its page within its timeout of ${waitedSeconds(queryTimeout)} and ${waitedSeconds(EXECUTE_SLACK_MS)} more, so it stopped waiting for it.`,
+    );
+    expect(errorKind(timedOut)).toBe("studio-timeout-refusal");
+    expect(errorOutcome(timedOut)).toBe("unknown");
+    expect(databaseErrorBody(timedOut)?.body).toMatchObject({
+      code: "TIMEOUT_ERROR",
+      statusCode: 504,
+      kind: "studio-timeout-refusal",
+      outcome: "unknown",
+    });
+    expect(left).toBeInstanceOf(QueryCancelledError);
+    expect(errorOutcome(left)).toBe("unknown");
+  });
+
+  test("a run whose closing of its other results its deadline ends answers StudioTimeoutRefusal saying the page was read, outcome unknown", async () => {
+    // A bridged run closes its other results at once, so a core of the test's answers the stop marked as closing them.
+    const real = hostCore();
+    const deadlineReason = new DOMException("The call's deadline has passed.", "TimeoutError");
+    const queryTimeout = 2_000;
+    forgetHostCore();
+    installHostCore(
+      {
+        executeCall: async () => ({ kind: "stopped", reason: deadlineReason, waitingFor: "other-results" }),
+        cancelCall: real.cancelCall,
+      },
+      "test",
+    );
+    let timedOut: unknown;
+    try {
+      const provider = Object.assign(fake(resultOf(rowsOf(1))), { config: connectionWith({ queryTimeout }) });
+      timedOut = await runEditorQuery(provider, runOf()).catch((error: unknown) => error);
+    } finally {
+      forgetHostCore();
+      installHostCore(real, "test");
+    }
+
+    expect(timedOut).toBeInstanceOf(StudioTimeoutRefusal);
+    expect((timedOut as Error).message).toBe(
+      `The statement answered and Studio read its page, but closing its other results did not finish within its timeout of ${waitedSeconds(queryTimeout)} and ${waitedSeconds(EXECUTE_SLACK_MS)} more, so Studio stopped waiting for them.`,
+    );
+    expect(errorOutcome(timedOut)).toBe("unknown");
+  });
+
   test("a row no page can hold is refused in Studio's words", async () => {
     const caught = await runEditorQuery(
       fake(resultOf([{ n: "x".repeat(33 * MIB) }])),

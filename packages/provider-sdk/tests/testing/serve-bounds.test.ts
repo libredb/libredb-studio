@@ -10,7 +10,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import path from "node:path";
-import type { defineProvider, pumpPage, ResultSource } from "@libredb/provider-sdk/calls";
+import type { defineProvider, encodedRowBytes, pumpPage, ResultSource } from "@libredb/provider-sdk/calls";
 import type { FrameRefusal, serve } from "@libredb/provider-sdk/testing";
 import { boundedChild } from "../helpers/node-child";
 
@@ -21,6 +21,7 @@ interface ChildDeps {
   readonly defineProvider: typeof defineProvider;
   readonly serve: typeof serve;
   readonly pumpPage: typeof pumpPage;
+  readonly encodedRowBytes: typeof encodedRowBytes;
   readonly manifest: Record<string, unknown>;
 }
 
@@ -94,7 +95,7 @@ async function runCase(deps: ChildDeps, name: string): Promise<ChildReport> {
   try {
     const answer = await served.console.execute(opened.handle, { statement: "s", page: { unlimited: true } }, ctx);
     const result = answer.results[0] as ResultSource;
-    if (name === "rows") await result.next({ maxRows: 1, maxBytes: 1024 });
+    if (name === "rows") await result.next({ maxRows: 1, maxBytes: 1024, measure: deps.encodedRowBytes });
     const page = await deps.pumpPage(
       result,
       {
@@ -116,7 +117,7 @@ const SOURCE = path.join(import.meta.dir, "..", "..", "src");
 const child = boundedChild({
   label: "serve-bounds",
   imports: [
-    { from: path.join(SOURCE, "calls", "index.ts"), names: ["defineProvider", "pumpPage"] },
+    { from: path.join(SOURCE, "calls", "index.ts"), names: ["defineProvider", "encodedRowBytes", "pumpPage"] },
     { from: path.join(SOURCE, "testing", "index.ts"), names: ["serve"] },
     { from: path.join(import.meta.dir, "..", "fixtures", "minimal-manifest.json"), defaultAs: "manifest" },
   ],

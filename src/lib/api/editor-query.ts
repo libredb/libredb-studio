@@ -22,7 +22,7 @@ import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { logger } from "@/lib/logger";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 import { type CallerView, openStopError, refusalError, stopError } from "@/lib/provider-host/access";
-import type { HostCallPorts } from "@/lib/provider-host/core/console";
+import type { HostCallPorts, StoppedRecord } from "@/lib/provider-host/core/console";
 import type { OpenWait } from "@/lib/provider-host/core/open-once";
 import { hostCore } from "@/lib/provider-host/instance";
 import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
@@ -243,7 +243,9 @@ function callContext(deadline: number, caller: AbortSignal): CallContext {
  * with a turn of the event loop before every pull. A page that needs more than one batch waits for the core's one
  * large-page slot (clause C-53), and the facade releases the page record once it has built the answer body, in a
  * `finally`, so the next large page waits for no more than that. A page whose wait for the slot its deadline ended
- * answers `StudioTimeoutRefusal` in a sentence naming that wait, outcome unknown, since the statement ran (clause C-54).
+ * answers `StudioTimeoutRefusal` in a sentence naming that wait, outcome unknown, since the statement ran (clause C-54),
+ * a page whose reading its deadline ended answers it in a sentence saying the statement answered, and a run whose
+ * closing of its other results its deadline ended, after its page was read, in a sentence saying so (clause C-48).
  * The accessor turns each record the core answers into this bundle's own error class.
  *
  * A caller that goes while the statement runs is answered at once, and the core sends the run's cancel; the
@@ -264,6 +266,21 @@ export async function runEditorQuery(provider: DatabaseProvider, run: EditorQuer
     caller: run.signal,
     deadlineSentence: `The statement answered, but its page waited for another large page to be answered past its timeout of ${waitedSeconds(statementTimeout(provider))} and ${waitedSeconds(EXECUTE_SLACK_MS)} more, so Studio stopped waiting for it.`,
   };
+  // The statement answered, but its page was still being read at the deadline (clause C-48).
+  const pageView: CallerView = {
+    caller: run.signal,
+    deadlineSentence: `The statement answered, but Studio did not finish reading its page within its timeout of ${waitedSeconds(statementTimeout(provider))} and ${waitedSeconds(EXECUTE_SLACK_MS)} more, so it stopped waiting for it.`,
+  };
+  // The statement answered and its page was read, but its other results were still being closed (clause C-48).
+  const otherResultsView: CallerView = {
+    caller: run.signal,
+    deadlineSentence: `The statement answered and Studio read its page, but closing its other results did not finish within its timeout of ${waitedSeconds(statementTimeout(provider))} and ${waitedSeconds(EXECUTE_SLACK_MS)} more, so Studio stopped waiting for them.`,
+  };
+  const stopViews: Readonly<Record<NonNullable<StoppedRecord["waitingFor"]>, CallerView>> = {
+    "large-page-slot": slotView,
+    page: pageView,
+    "other-results": otherResultsView,
+  };
   const bridged = bridgedConsole(provider, run.options);
   const request: ExecuteRequest = {
     statement: run.statement,
@@ -280,7 +297,7 @@ export async function runEditorQuery(provider: DatabaseProvider, run: EditorQuer
   );
   if (record.kind === "refused") throw refusalError(record, view);
   if (record.kind === "stopped") {
-    throw stopError(record.reason, record.waitingFor === "large-page-slot" ? slotView : view);
+    throw stopError(record.reason, record.waitingFor === undefined ? view : stopViews[record.waitingFor]);
   }
   try {
     const { prepared, result, openTransaction } = bridged.answered();

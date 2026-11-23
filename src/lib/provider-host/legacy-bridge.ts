@@ -17,12 +17,14 @@
  * facade's per-call record, beside whether its cancel was sent, and answers one source per result set, the main rows
  * first.
  *
- * A source reads each legacy row positionally under the result's `fields` and answers it in the form the page budget
- * measures: its value codec form, or, when the codec refuses a cell (`undefined`, a class instance, a `Map`), the JSON
- * form the answer writes for that row, `undefined` as `null`. Which cells the codec refuses is found before encoding,
- * so no `ValueCodecError` is thrown per row; every error measuring throws passes by reference. This is how a row is
- * measured, not how it is answered: the facade answers the legacy rows themselves, by the page's count. A key a row
- * holds outside `fields` is answered and not measured.
+ * A source reads each legacy row positionally under the result's `fields`, in the form the page budget measures: its
+ * value codec form, or, when the codec refuses a cell (`undefined`, a class instance, a `Map`), the JSON form the
+ * answer writes for that row, `undefined` as `null`. It sizes that array with the measure of the pull that asks for it,
+ * `limit.measure`, and answers that same array, so the pump takes the size its measure recorded and each row is
+ * encoded once. Which cells the codec refuses is found before encoding, so no `ValueCodecError` is thrown per row;
+ * every error measuring throws passes by reference. This is how a row is measured, not how it is answered: the facade
+ * answers the legacy rows themselves, by the page's count. A key a row holds outside `fields` is answered and not
+ * measured.
  *
  * `pumpLimits` sets the page's row limit once execute answered: the probe limit, one past the page, when the provider
  * applied the page, otherwise every row the provider returned, at least one, so a result the limiter did not bound
@@ -33,7 +35,6 @@ import {
   type BatchLimit,
   type CancelAnswer,
   type CancelRequest,
-  encodedRowBytes,
   type ExecuteAnswer,
   type ExecuteRequest,
   PAGE_MAX_BYTES,
@@ -102,12 +103,6 @@ function contractWarning(warning: QueryWarning): Warning {
   };
 }
 
-/** A row and its size, in the form the page budget measures. */
-interface MeasuredRow {
-  readonly row: readonly unknown[];
-  readonly size: number;
-}
-
 /** The value codec's integer range (docs/providers/CONTRACT.md, "Values"): a bigint outside it is refused. */
 const MIN_I64 = -(BigInt(2) ** BigInt(63));
 const MAX_U64 = BigInt(2) ** BigInt(64) - BigInt(1);
@@ -151,16 +146,15 @@ function outsideCodec(value: unknown): boolean {
 /**
  * `row` read positionally under `fields`, in its value codec form, or in its JSON form when the codec refuses a cell.
  *
- * @throws Any error reading or measuring the row throws, by reference.
+ * @throws Any error reading the row or writing its JSON form throws, by reference.
  */
-function measuredRow(fields: readonly string[], row: Readonly<Record<string, unknown>>): MeasuredRow {
+function rowForm(fields: readonly string[], row: Readonly<Record<string, unknown>>): readonly unknown[] {
   const cells = fields.map((field) => row[field]);
-  if (!outsideCodec(cells)) return { row: cells, size: encodedRowBytes(cells) };
-  const json = JSON.parse(JSON.stringify(cells)) as readonly unknown[];
-  return { row: json, size: encodedRowBytes(json) };
+  if (!outsideCodec(cells)) return cells;
+  return JSON.parse(JSON.stringify(cells)) as readonly unknown[];
 }
 
-/** A result source over a legacy result set's rows, answering each in its measured form. */
+/** A result source over a legacy result set's rows, each in its measured form, sized with its pull's measure. */
 function legacySource(
   fields: readonly string[],
   rows: readonly Readonly<Record<string, unknown>>[],
@@ -176,10 +170,11 @@ function legacySource(
       const batch: (readonly unknown[])[] = [];
       let bytes = 0;
       while (at < rows.length && batch.length < limit.maxRows) {
-        const measured = measuredRow(fields, rows[at] as Readonly<Record<string, unknown>>);
-        if (batch.length > 0 && bytes + measured.size > limit.maxBytes) break;
-        batch.push(measured.row);
-        bytes += measured.size;
+        const row = rowForm(fields, rows[at] as Readonly<Record<string, unknown>>);
+        const size = limit.measure(row);
+        if (batch.length > 0 && bytes + size > limit.maxBytes) break;
+        batch.push(row);
+        bytes += size;
         at += 1;
         if (bytes >= limit.maxBytes) break;
       }

@@ -12,6 +12,7 @@ import {
   type BatchLimit,
   type CallContext,
   CallRefusalError,
+  encodedRowBytes,
   envReader,
   type ResultSource,
   rowsSource,
@@ -20,12 +21,13 @@ import {
   createPageBudget,
   LARGE_PAGE_SLOTS,
   type LargePageSlot,
+  type PageBudget,
   type PageHold,
   withLargePageSlot,
 } from "@/lib/provider-host/core/page-budget";
 
 const HOUR = 3_600_000;
-const LIMIT: BatchLimit = Object.freeze({ maxRows: 1, maxBytes: 1_024 });
+const LIMIT: BatchLimit = Object.freeze({ maxRows: 1, maxBytes: 1_024, measure: encodedRowBytes });
 
 function contextOf(controller = new AbortController()): CallContext {
   return { deadline: Date.now() + HOUR, signal: controller.signal, env: envReader([], () => undefined) };
@@ -235,5 +237,32 @@ describe("withLargePageSlot", () => {
     expect(hold.waiting).toBe(true);
     expect(budget.state()).toEqual({ slots: 1, held: 1, waiting: 0 });
     other.release();
+  });
+  test("a take that fails for a reason other than the call's signal passes that failure by reference", async () => {
+    const failure = new Error(randomUUID());
+    const failing: PageBudget = {
+      slots: 1,
+      take: () => Promise.reject(failure),
+      state: () => ({ slots: 1, held: 0, waiting: 0 }),
+    };
+    let pulls = 0;
+    const inner = rowsSource([{ name: "v" }], [[1], [2]]);
+    const source: ResultSource = {
+      columns: inner.columns,
+      next: (limit) => {
+        pulls += 1;
+        return inner.next(limit);
+      },
+      close: () => inner.close(),
+    };
+    const hold: PageHold = { waiting: false };
+    const wrapped = withLargePageSlot(source, failing, contextOf(), hold);
+
+    await wrapped.next(LIMIT);
+    const caught = await wrapped.next(LIMIT).catch((error: unknown) => error);
+
+    expect(caught).toBe(failure);
+    expect(pulls).toBe(1);
+    expect(hold.slot).toBeUndefined();
   });
 });

@@ -14,6 +14,7 @@ import { randomUUID } from "node:crypto";
 import {
   BATCH_MAX_BYTES,
   type CallContext,
+  deadlineSignal,
   envReader,
   type ExecuteAnswer,
   type ExecuteRequest,
@@ -294,7 +295,7 @@ describe("the console execute under the page budget", () => {
     controller.abort();
     const record = await running;
     expect(record.kind).toBe("stopped");
-    expect("waitingFor" in record).toBe(false);
+    expect((record as { readonly waitingFor?: string }).waitingFor).toBe("page");
     expect(budget.state().held).toBe(1);
     gate.resolve();
     await until("the late page giving its slot back", () => budget.state().held === 0);
@@ -344,6 +345,98 @@ describe("the console execute under the page budget", () => {
     expect(record).toEqual({ kind: "stopped", reason, waitingFor: "large-page-slot" });
     expect(state).toEqual({ slots: 1, held: 1, waiting: 0 });
     expect(late).toEqual([]);
+  });
+
+  /**
+   * A page whose first pull the test holds, on a session that offers cancel, run under `ctx`; it answers the record,
+   * once `stop` ended the call while the pull was held, and the runs the cancel was sent for, and then lets the pull go.
+   */
+  async function stoppedWhileRead(ctx: CallContext, stop: () => void) {
+    const read = paged(2);
+    const gate = read.gate(1);
+    const cancelled: string[] = [];
+    const session: ConsoleSession = {
+      calls: { console: { execute: { honours: [] }, cancel: "offered", endScope: "not-offered" } },
+      execute: async (): Promise<ExecuteAnswer> => ({
+        results: [read.source],
+        warnings: [],
+        executionTimeMs: 1,
+        pageApplied: true,
+      }),
+      cancel: async (request) => {
+        cancelled.push(request.runId);
+        return { cancelled: true };
+      },
+    };
+    const { ports, late } = portsOf();
+    const runId = randomUUID();
+    const running = calls.executeCall(session, { ...requestOf(), runId }, ctx, () => LIMITS, ports);
+    await read.reached(1);
+    stop();
+    const record = await running;
+    gate.resolve();
+    await until("the read page's source closed", () => read.seen.closes === 1);
+    await turn();
+    return { record, cancelled, runId, late };
+  }
+
+  test("a call whose page its caller stops while it is read answers a stop marked as waiting for the page", async () => {
+    const controller = new AbortController();
+    const reason = new DOMException("The request went away.", "AbortError");
+
+    const { record, cancelled, runId, late } = await stoppedWhileRead(contextOf(controller), () =>
+      controller.abort(reason),
+    );
+
+    expect(record).toEqual({ kind: "stopped", reason, waitingFor: "page" });
+    expect((record as { readonly reason: unknown }).reason).toBe(reason);
+    expect(cancelled).toEqual([runId]);
+    expect(late).toEqual([]);
+    expect(budget.state()).toEqual({ slots: 1, held: 0, waiting: 0 });
+  });
+
+  test("a call whose page its deadline stops while it is read answers a stop marked as waiting for the page", async () => {
+    // The deadline's own timer is an hour away, so the test ends the call with the deadline's reason itself, once the
+    // pull is held, and no runner's speed decides when the stop lands.
+    const deadline = Date.now() + HOUR;
+    const passed = new AbortController();
+    const signal = AbortSignal.any([deadlineSignal(deadline), passed.signal]);
+    const ctx: CallContext = { deadline, signal, env: envReader([], () => undefined) };
+    const reason = new DOMException("The call's deadline has passed.", "TimeoutError");
+
+    const { record, cancelled, runId, late } = await stoppedWhileRead(ctx, () => passed.abort(reason));
+
+    expect(record).toEqual({ kind: "stopped", reason, waitingFor: "page" });
+    expect((record as { readonly reason: unknown }).reason).toBe(signal.reason);
+    expect(cancelled).toEqual([runId]);
+    expect(late).toEqual([]);
+    expect(budget.state()).toEqual({ slots: 1, held: 0, waiting: 0 });
+  });
+
+  test("a call stopped after its page was read, while its other results close, answers a stop marked as closing them", async () => {
+    const read = paged(1);
+    const closing = Promise.withResolvers<void>();
+    const closeHeld = Promise.withResolvers<void>();
+    const other: ResultSource = {
+      columns: [{ name: "w" }],
+      next: async () => ({ rows: [], done: true }),
+      close: async () => {
+        closing.resolve();
+        await closeHeld.promise;
+      },
+    };
+    const controller = new AbortController();
+    const reason = new DOMException("The request went away.", "AbortError");
+    const running = run([read.source, other], { controller });
+    await closing.promise;
+
+    controller.abort(reason);
+    const record = await running;
+    closeHeld.resolve();
+
+    expect(read.seen).toEqual({ pulls: 1, closes: 1, heldAtPull: [0] });
+    expect(record).toEqual({ kind: "stopped", reason, waitingFor: "other-results" });
+    await until("the late page giving its slot back", () => budget.state().held === 0);
   });
 
   test("a page record released twice is refused by name", async () => {

@@ -23,6 +23,7 @@ export {
 export { type RoundTripAt, roundTripRefusals } from "./round-trip";
 export { type ServedFrame, type ServedHandle, type ServeOptions, serve } from "./serve";
 export {
+  type BatchLimitData,
   type ContextData,
   type ExecuteAnswerFrame,
   type FramePartOf,

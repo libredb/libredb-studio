@@ -7,9 +7,11 @@
  * parsed and decoded with `decodeValue` on the other side, read as the closed shape of its call type (`readFrame`) and
  * compared with what the sending side handed (`roundTripRefusals`); a frame either refuses is thrown as one
  * `FrameRefusalError`. The provider's side passes the implementation decoded copies, its context frozen by
- * `freezeContext` with the host's `signal` and `env` attached by reference, its request by `freezeData`. The host
- * receives decoded copies of each answer. A value outside the codec's domain fails where it is encoded, with the codec's
- * own `ValueCodecError`, before the other side is called, and an error either side throws crosses by reference.
+ * `freezeContext` with the host's `signal` and `env` attached by reference, its request by `freezeData`, and a pull's
+ * limit frozen with the host's `measure` attached by reference: a frame carries only the limit's numbers. The host
+ * receives decoded copies of each answer, so a row that crossed is a new array, which the host's pump measures itself.
+ * A value outside the codec's domain fails where it is encoded, with the codec's own `ValueCodecError`, before the
+ * other side is called, and an error either side throws crosses by reference.
  *
  * A session handle and a result source never cross. The served instance keeps them in tables of its own: on the
  * provider's side, each session id to the provider's handle and each result id to the provider's source; on the host's
@@ -60,7 +62,7 @@ import type {
 import { decodeValue, encodeValue } from "../values/codec";
 import { type FramePart, type FrameRefusal, FrameRefusalError, type ServedCall } from "./frames";
 import { roundTripRefusals } from "./round-trip";
-import { type FramePartOf, readFrame } from "./shapes";
+import { type BatchLimitData, type FramePartOf, readFrame } from "./shapes";
 
 /** One frame, as the observer sees it before the other side reads it. */
 export interface ServedFrame {
@@ -87,6 +89,11 @@ const SERVICES: readonly string[] = Object.freeze(["signal", "env"] satisfies (k
 interface HostSession {
   readonly id: string;
   readonly calls: Calls;
+}
+
+/** The limit's data, the copy the encoder is handed: its numbers, without the host's measure. */
+function limitData(limit: BatchLimit): BatchLimitData {
+  return { maxRows: limit.maxRows, maxBytes: limit.maxBytes };
 }
 
 /** The context's data, the copy the encoder is handed: its own enumerable string keys but the host services. */
@@ -245,9 +252,10 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
         const sent = cross("result.next", "to-provider", {
           call: "result.next",
           result: id,
-          request: encodeValue(limit),
+          request: encodeValue(limitData(limit)),
         });
-        const providerLimit = freezeData(receive("result.next", "request", sent.request, limit) as BatchLimit);
+        const decoded = receive("result.next", "request", sent.request, limit, ["measure"]) as BatchLimitData;
+        const providerLimit: BatchLimit = Object.freeze({ ...freezeData(decoded), measure: limit.measure });
         const batch = await (sources.get(id) as ResultSource).next(providerLimit);
         const received = cross("result.next", "to-host", { answer: encodeValue(batch) });
         return receive("result.next", "answer", received.answer, batch) as RowBatch;

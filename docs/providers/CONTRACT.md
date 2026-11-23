@@ -1193,6 +1193,7 @@ The host core's console calls do so, C-48.
 
 The byte budgets of a result are `BATCH_MAX_BYTES`, for one batch, and `PAGE_MAX_BYTES`, for one page.
 A row's size is the UTF-8 length of its encoded JSON text, `encodedRowBytes`, and a batch's and a page's size is the sum of their rows' sizes.
+The pump hands each pull its own measure, `measure` on the pull's limit, which answers that size.
 Measuring a row encodes every cell, so a cell outside the value codec's domain is refused by the codec's own error.
 
 - test `packages/provider-sdk/tests/calls/results.test.ts` "the batch and page budgets are one MiB and 32 MiB"
@@ -1201,6 +1202,7 @@ Measuring a row encodes every cell, so a cell outside the value codec's domain i
 ### C-14 (normative): A result source answers within the limit it is asked for
 
 A result source answers each `next` with at most the rows and the bytes it is asked for, and never splits a row, so a batch of exactly one row may be larger than its byte limit and one row always makes progress.
+It sizes each row it answers with the measure of the limit it is asked with.
 `rowsSource` does so over rows a driver already holds in memory.
 
 - test `packages/provider-sdk/tests/calls/results.test.ts` "a batch held to batch.maxBytes"
@@ -1209,7 +1211,9 @@ A result source answers each `next` with at most the rows and the bytes it is as
 ### C-15 (normative): The host pulls a page with pumpPage
 
 The host pulls a page from a result source with `pumpPage`, one batch at a time, the pull being the credit.
-Each pull asks for no more than the page has left, with a frozen limit.
+Each pull asks for no more than the page has left, with a frozen limit that holds the pump's own measure for that pull, a new one each pull.
+The pump takes the size its measure recorded for the same row array a source answers, in the order the source measured its rows, and measures any other row itself, a copy of a measured row, a row measured in another pull and a row answered twice included, so a page's bytes are the same whichever rows a source measured.
+A pull's measure answers only during its pull: called after its pull answered, it throws an error that names the source's defect.
 As it reads each batch, the pump refuses by a rule of `CALL_REFUSAL_RULES` a batch that breaks C-14 or is not a plain record of rows and done, a row that is not positional, a batch that brings nothing and is not done, and a row no page can hold.
 It cuts the page by size, ends it at its row limit or when the source is done, and closes the source exactly once on every path, losing no failure: when the close fails after another failure, both are thrown together.
 A limit that is not a positive safe integer is a host defect, refused before any pull.
@@ -1221,6 +1225,9 @@ The pump takes the context of the execute call that answered the source and star
 - test `packages/provider-sdk/tests/calls/results.test.ts` "a batch a source should not have answered is refused by name, and the source is closed once"
 - test `packages/provider-sdk/tests/calls/results.test.ts` "a failure to pull or to close is thrown, and neither is lost"
 - test `packages/provider-sdk/tests/calls/results.test.ts` "the limits a source is asked for are frozen and within the page"
+- test `packages/provider-sdk/tests/calls/results.test.ts` "each pull hands the source the pump's own measure, and a row the source sized with it is not measured again"
+- test `packages/provider-sdk/tests/calls/results.test.ts` "a row the source did not size with its pull's measure is measured by the pump"
+- test `packages/provider-sdk/tests/calls/results.test.ts` "a pull's measure called after its pull answered is refused by name"
 - test `packages/provider-sdk/tests/calls/results.test.ts` "a pump limit that is not a positive safe integer is refused before any pull"
 - test `packages/provider-sdk/tests/calls/pump-bounds.test.ts` "a source that never progresses is refused after one pull, in a bounded child"
 - test `packages/provider-sdk/tests/calls/pump-bounds.test.ts` "a source that never ends is cut at the page's byte budget, in a bounded child"
@@ -1231,11 +1238,15 @@ The pump takes the context of the execute call that answered the source and star
 The pump runs in the host's copy of the SDK, so every package's batches are measured by one rule.
 The budgets bound what crosses from a provider, not what a driver buffers: a driver without a cursor materialises a page before the SDK sees it.
 A page of very small rows is bounded in the heap by the host's row limit, not by its bytes, so the host always passes a finite row limit.
-The pump measures a row once, as it reads the batch, and hands on the provider's own row arrays, so a source whose cells change after that read, through a getter or a later write, answers more than was measured.
-In process nothing is framed, so the host measures what a source answers, through the pump's own measure, and a source of the legacy bridge answers each row in the form C-50 states.
+A row a source answers as the same array the pull's measure sized, in the order the source measured its rows, is measured once, by that call, and its cells are read once, when it is measured.
+Every other row is measured by the pump as C-15 states, so a copy of a measured row, a row measured in another pull and a row answered twice are measured a second time, as is a row that crossed a frame of the kit, C-19.
+The pump hands on the provider's own row arrays, so a source whose cells change after the row was measured, through a getter or a later write, whether after its own call of the pull's measure or after the pump read the batch, answers more than was measured.
+In process nothing is framed, so the host measures what a source answers, through the pump's own measure, and a source of the legacy bridge sizes each row with the pull's measure in the form C-50 states.
 How many pages larger than one batch the host holds at once is bounded by its page budget, C-53.
 
 - test `tests/unit/lib/provider-host/core/console.test.ts` "the first result is pumped within the limits set from the answer, and every other result is closed once"
+- test `packages/provider-sdk/tests/calls/results.test.ts` "each pull hands the source the pump's own measure, and a row the source sized with it is not measured again"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the bridge sizes every row it answers with the pull's measure, and answers that same array"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a cell outside the value codec is measured in its JSON form and answered unchanged"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the page's row limit is the probe limit for a bound Studio wrote, and every returned row otherwise"
 
@@ -1261,6 +1272,8 @@ The package root never re-exports it, and Studio's runtime source under `src/`, 
 
 `serve` puts a provider module record behind the memory test transport: every call crosses as one request frame and one answer frame, each the JSON text of what `encodeValue` wrote, parsed and decoded with `decodeValue` on the other side.
 The provider receives decoded copies, its context frozen by `freezeContext` with the host's `signal` and `env` attached by reference, and its request by `freezeData`, and the host's own context and request are left as the host built them.
+A `result.next` frame carries the limit's numbers only, and the provider receives them decoded and frozen with the host's `measure` attached by reference, as the context's `signal` and `env` are.
+A row that crosses a frame is a new array, so the host's pump measures it itself.
 The host receives decoded copies of each answer.
 A value outside the codec's domain fails where it is encoded, with the codec's own `ValueCodecError`, before the other side is called.
 An `undefined` optional member, which the codec leaves out (V-9), is refused by the round trip as `round-trip-changed` at its pointer, and a frame that `readFrame` or `roundTripRefusals` refuses fails as one `FrameRefusalError`.
@@ -1272,6 +1285,7 @@ An error either side throws crosses by reference.
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "the host's own context and request are left as the host built them, and the host receives decoded copies of each answer"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a value the codec cannot carry, or a frame key the call does not define, fails the call before the provider is called"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "an error a call or a source throws reaches the host as the same object"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served source's provider receives the limit's numbers decoded and frozen with the host's measure by reference, and the frame carries the numbers only"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a value that is not a provider module record is refused with every refusal before anything is served"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "the served implementation is an implementation of the module's manifest, with the module's facets"
 
@@ -1626,6 +1640,8 @@ Before the call it checks the context with `checkCallStart`, C-27, and the reque
 It then freezes the context and the request in place, C-12, and waits for the call with `awaitWithin` until the context's signal, C-28.
 An execute's run pumps the first result with `pumpPage` within the limits the caller sets from the execute answer, C-15, under the core's page budget, C-53, closes every other result once, and answers a refusal the pump throws as a record.
 A call is stopped exactly when its signal aborted and the wait rejected with that signal's reason, so a provider that throws its own signal's reason is stopped too, and the stop is answered as a record with that reason.
+A stop that ends an execute after its execute answered is marked by the part of the run it ended, since the statement ran: the slot while the page waits for one, C-54, the page from its first pull until the pump answered it, and the other results while the run closes them after that.
+The caller answers a stop marked as waiting for the page or for the other results as C-54 answers one waiting for the slot, `QueryCancelledError` when its own signal ended the wait and otherwise `StudioTimeoutRefusal` with Studio's sentence saying the statement answered and, for the other results, that its page was read, both outcome unknown.
 A stopped execute sends the run's cancel when the session offers `console.cancel` and the request names a run, under a cleanup context of its own, C-47, and a cancel that fails or is cut is handed to the caller, never left as a detached rejection.
 Core constructs no error class a caller tests with `instanceof`: the caller builds its own classes from the records, C-51.
 
@@ -1637,6 +1653,11 @@ Core constructs no error class a caller tests with `instanceof`: the caller buil
 - test `tests/unit/lib/provider-host/core/console.test.ts` "no cancel is sent to a session without console.cancel or for a request without a run id"
 - test `tests/unit/lib/provider-host/core/console.test.ts` "a cancel that fails after a stop reaches its handler once"
 - test `tests/unit/lib/provider-host/core/console.test.ts` "a provider that throws its own signal's reason is answered as a stop"
+- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "a call whose page its caller stops while it is read answers a stop marked as waiting for the page"
+- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "a call whose page its deadline stops while it is read answers a stop marked as waiting for the page"
+- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "a call stopped after its page was read, while its other results close, answers a stop marked as closing them"
+- test `tests/unit/lib/api/editor-query.test.ts` "a page whose reading its deadline ends answers StudioTimeoutRefusal saying the statement answered, outcome unknown"
+- test `tests/unit/lib/api/editor-query.test.ts` "a run whose closing of its other results its deadline ends answers StudioTimeoutRefusal saying the page was read, outcome unknown"
 - test `tests/unit/lib/provider-host/core/console.test.ts` "a cancel to a session without console.cancel is refused as a record, and the provider is never called"
 - test `tests/unit/lib/provider-host/core/console.test.ts` "a cancel whose signal already aborted is refused as a record"
 - test `tests/unit/lib/provider-host/core/console.test.ts` "a cancel the caller stops waiting for answers a stop, and its later failure reaches the late handler once"
@@ -1659,7 +1680,7 @@ Its execute honours `params` and `offset` for every engine, so each provider ans
 It offers `console.cancel` exactly when the provider can cancel a run, and does not offer `console.endScope`: the run's open transaction is ended inside its execute, as the editor query always ended it, until that moves onto `console.endScope`.
 Its execute hands the provider a fresh copy of the caller's own page options and a new array of the request's params, so a provider that writes what it receives changes nothing the host froze, and runs the provider's prepare, the probe row past the page, the statement and the transaction's end as the editor query always ran them.
 It answers one source per result set, the main rows first.
-A source reads each row positionally under the result's columns and answers it in its value codec form, or, when the codec refuses a cell, in the JSON form the answer writes for that row, so the page budget measures every row in the form closest to its answer.
+A source reads each row positionally under the result's columns in its value codec form, or, when the codec refuses a cell, in the JSON form the answer writes for that row, sizes it with the pull's measure, C-15, and answers that same array, so each row is measured once, in the form closest to its answer.
 Which cells the codec refuses is read before encoding, the codec's domain read as the codec reads it, so no codec error is thrown per row, and every error measuring a row throws passes by reference.
 A key a row holds outside its columns is answered and not measured.
 The page's row limit is set once execute answered: one past the page when the provider applied the page, otherwise every row the provider returned, at least one.
@@ -1668,6 +1689,7 @@ The page's row limit is set once execute answered: one past the page when the pr
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a legacy provider that writes what it receives changes nothing the host froze"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the run prepares, probes, queries and ends its transaction as runEditorQuery did"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "every result set is a source, the main rows first"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the bridge sizes every row it answers with the pull's measure, and answers that same array"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a cell outside the value codec is measured in its JSON form and answered unchanged"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a measuring error other than the codec's passes as the same object"
 - test `tests/unit/lib/provider-host/legacy-bridge-measure.test.ts` "a row with an undefined cell is measured in its JSON form, and the codec throws nothing"
@@ -1733,6 +1755,7 @@ The live check `tests/live/host-core-live.ts` holds the same rule against the bu
 A host core holds one page budget of large-page slots, and the budget holds one slot.
 Every page takes its first batch without waiting, at most one batch's bytes or one row.
 A page that needs a second batch first takes a slot, waiting for one in arrival order until its call's signal aborts, and runs every later pull under it.
+A wait its call's signal ends is refused as `checkCallStart` refuses that call, and any other failure of the take passes by reference.
 A waiting page holds its first batch and no slot, so no two pages wait on each other.
 The caller releases a page record once its answer body is built, exactly once, and the host releases a page that ends any other way: a run that answers no page gives its slot back before it answers, and a page answered after its call stopped is released by the host.
 A slot or a page record released twice is refused by name.
@@ -1747,6 +1770,7 @@ The budget does not bound a legacy provider's own rows, held before the first pu
 - test `tests/unit/lib/provider-host/core/page-budget.test.ts` "a slot count that is not a positive safe integer is refused"
 - test `tests/unit/lib/provider-host/core/page-budget.test.ts` "a page's first pull takes no slot, and every later pull runs under the one slot it took"
 - test `tests/unit/lib/provider-host/core/page-budget.test.ts` "a pull whose wait for a slot the call's signal ends is refused as checkCallStart answers, the signal's reason as its cause, and the source is not pulled"
+- test `tests/unit/lib/provider-host/core/page-budget.test.ts` "a take that fails for a reason other than the call's signal passes that failure by reference"
 - test `tests/unit/lib/provider-host/core/console-pages.test.ts` "every page takes its first batch without waiting"
 - test `tests/unit/lib/provider-host/core/console-pages.test.ts` "of two concurrent large pages the second waits for the slot holding one batch, and is pumped once the first page is released"
 - test `tests/unit/lib/provider-host/core/console-pages.test.ts` "three concurrent large pages are pumped one after another in arrival order, each waiting page holding one batch and no slot"
@@ -1814,3 +1838,7 @@ Against the manifest sketch the design started from:
 - The type vocabulary is a fact of each engine, S-14.
 - An engine's migration DDL row is one segment, `migrationDdl`, in one of its two forms, S-17.
 - The sketch's frame cap is replaced by the byte budgets, since calls are unframed in process; the memory test transport keeps frames for tests only.
+
+Against this contract's earlier text:
+
+- A row is measured once on the host's path: the pump hands each pull its own measure and takes the size it recorded for the row a source answers, C-13 to C-16 and C-50, where a source and the pump each measured every row.

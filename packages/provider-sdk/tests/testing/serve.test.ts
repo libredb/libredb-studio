@@ -21,6 +21,7 @@ import {
   checkProviderModule,
   deadlineSignal,
   defineProvider,
+  encodedRowBytes,
   envReader,
   type ExecuteAnswer,
   type ExecuteRequest,
@@ -33,6 +34,7 @@ import {
   type ProviderModule,
   pumpPage,
   type ResultSource,
+  type RowBatch,
   rowsSource,
 } from "@libredb/provider-sdk/calls";
 import { FrameRefusalError, type ServedFrame, type ServedHandle, serve } from "@libredb/provider-sdk/testing";
@@ -185,6 +187,11 @@ function dataOf(ctx: CallContext): Json {
   return Object.fromEntries(Object.entries(ctx).filter(([key]) => key !== "signal" && key !== "env"));
 }
 
+/** A pull's limit as a host passes it by hand, with `encodedRowBytes` as its measure. */
+function limitOf(maxRows: number, maxBytes: number): BatchLimit {
+  return { maxRows, maxBytes, measure: encodedRowBytes };
+}
+
 /** `ctx` with its deadline already past. */
 function past<C extends CallContext>(ctx: C): C {
   return { ...ctx, deadline: Date.now() - 1 };
@@ -235,7 +242,7 @@ describe("serve", () => {
     await impl.console.cancel?.(opened.handle, { runId: marker() }, callContext());
     await impl.console.endScope?.(opened.handle, { scope: marker() }, callContext());
     const source = answer.results[0] as ResultSource;
-    await source.next({ maxRows: 10, maxBytes: 1024 });
+    await source.next(limitOf(10, 1024));
     await source.close();
     await impl.close(opened.handle, callContext());
 
@@ -390,7 +397,7 @@ describe("serve", () => {
     };
 
     expect(await failure(() => impl.open(openContext()))).toBe(thrown);
-    expect(await failure(() => servedSource.next({ maxRows: 1, maxBytes: 1 }))).toBe(thrown);
+    expect(await failure(() => servedSource.next(limitOf(1, 1)))).toBe(thrown);
     expect(await failure(() => servedSource.close())).toBe(thrown);
     expect(await failure(async () => impl.console.cancel?.(opened.handle, { runId: marker() }, callContext()))).toBe(
       thrown,
@@ -406,7 +413,7 @@ describe("serve", () => {
     const opened = await impl.open(openContext());
     const answer = await impl.console.execute(opened.handle, request(), callContext());
     const source = answer.results[0] as ResultSource;
-    await source.next({ maxRows: 10, maxBytes: 1024 });
+    await source.next(limitOf(10, 1024));
     await impl.close(opened.handle, callContext());
     const executeAnswer = JSON.parse((frames[3] as ServedFrame).text);
 
@@ -466,7 +473,7 @@ describe("serve", () => {
     await source.close();
     const before = frames.length;
 
-    const pulled = await failure(() => source.next({ maxRows: 1, maxBytes: 1024 }));
+    const pulled = await failure(() => source.next(limitOf(1, 1024)));
     const closedAgain = await failure(() => source.close());
 
     expect((pulled as FrameRefusalError).refusals).toEqual([
@@ -817,12 +824,64 @@ describe("serve", () => {
     expect(page.rows).not.toBe(rows);
     expect(pulls).toHaveLength(5);
     expect(requested).toHaveLength(5);
-    expect(requested.map((frame) => JSON.parse(frame.text).request)).toEqual(pulls);
+    expect(requested.map((frame) => JSON.parse(frame.text).request)).toEqual(
+      pulls.map((limit) => {
+        const { maxRows, maxBytes } = limit as BatchLimit;
+        return { maxRows, maxBytes };
+      }),
+    );
     expect(pumped.map((frame) => `${frame.direction} ${frame.call}`).slice(-2)).toEqual([
       "to-provider result.close",
       "to-host result.close",
     ]);
     expect(pumped).toHaveLength(12);
+  });
+
+  test("a served source's provider receives the limit's numbers decoded and frozen with the host's measure by reference, and the frame carries the numbers only", async () => {
+    const fx = fixture();
+    const { impl, frames } = served(fx);
+    const pulls: BatchLimit[] = [];
+    const inner = rowsSource([{ name: "id" }, { name: "label" }], [[1, marker()]], 1);
+    fx.answers.execute = () => ({
+      results: [
+        {
+          columns: inner.columns,
+          next: (limit: BatchLimit) => {
+            pulls.push(limit);
+            return inner.next(limit);
+          },
+          close: () => inner.close(),
+        },
+      ],
+      warnings: [],
+      executionTimeMs: 0,
+      pageApplied: false,
+    });
+    const opened = await impl.open(openContext());
+    const answer = await impl.console.execute(opened.handle, request(), callContext());
+    const measured: (readonly unknown[])[] = [];
+    const measure = (row: readonly unknown[]): number => {
+      measured.push(row);
+      return encodedRowBytes(row);
+    };
+    const host: BatchLimit = { maxRows: 7, maxBytes: 1024, measure };
+    const before = frames.length;
+
+    const batch: RowBatch = await (answer.results[0] as ResultSource).next(host);
+    const asked = frames.slice(before).find((frame) => frame.direction === "to-provider");
+
+    expect(JSON.parse((asked as ServedFrame).text).request).toEqual({ maxRows: 7, maxBytes: 1024 });
+    expect(pulls).toHaveLength(1);
+    const [provided] = pulls;
+    expect(provided).not.toBe(host);
+    expect(Object.isFrozen(provided)).toBe(true);
+    expect(Object.keys(provided as BatchLimit).sort()).toEqual(["maxBytes", "maxRows", "measure"]);
+    expect(provided?.maxRows).toBe(7);
+    expect(provided?.maxBytes).toBe(1024);
+    expect(provided?.measure).toBe(measure);
+    expect(measured).toHaveLength(1);
+    expect(batch.rows).toEqual(measured);
+    expect(batch.rows[0]).not.toBe(measured[0]);
   });
 
   test("a call whose signal aborted or whose deadline passed is refused before any frame, and the provider is never called", async () => {
@@ -1007,7 +1066,7 @@ describe("serve", () => {
     expect(await failure(() => impl.console.execute(first.handle, request(), callContext()))).toBe(thrown);
     const again = await impl.console.execute(first.handle, request(), callContext());
     const other = await impl.console.execute(second.handle, request(), callContext());
-    const pulled = await (earlier.results[0] as ResultSource).next({ maxRows: 10, maxBytes: 1024 });
+    const pulled = await (earlier.results[0] as ResultSource).next(limitOf(10, 1024));
 
     expect(again.results).toHaveLength(1);
     expect(other.results).toHaveLength(1);
@@ -1044,7 +1103,7 @@ describe("serve", () => {
     const who = async (handle: ServedHandle): Promise<unknown> => {
       const answer = await impl.console.execute(handle, request(), callContext());
       const source = answer.results[0] as ResultSource;
-      const batch = await source.next({ maxRows: 10, maxBytes: 1024 });
+      const batch = await source.next(limitOf(10, 1024));
       await source.close();
       return batch.rows[0]?.[0];
     };

@@ -17,7 +17,9 @@
  * A page record holds its page's large-page slot, if it took one, until the caller calls its `release`, exactly once,
  * after building its answer body. A run that ends without a page gives the slot back before it answers or throws, and a
  * page answered after the wait on its call ended is released by the call's late handler. A stop that ends the call while
- * its page waits for a slot is marked `waitingFor: "large-page-slot"` (clause C-54): the statement ran.
+ * its page waits for a slot is marked `waitingFor: "large-page-slot"` (clause C-54), one that ends it while its page is
+ * read otherwise, from the first pull until the pump answered, `waitingFor: "page"`, and one that ends it after that,
+ * while the run closes its other results, `waitingFor: "other-results"`: in each the statement ran.
  *
  * A wait the signal ends answers a stop, the signal's reason by reference: a call is stopped exactly when its signal
  * aborted and the rejection is that signal's reason, so a provider that throws its own signal's reason is stopped too.
@@ -77,13 +79,14 @@ export interface RefusedRecord {
 
 /**
  * A call whose wait the context's signal ended, with the signal's reason by reference. `waitingFor` names a wait inside
- * the run the stop ended: `large-page-slot` when the execute had answered and its page was waiting for a large-page
- * slot (clause C-54), so the statement ran.
+ * the run the stop ended, after its execute answered, so the statement ran: `large-page-slot` when its page was waiting
+ * for a large-page slot (clause C-54), `page` when its page was being read otherwise, and `other-results` when its page
+ * had been read and the run was closing its other results (clause C-48).
  */
 export interface StoppedRecord {
   readonly kind: "stopped";
   readonly reason: unknown;
-  readonly waitingFor?: "large-page-slot";
+  readonly waitingFor?: "large-page-slot" | "page" | "other-results";
 }
 
 /** An execute that answered a page of its first result. */
@@ -154,6 +157,32 @@ function lateExecute(ctx: CallContext, port: (error: unknown) => void): (outcome
   };
 }
 
+/**
+ * How far one execute's run got, for the marker of a stop that ends it: `execute` until the provider's execute
+ * answered, `page` from the page's first pull until the pump answered, `other-results` while the run closes the rest.
+ */
+interface RunProgress {
+  phase: "execute" | "page" | "other-results";
+}
+
+/**
+ * Moves `progress` to `phase` only while the call's signal has not aborted, so the phase a stop reads is the one the
+ * run was in when the signal aborted, whatever order the abort's reactions run.
+ */
+function enterPhase(progress: RunProgress, phase: RunProgress["phase"], ctx: CallContext): void {
+  if (!ctx.signal.aborted) progress.phase = phase;
+}
+
+/**
+ * The wait a stop ended, for its record: the slot while the page waits for one, otherwise the run's phase after its
+ * execute answered, and none for the execute itself.
+ */
+function stopMarker(hold: PageHold, progress: RunProgress): Pick<StoppedRecord, "waitingFor"> {
+  if (hold.waiting) return { waitingFor: "large-page-slot" };
+  if (progress.phase === "execute") return {};
+  return { waitingFor: progress.phase };
+}
+
 /** Gives back the slot `hold` holds, if any, and forgets it. */
 function releaseHold(hold: PageHold): void {
   const { slot } = hold;
@@ -204,11 +233,13 @@ function sessionCancel(session: ConsoleSession, request: CancelRequest, ctx: Cal
 
 /**
  * The run of an execute call: the provider's execute, its first result pumped under `budget`, every other result
- * closed. The slot the page takes is recorded in `hold`, and given back on every path that answers no page.
+ * closed. The slot the page takes is recorded in `hold`, and given back on every path that answers no page; the phase
+ * the run is in is recorded in `progress`.
  */
 async function runExecute(
   budget: PageBudget,
   hold: PageHold,
+  progress: RunProgress,
   session: ConsoleSession,
   request: ExecuteRequest,
   ctx: CallContext,
@@ -229,6 +260,7 @@ async function runExecute(
   }
   const [first, ...rest] = sources;
   let page: Page;
+  enterPhase(progress, "page", ctx);
   try {
     page =
       first === undefined
@@ -236,6 +268,7 @@ async function runExecute(
         : await pumpPage(withLargePageSlot(withTurns(first, ctx), budget, ctx, hold), limits, ctx);
   } catch (error) {
     releaseHold(hold);
+    enterPhase(progress, "other-results", ctx);
     const closeErrors = await closeEach(rest);
     if (closeErrors.length > 0) throw withCloseErrors(error, closeErrors);
     if (!(error instanceof CallRefusalError)) throw error;
@@ -246,6 +279,7 @@ async function runExecute(
       ...(error.cause === undefined ? {} : { cause: error.cause }),
     };
   }
+  enterPhase(progress, "other-results", ctx);
   const closeErrors = await closeEach(rest);
   if (closeErrors.length > 0) releaseHold(hold);
   if (closeErrors.length === 1) throw closeErrors[0];
@@ -306,17 +340,19 @@ async function executeCall(
   freezeContext(ctx);
   freezeData(request);
   const hold: PageHold = { waiting: false };
+  const progress: RunProgress = { phase: "execute" };
   try {
     return await awaitWithin(
-      startCall(() => runExecute(budget, hold, session, request, ctx, pumpLimits)),
+      startCall(() => runExecute(budget, hold, progress, session, request, ctx, pumpLimits)),
       ctx.signal,
       lateExecute(ctx, ports.late),
     );
   } catch (error) {
     if (!stoppedBy(ctx, error)) throw error;
     cancelStoppedRun(session, request, ctx, ports);
-    // `waiting` is cleared only when a slot is granted, so it is read the same whatever order the abort's reactions run.
-    return { kind: "stopped", reason: error, ...(hold.waiting ? { waitingFor: "large-page-slot" as const } : {}) };
+    // `waiting` is cleared only when a slot is granted and the phase moves only before the signal aborted, so both are
+    // read the same whatever order the abort's reactions run.
+    return { kind: "stopped", reason: error, ...stopMarker(hold, progress) };
   }
 }
 
