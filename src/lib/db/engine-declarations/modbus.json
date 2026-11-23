@@ -1,0 +1,54 @@
+{
+  "id": "modbus",
+  "displayName": "Modbus",
+  "location": "external",
+  "connection": {
+    "fields": [
+      "host",
+      "port",
+      "registerMap"
+    ],
+    "defaults": {
+      "port": 502
+    },
+    "seedOnly": {
+      "fields": [
+        "registerMap"
+      ],
+      "scope": "each",
+      "refusal": "{field} is Modbus only: no other engine's provider reads it, so this connection would be listed as carrying it and would not. Remove {field} from this connection.",
+      "projectionRefusal": null
+    },
+    "refused": [],
+    "connectionString": {
+      "accepted": false,
+      "dialogOffersUri": false
+    },
+    "tls": "offered",
+    "sshTunnel": {
+      "offered": true
+    },
+    "hostPathFields": [],
+    "opensLocalFile": false,
+    "serverLevelWithoutDatabase": false,
+    "agentCredential": null
+  },
+  "facets": {
+    "monitoring": {
+      "overview": "not-offered",
+      "performance": "not-offered",
+      "slowQueries": "not-offered",
+      "activeSessions": "not-offered",
+      "tables": "not-offered",
+      "indexes": "not-offered",
+      "storage": "not-offered"
+    },
+    "maintenance": [],
+    "agentReadings": [
+      "health"
+    ]
+  },
+  "agent": {
+    "statementLanguage": "modbusread"
+  }
+}

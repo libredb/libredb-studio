@@ -1,0 +1,61 @@
+{
+  "id": "netconf",
+  "displayName": "NETCONF",
+  "location": "external",
+  "connection": {
+    "fields": [
+      "host",
+      "port",
+      "user",
+      "password",
+      "privateKey",
+      "privateKeyPassphrase",
+      "hostKeyFingerprint"
+    ],
+    "defaults": {
+      "port": 830
+    },
+    "seedOnly": {
+      "fields": [
+        "hostKeyFingerprint"
+      ],
+      "scope": "each",
+      "refusal": "{field} is NETCONF only: no other engine's provider reads it, so this connection would be listed as carrying it and would not. Remove {field} from this connection.",
+      "projectionRefusal": null
+    },
+    "refused": [],
+    "connectionString": {
+      "accepted": false,
+      "dialogOffersUri": false
+    },
+    "tls": "not-offered",
+    "sshTunnel": {
+      "offered": true
+    },
+    "hostPathFields": [],
+    "opensLocalFile": false,
+    "serverLevelWithoutDatabase": false,
+    "agentCredential": {
+      "form": "pair",
+      "supersededBy": []
+    }
+  },
+  "facets": {
+    "monitoring": {
+      "overview": "offered",
+      "performance": "not-offered",
+      "slowQueries": "not-offered",
+      "activeSessions": "not-offered",
+      "tables": "not-offered",
+      "indexes": "not-offered",
+      "storage": "not-offered"
+    },
+    "maintenance": [],
+    "agentReadings": [
+      "health"
+    ]
+  },
+  "agent": {
+    "statementLanguage": "netconfrpc"
+  }
+}

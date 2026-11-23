@@ -1,0 +1,46 @@
+{
+  "id": "libredb",
+  "displayName": "LibreDB",
+  "location": "embedded",
+  "connection": {
+    "fields": [
+      "database"
+    ],
+    "defaults": {},
+    "seedOnly": null,
+    "refused": [],
+    "connectionString": {
+      "accepted": false,
+      "dialogOffersUri": false
+    },
+    "tls": "offered",
+    "sshTunnel": {
+      "offered": false,
+      "refusal": "LibreDB opens a file on the Studio server, so there is no address for an SSH tunnel to forward to. Turn the tunnel off: edit the connection and save it again."
+    },
+    "hostPathFields": [],
+    "opensLocalFile": true,
+    "serverLevelWithoutDatabase": false,
+    "agentCredential": null
+  },
+  "facets": {
+    "monitoring": {
+      "overview": "offered",
+      "performance": "not-offered",
+      "slowQueries": "not-offered",
+      "activeSessions": "not-offered",
+      "tables": "offered",
+      "indexes": "not-offered",
+      "storage": "offered"
+    },
+    "maintenance": [],
+    "agentReadings": [
+      "table-stats",
+      "storage",
+      "health"
+    ]
+  },
+  "agent": {
+    "statementLanguage": "libredbkv"
+  }
+}

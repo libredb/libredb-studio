@@ -1,0 +1,45 @@
+{
+  "id": "mtconnect",
+  "displayName": "MTConnect",
+  "location": "external",
+  "connection": {
+    "fields": [
+      "host",
+      "port",
+      "apiPath"
+    ],
+    "defaults": {
+      "port": 5000
+    },
+    "seedOnly": null,
+    "refused": [],
+    "connectionString": {
+      "accepted": false,
+      "dialogOffersUri": false
+    },
+    "tls": "offered",
+    "sshTunnel": {
+      "offered": true
+    },
+    "hostPathFields": [],
+    "opensLocalFile": false,
+    "serverLevelWithoutDatabase": false,
+    "agentCredential": null
+  },
+  "facets": {
+    "monitoring": {
+      "overview": "offered",
+      "performance": "not-offered",
+      "slowQueries": "not-offered",
+      "activeSessions": "not-offered",
+      "tables": "not-offered",
+      "indexes": "not-offered",
+      "storage": "not-offered"
+    },
+    "maintenance": [],
+    "agentReadings": []
+  },
+  "agent": {
+    "statementLanguage": "mtconnectread"
+  }
+}

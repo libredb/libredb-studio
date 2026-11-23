@@ -1,0 +1,59 @@
+{
+  "id": "rabbitmq",
+  "displayName": "RabbitMQ",
+  "location": "external",
+  "connection": {
+    "fields": [
+      "host",
+      "port",
+      "user",
+      "password",
+      "amqpPort",
+      "apiPath",
+      "allowInsecureAuth"
+    ],
+    "defaults": {
+      "port": 15672
+    },
+    "seedOnly": null,
+    "refused": [
+      "database",
+      "namespaces",
+      "tlsServerName"
+    ],
+    "connectionString": {
+      "accepted": false,
+      "dialogOffersUri": false
+    },
+    "tls": "offered",
+    "sshTunnel": {
+      "offered": false,
+      "refusal": "RabbitMQ connections cannot use an SSH tunnel: one tunnel carries one port, and the management API and AMQP use two."
+    },
+    "hostPathFields": [],
+    "opensLocalFile": false,
+    "serverLevelWithoutDatabase": false,
+    "agentCredential": {
+      "form": "pair",
+      "supersededBy": []
+    }
+  },
+  "facets": {
+    "monitoring": {
+      "overview": "offered",
+      "performance": "not-offered",
+      "slowQueries": "not-offered",
+      "activeSessions": "not-offered",
+      "tables": "not-offered",
+      "indexes": "not-offered",
+      "storage": "not-offered"
+    },
+    "maintenance": [],
+    "agentReadings": [
+      "health"
+    ]
+  },
+  "agent": {
+    "statementLanguage": "rabbitread"
+  }
+}
