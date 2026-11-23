@@ -217,6 +217,58 @@ function everySqlWritingHook(m: Json): void {
   });
 }
 
+/** The migration DDL of the fixture's one engine. */
+const migrationDdlOf = (m: Json): Json => m.engines[0].migrationDdl;
+
+/** The pointer of the fixture's one engine's migration DDL. */
+const MIGRATION_DDL = "/engines/0/migrationDdl";
+
+/** The members of a migration DDL segment that writes table DDL, in the schema's order. */
+const WRITTEN_MIGRATION_DDL_MEMBERS = [
+  "tableDdl",
+  "transactionWrapper",
+  "createTable",
+  "columnDef",
+  "createIndex",
+  "dropIndex",
+  "addForeignKey",
+  "dropForeignKey",
+  "addColumn",
+  "dropColumn",
+  "modifyColumn",
+  "dropTable",
+  "reasons",
+] as const;
+
+/** A migration DDL segment that writes table DDL, its wrapper BEGIN; and COMMIT; and its CREATE TABLE written. */
+function writtenMigrationDdl(): Json {
+  return {
+    tableDdl: "written",
+    transactionWrapper: { begin: "BEGIN;", commit: "COMMIT;" },
+    createTable: { kind: "written", primaryKey: "createTablePrimaryKey", foreignKey: "createTableForeignKey" },
+    columnDef: "columnDef",
+    createIndex: "createIndex",
+    dropIndex: "dropIndex",
+    addForeignKey: "addForeignKey",
+    dropForeignKey: "dropForeignKey",
+    addColumn: "addColumn",
+    dropColumn: "dropColumn",
+    modifyColumn: "modifyColumn",
+    dropTable: "dropTable",
+    reasons: [],
+  };
+}
+
+/** A migration DDL segment that refuses table DDL, with its one comment line and the reason the line gives. */
+function refusedMigrationDdl(): Json {
+  return {
+    tableDdl: "refused",
+    refusal: "-- ExampleDB: Cannot generate table DDL. A bucket holds documents, not rows with declared columns.",
+    transactionWrapper: null,
+    reasons: ["A bucket holds documents, not rows with declared columns."],
+  };
+}
+
 /** One missing-key row per member of the part `of` returns, named `<name>.<member>` and refused at `pointer`. */
 function missingRows(
   name: string,
@@ -550,6 +602,7 @@ describe("schema refusals", () => {
       `${SQL_WRITING}/export/createTableKey`,
       ["note", "clause"],
     ),
+    ["migrationDdl", (m: Json) => delete m.engines[0].migrationDdl, "/engines/0", "migrationDdl"],
   ])("a missing %s is refused as missing-key", (_name, change, pointer, key) => {
     expect(refusalsFor(manifest(change))).toEqual([refusal("missing-key", pointer, key)]);
   });
@@ -1273,7 +1326,7 @@ describe("schema refusals", () => {
   });
 
   test("a DDL type, a bare spelling or a non-finite literal that would not stay on its line is refused as pattern-mismatch", () => {
-    for (const spelling of ["TEXT;", "TEXT\nDROP TABLE t", "TEXT\r", "1TEXT", "", `T${"A".repeat(64)}`]) {
+    for (const spelling of ["TEXT;", "TEXT\nDROP TABLE t", "TEXT\r", "1TEXT", ""]) {
       const ddl = manifest((m) => (sqlWritingOf(m).export.ddlTypes.text = spelling));
       const bare = manifest((m) => (sqlWritingOf(m).export.bareSpelling = [{ name: "bit", spelling }]));
 
@@ -1366,6 +1419,189 @@ describe("schema refusals", () => {
     expect(refusalsFor(alone)).toEqual([refusal("duplicate", `${SQL_WRITING}/export/standsAlone/1`)]);
     expect(refusalsFor(family)).toEqual([refusal("duplicate", `${VOCABULARY}/bareTypeFamily/integer/1`)]);
     expect(refusalsFor(spelled)).toEqual([refusal("duplicate", `${SQL_WRITING}/export/bareSpelling/1`)]);
+  });
+
+  test("a migration DDL segment that refuses table DDL, one that writes it with a transaction wrapper, and one whose CREATE TABLE is refused are admitted", () => {
+    const transaction = manifest(
+      (m) => (migrationDdlOf(m).transactionWrapper = { begin: "BEGIN TRANSACTION;", commit: "COMMIT;" }),
+    );
+    const createTableRefused = manifest((m) => {
+      Object.assign(migrationDdlOf(m), {
+        transactionWrapper: null,
+        createTable: { kind: "refused", createTableRefusal: "createTableRefusal" },
+        reasons: [
+          "Each table needs a primary key.",
+          "An index is written by its own statement.",
+          "A column type is changed by recreating the table.",
+          "A foreign key is not enforced.",
+        ],
+      });
+    });
+    const refused = manifest((m) => (m.engines[0].migrationDdl = refusedMigrationDdl()));
+
+    expect(migrationDdlOf(manifest())).toEqual(writtenMigrationDdl());
+    expect(refusalsFor(manifest())).toEqual([]);
+    expect(refusalsFor(kafkaManifest())).toEqual([]);
+    expect(migrationDdlOf(kafkaManifest()).tableDdl).toBe("refused");
+    expect(refusalsFor(transaction)).toEqual([]);
+    expect(refusalsFor(createTableRefused)).toEqual([]);
+    expect(refusalsFor(refused)).toEqual([]);
+  });
+
+  test("a migration DDL refusal that is not one comment line is one no-variant refusal at the segment", () => {
+    const refusing = (line: string) =>
+      manifest((m) => (m.engines[0].migrationDdl = { ...refusedMigrationDdl(), refusal: line }));
+    for (const line of [
+      "ExampleDB: Cannot generate table DDL.",
+      "--ExampleDB: Cannot generate table DDL.",
+      "-- ",
+      "-- ExampleDB.\nDROP TABLE t;",
+      "-- ExampleDB.\r",
+      "-- ExampleDB. DROP TABLE t;",
+      "-- ExampleDB. ",
+      `-- ${"a".repeat(1022)}`,
+    ]) {
+      expect(refusalsFor(refusing(line))).toEqual([refusal("no-variant", MIGRATION_DDL)]);
+    }
+    expect(refusalsFor(refusing("-- ExampleDB: Cannot generate table DDL. Rows have no columns."))).toEqual([]);
+    expect(refusalsFor(refusing(`-- ${"a".repeat(1021)}`))).toEqual([]);
+  });
+
+  test("a migration DDL reason that is not one line, or is listed twice, is one no-variant refusal at the segment", () => {
+    const giving = (reasons: readonly string[]) => manifest((m) => (migrationDdlOf(m).reasons = reasons));
+    const distinct = (count: number) => Array.from({ length: count }, (_, index) => `Reason ${index}.`);
+    for (const reasons of [
+      ["A reason.\nDROP TABLE t;"],
+      ["A reason.\r"],
+      ["A reason. "],
+      [""],
+      ["A reason.", "A reason."],
+      distinct(65),
+      ["a".repeat(1025)],
+    ]) {
+      expect(refusalsFor(giving(reasons))).toEqual([refusal("no-variant", MIGRATION_DDL)]);
+    }
+    expect(refusalsFor(giving(["A reason.", "Another reason."]))).toEqual([]);
+    expect(refusalsFor(giving(distinct(64)))).toEqual([]);
+    expect(refusalsFor(giving(["a".repeat(1024)]))).toEqual([]);
+  });
+
+  test("a transaction wrapper statement that is not words ending in one semicolon is one no-variant refusal at the segment", () => {
+    const wrapping = (wrapper: unknown) => manifest((m) => (migrationDdlOf(m).transactionWrapper = wrapper));
+    for (const begin of [
+      "BEGIN",
+      "BEGIN; DROP TABLE t;",
+      "BEGIN;\n",
+      "BEGIN;;",
+      " BEGIN;",
+      "BEGIN  TRANSACTION;",
+      "BEGIN ;",
+      `${"A".repeat(64)};`,
+    ]) {
+      expect(refusalsFor(wrapping({ begin, commit: "COMMIT;" }))).toEqual([refusal("no-variant", MIGRATION_DDL)]);
+    }
+    expect(refusalsFor(wrapping({ begin: "BEGIN;", commit: "COMMIT ;" }))).toEqual([
+      refusal("no-variant", MIGRATION_DDL),
+    ]);
+    expect(refusalsFor(wrapping({ begin: "BEGIN;", commit: "COMMIT;", rollback: "ROLLBACK;" }))).toEqual([
+      refusal("no-variant", MIGRATION_DDL),
+    ]);
+    expect(refusalsFor(wrapping({ begin: "BEGIN;" }))).toEqual([refusal("no-variant", MIGRATION_DDL)]);
+    expect(refusalsFor(wrapping({ begin: "START TRANSACTION;", commit: "COMMIT WORK;" }))).toEqual([]);
+    expect(refusalsFor(wrapping({ begin: `${"A".repeat(63)};`, commit: "COMMIT;" }))).toEqual([]);
+    expect(refusalsFor(wrapping(null))).toEqual([]);
+  });
+
+  test("a migration DDL member of the other form, a missing one or an unknown one is one no-variant refusal at the segment", () => {
+    const segment = (value: Json) => manifest((m) => (m.engines[0].migrationDdl = value));
+    const without = (value: Json, member: string) => {
+      const rest = { ...value };
+      delete rest[member];
+      return rest;
+    };
+    const refused = refusedMigrationDdl();
+    const written = writtenMigrationDdl();
+    const changed: Json[] = [
+      { ...refused, transactionWrapper: { begin: "BEGIN;", commit: "COMMIT;" } },
+      { ...refused, columnDef: "columnDef" },
+      { ...refused, createTable: written.createTable },
+      { ...written, refusal: refused.refusal },
+      { ...written, dropTable: "Drop_table" },
+      { ...written, dropTable: null },
+      { ...written, tableDdl: "refused" },
+      { ...refused, tableDdl: "written" },
+      { ...written, tableDdl: "partial" },
+      { ...written, bogus: "bogus" },
+      ...WRITTEN_MIGRATION_DDL_MEMBERS.map((member) => without(written, member)),
+      ...["tableDdl", "refusal", "transactionWrapper", "reasons"].map((member) => without(refused, member)),
+    ];
+
+    for (const value of changed) {
+      expect(refusalsFor(segment(value))).toEqual([refusal("no-variant", MIGRATION_DDL)]);
+    }
+    expect(refusalsFor(segment(written))).toEqual([]);
+    expect(refusalsFor(segment(refused))).toEqual([]);
+    expect(refusalsFor(segment({ ...written, dropTable: "dropTable2" }))).toEqual([]);
+  });
+
+  test("a create table of no listed kind, or with a member of the other kind, is one no-variant refusal at the segment", () => {
+    const creating = (createTable: Json | null) => manifest((m) => (migrationDdlOf(m).createTable = createTable));
+    for (const createTable of [
+      { kind: "partial", primaryKey: "createTablePrimaryKey", foreignKey: "createTableForeignKey" },
+      { kind: "refused", createTableRefusal: "createTableRefusal", primaryKey: "createTablePrimaryKey" },
+      { kind: "refused", primaryKey: "createTablePrimaryKey" },
+      { kind: "written", primaryKey: "createTablePrimaryKey" },
+      { kind: "written", primaryKey: "createTablePrimaryKey", foreignKey: "createTableForeignKey", note: "n" },
+      { kind: "written", createTableRefusal: "createTableRefusal" },
+      { primaryKey: "createTablePrimaryKey", foreignKey: "createTableForeignKey" },
+      null,
+    ]) {
+      expect(refusalsFor(creating(createTable))).toEqual([refusal("no-variant", MIGRATION_DDL)]);
+    }
+    expect(refusalsFor(creating({ kind: "refused", createTableRefusal: "createTableRefusal" }))).toEqual([]);
+    expect(
+      refusalsFor(creating({ kind: "written", primaryKey: "primaryKey", foreignKey: "createTableForeignKey" })),
+    ).toEqual([]);
+  });
+
+  test("a DDL type or a bare spelling that is more than one type at the top level is refused as pattern-mismatch", () => {
+    const ddl = (spelling: string) => manifest((m) => (sqlWritingOf(m).export.ddlTypes.text = spelling));
+    const bare = (spelling: string) =>
+      manifest((m) => (sqlWritingOf(m).export.bareSpelling = [{ name: "bit", spelling }]));
+    for (const spelling of [
+      "INT, x INT",
+      "NUMBER(19), y INT",
+      "INT)",
+      "(INT)",
+      "INT(",
+      "INT()",
+      "INT(1)(2)",
+      "INT(1, )",
+      "INT  X",
+      "INT ",
+      "INT,",
+      "Array(Nullable(String))",
+    ]) {
+      expect(refusalsFor(ddl(spelling))).toEqual([refusal("pattern-mismatch", `${SQL_WRITING}/export/ddlTypes/text`)]);
+      expect(refusalsFor(bare(spelling))).toEqual([
+        refusal("pattern-mismatch", `${SQL_WRITING}/export/bareSpelling/0/spelling`),
+      ]);
+    }
+    for (const spelling of [
+      "DECIMAL(38, 9)",
+      "DECIMAL(38,9)",
+      "TIMESTAMP(6) WITH TIME ZONE",
+      "Map(String, String)",
+      "CHARACTER VARYING(255)",
+      "NVARCHAR(MAX)",
+      "bit varying",
+    ]) {
+      expect(refusalsFor(ddl(spelling))).toEqual([]);
+      expect(refusalsFor(bare(spelling))).toEqual([]);
+    }
+    expect(refusalsFor(ddl(`T${"A".repeat(64)}`))).toEqual([
+      refusal("out-of-range", `${SQL_WRITING}/export/ddlTypes/text`),
+    ]);
   });
 
   test("several failures are each refused, ordered by pointer", () => {
@@ -2164,6 +2400,20 @@ describe("one engine declaration", () => {
         refusal("pattern-invalid", "/sqlWriting/export/typeVocabulary/floatType/source"),
         refusal("wrapper-group-count", "/sqlWriting/export/typeVocabulary/numericWrapper/source"),
       ],
+    });
+  });
+
+  test("an engine declaration's migration DDL is refused at its own pointer under validateEngine", () => {
+    const declaration = kafkaManifest().engines[0] as Json;
+    declaration.migrationDdl.refusal = "Apache Kafka: Cannot generate table DDL.";
+
+    expect(validator.validateEngine(kafkaManifest().engines[0])).toEqual({
+      admitted: true,
+      engine: kafkaManifest().engines[0],
+    });
+    expect(validator.validateEngine(declaration)).toEqual({
+      admitted: false,
+      refusals: [refusal("no-variant", "/migrationDdl")],
     });
   });
 

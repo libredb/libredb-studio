@@ -298,5 +298,29 @@
       "createTableKey": null
     },
     "insertDocuments": null
+  },
+  "migrationDdl": {
+    "tableDdl": "written",
+    "transactionWrapper": null,
+    "createTable": {
+      "kind": "written",
+      "primaryKey": "createTablePrimaryKey",
+      "foreignKey": "createTableForeignKey"
+    },
+    "columnDef": "columnDef",
+    "createIndex": "createIndex",
+    "dropIndex": "dropIndex",
+    "addForeignKey": "addForeignKey",
+    "dropForeignKey": "dropForeignKey",
+    "addColumn": "addColumn",
+    "dropColumn": "dropColumn",
+    "modifyColumn": "modifyColumn",
+    "dropTable": "dropTable",
+    "reasons": [
+      "BigQuery widens a column with ALTER COLUMN ... SET DATA TYPE only along its coercion rules, and nothing else; write the change by hand.",
+      "BigQuery: Cannot generate index DDL. BigQuery has search and vector indexes only; write the index change by hand.",
+      "The engine has no foreign-key constraint.",
+      "BigQuery accepts a primary key only as PRIMARY KEY (...) NOT ENFORCED."
+    ]
   }
 }

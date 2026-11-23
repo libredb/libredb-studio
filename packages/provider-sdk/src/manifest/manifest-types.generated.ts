@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "88f7719ad7fce172ab26b221dbb9c04d26083abbbf356214eec4ee2cdf970c4e";
+export const MANIFEST_SCHEMA_SHA256 = "465571a76e6ae3b65bc7555ac35bc1cd718270f5c61e7efe3031272a6495246b";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -111,6 +111,7 @@ export interface EngineDeclaration {
   readonly editor: Editor;
   readonly sqlText: SqlText;
   readonly sqlWriting: SqlWriting;
+  readonly migrationDdl: MigrationDdl;
 }
 
 /** external: a database the user already runs, which Studio is pointed at. embedded: a store Studio carries and creates itself. */
@@ -529,7 +530,7 @@ export type StatementLanguage =
   | "sparkplugread"
   | null;
 
-/** The editor facts of the engine that are data: the keyword its open transaction is committed with, the consent card's deadline, the fence tags naming it, the explain format of its plans and its query dialect. The SQL text facts are sqlText and the SQL writing facts sqlWriting, and migration DDL, generators and editor languages are later parts of the contract. */
+/** The editor facts of the engine that are data: the keyword its open transaction is committed with, the consent card's deadline, the fence tags naming it, the explain format of its plans and its query dialect. The SQL text facts are sqlText, the SQL writing facts sqlWriting and the migration DDL facts migrationDdl, and generators and editor languages are later parts of the contract. */
 export interface Editor {
   /** The one word that keeps an open transaction on the engine, which the notice Studio shows when a statement left a transaction open and it was rolled back names: a letter, then up to 31 letters, digits or underscores. */
   readonly commitKeyword: string;
@@ -866,7 +867,7 @@ export interface DdlTypeSpellings {
   readonly binary: SqlTypeSpelling;
 }
 
-/** An SQL type as a CREATE TABLE writes it, verbatim: a letter, then up to 63 letters, digits, underscores, spaces, parentheses or commas, so it never ends its line or its statement. */
+/** One SQL type as a CREATE TABLE writes it, verbatim, up to 64 characters: words separated by one space, the first opening with a letter, each of letters, digits or underscores, then at most one parenthesized argument list with its commas inside it, each argument such words, then words, so it fills one column's type, never adds a column and never ends its line or its statement. A type nested two deep is not admitted yet. */
 export type SqlTypeSpelling = string;
 
 /** A bare declared type name as the export compares it: lower-case words separated by one space, each a lower-case letter, then lower-case letters, digits or underscores, since the export reads a declared type trimmed, lower-cased and with each run of whitespace one space. */
@@ -927,6 +928,69 @@ export type CreateTableKey = {
 
 /** Whole SQL comment lines, each -- and a space, then text with no line break, then a line feed, up to 1024 characters in all, so the text written above a statement never becomes one. */
 export type CommentLines = string;
+
+/** What the schema diff's migration writes for the engine, in one of two forms: refused, where the engine writes no table DDL and the migration is one comment line saying why, or written, with its transaction wrapper, its CREATE TABLE form and a statement writer for each change. One member per member of Studio's migration DDL row in that form, each function named by the slot it fills. */
+export type MigrationDdl = MigrationDdlRefused | MigrationDdlWritten;
+
+/** Migration DDL of an engine that writes no table DDL: the one comment line the migration holds in place of any statement, no transaction wrapper, and the reasons the line gives. */
+export interface MigrationDdlRefused {
+  readonly tableDdl: "refused";
+  readonly refusal: MigrationRefusal;
+  /** Always null: an engine that writes no table DDL has nothing to wrap. */
+  readonly transactionWrapper: null;
+  readonly reasons: DdlReasons;
+}
+
+/** Migration DDL of an engine that writes table DDL: its transaction wrapper or null, its CREATE TABLE form, and the pure function that writes each statement from names the migration has already quoted. columnDef: one column's definition. createIndex and dropIndex: an index's CREATE and DROP. addForeignKey and dropForeignKey: a foreign key added to or dropped from a table. addColumn, dropColumn and modifyColumn: a column added, dropped or changed, the last as one statement or several. dropTable: a table dropped. reasons: every refusal sentence the writers print. */
+export interface MigrationDdlWritten {
+  readonly tableDdl: "written";
+  readonly transactionWrapper: TransactionWrapper;
+  readonly createTable: CreateTable;
+  readonly columnDef: FunctionName;
+  readonly createIndex: FunctionName;
+  readonly dropIndex: FunctionName;
+  readonly addForeignKey: FunctionName;
+  readonly dropForeignKey: FunctionName;
+  readonly addColumn: FunctionName;
+  readonly dropColumn: FunctionName;
+  readonly modifyColumn: FunctionName;
+  readonly dropTable: FunctionName;
+  readonly reasons: DdlReasons;
+}
+
+/** The statements the migration writes on a line of their own before its first statement and after its last; null where the migration is not wrapped in a transaction. */
+export type TransactionWrapper = {
+  readonly begin: WrapperStatement;
+  readonly commit: WrapperStatement;
+} | null;
+
+/** One statement of a transaction wrapper, up to 64 characters: words of letters separated by one space, ending in its one semicolon, so it is one statement on its line and never a second. */
+export type WrapperStatement = string;
+
+/** How the migration writes a CREATE TABLE for the engine: written, with the pure functions that write the primary key and a foreign key from quoted names, each inside the column list or as a statement after it, or refused, with the pure function that writes the line in its place for the quoted table. */
+export type CreateTable = CreateTableRefused | CreateTableWritten;
+
+/** A CREATE TABLE the engine refuses: createTableRefusal names the pure function that writes the line in its place for the quoted table. */
+export interface CreateTableRefused {
+  readonly kind: "refused";
+  readonly createTableRefusal: FunctionName;
+}
+
+/** A CREATE TABLE the engine writes: primaryKey names the pure function that writes the primary key from the quoted key columns, and foreignKey the one that writes a foreign key of the quoted table. */
+export interface CreateTableWritten {
+  readonly kind: "written";
+  readonly primaryKey: FunctionName;
+  readonly foreignKey: FunctionName;
+}
+
+/** The whole migration after its header for an engine that writes no table DDL: one SQL comment line, -- and a space, then text with no line break, up to 1024 characters, so it is never a statement. */
+export type MigrationRefusal = string;
+
+/** Every refusal sentence the engine's migration DDL can print, each once, in the row's order; an empty list where it prints none. */
+export type DdlReasons = readonly DdlReason[];
+
+/** One refusal sentence, 1 to 1024 characters with no line break, since every sentence a writer prints is printed inside a comment line. */
+export type DdlReason = string;
 
 /** One product the package was measured against: the engine that serves it, the versions claimed and the versions tested. */
 export interface CompatibilityEntry {

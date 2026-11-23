@@ -228,6 +228,28 @@
           "createTableKey": null
         },
         "insertDocuments": null
+      },
+      "migrationDdl": {
+        "tableDdl": "written",
+        "transactionWrapper": {
+          "begin": "BEGIN;",
+          "commit": "COMMIT;"
+        },
+        "createTable": {
+          "kind": "written",
+          "primaryKey": "createTablePrimaryKey",
+          "foreignKey": "createTableForeignKey"
+        },
+        "columnDef": "columnDef",
+        "createIndex": "createIndex",
+        "dropIndex": "dropIndex",
+        "addForeignKey": "addForeignKey",
+        "dropForeignKey": "dropForeignKey",
+        "addColumn": "addColumn",
+        "dropColumn": "dropColumn",
+        "modifyColumn": "modifyColumn",
+        "dropTable": "dropTable",
+        "reasons": []
       }
     }
   ],

@@ -258,5 +258,13 @@
       "createTableKey": null
     },
     "insertDocuments": null
+  },
+  "migrationDdl": {
+    "tableDdl": "refused",
+    "refusal": "-- LibreDB: Cannot generate table DDL. The embedded engine speaks a JSON command grammar, not SQL DDL.",
+    "transactionWrapper": null,
+    "reasons": [
+      "The embedded engine speaks a JSON command grammar, not SQL DDL."
+    ]
   }
 }

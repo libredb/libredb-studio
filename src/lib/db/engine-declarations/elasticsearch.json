@@ -270,5 +270,13 @@
       "createTableKey": null
     },
     "insertDocuments": null
+  },
+  "migrationDdl": {
+    "tableDdl": "refused",
+    "refusal": "-- Elasticsearch: Cannot generate table DDL. Elasticsearch SQL reads only; change a field by reindexing into an index whose mapping declares it.",
+    "transactionWrapper": null,
+    "reasons": [
+      "Elasticsearch SQL reads only; change a field by reindexing into an index whose mapping declares it."
+    ]
   }
 }
