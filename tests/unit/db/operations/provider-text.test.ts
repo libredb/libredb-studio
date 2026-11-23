@@ -34,8 +34,11 @@ import {
   PROVIDER_TEXT_WITHHELD,
   providerAuthor,
   providerTextScrub,
+  scrubKindCounts,
+  scrubObjectDetail,
   scrubProviderText,
   scrubProviderWarnings,
+  scrubSourceDocument,
   withheldErrorMessage,
   withheldProviderError,
   withholdProviderError,
@@ -43,6 +46,7 @@ import {
 } from "@/lib/db/operations/provider-text";
 import { secretForms } from "@/lib/db/utils/server-text";
 import { CONNECTION_FIELDS, SSH_TUNNEL_FIELDS, SSL_FIELDS, type FieldClass } from "@/lib/storage/secret-fields";
+import type { KindCount, ObjectDetail, ObjectSourceDocument } from "@/lib/db/types";
 import type { DatabaseConnection, DatabaseType, QueryResult } from "@/lib/types";
 
 const generated = () => `${crypto.randomUUID()}/${crypto.randomUUID().slice(0, 8)}`;
@@ -364,6 +368,139 @@ describe("scrubProviderWarnings and withScrubbedWarnings", () => {
     expect(scrubbed.warnings).toEqual([{ message: PROVIDER_TEXT_WITHHELD }]);
     expect(scrubbed.rows).toBe(result.rows);
     expect(result.warnings).toEqual([{ message: `notice ${password}` }]);
+  });
+});
+
+describe("the object read sentences", () => {
+  const password = generated();
+  const scrub = providerTextScrub(connectionWith({ password }), "any");
+
+  test("scrubKindCounts withholds an unavailable or sampledFrom sentence that holds the connection's credential and keeps every count", () => {
+    const counts: Record<string, KindCount> = {
+      table: { unavailable: `permission denied for ${password}` },
+      view: { count: 7, sampledFrom: `sampled as ${password}` },
+      index: { count: 3 },
+      sequence: { count: 2, sampledFrom: "pg_class estimate" },
+      function: { unavailable: "the catalog refused the read" },
+    };
+    expect(scrubKindCounts(scrub, counts)).toEqual({
+      table: { unavailable: PROVIDER_TEXT_WITHHELD },
+      view: { count: 7, sampledFrom: PROVIDER_TEXT_WITHHELD },
+      index: { count: 3 },
+      sequence: { count: 2, sampledFrom: "pg_class estimate" },
+      function: { unavailable: "the catalog refused the read" },
+    });
+  });
+
+  test("scrubObjectDetail withholds an unavailable index sentence and answers a detail whose indexes are a list as given", () => {
+    const refused: ObjectDetail = {
+      path: ["public", "orders"],
+      columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+      indexes: { unavailable: `index read refused for ${password}` },
+      foreignKeys: [],
+    };
+    expect(scrubObjectDetail(scrub, refused)).toEqual({ ...refused, indexes: { unavailable: PROVIDER_TEXT_WITHHELD } });
+    const listed: ObjectDetail = {
+      path: ["public", "orders"],
+      columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+      indexes: [{ name: "orders_pkey", columns: ["id"], unique: true }],
+      foreignKeys: [{ columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" }],
+    };
+    expect(scrubObjectDetail(scrub, listed)).toEqual(listed);
+  });
+
+  test("scrubSourceDocument withholds a part's refusal, truncation and refused edit sentences, and keeps its text, its statement flag and an offered edit", () => {
+    const document: ObjectSourceDocument = {
+      path: ["public", "report"],
+      kind: "function",
+      parts: [
+        { id: "definition", label: "Definition", unavailable: `pg_get_functiondef refused for ${password}` },
+        { id: "grants", label: "Grants", unavailable: `grant read refused for ${password}`, statement: true },
+        {
+          id: "body",
+          label: "Body",
+          text: "SELECT 1",
+          language: "sql",
+          form: "complete",
+          origin: "stored",
+          truncated: { limit: 10, reason: `cut for ${password}` },
+          edit: { offered: false, reason: `owned by ${password}` },
+        },
+        {
+          id: "comment",
+          label: "Comment",
+          text: `COMMENT ON FUNCTION report IS 'kept'`,
+          language: "sql",
+          form: "complete",
+          origin: "rendered",
+          edit: { offered: true },
+        },
+      ],
+    };
+    const scrubbed = scrubSourceDocument(scrub, document);
+    expect(scrubbed).toEqual({
+      path: ["public", "report"],
+      kind: "function",
+      parts: [
+        { id: "definition", label: "Definition", unavailable: PROVIDER_TEXT_WITHHELD },
+        { id: "grants", label: "Grants", unavailable: PROVIDER_TEXT_WITHHELD, statement: true },
+        {
+          id: "body",
+          label: "Body",
+          text: "SELECT 1",
+          language: "sql",
+          form: "complete",
+          origin: "stored",
+          truncated: { limit: 10, reason: PROVIDER_TEXT_WITHHELD },
+          edit: { offered: false, reason: PROVIDER_TEXT_WITHHELD },
+        },
+        document.parts[3],
+      ],
+    });
+  });
+
+  test("scrubSourceDocument answers a document with no parts as given, for the source route's bound to refuse", () => {
+    const empty = { path: ["report"], kind: "view", parts: [] } as unknown as ObjectSourceDocument;
+    expect(scrubSourceDocument(scrub, empty)).toBe(empty);
+  });
+
+  test("a value none of whose sentences holds a form answers deep-equal to the value given, and the value given is not changed", () => {
+    const counts: Record<string, KindCount> = {
+      table: { unavailable: `refused for ${password}` },
+      view: { count: 1, sampledFrom: "estimate" },
+    };
+    const detail: ObjectDetail = {
+      path: ["orders"],
+      columns: [],
+      indexes: { unavailable: `refused for ${password}` },
+      foreignKeys: [],
+    };
+    const document: ObjectSourceDocument = {
+      path: ["report"],
+      kind: "view",
+      parts: [
+        {
+          id: "definition",
+          label: "Definition",
+          text: `SELECT '${password}'`,
+          language: "sql",
+          form: "partial",
+          origin: "regenerated",
+          truncated: { limit: 5, reason: `cut for ${password}` },
+          edit: { offered: false, reason: "a view built by the engine" },
+        },
+      ],
+    };
+    const before = structuredClone({ counts, detail, document });
+    scrubKindCounts(scrub, counts);
+    scrubObjectDetail(scrub, detail);
+    scrubSourceDocument(scrub, document);
+    expect({ counts, detail, document }).toEqual(before);
+
+    const clean = providerTextScrub(connectionWith({ password: generated() }), "any");
+    expect(scrubKindCounts(clean, counts)).toEqual(counts);
+    expect(scrubObjectDetail(clean, detail)).toEqual(detail);
+    expect(scrubSourceDocument(clean, document)).toEqual(document);
   });
 });
 

@@ -17,6 +17,7 @@ import {
   isAuthenticationError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 
 // ─── Create mock objects ────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -228,6 +229,27 @@ describe("POST /api/db/monitoring", () => {
 
     expect(res.status).toBe(400);
     expect(data.error).toContain("Invalid JSON");
+  });
+
+  test("an error that holds the connection's credential keeps its status and code and holds none of it", async () => {
+    const password = crypto.randomUUID();
+    const connection = { ...validConnection, password };
+    const send = () => POST(createMockRequest("/api/db/monitoring", { method: "POST", body: { connection } }) as never);
+    (mockProvider.getMonitoringData as ReturnType<typeof mock>).mockRejectedValueOnce(
+      new QueryError(`permission denied for ${password}`, "postgres"),
+    );
+    const withheld = await send();
+    const body = await parseResponseJSON<Record<string, unknown>>(withheld);
+    expect(withheld.status).toBe(400);
+    expect(body).toMatchObject({ code: "QUERY_ERROR", error: withheldErrorMessage("QueryError") });
+    expect(JSON.stringify(body)).not.toContain(password);
+
+    (mockProvider.getMonitoringData as ReturnType<typeof mock>).mockRejectedValueOnce(
+      new QueryError("permission denied", "postgres"),
+    );
+    const clean = await send();
+    expect(clean.status).toBe(400);
+    expect(await parseResponseJSON(clean)).toMatchObject({ code: "QUERY_ERROR", error: "permission denied" });
   });
 
   test("returns 401 when no session exists", async () => {

@@ -28,6 +28,7 @@ import { EDIT_BODY_BYTE_LIMIT } from "@/lib/db/object-edit";
 import { isSourceDocumentShape } from "@/components/object-source/source-reader";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { QueryError } from "@/lib/db/errors";
+import { PROVIDER_TEXT_WITHHELD, providerTextScrub, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import type {
   Container,
   ContainerLevels,
@@ -2911,6 +2912,196 @@ describe("the edit routes' body read", () => {
   });
 });
 
+describe("the connection's scrub on the object routes", () => {
+  /** Generated at run time and holding a slash, so its URI-encoded form differs from the value itself. */
+  const password = `${crypto.randomUUID()}/${crypto.randomUUID().slice(0, 8)}`;
+  const scrubbed = { ...connection, password: password };
+  const call = (route: { POST: (req: never) => Promise<Response> }, name: string, body: Record<string, unknown>) =>
+    route.POST(createMockRequest(`/api/db/objects/${name}`, { method: "POST", body }) as never);
+  const FUNCTION_SOURCE_KIND: ObjectKindSpec = {
+    id: "function",
+    role: "routine",
+    label: "Function",
+    labelPlural: "Functions",
+    hasSource: true,
+    sourceLanguage: "sql",
+    acceptsSourceEdits: true,
+  };
+
+  test("an error answer that holds the connection's credential keeps its status, code, kind and retryable and holds none of it", async () => {
+    // Keyed by the container each case asks for, so the cases share one provider and run together.
+    const cases = [
+      [
+        "app",
+        new QueryError(`relation near ${password} does not exist`, "postgres"),
+        400,
+        "QUERY_ERROR",
+        "query",
+        undefined,
+      ],
+      [
+        "ops",
+        new ConnectionError(`could not connect as ${encodeURIComponent(password)}`, "postgres"),
+        503,
+        "CONNECTION_ERROR",
+        "connection",
+        true,
+      ],
+    ] as const;
+    activeProvider = objectProvider({
+      countObjects: mock(async (container: readonly string[]) => {
+        throw cases.find(([name]) => name === container[0])?.[1];
+      }),
+    });
+    const answers = await Promise.all(
+      cases.map(async ([name]) => {
+        const response = await call(countsRoute, "counts", { connection: scrubbed, container: [name] });
+        return { status: response.status, body: await parseResponseJSON<Record<string, unknown>>(response) };
+      }),
+    );
+    cases.forEach(([, error, status, code, kind, retryable], index) => {
+      const { status: answered, body } = answers[index];
+      expect(answered).toBe(status);
+      expect(body).toMatchObject({ code, kind, error: withheldErrorMessage(error.name) });
+      expect(body.retryable).toBe(retryable);
+      expect(JSON.stringify(body)).not.toContain(password);
+      expect(JSON.stringify(body)).not.toContain(encodeURIComponent(password));
+    });
+
+    activeProvider = objectProvider({
+      countObjects: mock(async () => {
+        throw new QueryError("relation does not exist", "postgres");
+      }),
+    });
+    const clean = await call(countsRoute, "counts", { connection: scrubbed, container: ["app"] });
+    expect(clean.status).toBe(400);
+    expect(await parseResponseJSON(clean)).toMatchObject({ code: "QUERY_ERROR", error: "relation does not exist" });
+  });
+
+  test("counts answers an unavailable and a sampled sentence that hold the connection's credential withheld", async () => {
+    activeProvider = objectProvider({
+      countObjects: mock(async () => ({
+        table: { count: 9, sampledFrom: `sampled as ${password}` },
+        view: { unavailable: `permission denied for ${password}` },
+      })),
+    });
+    const response = await call(countsRoute, "counts", { connection: scrubbed, container: ["app"] });
+    expect(response.status).toBe(200);
+    expect(await parseResponseJSON(response)).toEqual({
+      table: { count: 9, sampledFrom: PROVIDER_TEXT_WITHHELD },
+      view: { unavailable: PROVIDER_TEXT_WITHHELD },
+    });
+  });
+
+  test("describe answers an unavailable index sentence that holds the connection's credential withheld", async () => {
+    activeProvider = objectProvider({
+      describeObject: mock(async (path: readonly string[]) => ({
+        ...emptyDetail(path),
+        indexes: { unavailable: `index read refused for ${password}` },
+      })),
+    });
+    const response = await call(describeRoute, "describe", {
+      connection: scrubbed,
+      path: ["app", "orders"],
+      kind: "table",
+    });
+    expect(response.status).toBe(200);
+    expect(await parseResponseJSON(response)).toEqual({
+      ...emptyDetail(["app", "orders"]),
+      indexes: { unavailable: PROVIDER_TEXT_WITHHELD },
+    });
+  });
+
+  test("inventory answers its details' and the provider's column bound sentences withheld, and keeps Studio's own bound sentence", async () => {
+    activeProvider = objectProvider({
+      objectKinds: [TABLE_KIND],
+      listContainers: mock(async () => [{ path: ["app"], name: "app", level: 0 }]),
+      listObjects: mock(async () => [object(["app", "orders"], "table")]),
+      describeObjects: mock(async () => ({
+        details: [{ ...emptyDetail(["app", "orders"]), indexes: { unavailable: `refused for ${password}` } }],
+        truncated: { limit: 1, reason: `bounded for ${password}` },
+      })),
+    });
+    const response = await call(inventoryRoute, "inventory", { connection: scrubbed, includeColumns: true });
+    const body = await parseResponseJSON<{ details: ObjectDetail[]; truncated: { limit: number; reason: string } }>(
+      response,
+    );
+    expect(response.status).toBe(200);
+    expect(body.details).toEqual([
+      { ...emptyDetail(["app", "orders"]), indexes: { unavailable: PROVIDER_TEXT_WITHHELD } },
+    ]);
+    expect(body.truncated).toEqual({ limit: 1, reason: PROVIDER_TEXT_WITHHELD });
+
+    activeProvider = objectProvider({
+      objectKinds: [TABLE_KIND],
+      listContainers: mock(async () => [{ path: ["app"], name: "app", level: 0 }]),
+      listObjects: mock(async () =>
+        Array.from({ length: INVENTORY_LIMIT + 1 }, (_unused, index) => object(["app", `t${index}`], "table")),
+      ),
+      describeObjects: mock(async () => ({
+        details: [],
+        truncated: { limit: 1, reason: `bounded for ${password}` },
+      })),
+    });
+    const studioBound = await call(inventoryRoute, "inventory", { connection: scrubbed, includeColumns: true });
+    expect((await parseResponseJSON<{ truncated: unknown }>(studioBound)).truncated).toEqual({
+      limit: INVENTORY_LIMIT,
+      reason: "inventory limit reached",
+    });
+  });
+
+  test("source answers a part's refusal, truncation and refused edit sentences withheld, and joins Studio's bound sentence after a withheld one", async () => {
+    const document: ObjectSourceDocument = {
+      path: ["app", "order_total(integer)"],
+      kind: "function",
+      parts: [
+        { id: "definition", label: "Definition", unavailable: `refused for ${password}` },
+        {
+          id: "body",
+          label: "Body",
+          text: "x".repeat(SOURCE_CHARACTER_LIMIT + 1),
+          language: "sql",
+          form: "partial",
+          origin: "stored",
+          truncated: { limit: SOURCE_CHARACTER_LIMIT + 1, reason: `cut for ${password}` },
+        },
+        {
+          id: "comment",
+          label: "Comment",
+          text: "COMMENT ON FUNCTION order_total(integer) IS 'kept'",
+          language: "sql",
+          form: "complete",
+          origin: "rendered",
+          edit: { offered: false, reason: `owned by ${password}` },
+        },
+      ],
+    };
+    activeProvider = objectProvider({
+      objectKinds: [TABLE_KIND, FUNCTION_SOURCE_KIND],
+      readObjectSource: mock(async () => document),
+    });
+    const response = await call(sourceRoute, "source", {
+      connection: scrubbed,
+      path: ["app", "order_total(integer)"],
+      kind: "function",
+    });
+    const body = await parseResponseJSON<ObjectSourceDocument>(response);
+    expect(response.status).toBe(200);
+    expect(body.parts[0]).toEqual({ id: "definition", label: "Definition", unavailable: PROVIDER_TEXT_WITHHELD });
+    expect(body.parts[1]).toMatchObject({
+      truncated: {
+        limit: SOURCE_CHARACTER_LIMIT,
+        reason: `${PROVIDER_TEXT_WITHHELD}; ${sourceBoundTruncationReason(SOURCE_CHARACTER_LIMIT)}`,
+      },
+    });
+    expect(body.parts[2]).toMatchObject({
+      text: "COMMENT ON FUNCTION order_total(integer) IS 'kept'",
+      edit: { offered: false, reason: PROVIDER_TEXT_WITHHELD },
+    });
+    expect(JSON.stringify(body)).not.toContain(password);
+  });
+});
+
 /**
  * The three fields an audit event for an applied DDL is attributed with. A wrong binding here names
  * the wrong caller or the wrong route on a write against a live engine, and no other test in this
@@ -2921,7 +3112,7 @@ describe("the context the handler hands run", () => {
   const post = (body: unknown) =>
     createMockRequest(`/${probeRoute}`, { method: "POST", body }) as never as Parameters<typeof handleObjectRequest>[0];
 
-  test("it carries the RESOLVED connection, the guard's session and the route, and nothing else", async () => {
+  test("it carries the RESOLVED connection, the guard's session, the route and that connection's scrub, and nothing else", async () => {
     let seen: ObjectRequestContext | undefined;
     // The body names a connectionId and NO connection, so an object taken from the BODY cannot be
     // what the context carries: only the resolution answers `{ id: "seed-1", name: "Seeded", ... }`.
@@ -2934,7 +3125,8 @@ describe("the context the handler hands run", () => {
     expect(seen?.connection).toEqual({ id: "seed-1", name: "Seeded", type: "postgres" } as never);
     expect(seen?.session).toEqual({ role: "admin", username: "admin" });
     expect(seen?.route).toBe(probeRoute);
-    expect(Object.keys(seen ?? {}).sort()).toEqual(["connection", "route", "session"]);
+    expect(seen?.scrub).toEqual(providerTextScrub(seen?.connection as never, "any"));
+    expect(Object.keys(seen ?? {}).sort()).toEqual(["connection", "route", "scrub", "session"]);
   });
 
   test("an INLINE connection reaches the context as the resolution answered it", async () => {

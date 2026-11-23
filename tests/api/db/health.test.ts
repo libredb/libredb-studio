@@ -17,6 +17,7 @@ import {
   isAuthenticationError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 
 // ─── Mock provider ──────────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -116,6 +117,27 @@ describe("POST /api/db/health", () => {
     clearRateLimitState();
     mockGetOrCreateProvider.mockClear();
     (mockProvider.getHealth as ReturnType<typeof mock>).mockClear();
+  });
+
+  test("an error that holds the connection's credential keeps its status and code and holds none of it", async () => {
+    const password = crypto.randomUUID();
+    const connection = { ...validConnection, password };
+    const send = () => POST(createMockRequest("/api/db/health", { method: "POST", body: { connection } }) as never);
+    (mockProvider.getHealth as ReturnType<typeof mock>).mockRejectedValueOnce(
+      new ConnectionError(`could not connect as ${password}`, "postgres"),
+    );
+    const withheld = await send();
+    const body = await parseResponseJSON<Record<string, unknown>>(withheld);
+    expect(withheld.status).toBe(503);
+    expect(body).toMatchObject({ code: "CONNECTION_ERROR", error: withheldErrorMessage("ConnectionError") });
+    expect(JSON.stringify(body)).not.toContain(password);
+
+    (mockProvider.getHealth as ReturnType<typeof mock>).mockRejectedValueOnce(
+      new ConnectionError("could not connect", "postgres"),
+    );
+    const clean = await send();
+    expect(clean.status).toBe(503);
+    expect(await parseResponseJSON(clean)).toMatchObject({ code: "CONNECTION_ERROR", error: "could not connect" });
   });
 
   test("returns 200 with health info for valid connection", async () => {

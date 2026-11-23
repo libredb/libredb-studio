@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getOrCreateProvider, type MaintenanceOperation } from "@/lib/db";
 import { emitAuditEvent } from "@/lib/audit";
 import { createErrorResponse } from "@/lib/api/errors";
+import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { maintenanceControl, type MaintenancePlacement } from "@/lib/db/types";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
@@ -42,6 +43,9 @@ export async function POST(request: Request) {
     return adminRequiredResponse();
   }
 
+  // Core's scrub of the resolved connection, held out here for the `catch` below: before the connection resolves no
+  // provider ran.
+  let scrub: ProviderTextScrub | undefined;
   try {
     // A body that is not JSON, or JSON that is not an object (`null`, an array, a number), is the caller's mistake and
     // answers 400 in a fixed sentence, rather than reaching the destructuring below as a raw runtime error.
@@ -52,6 +56,7 @@ export async function POST(request: Request) {
     const { type, target, container } = body;
 
     const connection = await resolveConnection(body, guard.session);
+    scrub = providerTextScrub(connection, "any");
 
     if (!type) {
       return NextResponse.json({ error: "Maintenance type is required" }, { status: 400 });
@@ -248,7 +253,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json(result);
   } catch (error) {
-    return createErrorResponse(error, { route: "api/db/maintenance" });
+    return createErrorResponse(error, { route: "api/db/maintenance", scrub });
   }
 }
 

@@ -41,6 +41,7 @@ import {
   isAuthenticationError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 
 let activeProvider: DatabaseProvider = createMockProvider();
 const mockGetOrCreateProvider = mock(async () => activeProvider);
@@ -1053,6 +1054,41 @@ describe("POST /api/db/keys/scan under governance", () => {
       expect.objectContaining({ status: "error", error_code: "CONNECTION_ERROR", row_count: null, statement: null }),
       expect.objectContaining({ status: "cancelled", error_code: "QUERY_CANCELLED", row_count: null }),
     ]);
+  });
+
+  test("governance: a walk that fails with an error holding the connection's credential records the withheld sentence and the error's API code, and a cancel still records cancelled", async () => {
+    settings({ "queryLog.statementCapture": "full" });
+    const password = crypto.randomUUID();
+    const connection = { ...GOVERNED, password };
+    const { QueryCancelledError } = await import("@/lib/db/errors");
+    activeProvider = declaringProvider(async () => {
+      throw new QueryError(`SCAN refused for ${password}`, "redis");
+    });
+    const failed = await post({ connection });
+    activeProvider = declaringProvider(async () => {
+      throw new QueryCancelledError(`SCAN of ${password} was cancelled`, "redis");
+    });
+    await post({ connection });
+    activeProvider = declaringProvider(async () => {
+      throw new QueryError("SCAN refused", "redis");
+    });
+    await post({ connection });
+
+    expect(failed.status).toBe(400);
+    expect(rows()).toEqual([
+      expect.objectContaining({
+        status: "error",
+        error_code: "QUERY_ERROR",
+        error_message: withheldErrorMessage("QueryError"),
+      }),
+      expect.objectContaining({
+        status: "cancelled",
+        error_code: "QUERY_CANCELLED",
+        error_message: withheldErrorMessage("QueryCancelledError"),
+      }),
+      expect.objectContaining({ status: "error", error_code: "QUERY_ERROR", error_message: "SCAN refused" }),
+    ]);
+    expect(JSON.stringify(rows())).not.toContain(password);
   });
 
   test("governance: a page that breaks the level contract records status error", async () => {

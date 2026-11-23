@@ -5,6 +5,7 @@ import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
+import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
 import {
   SOURCE_PART_LIMIT,
   acceptedContainerShapes,
@@ -78,6 +79,9 @@ export async function handleObjectRequest(
   const guard = await guardRoute({ route: `POST /${route}`, bucket: "query", request: req });
   if ("response" in guard) return guard.response;
 
+  // Core's scrub of the resolved connection, held out here for the `catch` below: before the connection resolves no
+  // provider ran.
+  let scrub: ProviderTextScrub | undefined;
   try {
     const body = await (options?.readBody === undefined ? readDefaultBody(req) : options.readBody(req));
 
@@ -87,6 +91,8 @@ export async function handleObjectRequest(
     // nor `connectionId` is a caller mistake, and reading it as a connection would turn that
     // mistake into a confusing provider error further down.
     const connection = await resolveConnection(body as ObjectRequestBody, guard.session);
+    const connectionScrub = providerTextScrub(connection, "any");
+    scrub = connectionScrub;
 
     if (!connection.type) {
       return NextResponse.json({ error: "Valid connection configuration is required" }, { status: 400 });
@@ -96,7 +102,9 @@ export async function handleObjectRequest(
     // derived from the verified session role and the resolved connection (non-admin DuckDB file access), so a non-admin
     // browsing or editing objects on a DuckDB connection opens a handle with external access off.
     const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
-    return NextResponse.json(await run(provider, body, { connection, session: guard.session, route }));
+    return NextResponse.json(
+      await run(provider, body, { connection, session: guard.session, route, scrub: connectionScrub }),
+    );
   } catch (error) {
     if (error instanceof ObjectRouteError) {
       // `{ error }`, the shape this handler's own body-shape refusals above already use, plus
@@ -105,7 +113,7 @@ export async function handleObjectRequest(
       // have to know that to predict the wire shape.
       return NextResponse.json(objectRouteErrorBody(error), { status: error.status });
     }
-    return createErrorResponse(error, { route });
+    return createErrorResponse(error, { route, scrub });
   }
 }
 
@@ -150,6 +158,9 @@ export function objectRouteErrorBody(error: ObjectRouteError): {
  * `route` is the same string the caller passed, repeated here so a route that needs it for an
  * audit event does not have to hold a second copy of its own name.
  *
+ * `scrub` is core's scrub of the resolved connection (`providerTextScrub`), so a route answers a
+ * provider's sentences through the same scrub its errors are answered with.
+ *
  * The session is a read-only view of the three `UserPayload` fields a consumer reads: the role and
  * username an audit line writes, and the identity provider subject a query event names its caller
  * by (docs/GOVERNANCE.md#query-events), so this interface moves only when a consumer needs another field.
@@ -158,6 +169,7 @@ export interface ObjectRequestContext {
   readonly connection: DatabaseConnection;
   readonly session: Readonly<Pick<UserPayload, "role" | "username" | "idpSubject">>;
   readonly route: string;
+  readonly scrub: ProviderTextScrub;
 }
 
 /**

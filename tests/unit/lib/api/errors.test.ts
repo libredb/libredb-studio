@@ -147,7 +147,7 @@ describe("createErrorResponse with the connection's scrub", () => {
     quietLogger();
     const inSqlstate = new QueryError("relation does not exist", "postgres");
     inSqlstate.sqlstate = password;
-    for (const [error, status, code] of [
+    const cases = [
       [new QueryError("syntax error", "postgres", "SELECT 1", 4, `near ${password}`), 400, "QUERY_ERROR"],
       [
         new AuthenticationError("denied", "postgres", { fixStatement: `ALTER ROLE x PASSWORD '${password}'` }),
@@ -155,15 +155,17 @@ describe("createErrorResponse with the connection's scrub", () => {
         "AUTH_ERROR",
       ],
       [inSqlstate, 400, "QUERY_ERROR"],
-    ] as const) {
-      const res = createErrorResponse(error, { route, scrub });
-      const body = await res.json();
-      expect(res.status).toBe(status);
+    ] as const;
+    const responses = cases.map(([error]) => createErrorResponse(error, { route, scrub }));
+    const bodies = await Promise.all(responses.map((res) => res.json()));
+    cases.forEach(([error, status, code], index) => {
+      const body = bodies[index];
+      expect(responses[index].status).toBe(status);
       expect(body.code).toBe(code);
       expect(body.error).toBe(withheldErrorMessage(error.name));
       expect(Object.hasOwn(body, "fixStatement")).toBe(false);
       expect(JSON.stringify(body)).not.toContain(password);
-    }
+    });
     const positioned = await createErrorResponse(
       new QueryError("syntax error", "postgres", "SELECT 1", 4, `near ${password}`),
       { route, scrub },
@@ -190,15 +192,19 @@ describe("createErrorResponse with the connection's scrub", () => {
   });
 
   test("a clean error answers as it does without the scrub", async () => {
-    for (const [, make] of classes) {
-      quietLogger();
+    quietLogger();
+    const pairs = classes.map(([, make]) => {
       const error = make("a provider's sentence");
-      const scrubbed = createErrorResponse(error, { route, scrub });
-      const plain = createErrorResponse(error, { route });
+      return { scrubbed: createErrorResponse(error, { route, scrub }), plain: createErrorResponse(error, { route }) };
+    });
+    const bodies = await Promise.all(
+      pairs.map(async ({ scrubbed, plain }) => ({ scrubbed: await scrubbed.json(), plain: await plain.json() })),
+    );
+    mock.restore();
+    pairs.forEach(({ scrubbed, plain }, index) => {
       expect(scrubbed.status).toBe(plain.status);
-      expect(await scrubbed.json()).toEqual(await plain.json());
-      mock.restore();
-    }
+      expect(bodies[index].scrubbed).toEqual(bodies[index].plain);
+    });
   });
 
   describe("every branch that answers an error's own text", () => {

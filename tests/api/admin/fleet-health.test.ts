@@ -18,6 +18,7 @@ import {
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { ENGINE_FACETS } from "@/lib/db/engine-facets";
+import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 
 // ─── Mock provider ──────────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -315,6 +316,55 @@ describe("POST /api/admin/fleet-health", () => {
     const errorItem = data.results.find((r) => r.status === "error");
     expect(errorItem).toBeDefined();
     expect(errorItem!.error).toContain("Connection refused");
+  });
+
+  test("an item whose check fails with an error holding its connection's credential answers the withheld sentence, and the other items are unchanged", async () => {
+    const password = crypto.randomUUID();
+    const failing = (error: Error) => {
+      const provider = createMockProvider();
+      (provider.getHealth as ReturnType<typeof mock>).mockRejectedValue(error);
+      return provider;
+    };
+    const providers: Record<string, ReturnType<typeof createMockProvider>> = {
+      "conn-1": failing(new ConnectionError(`could not connect as ${password}`, "postgres")),
+      "conn-2": mockProvider,
+      "conn-3": failing(new ConnectionError("could not connect", "postgres")),
+    };
+    mockGetOrCreateProvider.mockImplementation((async (resolved: { id: string }) => providers[resolved.id]) as never);
+    const items = [
+      { ...connections[0], password },
+      connections[1],
+      { ...connections[0], id: "conn-3", name: "Reporting DB", password: password },
+    ];
+
+    const res = await POST(
+      createMockRequest("/api/admin/fleet-health", { method: "POST", body: { connections: items } }),
+    );
+    const data = await parseResponseJSON<{ results: { connectionId: string; status: string; error?: string }[] }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.results.map(({ connectionId, status, error }) => ({ connectionId, status, error }))).toEqual([
+      { connectionId: "conn-1", status: "error", error: withheldErrorMessage("ConnectionError") },
+      { connectionId: "conn-2", status: "healthy", error: undefined },
+      { connectionId: "conn-3", status: "error", error: "could not connect" },
+    ]);
+    expect(JSON.stringify(data)).not.toContain(password);
+  });
+
+  test("an item whose check throws a value that is not an Error answers Connection failed", async () => {
+    mockGetOrCreateProvider.mockImplementation((async (resolved: { id: string }) => {
+      if (resolved.id !== "conn-1") return mockProvider;
+      const provider = createMockProvider();
+      (provider.getHealth as ReturnType<typeof mock>).mockRejectedValue("socket closed");
+      return provider;
+    }) as never);
+
+    const res = await POST(createMockRequest("/api/admin/fleet-health", { method: "POST", body: { connections } }));
+    const data = await parseResponseJSON<{ results: { connectionId: string; status: string; error?: string }[] }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.results[0]).toMatchObject({ connectionId: "conn-1", status: "error", error: "Connection failed" });
+    expect(data.results[1]).toMatchObject({ connectionId: "conn-2", status: "healthy" });
   });
 
   test("invalid JSON body returns 500", async () => {

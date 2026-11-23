@@ -20,6 +20,7 @@ import { providerConnection } from "@/lib/db/provider-connection";
 import { requireEditableKind } from "@/lib/db/object-kinds";
 import { emitAuditEvent } from "@/lib/audit";
 import { logger } from "@/lib/logger";
+import { withholdProviderError } from "@/lib/db/operations/provider-text";
 import { clientAddress } from "@/lib/api/client-address";
 import type { GovernedConnection } from "@/lib/governance/visible";
 import { admitQueryExecution } from "@/lib/query-events/admission";
@@ -187,7 +188,7 @@ export async function POST(req: NextRequest) {
       try {
         outcome = await applyEdit.call(provider, plan);
       } catch (error) {
-        logger.error("Object edit apply threw", error, { route: ROUTE });
+        logger.error("Object edit apply threw", withholdProviderError(context.scrub, error), { route: ROUTE });
         outcome = interrupted(Date.now() - started);
       }
       if (!isObjectEditOutcomeShape(outcome)) {

@@ -10,6 +10,8 @@ import type { EtcdStatus } from "@/lib/db/providers/keyvalue/etcd/client";
 import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
 import { readOnlySentence } from "@/lib/db/providers/keyvalue/etcd/write-policy";
 import type { ObjectEditOutcome, ObjectEditPlan } from "@/lib/db/types";
+import { ProviderTextWithheldError } from "@/lib/db/errors";
+import { logger } from "@/lib/logger";
 import type { DatabaseConnection } from "@/lib/types";
 import {
   POST_APPLY as POST,
@@ -246,6 +248,28 @@ describe("POST /api/db/objects/edit-apply", () => {
       .filter((event) => event.type === "object_edit");
     expect(events).toHaveLength(2);
     expect(events[1].reason).toBe("object_edit_interrupted");
+  });
+
+  test("an applier that throws an error holding the connection's credential is logged withheld and answers interrupted", async () => {
+    const password = crypto.randomUUID();
+    mockResolveConnection.mockResolvedValueOnce({ ...CONNECTION, password });
+    provider.applyObjectEdit.mockRejectedValueOnce(new Error(`connection for ${password} terminated unexpectedly`));
+    const logged = spyOn(logger, "error").mockImplementation(() => {});
+    try {
+      const response = await POST(request(await mintValidPlan()));
+      expect(response.status).toBe(200);
+      const body = await parseResponseJSON<{ outcome: string; committed: string }>(response);
+      expect(body.outcome).toBe("interrupted");
+      expect(body.committed).toBe("unknown");
+      expect(JSON.stringify(body)).not.toContain(password);
+      const threw = logged.mock.calls.find(([message]) => message === "Object edit apply threw");
+      const withheld = threw?.[1];
+      expect(withheld).toBeInstanceOf(ProviderTextWithheldError);
+      expect(JSON.stringify(threw)).not.toContain(password);
+      expect(String((withheld as Error).stack)).not.toContain(password);
+    } finally {
+      logged.mockRestore();
+    }
   });
 
   test("a provider that answers a MALFORMED outcome is interrupted rather than trusted", async () => {

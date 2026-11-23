@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readProviderDeclarations } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
+import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
@@ -18,6 +19,9 @@ export async function POST(req: NextRequest) {
   const guard = await guardRoute({ route: "POST /api/db/provider-meta", bucket: "query", request: req });
   if ("response" in guard) return guard.response;
 
+  // Core's scrub of the resolved connection, held out here for the `catch` below: before the connection resolves no
+  // provider ran.
+  let scrub: ProviderTextScrub | undefined;
   try {
     let body;
     try {
@@ -34,6 +38,7 @@ export async function POST(req: NextRequest) {
       body.connectionId ? body : body.connection ? body : { connection: body },
       guard.session,
     );
+    scrub = providerTextScrub(connection, "any");
 
     if (!connection.type) {
       return NextResponse.json({ error: "Valid connection configuration is required" }, { status: 400 });
@@ -54,6 +59,6 @@ export async function POST(req: NextRequest) {
       labels: declarations.labels,
     });
   } catch (error) {
-    return createErrorResponse(error, { route: "api/db/provider-meta" });
+    return createErrorResponse(error, { route: "api/db/provider-meta", scrub });
   }
 }

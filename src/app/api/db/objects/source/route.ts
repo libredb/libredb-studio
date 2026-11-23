@@ -7,6 +7,7 @@ import {
   requireString,
 } from "@/lib/api/object-route";
 import { SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
+import { scrubSourceDocument } from "@/lib/db/operations/provider-text";
 
 export const dynamic = "force-dynamic";
 
@@ -39,12 +40,12 @@ export const dynamic = "force-dynamic";
  * has no API routes.
  */
 export async function POST(req: NextRequest) {
-  return handleObjectRequest(req, "api/db/objects/source", async (provider, body) => {
+  return handleObjectRequest(req, "api/db/objects/source", async (provider, body, context) => {
     const path = requireObjectPath(body);
     const kind = requireString(body, "kind");
     const read = requireSourceReader(provider, kind);
     return boundSourceDocument(
-      await read(path, kind, SOURCE_CHARACTER_LIMIT),
+      scrubSourceDocument(context.scrub, await read(path, kind, SOURCE_CHARACTER_LIMIT)),
       SOURCE_CHARACTER_LIMIT,
       provider.getCapabilities(),
     );

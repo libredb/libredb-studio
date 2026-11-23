@@ -25,6 +25,7 @@ import {
   isAuthenticationError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 
 // ─── Create mock objects ────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -250,6 +251,31 @@ describe("POST /api/db/maintenance", () => {
     expect(res.status).toBe(400);
     expect(await parseResponseJSON<{ error: string }>(res)).toEqual({ error: "Invalid request body" });
     expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+  });
+
+  test("an error that holds the connection's credential keeps its status and code and holds none of it", async () => {
+    const password = crypto.randomUUID();
+    const connection = { ...validConnection, password };
+    const send = () =>
+      POST(createMockRequest("/api/db/maintenance", { method: "POST", body: { type: "vacuum", connection } }) as never);
+    (mockProvider.runMaintenance as ReturnType<typeof mock>).mockImplementationOnce(async () => {
+      throw Object.assign(new Error(`at or near ${password}: syntax error`), { code: "42601" });
+    });
+    const withheld = await send();
+    const body = await parseResponseJSON<Record<string, unknown>>(withheld);
+    expect(withheld.status).toBe(400);
+    expect(body).toMatchObject({ code: "QUERY_ERROR", error: withheldErrorMessage("QueryError") });
+    expect(JSON.stringify(body)).not.toContain(password);
+
+    (mockProvider.runMaintenance as ReturnType<typeof mock>).mockImplementationOnce(async () => {
+      throw Object.assign(new Error("at or near vacuum: syntax error"), { code: "42601" });
+    });
+    const clean = await send();
+    expect(clean.status).toBe(400);
+    expect(await parseResponseJSON(clean)).toMatchObject({
+      code: "QUERY_ERROR",
+      error: "at or near vacuum: syntax error",
+    });
   });
 
   test("admin with valid params returns maintenance result", async () => {

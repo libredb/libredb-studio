@@ -10,6 +10,7 @@ import { validateSettings } from "@/lib/governance/settings";
 import { buildQueryEvent, queryEventPolicy } from "@/lib/query-events/build";
 import type { QueryEventInput } from "@/lib/query-events/types";
 import type { QueryEventSinkState } from "@/lib/query-events/sink";
+import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 
 // ─── Mock providers ─────────────────────────────────────────────────────────
 const mockSQLProvider = createMockProvider({
@@ -450,6 +451,64 @@ describe("POST /api/db/profile", () => {
       'SELECT COUNT(DISTINCT "body") AS distinct_count FROM dbo.notes',
       'SELECT MIN("body") AS min_value, MAX("body") AS max_value FROM dbo.notes',
     ]);
+  });
+
+  test("an error that holds the connection's credential keeps its status and code and holds none of it", async () => {
+    const password = crypto.randomUUID();
+    const connection = { ...validConnection, password };
+    const failing = (message: string) => {
+      const provider = createMockProvider({ capabilities: { queryLanguage: "sql" } });
+      (provider.query as ReturnType<typeof mock>).mockImplementation(async () => {
+        throw new QueryError(message, "postgres");
+      });
+      return provider;
+    };
+    const send = () =>
+      POST(
+        createMockRequest("/api/db/profile", {
+          method: "POST",
+          body: { connection, tablePath: ["public", "users"], columns: ["id"] },
+        }) as never,
+      );
+
+    mockGetOrCreateProvider.mockResolvedValueOnce(failing(`relation for ${password} does not exist`));
+    const withheld = await send();
+    const body = await parseResponseJSON<Record<string, unknown>>(withheld);
+    expect(withheld.status).toBe(400);
+    expect(body).toMatchObject({ code: "QUERY_ERROR", error: withheldErrorMessage("QueryError") });
+    expect(JSON.stringify(body)).not.toContain(password);
+
+    mockGetOrCreateProvider.mockResolvedValueOnce(failing("relation does not exist"));
+    const clean = await send();
+    expect(clean.status).toBe(400);
+    expect(await parseResponseJSON(clean)).toMatchObject({ code: "QUERY_ERROR", error: "relation does not exist" });
+  });
+
+  test("a column refusal that holds the connection's credential answers the withheld sentence in its error and warnings", async () => {
+    const password = crypto.randomUUID();
+    const connection = { ...validConnection, password };
+    const sqlProvider = createMockProvider({ capabilities: { queryLanguage: "sql" } });
+    (sqlProvider.query as ReturnType<typeof mock>).mockImplementation(async (sql: string) => {
+      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return { rows: [{ total: 4 }], fields: ["total"] };
+      if (sql.includes("geom")) throw new QueryError(`type refused for ${password}`);
+      if (sql.includes("COUNT(DISTINCT")) throw new QueryError(`DISTINCT refused for ${password}`);
+      if (sql.includes("MIN(")) throw new QueryError("MIN refused");
+      if (sql.includes("non_null_count")) return { rows: [{ total_count: 4, non_null_count: 3 }], fields: [] };
+      return { rows: [], fields: [] };
+    });
+    mockGetOrCreateProvider.mockResolvedValueOnce(sqlProvider);
+    const body = { connection, tablePath: ["dbo", "notes"], columns: ["body", "geom"] };
+
+    const res = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
+    const data = await parseResponseJSON<{ columns: Record<string, unknown>[] }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.columns[0].warnings).toEqual([
+      `Distinct count: ${withheldErrorMessage("QueryError")}`,
+      "Min/max: MIN refused",
+    ]);
+    expect(data.columns[1]).toEqual({ name: "geom", totalRows: 4, error: withheldErrorMessage("QueryError") });
+    expect(JSON.stringify(data)).not.toContain(password);
   });
 
   test("a range the engine refuses is reported with its reason", async () => {
@@ -1341,6 +1400,27 @@ describe("POST /api/db/profile under governance", () => {
       statement: "public.users",
       statement_type: "SELECT",
     });
+  });
+
+  test("governance: a profile that fails with an error holding the connection's credential records the withheld sentence", async () => {
+    settings({ "queryLog.statementCapture": "full" });
+    const password = crypto.randomUUID();
+    const provider = createMockProvider({ capabilities: { queryLanguage: "sql" } });
+    (provider.query as ReturnType<typeof mock>).mockImplementation(async () => {
+      throw new QueryError(`relation for ${password} does not exist`, "postgres");
+    });
+    mockGetOrCreateProvider.mockResolvedValueOnce(provider);
+    const body = { connection: { ...governedConnection, password }, tablePath: ["public", "users"], columns: ["id"] };
+
+    const res = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
+
+    expect(res.status).toBe(400);
+    expect(onlyRow()).toMatchObject({
+      status: "error",
+      error_code: "QUERY_ERROR",
+      error_message: withheldErrorMessage("QueryError"),
+    });
+    expect(JSON.stringify(recordedEvents)).not.toContain(password);
   });
 
   test("governance: refuse mode with a backing-off sink answers 503 AUDIT_UNAVAILABLE before any read and records a refused event", async () => {

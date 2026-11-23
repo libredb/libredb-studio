@@ -1051,12 +1051,14 @@ describe("POST /api/db/multi-query", () => {
         if (call === 2) throw thrown;
         return { rows: [{ id: 1 }], fields: ["id"], rowCount: 1, executionTime: 1 };
       });
+      // oxlint-disable-next-line no-await-in-loop -- each case installs the provider's query mock that the next case replaces, so the cases run in order.
       const res = await POST(
         createMockRequest("/api/db/multi-query", {
           method: "POST",
           body: { connection, sql: "SELECT 1; SELECT 2" },
         }) as never,
       );
+      // oxlint-disable-next-line no-await-in-loop -- each case installs the provider's query mock that the next case replaces, so the cases run in order.
       const data = await parseResponseJSON<{ statements: Array<{ status: string; error?: string; rows?: unknown[] }> }>(
         res,
       );

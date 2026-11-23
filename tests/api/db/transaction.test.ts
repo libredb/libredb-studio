@@ -460,17 +460,23 @@ describe("POST /api/db/transaction", () => {
       mockTxProvider.queryInTransaction.mockImplementationOnce(async () => {
         throw new QueryError(`syntax error near ${password}`, "postgres");
       });
-      for (const [body, status, code, replaced] of [
+      const cases = [
         [{ action: "begin" }, 400, "QUERY_ERROR", "QueryError"],
         [{ action: "commit" }, 503, "TRANSACTION_LOST", "TransactionLostError"],
         [{ action: "query", sql: "SELECT 1" }, 400, "QUERY_ERROR", "QueryError"],
-      ] as const) {
-        const res = await send(body);
-        const data = await parseResponseJSON<Record<string, unknown>>(res);
-        expect(res.status).toBe(status);
+      ] as const;
+      const answers = await Promise.all(
+        cases.map(async ([body]) => {
+          const res = await send(body);
+          return { status: res.status, data: await parseResponseJSON<Record<string, unknown>>(res) };
+        }),
+      );
+      cases.forEach(([, status, code, replaced], index) => {
+        const { status: answered, data } = answers[index];
+        expect(answered).toBe(status);
         expect(data).toMatchObject({ code, error: withheldErrorMessage(replaced) });
         expect(JSON.stringify(data)).not.toContain(password);
-      }
+      });
     });
   });
 

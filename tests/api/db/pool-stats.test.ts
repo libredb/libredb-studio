@@ -2,6 +2,8 @@ import { describe, test, expect, mock, beforeEach } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
+import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
+import { QueryError } from "@/lib/db/errors";
 
 // ─── Mock provider ──────────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -80,6 +82,29 @@ describe("POST /api/db/pool-stats", () => {
     mockGetSession.mockImplementation(
       async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
     );
+  });
+
+  test("an error that holds the connection's credential keeps its status and code and holds none of it", async () => {
+    const password = crypto.randomUUID();
+    const connection = { ...validConnection, password };
+    const send = () => POST(createMockRequest("/api/db/pool-stats", { method: "POST", body: { connection } }) as never);
+    const refusing = (message: string) => ({
+      ...createMockProvider(),
+      getPoolStats: mock(() => {
+        throw new QueryError(message, "postgres");
+      }),
+    });
+    mockGetOrCreateProvider.mockResolvedValueOnce(refusing(`pool read refused for ${password}`));
+    const withheld = await send();
+    const body = await parseResponseJSON<Record<string, unknown>>(withheld);
+    expect(withheld.status).toBe(400);
+    expect(body).toMatchObject({ code: "QUERY_ERROR", error: withheldErrorMessage("QueryError") });
+    expect(JSON.stringify(body)).not.toContain(password);
+
+    mockGetOrCreateProvider.mockResolvedValueOnce(refusing("pool read refused"));
+    const clean = await send();
+    expect(clean.status).toBe(400);
+    expect(await parseResponseJSON(clean)).toMatchObject({ code: "QUERY_ERROR", error: "pool read refused" });
   });
 
   test("returns 401 when no session exists", async () => {

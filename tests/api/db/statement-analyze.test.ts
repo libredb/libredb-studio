@@ -20,6 +20,8 @@ import * as actualDb from "@/lib/db";
 import * as actualFactory from "@/lib/db/factory";
 import type { ProviderDeclarations } from "@/lib/db/factory";
 import * as actualResolve from "@/lib/seed/resolve-connection";
+import { DatabaseConfigError } from "@/lib/db/errors";
+import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import type { DatabaseType } from "@/lib/types";
 import { admittedConnection, grantedSnapshot } from "../../helpers/governance/granted-snapshot";
 
@@ -514,6 +516,25 @@ describe("POST /api/db/statement/analyze without governance", () => {
   ])("a body that is %s answers 400 Invalid request body, and resolves nothing", async (_label, body) => {
     expect(await analyze(body)).toEqual({ status: 400, body: { error: "Invalid request body" }, retryAfter: null });
     expect(resolveConnection).not.toHaveBeenCalled();
+  });
+
+  test("an error that holds the connection's credential keeps its status and code and holds none of it", async () => {
+    const password = crypto.randomUUID();
+    const connection = { id: "inline-pg", name: "Inline", type: "postgres", host: "127.0.0.1", port: 1, password };
+    readProviderDeclarations.mockImplementationOnce(async () => {
+      throw new DatabaseConfigError(`the file ${password} is not a database`, "postgres");
+    });
+    const withheld = await analyze({ connection, text: TWO, ...at(19) });
+    expect(withheld.status).toBe(400);
+    expect(withheld.body).toMatchObject({ code: "CONFIG_ERROR", error: withheldErrorMessage("DatabaseConfigError") });
+    expect(JSON.stringify(withheld.body)).not.toContain(password);
+
+    readProviderDeclarations.mockImplementationOnce(async () => {
+      throw new DatabaseConfigError("the file is not a database", "postgres");
+    });
+    const clean = await analyze({ connection, text: TWO, ...at(19) });
+    expect(clean.status).toBe(400);
+    expect(clean.body).toMatchObject({ code: "CONFIG_ERROR", error: "the file is not a database" });
   });
 
   // H3: the connection alone, as the custom connections census sends it.
