@@ -23,6 +23,9 @@ import { isSourcePath, moduleSpecifiers } from "./lib/db/provider-imports/scan";
 
 const SDK = "@libredb/provider-sdk";
 const CORE_ROOTS = ["src", "bin", "scripts", "tests", "e2e", "vscode-extension/src"];
+/** Studio's runtime source, which never imports the SDK's testing entry (docs/providers/CONTRACT.md, clause C-18). */
+const RUNTIME_ROOTS = ["src", "bin", "vscode-extension/src"];
+const SDK_TESTING = `${SDK}/testing`;
 
 /** Every source file under `directory` of `root`, as sorted repository-relative POSIX paths; none when it is absent. */
 function sourceFilesUnder(root: string, directory: string): string[] {
@@ -101,6 +104,24 @@ function inwardPathFailures(root: string): string[] {
   return failures.sort();
 }
 
+/**
+ * Every runtime file under `root` that imports the SDK's testing entry, in any form the scanner reads (static, `import
+ * type`, `export from`, `import()` and `require()`), sorted. Only files whose text names the entry are parsed.
+ */
+function testingEntryFailures(root: string): string[] {
+  const failures: string[] = [];
+  for (const file of RUNTIME_ROOTS.flatMap((directory) => sourceFilesUnder(root, directory))) {
+    const text = readFileSync(path.join(root, file), "utf8");
+    if (!text.includes(SDK_TESTING)) continue;
+    for (const specifier of moduleSpecifiers(text)) {
+      if (specifier === SDK_TESTING || specifier.startsWith(`${SDK_TESTING}/`)) {
+        failures.push(`${file} imports "${specifier}", the SDK's testing entry, which only tests import`);
+      }
+    }
+  }
+  return failures.sort();
+}
+
 describe("the package import rule", () => {
   test("the repository's packages import only what they declare", () => {
     expect(workspacePackageManifests(REPOSITORY_ROOT).length).toBeGreaterThan(0);
@@ -119,6 +140,39 @@ describe("the package import rule", () => {
 
   test("core reaches no workspace package by path", () => {
     expect(inwardPathFailures(REPOSITORY_ROOT)).toEqual([]);
+  });
+
+  test("Studio's runtime source never imports the SDK's testing entry", () => {
+    expect(sourceFilesUnder(REPOSITORY_ROOT, "bin").length).toBeGreaterThan(0);
+    expect(testingEntryFailures(REPOSITORY_ROOT)).toEqual([]);
+  });
+
+  test("a planted runtime file that imports the testing entry fails by file and specifier", () => {
+    const root = plantedRoot({
+      copy: [],
+      workspaces: false,
+      linkNodeModules: false,
+      files: {
+        "src/lib/a.ts": `import { serve } from "${SDK_TESTING}";\nexport const a = serve;\n`,
+        "src/lib/b.ts": `export const b = () => require("${SDK_TESTING}");\n`,
+        "bin/c.ts": `import type { FrameRefusal } from "${SDK_TESTING}";\nexport type C = FrameRefusal;\n`,
+        "vscode-extension/src/d.ts": `export const d = () => import("${SDK_TESTING}");\n`,
+        "src/lib/e.ts": `// import "${SDK_TESTING}";\nexport const e = "${SDK_TESTING}";\n`,
+        "tests/unit/f.test.ts": `import { readFrame } from "${SDK_TESTING}";\nexport const f = readFrame;\n`,
+        "scripts/g.ts": `import "${SDK_TESTING}";\n`,
+        "e2e/h.ts": `export * from "${SDK_TESTING}";\n`,
+      },
+    });
+    try {
+      expect(testingEntryFailures(root)).toEqual([
+        `bin/c.ts imports "${SDK_TESTING}", the SDK's testing entry, which only tests import`,
+        `src/lib/a.ts imports "${SDK_TESTING}", the SDK's testing entry, which only tests import`,
+        `src/lib/b.ts imports "${SDK_TESTING}", the SDK's testing entry, which only tests import`,
+        `vscode-extension/src/d.ts imports "${SDK_TESTING}", the SDK's testing entry, which only tests import`,
+      ]);
+    } finally {
+      removePlantedRoot(root);
+    }
   });
 
   test("a planted package and planted core files fail by file and specifier", () => {

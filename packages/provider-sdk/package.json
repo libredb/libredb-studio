@@ -13,7 +13,8 @@
     "./values": "./src/values/index.ts",
     "./errors": "./src/errors/index.ts",
     "./calls": "./src/calls/index.ts",
-    "./sql": "./src/sql/index.ts"
+    "./sql": "./src/sql/index.ts",
+    "./testing": "./src/testing/index.ts"
   },
   "dependencies": {
     "ajv": "^8.17.1"

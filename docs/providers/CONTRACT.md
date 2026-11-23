@@ -13,8 +13,9 @@ The SDK package `@libredb/provider-sdk`, under [`packages/provider-sdk`](../../p
 - [`errors/index.ts`](../../packages/provider-sdk/src/errors/index.ts), the error record's shape and vocabularies, the kinds a provider may raise and the driver error row contract, exported from `@libredb/provider-sdk/errors`.
 - [`calls/index.ts`](../../packages/provider-sdk/src/calls/index.ts), the call and context types, `defineProvider`, `checkProviderModule` and `envReader`, the host's checks of a call, `checkExecuteRequest`, `checkConsoleFacet`, `checkRefinement` and `sessionCalls`, `freezeContext` and `freezeData`, and the byte budgets `BATCH_MAX_BYTES` and `PAGE_MAX_BYTES` with `encodedRowBytes`, `rowsSource` and `pumpPage`, exported from `@libredb/provider-sdk/calls`.
 - `SqlGrammar` and its member types, the compatibility default `DEFAULT_SQL_GRAMMAR`, and `hashRunIsAmbiguous`, exported from `@libredb/provider-sdk/sql`.
+- [`testing/index.ts`](../../packages/provider-sdk/src/testing/index.ts), `readFrame`, `roundTripRefusals` and the frame refusals, exported from `@libredb/provider-sdk/testing` only.
 
-The package root exports every entry's surface.
+The package root exports every entry's surface but the testing entry's, which only tests import (C-18).
 The schema, the generated types and the constants the SDK exports are the source for every vocabulary named here, and this document lists none of them by hand.
 
 ## How to read this document
@@ -825,6 +826,46 @@ The refusal names the facet by its call name and a JSON Pointer into the session
 
 - test `packages/provider-sdk/tests/calls/request.test.ts` "a console facet the session does not offer is refused before the call"
 - test `packages/provider-sdk/tests/calls/request.test.ts` "a console facet the session offers is called"
+
+### C-18 (normative): The testing entry is for tests
+
+`@libredb/provider-sdk/testing` holds the memory test transport's pieces, and only tests import it.
+The package root never re-exports it, and Studio's runtime source under `src/`, `bin/` and `vscode-extension/src/` never imports it, in any form, a type import included.
+
+- test `packages/provider-sdk/tests/manifest/digest.test.ts` "the package root does not export the testing surface"
+- test `tests/unit/package-imports.test.ts` "Studio's runtime source never imports the SDK's testing entry"
+- test `tests/unit/package-imports.test.ts` "a planted runtime file that imports the testing entry fails by file and specifier"
+
+### C-20 (normative): Each part of each frame is read as a closed shape
+
+`readFrame` reads each part of each call's frame, its context, its request and its answer, as the closed shape of the call type it carries.
+A key the shape does not define, a required key the part lacks, and a value of the wrong type, outside its vocabulary, behind an accessor or in a list with a hole are each refused by a rule of `FRAME_REFUSAL_RULES`, at a JSON Pointer into the part, and never with a value of it.
+A page bound is exactly one of its two forms, and a connection's keys are the contract's field names.
+Each reader is declared as the shape of its call type, so a member added to a call type, or to a union it reads, fails typecheck until its reader names it.
+
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a well-formed frame of every call and part is admitted"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a key a frame's shape does not define is refused as frame-key-unknown at its pointer"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a required key a frame lacks is refused as frame-key-missing"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a value of the wrong type or outside its vocabulary is refused as frame-value-unreadable"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a page bound is exactly one of its two forms"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a connection's keys are the contract's field names and each value a connection field value"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "no frame refusal and no sentence carries a value of the frame"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "every frame refusal rule is worded in one sentence"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a FrameRefusalError carries every refusal and words each"
+
+### C-21 (normative): What crosses is compared deep-equal, and whatever the round trip changes is refused
+
+The value a side decodes is compared deep-equal with the value the other side handed, as `roundTripRefusals` does, and never copied with `structuredClone`, so a test sees what a JSON boundary does to a value.
+Whatever the value codec's JSON round trip changes or drops is refused as `round-trip-changed` at its pointer: a symbol-keyed property, at the object that holds it, a non-enumerable property, an accessor, whose getter the comparison never calls, an array's property that is not an index, at the array, and a key, a length or a leaf that differs.
+What the codec defines as equal compares equal: `-0` and `0`, NaN and NaN, a `Uint8Array` subclass such as a Buffer and a plain `Uint8Array` of the same bytes, a `Date` subclass and a `Date` of the same time, and an object with no prototype and one with `Object.prototype`.
+A `Uint8Array` and a `Date` are compared by their bytes and their time alone, so an own property either one carries besides them is not compared: a typed array's own keys are its indices, and walking them would cost a pass over every byte.
+
+- test `packages/provider-sdk/tests/testing/round-trip.test.ts` "a value the codec carries is admitted, with -0, a Buffer, a null-prototype object and Date and Uint8Array subclasses compared as the codec defines them"
+- test `packages/provider-sdk/tests/testing/round-trip.test.ts` "a symbol-keyed property is refused as round-trip-changed at the pointer of the object that holds it"
+- test `packages/provider-sdk/tests/testing/round-trip.test.ts` "a non-enumerable property is refused as round-trip-changed at its pointer"
+- test `packages/provider-sdk/tests/testing/round-trip.test.ts` "an accessor is refused as round-trip-changed at its pointer, and the comparison never calls its getter"
+- test `packages/provider-sdk/tests/testing/round-trip.test.ts` "an array's own property that is not an index is refused as round-trip-changed at the array"
+- test `packages/provider-sdk/tests/testing/round-trip.test.ts` "a received value that differs from the sent one is refused at the pointer where it differs"
 
 ## Not yet in this contract
 
