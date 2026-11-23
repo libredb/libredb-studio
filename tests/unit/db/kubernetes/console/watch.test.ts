@@ -5,7 +5,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { TransportError } from "@/lib/db/http/node-transport";
-import { type KubectlStatement, parseKubectl } from "@/lib/db/providers/platform/kubernetes/console/parse";
+import { type KubectlStatement, parseKubectl } from "@/lib/languages/kubectl/parse";
 import {
   getWatch,
   WATCH_BYTES_SENTENCE,

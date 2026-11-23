@@ -3,7 +3,7 @@
  * masks, so a line pasted with a token or a Secret's value is stored without it, whatever form the flag takes.
  */
 import { describe, expect, test } from "bun:test";
-import { CREDENTIAL_FLAGS } from "@/lib/db/providers/platform/kubernetes/console/commands";
+import { CREDENTIAL_FLAGS } from "@/lib/languages/kubectl/commands";
 import { QUERY_DIALECTS } from "@/lib/db/query-dialects";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { historyMaskOf, maskStatementForHistory } from "@/lib/history-mask";
@@ -24,9 +24,10 @@ const KUBECTL: ProviderCapabilities = {
 };
 
 describe("the kubectl history mask", () => {
-  // The shared registry writes the six flags literally, so it imports nothing from the provider; this pins them equal.
+  // The shared registry reads the six flags from the kubectl family module; this pins them to be that list.
   test("the dialect declares exactly the console's credential flags", () => {
     expect(QUERY_DIALECTS.kubectl.historyMask).toEqual({ credentialFlags: [...CREDENTIAL_FLAGS] });
+    expect(QUERY_DIALECTS.kubectl.historyMask?.credentialFlags).toBe(CREDENTIAL_FLAGS);
     expect(historyMaskOf(KUBECTL)).toEqual({ credentialFlags: [...CREDENTIAL_FLAGS] });
   });
 

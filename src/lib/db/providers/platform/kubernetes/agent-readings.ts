@@ -21,10 +21,11 @@ import type {
 } from "@/lib/db/types";
 import { ACCEPT_JSON } from "./client";
 import { byCodeUnit, inTurn, type KubectlContext, objectOf, stringOf } from "./console/context";
-import { milliValue, parseQuantity, wholeValue } from "./console/top";
+import { milliValue, parseQuantity, wholeValue } from "@/lib/languages/kubectl/quantity";
 import { findResource, type IndexedResource } from "./discovery";
 import { KubernetesRequestError } from "./errors";
-import { KUBERNETES_MAX_STATEMENT_ROWS, KUBERNETES_PAGE_SIZE, KUBERNETES_TYPE } from "./limits";
+import { KUBERNETES_MAX_STATEMENT_ROWS, KUBERNETES_PAGE_SIZE } from "@/lib/languages/kubectl/constants";
+import { KUBERNETES_TYPE } from "./limits";
 import { redactResponse } from "./redaction";
 import { parseTable, scanTable } from "./table";
 

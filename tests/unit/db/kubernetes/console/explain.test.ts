@@ -7,7 +7,7 @@ import { describe, expect, test } from "bun:test";
 import type { NodeRequest, NodeResponse } from "@/lib/db/http/node-transport";
 import { TransportError } from "@/lib/db/http/node-transport";
 import { explain } from "@/lib/db/providers/platform/kubernetes/console/explain";
-import { type KubectlStatement, parseKubectl } from "@/lib/db/providers/platform/kubernetes/console/parse";
+import { type KubectlStatement, parseKubectl } from "@/lib/languages/kubectl/parse";
 import { consoleContext, routes, textAnswer } from "../../../../helpers/kubernetes-console";
 import { jsonAnswer } from "../../../../helpers/kubernetes-transport";
 

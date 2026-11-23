@@ -43,7 +43,7 @@ import {
   KUBERNETES_LOG_TAIL_MAX,
   KUBERNETES_MAX_DOCUMENT_OBJECTS,
   KUBERNETES_PAGE_SIZE,
-} from "../limits";
+} from "./constants";
 import { commandWordIndex, isKubectlFlagText, KUBECTL_VALUE_GLOBAL_FLAGS, kubectlWords } from "./lexer";
 
 export type GetOutput = "table" | "wide" | "name" | "json" | "yaml";

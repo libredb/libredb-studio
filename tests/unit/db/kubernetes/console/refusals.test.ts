@@ -14,9 +14,9 @@ import {
   notInV1CommandSentence,
   notReadOnlySentence,
   tooManyNamesSentence,
-} from "@/lib/db/providers/platform/kubernetes/console/commands";
-import { kubectlRefusal } from "@/lib/db/providers/platform/kubernetes/console/guard";
-import { PAGING_CLAUSE_SENTENCE } from "@/lib/db/providers/platform/kubernetes/console/paging";
+} from "@/lib/languages/kubectl/commands";
+import { kubectlRefusal } from "@/lib/languages/kubectl/guard";
+import { PAGING_CLAUSE_SENTENCE } from "@/lib/languages/kubectl/paging";
 import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes/index";
 import { ALLOWS_PRIVATE_HOSTS } from "../../../../helpers/egress-decisions";
 import { fakeCluster } from "../../../../helpers/kubernetes-cluster";

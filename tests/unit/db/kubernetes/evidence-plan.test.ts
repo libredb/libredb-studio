@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
-import { KUBECTL_COMMAND_TABLE } from "@/lib/db/providers/platform/kubernetes/console/commands";
-import { parseKubectl } from "@/lib/db/providers/platform/kubernetes/console/parse";
+import { KUBECTL_COMMAND_TABLE } from "@/lib/languages/kubectl/commands";
+import { parseKubectl } from "@/lib/languages/kubectl/parse";
 import { connectionOf, insideDirectory, runArguments } from "../../../live/kubernetes-evidence";
 import {
   EVIDENCE_TARGETS,

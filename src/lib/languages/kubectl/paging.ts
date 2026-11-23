@@ -7,7 +7,7 @@
  * goes on untouched with `wasLimited: false`, so the grid never offers a page two the statement cannot serve.
  */
 import type { PreparedQuery, QueryPrepareOptions } from "@/lib/db/types";
-import { KUBERNETES_MAX_STATEMENT_ROWS, KUBERNETES_PAGE_SIZE } from "../limits";
+import { KUBERNETES_MAX_STATEMENT_ROWS, KUBERNETES_PAGE_SIZE } from "./constants";
 import { isPageable, type KubectlRefusalCode, type KubectlStatement, parseKubectl } from "./parse";
 
 /** The sentence for a paging line under a statement that cannot page. */

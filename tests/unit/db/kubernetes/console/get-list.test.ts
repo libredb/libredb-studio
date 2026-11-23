@@ -8,7 +8,7 @@ import { QueryError } from "@/lib/db/errors";
 import type { NodeRequest } from "@/lib/db/http/node-transport";
 import { TransportError } from "@/lib/db/http/node-transport";
 import { getList, getNamed, ROWS_CAP_SENTENCE } from "@/lib/db/providers/platform/kubernetes/console/get-list";
-import { type KubectlStatement, parseKubectl } from "@/lib/db/providers/platform/kubernetes/console/parse";
+import { type KubectlStatement, parseKubectl } from "@/lib/languages/kubectl/parse";
 import { STATEMENT_DEADLINE_SENTENCE } from "@/lib/db/providers/platform/kubernetes/console/context";
 import {
   CONSOLE_NOW,

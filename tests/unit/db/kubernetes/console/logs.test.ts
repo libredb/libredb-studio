@@ -11,7 +11,7 @@ import {
   splitTimestamp,
   stripTerminalEscapes,
 } from "@/lib/db/providers/platform/kubernetes/console/logs";
-import { type KubectlStatement, parseKubectl } from "@/lib/db/providers/platform/kubernetes/console/parse";
+import { type KubectlStatement, parseKubectl } from "@/lib/languages/kubectl/parse";
 import { consoleContext, listAnswer, routes, sentLines, textAnswer } from "../../../../helpers/kubernetes-console";
 import { jsonAnswer } from "../../../../helpers/kubernetes-transport";
 import { errorKind } from "@/lib/db/error-record";

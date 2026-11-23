@@ -17,7 +17,7 @@ import {
   KUBECTL_SENTENCES,
   NOT_IN_V1_COMMANDS,
   NOT_READ_ONLY_COMMANDS,
-} from "@/lib/db/providers/platform/kubernetes/console/commands";
+} from "@/lib/languages/kubectl/commands";
 import { DISCOVERY_FLOOR_SENTENCE, VERSION_FLOOR_SENTENCE } from "@/lib/db/providers/platform/kubernetes/discovery";
 import {
   ANONYMOUS_UNAUTHORIZED_SENTENCE,
@@ -26,6 +26,13 @@ import {
   UNAUTHORIZED_SENTENCE,
 } from "@/lib/db/providers/platform/kubernetes/errors";
 import * as limits from "@/lib/db/providers/platform/kubernetes/limits";
+import {
+  KUBERNETES_LOG_LIMIT_BYTES,
+  KUBERNETES_LOG_TAIL_MAX,
+  KUBERNETES_MAX_DOCUMENT_OBJECTS,
+  KUBERNETES_MAX_STATEMENT_ROWS,
+  KUBERNETES_PAGE_SIZE,
+} from "@/lib/languages/kubectl/constants";
 import { KUBERNETES_SAMPLED_FROM } from "@/lib/db/providers/platform/kubernetes/objects";
 import { planRequest } from "@/lib/db/providers/platform/kubernetes/request-policy";
 import { KUBECONFIG_IMPORT_SENTENCES } from "@/lib/kubernetes/kubeconfig-import";
@@ -99,20 +106,20 @@ describe("the console section is the command table", () => {
   });
 });
 
-describe("the limits table is limits.ts", () => {
+describe("the limits table is limits.ts and the kubectl family's constants.ts", () => {
   test.each([
-    ["Objects per list request", count(limits.KUBERNETES_PAGE_SIZE)],
-    ["Rows one statement reads", count(limits.KUBERNETES_MAX_STATEMENT_ROWS)],
+    ["Objects per list request", count(KUBERNETES_PAGE_SIZE)],
+    ["Rows one statement reads", count(KUBERNETES_MAX_STATEMENT_ROWS)],
     ["Objects the tree lists per kind and container", count(limits.KUBERNETES_TREE_OBJECT_CAP)],
     ["Bytes per response", mib(limits.KUBERNETES_MAX_RESPONSE_BYTES)],
     ["Nesting of an answer's objects and arrays", `${count(limits.KUBERNETES_MAX_JSON_DEPTH)} levels`],
     ["Bytes per `-o json` or `-o yaml` document", mib(limits.KUBERNETES_MAX_DOCUMENT_BYTES)],
-    ["Objects per `-o json` or `-o yaml` statement", count(limits.KUBERNETES_MAX_DOCUMENT_OBJECTS)],
+    ["Objects per `-o json` or `-o yaml` statement", count(KUBERNETES_MAX_DOCUMENT_OBJECTS)],
     ["Log lines without `--tail`", count(limits.KUBERNETES_LOG_TAIL_DEFAULT)],
     ["Log lines a pod's click and its Logs row action read", count(limits.KUBERNETES_LOG_ROW_TAIL)],
-    ["Log lines `--tail` may ask for", count(limits.KUBERNETES_LOG_TAIL_MAX)],
+    ["Log lines `--tail` may ask for", count(KUBERNETES_LOG_TAIL_MAX)],
     ["Log lines per pod under `-l` without `--tail`", count(limits.KUBERNETES_LOG_SELECTOR_TAIL)],
-    ["Bytes per log stream", mib(limits.KUBERNETES_LOG_LIMIT_BYTES)],
+    ["Bytes per log stream", mib(KUBERNETES_LOG_LIMIT_BYTES)],
     ["Log streams per statement", count(limits.KUBERNETES_MAX_LOG_STREAMS)],
     ["Watch window without `--request-timeout`", `${limits.KUBERNETES_WATCH_WINDOW_SECONDS} s`],
     ["Bytes per watch window", mib(limits.KUBERNETES_WATCH_WINDOW_BYTES)],

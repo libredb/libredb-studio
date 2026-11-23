@@ -18,13 +18,8 @@ import { byteBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
 import { ACCEPT_JSON } from "../client";
 import type { IndexedResource } from "../discovery";
 import { KubernetesRequestError, KubernetesResponseTooLargeError } from "../errors";
-import {
-  KUBERNETES_MAX_DOCUMENT_BYTES,
-  KUBERNETES_MAX_DOCUMENT_OBJECTS,
-  KUBERNETES_MAX_DOCUMENTS_BYTES,
-  KUBERNETES_PAGE_SIZE,
-  KUBERNETES_TYPE,
-} from "../limits";
+import { KUBERNETES_MAX_DOCUMENT_OBJECTS, KUBERNETES_PAGE_SIZE } from "@/lib/languages/kubectl/constants";
+import { KUBERNETES_MAX_DOCUMENT_BYTES, KUBERNETES_MAX_DOCUMENTS_BYTES, KUBERNETES_TYPE } from "../limits";
 import { maskObjectForMachine } from "../machine-redaction";
 import { redactResponse } from "../redaction";
 import { type KubeTable, parseTable, scanTable } from "../table";

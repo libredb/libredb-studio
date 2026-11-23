@@ -133,6 +133,12 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/languages/influxql/agent-statement.ts` | SDK /influxql | The agent's reader of one InfluxQL statement, pure; the influxdb provider's agent profile runs it and the admission reads it. |
 | `src/lib/languages/influxql/lexer.ts` | SDK /influxql | InfluxQL read as tokens as the server's scanner reads it, pure; the provider, the editor language and the policy read it. |
 | `src/lib/languages/influxql/policy.ts` | SDK /influxql | The InfluxQL read policy, pure; the provider and the confirmation gate ask the same function. |
+| `src/lib/languages/kubectl/commands.ts` | SDK /kubectl | The kubectl subset as data, its commands, flags, refused commands and flags and every refusal sentence, pure; the parser, the console's context, the provider's labels and the query dialect's history mask read it. |
+| `src/lib/languages/kubectl/constants.ts` | SDK /kubectl | The five caps a kubectl statement is read against, the page size, the rows one statement reads, the objects of a document statement and the `--tail` and `--limit-bytes` maxima; the parser and the paging clause read them, and the provider's list walks and readers apply them. |
+| `src/lib/languages/kubectl/lexer.ts` | SDK /kubectl | The kubectl command line read as shell words and token roles, pure; the editor syntax and the parser read it. |
+| `src/lib/languages/kubectl/paging.ts` | SDK /kubectl | The console's reading of one kubectl run and the grid's paging clause, pure; the provider prepares and runs a statement through it, and the admission and the confirmation row read it. |
+| `src/lib/languages/kubectl/parse.ts` | SDK /kubectl | One kubectl statement read to a typed statement or a refusal sentence, pure; each reader of the provider's console takes the typed statement. |
+| `src/lib/languages/kubectl/quantity.ts` | SDK /kubectl | A Kubernetes quantity read as an exact fraction, its rounded values and sums, pure; `kubectl top`, the agent's cluster readings and the agent's tool input schema read it. |
 | `src/lib/languages/oxiacli/agent-statement.ts` | SDK /oxiacli | The agent's reader of one oxia client command. |
 | `src/lib/languages/oxiacli/commands.ts` | SDK /oxiacli | The oxia client command table and parser the provider and the gate read. |
 | `src/lib/languages/oxiacli/constants.ts` | SDK /oxiacli | The numbers and fixed names the oxia command language reads: the CLI's default port, the internal key prefix, the list and scan limits, the text bound and the echo width. |
@@ -195,8 +201,6 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 | `src/lib/agent/languages/etcdctl/adapter.ts` | 1 statement reader module | PR 8 etcdctl | the etcdctl family, `src/lib/languages/etcdctl/` |
 | `src/lib/agent/languages/fsquery/adapter.ts` | 1 statement reader module | PR 8 fsquery | the fsquery family, `src/lib/languages/fsquery/` |
 | `src/lib/agent/languages/kafkaread/adapter.ts` | 1 statement reader module | PR 8 kafkaread | the kafkaread family, `src/lib/languages/kafkaread/` |
-| `src/lib/agent/languages/kubectl/adapter.ts` | 1 statement reader module | PR 8 kubectl | the kubectl family, `src/lib/languages/kubectl/` |
-| `src/lib/agent/languages/kubectl/definitions.ts` | 1 agent fact and reader module | PR 8 kubectl | the kubectl family, `src/lib/languages/kubectl/` |
 | `src/lib/agent/languages/libredbkv/adapter.ts` | 1 statement reader module | PR 8 libredbkv | the libredbkv family, `src/lib/languages/libredbkv/` |
 | `src/lib/agent/languages/milvusrpc/adapter.ts` | 1 statement reader module | PR 8 milvusrpc | the milvusrpc family, `src/lib/languages/milvusrpc/` |
 | `src/lib/agent/languages/modbusread/adapter.ts` | 1 statement reader module | PR 8 modbusread | the modbusread family, `src/lib/languages/modbusread/` |
@@ -232,7 +236,7 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 | `src/lib/connection-string-parser.ts` | 2 paste readers, re-exported (databend, snowflake) | PR 11 connection | the manifest's connection section |
 | `src/lib/db/connection-form.ts` | 1 snowflake account host reader | PR 11 connection | the manifest's connection section |
 | `src/lib/db/connection-string/index.ts` | 43 connection string rows | PR 11 connection | manifest rows: the PR 9 schema, collected by the PR 11 projection |
-| `src/lib/db/destructive-commands.ts` | 6 confirmation vocabulary rows | PR 8 etcdctl, PR 8 fsquery, PR 8 kubectl, PR 8 milvusrpc, PR 8 qdrantapi, PR 8 s3api | each row into its statement language's core family module |
+| `src/lib/db/destructive-commands.ts` | 5 confirmation vocabulary rows | PR 8 etcdctl, PR 8 fsquery, PR 8 milvusrpc, PR 8 qdrantapi, PR 8 s3api | each row into its statement language's core family module |
 | `src/lib/db/driver-errors/index.ts` | 7 driver error rows | PR 11 policy | manifest rows: the PR 9 schema, collected by the PR 11 projection |
 | `src/lib/db/editor-language/index.ts` | 15 editor language rows | PR 11 editor and SQL text | manifest rows: the PR 9 schema, collected by the PR 11 projection |
 | `src/lib/db/engine-facets/index.ts` | 43 engine facets rows | PR 11 policy | manifest rows: the PR 9 schema, collected by the PR 11 projection |
@@ -245,7 +249,6 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 | `src/lib/db/operations/etcdctl-admission.ts` | 1 statement reader module | PR 8 etcdctl | the etcdctl family, `src/lib/languages/etcdctl/` |
 | `src/lib/db/operations/fsquery-admission.ts` | 1 statement reader module | PR 8 fsquery | the fsquery family, `src/lib/languages/fsquery/` |
 | `src/lib/db/operations/kafkaread-admission.ts` | 1 statement reader module | PR 8 kafkaread | the kafkaread family, `src/lib/languages/kafkaread/` |
-| `src/lib/db/operations/kubectl-admission.ts` | 1 statement reader module | PR 8 kubectl | the kubectl family, `src/lib/languages/kubectl/` |
 | `src/lib/db/operations/libredbkv-admission.ts` | 1 statement reader module | PR 8 libredbkv | the libredbkv family, `src/lib/languages/libredbkv/` |
 | `src/lib/db/operations/milvusrpc-admission.ts` | 1 statement reader module | PR 8 milvusrpc | the milvusrpc family, `src/lib/languages/milvusrpc/` |
 | `src/lib/db/operations/modbusread-admission.ts` | 1 statement reader module | PR 8 modbusread | the modbusread family, `src/lib/languages/modbusread/` |

@@ -11,11 +11,12 @@ import type { QueryWarning } from "@/lib/types";
 import type { KubernetesCall } from "../client";
 import type { IndexedResource } from "../discovery";
 import { typeMissingSentence } from "../errors";
-import { KUBERNETES_MAX_STATEMENT_ROWS, KUBERNETES_TYPE, KUBERNETES_WINDOW_MARGIN_MS } from "../limits";
+import { KUBERNETES_MAX_STATEMENT_ROWS } from "@/lib/languages/kubectl/constants";
+import { KUBERNETES_TYPE, KUBERNETES_WINDOW_MARGIN_MS } from "../limits";
 import type { KubernetesSurface } from "../objects";
 import type { RedactionMode } from "../redaction";
 import { resolveResource } from "../resolve";
-import { KUBECTL_SENTENCES } from "./commands";
+import { KUBECTL_SENTENCES } from "@/lib/languages/kubectl/commands";
 
 /** The OpenAPI group documents `explain` has read, by their immutable URL; the oldest goes first past the bound. */
 export class ExplainCache {

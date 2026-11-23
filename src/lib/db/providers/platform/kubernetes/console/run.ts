@@ -17,8 +17,8 @@ import { explain } from "./explain";
 import { getDocuments } from "./get-documents";
 import { getList, getNamed, type RowWindow } from "./get-list";
 import { readLogs } from "./logs";
-import { AGENT_PAGING_SENTENCE, readKubectlRun } from "./paging";
-import type { KubectlStatement } from "./parse";
+import { AGENT_PAGING_SENTENCE, readKubectlRun } from "@/lib/languages/kubectl/paging";
+import type { KubectlStatement } from "@/lib/languages/kubectl/parse";
 import { readTop } from "./top";
 import { getWatch } from "./watch";
 

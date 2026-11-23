@@ -1,6 +1,8 @@
 /**
- * The Kubernetes provider's identity and every numeric cap it applies, in one module that imports nothing at run
- * time, so the browser-side kubeconfig importer can read the paste cap without reaching the provider's server code.
+ * The Kubernetes provider's identity and its numeric caps, in one module that imports nothing at run time, so the
+ * browser-side kubeconfig importer can read the paste cap without reaching the provider's server code. The five caps
+ * a kubectl statement is read against are the kubectl statement language's, in
+ * `src/lib/languages/kubectl/constants.ts`.
  *
  * A value above a cap is refused with a sentence naming the cap, never clamped.
  */
@@ -13,10 +15,6 @@ export const KUBERNETES_DEFAULT_PORT = 6443;
 /** The calls in flight for one connection, and so the sockets of its one Agent. */
 export const KUBERNETES_MAX_IN_FLIGHT = 4;
 
-/** Objects per list request. */
-export const KUBERNETES_PAGE_SIZE = 500;
-/** Rows one console statement may read. */
-export const KUBERNETES_MAX_STATEMENT_ROWS = 5_000;
 /**
  * Pages of one list walk that may hold no object yet carry a continue token. A selector can leave a page empty, but a
  * server that keeps answering such pages would hold the walk for ever, so past this many it stops.
@@ -30,8 +28,6 @@ export const KUBERNETES_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 export const KUBERNETES_MAX_DOCUMENT_BYTES = 1024 * 1024;
 /** Bytes the documents of one `-o json|yaml` statement may hold together. */
 export const KUBERNETES_MAX_DOCUMENTS_BYTES = 16 * 1024 * 1024;
-/** Objects one `-o json|yaml` statement may show. */
-export const KUBERNETES_MAX_DOCUMENT_OBJECTS = 500;
 /** Log lines read when `--tail` is absent. */
 export const KUBERNETES_LOG_TAIL_DEFAULT = 500;
 /**
@@ -40,12 +36,8 @@ export const KUBERNETES_LOG_TAIL_DEFAULT = 500;
  * `--tail=50`, so the reader sees the bound and can raise it in the editor.
  */
 export const KUBERNETES_LOG_ROW_TAIL = 50;
-/** The most log lines `--tail` may ask for. */
-export const KUBERNETES_LOG_TAIL_MAX = 5_000;
 /** Log lines per pod when `-l` selects the pods and `--tail` is absent, as kubectl reads them. */
 export const KUBERNETES_LOG_SELECTOR_TAIL = 10;
-/** The `limitBytes` of every log request, and the most `--limit-bytes` may ask for. */
-export const KUBERNETES_LOG_LIMIT_BYTES = 1024 * 1024;
 /** Log streams one statement may open, kubectl's `--max-log-requests` default. */
 export const KUBERNETES_MAX_LOG_STREAMS = 5;
 /** The bounded watch window when `--request-timeout` is absent, in seconds. */

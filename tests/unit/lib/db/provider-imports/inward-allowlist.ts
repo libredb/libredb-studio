@@ -35,14 +35,6 @@ export const INWARD_IMPORTS: readonly AllowlistEntry[] = [
     modules: ["stream/kafka/agent-statement.ts"],
   },
   {
-    file: "src/lib/agent/languages/kubectl/adapter.ts",
-    modules: ["platform/kubernetes/console/paging.ts"],
-  },
-  {
-    file: "src/lib/agent/languages/kubectl/definitions.ts",
-    modules: ["platform/kubernetes/console/top.ts"],
-  },
-  {
     file: "src/lib/agent/languages/libredbkv/adapter.ts",
     modules: ["embedded/libredb-command.ts"],
   },
@@ -237,7 +229,6 @@ export const INWARD_IMPORTS: readonly AllowlistEntry[] = [
       "document/firestore/destructive.ts",
       "keyvalue/etcd/destructive.ts",
       "objectstore/s3/destructive.ts",
-      "platform/kubernetes/destructive.ts",
       "vector/milvus/destructive.ts",
       "vector/qdrant/destructive.ts",
     ],
@@ -488,10 +479,6 @@ export const INWARD_IMPORTS: readonly AllowlistEntry[] = [
   {
     file: "src/lib/db/operations/kafkaread-admission.ts",
     modules: ["stream/kafka/agent-statement.ts"],
-  },
-  {
-    file: "src/lib/db/operations/kubectl-admission.ts",
-    modules: ["platform/kubernetes/console/paging.ts"],
   },
   {
     file: "src/lib/db/operations/libredbkv-admission.ts",

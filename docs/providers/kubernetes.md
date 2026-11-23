@@ -40,8 +40,12 @@ The clock, the sleep, the randomness and the transport factory are one injected 
 | `discovery.ts`, `resolve.ts` | Aggregated discovery, its admission and cache, and kubectl's name resolution |
 | `kinds.ts`, `objects.ts`, `source.ts` | The kind table, the tree surface and the YAML view |
 | `table.ts`, `redaction.ts` | Table answers to grids with the paged walk, and the one place Secret data is removed |
-| `errors.ts`, `labels.ts`, `monitoring.ts`, `connect-warnings.ts`, `limits.ts` | Studio's error sentences, the labels, health, Test Connection's warnings, every cap |
-| `console/` | The kubectl subset: lexer, command table, parser, one reader per command family, paging |
+| `errors.ts`, `labels.ts`, `monitoring.ts`, `connect-warnings.ts`, `limits.ts` | Studio's error sentences, the labels, health, Test Connection's warnings, every other cap |
+| `console/` | One reader per command family, the run that sends a parsed statement to it, and the console's context |
+
+The kubectl statement language lives in its core family module, `src/lib/languages/kubectl/`, which the provider imports.
+The editor, the confirmation gate, the agent and the provider read the kubectl subset from it: the lexer, the command table, the parser, the paging clause, the confirmation row, the five caps a statement is read against (`constants.ts`) and the quantity reader (`quantity.ts`).
+`tests/unit/db/kubernetes/browser-modules.test.ts` holds every module of the kubectl family to family members, the shared console modules and types.
 
 ## 3. Design decisions
 
@@ -328,13 +332,13 @@ The grid pages the list form of a single-type `get` with a paging line of Studio
 A statement reads at most 5,000 rows; a page at or past that answers a sentence to narrow the list with `-l` or `--field-selector`.
 
 Query history masks the values of `--token`, `--password`, `--client-key`, `--client-certificate`, `--from-literal` and `--docker-password` in every spelling, though the console refuses every line that carries them; a tab keeps what was typed, a saved query keeps what was saved, and the embedded workspace writes no history.
-Those flags are the console's own `CREDENTIAL_FLAGS` list, which the dialect's row in `QUERY_DIALECTS` ([`src/lib/db/query-dialects.ts`](../../src/lib/db/query-dialects.ts)) writes again so the registry imports nothing from the provider, and a test holds the two lists equal.
+Those flags are the console's own `CREDENTIAL_FLAGS` list in the kubectl family module ([`src/lib/languages/kubectl/commands.ts`](../../src/lib/languages/kubectl/commands.ts)), which the dialect's row in `QUERY_DIALECTS` ([`src/lib/db/query-dialects.ts`](../../src/lib/db/query-dialects.ts)) reads, so the two cannot drift.
 
 ### 5.1 SQL grammar
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/platform/kubernetes/sql-grammar.ts`](../../src/lib/db/providers/platform/kubernetes/sql-grammar.ts), the `kubernetes` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
 `readsSqlText` is `false`: `kubernetes` takes one kubectl subset statement, words split by POSIX shell rules, and a SQL span reader would report its quoting as unreadable and prompt on every run.
-The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/platform/kubernetes/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/kubectl/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 

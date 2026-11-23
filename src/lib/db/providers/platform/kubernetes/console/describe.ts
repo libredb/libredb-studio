@@ -15,7 +15,8 @@ import { rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
 import { ACCEPT_JSON, ACCEPT_TABLE } from "../client";
 import type { IndexedResource } from "../discovery";
 import { KubernetesRequestError } from "../errors";
-import { KUBERNETES_EVENTS_READ_MAX, KUBERNETES_PAGE_SIZE, KUBERNETES_TYPE } from "../limits";
+import { KUBERNETES_PAGE_SIZE } from "@/lib/languages/kubectl/constants";
+import { KUBERNETES_EVENTS_READ_MAX, KUBERNETES_TYPE } from "../limits";
 import { maskObjectForMachine, maskTableForMachine } from "../machine-redaction";
 import { redactResponse } from "../redaction";
 import { fieldSelectorValue } from "../request-policy";
@@ -34,7 +35,7 @@ import {
   textGrid,
 } from "./context";
 import { eventTime, type KubeEvent } from "./events";
-import type { KubectlStatement } from "./parse";
+import type { KubectlStatement } from "@/lib/languages/kubectl/parse";
 
 type DescribeStatement = Extract<KubectlStatement, { readonly command: "describe" }>;
 
