@@ -1873,7 +1873,7 @@ The memory transport closes the session of an open answer it refuses under such 
 
 ### C-48 (normative): The host's console calls
 
-The host core makes each console call through `executeCall` or `cancelCall`, which answer a record of how the call ended and pass a provider's error by reference.
+The host core makes each console call through `executeCall`, `cancelCall` or `transactionCall`, which answer a record of how the call ended and pass a provider's error by reference.
 Before the call it checks the context with `checkCallStart`, C-27, and the request with `checkExecuteRequest`, C-9, or the facet with `checkConsoleFacet`, C-17, and answers each refusal as a record, the signal's reason as its cause when the signal aborted, without calling the provider.
 It then freezes the context and the request in place, C-12, and waits for the call with `awaitWithin` until the context's signal, C-28.
 An execute's run pumps the first result with `pumpPage` within the limits the caller sets from the execute answer, C-15, under the core's page budget, C-53, closes every other result once, and answers a refusal the pump throws as a record.
@@ -1881,6 +1881,9 @@ A call is stopped exactly when its signal aborted and the wait rejected with tha
 A stop that ends an execute after its execute answered is marked by the part of the run it ended, since the statement ran: the slot while the page waits for one, C-54, the page from its first pull until the pump answered it, and the other results while the run closes them after that.
 The caller answers a stop marked as waiting for the page or for the other results as C-54 answers one waiting for the slot, `QueryCancelledError` when its own signal ended the wait and otherwise `StudioTimeoutRefusal` with Studio's sentence saying the statement answered and, for the other results, that its page was read, both outcome unknown.
 A stopped execute sends the run's cancel when the session offers `console.cancel` and the request names a run, under a cleanup context of its own, C-47, and a cancel that fails or is cut is handed to the caller, never left as a detached rejection.
+A transaction call is checked with `checkCallStart` and with `checkConsoleFacet` for `console.transaction`, frozen, and waited for until its signal; its answer is read with `checkTransactionAnswer`, C-57, and refused after the call, as a record, when the host cannot read it.
+A statement sent with `transaction` has its execute answer read with `checkTransactionStatement` before its page is pumped; an answer the host cannot read is refused after the call, as a record, with every source closed once, and otherwise its page record carries the session state the execute answered.
+A stopped transaction call or statement carries no session state.
 Core constructs no error class a caller tests with `instanceof`: the caller builds its own classes from the records, C-51.
 
 - test `tests/unit/lib/provider-host/core/console.test.ts` "a call whose signal aborted or whose deadline passed is refused as a record, and the provider is never called"
@@ -1900,6 +1903,16 @@ Core constructs no error class a caller tests with `instanceof`: the caller buil
 - test `tests/unit/lib/provider-host/core/console.test.ts` "a cancel whose signal already aborted is refused as a record"
 - test `tests/unit/lib/provider-host/core/console.test.ts` "a cancel the caller stops waiting for answers a stop, and its later failure reaches the late handler once"
 - test `tests/unit/lib/provider-host/core/console-bounds.test.ts` "an execute that never settles is stopped at the call's deadline"
+- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "a transaction call whose signal aborted or whose deadline passed is refused as a record, and the provider is never called"
+- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "a transaction call to a session without console.transaction is refused as a record before the call"
+- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "a transaction call answers the session state it was answered, and stateReported only for a begin"
+- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "an answer the host cannot read is refused as a record after the call, never read as any state"
+- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "an error the provider throws reaches the caller as the same object"
+- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "a transaction call the caller stops waiting for answers a stop at once with no state, and its later failure reaches the late handler once"
+- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "a statement sent inside a transaction answers its page with the session state after it"
+- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "a statement inside a transaction whose answer carries no readable session state is refused as a record, and every source is closed once"
+- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "a statement inside a transaction that its caller stops answers a stop with no state"
+- test `tests/unit/lib/provider-host/core/console-bounds.test.ts` "a transaction call that never settles is stopped at the call's deadline"
 
 ### C-49 (normative): A turn of the event loop before every pull
 

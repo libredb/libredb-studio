@@ -4,8 +4,8 @@
  * `createHostCore` answers what a composition root installs once per process (src/lib/provider-host/instance.ts): the
  * core's console calls in a frozen object, and nothing else. `executeCall` is bound to a page budget of
  * `LARGE_PAGE_SLOTS` slots the core creates for itself (src/lib/provider-host/core/page-budget.ts), so the process holds
- * one page budget as it holds one core; `cancelCall` pumps nothing and is the console's own function. The budget is not
- * exposed: it is reached only through the core's execute.
+ * one page budget as it holds one core; `cancelCall` and `transactionCall` pump nothing and are the console's own
+ * functions. The budget is not exposed: it is reached only through the core's execute.
  *
  * Next.js bundles instrumentation apart from every route handler, and each bundle holds its own copy of Studio's error
  * classes (docs/ARCHITECTURE.md, "The provider host core"). The core answers records and constructs no class, so the

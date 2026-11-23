@@ -240,7 +240,7 @@ describe("the child entry", () => {
     await assert.rejects(import("../../src/backend/main"), { message: NO_IPC_CHANNEL });
 
     const core = hostCore();
-    assert.deepEqual(Object.keys(core).sort(), ["cancelCall", "executeCall"]);
+    assert.deepEqual(Object.keys(core).sort(), ["cancelCall", "executeCall", "transactionCall"]);
     assert.equal(core.cancelCall, cancelCall);
     assert.ok(Object.isFrozen(core));
   });

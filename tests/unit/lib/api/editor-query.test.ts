@@ -596,6 +596,7 @@ describe("runEditorQuery on the host core", () => {
       {
         executeCall: async () => ({ kind: "stopped", reason: answers.shift(), waitingFor: "page" }),
         cancelCall: real.cancelCall,
+        transactionCall: real.transactionCall,
       },
       "test",
     );
@@ -636,6 +637,7 @@ describe("runEditorQuery on the host core", () => {
       {
         executeCall: async () => ({ kind: "stopped", reason: deadlineReason, waitingFor: "other-results" }),
         cancelCall: real.cancelCall,
+        transactionCall: real.transactionCall,
       },
       "test",
     );

@@ -7,7 +7,13 @@
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { BATCH_MAX_BYTES, envReader, PAGE_MAX_BYTES, type ResultSource } from "@libredb/provider-sdk/calls";
-import { cancelCall, type ConsoleSession, type ExecuteRecord, type PageRecord } from "@/lib/provider-host/core/console";
+import {
+  cancelCall,
+  type ConsoleSession,
+  type ExecuteRecord,
+  type PageRecord,
+  transactionCall,
+} from "@/lib/provider-host/core/console";
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
 
 /** Lets every callback already queued run: one turn of the event loop, never a timer an assertion waits on. */
@@ -63,8 +69,9 @@ describe("the host core instance", () => {
   test("the host core holds the console calls on a page budget of its own, frozen, and nothing else", () => {
     const core = createHostCore();
 
-    expect(Object.keys(core).sort()).toEqual(["cancelCall", "executeCall"]);
+    expect(Object.keys(core).sort()).toEqual(["cancelCall", "executeCall", "transactionCall"]);
     expect(core.cancelCall).toBe(cancelCall);
+    expect(core.transactionCall).toBe(transactionCall);
     expect(typeof core.executeCall).toBe("function");
     expect(Object.isFrozen(core)).toBe(true);
     const other = createHostCore();
