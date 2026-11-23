@@ -81,26 +81,28 @@ mock.module("@/lib/auth", () => ({
   logout: mock(async () => {}),
 }));
 
-mock.module("@/lib/seed/resolve-connection", () => {
-  class SeedConnectionError extends Error {
-    constructor(
-      message: string,
-      public statusCode: number,
-    ) {
-      super(message);
-      this.name = "SeedConnectionError";
-    }
+class SeedConnectionError extends Error {
+  constructor(
+    message: string,
+    public statusCode: number,
+  ) {
+    super(message);
+    this.name = "SeedConnectionError";
   }
-  return {
-    resolveConnection: mock(async (body: Record<string, unknown>) => {
-      if (!body.connection && !body.connectionId) {
-        throw new SeedConnectionError("Either connection or connectionId is required", 400);
-      }
-      return body.connection ?? { id: "seed-1", name: "Seeded", type: "postgres" };
-    }),
-    SeedConnectionError,
-  };
+}
+
+/** The resolution: an inline connection as given, or a seeded record for a connectionId. A test queues its own. */
+const mockResolveConnection = mock(async (body: Record<string, unknown>): Promise<unknown> => {
+  if (!body.connection && !body.connectionId) {
+    throw new SeedConnectionError("Either connection or connectionId is required", 400);
+  }
+  return body.connection ?? { id: "seed-1", name: "Seeded", type: "postgres" };
 });
+
+mock.module("@/lib/seed/resolve-connection", () => ({
+  resolveConnection: mockResolveConnection,
+  SeedConnectionError,
+}));
 
 mock.module("@/lib/db", () => ({
   getOrCreateProvider: mockGetOrCreateProvider,
@@ -3115,17 +3117,22 @@ describe("the context the handler hands run", () => {
   test("it carries the RESOLVED connection, the guard's session, the route and that connection's scrub, and nothing else", async () => {
     let seen: ObjectRequestContext | undefined;
     // The body names a connectionId and NO connection, so an object taken from the BODY cannot be
-    // what the context carries: only the resolution answers `{ id: "seed-1", name: "Seeded", ... }`.
+    // what the context carries: only the resolution answers the seeded record, and only that record
+    // holds the password, so a scrub built from the body would hold no form of it.
+    const password = crypto.randomUUID();
+    const resolved = { id: "seed-1", name: "Seeded", type: "postgres", password };
+    mockResolveConnection.mockResolvedValueOnce(resolved);
     const response = await handleObjectRequest(post({ connectionId: "seed-1" }), probeRoute, async (_p, _b, ctx) => {
       seen = ctx;
       return { ok: true };
     });
 
     expect(response.status).toBe(200);
-    expect(seen?.connection).toEqual({ id: "seed-1", name: "Seeded", type: "postgres" } as never);
+    expect(seen?.connection).toEqual(resolved as never);
     expect(seen?.session).toEqual({ role: "admin", username: "admin" });
     expect(seen?.route).toBe(probeRoute);
-    expect(seen?.scrub).toEqual(providerTextScrub(seen?.connection as never, "any"));
+    expect(seen?.scrub).toEqual(providerTextScrub(resolved as never, "any"));
+    expect(seen?.scrub.forms).toContain(password);
     expect(Object.keys(seen ?? {}).sort()).toEqual(["connection", "route", "scrub", "session"]);
   });
 
