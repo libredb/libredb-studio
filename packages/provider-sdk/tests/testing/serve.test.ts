@@ -17,6 +17,7 @@ import {
   type BatchLimit,
   type CallContext,
   CallRefusalError,
+  CLEANUP_DEADLINE_MS,
   checkProviderModule,
   deadlineSignal,
   defineProvider,
@@ -577,9 +578,6 @@ describe("serve", () => {
     ]);
     expect(unframed).toBeInstanceOf(ValueCodecError);
     expect(closes().map((item) => item.handle)).toEqual([fx.handle, fx.handle, fx.handle]);
-    expect(closes().map((item) => item.ctx)).toEqual(
-      fx.seen.filter((item) => item.call === "open").map((item) => item.ctx),
-    );
 
     fx.answers.open = () => marker();
     const notARecord = await failure(() => impl.open(openContext()));
@@ -703,6 +701,36 @@ describe("serve", () => {
       "before-getter",
       "throwing",
     ]);
+  });
+
+  test("a refused open answer's session is closed with a context of its own, not the open's aborted one", async () => {
+    const fx = fixture({ endScope: false });
+    const { impl } = served(fx);
+    const controller = new AbortController();
+    const reason = new Error(marker());
+    const env = envReader([], () => undefined);
+    fx.answers.open = () => {
+      controller.abort(reason);
+      return { handle: fx.handle, refine: { calls: { console: { endScope: "offered" } } } };
+    };
+    const ctx = { ...openContext(controller), env };
+    const before = Date.now();
+    const refused = await failure(() => impl.open(ctx));
+    const after = Date.now();
+    const closes = fx.seen.filter((item) => item.call === "close");
+
+    expect(refused).toBeInstanceOf(CallRefusalError);
+    expect(controller.signal.aborted).toBe(true);
+    expect(closes).toHaveLength(1);
+    const closeCtx = closes[0]?.ctx as CallContext;
+    expect(closes[0]?.handle).toBe(fx.handle);
+    expect(closeCtx.signal.aborted).toBe(false);
+    expect(closeCtx.signal).not.toBe(controller.signal);
+    expect(closeCtx.deadline).not.toBe(ctx.deadline);
+    expect(closeCtx.deadline).toBeGreaterThanOrEqual(before + CLEANUP_DEADLINE_MS);
+    expect(closeCtx.deadline).toBeLessThanOrEqual(after + CLEANUP_DEADLINE_MS);
+    expect(closeCtx.env).toBe(env);
+    expect(Object.isFrozen(closeCtx)).toBe(true);
   });
 
   test("a close that fails beside a refused answer is thrown with the refusal first", async () => {

@@ -21,8 +21,9 @@
  * whose signal has aborted (`checkCallStart`), the signal's reason as the error's cause, so the provider is never
  * called and the tables are unchanged. It holds every call to the session's calls before any frame
  * (`checkExecuteRequest`, `checkConsoleFacet`), reads `open`'s refinement with `sessionCalls`, and closes what an
- * answer it refuses handed over: the session through the provider's `close`, each source through its own, every close
- * run and no failure lost.
+ * answer it refuses handed over: the session through the provider's `close`, under a cleanup context of its own
+ * (`cleanupContext`), never the open's, which may have aborted, and each source through its own, every close run and
+ * no failure lost.
  * Every loop over a provider's array stops at its first hole, an execute answer's result that is not an object is
  * refused at its index like a hole, and a served source asks the provider for exactly the limit it is pulled with, so
  * a frame never grows past what the provider holds.
@@ -32,7 +33,7 @@
  * keeps its sessions in its own tables, so a token of one is foreign to another.
  */
 import type { Calls } from "../manifest/manifest-types.generated";
-import { refuseCallStart } from "../calls/deadline";
+import { cleanupContext, refuseCallStart } from "../calls/deadline";
 import { checkProviderModule, ProviderDefinitionError } from "../calls/define-provider";
 import { freezeContext, freezeData } from "../calls/freeze";
 import { isPlainRecord, pointerTo, readOwn } from "../calls/records";
@@ -313,7 +314,11 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
     sessionCount += 1;
     const id = `session-${sessionCount}`;
     handles.set(id, handleRead.value);
-    const closeSession = () => closeProviderSession(id, providerCtx);
+    // The open's own context may have aborted, so the close a refused answer needs runs under one of its own.
+    const closeSession = () => {
+      const cleanup = cleanupContext(ctx.env);
+      return closeProviderSession(id, providerContext<CallContext>({ deadline: cleanup.deadline }, cleanup));
+    };
     try {
       const fields = answer as Readonly<Record<string, unknown>>;
       const framed = Object.fromEntries(

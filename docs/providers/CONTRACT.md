@@ -995,7 +995,7 @@ A close takes its entry out of both tables whatever the provider's close answers
 
 The served host side refuses before any frame what C-9 and C-17 refuse, holding each call to the session's calls.
 It reads the refinement `open` answers by C-10, so the session's calls are the narrowed ones.
-An answer the host refuses holds nothing open afterwards: a refused open answer closes its session through the provider's `close`, with the open's own context, and a refused execute answer closes each result source it handed over through its own `close`.
+An answer the host refuses holds nothing open afterwards: a refused open answer closes its session through the provider's `close`, under a cleanup context of its own, C-47, never the open's, and a refused execute answer closes each result source it handed over through its own `close`.
 An item of an execute answer's `results` that is not an object is refused at its index, as a hole is, and a source whose `columns` or `rowCount` read throws is closed with the sources before it, the read's own error thrown.
 Every close runs, and when one fails the host receives an `AggregateError` with the refusal first and each close's error after it.
 
@@ -1069,6 +1069,7 @@ The memory transport races nothing: an answer the host stopped waiting for is de
 A provider derives every driver timeout from `ctx.deadline`, for checkout, connect and execute alike, starts no work on a signal already aborted, and ends its waits when the signal aborts.
 It answers `cancelled: false` for a run it does not know.
 A result source's pulls honour the context of the execute call that answered it.
+A close, and the cancel a stopped wait sends, are called with a context of the host's own, `cleanupContext`, never one that already aborted, C-47.
 The kit checks these, and no such check exists yet.
 
 ### C-30 (normative): A session without console.cancel is reported as still running, without a call
@@ -1254,6 +1255,16 @@ The lint holds the members `DatabaseProvider` declares, so a capability read by 
 - test `tests/unit/lib/db/database-provider-members.test.ts` "DatabaseProvider gains no member, so every SPI change lands contract-first"
 - test `tests/unit/lib/db/database-provider-members.test.ts` "a planted member is refused by name"
 - test `tests/unit/lib/db/database-provider-members.test.ts` "a removed member is refused by name, so the list stays exact"
+
+### C-47 (normative): A cleanup call runs under a context of its own
+
+A cleanup call ends work another call started: a close, and the cancel the host sends when it stops waiting for a run.
+It never runs under the context of the call it follows, which may have aborted, but under `cleanupContext`: a deadline `CLEANUP_DEADLINE_MS`, 10 s, after it starts, a signal that aborts only at that deadline, and the reader of the call it follows.
+The memory transport closes the session of an open answer it refuses under such a context, and the host core's teardown waits for a close at most the same 10 s, C-45.
+
+- test `packages/provider-sdk/tests/calls/deadline.test.ts` "a cleanup call gets a context of its own, ten seconds ahead and never aborted"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a refused open answer's session is closed with a context of its own, not the open's aborted one"
+- test `tests/unit/lib/provider-host/core/teardown.test.ts` "the close deadline is the SDK's cleanup deadline"
 
 ## Not yet in this contract
 

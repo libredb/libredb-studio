@@ -10,7 +10,8 @@
  * holder for rows already in memory, and `pumpPage`, the host's pump that cuts a page by size; and a call's deadline:
  * `deadlineSignal`, the signal that aborts at it, `checkCallStart`, which refuses a call that would start after its
  * deadline passed or its signal aborted, and `awaitWithin`, the host's wait on an answer, ended by that signal, which
- * hands an abandoned answer's late outcome to the host.
+ * hands an abandoned answer's late outcome to the host; and `cleanupContext`, the context of a cleanup call of its own,
+ * `CLEANUP_DEADLINE_MS` ahead.
  */
 export {
   checkProviderModule,
@@ -21,7 +22,14 @@ export {
   definitionRefusalSentence,
   ProviderDefinitionError,
 } from "./define-provider";
-export { awaitWithin, checkCallStart, deadlineSignal, type LateOutcome } from "./deadline";
+export {
+  awaitWithin,
+  CLEANUP_DEADLINE_MS,
+  checkCallStart,
+  cleanupContext,
+  deadlineSignal,
+  type LateOutcome,
+} from "./deadline";
 export { type EnvReader, envReader, UndeclaredEnvironmentError } from "./env";
 export { freezeContext, freezeData } from "./freeze";
 export {
