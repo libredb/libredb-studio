@@ -21,6 +21,7 @@
       "seedCheck": null
     },
     "tls": "not-offered",
+    "readsTrustMaterial": false,
     "sshTunnel": {
       "offered": false,
       "refusal": "BigQuery does not run through an SSH tunnel: every request goes over HTTPS to Google's API hosts, and a tunnel forwards one address of the several the provider reaches. Turn the tunnel off."
@@ -330,5 +331,18 @@
       "BigQuery accepts a primary key only as PRIMARY KEY (...) NOT ENFORCED."
     ]
   },
-  "sqlGenerators": null
+  "sqlGenerators": null,
+  "policy": {
+    "writeReach": "open",
+    "readsFileAccessPosture": false,
+    "deniedFileAccessRefusal": null,
+    "singleWriterFile": false,
+    "readRootsRequired": false
+  },
+  "mcp": {
+    "exposable": true,
+    "statementRead": false,
+    "metadataReadChangesState": false,
+    "agentCredentialRequired": false
+  }
 }

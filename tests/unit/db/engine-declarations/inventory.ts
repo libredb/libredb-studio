@@ -4,7 +4,8 @@
  *
  * A destination starts with one of three words:
  * - `engine declaration:` the facts are in `src/lib/db/engine-declarations/<type-id>.json` today, at the members
- *   named, and `tests/unit/db/engine-declarations.test.ts` reads them back to the table.
+ *   named, and `tests/unit/db/engine-declarations.test.ts` reads them back to the table. A claim's table stays, as
+ *   Studio's review record that grants the request its member states.
  * - `planned segment:` the facts move into a segment of the manifest a later contract minor adds, named in words.
  * - `core-owned:` the facts stay with Studio, for the reason given, and no manifest declares them.
  */
@@ -20,9 +21,10 @@ export interface InventoryEntry {
 const COMPATIBILITY = "src/lib/db/compatibility.ts";
 const CONNECTION_FIELDS_MODULE = "src/lib/db/connection-fields.ts";
 
-const POLICY_CLAIM =
-  "planned segment: policy claims, each a request a provider makes that only core's review record grants";
-const MCP_CLAIM = "planned segment: MCP claims, each a request a provider makes that only core's review record grants";
+/** The destination of a claim table: the member that requests the claim, which the table grants as Studio's record. */
+function claim(member: string): string {
+  return `engine declaration: ${member}, the engine's request, which this table grants as Studio's review record of the claim`;
+}
 const STATEMENT_FAMILY =
   "core-owned: the vocabulary of a statement language family, which core keeps once for every engine that speaks it";
 
@@ -54,16 +56,28 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     destination: "engine declaration: id, one declaration per shipped type-id",
   },
   { module: COMPATIBILITY, name: "EXTERNAL", destination: "engine declaration: location" },
-  { module: COMPATIBILITY, name: "WRITE_REACH", destination: POLICY_CLAIM },
-  { module: COMPATIBILITY, name: "READS_FILE_ACCESS_POSTURE", destination: POLICY_CLAIM },
-  { module: COMPATIBILITY, name: "READS_TRUST_MATERIAL", destination: POLICY_CLAIM },
-  { module: COMPATIBILITY, name: "REFUSES_DENIED_FILE_ACCESS", destination: POLICY_CLAIM },
-  { module: COMPATIBILITY, name: "SINGLE_WRITER_FILE", destination: POLICY_CLAIM },
-  { module: COMPATIBILITY, name: "MCP_EXPOSABLE", destination: MCP_CLAIM },
-  { module: COMPATIBILITY, name: "MCP_STATEMENT_READ", destination: MCP_CLAIM },
-  { module: COMPATIBILITY, name: "MCP_METADATA_READ_CHANGES_STATE", destination: MCP_CLAIM },
-  { module: COMPATIBILITY, name: "MCP_AGENT_CREDENTIAL_REQUIRED", destination: MCP_CLAIM },
-  { module: COMPATIBILITY, name: "READ_ROOTS_REQUIRED", destination: MCP_CLAIM },
+  { module: COMPATIBILITY, name: "WRITE_REACH", destination: claim("policy.writeReach") },
+  { module: COMPATIBILITY, name: "READS_FILE_ACCESS_POSTURE", destination: claim("policy.readsFileAccessPosture") },
+  {
+    module: COMPATIBILITY,
+    name: "READS_TRUST_MATERIAL",
+    destination: "engine declaration: connection.readsTrustMaterial",
+  },
+  { module: COMPATIBILITY, name: "REFUSES_DENIED_FILE_ACCESS", destination: claim("policy.deniedFileAccessRefusal") },
+  { module: COMPATIBILITY, name: "SINGLE_WRITER_FILE", destination: claim("policy.singleWriterFile") },
+  { module: COMPATIBILITY, name: "MCP_EXPOSABLE", destination: claim("mcp.exposable") },
+  { module: COMPATIBILITY, name: "MCP_STATEMENT_READ", destination: claim("mcp.statementRead") },
+  {
+    module: COMPATIBILITY,
+    name: "MCP_METADATA_READ_CHANGES_STATE",
+    destination: claim("mcp.metadataReadChangesState"),
+  },
+  {
+    module: COMPATIBILITY,
+    name: "MCP_AGENT_CREDENTIAL_REQUIRED",
+    destination: claim("mcp.agentCredentialRequired"),
+  },
+  { module: COMPATIBILITY, name: "READ_ROOTS_REQUIRED", destination: claim("policy.readRootsRequired") },
   {
     module: COMPATIBILITY,
     name: "CONNECTION_FORM_URI_MODE",

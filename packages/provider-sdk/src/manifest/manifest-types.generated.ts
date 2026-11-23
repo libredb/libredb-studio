@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "9ae515120381dea2f2f24c74460d68cf013e9e5a6f31c842493e67428d660a65";
+export const MANIFEST_SCHEMA_SHA256 = "d28107fc4e1ffee1524455db1908aa0033bcbb14b730b7e2b92dfb3b65475d2b";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -113,6 +113,8 @@ export interface EngineDeclaration {
   readonly sqlWriting: SqlWriting;
   readonly migrationDdl: MigrationDdl;
   readonly sqlGenerators: SqlGenerators;
+  readonly policy: PolicyClaims;
+  readonly mcp: McpClaims;
 }
 
 /** external: a database the user already runs, which Studio is pointed at. embedded: a store Studio carries and creates itself. */
@@ -128,6 +130,8 @@ export interface Connection {
   readonly refused: readonly RefusedField[];
   readonly connectionString: ConnectionStringOffer;
   readonly tls: FacetOffer;
+  /** Whether the engine's provider is handed the CA certificates of the file NODE_EXTRA_CA_CERTS names, as data: true where its TLS library does not read Node.js's trust store, so the variable never reaches it on its own. Not a claim: no gate reads it, the certificates are the operator's public ones, and a provider that needs them and does not ask fails to verify, never verifies less. */
+  readonly readsTrustMaterial: boolean;
   readonly sshTunnel: SshTunnelOffered | SshTunnelRefused;
   /** The seed-only fields that name a file on Studio's own host the provider reads. */
   readonly hostPathFields: readonly HostPathField[];
@@ -1045,6 +1049,34 @@ export type SqlGenerators = {
 
 /** The count Generate Count Query writes for the engine, COUNT(*) where the engine's is the shared one: one aggregate call over every row, a letter, then letters, digits or underscores, then (*), up to 64 characters, so it fills one expression of the statement Studio writes and never adds a clause or a statement. */
 export type CountExpression = string;
+
+/** What the engine asks of the gates Studio decides before a provider exists. Every member is a claim: a request, never a fact Studio believes as declared. Studio grants a request only as far as its own review record of the claim, or an operator's audited grant, allows, and reads a claim with neither at its restrictive value, named at the end of each member's description. */
+export interface PolicyClaims {
+  readonly writeReach: WriteReachClaim;
+  /** Whether the engine's provider opens its handle under a file-access posture, opening with external file access off where the caller's is denied, so a denied handle and a full-reach one never share a cached provider or a borrowed handle. Restrictive value: true. */
+  readonly readsFileAccessPosture: boolean;
+  /** The sentence a connection whose file access is denied is refused with before anything is opened, where the provider cannot confine that access; null where a denied handle opens confined. Restrictive value: a refusal, so every caller whose file access is denied is refused. */
+  readonly deniedFileAccessRefusal: string | null;
+  /** Whether the engine keeps one handle per database file in a process, so every user of a connection is served the one provider instead of a provider of their own. Restrictive value: false, each user keeping a provider of their own. */
+  readonly singleWriterFile: boolean;
+  /** Whether agent mode and MCP read the engine only beneath read roots a seed declares, refusing a connection that declares none. Restrictive value: true. */
+  readonly readRootsRequired: boolean;
+}
+
+/** What Studio's code can write on the engine. none: no code of the provider can send a write on any write path. guarded: every write path it has is refused by a named gate while read-only mode holds. open: at least one path sends a write no Studio gate refuses. Studio keeps a connection's read-only mode only where the reach is not open, so no manifest states read-only enforcement. Restrictive value: open, under which read-only mode is refused, ordered open, guarded, none from the most restrictive. */
+export type WriteReachClaim = "none" | "guarded" | "open";
+
+/** What the engine asks of the gates Studio's MCP server decides. Every member is a claim: a request, never a fact Studio believes as declared. Studio grants a request only as far as its own review record of the claim, or an operator's audited grant, allows, and reads a claim with neither at its restrictive value, named at the end of each member's description. The engines agent and MCP statements run on are Studio's own record, which no manifest states. */
+export interface McpClaims {
+  /** Whether a connection of the engine may be exposed to MCP clients at all. Restrictive value: false. */
+  readonly exposable: boolean;
+  /** Whether an MCP client may run a statement on the engine, beside the metadata tools exposable opens. Restrictive value: false. */
+  readonly statementRead: boolean;
+  /** Whether reading the engine's metadata changes state the engine keeps, though it writes no data, so the metadata tool is not marked read-only. Restrictive value: true. */
+  readonly metadataReadChangesState: boolean;
+  /** Whether MCP reads the engine only under an agent credential of the seed's own, refusing a connection that has none. Restrictive value: true. */
+  readonly agentCredentialRequired: boolean;
+}
 
 /** One product the package was measured against: the engine that serves it, the versions claimed and the versions tested. */
 export interface CompatibilityEntry {

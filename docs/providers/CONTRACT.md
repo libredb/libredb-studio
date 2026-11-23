@@ -658,6 +658,88 @@ Studio declares each engine's budget in one central table, `CONNECT_BUDGET` in `
 - test `tests/unit/db/bigquery/connect-budget.test.ts` "BigQuery's connect budget covers its connect's dataset list and probe job at the default statement timeout, plus 10 s"
 - test `tests/unit/db/snowflake/connect-budget.test.ts` "Snowflake's connect budget covers its connect's two Studio statements at their deadline, plus 10 s"
 
+### M-52 (normative): Policy and MCP claims are requests
+
+An engine states in `policy` and `mcp` what it asks of the gates Studio decides before a provider exists.
+Each member is a claim: a request, never a fact Studio believes as declared.
+Studio's review record of each claim is the table of Studio's source the declaration is generated from, and every gate reads that record.
+No module of Studio reads a declaration, so a declared claim alone never reaches a gate.
+For every engine Studio ships, each request is its record's row.
+Read-only enforcement is no member: Studio keeps a connection's read-only mode wherever the write reach is not `open`.
+The engines agent and MCP statements run on are Studio's record alone, C-39, and S-8 applies the same rule to the confirmation gate's claims.
+
+- schema `/$defs/policyClaims`
+- schema `/$defs/mcpClaims`
+- test `tests/unit/db/engine-declarations.test.ts` "every claim of the policy and MCP segments is the row of Studio's review record of it"
+- test `tests/unit/db/engine-declarations.test.ts` "READ_ONLY_ENFORCED is true exactly where the declaration's write reach is not open"
+- test `tests/unit/db/engine-declarations.test.ts` "each declaration's policy and MCP segments hold exactly the claims Studio keeps a review record of"
+- test `tests/unit/db/engine-declarations.test.ts` "MCP serves statements on exactly the engines the declarations' claims and Studio's agent execution record give it"
+- test `tests/unit/db/engine-declaration-readers.test.ts` "no module of Studio's source reads an engine declaration, so a claim reaches a gate only through Studio's review record"
+- test `tests/unit/db/engine-declaration-readers.test.ts` "the scan finds each way a module could read a declaration, and passes over a backticked path in a comment"
+- test `tests/unit/mcp/served-engines.test.ts` "an engine agent mode does not execute on is not served, whatever its rows say"
+- test `tests/unit/db/write-reach-capability.test.ts` "READ_ONLY_ENFORCED, now derived from the record, answers what it answered before, bar the flipped entries"
+
+### M-53 (normative): The restrictive value of each claim
+
+Each claim has a restrictive value, the answer under which the gates that read it refuse, withhold or keep apart the most.
+`writeReach`: `open`, under which read-only mode is refused, the reach ordered `open`, `guarded`, `none` from the most restrictive.
+`readsFileAccessPosture`: true, so a denied handle and a full-reach one never share a cached provider or a borrowed handle.
+`deniedFileAccessRefusal`: a refusal, so every caller whose file access is denied is refused.
+`singleWriterFile`: false, so each user of a connection keeps a provider of their own.
+`readRootsRequired`: true.
+`exposable` and `statementRead`: false.
+`metadataReadChangesState`: true, so the metadata tool is not marked read-only.
+`agentCredentialRequired`: true.
+Every restrictive value is a request the schema admits.
+
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a policy and an MCP segment at every claim's restrictive value are admitted"
+- test `tests/unit/seed/types.test.ts` "refuses readOnly: true on every engine whose write reach is open, naming the type and the field"
+- test `tests/isolated/factory.test.ts` "a databend connection with readOnly: true is refused before anything is built (Databend design 5.7)"
+- test `tests/unit/lib/db/provider-cache-key.test.ts` "a non-admin (deny) DuckDB handle keys apart from an admin (allow) one, so they never share a handle"
+- test `tests/unit/db/refuses-denied-file-access.test.ts` "SQLite refuses a handle opened with file access denied, and DuckDB confines one"
+- test `tests/unit/lib/db/provider-cache-key.test.ts` "an owner appends a framed segment, no owner is byte-identical, and duckdb and libredb ignore the owner"
+- test `tests/unit/seed/types.test.ts` "refuses mcp: true without read roots, at the mcp field, and loads it with them"
+- test `tests/api/agent/runs.test.ts` "an OPC UA run that sends statements is refused on a connection without read roots, before a run exists"
+- test `tests/unit/seed/types.test.ts` "refuses only the engine the record answers false for"
+- test `tests/unit/mcp/served-engines.test.ts` "an engine MCP is not offered for is not served, whatever its MCP read row says"
+- test `tests/unit/mcp/served-engines.test.ts` "an agent engine whose MCP read row is false is not served, though every other record lets it through"
+- test `tests/unit/mcp/annotations.test.ts` "answers not read-only and not destructive, closed-world, for a reach holding an engine whose row is true"
+- test `tests/unit/seed/types.test.ts` "fails a seed with mcp: true and no agent key, naming mcp and the type"
+- test `tests/integration/mcp/context.test.ts` "refuses a connection with no agent credential in Studio's words, naming the connection"
+
+### M-54 (informative): How a host grants a claim
+
+A host reads each claim as the more restrictive of the manifest's request and the grant.
+The grant is the row of Studio's review record for the engine, or an operator's audited grant for the package, and the claim's restrictive value, M-53, where neither exists.
+So a restrictive request is read as made, a looser one only as far as a grant allows, and a declared claim alone never loosens a gate.
+A write reach request is capped at the grant: a request of `none` on an engine whose record grants `guarded` is read as `guarded`.
+Studio reads no declaration's claims yet, M-52, so nothing checks this rule, and the change that first makes Studio read them applies it and adds its enforcer.
+
+### M-55 (normative): The rules of an engine's claims
+
+A statement read is claimed only for an engine its MCP claims expose.
+An agent credential is required only of an engine whose seeds take one, `connection.agentCredential`.
+Read roots are required only of an engine whose seed-only fields name `agentReadRoots`.
+A denied file access refusal is stated only for an engine that reads the file-access posture.
+The rules check requests, so a request of every claim at its restrictive value meets them where the engine's connection allows it.
+
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a statement read on an engine not exposed to MCP is refused as statement-read-unexposed"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an agent credential required of an engine whose seeds take none is refused as agent-credential-form-missing"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "read roots required of an engine whose seeds cannot declare them are refused as read-roots-field-undeclared"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a denied file access refusal on an engine that reads no file-access posture is refused as denied-file-access-unread"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's claims are held to the rules the schema cannot state, at pointers into it"
+
+### M-56 (normative): The trust material a provider is handed
+
+An engine whose provider's TLS library does not read Node.js's trust store states `connection.readsTrustMaterial: true`, and its provider is handed the CA certificates of the file `NODE_EXTRA_CA_CERTS` names, as data.
+Every other engine states false and is handed nothing.
+No gate reads it, the material is the operator's public certificates, and a provider that needs it and does not ask fails to verify, never verifies less, so it is not a claim.
+
+- schema `/$defs/connection/properties/readsTrustMaterial`
+- test `tests/unit/db/engine-declarations.test.ts` "connection.readsTrustMaterial is the engine's READS_TRUST_MATERIAL row"
+- test `tests/security/provider-trust-material.test.ts` "READS_TRUST_MATERIAL names db2 alone, the engine whose TLS the probe found outside Node's trust store"
+- test `tests/security/provider-trust-material.test.ts` "a caller's trust in the execution context never reaches a provider"
+
 ## Values
 
 A value crosses a JSON boundary, between a provider and the host or between two of the host's own hops, in one form: the value codec of `@libredb/provider-sdk/values`.
@@ -1948,7 +2030,7 @@ The same deadline holds on the Test connection route and in the VS Code backend'
 
 These chapters are added by the changes that bring their enforcers:
 
-- Policy and MCP claims, each a request a provider makes that only Studio's review record grants, the agent overlay, and presentation (an icon and a colour).
+- Which other declared facts a gate reads are claims, the policy facts and maintenance specs a provider declares once built, the agent overlay, and presentation (an icon and a colour).
 - The API report of each SDK entry.
 
 ## Change notes
@@ -1989,6 +2071,9 @@ Against the manifest sketch the design started from:
 - An engine's migration DDL row is one segment, `migrationDdl`, in one of its two forms, S-17.
 - An engine's SQL generator row is one segment, `sqlGenerators`, null where the engine writes Studio's shared forms, S-20.
 - An engine's editor language is stated per engine, a console dialect's id being its Monaco id and a dialect-less engine's tab type its query language's, S-23.
+- Policy and MCP claims are requests Studio reads as far as its review record or an operator's audited grant allows, never facts a declaration sets alone, M-52 to M-54.
+- Read-only enforcement is not declared: Studio derives it from the write reach, M-52.
+- The trust material a provider is handed is a connection fact, not a claim, M-56.
 - The sketch's frame cap is replaced by the byte budgets, since calls are unframed in process; the memory test transport keeps frames for tests only.
 
 Against this contract's earlier text:
