@@ -1,0 +1,736 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:libredb:provider-manifest:0.1",
+  "title": "ProviderManifest",
+  "description": "A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "The identifier of this schema, for an editor that reads it; never fetched.",
+      "const": "urn:libredb:provider-manifest:0.1"
+    },
+    "contract": {
+      "description": "The provider contract the manifest was built against, the one this schema serves.",
+      "const": "0.1"
+    },
+    "runtime": {
+      "$ref": "#/$defs/runtime"
+    },
+    "engines": {
+      "description": "The engines the package serves, one declaration each.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/engineDeclaration"
+      },
+      "minItems": 1
+    },
+    "compatibility": {
+      "description": "The products the package was measured against, one entry per product, each naming an engine the manifest declares.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/compatibilityEntry"
+      },
+      "minItems": 1
+    },
+    "vendor": {
+      "description": "Keys of the package's own, which Studio never reads.",
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "required": ["contract", "runtime", "engines", "compatibility"],
+  "additionalProperties": false,
+  "$defs": {
+    "envelope": {
+      "description": "What a host reads first, before it knows which schema applies: the contract the manifest was built against, in the form MAJOR.MINOR.",
+      "type": "object",
+      "properties": {
+        "contract": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})$"
+        }
+      },
+      "required": ["contract"],
+      "additionalProperties": true
+    },
+    "runtime": {
+      "description": "How the host loads the package into its own process.",
+      "type": "object",
+      "properties": {
+        "entry": {
+          "description": "The package-relative POSIX path of the ES module whose default export the loader reads, with no dot segment.",
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9_-][A-Za-z0-9._-]*/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\\.m?js$",
+          "maxLength": 256
+        },
+        "native": {
+          "description": "The per-platform native packages the package needs, each pinned exactly.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nativePackage"
+          },
+          "minItems": 1
+        },
+        "env": {
+          "description": "The environment variables the package reads, each with the reason it reads it.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/envDeclaration"
+          },
+          "minItems": 1
+        }
+      },
+      "required": ["entry"],
+      "additionalProperties": false
+    },
+    "nativePackage": {
+      "description": "A native package pinned to one version, the platforms it serves and the Node-API version it is built for.",
+      "type": "object",
+      "properties": {
+        "package": {
+          "type": "string",
+          "pattern": "^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$",
+          "maxLength": 214
+        },
+        "version": {
+          "description": "An exact version, never a range.",
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?$",
+          "maxLength": 64
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nativeTarget"
+          },
+          "minItems": 1
+        },
+        "nodeApi": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        }
+      },
+      "required": ["package", "version", "targets", "nodeApi"],
+      "additionalProperties": false
+    },
+    "nativeTarget": {
+      "description": "One platform, in npm's os, cpu and libc vocabulary.",
+      "type": "object",
+      "properties": {
+        "os": {
+          "$ref": "#/$defs/targetOs"
+        },
+        "cpu": {
+          "$ref": "#/$defs/targetCpu"
+        },
+        "libc": {
+          "$ref": "#/$defs/targetLibc"
+        }
+      },
+      "required": ["os", "cpu"],
+      "additionalProperties": false
+    },
+    "targetOs": {
+      "type": "string",
+      "enum": ["aix", "darwin", "freebsd", "linux", "openbsd", "sunos", "win32"]
+    },
+    "targetCpu": {
+      "type": "string",
+      "enum": ["arm", "arm64", "ia32", "loong64", "mips", "mipsel", "ppc64", "riscv64", "s390x", "x64"]
+    },
+    "targetLibc": {
+      "type": "string",
+      "enum": ["glibc", "musl"]
+    },
+    "envDeclaration": {
+      "description": "One environment variable the package reads, by name, and why.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        }
+      },
+      "required": ["name", "purpose"],
+      "additionalProperties": false
+    },
+    "engineId": {
+      "description": "An engine's type-id: a lower-case letter, then up to 31 lower-case letters or digits.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]{0,31}$"
+    },
+    "engineDeclaration": {
+      "description": "One engine the package serves. Every fact is required, written as null, false or an empty list where the engine has none, so no fact is left out by omission.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/engineId"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "location": {
+          "$ref": "#/$defs/engineLocation"
+        },
+        "connection": {
+          "$ref": "#/$defs/connection"
+        },
+        "facets": {
+          "$ref": "#/$defs/facets"
+        },
+        "agent": {
+          "$ref": "#/$defs/agent"
+        }
+      },
+      "required": ["id", "displayName", "location", "connection", "facets", "agent"],
+      "additionalProperties": false
+    },
+    "engineLocation": {
+      "description": "external: a database the user already runs, which Studio is pointed at. embedded: a store Studio carries and creates itself.",
+      "type": "string",
+      "enum": ["external", "embedded"]
+    },
+    "connection": {
+      "description": "What a connection to the engine is made of.",
+      "type": "object",
+      "properties": {
+        "fields": {
+          "description": "The fields the connection dialog draws and a save writes, in the order the VS Code extension prompts in.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldName"
+          },
+          "uniqueItems": true
+        },
+        "defaults": {
+          "$ref": "#/$defs/connectionDefaults"
+        },
+        "seedOnly": {
+          "$ref": "#/$defs/seedOnly"
+        },
+        "refused": {
+          "description": "The fields the provider receives only to refuse a value in them by name; none of them is one of the engine's fields.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldName"
+          },
+          "uniqueItems": true
+        },
+        "connectionString": {
+          "$ref": "#/$defs/connectionStringOffer"
+        },
+        "tls": {
+          "$ref": "#/$defs/facetOffer"
+        },
+        "sshTunnel": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/sshTunnelOffered"
+            },
+            {
+              "$ref": "#/$defs/sshTunnelRefused"
+            }
+          ]
+        },
+        "hostPathFields": {
+          "description": "The seed-only fields that name a file on Studio's own host the provider reads.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/hostPathField"
+          },
+          "uniqueItems": true
+        },
+        "opensLocalFile": {
+          "description": "Whether the engine opens a file on Studio's own host as its database.",
+          "type": "boolean"
+        },
+        "serverLevelWithoutDatabase": {
+          "description": "Whether a connection that names no database reaches every database of the server.",
+          "type": "boolean"
+        },
+        "agentCredential": {
+          "$ref": "#/$defs/agentCredential"
+        }
+      },
+      "required": [
+        "fields",
+        "defaults",
+        "seedOnly",
+        "refused",
+        "connectionString",
+        "tls",
+        "sshTunnel",
+        "hostPathFields",
+        "opensLocalFile",
+        "serverLevelWithoutDatabase",
+        "agentCredential"
+      ],
+      "additionalProperties": false
+    },
+    "connectionDefaults": {
+      "description": "What the connection dialog fills in when the engine is chosen; a key is absent where the dialog fills in nothing.",
+      "type": "object",
+      "properties": {
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "host": {
+          "type": "string",
+          "maxLength": 253
+        }
+      },
+      "additionalProperties": false
+    },
+    "seedOnly": {
+      "description": "The fields only this engine's provider reads, and how a seed of another type that carries one is refused; null where a seed of another type may carry every field this engine reads.",
+      "type": ["object", "null"],
+      "properties": {
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldName"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "scope": {
+          "description": "each: one refusal per present field. set: one refusal for the whole set.",
+          "type": "string",
+          "enum": ["each", "set"]
+        },
+        "refusal": {
+          "description": "The refusal sentence, in which {field} stands for the field refused.",
+          "type": "string",
+          "pattern": "^(?:[^{}]|\\{field\\})*$",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "projectionRefusal": {
+          "description": "The sentence that refuses a seed connection of another type carrying the fields when it is projected, in which {id} and {type} stand for the connection's id and type; null where the projection has none.",
+          "type": ["string", "null"],
+          "pattern": "^(?:[^{}]|\\{id\\}|\\{type\\})*$",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": ["fields", "scope", "refusal", "projectionRefusal"],
+      "additionalProperties": false
+    },
+    "connectionStringOffer": {
+      "description": "accepted: whether the provider opens what a connection string names. dialogOffersUri: whether the connection dialog offers a connection string box.",
+      "type": "object",
+      "properties": {
+        "accepted": {
+          "type": "boolean"
+        },
+        "dialogOffersUri": {
+          "type": "boolean"
+        }
+      },
+      "required": ["accepted", "dialogOffersUri"],
+      "additionalProperties": false
+    },
+    "facetOffer": {
+      "description": "offered: the engine has something to read or do for it. not-offered: it has nothing, so no surface draws it.",
+      "type": "string",
+      "enum": ["offered", "not-offered"]
+    },
+    "sshTunnelOffered": {
+      "description": "The engine's connections may run through an SSH tunnel.",
+      "type": "object",
+      "properties": {
+        "offered": {
+          "const": true
+        }
+      },
+      "required": ["offered"],
+      "additionalProperties": false
+    },
+    "sshTunnelRefused": {
+      "description": "The engine's connections never run through an SSH tunnel, and the sentence that refuses one says why.",
+      "type": "object",
+      "properties": {
+        "offered": {
+          "const": false
+        },
+        "refusal": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": ["offered", "refusal"],
+      "additionalProperties": false
+    },
+    "agentCredential": {
+      "description": "The agent credential a seed connection of the engine may carry; null where it carries none.",
+      "type": ["object", "null"],
+      "properties": {
+        "form": {
+          "$ref": "#/$defs/agentCredentialForm"
+        },
+        "supersededBy": {
+          "description": "Fields the provider signs in with in preference to the user and password, beside which an agent credential is refused.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldName"
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": ["form", "supersededBy"],
+      "additionalProperties": false
+    },
+    "agentCredentialForm": {
+      "description": "pair: a user and a password. dedicated-pair: a pair whose user differs from the connection's own. secret: a password alone.",
+      "type": "string",
+      "enum": ["pair", "dedicated-pair", "secret"]
+    },
+    "fieldName": {
+      "description": "A connection field, from the contract's closed vocabulary. Its class is the contract's: each name is in exactly one of secretFieldName, identityFieldName and publicFieldName.",
+      "type": "string",
+      "enum": [
+        "host",
+        "port",
+        "connectionString",
+        "allowInsecureAuth",
+        "user",
+        "password",
+        "saslMechanism",
+        "authMethod",
+        "privateKey",
+        "privateKeyPassphrase",
+        "hostKeyFingerprint",
+        "database",
+        "dataServers",
+        "warehouse",
+        "location",
+        "region",
+        "namespaces",
+        "amqpPort",
+        "apiPath",
+        "tlsServerName",
+        "registerMap",
+        "securityMode",
+        "serverCertificateThumbprint",
+        "schema",
+        "role",
+        "authSource",
+        "apiKeyId",
+        "apiKeySecret",
+        "localDataCenter",
+        "serviceName",
+        "instanceName",
+        "securityPolicyUri",
+        "clientCertificatePath",
+        "clientPrivateKeyPath",
+        "agentReadRoots"
+      ]
+    },
+    "seedOnlyFieldName": {
+      "description": "The field names only a seed file or an embedder's own code sets, which no connection dialog draws.",
+      "type": "string",
+      "enum": ["securityPolicyUri", "clientCertificatePath", "clientPrivateKeyPath", "agentReadRoots"]
+    },
+    "secretFieldName": {
+      "description": "The secret class: a stored value is encrypted, never sent to a browser, and moves the provider cache key.",
+      "type": "string",
+      "enum": ["connectionString", "password", "privateKey", "privateKeyPassphrase", "apiKeyId", "apiKeySecret"]
+    },
+    "identityFieldName": {
+      "description": "The identity class: another value names another principal or server, so a change of it is a new connection.",
+      "type": "string",
+      "enum": [
+        "host",
+        "port",
+        "allowInsecureAuth",
+        "user",
+        "saslMechanism",
+        "hostKeyFingerprint",
+        "database",
+        "dataServers",
+        "amqpPort",
+        "apiPath",
+        "tlsServerName",
+        "securityMode",
+        "serverCertificateThumbprint",
+        "authSource",
+        "serviceName",
+        "instanceName",
+        "securityPolicyUri",
+        "clientCertificatePath",
+        "clientPrivateKeyPath"
+      ]
+    },
+    "publicFieldName": {
+      "description": "The public class: a value that grants nothing.",
+      "type": "string",
+      "enum": [
+        "authMethod",
+        "warehouse",
+        "location",
+        "region",
+        "namespaces",
+        "registerMap",
+        "schema",
+        "role",
+        "localDataCenter",
+        "agentReadRoots"
+      ]
+    },
+    "hostPathField": {
+      "description": "A field that names a file on Studio's own host, which core admits through its reserved-path refusal before the provider reads it.",
+      "type": "string",
+      "enum": ["clientCertificatePath", "clientPrivateKeyPath"]
+    },
+    "facets": {
+      "description": "What the engine offers beyond its queries.",
+      "type": "object",
+      "properties": {
+        "monitoring": {
+          "$ref": "#/$defs/monitoringPanels"
+        },
+        "maintenance": {
+          "description": "The maintenance operations the engine offers before Studio connects.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/maintenanceOperation"
+          },
+          "uniqueItems": true
+        },
+        "agentReadings": {
+          "description": "The curated operational readings agent mode is offered on the engine.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/agentReading"
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": ["monitoring", "maintenance", "agentReadings"],
+      "additionalProperties": false
+    },
+    "monitoringPanels": {
+      "description": "Every monitoring panel, each stated as offered or not, so no panel is offered or withheld by default.",
+      "type": "object",
+      "properties": {
+        "overview": {
+          "$ref": "#/$defs/facetOffer"
+        },
+        "performance": {
+          "$ref": "#/$defs/facetOffer"
+        },
+        "slowQueries": {
+          "$ref": "#/$defs/facetOffer"
+        },
+        "activeSessions": {
+          "$ref": "#/$defs/facetOffer"
+        },
+        "tables": {
+          "$ref": "#/$defs/facetOffer"
+        },
+        "indexes": {
+          "$ref": "#/$defs/facetOffer"
+        },
+        "storage": {
+          "$ref": "#/$defs/facetOffer"
+        }
+      },
+      "required": ["overview", "performance", "slowQueries", "activeSessions", "tables", "indexes", "storage"],
+      "additionalProperties": false
+    },
+    "maintenanceOperation": {
+      "type": "string",
+      "enum": [
+        "vacuum",
+        "analyze",
+        "reindex",
+        "kill",
+        "optimize",
+        "check",
+        "compact",
+        "defragment",
+        "disarm",
+        "load",
+        "release"
+      ]
+    },
+    "agentReading": {
+      "type": "string",
+      "enum": ["sessions", "slow-queries", "table-stats", "index-stats", "storage", "health"]
+    },
+    "agent": {
+      "description": "What agent mode sends to the engine.",
+      "type": "object",
+      "properties": {
+        "statementLanguage": {
+          "$ref": "#/$defs/statementLanguage"
+        }
+      },
+      "required": ["statementLanguage"],
+      "additionalProperties": false
+    },
+    "statementLanguage": {
+      "description": "The statement language family agent mode sends, or null where agent mode sends the engine no statement.",
+      "type": ["string", "null"],
+      "enum": [
+        "sql",
+        "kubectl",
+        "mongo",
+        "libredbkv",
+        "influxql",
+        "weaviateapi",
+        "qdrantapi",
+        "cypher",
+        "milvusrpc",
+        "rediscli",
+        "etcdctl",
+        "oxiacli",
+        "rabbitread",
+        "kafkaread",
+        "s3api",
+        "fsquery",
+        "snmpget",
+        "netconfrpc",
+        "modbusread",
+        "promql",
+        "opcuaread",
+        "mtconnectread",
+        "mqttread",
+        "sparkplugread",
+        null
+      ]
+    },
+    "compatibilityEntry": {
+      "description": "One product the package was measured against: the engine that serves it, the versions claimed and the versions tested.",
+      "type": "object",
+      "properties": {
+        "engine": {
+          "$ref": "#/$defs/engineId"
+        },
+        "product": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "versions": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/versionRange"
+            },
+            {
+              "$ref": "#/$defs/versionList"
+            },
+            {
+              "$ref": "#/$defs/serviceVersions"
+            }
+          ]
+        },
+        "tested": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/testedVersion"
+          },
+          "minItems": 1
+        }
+      },
+      "required": ["engine", "product", "versions", "tested"],
+      "additionalProperties": false
+    },
+    "productVersion": {
+      "type": "string",
+      "pattern": "^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$"
+    },
+    "versionRange": {
+      "description": "Every version from one tested version to another, both included.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "range"
+        },
+        "from": {
+          "$ref": "#/$defs/productVersion"
+        },
+        "to": {
+          "$ref": "#/$defs/productVersion"
+        }
+      },
+      "required": ["kind", "from", "to"],
+      "additionalProperties": false
+    },
+    "versionList": {
+      "description": "The versions named, and no other.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "list"
+        },
+        "list": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/productVersion"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "required": ["kind", "list"],
+      "additionalProperties": false
+    },
+    "serviceVersions": {
+      "description": "A hosted service with no version of its own, measured on the date named.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "service"
+        },
+        "measured": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+        }
+      },
+      "required": ["kind", "measured"],
+      "additionalProperties": false
+    },
+    "testedVersion": {
+      "description": "A version the package's tests ran against, with the image they ran where one exists.",
+      "type": "object",
+      "properties": {
+        "version": {
+          "$ref": "#/$defs/productVersion"
+        },
+        "image": {
+          "$ref": "#/$defs/imageReference"
+        }
+      },
+      "required": ["version"],
+      "additionalProperties": false
+    },
+    "imageReference": {
+      "description": "A container image, pinned by the full SHA-256 digest of its manifest.",
+      "type": "object",
+      "properties": {
+        "repository": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._/:-]{0,254}$"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      },
+      "required": ["repository", "digest"],
+      "additionalProperties": false
+    }
+  }
+}

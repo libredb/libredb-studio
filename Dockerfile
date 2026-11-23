@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y python3 make g++ --no-install-recommend
 # without the package (packages/README.md, "Docker").
 COPY package.json bun.lock bunfig.toml ./
 COPY patches ./patches
+COPY packages/provider-sdk/package.json ./packages/provider-sdk/
 RUN bun install --frozen-lockfile
 
 # Build with Node.js to avoid Bun/QEMU segfaults on ARM64.

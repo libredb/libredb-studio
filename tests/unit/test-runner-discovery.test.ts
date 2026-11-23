@@ -3,6 +3,7 @@ import { lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, wr
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { testIf } from "../helpers/posix-tools";
+import { workspacePackageDirectories } from "../../scripts/workspace-packages.mjs";
 import { COVERAGE_EXEMPT_FILES, discoverTestFiles, selectTestFiles } from "../runner/discover";
 
 // The guard that replaces tests/unit/component-runner-coverage.test.ts: that file
@@ -41,10 +42,11 @@ const MISSING_FILE_SYMLINKS: string | null =
   process.platform === "win32" ? "file symlinks need a privilege or Developer Mode on Windows" : null;
 
 describe("test discovery", () => {
-  test("runs every *.test.ts(x) file under tests/, except tests/live", () => {
-    const onDisk = walk("tests")
-      .filter((file) => !file.startsWith("tests/live/"))
-      .sort();
+  test("runs every *.test.ts(x) file under tests/ and each package's tests/, except their live/", () => {
+    const packageTests = workspacePackageDirectories(root).flatMap((directory) =>
+      walk(`${directory}/tests`).filter((file) => !file.startsWith(`${directory}/tests/live/`)),
+    );
+    const onDisk = [...walk("tests").filter((file) => !file.startsWith("tests/live/")), ...packageTests].sort();
 
     expect(discoverTestFiles(root)).toEqual(onDisk);
   });
@@ -58,7 +60,13 @@ describe("test discovery", () => {
     }
     // Nothing outside those layers: a new top-level directory has to be added to
     // the list above deliberately, which is where someone reads this test.
-    const outside = files.filter((file) => !layers.some((layer) => file.startsWith(`tests/${layer}/`)));
+    // A workspace package's tests are its own layer, under packages/<name>/tests/.
+    const packages = workspacePackageDirectories(root);
+    const outside = files.filter(
+      (file) =>
+        !layers.some((layer) => file.startsWith(`tests/${layer}/`)) &&
+        !packages.some((directory) => file.startsWith(`${directory}/tests/`)),
+    );
     expect(outside).toEqual([]);
   });
 
