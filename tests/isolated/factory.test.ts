@@ -6745,3 +6745,143 @@ describe("a provider receives only its engine's fields on every entry point (FND
     expect(profiled.isConnected()).toBe(true);
   });
 });
+
+const { errorOutcome } = await import("@/lib/db/error-record");
+
+describe("every refusal raised while a provider is built answers outcome not-sent (FND-2 slice 6c)", () => {
+  /** A record whose class makes it something other than plain data. */
+  class ClassConnection {
+    id = "pg-s6c-class";
+    name = "pg-s6c-class";
+    type = "postgres" as const;
+    host = "localhost";
+    port = 5432;
+    database = "testdb";
+    createdAt = new Date(0);
+  }
+  interface BuildRefusal {
+    readonly connection: () => DatabaseConnection;
+    readonly execution?: () => ProviderExecutionContext;
+    /** Whether `readProviderDeclarations` runs the check too: it never connects, so it skips two. */
+    readonly declarations: boolean;
+    /** Words of the refusal, so each fixture is held to the check it names and to no earlier one. */
+    readonly says: string;
+  }
+  /** One refusal per check the build runs, each named for what it refuses. */
+  const REFUSALS: Readonly<Record<string, BuildRefusal>> = {
+    "a type that names no provider": {
+      connection: () => makeConnection("not-an-engine"),
+      declarations: true,
+      says: 'No provider for the connection type "not-an-engine"',
+    },
+    "a type LIBREDB_ENABLED_PROVIDERS leaves out": {
+      connection: () => makeConnection("mysql"),
+      declarations: true,
+      says: "The mysql provider is not available",
+    },
+    "a readOnly the engine cannot honour": {
+      connection: () => makeConnection("databend", { readOnly: true }),
+      declarations: true,
+      says: "readOnly: true is refused for databend",
+    },
+    "an execution context that is not plain data": {
+      connection: () => makeConnection("postgres"),
+      execution: () => Object.create({ allowExternalFileAccess: false }) as ProviderExecutionContext,
+      declarations: true,
+      says: "The execution context must be a plain object",
+    },
+    "an owner without ownerPoolMax": {
+      connection: () => makeConnection("postgres"),
+      execution: () => ({ owner: "s6c-subject" }) as ProviderExecutionContext,
+      declarations: true,
+      says: "ownerPoolMax must be a whole number",
+    },
+    "a denied file-access posture on SQLite": {
+      connection: () => makeConnection("sqlite", { database: ":memory:" }),
+      execution: () => ({ allowExternalFileAccess: false }),
+      declarations: true,
+      says: "SQLite connections require an administrator",
+    },
+    "a tunnel that is on and was not opened": {
+      connection: () =>
+        makeConnection("postgres", {
+          sshTunnel: { enabled: true, host: "bastion.internal", port: 22, username: "jump", authMethod: "password" },
+        }),
+      declarations: false,
+      says: "no tunnel was opened for it",
+    },
+    "a record that is not plain data": {
+      connection: () => new ClassConnection() as unknown as DatabaseConnection,
+      declarations: true,
+      says: "A connection must be a plain object",
+    },
+    "a blank required secret": {
+      connection: () =>
+        makeConnection("snowflake", {
+          host: "myorg-myaccount",
+          port: undefined,
+          authMethod: "keypair",
+          password: undefined,
+        }),
+      declarations: false,
+      says: "Paste the private key for key-pair sign-in.",
+    },
+    "an admitted file holding a NUL byte": {
+      connection: () => makeConnection("sqlite", { database: "s6c\u0000.db" }),
+      declarations: true,
+      says: "Invalid database path: NUL bytes",
+    },
+    "an OPC UA host path holding a NUL byte": {
+      connection: () => makeConnection("opcua", { port: 4840, clientCertificatePath: "s6c\u0000.pem" }),
+      declarations: true,
+      says: "Invalid clientCertificatePath: NUL bytes",
+    },
+    "a provider constructor's refusal": {
+      connection: () => makeConnection("mssql", { host: undefined }),
+      declarations: true,
+      says: "Host is required for SQL Server",
+    },
+  };
+  const enabledBefore = process.env.LIBREDB_ENABLED_PROVIDERS;
+  beforeEach(() => {
+    process.env.LIBREDB_ENABLED_PROVIDERS = SHIPPED_DATABASE_TYPES.filter((type) => type !== "mysql").join(",");
+  });
+  afterEach(() => {
+    if (enabledBefore === undefined) delete process.env.LIBREDB_ENABLED_PROVIDERS;
+    else process.env.LIBREDB_ENABLED_PROVIDERS = enabledBefore;
+  });
+
+  test.each(Object.keys(REFUSALS))("%s answers not-sent through createDatabaseProvider", async (name) => {
+    const refusal = REFUSALS[name];
+    const error: unknown = await createDatabaseProvider(refusal.connection(), {}, refusal.execution?.() ?? {}).catch(
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect((error as Error).message).toContain(refusal.says);
+    expect(errorOutcome(error)).toBe("not-sent");
+    expect(databaseErrorBody(error)?.body.outcome).toBe("not-sent");
+  });
+
+  test.each(Object.keys(REFUSALS).filter((name) => REFUSALS[name].declarations))(
+    "%s answers not-sent through readProviderDeclarations",
+    async (name) => {
+      const refusal = REFUSALS[name];
+      const error: unknown = await readProviderDeclarations(refusal.connection(), refusal.execution?.() ?? {}).catch(
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(DatabaseConfigError);
+      expect((error as Error).message).toContain(refusal.says);
+      expect(errorOutcome(error)).toBe("not-sent");
+    },
+  );
+
+  test("a refusal a getOrCreateProvider build raises answers not-sent, and nothing is cached", async () => {
+    const error: unknown = await getOrCreateProvider(
+      makeConnection("sqlite", { id: "sqlite-s6c-nul", database: "s6c\u0000.db" }),
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect((error as Error).message).toContain("Invalid database path: NUL bytes");
+    expect(errorOutcome(error)).toBe("not-sent");
+    expect(getProviderCacheStats().size).toBe(0);
+  });
+});

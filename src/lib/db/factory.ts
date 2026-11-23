@@ -14,7 +14,7 @@ import {
   type ProviderOptions,
   type ProviderExecutionContext,
 } from "./types";
-import { connectPhase, DatabaseConfigError, StudioProfileRefusal } from "./errors";
+import { buildPhase, connectPhase, DatabaseConfigError, StudioProfileRefusal } from "./errors";
 import { createSSHTunnel, closeSSHTunnel, releaseUnopenedTunnel, tunnelProviderOpened } from "@/lib/ssh/tunnel";
 import type { TunnelInfo } from "@/lib/ssh/tunnel";
 import { isEnvelopeClaim } from "@/lib/storage/envelope-claim";
@@ -120,6 +120,9 @@ import * as path from "path";
  *   and its access token under a programmatic access token), with the entry's sentence for it, which names the field,
  *   before the provider is built (see assertRequiredSecretsPresent); a provider constructed directly refuses it at
  *   `connect()`
+ *
+ * Every error raised while the provider is built, each refusal above and a provider constructor's own, answers `outcome`
+ * `not-sent` (`buildPhase` in ./errors): a build sends no statement.
  *
  * @example
  * // SQL Database
@@ -301,7 +304,7 @@ export async function createDatabaseProvider(
   options: ProviderOptions = {},
   execution: ProviderExecutionContext = {},
 ): Promise<DatabaseProvider> {
-  return await buildProvider(connection, options, execution, "connect");
+  return await buildPhase(() => buildProvider(connection, options, execution, "connect"));
 }
 
 /**
@@ -331,7 +334,7 @@ export async function readProviderDeclarations(
   connection: DatabaseConnection,
   execution: ProviderExecutionContext = {},
 ): Promise<ProviderDeclarations> {
-  const provider = await buildProvider(connection, {}, execution, "declarations");
+  const provider = await buildPhase(() => buildProvider(connection, {}, execution, "declarations"));
   return {
     capabilities: provider.getCapabilities(),
     labels: provider.getLabels(),
@@ -343,22 +346,21 @@ export async function readProviderDeclarations(
  * Refuse a connection to be built to connect when its engine's form entry declares a required secret that it shows and
  * leaves blank (`requiredSecretRefusal` in ./connection-form), with the entry's own sentence, which names the field as
  * the dialog labels it. Read on the copy the provider would receive, so an agent credential core substituted is the
- * one read. It names no type id: the declaration is the entry's. The refusal answers `outcome` `not-sent`, as the
- * provider's own connect refusal does through `connectPhase`: nothing was sent, though it is raised before that phase.
+ * one read. It names no type id: the declaration is the entry's. The refusal answers `outcome` `not-sent`, as every
+ * refusal raised while a provider is built does (`buildPhase` in ./errors).
  */
 function assertRequiredSecretsPresent(connection: DatabaseConnection): void {
   const refusal = requiredSecretRefusal(connection.type, connection);
   if (refusal === undefined) return;
-  const error = new DatabaseConfigError(refusal, connection.type);
-  error.outcome = "not-sent";
-  throw error;
+  throw new DatabaseConfigError(refusal, connection.type);
 }
 
 /**
  * The build `createDatabaseProvider` and `readProviderDeclarations` share: every check, then the provider. Two rules
  * differ by `purpose`: a tunnel that is on must have been opened (see `assertProviderTunnel` in ./tunnel-decision),
  * and a required secret the engine declares must not be blank (`assertRequiredSecretsPresent`), each only for
- * `"connect"`, the build of a provider that may be connected.
+ * `"connect"`, the build of a provider that may be connected. Both callers run it inside `buildPhase` (./errors), so
+ * every error it raises, a provider constructor's included, answers `outcome` `not-sent`: a build sends no statement.
  */
 async function buildProvider(
   connection: DatabaseConnection,

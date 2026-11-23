@@ -3004,7 +3004,7 @@ A provider's budget refusal made before it sent anything answers `refused-before
 
 `outcome` says whether the statement may have reached the database:
 
-- `not-sent`: the provider's connect failed, or Studio refused the statement before sending it, so the database never received it.
+- `not-sent`: the provider's connect failed, Studio refused the connection while building its provider, or Studio refused the statement before sending it, so the database never received it.
 - `unknown`: any other failure. The statement may have reached the database and run even though the answer is an error, so check the data before running work that changes it again.
 
 Neither value makes any Studio client send the request again, as for `retryable`.

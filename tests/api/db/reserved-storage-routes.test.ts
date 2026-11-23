@@ -90,7 +90,7 @@ describe("the routes answer a connection to Studio's own storage database with t
       code: "CONFIG_ERROR",
       statusCode: 400,
       kind: "config",
-      outcome: "unknown",
+      outcome: "not-sent",
     });
     expect(existsSync(storageFile)).toBe(false);
   });
@@ -108,7 +108,7 @@ describe("the routes answer a connection to Studio's own storage database with t
       code: "CONFIG_ERROR",
       statusCode: 400,
       kind: "config",
-      outcome: "unknown",
+      outcome: "not-sent",
     });
   });
 
@@ -122,7 +122,7 @@ describe("the routes answer a connection to Studio's own storage database with t
       code: "CONFIG_ERROR",
       statusCode: 400,
       kind: "config",
-      outcome: "unknown",
+      outcome: "not-sent",
     });
     expect(existsSync(storageFile)).toBe(false);
   });
@@ -170,7 +170,7 @@ describe("the routes answer a connection whose file Studio cannot check or that 
       code: "CONFIG_ERROR",
       statusCode: 400,
       kind: "config",
-      outcome: "unknown",
+      outcome: "not-sent",
     });
   });
 });
@@ -218,7 +218,7 @@ describe("a role whose file-access posture SQLite refuses is answered with that 
         code: "CONFIG_ERROR",
         statusCode: 400,
         kind: "config",
-        outcome: "unknown",
+        outcome: "not-sent",
       };
       expect(answers).toEqual(paths.flatMap((database) => routes.map(([route]) => [route, database, 400, refusal])));
       const read = spies.flatMap((spy) =>

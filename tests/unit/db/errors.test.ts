@@ -33,6 +33,8 @@ import {
   isAuthenticationError,
   waitedSeconds,
   connectPhase,
+  buildPhase,
+  ExecutionProfileError,
 } from "@/lib/db/errors";
 import * as errorsModule from "@/lib/db/errors";
 import { errorKind } from "@/lib/db/error-record";
@@ -1285,5 +1287,34 @@ describe("connectPhase", () => {
     expect(error).toBeInstanceOf(ConnectionError);
     expect((error as ConnectionError).outcome).toBe("not-sent");
     expect(deadline.outcome).toBeUndefined();
+  });
+});
+
+describe("buildPhase", () => {
+  test("marks a database error and an execution profile refusal not-sent, keeping each instance", async () => {
+    const raised = [
+      new DatabaseConfigError("bad config", "postgres"),
+      new ConnectionError("No answer from db.test:5432", "postgres"),
+      new ExecutionProfileError("refused", "PROFILE_UNSUPPORTED_TARGET"),
+      new StudioProfileRefusal("refused", "PROFILE_UNSUPPORTED_TARGET"),
+    ];
+    const rejections = await Promise.all(
+      raised.map((error) => buildPhase(() => Promise.reject(error)).catch((e: unknown) => e)),
+    );
+    rejections.forEach((rejection, index) => expect(rejection).toBe(raised[index]));
+    for (const error of raised) expect(error.outcome).toBe("not-sent");
+  });
+
+  test("passes any other value unmarked", async () => {
+    const raw = new Error("socket hang up");
+    expect(await buildPhase(() => Promise.reject(raw)).catch((e: unknown) => e)).toBe(raw);
+    expect(Object.keys(raw)).toEqual([]);
+    const text = "not an error";
+    expect(await buildPhase(() => Promise.reject(text)).catch((e: unknown) => e)).toBe(text);
+  });
+
+  test("resolves to what the build answers", async () => {
+    const built = { built: true };
+    expect(await buildPhase(async () => built)).toBe(built);
   });
 });

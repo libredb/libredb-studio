@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D494, U17 · 363
+- [Drivers and connections](#drivers-and-connections) — D1-D495, U17 · 364
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -4873,6 +4873,17 @@ The census of the fields provider modules read (`tests/unit/lib/db/provider-fiel
 Found 2026-11-23 while planning FND-2 slice 6.
 
 **Done when:** the three form entries declare `showSslPanel: false`, the dialog's rendering of the three is unchanged, and the census's list of declared fields no module reads is empty.
+
+### D495. A refusal the provider factory's entry points raise before the build answers outcome unknown
+
+Every error raised while a provider is built answers `outcome` `not-sent` (`buildPhase` in `src/lib/db/errors.ts`), since a build sends no statement.
+`getOrCreateProvider`, `acquireExecutionProfileProvider` and `withOneShotTunnel` in `src/lib/db/factory.ts` make checks of their own before they build: the type, the id, the enabled set, the read-only mode, plain data, the tunnel decision, the owner pool and the egress decision, and they dial the bastion of a tunnel that is on.
+A refusal from one of those checks, and a failed bastion dial, carries no outcome, so a route body built from it answers `unknown` although nothing was sent.
+`withOneShotTunnel` must not mark what its callback raises, since the callback may send statements.
+
+Found 2026-11-23 while planning FND-2 slice 6c.
+
+**Done when:** each such refusal answers `outcome` `not-sent`, with a test per entry point.
 
 ## Value interpolation
 
