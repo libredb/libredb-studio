@@ -332,7 +332,7 @@ The grid pages the list form of a single-type `get` with a paging line of Studio
 A statement reads at most 5,000 rows; a page at or past that answers a sentence to narrow the list with `-l` or `--field-selector`.
 
 Query history masks the values of `--token`, `--password`, `--client-key`, `--client-certificate`, `--from-literal` and `--docker-password` in every spelling, though the console refuses every line that carries them; a tab keeps what was typed, a saved query keeps what was saved, and the embedded workspace writes no history.
-Those flags are the console's own `CREDENTIAL_FLAGS` list, which the dialect's row in `QUERY_DIALECTS` ([`src/lib/db/query-dialects.ts`](../../src/lib/db/query-dialects.ts)) writes again so the registry imports nothing from the provider, and a test holds the two lists equal.
+Those flags are the console's own `CREDENTIAL_FLAGS` list in the kubectl family module ([`src/lib/languages/kubectl/commands.ts`](../../src/lib/languages/kubectl/commands.ts)), which the dialect's row in `QUERY_DIALECTS` ([`src/lib/db/query-dialects.ts`](../../src/lib/db/query-dialects.ts)) reads, so the two cannot drift.
 
 ### 5.1 SQL grammar
 

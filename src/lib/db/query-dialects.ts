@@ -1,4 +1,5 @@
 import type { ProviderCapabilities } from "@/lib/db/types";
+import { CREDENTIAL_FLAGS } from "@/lib/languages/kubectl/commands";
 import type { QueryTab } from "@/lib/types";
 
 /**
@@ -159,19 +160,10 @@ export const QUERY_DIALECTS: Readonly<Record<QueryDialect, DialectSpec>> = Objec
     offersCountQuery: false,
     offersSqlExport: false,
     // A line pasted from a shell may carry kubectl's credential flags or a Secret's values, which the console refuses;
-    // query history keeps none of their values. The flags are the Kubernetes console's `CREDENTIAL_FLAGS`, written
-    // here rather than imported so this registry imports nothing from a provider; the test "the dialect declares
-    // exactly the console's credential flags" holds the two lists equal.
-    historyMask: Object.freeze({
-      credentialFlags: Object.freeze([
-        "--token",
-        "--password",
-        "--client-key",
-        "--client-certificate",
-        "--from-literal",
-        "--docker-password",
-      ]),
-    }),
+    // query history keeps none of their values. The flags are the kubectl family's `CREDENTIAL_FLAGS`
+    // (`src/lib/languages/kubectl/commands.ts`), the list the console refuses, read here so the mask and the refusals
+    // are one list; the test "the dialect declares exactly the console's credential flags" holds it.
+    historyMask: Object.freeze({ credentialFlags: CREDENTIAL_FLAGS }),
   }),
 
   // OPC UA: one JSON read request, either current values or raw history. Its grids are the server's own
