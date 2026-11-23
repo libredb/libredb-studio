@@ -550,7 +550,11 @@ describe("installShutdownHandler", () => {
       proc.signal("SIGTERM");
 
       expect(await proc.exited).toBe(143);
-      expect(consoleError).toHaveBeenCalledWith("[DB] Error disconnecting provider", "shutdown-handler", failure);
+      expect(consoleError).toHaveBeenCalledWith(
+        "[DB] Error disconnecting provider",
+        "shutdown-handler",
+        String(failure),
+      );
       expect(logger.error).toHaveBeenCalledWith(
         "Provider cache close failed",
         expect.objectContaining({ message: "Providers not closed: shutdown-handler" }),
