@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "465571a76e6ae3b65bc7555ac35bc1cd718270f5c61e7efe3031272a6495246b";
+export const MANIFEST_SCHEMA_SHA256 = "ae5d6abfb3e73ffb8dcba49e0e93343f1f68b93d017c881c5f2a6f152f315ee2";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -112,6 +112,7 @@ export interface EngineDeclaration {
   readonly sqlText: SqlText;
   readonly sqlWriting: SqlWriting;
   readonly migrationDdl: MigrationDdl;
+  readonly sqlGenerators: SqlGenerators;
 }
 
 /** external: a database the user already runs, which Studio is pointed at. embedded: a store Studio carries and creates itself. */
@@ -530,7 +531,7 @@ export type StatementLanguage =
   | "sparkplugread"
   | null;
 
-/** The editor facts of the engine that are data: the keyword its open transaction is committed with, the consent card's deadline, the fence tags naming it, the explain format of its plans and its query dialect. The SQL text facts are sqlText, the SQL writing facts sqlWriting and the migration DDL facts migrationDdl, and generators and editor languages are later parts of the contract. */
+/** The editor facts of the engine that are data: the keyword its open transaction is committed with, the consent card's deadline, the fence tags naming it, the explain format of its plans, its query dialect and the language its tabs are written and rendered in. The SQL text facts are sqlText, the SQL writing facts sqlWriting, the migration DDL facts migrationDdl and the SQL generator forms sqlGenerators. */
 export interface Editor {
   /** The one word that keeps an open transaction on the engine, which the notice Studio shows when a statement left a transaction open and it was rolled back names: a letter, then up to 31 letters, digits or underscores. */
   readonly commitKeyword: string;
@@ -539,6 +540,7 @@ export interface Editor {
   readonly fenceAliases: readonly FenceTag[];
   readonly explainFormat: ExplainFormat;
   readonly dialect: QueryDialectRow;
+  readonly language: EditorLanguageFacts;
 }
 
 /** The chip and the sentence the agent's consent card shows for an engine whose long read ends differently from the others, or null where the engine has none. chip: the label in the card's bounds row. sentence: the paragraph under the card's box. */
@@ -604,6 +606,39 @@ export type QueryDialectRow = {
   readonly offersSqlExport: boolean;
   readonly historyMask: HistoryMask;
 } | null;
+
+/** The language the engine's query tabs are written and rendered in. queryLanguage: the query language the engine speaks; an engine with no dialect opens its tabs under that language's tab type (sql for sql, mongodb for json, and promql, cypher and influxql for their own), an engine with a dialect under the dialect's name, so no tab type is stated. monacoId: the Monaco language the tabs render in, one of Studio's editor languages. accent: that language's accent. console: whether the language is a console dialect, registered under its Monaco id, which is also its dialect id, so no second id is stated. */
+export interface EditorLanguageFacts {
+  readonly queryLanguage: QueryLanguage;
+  readonly monacoId: MonacoLanguageId;
+  readonly accent: EditorAccent;
+  readonly console: boolean;
+}
+
+/** A query language Studio's editor reads: SQL, JSON, PromQL, Cypher or InfluxQL. */
+export type QueryLanguage = "sql" | "json" | "promql" | "cypher" | "influxql";
+
+/** A Monaco language Studio's query editor renders a tab in, each with Studio's own registration, completion and formatting code until Studio's browser catalog reads them. graph-cypher and not cypher, which Monaco's own bundle registers. */
+export type MonacoLanguageId =
+  | "sql"
+  | "json"
+  | "libredb"
+  | "redis"
+  | "promql"
+  | "etcd"
+  | "oxia"
+  | "s3"
+  | "kubectl"
+  | "firestore"
+  | "graph-cypher"
+  | "influxql"
+  | "milvus"
+  | "qdrant"
+  | "weaviate"
+  | "mtconnect";
+
+/** The border class an agent answer's statement block takes in the language, up to 32 characters: border-hue-, one hue of Studio's palette in lower-case letters that is none of the three status hues (amber, rose, emerald), optionally -alt, then /40. */
+export type EditorAccent = string;
 
 /** The command-line flags whose values query history never keeps, each once, or null where history keeps a statement as typed. */
 export type HistoryMask = {
@@ -991,6 +1026,21 @@ export type DdlReasons = readonly DdlReason[];
 
 /** One refusal sentence, 1 to 1024 characters with no line break, since every sentence a writer prints is printed inside a comment line. */
 export type DdlReason = string;
+
+/** What an SQL engine writes apart from Studio's shared SQL forms, or null where it writes the shared forms, quotes a name as its declared identifier quoting or Studio's default says, and counts with COUNT(*). One member per member of Studio's SQL generator row, each function named by the slot it fills. quote: the pure function that quotes a name for the engine, leaving it bare where it round-trips bare and quoting is not forced. */
+export type SqlGenerators = {
+  readonly quote: FunctionName;
+  /** The pure function that writes the tree click's statement on the quoted address; null where the shared form stands. */
+  readonly table: FunctionName | null;
+  /** The pure function that writes Generate Query's statement on the quoted address and its columns; null where the shared form stands. */
+  readonly select: FunctionName | null;
+  /** The pure function that writes Generate Query's statement on the quoted address and its projected column list; null where the shared form stands. */
+  readonly selectList: FunctionName | null;
+  readonly countExpression: CountExpression;
+} | null;
+
+/** The count Generate Count Query writes for the engine, COUNT(*) where the engine's is the shared one: one aggregate call over every row, a letter, then letters, digits or underscores, then (*), up to 64 characters, so it fills one expression of the statement Studio writes and never adds a clause or a statement. */
+export type CountExpression = string;
 
 /** One product the package was measured against: the engine that serves it, the versions claimed and the versions tested. */
 export interface CompatibilityEntry {

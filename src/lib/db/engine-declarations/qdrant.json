@@ -119,6 +119,12 @@
       "offersCountQuery": false,
       "offersSqlExport": false,
       "historyMask": null
+    },
+    "language": {
+      "queryLanguage": "json",
+      "monacoId": "qdrant",
+      "accent": "border-hue-pink/40",
+      "console": true
     }
   },
   "sqlText": {
@@ -308,5 +314,6 @@
     "reasons": [
       "A collection's payloads are schemaless and its vectors are declared through Qdrant's own collection API, not SQL DDL, so there is no column definition to change."
     ]
-  }
+  },
+  "sqlGenerators": null
 }

@@ -76,7 +76,13 @@
     "consentDeadline": null,
     "fenceAliases": [],
     "explainFormat": "druid-native",
-    "dialect": null
+    "dialect": null,
+    "language": {
+      "queryLanguage": "sql",
+      "monacoId": "sql",
+      "accent": "border-hue-blue/40",
+      "console": false
+    }
   },
   "sqlText": {
     "readsSqlText": true,
@@ -272,5 +278,12 @@
     "reasons": [
       "Druid SQL has no ALTER TABLE; rewrite the datasource with REPLACE INTO through an MSQ task."
     ]
+  },
+  "sqlGenerators": {
+    "quote": "generatorQuote",
+    "table": null,
+    "select": null,
+    "selectList": null,
+    "countExpression": "COUNT(*)"
   }
 }

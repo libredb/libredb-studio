@@ -101,7 +101,13 @@
     "consentDeadline": null,
     "fenceAliases": [],
     "explainFormat": null,
-    "dialect": null
+    "dialect": null,
+    "language": {
+      "queryLanguage": "sql",
+      "monacoId": "sql",
+      "accent": "border-hue-blue/40",
+      "console": false
+    }
   },
   "sqlText": {
     "readsSqlText": true,
@@ -328,5 +334,6 @@
       "The clause is not in CQL's grammar; enforce the relationship in the application.",
       "CQL never declared one."
     ]
-  }
+  },
+  "sqlGenerators": null
 }

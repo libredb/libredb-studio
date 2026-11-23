@@ -204,6 +204,12 @@
       "offersCountQuery": false,
       "offersSqlExport": false,
       "historyMask": null
+    },
+    "language": {
+      "queryLanguage": "json",
+      "monacoId": "s3",
+      "accent": "border-hue-indigo-alt/40",
+      "console": false
     }
   },
   "sqlText": {
@@ -393,5 +399,6 @@
     "reasons": [
       "S3 stores objects under keys with no schema, so there is no column definition to change."
     ]
-  }
+  },
+  "sqlGenerators": null
 }

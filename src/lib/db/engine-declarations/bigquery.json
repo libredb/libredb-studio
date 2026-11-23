@@ -116,7 +116,13 @@
     "consentDeadline": null,
     "fenceAliases": [],
     "explainFormat": "bigquery-dryrun",
-    "dialect": null
+    "dialect": null,
+    "language": {
+      "queryLanguage": "sql",
+      "monacoId": "sql",
+      "accent": "border-hue-blue/40",
+      "console": false
+    }
   },
   "sqlText": {
     "readsSqlText": true,
@@ -322,5 +328,6 @@
       "The engine has no foreign-key constraint.",
       "BigQuery accepts a primary key only as PRIMARY KEY (...) NOT ENFORCED."
     ]
-  }
+  },
+  "sqlGenerators": null
 }

@@ -84,7 +84,13 @@
       "cypher"
     ],
     "explainFormat": null,
-    "dialect": null
+    "dialect": null,
+    "language": {
+      "queryLanguage": "cypher",
+      "monacoId": "graph-cypher",
+      "accent": "border-hue-purple/40",
+      "console": false
+    }
   },
   "sqlText": {
     "readsSqlText": false,
@@ -273,5 +279,6 @@
     "reasons": [
       "A node label groups nodes whose properties are not declared columns, so there is no column definition to change."
     ]
-  }
+  },
+  "sqlGenerators": null
 }

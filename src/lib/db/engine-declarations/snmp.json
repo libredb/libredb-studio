@@ -111,6 +111,12 @@
       "offersCountQuery": false,
       "offersSqlExport": true,
       "historyMask": null
+    },
+    "language": {
+      "queryLanguage": "json",
+      "monacoId": "json",
+      "accent": "border-hue-cyan/40",
+      "console": false
     }
   },
   "sqlText": {
@@ -300,5 +306,6 @@
     "reasons": [
       "An SNMP object's type is declared in the MIB module the device was built with, not in columns a client can change, and this provider's valve refuses any PDU that is not a Get, GetNext or GetBulk, so there is no column definition to change."
     ]
-  }
+  },
+  "sqlGenerators": null
 }

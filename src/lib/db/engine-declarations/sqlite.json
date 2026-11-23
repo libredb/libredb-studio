@@ -79,7 +79,13 @@
       "sqlite3"
     ],
     "explainFormat": "sqlite-queryplan",
-    "dialect": null
+    "dialect": null,
+    "language": {
+      "queryLanguage": "sql",
+      "monacoId": "sql",
+      "accent": "border-hue-blue/40",
+      "console": false
+    }
   },
   "sqlText": {
     "readsSqlText": true,
@@ -310,5 +316,6 @@
       "A foreign key is declarable only as a CREATE TABLE constraint; recreate the table and copy the rows.",
       "Requires table recreation."
     ]
-  }
+  },
+  "sqlGenerators": null
 }

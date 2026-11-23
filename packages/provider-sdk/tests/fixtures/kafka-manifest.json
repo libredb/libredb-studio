@@ -105,6 +105,12 @@
           "offersCountQuery": false,
           "offersSqlExport": true,
           "historyMask": null
+        },
+        "language": {
+          "queryLanguage": "json",
+          "monacoId": "json",
+          "accent": "border-hue-cyan/40",
+          "console": false
         }
       },
       "sqlText": {
@@ -265,7 +271,8 @@
         "refusal": "-- Apache Kafka: Cannot generate table DDL. A topic holds messages, not rows with declared columns, so there is no column definition to change.",
         "transactionWrapper": null,
         "reasons": ["A topic holds messages, not rows with declared columns, so there is no column definition to change."]
-      }
+      },
+      "sqlGenerators": null
     }
   ],
   "compatibility": [

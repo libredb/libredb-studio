@@ -147,6 +147,12 @@
       "offersCountQuery": false,
       "offersSqlExport": true,
       "historyMask": null
+    },
+    "language": {
+      "queryLanguage": "json",
+      "monacoId": "json",
+      "accent": "border-hue-cyan/40",
+      "console": false
     }
   },
   "sqlText": {
@@ -336,5 +342,6 @@
     "reasons": [
       "An OPC UA node has attributes defined by its type in the server's own model, not columns, and this provider has no code that can write to a server, so there is no column definition to change."
     ]
-  }
+  },
+  "sqlGenerators": null
 }

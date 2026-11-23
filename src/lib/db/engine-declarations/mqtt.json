@@ -113,6 +113,12 @@
       "offersCountQuery": false,
       "offersSqlExport": true,
       "historyMask": null
+    },
+    "language": {
+      "queryLanguage": "json",
+      "monacoId": "json",
+      "accent": "border-hue-cyan/40",
+      "console": false
     }
   },
   "sqlText": {
@@ -302,5 +308,6 @@
     "reasons": [
       "A broker keeps no schema and no catalog, so there is no column definition to change."
     ]
-  }
+  },
+  "sqlGenerators": null
 }

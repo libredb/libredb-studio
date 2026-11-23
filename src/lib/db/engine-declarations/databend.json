@@ -151,7 +151,13 @@
     "consentDeadline": null,
     "fenceAliases": [],
     "explainFormat": "databend-text",
-    "dialect": null
+    "dialect": null,
+    "language": {
+      "queryLanguage": "sql",
+      "monacoId": "sql",
+      "accent": "border-hue-blue/40",
+      "console": false
+    }
   },
   "sqlText": {
     "readsSqlText": true,
@@ -373,5 +379,6 @@
       "The engine has no foreign-key constraint.",
       "Databend's CREATE TABLE has no primary-key constraint."
     ]
-  }
+  },
+  "sqlGenerators": null
 }

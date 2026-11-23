@@ -96,7 +96,13 @@
     "consentDeadline": null,
     "fenceAliases": [],
     "explainFormat": "clickhouse-json",
-    "dialect": null
+    "dialect": null,
+    "language": {
+      "queryLanguage": "sql",
+      "monacoId": "sql",
+      "accent": "border-hue-blue/40",
+      "console": false
+    }
   },
   "sqlText": {
     "readsSqlText": true,
@@ -323,5 +329,6 @@
       "The engine has no foreign-key constraint.",
       "REMOVE accepts DEFAULT, MATERIALIZED or ALIAS only; recreate the column."
     ]
-  }
+  },
+  "sqlGenerators": null
 }

@@ -94,6 +94,12 @@
       "offersCountQuery": false,
       "offersSqlExport": true,
       "historyMask": null
+    },
+    "language": {
+      "queryLanguage": "json",
+      "monacoId": "redis",
+      "accent": "border-hue-fuchsia/40",
+      "console": false
     }
   },
   "sqlText": {
@@ -284,5 +290,6 @@
     "reasons": [
       "Keys are not tables and have no column definitions to change."
     ]
-  }
+  },
+  "sqlGenerators": null
 }

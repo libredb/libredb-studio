@@ -32,10 +32,12 @@ import {
   type JwtAccessClaim,
   type MaintenanceOperation as ManifestMaintenanceOperation,
   type MigrationDdl,
+  type MonacoLanguageId,
   type NonFiniteLiterals,
   type PlaceableFieldName,
   type ProcedureBodies,
   type QueryDialect as ManifestQueryDialect,
+  type QueryLanguage,
   type ScriptFacts,
   type ScriptUnit,
   type SelectFieldName,
@@ -57,6 +59,7 @@ import {
   buildEngineDeclaration,
   buildFieldRules,
   buildMigrationDdl,
+  buildSqlGenerators,
   buildSqlText,
   buildSqlWriting,
   CAPABILITY_READ_ENVIRONMENT,
@@ -124,6 +127,10 @@ import { CURATED_OPERATION_KINDS } from "@/lib/db/operations/descriptors";
 import { refusedFieldRefusal } from "@/lib/db/provider-connection";
 import { SQL_GRAMMAR } from "@/lib/db/sql-grammar";
 import type { CompletionQuoting, SqlGrammarSpec, SqlRedaction, UpdateTargetGrammar } from "@/lib/db/sql-grammar/types";
+import { EDITOR_LANGUAGES, type EditorLanguage } from "@/lib/db/editor-language";
+import type { EditorLanguageContribution } from "@/lib/db/editor-language/types";
+import { SQL_ENGINE_GENERATORS } from "@/lib/db/query-generators";
+import type { SqlEngineGenerators } from "@/lib/db/query-generators/types";
 import { SQL_WRITING } from "@/lib/db/sql-writing";
 import type {
   ExportSpec,
@@ -158,6 +165,8 @@ import { SNOWFLAKE_CONNECTION_STRING } from "@/lib/db/providers/sql/snowflake/co
 import { SPARK_CONNECTION_STRING } from "@/lib/db/providers/sql/spark/connection-string";
 import type { ExplainFormat, MaintenanceOperation, ProviderCapabilities } from "@/lib/db/types";
 import { getExplainStrategy } from "@/lib/explain";
+import { DIALECT_EDITORS, type DialectEditor } from "@/lib/editor/dialect-editors";
+import { editorLanguageOf, resolveTabType } from "@/lib/editor/tab-language";
 import { historyMaskOf } from "@/lib/history-mask";
 import type { NonFiniteWord } from "@/lib/non-finite";
 import { importKubeconfig } from "@/lib/kubernetes/kubeconfig-import";
@@ -167,12 +176,13 @@ import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
 import { hasUnterminatedSpan, readSqlSpan } from "@/lib/sql/spans";
 import { splitExecutionUnits } from "@/lib/sql/statement-splitter";
 import { CONNECTION_FIELDS as FIELD_CLASSES } from "@/lib/storage/secret-fields";
-import type { DatabaseConnection, DatabaseType, HostPathField } from "@/lib/types";
+import type { DatabaseConnection, DatabaseType, HostPathField, QueryTab } from "@/lib/types";
 import { readCensusCapabilities } from "../../helpers/census-capabilities";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 import { SPAN_STATEMENTS } from "./sql-grammar/fixtures";
 import { engineModules as migrationDdlModules } from "./migration-ddl/modules";
 import { ENGINE_MODULES } from "./sql-writing/engine-modules";
+import { sqlGeneratorModules } from "./engine-declarations/sql-generator-modules";
 import {
   DECLARED_SLOTS,
   type DeclaredSlotName,
@@ -415,9 +425,49 @@ function moduleMigrationDdl(type: DatabaseType): object {
   return row;
 }
 
-/** The row of `table` that `type`'s own engine module exports, on which the census resolves that table's slots. */
-function moduleRow(table: SlotTable, type: DatabaseType): object {
-  return table === "SQL_WRITING" ? moduleSqlWriting(type) : moduleMigrationDdl(type);
+/** The SQL generator modules the query generators' registry imports, read from the registry file's import statements. */
+const SQL_GENERATOR_MODULES = sqlGeneratorModules();
+
+/**
+ * Each SQL engine's generator row as its own module exports it, the module imported by its absolute path, never through
+ * the registry index the generator reads: every SQL generator slot the census's slot table names is resolved on this
+ * row. Only the engines with a row of `SQL_ENGINE_GENERATORS` have one.
+ */
+const MODULE_SQL_GENERATORS: ReadonlyMap<string, unknown> = new Map(
+  await Promise.all(
+    SQL_GENERATOR_MODULES.map(
+      async (engine) =>
+        [
+          engine.id,
+          ((await import(path.join(ROOT, engine.path))) as Record<string, unknown>)[engine.exportName],
+        ] as const,
+    ),
+  ),
+);
+
+/** The engine module's SQL generator row of `type`, which the census holds to be the registry's row. */
+function moduleSqlGenerators(type: DatabaseType): object {
+  const row = MODULE_SQL_GENERATORS.get(type);
+  if (typeof row !== "object" || row === null) throw new Error(`${type}: no SQL generator module exports a row`);
+  return row;
+}
+
+/** The registry's SQL generator row of `type`, read as an own key; undefined where the engine writes the shared forms. */
+function sqlGeneratorRow(type: DatabaseType): SqlEngineGenerators | undefined {
+  return Object.hasOwn(SQL_ENGINE_GENERATORS, type) ? SQL_ENGINE_GENERATORS[type] : undefined;
+}
+
+/**
+ * The row of `table` that `type`'s own engine module exports, on which the census resolves that table's slots; undefined
+ * only for an SQL generator row the engine does not have, since every shipped engine has a row of the other two tables.
+ */
+function moduleRow(table: SlotTable, type: DatabaseType): object | undefined {
+  const rows: Readonly<Record<SlotTable, () => object | undefined>> = {
+    SQL_WRITING: () => moduleSqlWriting(type),
+    MIGRATION_DDL: () => moduleMigrationDdl(type),
+    SQL_ENGINE_GENERATORS: () => (sqlGeneratorRow(type) === undefined ? undefined : moduleSqlGenerators(type)),
+  };
+  return rows[table]();
 }
 
 /** The kinds a bare type family may be, in the order of the schema's `typeFamilies`. */
@@ -461,6 +511,17 @@ const MIGRATION_DDL_FUNCTION_PATHS = schemaFunctionPaths("migrationDdl");
 function migrationDdlNames(d: EngineDeclaration): (readonly [path: string, name: string])[] {
   return MIGRATION_DDL_FUNCTION_PATHS.flatMap((path) => {
     const name = valueAt(d.migrationDdl, path);
+    return typeof name === "string" ? [[path, name] as const] : [];
+  });
+}
+
+/** The function members of a declaration's `sqlGenerators`, by their dotted paths, read off the schema. */
+const SQL_GENERATORS_FUNCTION_PATHS = schemaFunctionPaths("sqlGenerators");
+
+/** Every function name a declaration's `sqlGenerators` states, with the dotted path it is stated at; none where null. */
+function sqlGeneratorNames(d: EngineDeclaration): (readonly [path: string, name: string])[] {
+  return SQL_GENERATORS_FUNCTION_PATHS.flatMap((path) => {
+    const name = valueAt(d.sqlGenerators, path);
     return typeof name === "string" ? [[path, name] as const] : [];
   });
 }
@@ -656,6 +717,53 @@ function derivedDialects(): Readonly<Record<QueryDialect, DialectSpec>> {
     table[row.name] = spec;
   }
   return table as Record<QueryDialect, DialectSpec>;
+}
+
+/**
+ * The tab type a dialect-less engine's tabs open under, keyed by its query language (docs/providers/CONTRACT.md,
+ * clause S-23), written here from the contract rather than read from `resolveTabType`, so the census holds that ladder
+ * to it.
+ */
+const LANGUAGE_TAB_TYPES: Readonly<Record<QueryLanguage, QueryTab["type"]>> = {
+  sql: "sql",
+  json: "mongodb",
+  promql: "promql",
+  cypher: "cypher",
+  influxql: "influxql",
+};
+
+/** The tab type a declaration's engine opens its tabs under: its dialect's name, or its query language's tab type. */
+function declaredTabType(d: EngineDeclaration): QueryTab["type"] {
+  return d.editor.dialect === null ? LANGUAGE_TAB_TYPES[d.editor.language.queryLanguage] : d.editor.dialect.name;
+}
+
+/**
+ * The editor language facts the declarations state, one entry per Monaco language and one per tab type: two
+ * declarations stating one language with a different accent or console, or one tab type in a different language, are a
+ * thrown error naming both engines.
+ */
+function derivedEditorLanguages(): {
+  languages: Record<string, { accent: string; console: boolean; engine: DatabaseType }>;
+  tabTypes: Record<string, { monacoId: string; engine: DatabaseType }>;
+} {
+  const languages: Record<string, { accent: string; console: boolean; engine: DatabaseType }> = {};
+  const tabTypes: Record<string, { monacoId: string; engine: DatabaseType }> = {};
+  for (const type of SHIPPED_DATABASE_TYPES) {
+    const d = declared(type);
+    const { monacoId, accent, console } = d.editor.language;
+    const language = languages[monacoId];
+    if (language !== undefined && (language.accent !== accent || language.console !== console)) {
+      throw new Error(`${type} states the ${monacoId} editor language unlike ${language.engine}`);
+    }
+    languages[monacoId] ??= { accent, console, engine: type };
+    const tabType = declaredTabType(d);
+    const editor = tabTypes[tabType];
+    if (editor !== undefined && editor.monacoId !== monacoId) {
+      throw new Error(`${type} states the ${tabType} tab type's language unlike ${editor.engine}`);
+    }
+    tabTypes[tabType] ??= { monacoId, engine: type };
+  }
+  return { languages, tabTypes };
 }
 
 describe("the committed declarations", () => {
@@ -938,6 +1046,63 @@ describe("the committed declarations", () => {
     );
     expect(() => buildMigrationDdl("postgres", partialCreate)).toThrow(
       'postgres: the migration DDL member "createTable.kind" is "partial", neither refused nor written',
+    );
+  });
+
+  test("the generator refuses, by name, an SQL generator member it has no place for", () => {
+    const key = `k${crypto.randomUUID().replaceAll("-", "")}`;
+    const row = SQL_ENGINE_GENERATORS.mssql;
+    if (row === undefined) throw new Error("mssql has no SQL generator row");
+    const planted = { ...row, [key]: null } as SqlEngineGenerators;
+
+    expect(() => buildSqlGenerators("mssql")).not.toThrow();
+    expect(buildSqlGenerators("postgres")).toBeNull();
+    expect(() => buildSqlGenerators("mssql", planted)).toThrow(
+      `mssql: the SQL generator member "${key}" has no place in the engine declaration`,
+    );
+  });
+
+  test("the generator refuses, by name, an editor language or tab type member it has no place for", () => {
+    const key = `k${crypto.randomUUID().replaceAll("-", "")}`;
+    const language = {
+      ...EDITOR_TABLES,
+      languages: { ...EDITOR_LANGUAGES, sql: { ...EDITOR_LANGUAGES.sql, [key]: null } },
+    };
+    const tabEditor = {
+      ...EDITOR_TABLES,
+      tabEditors: { ...DIALECT_EDITORS, sql: { ...DIALECT_EDITORS.sql, [key]: null } },
+    };
+
+    expect(() => buildEditor("postgres", CAPABILITIES.postgres)).not.toThrow();
+    expect(() => buildEditor("postgres", CAPABILITIES.postgres, language)).toThrow(
+      `postgres: the sql editor language member "${key}" has no place in the engine declaration`,
+    );
+    expect(() => buildEditor("postgres", CAPABILITIES.postgres, tabEditor)).toThrow(
+      `postgres: the sql tab type's editor member "${key}" has no place in the engine declaration`,
+    );
+  });
+
+  test("the generator refuses, by name, an editor language row or a console whose id is not its Monaco id", () => {
+    const milvus = EDITOR_LANGUAGES.milvus;
+    if (milvus.console === undefined) throw new Error("the milvus editor language is no console dialect");
+    const renamed = {
+      ...EDITOR_TABLES,
+      languages: { ...EDITOR_LANGUAGES, sql: { ...EDITOR_LANGUAGES.sql, monacoId: "json" } },
+    };
+    const consoleId = {
+      ...EDITOR_TABLES,
+      languages: {
+        ...EDITOR_LANGUAGES,
+        milvus: { ...milvus, console: { ...milvus.console, spec: { ...milvus.console.spec, id: "milvus-console" } } },
+      },
+    };
+
+    expect(() => buildEditor("milvus", CAPABILITIES.milvus)).not.toThrow();
+    expect(() => buildEditor("postgres", CAPABILITIES.postgres, renamed)).toThrow(
+      'postgres: the sql editor language\'s monacoId is "json", not its Monaco id',
+    );
+    expect(() => buildEditor("milvus", CAPABILITIES.milvus, consoleId)).toThrow(
+      'milvus: the milvus editor language\'s console dialect id is "milvus-console", not its Monaco id',
     );
   });
 
@@ -2345,16 +2510,15 @@ describe("the census", () => {
   test("every slot of the census's slot table is filled by some shipped row of its table", () => {
     const names = Object.keys(DECLARED_SLOTS) as DeclaredSlotName[];
 
-    expect(
-      names.filter(
-        (name) =>
-          !SHIPPED_DATABASE_TYPES.some(
-            (type) => typeof slotFunction(moduleRow(DECLARED_SLOTS[name].table, type), name) === "function",
-          ),
-      ),
-    ).toEqual([]);
-    expect(names.length).toBe(25);
+    const fills = (type: DatabaseType, name: DeclaredSlotName) => {
+      const row = moduleRow(DECLARED_SLOTS[name].table, type);
+      return row !== undefined && typeof slotFunction(row, name) === "function";
+    };
+
+    expect(names.filter((name) => !SHIPPED_DATABASE_TYPES.some((type) => fills(type, name)))).toEqual([]);
+    expect(names.length).toBe(29);
     expect(names.filter((name) => DECLARED_SLOTS[name].table === "MIGRATION_DDL").length).toBe(12);
+    expect(names.filter((name) => DECLARED_SLOTS[name].table === "SQL_ENGINE_GENERATORS").length).toBe(4);
   });
 
   test("every member of an SQL writing row has its member in the declaration", () => {
@@ -2609,6 +2773,179 @@ describe("the census", () => {
     ).toEqual([]);
   });
 
+  test("the SQL generator modules the registry imports are the engines with a row, each exporting its registry row", () => {
+    const ids = Object.keys(SQL_ENGINE_GENERATORS) as DatabaseType[];
+
+    expect(sorted(SQL_GENERATOR_MODULES.map(({ id }) => id))).toEqual(sorted(ids));
+    expect(ids.filter((type) => MODULE_SQL_GENERATORS.get(type) !== SQL_ENGINE_GENERATORS[type])).toEqual([]);
+  });
+
+  test("sqlGenerators is null exactly where the engine has no SQL_ENGINE_GENERATORS row, and states the row's count expression, COUNT(*) where it has none", () => {
+    expect(
+      differing((type, d) => {
+        const row = sqlGeneratorRow(type);
+        if (row === undefined) return d.sqlGenerators === null;
+        return d.sqlGenerators !== null && d.sqlGenerators.countExpression === (row.countExpression ?? "COUNT(*)");
+      }),
+    ).toEqual([]);
+    // Vacuity: some engine writes the shared forms and some does not, and some count is not the shared one.
+    const segments = SHIPPED_DATABASE_TYPES.map((type) => declared(type).sqlGenerators);
+    expect(segments.some((segment) => segment === null)).toBe(true);
+    const counts = segments.flatMap((segment) => (segment === null ? [] : [segment.countExpression]));
+    expect(counts).toContain("COUNT(*)");
+    expect(counts.some((count) => count !== "COUNT(*)")).toBe(true);
+  });
+
+  test("every name an SQL generator declaration states is its member's slot, and resolves through the census's slot table to the very function the engine's own module exports there", () => {
+    const slots = DECLARED_SLOTS as Readonly<Record<string, { readonly table: SlotTable; readonly path: string }>>;
+    expect(
+      SHIPPED_DATABASE_TYPES.flatMap((type) =>
+        sqlGeneratorNames(declared(type)).flatMap(([path, name]) => {
+          const held = valueAt(sqlGeneratorRow(type), path);
+          const isSlot = slots[name]?.table === "SQL_ENGINE_GENERATORS" && slots[name]?.path === path;
+          const resolved = isSlot ? slotFunction(moduleSqlGenerators(type), name as DeclaredSlotName) : undefined;
+          return typeof resolved === "function" && resolved === held ? [] : [`${type}:${path}=${name}`];
+        }),
+      ),
+    ).toEqual([]);
+    // Vacuity: the schema states every SQL generator slot of the table as a function member, and each form other than
+    // the quoting is named on one row and null on another.
+    expect(sorted(SQL_GENERATORS_FUNCTION_PATHS)).toEqual(sorted(tablePaths("SQL_ENGINE_GENERATORS")));
+    const segments = SHIPPED_DATABASE_TYPES.flatMap((type) => {
+      const segment = declared(type).sqlGenerators;
+      return segment === null ? [] : [segment];
+    });
+    for (const form of ["table", "select", "selectList"] as const) {
+      expect(segments.some((segment) => segment[form] === null)).toBe(true);
+      expect(segments.some((segment) => segment[form] !== null)).toBe(true);
+    }
+  });
+
+  test("every function an SQL generator row holds is named at its slot by its engine's declaration, and no slot the row leaves empty is named", () => {
+    expect(
+      SHIPPED_DATABASE_TYPES.flatMap((type) =>
+        functionPaths(sqlGeneratorRow(type), "").flatMap((path) => {
+          const name = slotNameAt("SQL_ENGINE_GENERATORS", path);
+          return name !== undefined && valueAt(declared(type).sqlGenerators, path) === name ? [] : [`${type}:${path}`];
+        }),
+      ),
+    ).toEqual([]);
+    expect(
+      SHIPPED_DATABASE_TYPES.flatMap((type) =>
+        sqlGeneratorNames(declared(type)).flatMap(([path, name]) =>
+          typeof valueAt(sqlGeneratorRow(type), path) === "function" ? [] : [`${type}:${path}=${name}`],
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  test("every member of an SQL generator row has its member in the declaration", () => {
+    const declaredAt: Readonly<Record<keyof SqlEngineGenerators, string>> = {
+      quote: "quote",
+      table: "table",
+      select: "select",
+      selectList: "selectList",
+      countExpression: "countExpression",
+    };
+
+    expect(
+      SHIPPED_DATABASE_TYPES.flatMap((type) =>
+        Object.keys(sqlGeneratorRow(type) ?? {})
+          .filter((member) => !Object.hasOwn(declaredAt, member))
+          .map((member) => `${type}.${member}`),
+      ),
+    ).toEqual([]);
+    expect(
+      differing((_type, d) => {
+        const segment = d.sqlGenerators;
+        return segment === null || Object.values(declaredAt).every((member) => Object.hasOwn(segment, member));
+      }),
+    ).toEqual([]);
+  });
+
+  test("editor.language.queryLanguage is the query language the engine's unconnected provider declares", () => {
+    expect(differing((type, d) => d.editor.language.queryLanguage === CAPABILITIES[type].queryLanguage)).toEqual([]);
+    // Vacuity: every query language is some engine's.
+    const languages = SHIPPED_DATABASE_TYPES.map((type) => declared(type).editor.language.queryLanguage);
+    expect(sorted([...new Set(languages)])).toEqual(sorted(Object.keys(LANGUAGE_TAB_TYPES)));
+  });
+
+  test("a dialect-less engine's tabs take its query language's tab type, and a dialect engine's its dialect's name", () => {
+    expect(differing((type, d) => resolveTabType(CAPABILITIES[type]) === declaredTabType(d))).toEqual([]);
+    // Vacuity: some engine has a dialect and every query language opens some dialect-less engine's tabs.
+    const dialectLess = SHIPPED_DATABASE_TYPES.map(declared).filter((d) => d.editor.dialect === null);
+    expect(dialectLess.length).toBeLessThan(SHIPPED_DATABASE_TYPES.length);
+    expect(sorted([...new Set(dialectLess.map(declaredTabType))])).toEqual(sorted(Object.values(LANGUAGE_TAB_TYPES)));
+  });
+
+  test("editor.language.monacoId is the Monaco language Studio's editor renders the engine's tabs in", () => {
+    expect(
+      differing(
+        (type, d) =>
+          d.editor.language.monacoId === DIALECT_EDITORS[declaredTabType(d)].monacoId &&
+          editorLanguageOf(CAPABILITIES[type]) === d.editor.language.monacoId,
+      ),
+    ).toEqual([]);
+  });
+
+  test("editor.language.accent and console are the EDITOR_LANGUAGES row's, a console registered under its own Monaco id", () => {
+    const rows: Readonly<Record<string, EditorLanguageContribution>> = EDITOR_LANGUAGES;
+    expect(
+      differing((_type, d) => {
+        const { monacoId, accent, console } = d.editor.language;
+        const row = Object.hasOwn(rows, monacoId) ? rows[monacoId] : undefined;
+        if (row === undefined || row.accent !== accent || console !== (row.console !== undefined)) return false;
+        return row.console === undefined || row.console.spec.id === monacoId;
+      }),
+    ).toEqual([]);
+    // Vacuity: some language is a console dialect and some is not, and the accents differ.
+    const languages = SHIPPED_DATABASE_TYPES.map((type) => declared(type).editor.language);
+    expect(sorted([...new Set(languages.map((language) => language.console))])).toEqual(["false", "true"]);
+    expect(new Set(languages.map((language) => language.accent)).size).toBeGreaterThan(1);
+  });
+
+  test("EDITOR_LANGUAGES and DIALECT_EDITORS are the editor language facts the declarations state, one per language and one per tab type", () => {
+    const { languages, tabTypes } = derivedEditorLanguages();
+    const rows: Readonly<Record<string, EditorLanguageContribution>> = EDITOR_LANGUAGES;
+
+    expect(sorted(Object.keys(languages))).toEqual(sorted(Object.keys(EDITOR_LANGUAGES)));
+    expect(
+      Object.keys(languages).filter(
+        (monacoId) =>
+          languages[monacoId].accent !== rows[monacoId]?.accent ||
+          languages[monacoId].console !== (rows[monacoId]?.console !== undefined),
+      ),
+    ).toEqual([]);
+    expect(Object.fromEntries(Object.entries(tabTypes).map(([tabType, { monacoId }]) => [tabType, monacoId]))).toEqual(
+      Object.fromEntries(Object.entries(DIALECT_EDITORS).map(([tabType, { monacoId }]) => [tabType, monacoId])),
+    );
+    expect(Object.keys(languages).length).toBe(16);
+    expect(Object.keys(tabTypes).length).toBe(24);
+  });
+
+  test("every member of an editor language row and of a tab type's editor row has its member in the declaration, or stays browser code", () => {
+    const languageDeclaredAt: Readonly<Record<keyof EditorLanguageContribution, string | null>> = {
+      monacoId: "monacoId",
+      accent: "accent",
+      console: "console",
+      register: null,
+      completions: null,
+      format: null,
+    };
+    const tabEditorDeclaredAt: Readonly<Record<keyof DialectEditor, string>> = { monacoId: "monacoId" };
+    const unplaced = (rows: Readonly<Record<string, object>>, declaredAt: object) =>
+      Object.entries(rows).flatMap(([key, row]) =>
+        Object.keys(row)
+          .filter((member) => !Object.hasOwn(declaredAt, member))
+          .map((member) => `${key}.${member}`),
+      );
+    const stated = Object.values(languageDeclaredAt).filter((member) => member !== null);
+
+    expect(unplaced(EDITOR_LANGUAGES, languageDeclaredAt)).toEqual([]);
+    expect(unplaced(DIALECT_EDITORS, tabEditorDeclaredAt)).toEqual([]);
+    expect(differing((_type, d) => stated.every((member) => Object.hasOwn(d.editor.language, member)))).toEqual([]);
+  });
+
   test("id is the file's type-id", () => {
     expect(differing((type, d) => d.id === type)).toEqual([]);
   });
@@ -2683,7 +3020,11 @@ describe("the vocabularies", () => {
       Equal<InsertForm, ExportSpec["insertForm"]>,
       Equal<MigrationDdl["tableDdl"], MigrationDdlSpec["tableDdl"]>,
       Equal<CreateTable["kind"], CreateTableDdl["kind"]>,
+      Equal<QueryLanguage, ProviderCapabilities["queryLanguage"]>,
+      Equal<MonacoLanguageId, EditorLanguage>,
     ] = [
+      true,
+      true,
       true,
       true,
       true,
@@ -2713,7 +3054,7 @@ describe("the vocabularies", () => {
       true,
     ];
 
-    expect<readonly boolean[]>(parity).toEqual(Array.from({ length: 27 }, () => true));
+    expect<readonly boolean[]>(parity).toEqual(Array.from({ length: 29 }, () => true));
   });
 
   test("the explain formats, the query dialects and the generic fence tags are Studio's", () => {
@@ -2725,5 +3066,18 @@ describe("the vocabularies", () => {
     expect(sorted(enumOf("genericFenceTag"))).toEqual(
       sorted([...QUERY_FENCE_ALIASES].filter((tag) => !Object.hasOwn(ALIAS_ENGINES, tag))),
     );
+  });
+
+  test("the query languages and the editor languages are Studio's", () => {
+    const queryLanguages: Readonly<Record<ProviderCapabilities["queryLanguage"], true>> = {
+      sql: true,
+      json: true,
+      promql: true,
+      cypher: true,
+      influxql: true,
+    };
+
+    expect(sorted(enumOf("queryLanguage"))).toEqual(sorted(Object.keys(queryLanguages)));
+    expect(sorted(enumOf("monacoLanguageId"))).toEqual(sorted(Object.keys(EDITOR_LANGUAGES)));
   });
 });

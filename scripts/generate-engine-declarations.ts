@@ -6,10 +6,11 @@
  *
  * Each file is a `#/$defs/engineDeclaration` of the provider manifest schema
  * (packages/provider-sdk/src/manifest/manifest.schema.json): the engine's identity, its connection facts, its facets,
- * the statement language agent mode sends it, its editor facts that are data, its SQL text facts, its SQL writing facts
- * and its migration DDL facts. A full manifest also states the package's runtime and the products it was measured
- * against, facts no provider in `src/lib/db/providers/` has yet, so they are written when a provider moves into a package
- * of its own, from this declaration.
+ * the statement language agent mode sends it, its editor facts that are data with the language its tabs are written and
+ * rendered in, its SQL text facts, its SQL writing facts, its migration DDL facts and its SQL generator forms. A full
+ * manifest also states the package's runtime and the products it was measured against, facts no provider in
+ * `src/lib/db/providers/` has yet, so they are written when a provider moves into a package of its own, from this
+ * declaration.
  *
  * The files are committed and never edited by hand, so a change to any table they come from lands with its declaration
  * diff. tests/unit/db/engine-declarations.test.ts rebuilds each in memory and fails on any byte of difference, holds
@@ -55,8 +56,15 @@
  * statement writers. The generator refuses by name a member of the row, of its CREATE TABLE or of its transaction
  * wrapper it has no place for, and a table DDL or CREATE TABLE form that is neither refused nor written.
  *
+ * The SQL generator forms come from the engine's row in `SQL_ENGINE_GENERATORS`, read as an own key: null where the
+ * engine has no row and writes Studio's shared forms; otherwise each member in the schema's order, each form named by
+ * its slot (`generatorQuote`, `generatorTable`, `generatorSelect` and `generatorSelectList`) or null where the row
+ * leaves it out, and the count expression as the row's, `COUNT(*)` where the row leaves it out, the reading Generate
+ * Count Query gives that absence. The generator refuses by name a member of the row it has no place for.
+ *
  * The editor facts come from `EXECUTION_UI`, the fence tag tables (`ALIAS_ENGINES` and `QUERY_FENCE_ALIASES`),
- * `QUERY_DIALECTS` and each engine's capabilities. The capabilities are read as Studio reads a provider it never
+ * `QUERY_DIALECTS`, the editor language tables (`EDITOR_LANGUAGES` and `DIALECT_EDITORS`) and each engine's
+ * capabilities. The capabilities are read as Studio reads a provider it never
  * connects, `readProviderDeclarations` with the engine's census connection (tests/helpers/census-connection.ts), so the
  * declaration states the explain format and the query dialect the provider declares before it connects. That read
  * builds every provider once, in a child process (scripts/read-engine-capabilities.ts) whose environment is
@@ -66,6 +74,14 @@
  * drops or misstates it: an explain format the provider's explain support contradicts, a dialect `QUERY_DIALECTS` has no row
  * for, a dialect row whose tab type is not the dialect's name, a dialect row no engine declares, and a fence alias that
  * is not a query fence tag.
+ *
+ * The editor language is the engine's query language, the Monaco language of the tab type Studio's `resolveTabType`
+ * gives its capabilities, read from that tab type's `DIALECT_EDITORS` row, and that language's accent and whether it is
+ * a console dialect, read from its `EDITOR_LANGUAGES` row. No tab type is written, since the dialect or the query
+ * language gives it, and no console dialect id, since it is the Monaco id. A language's registration, completion
+ * source and formatter, and a console's grammar and routes, stay browser code Studio's editor reads, so none of them is
+ * written. The generator refuses by name a member of either row it has no place for, a language row whose `monacoId` is
+ * not its key, and a console whose dialect id is not its Monaco id.
  *
  * Run: bun scripts/generate-engine-declarations.ts --write | --check [--out <directory>]
  * --write writes every declaration and removes a `.json` file for an id no longer shipped, --check exits 1 naming each
@@ -82,6 +98,7 @@ import type {
   ConnectionStringOffer,
   CredentialWarning as ManifestCredentialWarning,
   Editor,
+  EditorLanguageFacts,
   EngineDeclaration,
   FieldName,
   FieldRule,
@@ -91,6 +108,7 @@ import type {
   PlaceableFieldName,
   QueryDialectRow,
   SelectFieldName,
+  SqlGenerators,
   SqlText,
   SqlWriting,
   StatementRedaction,
@@ -123,20 +141,26 @@ import {
 import { CONNECTION_FORM, type ConnectionFormSpec, offersSslPanel } from "../src/lib/db/connection-form";
 import { CONNECTION_STRING } from "../src/lib/db/connection-string";
 import { CREDENTIAL_WARNINGS } from "../src/lib/db/credential-warnings";
+import { EDITOR_LANGUAGES, type EditorLanguage } from "../src/lib/db/editor-language";
+import type { EditorLanguageContribution } from "../src/lib/db/editor-language/types";
 import { ENGINE_FACETS } from "../src/lib/db/engine-facets";
 import { EXECUTION_UI } from "../src/lib/db/execution-ui";
 import type { ExecutionUiSpec } from "../src/lib/db/execution-ui/types";
 import { MIGRATION_DDL } from "../src/lib/db/migration-ddl";
 import type { MigrationDdlSpec } from "../src/lib/db/migration-ddl/types";
 import { type DialectSpec, QUERY_DIALECTS, type QueryDialect } from "../src/lib/db/query-dialects";
+import { SQL_ENGINE_GENERATORS } from "../src/lib/db/query-generators";
+import type { SqlEngineGenerators } from "../src/lib/db/query-generators/types";
 import { SQL_GRAMMAR } from "../src/lib/db/sql-grammar";
 import type { SqlGrammarSpec, SqlRedaction } from "../src/lib/db/sql-grammar/types";
 import { SQL_WRITING } from "../src/lib/db/sql-writing";
 import type { InferredKind, SqlWritingSpec } from "../src/lib/db/sql-writing/types";
 import type { ProviderCapabilities } from "../src/lib/db/types";
 import type { NonFiniteWord } from "../src/lib/non-finite";
+import { DIALECT_EDITORS, type DialectEditor } from "../src/lib/editor/dialect-editors";
+import { resolveTabType } from "../src/lib/editor/tab-language";
 import { ALIAS_ENGINES, QUERY_FENCE_ALIASES } from "../src/lib/sql/fence-tags";
-import type { DatabaseType } from "../src/lib/types";
+import type { DatabaseType, QueryTab } from "../src/lib/types";
 
 /** The declarations' directory in the repository. */
 export const ENGINE_DECLARATIONS_DIRECTORY = "src/lib/db/engine-declarations";
@@ -346,6 +370,8 @@ export interface EditorTables {
   readonly aliasEngines: Readonly<Record<string, DatabaseType>>;
   readonly queryAliases: ReadonlySet<string>;
   readonly dialects: Readonly<Partial<Record<QueryDialect, DialectSpec>>>;
+  readonly languages: Readonly<Record<EditorLanguage, EditorLanguageContribution>>;
+  readonly tabEditors: Readonly<Record<QueryTab["type"], DialectEditor>>;
 }
 
 /** Today's tables of the editor facts. */
@@ -354,6 +380,8 @@ export const EDITOR_TABLES: EditorTables = Object.freeze({
   aliasEngines: ALIAS_ENGINES,
   queryAliases: QUERY_FENCE_ALIASES,
   dialects: QUERY_DIALECTS,
+  languages: EDITOR_LANGUAGES,
+  tabEditors: DIALECT_EDITORS,
 });
 
 /**
@@ -429,6 +457,68 @@ function buildDialect(
 }
 
 /**
+ * The members of an editor language row: the data the declaration places (`monacoId`, `accent` and whether `console`
+ * is present) and the browser code it leaves to Studio's editor (`register`, `completions` and `format`). A key this
+ * list lacks would be dropped.
+ */
+const EDITOR_LANGUAGE_MEMBERS: readonly string[] = [
+  "monacoId",
+  "accent",
+  "console",
+  "register",
+  "completions",
+  "format",
+];
+
+/** The members of a tab type's editor row the declaration places: a key this list lacks would be dropped. */
+const TAB_EDITOR_MEMBERS: readonly string[] = ["monacoId"];
+
+/**
+ * The language the engine's tabs are written and rendered in: its query language, the Monaco language of the tab type
+ * `resolveTabType` gives its capabilities, read from that tab type's `DIALECT_EDITORS` row, and that language's accent
+ * and whether it is a console dialect, read from its `EDITOR_LANGUAGES` row. A member of either row the declaration has
+ * no place for, a language row whose `monacoId` is not its key, and a console whose dialect id is not the Monaco id, are
+ * thrown errors naming the engine.
+ */
+function buildEditorLanguage(
+  type: DatabaseType,
+  capabilities: ProviderCapabilities,
+  tables: EditorTables,
+): EditorLanguageFacts {
+  const tabType = resolveTabType(capabilities);
+  const tabEditor = tables.tabEditors[tabType];
+  for (const key of Object.keys(tabEditor)) {
+    if (!TAB_EDITOR_MEMBERS.includes(key)) {
+      throw new Error(
+        `${type}: the ${tabType} tab type's editor member "${key}" has no place in the engine declaration`,
+      );
+    }
+  }
+  const { monacoId } = tabEditor;
+  const language = tables.languages[monacoId];
+  for (const key of Object.keys(language)) {
+    if (!EDITOR_LANGUAGE_MEMBERS.includes(key)) {
+      throw new Error(
+        `${type}: the ${monacoId} editor language member "${key}" has no place in the engine declaration`,
+      );
+    }
+  }
+  const ids: [member: string, id: string][] = [["monacoId", language.monacoId]];
+  if (language.console !== undefined) ids.push(["console dialect id", language.console.spec.id]);
+  for (const [member, id] of ids) {
+    if (id !== monacoId) {
+      throw new Error(`${type}: the ${monacoId} editor language's ${member} is "${id}", not its Monaco id`);
+    }
+  }
+  return {
+    queryLanguage: capabilities.queryLanguage,
+    monacoId,
+    accent: language.accent,
+    console: language.console !== undefined,
+  };
+}
+
+/**
  * One engine's editor facts: its `EXECUTION_UI` row member by member, the aliases `ALIAS_ENGINES` maps to it in that
  * record's order, and the explain format and the query dialect its provider declares before it connects. An explain
  * format the provider's explain support contradicts, and an alias that is not a query fence tag, are thrown errors
@@ -460,6 +550,7 @@ export function buildEditor(
     fenceAliases,
     explainFormat: explainFormat ?? null,
     dialect: buildDialect(type, capabilities.queryDialect, tables.dialects),
+    language: buildEditorLanguage(type, capabilities, tables),
   };
 }
 
@@ -920,6 +1011,40 @@ export function buildMigrationDdl(type: DatabaseType, spec: MigrationDdlSpec = M
   };
 }
 
+/** The members of an SQL generator row the declaration places: a key this list lacks would be dropped. */
+const SQL_GENERATOR_MEMBERS: readonly string[] = ["quote", "table", "select", "selectList", "countExpression"];
+
+/** The engine's row of `SQL_ENGINE_GENERATORS`, read as an own key; undefined where it writes the shared forms. */
+function sqlGeneratorRow(type: DatabaseType): SqlEngineGenerators | undefined {
+  return Object.hasOwn(SQL_ENGINE_GENERATORS, type) ? SQL_ENGINE_GENERATORS[type] : undefined;
+}
+
+/**
+ * One engine's SQL generator forms, read from its row in `SQL_ENGINE_GENERATORS` (a parameter, so a test can hand the
+ * generator another row): null where it has none, otherwise each member in the order of the schema's `sqlGenerators`,
+ * each form named by the slot it fills or null where the row leaves it out, and the count expression as the row's,
+ * `COUNT(*)` where the row leaves it out. A member of the row the declaration has no place for is a thrown error naming
+ * the engine.
+ */
+export function buildSqlGenerators(
+  type: DatabaseType,
+  row: SqlEngineGenerators | undefined = sqlGeneratorRow(type),
+): SqlGenerators {
+  if (row === undefined) return null;
+  for (const key of Object.keys(row)) {
+    if (!SQL_GENERATOR_MEMBERS.includes(key)) {
+      throw new Error(`${type}: the SQL generator member "${key}" has no place in the engine declaration`);
+    }
+  }
+  return {
+    quote: "generatorQuote",
+    table: row.table === undefined ? null : "generatorTable",
+    select: row.select === undefined ? null : "generatorSelect",
+    selectList: row.selectList === undefined ? null : "generatorSelectList",
+    countExpression: row.countExpression ?? "COUNT(*)",
+  };
+}
+
 /** One engine's declaration, read from every table the contract states for it and from its provider's capabilities. */
 export function buildEngineDeclaration(type: DatabaseType, capabilities: ProviderCapabilities): EngineDeclaration {
   const form = CONNECTION_FORM[type];
@@ -989,6 +1114,7 @@ export function buildEngineDeclaration(type: DatabaseType, capabilities: Provide
     sqlText: buildSqlText(type),
     sqlWriting: buildSqlWriting(type),
     migrationDdl: buildMigrationDdl(type),
+    sqlGenerators: buildSqlGenerators(type),
   };
 }
 

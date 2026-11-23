@@ -253,6 +253,9 @@
         },
         "migrationDdl": {
           "$ref": "#/$defs/migrationDdl"
+        },
+        "sqlGenerators": {
+          "$ref": "#/$defs/sqlGenerators"
         }
       },
       "required": [
@@ -265,7 +268,8 @@
         "editor",
         "sqlText",
         "sqlWriting",
-        "migrationDdl"
+        "migrationDdl",
+        "sqlGenerators"
       ],
       "additionalProperties": false
     },
@@ -1243,7 +1247,7 @@
       ]
     },
     "editor": {
-      "description": "The editor facts of the engine that are data: the keyword its open transaction is committed with, the consent card's deadline, the fence tags naming it, the explain format of its plans and its query dialect. The SQL text facts are sqlText, the SQL writing facts sqlWriting and the migration DDL facts migrationDdl, and generators and editor languages are later parts of the contract.",
+      "description": "The editor facts of the engine that are data: the keyword its open transaction is committed with, the consent card's deadline, the fence tags naming it, the explain format of its plans, its query dialect and the language its tabs are written and rendered in. The SQL text facts are sqlText, the SQL writing facts sqlWriting, the migration DDL facts migrationDdl and the SQL generator forms sqlGenerators.",
       "type": "object",
       "properties": {
         "commitKeyword": {
@@ -1268,9 +1272,12 @@
         },
         "dialect": {
           "$ref": "#/$defs/queryDialectRow"
+        },
+        "language": {
+          "$ref": "#/$defs/editorLanguageFacts"
         }
       },
-      "required": ["commitKeyword", "consentDeadline", "fenceAliases", "explainFormat", "dialect"],
+      "required": ["commitKeyword", "consentDeadline", "fenceAliases", "explainFormat", "dialect", "language"],
       "additionalProperties": false
     },
     "consentDeadline": {
@@ -1381,6 +1388,59 @@
         "historyMask"
       ],
       "additionalProperties": false
+    },
+    "editorLanguageFacts": {
+      "description": "The language the engine's query tabs are written and rendered in. queryLanguage: the query language the engine speaks; an engine with no dialect opens its tabs under that language's tab type (sql for sql, mongodb for json, and promql, cypher and influxql for their own), an engine with a dialect under the dialect's name, so no tab type is stated. monacoId: the Monaco language the tabs render in, one of Studio's editor languages. accent: that language's accent. console: whether the language is a console dialect, registered under its Monaco id, which is also its dialect id, so no second id is stated.",
+      "type": "object",
+      "properties": {
+        "queryLanguage": {
+          "$ref": "#/$defs/queryLanguage"
+        },
+        "monacoId": {
+          "$ref": "#/$defs/monacoLanguageId"
+        },
+        "accent": {
+          "$ref": "#/$defs/editorAccent"
+        },
+        "console": {
+          "type": "boolean"
+        }
+      },
+      "required": ["queryLanguage", "monacoId", "accent", "console"],
+      "additionalProperties": false
+    },
+    "queryLanguage": {
+      "description": "A query language Studio's editor reads: SQL, JSON, PromQL, Cypher or InfluxQL.",
+      "type": "string",
+      "enum": ["sql", "json", "promql", "cypher", "influxql"]
+    },
+    "monacoLanguageId": {
+      "description": "A Monaco language Studio's query editor renders a tab in, each with Studio's own registration, completion and formatting code until Studio's browser catalog reads them. graph-cypher and not cypher, which Monaco's own bundle registers.",
+      "type": "string",
+      "enum": [
+        "sql",
+        "json",
+        "libredb",
+        "redis",
+        "promql",
+        "etcd",
+        "oxia",
+        "s3",
+        "kubectl",
+        "firestore",
+        "graph-cypher",
+        "influxql",
+        "milvus",
+        "qdrant",
+        "weaviate",
+        "mtconnect"
+      ]
+    },
+    "editorAccent": {
+      "description": "The border class an agent answer's statement block takes in the language, up to 32 characters: border-hue-, one hue of Studio's palette in lower-case letters that is none of the three status hues (amber, rose, emerald), optionally -alt, then /40.",
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^border-hue-(?!amber|rose|emerald)[a-z]+(?:-alt)?/40$"
     },
     "historyMask": {
       "description": "The command-line flags whose values query history never keeps, each once, or null where history keeps a statement as typed.",
@@ -2503,6 +2563,59 @@
       "minLength": 1,
       "maxLength": 1024,
       "pattern": "^[^\\r\\n\\u2028\\u2029]+$"
+    },
+    "sqlGenerators": {
+      "description": "What an SQL engine writes apart from Studio's shared SQL forms, or null where it writes the shared forms, quotes a name as its declared identifier quoting or Studio's default says, and counts with COUNT(*). One member per member of Studio's SQL generator row, each function named by the slot it fills. quote: the pure function that quotes a name for the engine, leaving it bare where it round-trips bare and quoting is not forced.",
+      "type": ["object", "null"],
+      "properties": {
+        "quote": {
+          "$ref": "#/$defs/functionName"
+        },
+        "table": {
+          "description": "The pure function that writes the tree click's statement on the quoted address; null where the shared form stands.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "select": {
+          "description": "The pure function that writes Generate Query's statement on the quoted address and its columns; null where the shared form stands.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "selectList": {
+          "description": "The pure function that writes Generate Query's statement on the quoted address and its projected column list; null where the shared form stands.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "countExpression": {
+          "$ref": "#/$defs/countExpression"
+        }
+      },
+      "required": ["quote", "table", "select", "selectList", "countExpression"],
+      "additionalProperties": false
+    },
+    "countExpression": {
+      "description": "The count Generate Count Query writes for the engine, COUNT(*) where the engine's is the shared one: one aggregate call over every row, a letter, then letters, digits or underscores, then (*), up to 64 characters, so it fills one expression of the statement Studio writes and never adds a clause or a statement.",
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[A-Za-z][A-Za-z0-9_]*\\(\\*\\)$"
     },
     "compatibilityEntry": {
       "description": "One product the package was measured against: the engine that serves it, the versions claimed and the versions tested.",

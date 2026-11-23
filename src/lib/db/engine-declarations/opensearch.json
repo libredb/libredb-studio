@@ -84,7 +84,13 @@
     "consentDeadline": null,
     "fenceAliases": [],
     "explainFormat": null,
-    "dialect": null
+    "dialect": null,
+    "language": {
+      "queryLanguage": "sql",
+      "monacoId": "sql",
+      "accent": "border-hue-blue/40",
+      "console": false
+    }
   },
   "sqlText": {
     "readsSqlText": true,
@@ -274,5 +280,6 @@
     "reasons": [
       "OpenSearch SQL reads only; change a field by reindexing into an index whose mapping declares it."
     ]
-  }
+  },
+  "sqlGenerators": null
 }

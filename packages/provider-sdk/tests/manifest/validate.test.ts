@@ -269,6 +269,29 @@ function refusedMigrationDdl(): Json {
   };
 }
 
+/** The editor language of the fixture's one engine. */
+const languageOf = (m: Json): Json => m.engines[0].editor.language;
+
+/** The pointer of the fixture's one engine's editor language. */
+const LANGUAGE = "/engines/0/editor/language";
+
+/** The SQL generator forms of the fixture's one engine. */
+const sqlGeneratorsOf = (m: Json): Json => m.engines[0].sqlGenerators;
+
+/** The pointer of the fixture's one engine's SQL generator forms. */
+const SQL_GENERATORS = "/engines/0/sqlGenerators";
+
+/** An SQL generator segment naming every form by its slot, counting with `count`. */
+function namedSqlGenerators(count = "COUNT_BIG(*)"): Json {
+  return {
+    quote: "generatorQuote",
+    table: "generatorTable",
+    select: "generatorSelect",
+    selectList: "generatorSelectList",
+    countExpression: count,
+  };
+}
+
 /** One missing-key row per member of the part `of` returns, named `<name>.<member>` and refused at `pointer`. */
 function missingRows(
   name: string,
@@ -352,6 +375,8 @@ describe("schema refusals", () => {
       (m: Json) => (editorOf(m).dialect = { ...dialect(), historyMask: { credentialFlags: ["--token"], bogus: 1 } }),
       "/engines/0/editor/dialect/historyMask",
     ],
+    ["in an SQL generator segment", (m: Json) => (sqlGeneratorsOf(m).bogus = "generatorBogus"), SQL_GENERATORS],
+    ["in an editor language", (m: Json) => (languageOf(m).bogus = "sql"), LANGUAGE],
   ])("an unknown key %s is refused as unknown-key at its pointer", (_where, change, pointer) => {
     expect(refusalsFor(manifest(change))).toEqual([refusal("unknown-key", pointer, "bogus")]);
   });
@@ -603,6 +628,16 @@ describe("schema refusals", () => {
       ["note", "clause"],
     ),
     ["migrationDdl", (m: Json) => delete m.engines[0].migrationDdl, "/engines/0", "migrationDdl"],
+    ["sqlGenerators", (m: Json) => delete m.engines[0].sqlGenerators, "/engines/0", "sqlGenerators"],
+    ["editor.language", (m: Json) => delete editorOf(m).language, "/engines/0/editor", "language"],
+    ...missingRows("editor.language", languageOf, LANGUAGE, ["queryLanguage", "monacoId", "accent", "console"]),
+    ...missingRows("sqlGenerators", sqlGeneratorsOf, SQL_GENERATORS, [
+      "quote",
+      "table",
+      "select",
+      "selectList",
+      "countExpression",
+    ]),
   ])("a missing %s is refused as missing-key", (_name, change, pointer, key) => {
     expect(refusalsFor(manifest(change))).toEqual([refusal("missing-key", pointer, key)]);
   });
@@ -1053,6 +1088,7 @@ describe("schema refusals", () => {
         fenceAliases: ["exampleql", `q${"a".repeat(31)}`],
         explainFormat: "postgres-json",
         dialect: dialect(["--token", "--client-key", `--${"a".repeat(63)}`]),
+        language: { queryLanguage: "json", monacoId: "kubectl", accent: "border-hue-sky/40", console: false },
       };
     });
 
@@ -1602,6 +1638,139 @@ describe("schema refusals", () => {
     expect(refusalsFor(ddl(`T${"A".repeat(64)}`))).toEqual([
       refusal("out-of-range", `${SQL_WRITING}/export/ddlTypes/text`),
     ]);
+  });
+
+  test("an SQL generator segment naming every form, one naming only its quoting, and a null one are admitted", () => {
+    const named = manifest((m) => (m.engines[0].sqlGenerators = namedSqlGenerators()));
+    const quoteOnly = manifest((m) =>
+      Object.assign(sqlGeneratorsOf(m), { selectList: null, countExpression: "COUNT(*)" }),
+    );
+    const none = manifest((m) => (m.engines[0].sqlGenerators = null));
+
+    expect(sqlGeneratorsOf(manifest())).toEqual({ ...namedSqlGenerators("COUNT(*)"), table: null, select: null });
+    expect(refusalsFor(manifest())).toEqual([]);
+    expect(sqlGeneratorsOf(kafkaManifest())).toBeNull();
+    expect(refusalsFor(kafkaManifest())).toEqual([]);
+    expect(refusalsFor(named)).toEqual([]);
+    expect(refusalsFor(quoteOnly)).toEqual([]);
+    expect(refusalsFor(none)).toEqual([]);
+  });
+
+  test("an SQL generator segment that is not an object or null is refused as wrong-type", () => {
+    const text = manifest((m) => (m.engines[0].sqlGenerators = "generatorQuote"));
+
+    expect(refusalsFor(text)).toEqual([refusal("wrong-type", SQL_GENERATORS)]);
+  });
+
+  test("an SQL generator form named in another form is refused at the form", () => {
+    const quote = manifest((m) => (sqlGeneratorsOf(m).quote = "Generator_quote"));
+    const table = manifest((m) => (sqlGeneratorsOf(m).table = "Generator_quote"));
+    const flag = manifest((m) => (sqlGeneratorsOf(m).table = false));
+    const quoteNull = manifest((m) => (sqlGeneratorsOf(m).quote = null));
+
+    expect(refusalsFor(quote)).toEqual([refusal("pattern-mismatch", `${SQL_GENERATORS}/quote`)]);
+    expect(refusalsFor(table)).toEqual([refusal("no-variant", `${SQL_GENERATORS}/table`)]);
+    expect(refusalsFor(flag)).toEqual([refusal("no-variant", `${SQL_GENERATORS}/table`)]);
+    expect(refusalsFor(quoteNull)).toEqual([refusal("wrong-type", `${SQL_GENERATORS}/quote`)]);
+  });
+
+  test("a count expression that is not one aggregate call over every row is refused as pattern-mismatch, and one longer than 64 characters as out-of-range", () => {
+    const counting = (count: unknown) => manifest((m) => (sqlGeneratorsOf(m).countExpression = count));
+    for (const count of [
+      "COUNT(*); DROP TABLE t",
+      "COUNT(*) AS n",
+      "COUNT(*)\n",
+      "COUNT(1)",
+      "COUNT (*)",
+      "COUNT(DISTINCT x)",
+      "(*)",
+      "1COUNT(*)",
+      "COUNT(*)(*)",
+      "",
+    ]) {
+      expect(refusalsFor(counting(count))).toEqual([refusal("pattern-mismatch", `${SQL_GENERATORS}/countExpression`)]);
+    }
+    for (const count of ["COUNT(*)", "COUNT_BIG(*)", "count(*)", `${"C".repeat(61)}(*)`]) {
+      expect(refusalsFor(counting(count))).toEqual([]);
+    }
+    expect(refusalsFor(counting(`${"C".repeat(62)}(*)`))).toEqual([
+      refusal("out-of-range", `${SQL_GENERATORS}/countExpression`),
+    ]);
+    expect(refusalsFor(counting(null))).toEqual([refusal("wrong-type", `${SQL_GENERATORS}/countExpression`)]);
+  });
+
+  test("an editor language with Studio's query language, Monaco language and accent is admitted, and a console language too", () => {
+    const consoleLanguage = manifest((m) =>
+      Object.assign(languageOf(m), {
+        queryLanguage: "json",
+        monacoId: "milvus",
+        accent: "border-hue-teal/40",
+        console: true,
+      }),
+    );
+    const alt = manifest((m) => (languageOf(m).accent = "border-hue-teal-alt/40"));
+    const cypher = manifest((m) =>
+      Object.assign(languageOf(m), {
+        queryLanguage: "cypher",
+        monacoId: "graph-cypher",
+        accent: "border-hue-violet/40",
+      }),
+    );
+
+    expect(languageOf(manifest())).toEqual({
+      queryLanguage: "sql",
+      monacoId: "sql",
+      accent: "border-hue-blue/40",
+      console: false,
+    });
+    expect(refusalsFor(manifest())).toEqual([]);
+    expect(languageOf(kafkaManifest()).monacoId).toBe("json");
+    expect(refusalsFor(kafkaManifest())).toEqual([]);
+    expect(refusalsFor(consoleLanguage)).toEqual([]);
+    expect(refusalsFor(alt)).toEqual([]);
+    expect(refusalsFor(cypher)).toEqual([]);
+  });
+
+  test("a query language or a Monaco language outside Studio's is refused as value-not-allowed", () => {
+    const graphql = manifest((m) => (languageOf(m).queryLanguage = "graphql"));
+    const cypher = manifest((m) => (languageOf(m).monacoId = "cypher"));
+
+    expect(refusalsFor(graphql)).toEqual([refusal("value-not-allowed", `${LANGUAGE}/queryLanguage`)]);
+    expect(refusalsFor(cypher)).toEqual([refusal("value-not-allowed", `${LANGUAGE}/monacoId`)]);
+  });
+
+  test("an accent that is not one border hue class of Studio's palette, or is a status hue, is refused as pattern-mismatch", () => {
+    const accenting = (accent: string) => manifest((m) => (languageOf(m).accent = accent));
+    for (const accent of [
+      "border-hue-amber/40",
+      "border-hue-rose-alt/40",
+      "border-hue-emerald/40",
+      "border-hue-blue/40 bg-red-500",
+      "border-hue-blue/50",
+      "border-hue-blue-tint/40",
+      "text-hue-blue/40",
+      "border-hue-Blue/40",
+      "border-hue-blue/40\n",
+      "border-hue-/40",
+      "border-hue-blue-alt-alt/40",
+    ]) {
+      expect(refusalsFor(accenting(accent))).toEqual([refusal("pattern-mismatch", `${LANGUAGE}/accent`)]);
+    }
+    expect(refusalsFor(accenting("border-hue-teal-alt/40"))).toEqual([]);
+    expect(refusalsFor(accenting(`border-hue-${"a".repeat(18)}/40`))).toEqual([]);
+    expect(refusalsFor(accenting(`border-hue-${"a".repeat(19)}/40`))).toEqual([
+      refusal("out-of-range", `${LANGUAGE}/accent`),
+    ]);
+  });
+
+  test("an editor language that states a tab type or a console dialect id is refused as unknown-key", () => {
+    const tabType = manifest((m) => (languageOf(m).tabType = "sql"));
+    const consoleDialect = manifest((m) => (languageOf(m).consoleDialect = "sql"));
+    const flag = manifest((m) => (languageOf(m).console = "yes"));
+
+    expect(refusalsFor(tabType)).toEqual([refusal("unknown-key", LANGUAGE, "tabType")]);
+    expect(refusalsFor(consoleDialect)).toEqual([refusal("unknown-key", LANGUAGE, "consoleDialect")]);
+    expect(refusalsFor(flag)).toEqual([refusal("wrong-type", `${LANGUAGE}/console`)]);
   });
 
   test("several failures are each refused, ordered by pointer", () => {
@@ -2415,6 +2584,28 @@ describe("one engine declaration", () => {
       admitted: false,
       refusals: [refusal("no-variant", "/migrationDdl")],
     });
+  });
+
+  test("an engine declaration's editor language is refused at its own pointer under validateEngine", () => {
+    const declaration = kafkaManifest().engines[0] as Json;
+    declaration.editor.language.accent = "border-hue-amber/40";
+
+    expect(validator.validateEngine(declaration)).toEqual({
+      admitted: false,
+      refusals: [refusal("pattern-mismatch", "/editor/language/accent")],
+    });
+  });
+
+  test("an engine declaration's SQL generators are refused at their own pointer under validateEngine", () => {
+    const declaration = kafkaManifest().engines[0] as Json;
+    declaration.sqlGenerators = { ...namedSqlGenerators("COUNT(1)"), table: null };
+
+    expect(validator.validateEngine(declaration)).toEqual({
+      admitted: false,
+      refusals: [refusal("pattern-mismatch", "/sqlGenerators/countExpression")],
+    });
+    declaration.sqlGenerators.countExpression = "COUNT(*)";
+    expect<unknown>(validator.validateEngine(declaration)).toEqual({ admitted: true, engine: declaration });
   });
 
   test("an engine declaration's dialog is held to the rules the schema cannot state, at pointers into it", () => {

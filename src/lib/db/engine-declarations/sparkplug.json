@@ -95,6 +95,12 @@
       "offersCountQuery": false,
       "offersSqlExport": true,
       "historyMask": null
+    },
+    "language": {
+      "queryLanguage": "json",
+      "monacoId": "json",
+      "accent": "border-hue-cyan/40",
+      "console": false
     }
   },
   "sqlText": {
@@ -284,5 +290,6 @@
     "reasons": [
       "A Sparkplug metric's shape is declared in the birth certificate its edge node publishes, not in columns a client can change, and this provider's encoder has no function that writes a PUBLISH, so there is no column definition to change."
     ]
-  }
+  },
+  "sqlGenerators": null
 }

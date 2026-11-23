@@ -78,7 +78,13 @@
         "consentDeadline": null,
         "fenceAliases": [],
         "explainFormat": null,
-        "dialect": null
+        "dialect": null,
+        "language": {
+          "queryLanguage": "sql",
+          "monacoId": "sql",
+          "accent": "border-hue-blue/40",
+          "console": false
+        }
       },
       "sqlText": {
         "readsSqlText": true,
@@ -250,6 +256,13 @@
         "modifyColumn": "modifyColumn",
         "dropTable": "dropTable",
         "reasons": []
+      },
+      "sqlGenerators": {
+        "quote": "generatorQuote",
+        "table": null,
+        "select": null,
+        "selectList": "generatorSelectList",
+        "countExpression": "COUNT(*)"
       }
     }
   ],

@@ -91,7 +91,13 @@
       "promql"
     ],
     "explainFormat": null,
-    "dialect": null
+    "dialect": null,
+    "language": {
+      "queryLanguage": "promql",
+      "monacoId": "promql",
+      "accent": "border-hue-indigo/40",
+      "console": false
+    }
   },
   "sqlText": {
     "readsSqlText": false,
@@ -280,5 +286,6 @@
     "reasons": [
       "A metric is written by scrapes and recording rules, not declared with columns, so there is no column definition to change."
     ]
-  }
+  },
+  "sqlGenerators": null
 }

@@ -12,12 +12,14 @@
  * A slot is resolved on the row the engine's own module exports, imported by its absolute path, never through the
  * registry index the generator reads, so the census holds the module's row and the registry's row to be the same object
  * as a separate fact. Each table's modules are found apart from that index: the SQL writing modules by a walk of the
- * provider tree (tests/unit/db/sql-writing/engine-modules.ts), and the migration DDL modules from the import statements
- * of the registry file, read as source (`engineModules` in tests/unit/db/migration-ddl/modules.ts).
+ * provider tree (tests/unit/db/sql-writing/engine-modules.ts), the migration DDL modules from the import statements
+ * of the registry file, read as source (`engineModules` in tests/unit/db/migration-ddl/modules.ts), and the SQL
+ * generator modules the same way from the query generators' registry file (`sqlGeneratorModules` in
+ * tests/unit/db/engine-declarations/sql-generator-modules.ts).
  */
 
 /** The registries whose rows the table names slots of. */
-export type SlotTable = "SQL_WRITING" | "MIGRATION_DDL";
+export type SlotTable = "SQL_WRITING" | "MIGRATION_DDL" | "SQL_ENGINE_GENERATORS";
 
 /** One slot: the registry whose row holds it and the dotted path of its member in that row. */
 export interface DeclaredSlot {
@@ -52,6 +54,10 @@ export const DECLARED_SLOTS = Object.freeze({
   dropColumn: { table: "MIGRATION_DDL", path: "dropColumn" },
   modifyColumn: { table: "MIGRATION_DDL", path: "modifyColumn" },
   dropTable: { table: "MIGRATION_DDL", path: "dropTable" },
+  generatorQuote: { table: "SQL_ENGINE_GENERATORS", path: "quote" },
+  generatorTable: { table: "SQL_ENGINE_GENERATORS", path: "table" },
+  generatorSelect: { table: "SQL_ENGINE_GENERATORS", path: "select" },
+  generatorSelectList: { table: "SQL_ENGINE_GENERATORS", path: "selectList" },
 } as const satisfies Readonly<Record<string, DeclaredSlot>>);
 
 /** The name of a slot of the table. */

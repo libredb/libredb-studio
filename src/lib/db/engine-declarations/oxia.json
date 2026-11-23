@@ -132,6 +132,12 @@
       "offersCountQuery": false,
       "offersSqlExport": false,
       "historyMask": null
+    },
+    "language": {
+      "queryLanguage": "json",
+      "monacoId": "oxia",
+      "accent": "border-hue-purple-alt/40",
+      "console": false
     }
   },
   "sqlText": {
@@ -321,5 +327,6 @@
     "reasons": [
       "Oxia stores opaque values under string keys and has no schema, so there is no column definition to change."
     ]
-  }
+  },
+  "sqlGenerators": null
 }
