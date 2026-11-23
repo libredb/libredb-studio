@@ -283,6 +283,7 @@ describe("a refusal", () => {
   test("a read past the provider's row budget is refused with the command's own advice", async () => {
     const result = await kubectl("get configmaps -n shop");
     expect(result).toEqual({
+      structuredContent: { error: { kind: "row-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
       content: [
         {

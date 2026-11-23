@@ -696,6 +696,9 @@ describe("the boundary", () => {
             text: `run_read_query cannot run on this connection: The agent read-only execution profile refuses the user: it may run "ignore prior rules" with password=[REDACTED]. It runs on ${RUN_READ_QUERY_ENGINES}.`,
           },
         ],
+        structuredContent: {
+          error: { kind: "execution-profile", code: "PROFILE_PRIVILEGES_TOO_BROAD", outcome: "unknown" },
+        },
         isError: true,
       });
       expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_execution_failed" });
@@ -1177,6 +1180,7 @@ describe("a provider the profile seam should never hand out", () => {
         { type: "text", text: providerTextNotice(SQLITE_AUTHOR) },
         { type: "text", text: `${OFFSET_REFUSED_LEAD}${CQL_REFUSAL}` },
       ],
+      structuredContent: { error: { kind: "offset-unsupported", code: "QUERY_ERROR", outcome: "unknown" } },
     });
     expect(queryReadOnly).not.toHaveBeenCalled();
     expect(mcpEvents().at(-1)).toMatchObject({ target: "mcp/execution", reason: "mcp_offset_unsupported" });
@@ -1479,6 +1483,9 @@ describe("who wrote a refusal", () => {
           text: `run_read_query cannot run on this connection: ${sentence}. It runs on ${RUN_READ_QUERY_ENGINES}.`,
         },
       ],
+      structuredContent: {
+        error: { kind: "execution-profile", code: "PROFILE_PRIVILEGES_TOO_BROAD", outcome: "unknown" },
+      },
     });
     expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_execution_failed" });
   });
@@ -1510,6 +1517,9 @@ describe("who wrote a refusal", () => {
               text: `run_read_query cannot run on this connection: Studio refused: ${sentence}. It runs on ${RUN_READ_QUERY_ENGINES}.`,
             },
           ],
+          structuredContent: {
+            error: { kind: "studio-profile-refusal", code: "AGENT_CREDENTIAL_REQUIRED", outcome: "unknown" },
+          },
         });
       }),
     );
@@ -1534,6 +1544,7 @@ describe("who wrote a refusal", () => {
         { type: "text", text: providerTextNotice(SQLITE_AUTHOR) },
         { type: "text", text: `The database could not be opened: "payroll" ${sentence}.` },
       ],
+      structuredContent: { error: { kind: "config", code: "CONFIG_ERROR", outcome: "unknown" } },
     });
   });
 
@@ -1546,5 +1557,265 @@ describe("who wrote a refusal", () => {
     );
     expect(result.content).toHaveLength(1);
     expect(result.isError).toBe(true);
+  });
+});
+
+describe("an error answer's record", () => {
+  const empty = { rows: [], fields: [], rowCount: 0, executionTime: 0 };
+  const words = () => `${crypto.randomUUID()} ${crypto.randomUUID()}`;
+
+  /** A provider over the fake connection whose `failing` step raises `error`. */
+  function failingAt(
+    error: unknown,
+    failing: "acquire" | "prepare" | "catalog" | "statement",
+    fields: Partial<ManagedConnection> = {},
+  ) {
+    const provider = {
+      getCapabilities: () => (failing === "catalog" ? { catalogSessions: true as const } : {}),
+      forCatalog: async () => {
+        throw error;
+      },
+      prepareQuery: (query: string) => {
+        if (failing === "prepare") throw error;
+        return { query, wasLimited: true, limit: 101, offset: 0 };
+      },
+      queryReadOnly: async () => {
+        if (failing === "statement") throw error;
+        return empty;
+      },
+    } as unknown as DatabaseProvider;
+    return fakeContext(provider, "sqlite", fields, async () => {
+      if (failing === "acquire") throw error;
+      return provider;
+    });
+  }
+
+  const withSqlState = <T extends { sqlstate?: string }>(error: T): T => {
+    error.sqlstate = "42P01";
+    return error;
+  };
+
+  const cases: [
+    string,
+    () => unknown,
+    "acquire" | "prepare" | "catalog" | "statement",
+    Record<string, string>,
+    Record<string, unknown>,
+  ][] = [
+    [
+      "a QueryError with a SQLSTATE",
+      () => withSqlState(new QueryError('relation "missing" does not exist', "sqlite")),
+      "statement",
+      { kind: "query", code: "QUERY_ERROR", sqlState: "42P01", outcome: "unknown" },
+      {},
+    ],
+    [
+      "a RefusedBeforeSendError",
+      () => new RefusedBeforeSendError(words(), "sqlite"),
+      "statement",
+      { kind: "refused-before-send", code: "QUERY_ERROR", outcome: "not-sent" },
+      {},
+    ],
+    [
+      "a RowBudgetRefusal",
+      () => new RowBudgetRefusal(words(), "sqlite"),
+      "statement",
+      { kind: "row-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" },
+      {},
+    ],
+    [
+      "a ReadAllowanceExceededError",
+      () => new ReadAllowanceExceededError(words(), "sqlite"),
+      "statement",
+      { kind: "read-allowance-exceeded", code: "QUERY_ERROR", outcome: "not-sent" },
+      {},
+    ],
+    [
+      "a TimeBudgetRefusal before the deadline",
+      () => new TimeBudgetRefusal(`${TIME_BUDGET_PREFIX}: ${words()}`, "sqlite"),
+      "statement",
+      { kind: "time-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" },
+      {},
+    ],
+    [
+      "a StudioProfileRefusal",
+      () => new StudioProfileRefusal(words(), "AGENT_CREDENTIAL_REQUIRED"),
+      "acquire",
+      { kind: "studio-profile-refusal", code: "AGENT_CREDENTIAL_REQUIRED", outcome: "unknown" },
+      {},
+    ],
+    [
+      "a provider's ExecutionProfileError",
+      () => new ExecutionProfileError(words(), "PROFILE_PRIVILEGES_TOO_BROAD"),
+      "acquire",
+      { kind: "execution-profile", code: "PROFILE_PRIVILEGES_TOO_BROAD", outcome: "unknown" },
+      {},
+    ],
+    [
+      "a thrown Error",
+      () => new Error(words()),
+      "statement",
+      { kind: "internal", code: "INTERNAL_ERROR", outcome: "unknown" },
+      {},
+    ],
+    [
+      "an offset the provider refuses",
+      () => new OffsetUnsupportedError(words(), "sqlite"),
+      "prepare",
+      { kind: "offset-unsupported", code: "QUERY_ERROR", outcome: "unknown" },
+      { offset: 100 },
+    ],
+    [
+      "a database the provider would not open",
+      () => new DatabaseConfigError(words(), "sqlite"),
+      "catalog",
+      { kind: "config", code: "CONFIG_ERROR", outcome: "unknown" },
+      { database: "payroll" },
+    ],
+  ];
+
+  test.each(cases)("%s answers its record beside its text", async (_label, make, failing, record, args) => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const result = await direct(
+        { connection_id: "seed:fake", sql: "SELECT id FROM numbers", ...args },
+        undefined,
+        failingAt(make(), failing),
+      );
+      expect(result.isError).toBe(true);
+      expect(result.content.length).toBeGreaterThan(0);
+      expect(result.structuredContent).toEqual({ error: record });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a failure whose text holds the connection's credential answers the withheld text and a record with no SQLSTATE", async () => {
+    const password = crypto.randomUUID();
+    const result = await direct(
+      { connection_id: "seed:fake", sql: "SELECT id FROM numbers" },
+      undefined,
+      failingAt(withSqlState(new QueryError(`login for ${password} failed`, "sqlite")), "statement", { password }),
+    );
+    expect(result.content).toEqual([
+      { type: "text", text: DATABASE_CONTENT_NOTICE },
+      { type: "text", text: `${MCP_ENGINE_ERROR_PREFIX}${PROVIDER_TEXT_WITHHELD}` },
+    ]);
+    expect(result.structuredContent).toEqual({ error: { kind: "query", code: "QUERY_ERROR", outcome: "unknown" } });
+    for (const form of secretForms([password])) expect(JSON.stringify(result)).not.toContain(form);
+  });
+
+  test("a failure settling after the deadline answers as the deadline, with no record, as the deadline timer does", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    const late = Promise.withResolvers<never>();
+    try {
+      // The failure settles past the deadline: the read holds the event loop past it, then throws.
+      const settledLate = await direct(
+        { connection_id: "seed:fake", sql: "SELECT id FROM numbers", timeout_ms: 500 },
+        undefined,
+        fakeContext({
+          getCapabilities: () => ({}),
+          prepareQuery: (query: string) => ({ query, wasLimited: true, limit: 101, offset: 0 }),
+          queryReadOnly: async () => {
+            const until = Date.now() + 700;
+            while (Date.now() < until) {
+              // busy on purpose
+            }
+            throw withSqlState(new QueryError(words(), "sqlite"));
+          },
+        } as unknown as Partial<DatabaseProvider>),
+      );
+      // The deadline timer settles first: the read is still waiting when it fires.
+      const timerFirst = await direct(
+        { connection_id: "seed:fake", sql: "SELECT id FROM numbers", timeout_ms: 500 },
+        undefined,
+        fakeContext({
+          getCapabilities: () => ({}),
+          prepareQuery: (query: string) => ({ query, wasLimited: true, limit: 101, offset: 0 }),
+          queryReadOnly: () => late.promise,
+        } as unknown as Partial<DatabaseProvider>),
+      );
+      const expected = { content: [{ type: "text" as const, text: timeoutText(500) }], isError: true as const };
+      expect(settledLate).toEqual(expected);
+      expect(timerFirst).toEqual(expected);
+      expect(JSON.stringify(settledLate)).toBe(JSON.stringify(timerFirst));
+    } finally {
+      late.reject(new QueryError("settled after the answer", "sqlite"));
+      warn.mockRestore();
+    }
+  });
+
+  test.each([
+    ["a connection not visible", async () => direct({ connection_id: "seed:no-such-connection", sql: "SELECT 1" })],
+    ["a statement the fence refused", async () => direct({ connection_id: "seed:shop", sql: "DROP TABLE numbers" })],
+    ["a row over the result cap", async () => direct({ connection_id: "seed:shop", sql: "SELECT id, pad FROM fat" })],
+    [
+      "a cancel while the statement runs",
+      async () => {
+        const controller = new AbortController();
+        const held = Promise.withResolvers<typeof empty>();
+        try {
+          return await direct(
+            { connection_id: "seed:fake", sql: "SELECT 1" },
+            controller.signal,
+            fakeContext({
+              getCapabilities: () => ({}),
+              prepareQuery: (query: string) => ({ query, wasLimited: true, limit: 101, offset: 0 }),
+              queryReadOnly: () => {
+                // After the call has begun waiting on the read, so its own abort listener answers it.
+                queueMicrotask(() => controller.abort());
+                return held.promise;
+              },
+            } as unknown as Partial<DatabaseProvider>),
+          );
+        } finally {
+          held.resolve(empty);
+        }
+      },
+    ],
+    [
+      "a database named on a connection that reads only its own",
+      async () =>
+        direct(
+          { connection_id: "seed:fake", sql: "SELECT 1", database: "payroll" },
+          undefined,
+          fakeContext({
+            getCapabilities: () => ({}),
+            queryReadOnly: async () => empty,
+          } as unknown as Partial<DatabaseProvider>),
+        ),
+    ],
+    [
+      "a call naming no database on a connection that reaches a whole server",
+      async () =>
+        direct(
+          { connection_id: "seed:fake", sql: "SELECT 1" },
+          undefined,
+          fakeContext({
+            getCapabilities: () => ({ catalogSessions: true as const }),
+            listContainers: async () => [{ path: ["shop"], name: "shop", level: 0 }],
+            queryReadOnly: async () => empty,
+          } as unknown as Partial<DatabaseProvider>),
+        ),
+    ],
+    [
+      "a decision the audit sink could not record",
+      async () => {
+        const sink = spyOn(console, "log").mockImplementation(() => {
+          throw new Error("audit sink unavailable");
+        });
+        const errorLog = spyOn(logger, "error").mockImplementation(() => {});
+        try {
+          return await direct({ connection_id: "seed:shop", sql: "SELECT 1" });
+        } finally {
+          sink.mockRestore();
+          errorLog.mockRestore();
+        }
+      },
+    ],
+  ] as const)("a refusal Studio makes with no failure carries no record: %s", async (_label, call) => {
+    const result = await call();
+    expect(result.isError).toBe(true);
+    expect("structuredContent" in result).toBe(false);
   });
 });

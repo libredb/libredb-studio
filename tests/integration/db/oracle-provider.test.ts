@@ -7093,6 +7093,9 @@ describe("MCP run_read_query on an Oracle connection", () => {
         text: `run_read_query cannot run on this connection: ${sentence}. It runs on ${RUN_READ_QUERY_ENGINES}.`,
       },
     ],
+    structuredContent: {
+      error: { kind: "studio-profile-refusal", code: "AGENT_CREDENTIAL_WITH_CONNECTION_STRING", outcome: "unknown" },
+    },
     isError: true as const,
   });
 
@@ -7106,6 +7109,9 @@ describe("MCP run_read_query on an Oracle connection", () => {
         text: `run_read_query cannot run on this connection: ${sentence}. It runs on ${RUN_READ_QUERY_ENGINES}.`,
       },
     ],
+    structuredContent: {
+      error: { kind: "execution-profile", code: "PROFILE_PRIVILEGES_TOO_BROAD", outcome: "unknown" },
+    },
     isError: true as const,
   });
 
@@ -7187,6 +7193,7 @@ describe("MCP run_read_query on an Oracle connection", () => {
           text: "The result has more than 1000 rows, the most this server reads for one call. Add FETCH FIRST n ROWS ONLY with n of 1000 or less, or remove your own FETCH FIRST, OFFSET ... FETCH or ROWNUM and page with offset.",
         },
       ],
+      structuredContent: { error: { kind: "row-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
     });
   });
@@ -7211,6 +7218,7 @@ describe("MCP run_read_query on an Oracle connection", () => {
           text: "The statement did not finish within timeout_ms (1000 ms). Narrow it, or raise timeout_ms up to 30000.",
         },
       ],
+      structuredContent: { error: { kind: "time-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
     });
     const sent = connectionLog.filter((entry) => entry.event === "execute").at(-1);

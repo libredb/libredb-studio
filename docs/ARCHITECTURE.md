@@ -450,6 +450,7 @@ The error body of the editor routes and of the agent runs and hand-over routes, 
 `readErrorRecord` reads a record strictly and refuses anything else with an `ErrorRecordError` that names the field, never its value.
 Every database error body the API routes answer (`databaseErrorBody` in `src/lib/api/error-body.ts`), and the `data` of the VS Code extension's error answers, carry `kind` and `outcome` ([`docs/API_DOCS.md`](API_DOCS.md#error-kind-and-outcome)).
 A body a route builds with the connection's scrub also carries the record's `sqlState`, and the agent's ledger refusal of a failed statement carries the whole record (`record`), which the agent and MCP decide a failure by.
+An MCP tool's error answer built from a failure carries the whole record in `structuredContent.error`, built under the call's scrub (`src/lib/mcp/output.ts`).
 The module uses no Node-only global.
 
 ## 5. Directory Structure

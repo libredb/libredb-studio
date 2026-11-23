@@ -615,6 +615,7 @@ describe("MCP run_read_query on an InfluxDB 3 connection", () => {
         { type: "text", text: providerTextNotice(providerAuthor("influxdb3")) },
         { type: "text", text: SYSTEM_REFUSAL },
       ],
+      structuredContent: { error: { kind: "refused-before-send", code: "QUERY_ERROR", outcome: "not-sent" } },
       isError: true,
     });
     expect(acquired).toEqual(["agent-read-only"]);
@@ -641,6 +642,7 @@ describe("MCP run_read_query on an InfluxDB 3 connection", () => {
           { type: "text", text: providerTextNotice(providerAuthor("influxdb3")) },
           { type: "text", text: STRING_QUALIFIER_REFUSAL },
         ],
+        structuredContent: { error: { kind: "refused-before-send", code: "QUERY_ERROR", outcome: "not-sent" } },
         isError: true,
       });
       expect(acquired).toEqual(["agent-read-only"]);
@@ -669,6 +671,7 @@ describe("MCP run_read_query on an InfluxDB 3 connection", () => {
           text: `The statement was refused before it reached the database: ${(evaluateInfluxSql("DELETE FROM home WHERE room = 'Kitchen'") as { message: string }).message}`,
         },
       ],
+      structuredContent: { error: { kind: "refused-before-send", code: "QUERY_ERROR", outcome: "not-sent" } },
       isError: true,
     });
     expect(statementsSent()).toEqual([]);
@@ -695,6 +698,7 @@ describe("MCP run_read_query on an InfluxDB 3 connection", () => {
         text: `run_read_query cannot run on this connection: ${sentence}. It runs on ${RUN_READ_QUERY_ENGINES}.`,
       },
     ],
+    structuredContent: { error: { kind: "execution-profile", code: "PROFILE_UNSUPPORTED_TARGET", outcome: "unknown" } },
     isError: true as const,
   });
 
@@ -755,6 +759,7 @@ describe("MCP run_read_query on an InfluxDB 3 connection", () => {
           text: "The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, or remove your own LIMIT and page with offset.",
         },
       ],
+      structuredContent: { error: { kind: "row-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
     });
   });
@@ -771,6 +776,7 @@ describe("MCP run_read_query on an InfluxDB 3 connection", () => {
           text: "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add a smaller LIMIT.",
         },
       ],
+      structuredContent: { error: { kind: "byte-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
     });
   });

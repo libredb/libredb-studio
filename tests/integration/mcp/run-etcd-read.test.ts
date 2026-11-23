@@ -279,6 +279,9 @@ describe("a refusal", () => {
     principal = refused;
     const result = await etcd("endpoint status");
     expect(result).toEqual({
+      structuredContent: {
+        error: { kind: "execution-profile", code: "PROFILE_PRIVILEGES_TOO_BROAD", outcome: "unknown" },
+      },
       isError: true,
       content: [
         { type: "text", text: providerTextNotice("etcd provider, bundled with Studio") },
@@ -300,6 +303,9 @@ describe("a refusal", () => {
     };
     const result = await etcd("endpoint status");
     expect(result).toEqual({
+      structuredContent: {
+        error: { kind: "execution-profile", code: "PROFILE_SERVER_UNENFORCED", outcome: "unknown" },
+      },
       isError: true,
       content: [
         { type: "text", text: providerTextNotice("etcd provider, bundled with Studio") },
@@ -373,6 +379,7 @@ describe("a refusal", () => {
     };
     const result = await etcd("lease list");
     expect(result).toEqual({
+      structuredContent: { error: { kind: "row-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
       content: [
         {

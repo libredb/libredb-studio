@@ -342,6 +342,47 @@ describe("a cancel of a running call", () => {
   });
 });
 
+describe("an error answer's record", () => {
+  const clients: [string, Parameters<typeof connectClient>[1]][] = [
+    ["default legacy (2025-11-25)", {}],
+    ["2025-06-18 only", { supportedProtocolVersions: ["2025-06-18"] }],
+    ["modern pinned (2026-07-28)", { negotiation: "pinned" }],
+  ];
+
+  test.each(clients)("a %s client reads a failure's record in structuredContent", async (_label, options) => {
+    const session = await connectClient(serve, options);
+    try {
+      const result = await session.client.callTool({
+        name: "run_read_query",
+        arguments: { connection_id: "seed:shop", sql: "SELECT id FROM no_such_table" },
+      });
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toEqual({
+        error: { kind: "query", code: "QUERY_ERROR", outcome: "unknown" },
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test.each(clients)(
+    "a %s client reads no record on a refusal Studio makes with no failure",
+    async (_label, options) => {
+      const session = await connectClient(serve, options);
+      try {
+        const result = await session.client.callTool({
+          name: "run_read_query",
+          arguments: { connection_id: "seed:no-such-connection", sql: "SELECT 1" },
+        });
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toBeUndefined();
+      } finally {
+        await session.close();
+      }
+    },
+  );
+});
+
 describe("the protocol layer's source", () => {
   test("names no 2024-11-05 revision, and the hand-written dispatcher is gone", () => {
     // One pattern per tree: Bun's glob matches no brace alternative that contains a slash.

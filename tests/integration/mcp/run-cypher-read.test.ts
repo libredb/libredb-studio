@@ -315,6 +315,7 @@ describe("a refusal", () => {
   test("a read past the provider's row budget is refused with the language's own advice", async () => {
     const result = await cypher(MANY);
     expect(result).toEqual({
+      structuredContent: { error: { kind: "row-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
       content: [
         {

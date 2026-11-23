@@ -48,6 +48,7 @@ import {
   MCP_TABLE_COMMENT_CAP_BYTES,
   MCP_UNTRUSTED_NOTICE,
   ownWordsError,
+  ownWordsFailure,
   providerTextError,
   recordOrRefuse,
   resultBytes,
@@ -487,7 +488,11 @@ export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall)
         "mcp_execution_failed",
       );
     }
-    if (error instanceof ExecutionProfileError || error instanceof McpDatabaseChoiceError) {
+    if (error instanceof ExecutionProfileError) {
+      return finish(ownWordsFailure(scrubProviderText(scrub, error.message), error, scrub), "mcp_execution_failed");
+    }
+    // Studio's own database choice refusal, raised in this tool layer: its words, with no failure record.
+    if (error instanceof McpDatabaseChoiceError) {
       return finish(ownWordsError(scrubProviderText(scrub, error.message)), "mcp_execution_failed");
     }
     return finish(engineError(MCP_ENGINE_ERROR_PREFIX, error, scrub, author), "mcp_execution_failed");

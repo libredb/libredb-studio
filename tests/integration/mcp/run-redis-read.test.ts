@@ -306,26 +306,34 @@ describe("a refusal", () => {
   });
 
   test.each([
-    ["names no ACL user", "seed:stock", REDIS_PROOF_SENTENCES.noUser],
-    ["names default", "seed:named-default", REDIS_PROOF_SENTENCES.defaultUser],
-  ])("a seed that %s is refused before any socket, in the tool's sentence", async (_what, connection, sentence) => {
-    const result = await redis("DBSIZE", {}, connection);
-    expect(result).toEqual({
-      isError: true,
-      content: [
-        { type: "text", text: providerTextNotice("Redis provider, bundled with Studio") },
-        {
-          type: "text",
-          text: `run_redis_read cannot run on this connection: ${sentence}`.replace(/\.$/, "") + ". It runs on Redis.",
-        },
-      ],
-    });
-    expect(opened).toEqual([]);
-  });
+    ["names no ACL user", "seed:stock", REDIS_PROOF_SENTENCES.noUser, "PROFILE_SERVER_UNENFORCED"],
+    ["names default", "seed:named-default", REDIS_PROOF_SENTENCES.defaultUser, "PROFILE_PRIVILEGES_TOO_BROAD"],
+  ])(
+    "a seed that %s is refused before any socket, in the tool's sentence",
+    async (_what, connection, sentence, code) => {
+      const result = await redis("DBSIZE", {}, connection);
+      expect(result).toEqual({
+        structuredContent: { error: { kind: "execution-profile", code, outcome: "not-sent" } },
+        isError: true,
+        content: [
+          { type: "text", text: providerTextNotice("Redis provider, bundled with Studio") },
+          {
+            type: "text",
+            text:
+              `run_redis_read cannot run on this connection: ${sentence}`.replace(/\.$/, "") + ". It runs on Redis.",
+          },
+        ],
+      });
+      expect(opened).toEqual([]);
+    },
+  );
 
   test("a writable user is refused by the proof at the open, and no command is sent", async () => {
     const result = await redis("DBSIZE", {}, "seed:writer");
     expect(result).toEqual({
+      structuredContent: {
+        error: { kind: "execution-profile", code: "PROFILE_PRIVILEGES_TOO_BROAD", outcome: "not-sent" },
+      },
       isError: true,
       content: [
         { type: "text", text: providerTextNotice("Redis provider, bundled with Studio") },

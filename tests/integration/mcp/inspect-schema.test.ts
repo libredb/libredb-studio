@@ -42,7 +42,7 @@ import {
   MCP_UNTRUSTED_NOTICE,
   providerTextNotice,
 } from "@/lib/mcp/output";
-import { DatabaseConfigError, ExecutionProfileError, StudioProfileRefusal } from "@/lib/db/errors";
+import { DatabaseConfigError, ExecutionProfileError, QueryError, StudioProfileRefusal } from "@/lib/db/errors";
 import { PROVIDER_TEXT_WITHHELD, providerAuthor } from "@/lib/db/operations/provider-text";
 import { secretForms } from "@/lib/db/utils/server-text";
 import type { ManagedConnection } from "@/lib/seed";
@@ -1494,6 +1494,9 @@ describe("a provider's text on inspect_schema", () => {
         { type: "text", text: providerTextNotice(AUTHOR) },
         { type: "text", text: "inspect_schema cannot run on this connection: the role may write." },
       ],
+      structuredContent: {
+        error: { kind: "execution-profile", code: "PROFILE_PRIVILEGES_TOO_BROAD", outcome: "unknown" },
+      },
     });
   });
 
@@ -1530,6 +1533,7 @@ describe("a provider's text on inspect_schema", () => {
         { type: "text", text: providerTextNotice(AUTHOR) },
         { type: "text", text: 'The database could not be opened: "payroll" cannot be opened.' },
       ],
+      structuredContent: { error: { kind: "config", code: "CONFIG_ERROR", outcome: "unknown" } },
     });
   });
 
@@ -1537,6 +1541,53 @@ describe("a provider's text on inspect_schema", () => {
     const result = await inspectOpening(async () => {
       throw new StudioProfileRefusal("Studio refused the open", "AGENT_CREDENTIAL_REQUIRED");
     });
-    expect(result).toEqual({ isError: true, content: [{ type: "text", text: "Studio refused the open" }] });
+    expect(result).toEqual({
+      isError: true,
+      content: [{ type: "text", text: "Studio refused the open" }],
+      structuredContent: {
+        error: { kind: "studio-profile-refusal", code: "AGENT_CREDENTIAL_REQUIRED", outcome: "unknown" },
+      },
+    });
+  });
+
+  test("an engine error carries its record", async () => {
+    const result = await inspectOpening(async () => {
+      const failure = new QueryError('relation "missing" does not exist', "postgres");
+      failure.sqlstate = "42P01";
+      throw failure;
+    });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toEqual({
+      error: { kind: "query", code: "QUERY_ERROR", sqlState: "42P01", outcome: "unknown" },
+    });
+  });
+
+  test("a profile refusal Studio raises carries its record", async () => {
+    const result = await inspectOpening(async () => {
+      throw new StudioProfileRefusal("Studio refused the open", "AGENT_CREDENTIAL_REQUIRED");
+    });
+    expect(result.structuredContent).toEqual({
+      error: { kind: "studio-profile-refusal", code: "AGENT_CREDENTIAL_REQUIRED", outcome: "unknown" },
+    });
+  });
+
+  test("a profile refusal the provider raises carries its record", async () => {
+    const result = await inspectOpening(async () => {
+      throw new ExecutionProfileError("the role may write", "PROFILE_PRIVILEGES_TOO_BROAD");
+    });
+    expect(result.structuredContent).toEqual({
+      error: { kind: "execution-profile", code: "PROFILE_PRIVILEGES_TOO_BROAD", outcome: "unknown" },
+    });
+  });
+
+  test("a database choice refused in Studio's words carries no record", async () => {
+    const provider = { getCapabilities: () => ({}) } as unknown as DatabaseProvider;
+    const result = await inspectOpening(async () => provider, { database: "payroll" });
+    expect(result).toEqual({
+      isError: true,
+      content: [
+        { type: "text", text: "This connection reads only the database it names; call again without database." },
+      ],
+    });
   });
 });

@@ -1,4 +1,4 @@
-import { type ProviderTextScrub, scrubProviderText } from "@/lib/db/operations/provider-text";
+import { errorRecord, type ProviderTextScrub, scrubProviderText } from "@/lib/db/operations/provider-text";
 import { logger } from "@/lib/logger";
 import { MCP_AUDIT_FAILURE_TEXT } from "./audit";
 import { redactError, redactErrorMessage } from "./serializer";
@@ -12,6 +12,13 @@ import { redactError, redactErrorMessage } from "./serializer";
  * src/lib/agent/untrusted-content.ts, not a sanitiser. A result made only of this server's own words
  * carries no notice. A tool description, which serves every engine its tool serves and so names no
  * single relaying provider, carries the generic `MCP_UNTRUSTED_NOTICE`.
+ *
+ * An error answer built from a failure, `engineError`, `providerTextError` and `ownWordsFailure`, carries the failure's
+ * error record (`errorRecord` in src/lib/db/operations/provider-text.ts) as `structuredContent.error`: its kind, code
+ * and outcome, and its SQLSTATE when the driver reported one and its text was not withheld. A refusal in this server's
+ * words with no failure behind it, `ownWordsError`, carries none. The record holds closed vocabularies and that
+ * SQLSTATE only, never message text. It is not the tool's output schema: an MCP client validates `structuredContent`
+ * against that schema only on a result that is not an error.
  *
  * C bounds every result a handler returns, measured as byte_size is: the UTF-8 length of the
  * compact JSON of the whole result, before the SDK adds its envelope. E and T bound the two pieces
@@ -109,17 +116,35 @@ export function untrustedResult(structured: Record<string, unknown>, author: str
   };
 }
 
+/** A refusal in this server's words with no failure behind it: one block, no notice, no record. */
 export function ownWordsError(text: string): ToolResult {
   return { content: [{ type: "text", text }], isError: true };
 }
 
-/** An engine's error message: the notice naming `author`, the provider that relayed it, then `prefix` and the message. */
+/** The `structuredContent` of an error answer built from `error`: its error record under `error`. */
+function failureRecord(error: unknown, scrub: ProviderTextScrub): Record<string, unknown> {
+  return { error: errorRecord(scrub, error) };
+}
+
+/**
+ * A failure answered in this server's words: one block, no notice, and the failure's error record under the
+ * connection's `scrub`. `text` is the caller's, already scrubbed where it splices provider text.
+ */
+export function ownWordsFailure(text: string, error: unknown, scrub: ProviderTextScrub): ToolResult {
+  return { content: [{ type: "text", text }], structuredContent: failureRecord(error, scrub), isError: true };
+}
+
+/**
+ * An engine's error message: the notice naming `author`, the provider that relayed it, then `prefix` and the message,
+ * and the failure's error record.
+ */
 export function engineError(prefix: string, error: unknown, scrub: ProviderTextScrub, author: string): ToolResult {
   return {
     content: [
       { type: "text", text: databaseContentNotice(author) },
       { type: "text", text: `${prefix}${engineMessage(error, scrub)}` },
     ],
+    structuredContent: failureRecord(error, scrub),
     isError: true,
   };
 }
@@ -136,7 +161,7 @@ export function providerTextNotice(author: string): string {
 /**
  * A provider's own refusal: the notice naming its author, then Studio's `lead` followed by the provider's text,
  * processed as an engine message is (`engineMessage`) and closed with a full stop where it ends without one, and then
- * `tail`, Studio's sentence after the provider's, where there is one.
+ * `tail`, Studio's sentence after the provider's, where there is one, and the failure's error record.
  */
 export function providerTextError(
   lead: string,
@@ -153,6 +178,7 @@ export function providerTextError(
       { type: "text", text: providerTextNotice(author) },
       { type: "text", text },
     ],
+    structuredContent: failureRecord(error, scrub),
     isError: true,
   };
 }

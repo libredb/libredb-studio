@@ -474,6 +474,9 @@ describe("the connection's own key", () => {
   test("a connection with no agent key, loaded past the seed schema, is refused at open and nothing is sent", async () => {
     const result = await direct(listed({ agentUser: undefined, agentPassword: undefined }), "aws s3api list-buckets");
     expect(result).toEqual({
+      structuredContent: {
+        error: { kind: "studio-profile-refusal", code: "AGENT_CREDENTIAL_REQUIRED", outcome: "unknown" },
+      },
       isError: true,
       content: [
         {
@@ -489,6 +492,9 @@ describe("the connection's own key", () => {
   test("an agent key that names the connection's own key ID is refused at open and nothing is sent", async () => {
     const result = await direct(listed({ agentUser: OWN_KEY.toLowerCase() }), "aws s3api list-buckets");
     expect(result).toEqual({
+      structuredContent: {
+        error: { kind: "studio-profile-refusal", code: "AGENT_CREDENTIAL_UNRESOLVABLE", outcome: "unknown" },
+      },
       isError: true,
       content: [
         {

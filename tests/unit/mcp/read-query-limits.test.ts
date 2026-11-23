@@ -330,11 +330,31 @@ describe("the offset rule", () => {
 describe("the provider refusal mapper", () => {
   const deadline = 10_000;
 
-  test("answers any failure that settles at or after the deadline as the timeout", () => {
-    expect(classifyReadQueryFailure(new Error("Query was cancelled"), deadline, deadline)).toEqual({ kind: "timeout" });
+  test("answers any failure that settles at or after the deadline as the deadline", () => {
+    expect(classifyReadQueryFailure(new Error("Query was cancelled"), deadline, deadline)).toEqual({
+      kind: "deadline",
+    });
     expect(
       classifyReadQueryFailure(new RowBudgetRefusal(rowBudgetSentence(1001, 1000)), deadline + 1, deadline),
     ).toEqual({
+      kind: "deadline",
+    });
+  });
+
+  test("a failure settling at or after the deadline is the deadline, whatever its class", () => {
+    for (const error of [
+      new TimeBudgetRefusal(rowBudgetSentence(1001, 1000), "postgres"),
+      new QueryError("relation does not exist", "postgres"),
+      new RefusedBeforeSendError("the statement writes", "postgres"),
+      "a thrown string",
+    ]) {
+      expect(classifyReadQueryFailure(error, deadline, deadline)).toEqual({ kind: "deadline" });
+      expect(classifyReadQueryFailure(error, deadline + 1, deadline)).toEqual({ kind: "deadline" });
+    }
+  });
+
+  test("a time budget refusal before the deadline is the timeout", () => {
+    expect(classifyReadQueryFailure(new TimeBudgetRefusal("over time", "postgres"), deadline - 1, deadline)).toEqual({
       kind: "timeout",
     });
   });
@@ -430,12 +450,12 @@ describe("a failure is answered by its class", () => {
     }
   });
 
-  test("a timeout of any author at or after the deadline answers the timeout", () => {
+  test("a timeout of any author at or after the deadline answers the deadline", () => {
     for (const error of [
       new TimeoutError(words(), "cassandra", 1_000),
       new StudioTimeoutRefusal(words(), "postgres", 1_000),
     ]) {
-      expect(classifyReadQueryFailure(error, deadline, deadline)).toEqual(TIMEOUT);
+      expect(classifyReadQueryFailure(error, deadline, deadline)).toEqual({ kind: "deadline" });
     }
   });
 

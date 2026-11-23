@@ -2963,6 +2963,7 @@ Every database error body `createErrorResponse` answers carries `kind` and `outc
 An answer without them is not a database error's: an unhandled error (`INTERNAL_ERROR`) and the codes a route or the middleware answers itself carry neither.
 Both are closed vocabularies and never hold the error's text.
 A route that resolves the calling connection (the editor's query, script and transaction routes, the connection test, the agent runs route and the hand-over route) also answers `sqlState`, the SQLSTATE the driver reported, when there is one and the error's text was not withheld.
+An MCP tool's error answer built from a failure carries the same record, `kind`, `code`, `outcome` and that `sqlState`, in `structuredContent.error` ([MCP](MCP.md)); there every kind can appear, and `code` is the deny code of an `execution-profile` or `studio-profile-refusal` failure.
 
 `kind` names the class of failure, so a client can branch on it without reading the sentence:
 

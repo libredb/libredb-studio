@@ -16,7 +16,8 @@ import type { DatabaseType } from "@/lib/types";
  * timeout), so its own text, not a sentence claiming timeout_ms was reached, says which. `MCP_FAILURE_OF_KIND` holds one answer for every
  * kind, so a kind added to `ERROR_KINDS` fails typecheck until it is given one. Which provider sites raise a budget
  * refusal as its class is held by tests/unit/db/operations/budget-refusal-census.test.ts. Any failure that settles
- * once the deadline has passed is the timeout, so which of the two settles first never changes what the client reads.
+ * once the deadline has passed is the deadline, answered as the deadline timer's own answer is, so which of the two
+ * settles first never changes what the client reads.
  * The deadline race stops the wait for a statement, not the statement: no provider can cancel a read-only statement
  * yet (docs/BACKLOG.md D128).
  *
@@ -82,7 +83,12 @@ const TOO_LARGE_TEXTS: Record<Exclude<ReadOnlyRefusalKind, "time">, string> = {
   serialised: ENGINE_TOO_LARGE_TEXTS.serialised,
 };
 
+/**
+ * `deadline` is a failure that settled at or after the call's deadline, answered as the deadline itself is; `timeout`
+ * is a time budget refusal before it.
+ */
 export type ReadQueryFailure =
+  | { readonly kind: "deadline" }
   | { readonly kind: "timeout" }
   | { readonly kind: "too-large"; readonly text: string }
   | { readonly kind: "not-sent"; readonly error: RefusedBeforeSendError }
@@ -100,7 +106,7 @@ export function classifyReadQueryFailure(
   deadline: number,
   texts: Partial<Record<Exclude<ReadOnlyRefusalKind, "time">, string>> = {},
 ): ReadQueryFailure {
-  if (settledAt >= deadline) return { kind: "timeout" };
+  if (settledAt >= deadline) return { kind: "deadline" };
   const answer = MCP_FAILURE_OF_KIND[errorKind(error)];
   switch (answer) {
     case "timeout":
