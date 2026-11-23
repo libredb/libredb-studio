@@ -8,7 +8,7 @@
  * captures of the seeded server (tests/helpers/qdrant-surface-fixtures.ts) unless a test replaces one. Only the
  * session and the provider cache are replaced. The credential is the stand-in TEST_PASSWORD.
  */
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { getServerAuditBuffer } from "@/lib/audit";
 import * as actualDb from "@/lib/db";
@@ -21,6 +21,12 @@ import type { DatabaseConnection } from "@/lib/types";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { recordedAnswer } from "../../helpers/qdrant-surface-fixtures";
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The editor query reads the process's host core (src/lib/provider-host/instance.ts), so this file composes its own.
+beforeAll(() => installHostCore(createHostCore()));
+afterAll(forgetHostCore);
 
 // A named placeholder, never a realistic value: a credential in a test fixture is a stand-in.
 const TEST_PASSWORD = "password";

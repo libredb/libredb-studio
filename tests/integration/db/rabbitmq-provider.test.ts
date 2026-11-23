@@ -719,6 +719,10 @@ describe("the three routes' full JSON bodies on Node (R-S5, R-S7)", () => {
         `import { rabbitmqConnection } from ${source("tests/helpers/rabbitmq-connection.ts")};`,
         `import { ALLOWS_PRIVATE_HOSTS } from ${source("tests/helpers/egress-decisions.ts")};`,
         'import { useProvider } from "./provider-slot.ts";',
+        `import { createHostCore } from ${source("src/lib/provider-host/core/host-core.ts")};`,
+        `import { installHostCore } from ${source("src/lib/provider-host/instance.ts")};`,
+        // The child is its own process, so it installs the host core the query route reads, as a composition root does.
+        "installHostCore(createHostCore());",
         'const routes = { query, "test-connection": testConnection, "objects/source": objectSource };',
         'const cases = JSON.parse(readFileSync(process.argv[2], "utf8"));',
         "const outcomes = {};",

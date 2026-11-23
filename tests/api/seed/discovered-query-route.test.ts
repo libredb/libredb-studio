@@ -9,7 +9,7 @@
  * Only the session and the provider cache are replaced; the seed loader, the discovery loader, resolveConnection
  * and the Vault client are the real ones.
  */
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,6 +23,12 @@ import { postgresService, writeDiscoveryExport, type DiscoveryExportFixture } fr
 import { createMockProvider } from "../../helpers/mock-provider";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { closeAll, httpListener, jsonAnswer, type Listener } from "../../helpers/node-transport-fixtures";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The editor query reads the process's host core (src/lib/provider-host/instance.ts), so this file composes its own.
+beforeAll(() => installHostCore(createHostCore()));
+afterAll(forgetHostCore);
 
 const VAULT_REFERENCE = "${vault:secret/data/a#b}";
 

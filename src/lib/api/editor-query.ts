@@ -17,7 +17,8 @@ import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { logger } from "@/lib/logger";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 import { type CallerView, refusalError, stopError } from "@/lib/provider-host/access";
-import { cancelCall, executeCall, type HostCallPorts } from "@/lib/provider-host/core/console";
+import type { HostCallPorts } from "@/lib/provider-host/core/console";
+import { hostCore } from "@/lib/provider-host/instance";
 import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
 import type { DatabaseType, QueryPagination, QueryResult } from "@/lib/types";
 
@@ -191,7 +192,10 @@ function callContext(deadline: number, caller: AbortSignal): CallContext {
  * THE EDITOR QUERY ON THE PROVIDER HOST CORE (docs/providers/CONTRACT.md, clauses C-48 to C-51).
  *
  * `runEditorQuery` is the caller facade: it keeps the shape both callers have always used and answers today's body,
- * while the run goes through the legacy bridge and the host core's execute call. It builds a fresh request and
+ * while the run goes through the legacy bridge and the host core's execute call. The core is the one the process's
+ * composition root installed (`hostCore`, src/lib/provider-host/instance.ts, clause C-52), read before anything else,
+ * so a call made before the install fails by name and this bundle holds no copy of the core's calls; the ports and the
+ * accessor that read this bundle's classes stay this bundle's, built per call. It builds a fresh request and
  * context for each call, so the core freezes nothing a caller holds; the core checks the call before it is made,
  * waits for it until its deadline or the caller's going, and pumps its first result within the 32 MiB page budget
  * with a turn of the event loop before every pull. The accessor turns each record the core answers into this bundle's
@@ -204,6 +208,7 @@ function callContext(deadline: number, caller: AbortSignal): CallContext {
 
 /** Runs one statement on `provider` and answers its first result set's page. */
 export async function runEditorQuery(provider: DatabaseProvider, run: EditorQueryRun): Promise<EditorQueryAnswer> {
+  const core = hostCore();
   const deadline = executeDeadline(provider, Date.now());
   const view: CallerView = {
     caller: run.signal,
@@ -216,7 +221,7 @@ export async function runEditorQuery(provider: DatabaseProvider, run: EditorQuer
     ...(run.params === undefined ? {} : { params: [...run.params] }),
     ...(run.queryId === undefined ? {} : { runId: run.queryId }),
   };
-  const record = await executeCall(
+  const record = await core.executeCall(
     bridged.session,
     request,
     callContext(deadline, run.signal),
@@ -303,11 +308,12 @@ export async function cancelEditorRun(
   caller: AbortSignal,
   route: string,
 ): Promise<EditorCancelAnswer> {
+  const core = hostCore();
   const view: CallerView = {
     caller,
     deadlineSentence: `The cancel did not answer within ${waitedSeconds(CLEANUP_DEADLINE_MS)}, so Studio stopped waiting for it.`,
   };
-  const record = await cancelCall(
+  const record = await core.cancelCall(
     bridgedConsole(provider, {}).session,
     { runId: queryId },
     callContext(Date.now() + CLEANUP_DEADLINE_MS, caller),

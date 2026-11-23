@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
+import { randomUUID } from "crypto";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -8,6 +9,9 @@ import { forgetTrustMaterial } from "@/lib/db/trust-material";
 import * as dataDir from "@/lib/data-dir";
 import { forgetStorageLocation } from "@/lib/data-dir";
 import { logger } from "@/lib/logger";
+import { cancelCall, executeCall } from "@/lib/provider-host/core/console";
+import { forgetHostCore, HostCoreBootOrderError, hostCore } from "@/lib/provider-host/instance";
+import * as resealAtBoot from "@/lib/storage/reseal-at-boot";
 import { closeStorageProvider } from "@/lib/storage/factory";
 import { getPendingSeeds, getUnavailableSamples } from "@/lib/seed";
 import { getSampleSeedState, resetSampleSeedStates, SAMPLES, unavailableSentence } from "@/lib/seed/samples";
@@ -68,6 +72,17 @@ function noSampleStarted(): boolean {
   return [...SAMPLES.values()].every((spec) => getSampleSeedState(spec.seedId) === undefined);
 }
 
+/** Whether a host core is installed in this process. */
+function hostInstalled(): boolean {
+  try {
+    hostCore();
+    return true;
+  } catch (error) {
+    if (error instanceof HostCoreBootOrderError) return false;
+    throw error;
+  }
+}
+
 /** The samples seed fire-and-forget; poll for their observable effects. */
 async function waitFor(cond: () => boolean, timeoutMs = 3000): Promise<void> {
   const start = Date.now();
@@ -100,6 +115,8 @@ describe("instrumentation register()", () => {
     forgetEgressDecision();
     forgetTrustMaterial();
     forgetStorageLocation();
+    // register() installs the provider host core once per process; forgotten here, each boot below installs its own.
+    forgetHostCore();
     // register() installs the uncaught-exception exit once per process; installed on a stand-in here first, its own
     // install attaches nothing, so no test in this file binds the real process.exit. The tests about that install
     // reset this one first.
@@ -137,6 +154,7 @@ describe("instrumentation register()", () => {
       forgetEgressDecision();
       forgetTrustMaterial();
       forgetStorageLocation();
+      forgetHostCore();
       resetUncaughtExceptionExit();
       resetShutdownHandler();
     }
@@ -241,6 +259,9 @@ describe("instrumentation register()", () => {
           realBootstrap = false;
         });
         await register();
+        // The host core is installed once per process and a second install is refused by name, so the second boot
+        // here, which only the handler's own install is about, starts from no core.
+        forgetHostCore();
         await register();
       });
 
@@ -361,6 +382,9 @@ describe("instrumentation register()", () => {
         const { exits, added } = await withRecordedExit(async (addedSoFar) => {
           setNodeEnv(nodeEnv);
           await register();
+          // The host core is installed once per process and a second install is refused by name, so the second boot
+          // here, which only the exit's own install is about, starts from no core.
+          forgetHostCore();
           await register();
           rejectionsAfter = process.listeners("unhandledRejection");
           // What an uncaught exception does: Node.js calls the listener with the error.
@@ -376,6 +400,45 @@ describe("instrumentation register()", () => {
       }
     },
   );
+
+  test("register() installs the provider host core once, after the boot checks", async () => {
+    process.env.NEXT_RUNTIME = "nodejs";
+    process.env.AUTH_BOOTSTRAP = "off";
+    process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
+    process.env.SQLITE_EMBEDDED_SAMPLE = "false";
+    process.env.JWT_SECRET = randomUUID();
+    const installedAtReseal: boolean[] = [];
+    const reseal = spyOn(resealAtBoot, "resealStoreAtBoot").mockImplementation(async () => {
+      installedAtReseal.push(hostInstalled());
+      return true;
+    });
+    try {
+      await register();
+    } finally {
+      reseal.mockRestore();
+    }
+
+    expect(installedAtReseal).toEqual([false]);
+    const core = hostCore();
+    expect(core.executeCall).toBe(executeCall);
+    expect(core.cancelCall).toBe(cancelCall);
+    expect(Object.isFrozen(core)).toBe(true);
+  });
+
+  test("a boot a check refuses installs no host core", async () => {
+    process.env.NEXT_RUNTIME = "nodejs";
+    process.env.NEXT_MANUAL_SIG_HANDLE = "1";
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { exits } = await withSignalListeners(() => register());
+
+      expect(exits).toEqual([1]);
+    } finally {
+      errorSpy.mockRestore();
+    }
+    expect(hostInstalled()).toBe(false);
+    expect(() => hostCore()).toThrow(HostCoreBootOrderError);
+  });
 
   test("attaches the exit before the boot preflights, so a refused boot has it too", async () => {
     process.env.NEXT_RUNTIME = "nodejs";

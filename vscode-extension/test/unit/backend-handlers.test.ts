@@ -11,6 +11,8 @@ import {
   StreamMessageWriter,
 } from "vscode-jsonrpc/node";
 import { runEditorQuery } from "@/lib/api/editor-query";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import { databaseErrorBody, internalErrorBody, TIMEOUT_SENTENCE } from "@/lib/api/error-body";
 import {
   CONFIRMATION_FIELD_MESSAGE,
@@ -169,6 +171,16 @@ async function answeredAs(call: Promise<unknown>, failure: unknown): Promise<voi
     assert.deepEqual(error.toJson(), answeredWithScrub(failure));
     return true;
   });
+}
+
+/**
+ * The editor query reads the process's host core (src/lib/provider-host/instance.ts), so a block that runs it composes
+ * its own and forgets it after: the unit leg is one Mocha process, where a hook at a file's top level would be a root
+ * hook of every file.
+ */
+function composeHostCore(): void {
+  before(() => installHostCore(createHostCore()));
+  after(forgetHostCore);
 }
 
 describe("the child's refusals", () => {
@@ -735,6 +747,8 @@ function shaped(answer: RunTargetResult): RunTargetResult {
 }
 
 describe("query/run", () => {
+  composeHostCore();
+
   it("answers the query route's body for the same provider outputs (criterion 5)", async () => {
     const { handlers } = await openedOn();
     const answer = await handlers.runQuery(RUN, idle);
@@ -959,6 +973,8 @@ describe("query/run", () => {
 });
 
 describe("the confirmation gate on query/run (FND-5 6e)", () => {
+  composeHostCore();
+
   restoresRunConfirmationMode();
   const WRITE = "DELETE FROM t";
   const write = { ...RUN, statement: WRITE };
@@ -1546,6 +1562,8 @@ describe("query/target", () => {
 });
 
 describe("query/cancel", () => {
+  composeHostCore();
+
   it("answers whether the engine stopped the statement", async () => {
     let stopped = true;
     const provider = fakeProvider({ cancelQuery: async () => stopped });
@@ -1808,6 +1826,8 @@ describe("toResponseError with the connection's scrub", () => {
 });
 
 describe("provider errors that hold the connection's credential", () => {
+  composeHostCore();
+
   const password = crypto.randomUUID();
   const wire = { ...WIRE, password };
 

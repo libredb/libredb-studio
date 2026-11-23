@@ -6,7 +6,7 @@
  * DescribeCollection. A console run is named by its id: the cancel route stops exactly that run, and an id that names
  * no run answers false.
  */
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import {
   AuthenticationError,
@@ -40,6 +40,12 @@ import {
   wireIndex,
 } from "../../helpers/milvus-catalog-client";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The editor query reads the process's host core (src/lib/provider-host/instance.ts), so this file composes its own.
+beforeAll(() => installHostCore(createHostCore()));
+afterAll(forgetHostCore);
 
 // Named placeholders, never realistic values: a credential in a test fixture is a stand-in.
 const TEST_PASSWORD = "password";

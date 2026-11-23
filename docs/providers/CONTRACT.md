@@ -1452,6 +1452,28 @@ A refused offset and refused params of a session that refuses a field arrive wit
 - test `tests/unit/lib/provider-host/access.test.ts` "any other refusal is a host defect named by its rule"
 - test `tests/unit/lib/provider-host/access.test.ts` "every class the accessor builds is the calling bundle's own"
 
+### C-52 (normative): One host core per process
+
+A process holds one host core, created by `createHostCore` and installed under a registered symbol once, by the process's composition root: the server's instrumentation and the VS Code backend's entry.
+The core holds plain functions, the console calls, and constructs no class, so a caller in any bundle of the process runs the core another bundle installed.
+The classes a caller tests with `instanceof` and the ports that read them stay the caller's, built per call, C-51.
+A call made before the core is installed fails by name, as a defect of how the process was composed, and nothing reaches the provider; a second install is refused the same way, so no second core is ever created.
+The library surface never reads the installed core, so an embedder composes nothing.
+
+- test `tests/unit/lib/provider-host/core/host-core.test.ts` "the host core holds the core's console calls, frozen, and nothing else"
+- test `tests/unit/lib/provider-host/instance.test.ts` "the host core is installed once per process, under a registered symbol"
+- test `tests/unit/lib/provider-host/instance.test.ts` "a second install is refused by name, and the first core stays"
+- test `tests/unit/lib/provider-host/instance.test.ts` "a call made with no host core installed fails by name, and nothing reaches the provider"
+- test `tests/unit/lib/provider-host/instance.test.ts` "only a composition root creates the host core, and only the core reaches its console calls"
+- test `tests/unit/lib/provider-host/instance.test.ts` "no module the library entries reach reads the host core, so an embedder needs none"
+- test `tests/unit/instrumentation.test.ts` "register() installs the provider host core once, after the boot checks"
+- test `tests/unit/instrumentation.test.ts` "a boot a check refuses installs no host core"
+- test `vscode-extension/test/unit/backend-start.test.ts` "installs the provider host core, then starts the backend on its own process, which under Mocha has no IPC channel"
+- test `tests/unit/lib/provider-host/cross-bundle.test.ts` "the two bundles hold two copies of Studio's errors, as instrumentation and a route do"
+- test `tests/unit/lib/provider-host/cross-bundle.test.ts` "a route runs the host core instrumentation installed, and builds none of its own"
+- test `tests/unit/lib/provider-host/cross-bundle.test.ts` "a refusal the host core answers as a record becomes the route bundle's own class"
+- test `tests/unit/lib/provider-host/cross-bundle.test.ts` "a provider error the route bundle built passes through the host core by reference"
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:
@@ -1475,6 +1497,7 @@ Against the manifest sketch the design started from:
 - The error kinds keep the names of Studio's error record, E-1.
 - Facet names keep Studio's own vocabulary, the seven monitoring panels, the maintenance operations and the curated agent readings, rather than new dotted names.
 - The host's own rules for opening and closing sessions and for the legacy provider interface are clauses of the calls chapter, C-44 to C-46, since the host serves today's providers through them.
+- The host core is one instance per process, installed by the process's composition root, C-52, where the sketch named no instance.
 - The connection dialog's per-field facts, its labels, hints, placeholders, placement, choices, conditions and absent values, are lists of entries that each name their field, rather than maps keyed by field, M-24.
 - A condition is one field equal to one value, with no list of values and no combination of conditions in this contract, M-25.
 - A `calls` segment declares the package's optional console facets and the request fields its execute honours.

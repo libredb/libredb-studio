@@ -8,6 +8,12 @@ import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
 import { admittedFileConnection } from "@/lib/db/provider-files";
 import type { DatabaseConnection, QueryTab } from "@/lib/types";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The editor query reads the process's host core (src/lib/provider-host/instance.ts), so this file composes its own.
+beforeAll(() => installHostCore(createHostCore()));
+afterAll(forgetHostCore);
 
 /**
  * THE POINT OF #816, asserted directly: two pages over a seeded ordered table produce

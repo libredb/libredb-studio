@@ -471,6 +471,16 @@ Today it holds two primitives the provider factory (`src/lib/db/factory.ts`) run
 Core imports only the public subpaths of `@libredb/provider-sdk` other than `testing`, Node built-ins and its own files, and declares no module state: every table it uses is created by its owner and handed in (`tests/unit/lib/provider-host/core-boundary.test.ts`).
 It answers plain data and passes errors through by reference, so it never constructs a class that code in another Next.js bundle would test with `instanceof`.
 
+One process holds one host core (clause C-52).
+`host-core.ts` creates it, `createHostCore()`: a frozen object holding the console calls `executeCall` and `cancelCall` by identity, and nothing else.
+`src/lib/provider-host/instance.ts` keeps it in a global under `Symbol.for("libredb-studio.provider-host-core")`, which every bundle of the process resolves to one key.
+Each composition root installs it once when its process starts: `register()` in `src/instrumentation.ts` for the server, after the boot checks and the credential re-seal, and the VS Code backend child's entry, `vscode-extension/src/backend/main.ts`, before it starts the backend.
+The caller facade reads it at the start of every call, so a route bundle holds no copy of the console calls; a call made before the install fails with `HostCoreBootOrderError`, by name, and a second install is refused the same way, so no second core is ever created on demand.
+Next.js loads instrumentation and each route handler as separate module instances, each with its own copy of Studio's error classes, so a class the instrumentation bundle constructs is not the route's: the core therefore constructs none, and the ports that read the caller's classes (`HostCallPorts`) and the accessor stay in the calling bundle, built per call.
+A record the core answers becomes the route's own class through the route's accessor, and a provider error the route built passes through the core by reference (`tests/unit/lib/provider-host/cross-bundle.test.ts`).
+The library surface never reads the slot, so an embedder of the npm package composes nothing.
+`register()` runs once per server process, `next dev` included, and a dev server does not reload instrumentation or the core when either is edited, so a change under `src/lib/provider-host/core/` needs a restart of the dev server.
+
 Beside core, in the calling bundle, sit the two pieces that serve today's providers through it.
 `src/lib/provider-host/legacy-bridge.ts` serves a legacy `DatabaseProvider` as one session of console execute and cancel (clause C-50), and `src/lib/provider-host/access.ts`, the accessor, builds Studio's error classes from the records core answers (clause C-51).
 The caller facade is `src/lib/api/editor-query.ts`: `runEditorQuery` and `cancelEditorRun` keep the shape `POST /api/db/query`, `POST /api/db/cancel` and the VS Code backend child's `query/run` and `query/cancel` have always called, and run each call through the bridge, core and the accessor under the call's deadline: the statement timeout plus 10 s for a statement, 10 s for a cancel.
@@ -556,7 +566,7 @@ src/
     ├── agent/               # Agent runtime: run ledger, workflow, tools, policy (docs/AGENT.md)
     │   └── languages/       # Statement language packs, their engine overlays and resolvers (docs/AGENT.md, Language packs)
     ├── mcp/                 # MCP server: SDK handler, token, pre-processing, tools (docs/MCP.md)
-    ├── provider-host/
+    ├── provider-host/       # instance.ts: the process's one host core, installed by each composition root (§4.15)
     │   └── core/            # The provider host core (§4.15): one open in flight per key, teardown under fixed deadlines, console calls
     ├── governance/          # Governance (docs/GOVERNANCE.md): contract v1, the settings registry and the runtime that
     │                        #   reads the source: keyring, admission, pool, snapshot, freshness, refresher, listener

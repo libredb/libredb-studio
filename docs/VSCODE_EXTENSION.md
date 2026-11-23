@@ -120,6 +120,7 @@ In practice that is the first expand of a connection in the tree, the first Add 
 The supervisor sends `initialize` with `PROTOCOL_VERSION`; the child answers its runtime and enabled providers, or refuses with `PROTOCOL_MISMATCH` or `RUNTIME_UNSUPPORTED` (a Node older than the root `package.json` `engines.node`).
 `PROTOCOL_VERSION` is 2 since the child holds the run confirmation contract (section 5): a host and a child of different versions refuse each other, so a host that asks no question never meets a child that runs what it is sent.
 Concurrent callers share one start.
+The child's entry, `src/backend/main.ts`, is its composition root: it installs the process's one provider host core (`installHostCore(createHostCore())`, `src/lib/provider-host/instance.ts`) before it starts the backend, as `register()` does for the server, so every `query/run` and `query/cancel` reads that core ([Architecture](ARCHITECTURE.md), "The provider host core").
 
 ```mermaid
 stateDiagram-v2

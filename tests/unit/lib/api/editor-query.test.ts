@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, beforeAll, afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import {
   checkEditorQuery,
   type EditorQueryRefusal,
@@ -24,6 +24,12 @@ import type { DatabaseConnection, QueryResult } from "@/lib/types";
 import { createMockProvider } from "../../../helpers/mock-provider";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../../../helpers/stand-in-vocabulary";
 import { serverOnlyReach, valueImportClosure } from "../../../helpers/value-import-closure";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The editor query reads the process's host core (src/lib/provider-host/instance.ts), so this file composes its own.
+beforeAll(() => installHostCore(createHostCore()));
+afterAll(forgetHostCore);
 
 /** The limiter's rule as a SQL provider applies it: a bound of ours, unless the text carries its own LIMIT. */
 function limiter(sql: string, options: QueryPrepareOptions = {}): PreparedQuery {
@@ -658,12 +664,14 @@ describe("the core's import closure stays free of Next", () => {
         "src/lib/db/utils/query-limiter.ts",
         "src/lib/non-finite.ts",
         "src/lib/provider-host/access.ts",
-        "src/lib/provider-host/core/console.ts",
-        "src/lib/provider-host/core/turns.ts",
+        "src/lib/provider-host/instance.ts",
         "src/lib/provider-host/legacy-bridge.ts",
       ]),
     );
     expect(closure.modules).not.toContain("src/lib/api/abort-cancel.ts");
+    // The facade reads the process's host core and holds no copy of the core's calls (clause C-52).
+    expect(closure.modules).not.toContain("src/lib/provider-host/core/console.ts");
+    expect(closure.modules).not.toContain("src/lib/provider-host/core/turns.ts");
   });
 
   test("a control: the same walk over the query route finds Next and governance", () => {
