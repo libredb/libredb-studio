@@ -12,6 +12,7 @@ import {
   type BatchLimit,
   type CallContext,
   CallRefusalError,
+  encodedRowBytes,
   envReader,
   type ResultSource,
   rowsSource,
@@ -25,7 +26,7 @@ import {
 } from "@/lib/provider-host/core/page-budget";
 
 const HOUR = 3_600_000;
-const LIMIT: BatchLimit = Object.freeze({ maxRows: 1, maxBytes: 1_024 });
+const LIMIT: BatchLimit = Object.freeze({ maxRows: 1, maxBytes: 1_024, measure: encodedRowBytes });
 
 function contextOf(controller = new AbortController()): CallContext {
   return { deadline: Date.now() + HOUR, signal: controller.signal, env: envReader([], () => undefined) };

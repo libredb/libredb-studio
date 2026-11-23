@@ -214,7 +214,9 @@ describe("bridgedConsole", () => {
     expect(Object.hasOwn(single, "explainPlan")).toBe(false);
     const closed = single.results[0];
     await closed?.close();
-    expect(await failure(async () => closed?.next({ maxRows: 1, maxBytes: 1 }))).toBeInstanceOf(Error);
+    expect(
+      await failure(async () => closed?.next({ maxRows: 1, maxBytes: 1, measure: encodedRowBytes })),
+    ).toBeInstanceOf(Error);
   });
 
   test("a cell outside the value codec is measured in its JSON form and answered unchanged", async () => {

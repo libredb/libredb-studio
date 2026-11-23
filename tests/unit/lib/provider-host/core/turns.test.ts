@@ -12,6 +12,7 @@ import {
   type BatchLimit,
   type CallContext,
   CallRefusalError,
+  encodedRowBytes,
   envReader,
   pumpPage,
   type ResultSource,
@@ -111,7 +112,7 @@ describe("withTurns", () => {
     const past: CallContext = { ...contextOf(), deadline: Date.now() - 1 };
     let deadlineCaught: unknown;
     try {
-      await withTurns(inner, past).next({ maxRows: 1, maxBytes: 100 });
+      await withTurns(inner, past).next({ maxRows: 1, maxBytes: 100, measure: encodedRowBytes });
     } catch (error) {
       deadlineCaught = error;
     }

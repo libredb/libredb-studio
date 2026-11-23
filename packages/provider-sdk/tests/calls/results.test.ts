@@ -1,8 +1,9 @@
 /**
  * The byte budgets, the row measure, the batch holder for rows already in memory and the result pump
- * (docs/providers/CONTRACT.md, clauses C-13, C-14 and C-15).
+ * (docs/providers/CONTRACT.md, clauses C-13 to C-16).
  *
  * The sources here are plain objects over arrays, honest (`rowsSource`) or scripted to answer what a source should not.
+ * A row the pump measures once is told by its cells' reads: a row behind `counted` records every index read of it.
  * No test waits on a timer: every source answers at once, and a rejection is captured with a plain `await` in a `try`.
  */
 import { describe, expect, test } from "bun:test";
@@ -70,6 +71,21 @@ function scripted(
   return source;
 }
 
+/** A pull's limit as a source sees it, with `encodedRowBytes`, the rule the pump's own measure applies, as its measure. */
+function limitOf(maxRows: number, maxBytes: number): BatchLimit {
+  return { maxRows, maxBytes, measure: encodedRowBytes };
+}
+
+/** `cells` behind a proxy that records in `reads` every index of it that is read, in order. */
+function counted(cells: unknown[], reads: string[]): unknown[] {
+  return new Proxy(cells, {
+    get(target, key, receiver) {
+      if (typeof key === "string" && /^\d+$/.test(key)) reads.push(key);
+      return Reflect.get(target, key, receiver);
+    },
+  });
+}
+
 /** Every batch `source` answers, pulled with `limit` until it says done. */
 async function drain(source: ResultSource, limit: BatchLimit): Promise<RowBatch[]> {
   const batches: RowBatch[] = [];
@@ -123,7 +139,7 @@ describe("rowsSource", () => {
     expect(source.columns).toBe(TWO);
     expect(source.rowCount).toBe(3000);
     expect(rowsSource(TWO, rows).rowCount).toBeUndefined();
-    const batches = await drain(source, { maxRows: 5000, maxBytes: BATCH_MAX_BYTES });
+    const batches = await drain(source, limitOf(5000, BATCH_MAX_BYTES));
     expect(batches.length).toBeGreaterThan(2);
     for (const batch of batches) {
       const bytes = batch.rows.reduce((sum, row) => sum + encodedRowBytes(row), 0);
@@ -133,13 +149,13 @@ describe("rowsSource", () => {
     expect(batches.flatMap((batch) => batch.rows)).toEqual(rows);
     expect(batches.map((batch) => batch.done)).toEqual([...batches.slice(1).map(() => false), true]);
 
-    const byRows = await drain(rowsSource(TWO, rows), { maxRows: 7, maxBytes: BATCH_MAX_BYTES });
+    const byRows = await drain(rowsSource(TWO, rows), limitOf(7, BATCH_MAX_BYTES));
     expect(byRows.every((batch) => batch.rows.length <= 7)).toBe(true);
     expect(byRows.flatMap((batch) => batch.rows)).toEqual(rows);
-    expect(await rowsSource(TWO, []).next({ maxRows: 1, maxBytes: 1 })).toEqual({ rows: [], done: true });
+    expect(await rowsSource(TWO, []).next(limitOf(1, 1))).toEqual({ rows: [], done: true });
 
     await source.close();
-    const error = await thrownBy(() => source.next({ maxRows: 1, maxBytes: 1 }));
+    const error = await thrownBy(() => source.next(limitOf(1, 1)));
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toBe("The result source was closed, so it answers no more batches.");
   });
@@ -193,7 +209,7 @@ describe("pumpPage", () => {
 
   test("a row larger than the batch budget comes alone, and is refused only when no page can hold it", async () => {
     const big = rowOf(300);
-    const alone = await rowsSource(ONE, [big, [1]]).next({ maxRows: 10, maxBytes: 100 });
+    const alone = await rowsSource(ONE, [big, [1]]).next(limitOf(10, 100));
     expect(alone).toEqual({ rows: [big], done: false });
 
     const kept = await pumpPage(rowsSource(ONE, [[1], big, [2]]), SMALL, live());
@@ -325,15 +341,110 @@ describe("pumpPage", () => {
     let rowsSoFar = 0;
     let bytesSoFar = 0;
     expect(asked.length).toBe(5);
+    expect(new Set(asked.map((limit) => limit.measure)).size).toBe(5);
     for (const [pull, limit] of asked.entries()) {
       expect(Object.isFrozen(limit)).toBe(true);
-      expect(limit).toEqual({ maxRows: 20 - rowsSoFar, maxBytes: Math.min(100, 400 - bytesSoFar) });
+      expect(limit).toEqual({
+        maxRows: 20 - rowsSoFar,
+        maxBytes: Math.min(100, 400 - bytesSoFar),
+        measure: expect.any(Function),
+      });
       rowsSoFar += answered[pull].rows.length;
       bytesSoFar += answered[pull].rows.reduce((sum, row) => sum + encodedRowBytes(row), 0);
     }
     expect(page.end).toBe("byte-limit");
     expect(page.bytes).toBe(400);
     expect(page.rows.length).toBe(10);
+  });
+
+  test("each pull hands the source the pump's own measure, and a row the source sized with it is not measured again", async () => {
+    const reads: string[][] = [[], [], []];
+    const cells = reads.map((_, index) => [randomUUID(), index]);
+    const rows = cells.map((row, index) => counted(row, reads[index]));
+    const wide = { maxRows: 100, maxBytes: 1000, batchMaxBytes: 1000 };
+
+    const page = await pumpPage(rowsSource(TWO, rows), wide, live());
+
+    expect(reads).toEqual([
+      ["0", "1"],
+      ["0", "1"],
+      ["0", "1"],
+    ]);
+    expect(page.bytes).toBe(cells.reduce((sum, row) => sum + encodedRowBytes(row), 0));
+    expect(page.end).toBe("done");
+    expect(page.rows.length).toBe(3);
+    page.rows.forEach((row, index) => {
+      expect(row).toBe(rows[index]);
+    });
+
+    const unclean = scripted(ONE, (_, limit) => {
+      const row = [new Map()];
+      limit.measure(row);
+      return { rows: [row], done: true };
+    });
+    expect(await thrownBy(() => pumpPage(unclean, wide, live()))).toBeInstanceOf(ValueCodecError);
+    expect(unclean.closes).toBe(1);
+  });
+
+  test("a row the source did not size with its pull's measure is measured by the pump", async () => {
+    const reads: string[][] = [[], [], [], []];
+    const cells = reads.map((_, index) => [randomUUID(), index]);
+    const rows = cells.map((row, index) => counted(row, reads[index]));
+    const [first, second, third, fourth] = rows;
+    const wide = { maxRows: 100, maxBytes: 1000, batchMaxBytes: 1000 };
+    const source = scripted(TWO, (pull, limit) => {
+      if (pull === 0) {
+        limit.measure([...cells[0]]);
+        limit.measure(second);
+        return { rows: [first], done: false };
+      }
+      limit.measure(third);
+      return { rows: [second, third, third, fourth], done: true };
+    });
+
+    const page = await pumpPage(source, wide, live());
+
+    expect(reads).toEqual([
+      ["0", "1"],
+      ["0", "1", "0", "1"],
+      ["0", "1", "0", "1"],
+      ["0", "1"],
+    ]);
+    const honest = await pumpPage(rowsSource(TWO, [cells[0], cells[1], cells[2], cells[2], cells[3]]), wide, live());
+    expect(page.bytes).toBe(honest.bytes);
+    expect(page.end).toBe(honest.end);
+    expect(page.rows).toEqual(honest.rows);
+    expect(source.closes).toBe(1);
+  });
+
+  test("a pull's measure called after its pull answered is refused by name", async () => {
+    const sentence =
+      "A pull's row measure was called after its pull answered, a defect of the result source: a source sizes each row with the measure of the pull that answers it.";
+    const kept: BatchLimit[] = [];
+    const late = scripted(ONE, (pull, limit) => {
+      kept.push(limit);
+      if (pull === 1) kept[0].measure([1]);
+      return { rows: [[pull]], done: false };
+    });
+
+    const error = await thrownBy(() => pumpPage(late, SMALL, live()));
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe(sentence);
+    expect(late.limits.length).toBe(2);
+    expect(late.closes).toBe(1);
+
+    const ended: BatchLimit[] = [];
+    const page = await pumpPage(
+      scripted(ONE, (_, limit) => {
+        ended.push(limit);
+        return { rows: [[1]], done: true };
+      }),
+      SMALL,
+      live(),
+    );
+    expect(page.rows).toEqual([[1]]);
+    expect(() => ended[0].measure([1])).toThrow(sentence);
   });
 
   test("a pump limit that is not a positive safe integer is refused before any pull", async () => {

@@ -222,10 +222,18 @@ export interface Column {
   readonly vector?: VectorColumnShape;
 }
 
-/** How much one batch may hold. */
+/** How much one batch may hold, and the pump's own row measure for the pull that asks for it. */
 export interface BatchLimit {
   readonly maxRows: number;
   readonly maxBytes: number;
+  /**
+   * The size of `row`, as `encodedRowBytes` answers it: the pump's own measure for this pull, so a source sizes each
+   * row it answers with it, and the pump measures no such row again. Called after its pull answered, it throws.
+   *
+   * @throws {ValueCodecError} For a cell outside the value codec's domain.
+   * @throws {Error} When called after its pull answered, a defect of the source.
+   */
+  readonly measure: (row: readonly unknown[]) => number;
 }
 
 /** One batch of rows, each positional under the result's columns, and whether the result has no row left. */

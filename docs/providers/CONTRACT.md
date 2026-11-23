@@ -1193,6 +1193,7 @@ The host core's console calls do so, C-48.
 
 The byte budgets of a result are `BATCH_MAX_BYTES`, for one batch, and `PAGE_MAX_BYTES`, for one page.
 A row's size is the UTF-8 length of its encoded JSON text, `encodedRowBytes`, and a batch's and a page's size is the sum of their rows' sizes.
+The pump hands each pull its own measure, `measure` on the pull's limit, which answers that size.
 Measuring a row encodes every cell, so a cell outside the value codec's domain is refused by the codec's own error.
 
 - test `packages/provider-sdk/tests/calls/results.test.ts` "the batch and page budgets are one MiB and 32 MiB"
@@ -1201,6 +1202,7 @@ Measuring a row encodes every cell, so a cell outside the value codec's domain i
 ### C-14 (normative): A result source answers within the limit it is asked for
 
 A result source answers each `next` with at most the rows and the bytes it is asked for, and never splits a row, so a batch of exactly one row may be larger than its byte limit and one row always makes progress.
+It sizes each row it answers with the measure of the limit it is asked with.
 `rowsSource` does so over rows a driver already holds in memory.
 
 - test `packages/provider-sdk/tests/calls/results.test.ts` "a batch held to batch.maxBytes"
@@ -1209,7 +1211,9 @@ A result source answers each `next` with at most the rows and the bytes it is as
 ### C-15 (normative): The host pulls a page with pumpPage
 
 The host pulls a page from a result source with `pumpPage`, one batch at a time, the pull being the credit.
-Each pull asks for no more than the page has left, with a frozen limit.
+Each pull asks for no more than the page has left, with a frozen limit that holds the pump's own measure for that pull, a new one each pull.
+The pump takes the size its measure recorded for the same row array a source answers, in the order the source measured its rows, and measures any other row itself, a copy of a measured row, a row measured in another pull and a row answered twice included, so a page's bytes are the same whichever rows a source measured.
+A pull's measure answers only during its pull: called after its pull answered, it throws an error that names the source's defect.
 As it reads each batch, the pump refuses by a rule of `CALL_REFUSAL_RULES` a batch that breaks C-14 or is not a plain record of rows and done, a row that is not positional, a batch that brings nothing and is not done, and a row no page can hold.
 It cuts the page by size, ends it at its row limit or when the source is done, and closes the source exactly once on every path, losing no failure: when the close fails after another failure, both are thrown together.
 A limit that is not a positive safe integer is a host defect, refused before any pull.
@@ -1221,6 +1225,9 @@ The pump takes the context of the execute call that answered the source and star
 - test `packages/provider-sdk/tests/calls/results.test.ts` "a batch a source should not have answered is refused by name, and the source is closed once"
 - test `packages/provider-sdk/tests/calls/results.test.ts` "a failure to pull or to close is thrown, and neither is lost"
 - test `packages/provider-sdk/tests/calls/results.test.ts` "the limits a source is asked for are frozen and within the page"
+- test `packages/provider-sdk/tests/calls/results.test.ts` "each pull hands the source the pump's own measure, and a row the source sized with it is not measured again"
+- test `packages/provider-sdk/tests/calls/results.test.ts` "a row the source did not size with its pull's measure is measured by the pump"
+- test `packages/provider-sdk/tests/calls/results.test.ts` "a pull's measure called after its pull answered is refused by name"
 - test `packages/provider-sdk/tests/calls/results.test.ts` "a pump limit that is not a positive safe integer is refused before any pull"
 - test `packages/provider-sdk/tests/calls/pump-bounds.test.ts` "a source that never progresses is refused after one pull, in a bounded child"
 - test `packages/provider-sdk/tests/calls/pump-bounds.test.ts` "a source that never ends is cut at the page's byte budget, in a bounded child"
@@ -1231,11 +1238,14 @@ The pump takes the context of the execute call that answered the source and star
 The pump runs in the host's copy of the SDK, so every package's batches are measured by one rule.
 The budgets bound what crosses from a provider, not what a driver buffers: a driver without a cursor materialises a page before the SDK sees it.
 A page of very small rows is bounded in the heap by the host's row limit, not by its bytes, so the host always passes a finite row limit.
-The pump measures a row once, as it reads the batch, and hands on the provider's own row arrays, so a source whose cells change after that read, through a getter or a later write, answers more than was measured.
+A row a source answers as the same array the pull's measure sized, in the order the source measured its rows, is measured once, by that call, and its cells are read once, when it is measured.
+Every other row is measured by the pump as C-15 states, so a copy of a measured row, a row measured in another pull and a row answered twice are measured a second time, as is a row that crossed a frame of the kit, C-19.
+The pump hands on the provider's own row arrays, so a source whose cells change after the row was measured, through a getter or a later write, whether after its own call of the pull's measure or after the pump read the batch, answers more than was measured.
 In process nothing is framed, so the host measures what a source answers, through the pump's own measure, and a source of the legacy bridge answers each row in the form C-50 states.
 How many pages larger than one batch the host holds at once is bounded by its page budget, C-53.
 
 - test `tests/unit/lib/provider-host/core/console.test.ts` "the first result is pumped within the limits set from the answer, and every other result is closed once"
+- test `packages/provider-sdk/tests/calls/results.test.ts` "each pull hands the source the pump's own measure, and a row the source sized with it is not measured again"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a cell outside the value codec is measured in its JSON form and answered unchanged"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the page's row limit is the probe limit for a bound Studio wrote, and every returned row otherwise"
 
@@ -1261,6 +1271,8 @@ The package root never re-exports it, and Studio's runtime source under `src/`, 
 
 `serve` puts a provider module record behind the memory test transport: every call crosses as one request frame and one answer frame, each the JSON text of what `encodeValue` wrote, parsed and decoded with `decodeValue` on the other side.
 The provider receives decoded copies, its context frozen by `freezeContext` with the host's `signal` and `env` attached by reference, and its request by `freezeData`, and the host's own context and request are left as the host built them.
+A `result.next` frame carries the limit's numbers only, and the provider receives them decoded and frozen with the host's `measure` attached by reference, as the context's `signal` and `env` are.
+A row that crosses a frame is a new array, so the host's pump measures it itself.
 The host receives decoded copies of each answer.
 A value outside the codec's domain fails where it is encoded, with the codec's own `ValueCodecError`, before the other side is called.
 An `undefined` optional member, which the codec leaves out (V-9), is refused by the round trip as `round-trip-changed` at its pointer, and a frame that `readFrame` or `roundTripRefusals` refuses fails as one `FrameRefusalError`.
@@ -1272,6 +1284,7 @@ An error either side throws crosses by reference.
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "the host's own context and request are left as the host built them, and the host receives decoded copies of each answer"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a value the codec cannot carry, or a frame key the call does not define, fails the call before the provider is called"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "an error a call or a source throws reaches the host as the same object"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served source's provider receives the limit's numbers decoded and frozen with the host's measure by reference, and the frame carries the numbers only"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a value that is not a provider module record is refused with every refusal before anything is served"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "the served implementation is an implementation of the module's manifest, with the module's facets"
 

@@ -65,6 +65,9 @@ export type ShapeOf<T> = { readonly [K in keyof T]-?: Partial<Pick<T, K>> extend
 /** The data a context carries in a frame: everything but its host services, `signal` and `env`. */
 export type ContextData<C extends CallContext> = Omit<C, "signal" | "env">;
 
+/** The data a pull's limit carries in a frame: its numbers, without the host's measure. */
+export type BatchLimitData = Omit<BatchLimit, "measure">;
+
 /** A result source as its descriptor crosses in an execute answer: its id, its columns and the provider's row count. */
 export interface ResultDescriptor {
   readonly result: string;
@@ -97,7 +100,7 @@ export interface FrameShapes {
     readonly request: EndScopeRequest;
     readonly answer: EndScopeAnswer;
   };
-  readonly "result.next": { readonly request: BatchLimit; readonly answer: RowBatch };
+  readonly "result.next": { readonly request: BatchLimitData; readonly answer: RowBatch };
   readonly "result.close": Readonly<Record<never, never>>;
 }
 
@@ -397,7 +400,7 @@ const READERS = Object.freeze<{
     answer: record<EndScopeAnswer>({ openTransaction: required(vocabulary(OPEN_TRANSACTIONS)) }),
   },
   "result.next": {
-    request: record<BatchLimit>({ maxRows: required(number), maxBytes: required(number) }),
+    request: record<BatchLimitData>({ maxRows: required(number), maxBytes: required(number) }),
     answer: record<RowBatch>({ rows: required(listOf(listOf(anyValue))), done: required(boolean) }),
   },
   "result.close": {},

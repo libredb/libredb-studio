@@ -11,6 +11,10 @@
  * pull being the credit, measures and checks every batch, cuts the page by size, and closes the source once on every
  * path. The pump never keeps a source open across pages, and it starts no pull once the call's signal has aborted or
  * its deadline has passed.
+ *
+ * Each row is measured once: every pull's limit carries the pump's own measure for that pull (`BatchLimit.measure`),
+ * a source sizes each row it answers with it, and the pump takes the size its measure recorded for that same row array
+ * and measures any other row itself. A pull's measure answers only during its pull.
  */
 import { encodeValue } from "../values/codec";
 import { refuseCallStart } from "./deadline";
@@ -71,7 +75,7 @@ export function encodedRowBytes(row: readonly unknown[]): number {
 /**
  * A result source over `rows`, already in memory: each `next` answers the rows that follow, at most `limit.maxRows` of
  * them and at most `limit.maxBytes` of their size, except that a row larger than `limit.maxBytes` comes alone. The
- * rows are measured, never copied.
+ * rows are measured with the pull's own measure, `limit.measure`, never copied.
  */
 export function rowsSource(
   columns: readonly Column[],
@@ -88,7 +92,7 @@ export function rowsSource(
       const batch: (readonly unknown[])[] = [];
       let bytes = 0;
       while (at < rows.length && batch.length < limit.maxRows) {
-        const size = encodedRowBytes(rows[at]);
+        const size = limit.measure(rows[at]);
         if (batch.length > 0 && bytes + size > limit.maxBytes) break;
         batch.push(rows[at]);
         bytes += size;
@@ -126,6 +130,55 @@ function readBatch(batch: unknown): BatchRead {
   return { kind: "read", rows: rowsValue, done: doneValue };
 }
 
+const MEASURE_AFTER_PULL =
+  "A pull's row measure was called after its pull answered, a defect of the result source: a source sizes each row with the measure of the pull that answers it.";
+
+/** The pump's row measure for one pull, and the sizes it recorded, read back in the order measured. */
+interface PullMeasure {
+  /** The size of `row`, recorded with the row array; throws once the pull ended. */
+  readonly measure: (row: readonly unknown[]) => number;
+  /**
+   * The size of `row`, a row of the pull's batch read in order: the size recorded for that same array at the cursor,
+   * which then moves past it, or, for any other row, the pump's own measure of it.
+   */
+  readonly sizeOf: (row: readonly unknown[]) => number;
+  /** Drops the records, so the measure throws from then on. */
+  readonly end: () => void;
+}
+
+/**
+ * A new measure for one pull. The cursor only moves forward, so a source that answers the rows it measured, in the
+ * order it measured them, has each one's size taken once; a copy of a measured row, a row measured in another pull, a
+ * row answered twice or a row measured out of that order is measured by the pump, at the cost of one more encoding.
+ */
+function pullMeasure(): PullMeasure {
+  let measured: (readonly unknown[])[] = [];
+  let sizes: number[] = [];
+  let ended = false;
+  let cursor = 0;
+  return {
+    measure(row) {
+      if (ended) throw new Error(MEASURE_AFTER_PULL);
+      const size = encodedRowBytes(row);
+      measured.push(row);
+      sizes.push(size);
+      return size;
+    },
+    sizeOf(row) {
+      if (cursor < measured.length && measured[cursor] === row) {
+        cursor += 1;
+        return sizes[cursor - 1];
+      }
+      return encodedRowBytes(row);
+    },
+    end() {
+      ended = true;
+      measured = [];
+      sizes = [];
+    },
+  };
+}
+
 /** One step of the pump: the rows a batch adds to the page and their size, and whether the page ends with it. */
 interface Step {
   readonly rows: readonly (readonly unknown[])[];
@@ -134,12 +187,20 @@ interface Step {
 }
 
 /**
- * What `batch`, answered to `limit`, adds to a page that has `bytesLeft` of `maxBytes` left and holds `width`-cell rows.
+ * What `batch`, answered to `limit`, adds to a page that has `bytesLeft` of `maxBytes` left and holds `width`-cell
+ * rows, each row sized by `sizeOf`.
  *
  * @throws {CallRefusalError} For a batch a source should not have answered.
  * @throws {ValueCodecError} For a cell outside the value codec's domain.
  */
-function step(batch: unknown, limit: BatchLimit, width: number, bytesLeft: number, maxBytes: number): Step {
+function step(
+  batch: unknown,
+  limit: BatchLimit,
+  width: number,
+  bytesLeft: number,
+  maxBytes: number,
+  sizeOf: (row: readonly unknown[]) => number,
+): Step {
   const read = readBatch(batch);
   if (read.kind === "refused") throw new CallRefusalError(read.refusals);
   const { rows, done } = read;
@@ -157,7 +218,7 @@ function step(batch: unknown, limit: BatchLimit, width: number, bytesLeft: numbe
   }
   if (refusals.length > 0) throw new CallRefusalError(refusals);
   if (positional.length === 0 && !done) throw new CallRefusalError([{ rule: "batch-empty-not-done", pointer: "" }]);
-  const bytes = positional.reduce((sum, row) => sum + encodedRowBytes(row), 0);
+  const bytes = positional.reduce((sum, row) => sum + sizeOf(row), 0);
   if (bytes > limit.maxBytes && positional.length > 1) {
     throw new CallRefusalError([{ rule: "batch-over-bytes", pointer: "/rows", limit: limit.maxBytes, size: bytes }]);
   }
@@ -170,10 +231,12 @@ function step(batch: unknown, limit: BatchLimit, width: number, bytesLeft: numbe
 
 /**
  * One page of `source`, pulled one batch at a time and cut by size: each pull asks for no more than the page has left,
- * `limits.batchMaxBytes` at most, and the limit object it passes is frozen. Every batch is read defensively and
- * measured; one a source should not have answered is refused by name, as is a row larger than the whole page. The
- * page ends when the source is done, when it holds `limits.maxRows` rows, or when it holds `limits.maxBytes` bytes or
- * the next row would not fit.
+ * `limits.batchMaxBytes` at most, and the limit object it passes is frozen, with a new measure of the pump's own for
+ * that pull. Every batch is read defensively and measured, each row once: a row the source sized with the pull's
+ * measure has the size that measure recorded for that same array, and any other row is measured by the pump. Once the
+ * batch is read the pull's measure drops its records and throws if called again. A batch a source should not have
+ * answered is refused by name, as is a row larger than the whole page. The page ends when the source is done, when it
+ * holds `limits.maxRows` rows, or when it holds `limits.maxBytes` bytes or the next row would not fit.
  *
  * `ctx` is the context of the execute call that answered the source, whose deadline and signal every pull runs under:
  * before each pull the pump refuses, as `checkCallStart` does, a call whose deadline has passed or whose signal has
@@ -207,13 +270,20 @@ export async function pumpPage(
     const { maxRows, maxBytes, batchMaxBytes } = limits;
     const width = source.columns.length;
     while (end === undefined) {
-      const limit = Object.freeze({
+      const pull = pullMeasure();
+      const limit: BatchLimit = Object.freeze({
         maxRows: maxRows - rows.length,
         maxBytes: Math.min(batchMaxBytes, maxBytes - bytes),
+        measure: pull.measure,
       });
       refuseCallStart(ctx);
-      // oxlint-disable-next-line no-await-in-loop -- one batch at a time: the pull is the credit, so a source holds one batch in flight.
-      const added = step(await source.next(limit), limit, width, maxBytes - bytes, maxBytes);
+      let added: Step;
+      try {
+        // oxlint-disable-next-line no-await-in-loop -- one batch at a time: the pull is the credit, so a source holds one batch in flight.
+        added = step(await source.next(limit), limit, width, maxBytes - bytes, maxBytes, pull.sizeOf);
+      } finally {
+        pull.end();
+      }
       for (const row of added.rows) rows.push(row);
       bytes += added.bytes;
       if (added.end !== undefined) end = added.end;
