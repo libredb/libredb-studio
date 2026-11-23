@@ -1011,6 +1011,86 @@ A provider keeps its per-session state, its connection, statement, cursor, trans
 So two sessions opened by two owners exchange no result, handle, error or cached metadata.
 The kit's isolation case checks it, and no such case exists yet.
 
+### C-34 (informative): The failure matrix
+
+How a provider's failure ends, by kind and by runtime.
+The runtimes are Studio's Next.js server, the VS Code extension's backend child under Node.js, the same child under Electron, which is how the extension forks it, and the server under Node.js started with `--unhandled-rejections=strict`.
+Each "held by" cell names the clause that holds the row, or says what will hold it.
+The loader, the kit's fault cases and a measurement under Electron do not exist yet, and the detached rejection row stays open until such rejections have been counted in real sessions.
+
+| Failure | Next.js server | VS Code child, Node.js | VS Code child, Electron | Node.js, strict | Blast radius | Held by |
+|---|---|---|---|---|---|---|
+| The loader refuses a package | Studio starts without its engines | The same | The same | The same | That package's engines | The loader |
+| A package's import throws | Studio starts without its engines | The same | The same | The same | That package's engines | The loader |
+| A package's import passes its deadline | Studio stops waiting and starts without its engines, unless the import is synchronous | The same | The same | The same | That package's engines, or the process | The loader, and C-37 |
+| A synchronous hang, at import or in a call | Every request waits | The same | The same | The same | The process | Only a watchdog outside the process, C-37 |
+| A throw inside a call | That call fails | The same | The same | The same | That call | C-31 |
+| A detached rejection | Logged, and the server keeps serving | The child exits with 1 and the extension restarts it, measured by a probe, not a test | Not measured | The server exits with 70 | None on the server, the process otherwise | C-35, with the server's own choice open |
+| An uncaught exception in a callback | The server exits with 70 | The child exits with 1 and the extension restarts it, measured by a probe, not a test | Not measured | The server exits with 70 | The process | C-35 |
+| A native fault in an addon | The process ends on the signal | The same | The same | The same | The process | The kit's fault cases |
+| A close that never settles at shutdown | Cut after 15 s, exit 143, where Studio owns the exit | Not stated | Not stated | As the server | The shutdown | C-36 |
+
+### C-35 (normative): An uncaught exception stops the server with code 70, and a detached rejection does not
+
+An exception that no code catches stops Studio's server with exit code 70, after one logged line.
+A promise rejection that nothing handles does not stop it, unless Node.js runs with `--unhandled-rejections=strict`, which raises the rejection as an uncaught exception, so the server exits with 70 for it too ([DISTRIBUTION.md](../DISTRIBUTION.md#uncaught-errors-and-restarts)).
+
+- test `tests/unit/lib/uncaught-exception.test.ts` "the listener logs the line once, with no stack even under NODE_ENV=development, then exits with 70"
+- test `tests/unit/lib/uncaught-exception.test.ts` "attaches one uncaughtException listener and nothing else"
+- test `tests/unit/lib/uncaught-exception.test.ts` "logs an unhandled rejection that Node.js raised as an uncaught exception by that origin, then exits with 70"
+- test `tests/unit/uncaught-exception-documentation.test.ts` "it says an unhandled promise rejection does not stop the server, unless Node.js raises it as an exception"
+
+### C-36 (normative): A close that never settles at shutdown is cut
+
+Where Studio owns the exit, a provider cache close still pending 15 s into the shutdown is cut, and the exit code is 143.
+Where Next.js owns the exit, Studio closes no provider.
+
+- test `tests/unit/lib/shutdown-handler.test.ts` "a cache close that never settles is cut after 15 s and the exit code is 143"
+- test `tests/unit/lib/shutdown-handler.test.ts` "where Next.js owns the exit it runs the hooks, closes no provider cache and never exits"
+
+### C-37 (informative): The import deadline cannot stop synchronous code
+
+The loader's deadline on each import is a timer in Studio's own thread, so a synchronous loop at import or in a call blocks it as it blocks every request.
+Only a watchdog outside the process detects a hung process.
+The Helm chart's and the OpenShift operator's liveness probe restarts the pod.
+The Compose healthcheck marks the container unhealthy and restarts nothing.
+npx, the Linux packages' units, Snap, Homebrew, Windows, the desktop shell after its boot and the VS Code extension detect nothing.
+The kit's import-time measurement is the check at a package's build, and no loader exists yet.
+
+### C-38 (normative): Classification is core's, and its verdict is a closed set
+
+Whether a statement needs a confirmation is decided by core's readers over facts core holds, never by a call into a provider.
+The verdict is one of the members of `ConfirmationVerdict`, and a reader that throws asks for a confirmation.
+
+- test `tests/unit/editor/statement-analysis.test.ts` "answers run for a read"
+- test `tests/unit/editor/statement-analysis.test.ts` "answers confirm for a write"
+- test `tests/unit/editor/statement-analysis.test.ts` "refuses a connection-name ask on a nameless connection"
+- test `tests/unit/lib/api/run-confirmation.test.ts` "a reader that throws asks, marked classificationFailed, and logs no text"
+
+### C-39 (normative): A protected read path is a precondition of agent and MCP statements
+
+A provider without `queryReadOnly` is refused for agent and MCP statements before it is connected, and the plain query path is never the fallback.
+
+- test `tests/integration/mcp/run-read-query.test.ts` "without queryReadOnly is refused, and query() is never the fallback"
+- test `tests/isolated/factory.test.ts` "refuses %s on an engine on the review record whose provider implements no read-only statement path, before connecting it, and query() is never the fallback"
+- test `tests/api/agent/handover.test.ts` "refuses to replay on an engine the review record does not list, naming it, and never calls queryReadOnly"
+
+### C-40 (normative): One provider kind, and no named provider method
+
+Every package implements the mandatory calls, `console.execute` among them, so no lifecycle-only kind of provider exists.
+An implementation key the contract does not define is refused, so a dialog action or a dynamic option is never a provider method of its own.
+A host path field is M-12's.
+
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a mandatory call that is missing or no function is refused as call-missing"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an implementation key the contract does not define is refused as impl-key-unknown"
+- schema `/$defs/consoleCalls/required`
+
+### C-41 (informative): Dialog actions, dynamic options and a provider's classification
+
+If a provider ever needs dialog actions or dynamic select options, both come through one fixed facet call with an action id, whose answer may set only declared fields of their declared types.
+If a provider ever answers a classification, it is read from a closed set, and any other answer, an error or a timeout asks for a confirmation.
+No such call exists yet, so nothing checks this.
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:

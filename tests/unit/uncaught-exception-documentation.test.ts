@@ -58,6 +58,17 @@ describe("docs/DISTRIBUTION.md, Uncaught errors and restarts", () => {
     expect(text).toContain(`the line begins \`${strictLine.slice(0, strictLine.indexOf(","))}\``);
   });
 
+  test("it links the provider contract's failure matrix rather than restating it", () => {
+    const text = section();
+    const anchor = "c-34-informative-the-failure-matrix";
+
+    expect(text).toContain(`(providers/CONTRACT.md#${anchor})`);
+    expect(read("docs/providers/CONTRACT.md")).toContain("\n### C-34 (informative): The failure matrix\n");
+    expect(text.match(/failure matrix/g)).toHaveLength(1);
+    expect(text).not.toContain("native fault");
+    expect(text).not.toContain("Electron");
+  });
+
   test("it says the query events still queued are lost and counted", () => {
     expect(section()).toContain("{route=uncaught-exception, queryEventsLost=");
     expect(read("docs/GOVERNANCE.md")).toContain("the line Studio logs for that exit counts them as `queryEventsLost`");
