@@ -3,6 +3,7 @@ import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { typeIdRefusal } from "@/lib/db/type-id";
 import { HELD_BACK } from "../../../src/host/channel";
 import {
+  ENVIRONMENTS,
   type ProfileEntry,
   readProfiles,
   SSL_MODES,
@@ -142,6 +143,26 @@ describe("readProfiles", () => {
       assert.deepEqual(invalid({ ...PG, ssl }), item, JSON.stringify(ssl));
     }
     for (const mode of SSL_MODES) assert.equal(invalid({ ...PG, ssl: { mode } }).kind, "valid", mode);
+  });
+
+  it("accepts the five environments and carries them to the wire", () => {
+    assert.deepEqual(ENVIRONMENTS, ["production", "staging", "development", "local", "other"]);
+    for (const environment of ENVIRONMENTS) {
+      const item = invalid({ ...PG, environment });
+      assert.equal(item.kind, "valid", environment);
+      if (item.kind !== "valid") continue;
+      assert.equal(toWireConnection(item.entry, {}).environment, environment);
+    }
+    assert.equal(invalid(PG).kind, "valid", "an entry without one is valid as before");
+  });
+
+  it("refuses any other environment, naming the five", () => {
+    const item = refusedShop(
+      "The connection shop has an environment that is not production, staging, development, local or other.",
+    );
+    for (const environment of ["prod", "Production", 1, null, ""]) {
+      assert.deepEqual(invalid({ ...PG, environment }), item, JSON.stringify(environment));
+    }
   });
 
   it("refuses a secret field in the setting by its path, never by its value (rule 9)", () => {

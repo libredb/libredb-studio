@@ -176,6 +176,16 @@
               "createdAt": {
                 "type": "string"
               },
+              "environment": {
+                "type": "string",
+                "enum": [
+                  "production",
+                  "staging",
+                  "development",
+                  "local",
+                  "other"
+                ]
+              },
               "secretFields": {
                 "type": "array",
                 "uniqueItems": true,
