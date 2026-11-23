@@ -1048,13 +1048,27 @@ export function logUnclaimedOpen(error: unknown, flight: Flight<OpenMeta>): void
 const editorFlights = createOpenFlights<DatabaseProvider, OpenMeta>(logUnclaimedOpen);
 const profiledFlights = createOpenFlights<DatabaseProvider, OpenMeta>(logUnclaimedOpen);
 
+/**
+ * How many closes of the caches (`closeCaches`) are running. An open that settles while one runs is overtaken as one in
+ * flight when it began is: a close states that nothing stays open after it, and its teardown takes up to 15 s, during
+ * which a new open would otherwise be admitted and then outlive the close (`connectUnlessOvertaken`).
+ */
+let cacheClosesRunning = 0;
+
+/**
+ * The overtaken opens that connected and are closing what they opened (`connectUnlessOvertaken`), so a cache close that
+ * cuts its wait for one names the state it is in (`overtakenOpenStillOpening`). Weak, so a settled flight leaves it.
+ */
+const flightsClosing = new WeakSet<Flight<OpenMeta>>();
+
 /** What a caller whose open a removal or a cache close overtook is answered, as a `ConnectionError` marked not-sent. */
 const OVERTAKEN_OPEN =
   "The connection was closed while it was opening: a disconnect, a removal, a change of access or a shutdown closed it before it was ready, so nothing was sent to the database. Try again.";
 
 /**
- * Connects `provider`, then checks whether a removal or a cache close overtook its open (`flight.signal`) and, when
- * none did, runs `admit`, which puts the provider into its cache. Nothing is awaited between the check and `admit`, so a
+ * Connects `provider`, then checks whether a removal or a cache close overtook its open (`flight.signal`, or a close of
+ * the caches still running, `cacheClosesRunning`) and, when none did, runs `admit`, which puts the provider into its
+ * cache. Nothing is awaited between the check and `admit`, so a
  * removal or a cache close whose synchronous part ran at any point before the admission is seen by the check, and one
  * that runs after it finds the provider in the cache and closes it there (docs/providers/CONTRACT.md, clause C-44).
  * An overtaken open closes the provider it built, once and within the teardown's close deadline, and rejects with a
@@ -1067,15 +1081,13 @@ async function connectUnlessOvertaken(
   admit: () => void,
 ): Promise<void> {
   await provider.connect();
-  if (!flight.signal.aborted) {
+  if (!flight.signal.aborted && cacheClosesRunning === 0) {
     admit();
     return;
   }
   const id = flight.meta.connectionId;
-  const outcome = await teardownWithin(
-    { close: () => provider.disconnect() },
-    { rollbackMs: TEARDOWN_ROLLBACK_MS, closeMs: TEARDOWN_CLOSE_MS },
-  );
+  flightsClosing.add(flight);
+  const outcome = await teardownWithin({ close: () => provider.disconnect() }, TEARDOWN_DEADLINES);
   if (outcome.close !== "done") {
     const how = outcome.close === "timed-out" ? `did not finish within ${TEARDOWN_CLOSE_MS} ms` : "failed";
     logger.warn(
@@ -1327,29 +1339,12 @@ function connectionStillServed(connectionId: string): boolean {
 }
 
 // ============================================================================
-// Teardown of an owned provider (docs/GOVERNANCE.md#per-user-providers)
+// Teardown of a provider under fixed deadlines (docs/GOVERNANCE.md#per-user-providers;
+// docs/providers/CONTRACT.md, clause C-45)
 // ============================================================================
 
-/** What `within` answers for work that did not settle before its deadline. */
-const TIMED_OUT = Symbol("timed out");
-
-/**
- * Waits for `work` at most `ms`: answers once it resolves, or TIMED_OUT once `ms` pass first, and throws what it
- * rejects with before then. A rejection after the deadline is already handled by the race, and the timer never holds
- * the process open.
- */
-async function within(work: Promise<void>, ms: number): Promise<void | typeof TIMED_OUT> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<typeof TIMED_OUT>((resolve) => {
-    timer = setTimeout(() => resolve(TIMED_OUT), ms);
-    timer.unref?.();
-  });
-  try {
-    return await Promise.race([work, deadline]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
+/** The deadlines every teardown runs under, the host core's (src/lib/provider-host/core/teardown.ts). */
+const TEARDOWN_DEADLINES = { rollbackMs: TEARDOWN_ROLLBACK_MS, closeMs: TEARDOWN_CLOSE_MS } as const;
 
 /** The interactive transaction session that `POST /api/db/transaction` drives, on a provider that implements one. */
 interface TransactionSession {
@@ -1365,65 +1360,90 @@ function openTransaction(provider: DatabaseProvider): TransactionSession | null 
 }
 
 /**
- * Tear down an owned provider (docs/GOVERNANCE.md#per-user-providers): the provider of one user, closed because that
- * user's access changed or the provider went idle. Its entry is deleted from `cache` first, so no request is handed the
- * provider while it closes; an open transaction is rolled back, waited for at most TEARDOWN_ROLLBACK_MS; and the
- * provider is disconnected, waited for at most TEARDOWN_CLOSE_MS. The rollback comes first because the disconnect
- * would otherwise wait on the very session the transaction holds: `pg`'s `pool.end()` waits for every checked-out
- * client.
+ * The rollback step of a teardown of `provider`: its open transaction's rollback, none when it holds no transaction,
+ * and a failed step when reading its transaction state throws, so a provider that throws there is still closed.
+ */
+function rollbackStep(provider: DatabaseProvider): (() => Promise<void>) | undefined {
+  try {
+    const session = openTransaction(provider);
+    return session === null ? undefined : () => session.rollbackTransaction();
+  } catch (error) {
+    return () => Promise.reject(error);
+  }
+}
+
+/**
+ * Tear down a cached provider under the host core's deadlines (`teardownWithin`): an owned provider
+ * (docs/GOVERNANCE.md#per-user-providers), closed because its user's access changed, it went idle or the caches close,
+ * and a provider every caller shares, closed because the caches close. Its entry is deleted from `cache` first, so no
+ * request is handed the provider while it closes; an open transaction is rolled back, waited for at most
+ * TEARDOWN_ROLLBACK_MS; and the provider is disconnected, waited for at most TEARDOWN_CLOSE_MS. The rollback comes first
+ * because the disconnect would otherwise wait on the very session the transaction holds: `pg`'s `pool.end()` waits for
+ * every checked-out client.
  *
- * A rollback or a disconnect that fails is logged through the entry's scrub, and a disconnect that does not finish in time is logged and its pool
- * abandoned, because a client stuck in a statement, or in a rollback that never answered, never comes back. So the
- * teardown ends within 15 s whatever the user's database does, and it never rejects. It answers whether the provider
- * closed completely: false after any of those, which the shutdown counts (`closeCaches`).
+ * A rollback or a disconnect that fails is logged with the error rendered through the entry's scrub, and a disconnect
+ * that does not finish in time is logged and its pool abandoned, because a client stuck in a statement, or in a
+ * rollback that never answered, never comes back. Each step is logged when it ends. So the teardown ends within 15 s
+ * whatever the database does, and it never rejects. It answers whether the provider closed completely: false after any
+ * of those, which the shutdown counts (`closeCaches`).
+ *
+ * The lines name an owned provider as before owners shared this path. A shared provider's rollback and cut name it
+ * shared, and its failed disconnect keeps the line `closeCaches` always wrote for it, `[DB] Error disconnecting
+ * <noun>` with the error, its name and message through the entry's scrub, as an argument, where `noun` names the cache.
  */
 async function teardownProvider(
   cache: Map<string, CachedProvider>,
   key: string,
   entry: CachedProvider,
+  noun: "provider" | "profiled provider" = "provider",
 ): Promise<boolean> {
   cache.delete(key);
   const { provider, connectionId: id, scrub } = entry;
-  let closed = true;
-  try {
-    // Inside the try, as `keepsRunInFlight` guards `hasRunsInFlight`: a provider that throws here is not left open.
-    const session = openTransaction(provider);
-    if (session !== null) {
-      const rollback = await within(session.rollbackTransaction(), TEARDOWN_ROLLBACK_MS);
-      if (rollback === TIMED_OUT) {
-        closed = false;
-        logger.warn(
-          `[DB] The open transaction of an owned provider of ${sanitize(id)} did not roll back within ${TEARDOWN_ROLLBACK_MS} ms, so the provider is closed with it open.`,
-          { connectionId: id },
-        );
-      } else {
-        const line = `[DB] Rolled back the open transaction of an owned provider of ${sanitize(id)} before closing it.`;
-        logger.info(line, { connectionId: id });
-      }
-    }
-  } catch (error) {
-    closed = false;
+  const shared = entry.owner === undefined;
+  const whose = shared ? "a shared provider" : "an owned provider";
+  const outcome = await teardownWithin(
+    {
+      rollback: rollbackStep(provider),
+      rollbackEnded: (settled) => {
+        if (settled.state === "done") {
+          const line = `[DB] Rolled back the open transaction of ${whose} of ${sanitize(id)} before closing it.`;
+          logger.info(line, { connectionId: id });
+        } else if (settled.state === "timed-out") {
+          logger.warn(
+            `[DB] The open transaction of ${whose} of ${sanitize(id)} did not roll back within ${TEARDOWN_ROLLBACK_MS} ms, so the provider is closed with it open.`,
+            { connectionId: id },
+          );
+        } else {
+          logger.warn(
+            `[DB] The open transaction of ${whose} of ${sanitize(id)} failed to roll back, so the provider is closed with it open.`,
+            { connectionId: id, error: String(withholdProviderError(scrub, settled.error)) },
+          );
+        }
+      },
+      close: () => provider.disconnect(),
+    },
+    TEARDOWN_DEADLINES,
+  );
+  if (outcome.close === "timed-out") {
     logger.warn(
-      `[DB] The open transaction of an owned provider of ${sanitize(id)} failed to roll back, so the provider is closed with it open.`,
-      { connectionId: id, error: String(withholdProviderError(scrub, error)) },
+      `[DB] Abandoned the pool of ${shared ? "shared" : "owned"} provider ${sanitize(id)}: its disconnect did not finish within ${TEARDOWN_CLOSE_MS} ms.`,
+      { connectionId: id },
     );
-  }
-  try {
-    if ((await within(provider.disconnect(), TEARDOWN_CLOSE_MS)) === TIMED_OUT) {
-      closed = false;
-      logger.warn(
-        `[DB] Abandoned the pool of owned provider ${sanitize(id)}: its disconnect did not finish within ${TEARDOWN_CLOSE_MS} ms.`,
-        { connectionId: id },
-      );
-    }
-  } catch (error) {
-    closed = false;
+  } else if (outcome.close === "failed" && shared) {
+    // The id is an argument, never part of the first one: `console.error`'s first argument
+    // is a format string, and a constant cannot be a format attack (js/tainted-format-string).
+    console.error(
+      `[DB] Error disconnecting ${noun}`,
+      sanitize(id),
+      String(withholdProviderError(scrub, outcome.closeError)),
+    );
+  } else if (outcome.close === "failed") {
     logger.warn(`[DB] Error disconnecting owned provider ${sanitize(id)}`, {
       connectionId: id,
-      error: String(withholdProviderError(scrub, error)),
+      error: String(withholdProviderError(scrub, outcome.closeError)),
     });
   }
-  return closed;
+  return (outcome.rollback === "none" || outcome.rollback === "done") && outcome.close === "done";
 }
 
 /** Idle timeout: evict providers unused for 30 minutes */
@@ -2367,14 +2387,19 @@ registerOwnerRemoval(removeProvider);
 
 /**
  * Waits for an open a cache close overtook at most the teardown's close deadline, and answers its name when it was
- * still opening at the cut, logged, or null once it settled. An overtaken open closes what it opened itself
- * (`connectUnlessOvertaken`), so one still connecting at the cut closes later, if its connect ever answers.
+ * still opening at the cut, logged with the state it was in, or null once it settled. An overtaken open closes what it
+ * opened itself (`connectUnlessOvertaken`), so one still connecting at the cut closes later, if its connect ever
+ * answers, and one that connected and is still closing at the cut is cut by its own close deadline.
  */
 async function overtakenOpenStillOpening(overtaken: DiscardedFlight<OpenMeta>): Promise<string | null> {
   if ((await settleWithin(overtaken.settled, TEARDOWN_CLOSE_MS)).state === "done") return null;
   const { connectionId: id, type } = overtaken.flight.meta;
+  const opening = `[DB] The open of ${sanitize(id)} was still`;
+  const cut = `when the caches closed, after ${TEARDOWN_CLOSE_MS} ms`;
   logger.warn(
-    `[DB] The open of ${sanitize(id)} was still connecting when the caches closed, after ${TEARDOWN_CLOSE_MS} ms; it closes itself if its connect answers.`,
+    flightsClosing.has(overtaken.flight)
+      ? `${opening} closing the provider it opened ${cut}; its close is cut at its own deadline.`
+      : `${opening} connecting ${cut}; it closes itself if its connect answers.`,
     { connectionId: id },
   );
   return providerName(id, type);
@@ -2382,15 +2407,31 @@ async function overtakenOpenStillOpening(overtaken: DiscardedFlight<OpenMeta>): 
 
 /**
  * Closes every cached provider (shared and execution-profile), all at once, and answers the names
- * (`providerName`) of those that did not close completely: a shared provider whose `disconnect()` rejected, an owned one
- * whose teardown failed or gave up, and an open in flight still connecting at the close deadline.
- * An owned provider (docs/GOVERNANCE.md#per-user-providers) is torn down (`teardownProvider`), so an open transaction
- * it holds is rolled back before it closes, and it is waited for at most 15 s; a provider every caller shares is
- * disconnected, and a disconnect that rejects is logged with the error's name and message, through the entry's scrub,
- * the text the scrub reads. Every open in flight is overtaken first, so none is admitted after the caches closed, and
- * each is waited for at most the teardown's close deadline (docs/providers/CONTRACT.md, clause C-44).
+ * (`providerName`) of those that did not close completely: one whose rollback or disconnect failed or was cut, and an
+ * open in flight still connecting at the close deadline. Every provider, owned (docs/GOVERNANCE.md#per-user-providers)
+ * or shared alike, is torn down (`teardownProvider`): its entry leaves the cache, an open transaction it holds is rolled
+ * back within 5 s, and it is closed within 10 s, so the close ends within 15 s whatever the databases do
+ * (docs/providers/CONTRACT.md, clause C-45). A rollback or a disconnect that fails is logged with the error's name and
+ * message, through the entry's scrub, the text the scrub reads. Every open in flight is overtaken first, so none is
+ * admitted after the caches closed, and each is waited for at most the teardown's close deadline (clause C-44). An open
+ * that starts while the close runs and settles before it ended is overtaken alike (`cacheClosesRunning`): it closes
+ * what it opened and admits nothing, so no provider is left in a cache, or dropped from one without a close, when the
+ * close answers.
  */
 async function closeCaches(): Promise<string[]> {
+  cacheClosesRunning += 1;
+  try {
+    return await closeEveryProvider();
+  } finally {
+    cacheClosesRunning -= 1;
+  }
+}
+
+/**
+ * The body of `closeCaches`, which runs it with every open that settles meanwhile overtaken. Each entry leaves its cache
+ * when its teardown starts, and no open is admitted until the close ended, so the caches are empty when it answers.
+ */
+async function closeEveryProvider(): Promise<string[]> {
   // Stop idle sweep
   if (sweepTimer) {
     clearInterval(sweepTimer);
@@ -2406,55 +2447,18 @@ async function closeCaches(): Promise<string[]> {
     closed ? null : providerName(entry.connectionId, entry.provider.type);
 
   for (const [key, entry] of providerCache) {
-    if (entry.owner !== undefined) {
-      closes.push(teardownProvider(providerCache, key, entry).then(notClosed(entry)));
-      continue;
-    }
-    closes.push(
-      entry.provider.disconnect().then(
-        () => null,
-        (error) => {
-          // The id is an argument, never part of the first one: `console.error`'s first argument
-          // is a format string, and a constant cannot be a format attack (js/tainted-format-string).
-          console.error(
-            "[DB] Error disconnecting provider",
-            sanitize(entry.connectionId),
-            String(withholdProviderError(entry.scrub, error)),
-          );
-          return providerName(entry.connectionId, entry.provider.type);
-        },
-      ),
-    );
+    closes.push(teardownProvider(providerCache, key, entry).then(notClosed(entry)));
   }
   for (const [key, entry] of profiledProviderCache) {
-    if (entry.owner !== undefined) {
-      closes.push(teardownProvider(profiledProviderCache, key, entry).then(notClosed(entry)));
-      continue;
-    }
-    closes.push(
-      entry.provider.disconnect().then(
-        () => null,
-        (error) => {
-          console.error(
-            "[DB] Error disconnecting profiled provider",
-            sanitize(entry.connectionId),
-            String(withholdProviderError(entry.scrub, error)),
-          );
-          return providerName(entry.connectionId, entry.provider.type);
-        },
-      ),
-    );
+    closes.push(teardownProvider(profiledProviderCache, key, entry, "profiled provider").then(notClosed(entry)));
   }
 
-  const unclosed = (await Promise.all(closes)).filter((id): id is string => id !== null);
-  providerCache.clear();
-  profiledProviderCache.clear();
-  return unclosed;
+  return (await Promise.all(closes)).filter((id): id is string => id !== null);
 }
 
 /**
- * Clear all cached providers (shared and execution-profile), all at once (`closeCaches`). A provider whose close fails
- * is logged, and the clear still resolves.
+ * Clear all cached providers (shared and execution-profile), all at once (`closeCaches`), within 15 s. A provider whose
+ * close fails or is cut is logged, and the clear still resolves.
  * At a shutdown Studio's handler owns, the handler (src/lib/shutdown-handler.ts) closes the caches through the shutdown
  * registry, where each copy of this module registers `closeCachesAtShutdown` below; importing this module adds no
  * process listener, so an embedder of the package that wants its pools closed on a signal calls this from its own

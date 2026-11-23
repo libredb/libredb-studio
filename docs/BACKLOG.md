@@ -10612,16 +10612,14 @@ Alone this rarely loses a row (a connect queued on a full pool when `end()` runs
 
 Both providers arm a five-minute timer when an editor transaction begins (`TX_TIMEOUT_MS` and `expireTransaction` in `src/lib/db/providers/sql/postgres.ts`, the same in `src/lib/db/providers/sql/mysql.ts`), and neither `disconnect()` clears it or releases the transaction's client, where the SQL Server and Oracle providers start `disconnect()` with `clearTxTimeout()`.
 On PostgreSQL `pool.end()` waits for every checked-out client, so a `disconnect()` with a transaction open returns only when the timer releases the client, up to five minutes after `BEGIN`, and the transaction keeps its locks until then.
-A shared provider is disconnected without a rollback first, by `removeProvider`, by the factory's cache close (`closeCaches`, which `closeCachesAtShutdown` runs at shutdown and `clearProviderCache` runs for its other callers), and when a request names another query timeout (D115), so deleting a custom connection that has an open transaction leaves the request waiting.
+A shared provider is disconnected without a rollback first by `removeProvider` and when a request names another query timeout (D115), so deleting a custom connection that has an open transaction leaves the request waiting.
+The factory's cache close (`closeCaches`, which `closeCachesAtShutdown` runs at shutdown and `clearProviderCache` runs for its other callers) rolls every provider back first and cuts its disconnect at 10 s (`teardownProvider`), so there the timer costs at most that wait.
 On MySQL `end()` closes the held connection, so `disconnect()` returns and the server rolls back, but `txActive` stays true, and five minutes later the timer logs a timeout that never happened and sends a `ROLLBACK` to a closed connection.
 An owned provider is rolled back before it is disconnected (`teardownProvider` in `src/lib/db/factory.ts`) on every path but the query timeout change, which disconnects it directly (GOV24), so outside that path this is the shared providers' defect.
 On a server-level PostgreSQL connection the transaction lives on a catalog session, a provider of its own in `catalogSessions`, and the parent's `isInTransaction()` does not report it.
 So a fix inside `PostgresProvider.disconnect()` covers it, because `closeAll()` calls each session's own `disconnect()`, while a fix that checks only the parent's `isInTransaction()` would miss it.
 
-`closeCaches` in `src/lib/db/factory.ts`, the body of both `clearProviderCache` and `closeCachesAtShutdown`, also awaits every shared provider's `disconnect()` in a `Promise.all` with no deadline, beside the owned providers' bounded teardown, so one shared provider whose disconnect never settles, such as a PostgreSQL pool waiting for this timer, holds the whole close.
-At shutdown Studio's handler stops waiting after 15 s and exits with 143 or 130 where it owns the exit, but every other caller, such as the VS Code backend's `shutdown` request or an embedder of the package, waits without a limit.
-
-**Done when:** both providers' `disconnect()` roll back and release a held transaction and clear the timer before they end the pool, `closeCaches` waits for a shared provider's disconnect at most a fixed deadline and names each provider still closing at the cut, and a test per provider shows `disconnect()` resolving without the timer firing, `isInTransaction()` false and no timer left pending.
+**Done when:** both providers' `disconnect()` roll back and release a held transaction and clear the timer before they end the pool, and a test per provider shows `disconnect()` resolving without the timer firing, `isInTransaction()` false and no timer left pending.
 
 ### GOV13. The package exports `removeProvider` with a key scope that no embedder can build a key for
 

@@ -197,6 +197,35 @@ describe("teardownWithin", () => {
     }
   });
 
+  test("the rollback's end is reported at its own cut, before the close starts", async () => {
+    jest.useFakeTimers();
+    const events: string[] = [];
+    const teardown = teardownWithin(
+      {
+        rollback: hangs,
+        rollbackEnded: (settled) => {
+          events.push(`rollback ${settled.state}`);
+        },
+        close: () => {
+          events.push("close started");
+          return hangs();
+        },
+      },
+      DEADLINES,
+    );
+    await settle();
+    jest.advanceTimersByTime(DEADLINES.rollbackMs);
+    await settle();
+    expect(events).toEqual(["rollback timed-out", "close started"]);
+    jest.advanceTimersByTime(DEADLINES.closeMs);
+    expect(await teardown).toEqual({ rollback: "timed-out", close: "timed-out" });
+
+    // Without a rollback there is nothing to report.
+    const reported: unknown[] = [];
+    await teardownWithin({ rollbackEnded: (settled) => reported.push(settled), close: async () => {} }, DEADLINES);
+    expect(reported).toEqual([]);
+  });
+
   test("a teardown leaves no timer pending once it answers", async () => {
     jest.useFakeTimers();
     const outcome = await teardownWithin({ rollback: async () => {}, close: async () => {} }, DEADLINES);

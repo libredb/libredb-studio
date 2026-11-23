@@ -2616,6 +2616,54 @@ describe("an open a removal or a cache close overtakes", () => {
     }
   });
 
+  test("a cache clear names an open that connected and is still inside its own close at the cut as closing, not connecting", async () => {
+    const conn = makeConnection("postgres", { id: "still-closing" });
+    const gate = await gateConnects(conn);
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      let answered: unknown;
+      void getOrCreateProvider(conn).then(
+        (provider) => {
+          answered = provider;
+        },
+        (failure: unknown) => {
+          answered = failure;
+        },
+      );
+      await gate.reached(1);
+      (gate.connected[0] as DatabaseProvider).disconnect = () => new Promise<void>(() => {});
+      jest.useFakeTimers();
+      let cleared = false;
+      const clear = clearProviderCache().then(() => {
+        cleared = true;
+      });
+      await settle();
+      // The connect answers 1 ms into the close, so the open's own close deadline falls 1 ms after the clear's cut.
+      jest.advanceTimersByTime(1);
+      gate.open();
+      await settle();
+      jest.advanceTimersByTime(9_999);
+      // Fake timers also hold the test's own timeout, so nothing here awaits a promise that might never settle.
+      await settle();
+      expect(cleared).toBe(true);
+      const lines = warn.mock.calls.map((call: unknown[]) => String(call[0]));
+      expect(lines).toContain(
+        "[DB] The open of still-closing was still closing the provider it opened when the caches closed, after 10000 ms; its close is cut at its own deadline.",
+      );
+      expect(lines.filter((line) => line.includes("still connecting"))).toEqual([]);
+
+      // Its own close is cut 1 ms later, and its callers are answered.
+      jest.advanceTimersByTime(1);
+      await settle();
+      expect(answered).toBeInstanceOf(ConnectionError);
+      expect(getProviderCacheStats().size).toBe(0);
+      await clear;
+    } finally {
+      gate.restore();
+      warn.mockRestore();
+    }
+  });
+
   test("an overtaken open whose close fails is logged by its kind and code, and its callers are still answered", async () => {
     const conn = makeConnection("postgres", { id: "overtaken-close-fails" });
     const gate = await gateConnects(conn);
@@ -2737,6 +2785,59 @@ describe("an open a removal or a cache close overtakes", () => {
     }
     return results;
   }
+
+  test("an open that settles while the caches close is closed once, admits nothing and answers not-sent, in either cache", async () => {
+    const slow = await getOrCreateProvider(makeConnection("sqlite", { id: "closing-slowly", database: ":memory:" }));
+    const slowDisconnect = slow.disconnect.bind(slow);
+    let releaseSlow: () => void = () => {};
+    const slowGate = new Promise<void>((resolve) => {
+      releaseSlow = resolve;
+    });
+    slow.disconnect = async () => {
+      await slowGate;
+      await slowDisconnect();
+    };
+    const editorConn = makeConnection("postgres", { id: "opened-while-closing" });
+    const profiledConn = makeConnection("postgres", { id: "acquired-while-closing" });
+    const gate = await gateConnects(editorConn);
+    try {
+      let cleared = false;
+      const clear = clearProviderCache().then(() => {
+        cleared = true;
+      });
+      await settle();
+      const editor = getOrCreateProvider(editorConn).catch((error: unknown) => error);
+      const profiled = acquireExecutionProfileProvider(profiledConn, "agent-read-only").catch(
+        (error: unknown) => error,
+      );
+      await gate.reached(2);
+      const disconnects = gate.connected.map((provider) => countDisconnects(provider));
+      gate.open();
+
+      const answers = await Promise.all([editor, profiled]);
+      // Both answered while the close still waits on the slow provider.
+      expect(cleared).toBe(false);
+      for (const answer of answers) {
+        expect(answer).toBeInstanceOf(ConnectionError);
+        expect((answer as Error).message).toBe(OVERTAKEN);
+        expect(errorOutcome(answer)).toBe("not-sent");
+      }
+      expect(disconnects.map((counter) => counter.count)).toEqual([1, 1]);
+      expect(getProviderCacheStats().size).toBe(0);
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+
+      releaseSlow();
+      await clear;
+      expect(disconnects.map((counter) => counter.count)).toEqual([1, 1]);
+
+      // Once the close ended, an open is admitted as before.
+      expect((await getOrCreateProvider(editorConn)).isConnected()).toBe(true);
+      expect(getProviderCacheStats()).toEqual({ size: 1, connections: ["opened-while-closing"] });
+    } finally {
+      releaseSlow();
+      gate.restore();
+    }
+  });
 
   const NOTHING_ADMITTED = Array.from({ length: 9 }, (_, hops) => ({ hops, cached: false, disconnects: 1 }));
 
@@ -3466,14 +3567,182 @@ describe("teardown of an owned provider", () => {
 
     await clearProviderCache();
 
+    // Every entry leaves its cache as its teardown starts: the shared one was still cached when the owned one's rollback
+    // started, and gone by the time the owned one disconnected.
     expect(events.sort()).toEqual([
       "agent disconnect",
-      "disconnect, 1 cached",
+      "disconnect, 0 cached",
       "rollback, 1 cached",
       "shared disconnect",
     ]);
     expect(getProviderCacheStats().size).toBe(0);
     expect(getExecutionProfileCacheStats().size).toBe(0);
+  });
+
+  test("a shared provider in a transaction is rolled back before it is closed when the caches close", async () => {
+    const shared = await getOrCreateProvider(makeConnection("postgres", { id: "seed:shared" }));
+    const profiled = await acquireExecutionProfileProvider(
+      makeConnection("postgres", { id: "seed:shared-agent" }),
+      "agent-read-only",
+    );
+    const events: string[] = [];
+    openTransaction(shared, events);
+    recordDisconnect(shared, events);
+    profiled.disconnect = async () => {
+      events.push(`profiled disconnect, ${getExecutionProfileCacheStats().size} profiled`);
+    };
+
+    await clearProviderCache();
+
+    // Its entry went first, as an owned one's does, and the transaction was rolled back before the pool closed. The
+    // profiled provider closes beside it, so only the shared provider's own order is pinned.
+    expect(events.filter((event) => !event.startsWith("profiled"))).toEqual([
+      "rollback, 0 cached",
+      "disconnect, 0 cached",
+    ]);
+    expect(events).toContain("profiled disconnect, 0 profiled");
+    expect(lines(info)).toContain(
+      "[DB] Rolled back the open transaction of a shared provider of seed:shared before closing it.",
+    );
+    expect(lines(warn)).toEqual([]);
+  });
+
+  test("a shared provider whose disconnect never settles is cut at 10 s and named", async () => {
+    const shared = await getOrCreateProvider(makeConnection("postgres", { id: "seed:shared-hangs" }));
+    recordDisconnect(shared, [], hangs);
+    const error = spyOn(logger, "error").mockImplementation(() => {});
+    resetShutdownHooks();
+    try {
+      jest.useFakeTimers();
+      let outcome: unknown;
+      const run = closeProviderCaches().then((result) => {
+        outcome = result;
+      });
+      await settle();
+      jest.advanceTimersByTime(9_999);
+      await settle();
+      expect(outcome).toBeUndefined();
+      jest.advanceTimersByTime(1);
+      await run;
+      expect(outcome).toEqual({ cut: 0, failed: 1 });
+      expect(error).toHaveBeenCalledWith(
+        "Provider cache close failed",
+        expect.objectContaining({
+          message: "Providers not closed: seed:shared-hangs (PostgreSQL provider, bundled with Studio)",
+        }),
+        { route: "shutdown" },
+      );
+      expect(lines(warn)).toEqual([
+        "[DB] Abandoned the pool of shared provider seed:shared-hangs: its disconnect did not finish within 10000 ms.",
+      ]);
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      resetShutdownHooks();
+      error.mockRestore();
+    }
+
+    // Outside the shutdown the same cut lets the clear resolve, within the 15 s a rollback and a close may take.
+    const again = await getOrCreateProvider(makeConnection("postgres", { id: "seed:shared-hangs" }));
+    recordDisconnect(again, [], hangs);
+    let cleared = false;
+    const clear = clearProviderCache().then(() => {
+      cleared = true;
+    });
+    await settle();
+    jest.advanceTimersByTime(10_000);
+    await clear;
+    expect(cleared).toBe(true);
+  });
+
+  test("a shared provider whose rollback never settles is cut at 5 s and still closed", async () => {
+    const shared = await getOrCreateProvider(makeConnection("postgres", { id: "seed:shared-rollback-hangs" }));
+    const events: string[] = [];
+    openTransaction(shared, events, hangs);
+    recordDisconnect(shared, events);
+    jest.useFakeTimers();
+    let cleared = false;
+    const clear = clearProviderCache().then(() => {
+      cleared = true;
+    });
+    await settle();
+    expect(events).toEqual(["rollback, 0 cached"]);
+    jest.advanceTimersByTime(4_999);
+    await settle();
+    expect(events).toEqual(["rollback, 0 cached"]);
+    jest.advanceTimersByTime(1);
+    await clear;
+    expect(cleared).toBe(true);
+    expect(events).toEqual(["rollback, 0 cached", "disconnect, 0 cached"]);
+    expect(lines(warn)).toEqual([
+      "[DB] The open transaction of a shared provider of seed:shared-rollback-hangs did not roll back within 5000 ms, so the provider is closed with it open.",
+    ]);
+  });
+
+  test("a shared provider whose rollback fails is logged and still closed", async () => {
+    const shared = await getOrCreateProvider(makeConnection("postgres", { id: "seed:shared-rollback-fails" }));
+    const events: string[] = [];
+    openTransaction(shared, events, async () => {
+      throw new Error("Connection terminated unexpectedly");
+    });
+    recordDisconnect(shared, events);
+
+    await clearProviderCache();
+
+    expect(events).toEqual(["rollback, 0 cached", "disconnect, 0 cached"]);
+    expect(warn.mock.calls).toEqual([
+      [
+        "[DB] The open transaction of a shared provider of seed:shared-rollback-fails failed to roll back, so the provider is closed with it open.",
+        { connectionId: "seed:shared-rollback-fails", error: "Error: Connection terminated unexpectedly" },
+      ],
+    ]);
+  });
+
+  test("a shared provider's failed rollback at the cache close is logged withheld when its text holds the connection's credential", async () => {
+    const password = randomUUID();
+    const shared = await getOrCreateProvider(
+      makeConnection("postgres", { id: "seed:shared-rollback-secret", password }),
+    );
+    const events: string[] = [];
+    openTransaction(shared, events, async () => {
+      throw echoing(password);
+    });
+    recordDisconnect(shared, events);
+
+    await clearProviderCache();
+
+    expect(events).toEqual(["rollback, 0 cached", "disconnect, 0 cached"]);
+    expect(warn.mock.calls).toEqual([
+      [
+        "[DB] The open transaction of a shared provider of seed:shared-rollback-secret failed to roll back, so the provider is closed with it open.",
+        { connectionId: "seed:shared-rollback-secret", error: withheldLine("Error") },
+      ],
+    ]);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(password);
+  });
+
+  test("the providers not closed at shutdown are named with their author and Studio's version", async () => {
+    process.env.NEXT_PUBLIC_APP_VERSION = "9.9.9-named";
+    const shared = await getOrCreateProvider(makeConnection("sqlite", { id: "named-shared", database: ":memory:" }));
+    const failure = new Error("disconnect failed");
+    shared.disconnect = () => Promise.reject(failure);
+    const error = spyOn(logger, "error").mockImplementation(() => {});
+    const consoleError = spyOn(console, "error").mockImplementation(() => {});
+    resetShutdownHooks();
+    try {
+      expect(await closeProviderCaches()).toEqual({ cut: 0, failed: 1 });
+      expect(error).toHaveBeenCalledWith(
+        "Provider cache close failed",
+        expect.objectContaining({
+          message: "Providers not closed: named-shared (SQLite provider, bundled with Studio 9.9.9-named)",
+        }),
+        { route: "shutdown" },
+      );
+      expect(consoleError).toHaveBeenCalledWith("[DB] Error disconnecting provider", "named-shared", String(failure));
+    } finally {
+      resetShutdownHooks();
+      error.mockRestore();
+      consoleError.mockRestore();
+    }
   });
 
   test("the close the factory registers for the shutdown rejects naming each provider whose close failed, while clearProviderCache resolves", async () => {

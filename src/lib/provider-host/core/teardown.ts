@@ -53,6 +53,12 @@ export async function settleWithin(work: Promise<unknown>, ms: number): Promise<
 export interface TeardownSteps {
   /** Rolls back the transaction the provider holds open; absent when it holds none. */
   readonly rollback?: () => Promise<void>;
+  /**
+   * Told how the rollback ended, at its own cut and before the close starts, so the caller can log the step when it
+   * ends rather than after the close. Not called when there is no rollback. One that throws is a caller defect, and
+   * the teardown rejects with its error.
+   */
+  readonly rollbackEnded?: (settled: Settled) => void;
   /** Closes the provider. */
   readonly close: () => Promise<void>;
 }
@@ -79,13 +85,14 @@ function startStep(step: () => Promise<void>): Promise<void> {
 }
 
 /**
- * Tears a provider down: the rollback, when there is one, waited for at most `deadlines.rollbackMs`, then the close,
- * started only once the rollback ended and waited for at most `deadlines.closeMs`. Answers how each step ended and
- * never rejects.
+ * Tears a provider down: the rollback, when there is one, waited for at most `deadlines.rollbackMs` and reported to
+ * `steps.rollbackEnded`, then the close, started only once the rollback ended and waited for at most
+ * `deadlines.closeMs`. Answers how each step ended and never rejects, unless `steps.rollbackEnded` throws.
  */
 export async function teardownWithin(steps: TeardownSteps, deadlines: TeardownDeadlines): Promise<TeardownOutcome> {
   const rollback: Settled | null =
     steps.rollback === undefined ? null : await settleWithin(startStep(steps.rollback), deadlines.rollbackMs);
+  if (rollback !== null) steps.rollbackEnded?.(rollback);
   const close = await settleWithin(startStep(steps.close), deadlines.closeMs);
   return {
     rollback: rollback === null ? "none" : rollback.state,

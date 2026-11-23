@@ -292,6 +292,7 @@ When a reload takes a person's access to a connection away or changes it, Studio
   A request that was waiting for that open is answered 503 `CONNECTION_ERROR`, saying the connection was closed while it was opening and nothing was sent.
 - The person's next request on the connection is answered from the new snapshot: 404 `CONNECTION_NOT_FOUND` without a grant, or 409 `TRANSACTION_CREDENTIAL_CHANGED` when their transaction was open under a level or credential that changed.
 - A provider idle for 30 minutes, and every provider at a shutdown Studio's handler owns ([DISTRIBUTION.md](DISTRIBUTION.md#stopping-the-server)), is closed the same way, its open transaction rolled back first.
+  At a shutdown this holds for every provider, not only a person's own: a provider every person shares is rolled back and closed under the same deadlines.
 
 Without governance every person who opens a connection with the same credential shares one provider, as before.
 
