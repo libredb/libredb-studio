@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db";
 import type { MonitoringOptions } from "@/lib/db/types";
 import { createErrorResponse } from "@/lib/api/errors";
-import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
+import { type ProviderTextScrub, providerTextScrub, scrubMonitoringData } from "@/lib/db/operations/provider-text";
 import { INVALID_REQUEST_BODY, isJsonObject } from "@/lib/api/json-object-body";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/require-session";
@@ -72,8 +72,9 @@ export async function POST(req: NextRequest) {
     // wire-compatible engine.
     const { maintenanceOperations, maintenanceOperationSpecs } = provider.getCapabilities();
 
+    // A failed panel's sentence is the engine's own, answered through the connection's scrub.
     return NextResponse.json({
-      ...monitoringData,
+      ...scrubMonitoringData(scrub, monitoringData),
       maintenance: {
         maintenanceOperations,
         ...(maintenanceOperationSpecs === undefined ? {} : { maintenanceOperationSpecs }),

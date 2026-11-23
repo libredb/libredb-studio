@@ -34,7 +34,11 @@ import {
   PROVIDER_TEXT_WITHHELD,
   providerAuthor,
   providerTextScrub,
+  scrubKeyScanPage,
   scrubKindCounts,
+  scrubMaintenancePreview,
+  scrubMaintenanceResult,
+  scrubMonitoringData,
   scrubObjectDetail,
   scrubProviderText,
   scrubProviderWarnings,
@@ -46,7 +50,15 @@ import {
 } from "@/lib/db/operations/provider-text";
 import { secretForms } from "@/lib/db/utils/server-text";
 import { CONNECTION_FIELDS, SSH_TUNNEL_FIELDS, SSL_FIELDS, type FieldClass } from "@/lib/storage/secret-fields";
-import type { KindCount, ObjectDetail, ObjectSourceDocument } from "@/lib/db/types";
+import type {
+  KeyScanPage,
+  KindCount,
+  MaintenancePreview,
+  MaintenanceResult,
+  MonitoringData,
+  ObjectDetail,
+  ObjectSourceDocument,
+} from "@/lib/db/types";
 import type { DatabaseConnection, DatabaseType, QueryResult } from "@/lib/types";
 
 const generated = () => `${crypto.randomUUID()}/${crypto.randomUUID().slice(0, 8)}`;
@@ -501,6 +513,167 @@ describe("the object read sentences", () => {
     expect(scrubKindCounts(clean, counts)).toEqual(counts);
     expect(scrubObjectDetail(clean, detail)).toEqual(detail);
     expect(scrubSourceDocument(clean, document)).toEqual(document);
+  });
+});
+
+describe("the success sentences of a provider's answers", () => {
+  const password = generated();
+  const scrub = providerTextScrub(connectionWith({ password }), "any");
+
+  test("scrubMonitoringData withholds a panel error that holds the connection's credential and keeps the other panel errors and the figures", () => {
+    const data: MonitoringData = {
+      timestamp: new Date(0),
+      overview: {
+        version: "PostgreSQL 16.1",
+        uptime: "10 days",
+        activeConnections: 5,
+        maxConnections: 100,
+        databaseSize: "256 MB",
+        databaseSizeBytes: 268435456,
+        tableCount: 15,
+        indexCount: 30,
+      },
+      errors: {
+        slowQueries: `permission denied for ${password}`,
+        tables: "relation pg_stat_user_tables is not readable",
+      },
+      notOffered: ["storage"],
+    };
+    expect(scrubMonitoringData(scrub, data)).toEqual({
+      ...data,
+      errors: { slowQueries: PROVIDER_TEXT_WITHHELD, tables: "relation pg_stat_user_tables is not readable" },
+    });
+    const answered: MonitoringData = { timestamp: new Date(0), slowQueries: [] };
+    expect(scrubMonitoringData(scrub, answered)).toEqual(answered);
+    expect("errors" in scrubMonitoringData(scrub, answered)).toBe(false);
+  });
+
+  test("scrubMaintenanceResult withholds a message that holds the connection's credential and keeps the verdict, the time and the rows", () => {
+    const result: MaintenanceResult = {
+      success: false,
+      executionTime: 3,
+      message: `ERR invalid password ${password}`,
+      rows: [{ section: "server", key: "redis_version", value: "7.2.4" }],
+      fields: ["section", "key", "value"],
+    };
+    expect(scrubMaintenanceResult(scrub, result)).toEqual({ ...result, message: PROVIDER_TEXT_WITHHELD });
+    const clean: MaintenanceResult = { success: true, executionTime: 1, message: "VACUUM completed" };
+    expect(scrubMaintenanceResult(scrub, clean)).toEqual(clean);
+    expect("rows" in scrubMaintenanceResult(scrub, clean)).toBe(false);
+  });
+
+  test("scrubMaintenancePreview withholds a summary, refusal or note that holds the connection's credential and keeps the facts", () => {
+    const preview: MaintenancePreview = {
+      summary: `Loads ${password} into memory`,
+      facts: [{ label: "Rows", value: "1200" }],
+      refusal: `the server refused ${password}`,
+      note: `GetMetrics failed for ${password}`,
+    };
+    expect(scrubMaintenancePreview(scrub, preview)).toEqual({
+      summary: PROVIDER_TEXT_WITHHELD,
+      facts: [{ label: "Rows", value: "1200" }],
+      refusal: PROVIDER_TEXT_WITHHELD,
+      note: PROVIDER_TEXT_WITHHELD,
+    });
+    const bare: MaintenancePreview = { summary: "Loads orders into memory", facts: [] };
+    const answered = scrubMaintenancePreview(scrub, bare);
+    expect(answered).toEqual(bare);
+    expect(Object.keys(answered).sort()).toEqual(["facts", "summary"]);
+  });
+
+  test("scrubKeyScanPage withholds a skipped reason, an end reason or a proven loss that holds the connection's credential and keeps the keys, the counts and the scope", () => {
+    const page: KeyScanPage = {
+      keys: ["orders/1", "orders/2"],
+      cursor: "orders/3",
+      total: 9,
+      types: { "orders/1": "string" },
+      clustered: true,
+      skipped: { count: 2, reason: `not UTF-8 under ${password}` },
+      readOutcome: {
+        scope: "incomplete",
+        endReason: `the server closed the stream for ${password}`,
+        provenLoss: [`dropped a message for ${password}`, "a clean loss"],
+      },
+    };
+    expect(scrubKeyScanPage(scrub, page)).toEqual({
+      ...page,
+      skipped: { count: 2, reason: PROVIDER_TEXT_WITHHELD },
+      readOutcome: {
+        scope: "incomplete",
+        endReason: PROVIDER_TEXT_WITHHELD,
+        provenLoss: [PROVIDER_TEXT_WITHHELD, "a clean loss"],
+      },
+    });
+    const unknown: KeyScanPage = {
+      keys: [],
+      cursor: "0",
+      total: 0,
+      types: {},
+      readOutcome: { scope: "unknown", endReason: "the walk reached its end" },
+    };
+    const answered = scrubKeyScanPage(scrub, unknown);
+    expect(answered).toEqual(unknown);
+    expect(answered.readOutcome !== undefined && "provenLoss" in answered.readOutcome).toBe(false);
+    const plain: KeyScanPage = { keys: ["a"], cursor: "0", total: 1, types: {} };
+    expect(scrubKeyScanPage(scrub, plain)).toEqual(plain);
+    expect(Object.keys(scrubKeyScanPage(scrub, plain)).sort()).toEqual(["cursor", "keys", "total", "types"]);
+  });
+
+  test("database content in each answer is kept as given, even where it holds the connection's credential", () => {
+    const data: MonitoringData = {
+      timestamp: new Date(0),
+      slowQueries: [{ query: `SELECT '${password}'`, calls: 1, totalTime: 2, avgTime: 2, rows: 1 }],
+    };
+    expect(scrubMonitoringData(scrub, data)).toEqual(data);
+    const result: MaintenanceResult = {
+      success: true,
+      executionTime: 1,
+      message: "INFO read",
+      rows: [{ key: "requirepass", value: password }],
+      fields: ["key", "value"],
+    };
+    expect(scrubMaintenanceResult(scrub, result)).toEqual(result);
+    const preview: MaintenancePreview = { summary: "Loads orders", facts: [{ label: password, value: password }] };
+    expect(scrubMaintenancePreview(scrub, preview)).toEqual(preview);
+    const page: KeyScanPage = {
+      keys: [password],
+      cursor: password,
+      total: 1,
+      types: { [password]: password },
+      prefixes: [`${password}/`],
+    };
+    expect(scrubKeyScanPage(scrub, page)).toEqual(page);
+  });
+
+  test("an answer none of whose sentences holds a form answers deep-equal to the answer given, and the answer given is not changed", () => {
+    const data: MonitoringData = { timestamp: new Date(0), errors: { tables: `refused for ${password}` } };
+    const result: MaintenanceResult = { success: false, executionTime: 1, message: `refused for ${password}` };
+    const preview: MaintenancePreview = {
+      summary: `Loads ${password}`,
+      facts: [],
+      refusal: `refused for ${password}`,
+      note: `stale for ${password}`,
+    };
+    const page: KeyScanPage = {
+      keys: [],
+      cursor: "0",
+      total: 0,
+      types: {},
+      skipped: { count: 1, reason: `skipped for ${password}` },
+      readOutcome: { scope: "incomplete", endReason: `ended for ${password}`, provenLoss: [`lost for ${password}`] },
+    };
+    const before = structuredClone({ data, result, preview, page });
+    scrubMonitoringData(scrub, data);
+    scrubMaintenanceResult(scrub, result);
+    scrubMaintenancePreview(scrub, preview);
+    scrubKeyScanPage(scrub, page);
+    expect({ data, result, preview, page }).toEqual(before);
+
+    const clean = providerTextScrub(connectionWith({ password: generated() }), "any");
+    expect(scrubMonitoringData(clean, data)).toEqual(data);
+    expect(scrubMaintenanceResult(clean, result)).toEqual(result);
+    expect(scrubMaintenancePreview(clean, preview)).toEqual(preview);
+    expect(scrubKeyScanPage(clean, page)).toEqual(page);
   });
 });
 

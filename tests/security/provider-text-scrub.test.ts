@@ -25,7 +25,11 @@ import {
   errorRecord,
   PROVIDER_TEXT_WITHHELD,
   providerTextScrub,
+  scrubKeyScanPage,
   scrubKindCounts,
+  scrubMaintenancePreview,
+  scrubMaintenanceResult,
+  scrubMonitoringData,
   scrubObjectDetail,
   scrubSourceDocument,
   withholdProviderError,
@@ -371,6 +375,43 @@ describe("on every route that resolves the calling connection", () => {
       };
       const source = scrubSourceDocument(scrub, document);
       expectNoForm("an object read's sentences", JSON.stringify([counts, detail, source]));
+    }
+  });
+
+  test("a success sentence of a monitoring, maintenance or key walk answer that holds the connection's credential in any form secretForms derives is withheld", () => {
+    const scrub = providerTextScrub(
+      { id: "c1", name: "Prod", type: "postgres", host: "db.internal", password, createdAt: new Date(0) },
+      "any",
+    );
+    for (const form of forms) {
+      const monitoring = scrubMonitoringData(scrub, {
+        timestamp: new Date(0),
+        errors: { slowQueries: `permission denied for ${form}` },
+      });
+      expect(monitoring.errors).toEqual({ slowQueries: PROVIDER_TEXT_WITHHELD });
+      const result = scrubMaintenanceResult(scrub, { success: false, executionTime: 1, message: `refused ${form}` });
+      expect(result.message).toBe(PROVIDER_TEXT_WITHHELD);
+      const preview = scrubMaintenancePreview(scrub, {
+        summary: `Loads ${form}`,
+        facts: [],
+        refusal: `refused ${form}`,
+        note: `stale for ${form}`,
+      });
+      expect(preview).toEqual({
+        summary: PROVIDER_TEXT_WITHHELD,
+        facts: [],
+        refusal: PROVIDER_TEXT_WITHHELD,
+        note: PROVIDER_TEXT_WITHHELD,
+      });
+      const page = scrubKeyScanPage(scrub, {
+        keys: [],
+        cursor: "0",
+        total: 0,
+        types: {},
+        skipped: { count: 1, reason: `skipped for ${form}` },
+        readOutcome: { scope: "incomplete", endReason: `ended for ${form}`, provenLoss: [`lost for ${form}`] },
+      });
+      expectNoForm("a success answer's sentences", JSON.stringify([monitoring, result, preview, page]));
     }
   });
 });

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getOrCreateProvider, type MaintenanceOperation } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
-import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
+import { type ProviderTextScrub, providerTextScrub, scrubMaintenancePreview } from "@/lib/db/operations/provider-text";
 import { maintenanceControl } from "@/lib/db/types";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/require-session";
@@ -102,7 +102,7 @@ export async function POST(request: Request) {
     // The object's path, container levels then the object (spec 3.11): one container level is all this body names.
     const path = requestedContainer === undefined ? [target] : [requestedContainer, target];
     const preview = await provider.previewMaintenance(type as MaintenanceOperation, path);
-    return NextResponse.json({ preview });
+    return NextResponse.json({ preview: scrubMaintenancePreview(scrub, preview) });
   } catch (error) {
     return createErrorResponse(error, { route: "api/db/maintenance/preview", scrub });
   }

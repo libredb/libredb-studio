@@ -6,7 +6,8 @@
  * A provider scrubs the server's text at its own entry with `serverText` (src/lib/db/utils/server-text.ts); this is
  * the pass core runs after it, over every error, warning and notice text a provider hands core on those paths, and over
  * the sentences an object read answers in a provider's words (`scrubKindCounts`, `scrubObjectDetail`,
- * `scrubSourceDocument`), before any fence, prompt, ledger row, response or log line. It reads the secret-class values
+ * `scrubSourceDocument`) and a success answer writes in them (`scrubMonitoringData`, `scrubMaintenanceResult`,
+ * `scrubMaintenancePreview`, `scrubKeyScanPage`), before any fence, prompt, ledger row, response or log line. It reads the secret-class values
  * of the calling connection that its providers receive (`ScrubbedProviders`) through the central walk
  * (`secretFieldValues`) and expands them with `secretForms`. A text holding any form is replaced whole by
  * `PROVIDER_TEXT_WITHHELD`, matched exactly as `serverText` matches (`holdsSecretForm`).
@@ -35,7 +36,16 @@ import {
 } from "@/lib/db/errors";
 import { holdsSecretForm, secretForms } from "@/lib/db/utils/server-text";
 import { type SecretFieldRecord, secretFieldValues } from "@/lib/storage/secret-fields";
-import type { KindCount, ObjectDetail, ObjectSourceDocument, ObjectSourcePart } from "@/lib/db/types";
+import type {
+  KeyScanPage,
+  KindCount,
+  MaintenancePreview,
+  MaintenanceResult,
+  MonitoringData,
+  ObjectDetail,
+  ObjectSourceDocument,
+  ObjectSourcePart,
+} from "@/lib/db/types";
 import type { DatabaseType, QueryResult, QueryWarning } from "@/lib/types";
 
 /** Replaces a provider's text whole when it holds a credential of the calling connection; it echoes none of it. */
@@ -157,6 +167,65 @@ export function scrubSourceDocument(scrub: ProviderTextScrub, document: ObjectSo
   return {
     ...document,
     parts: [scrubSourcePart(scrub, first), ...rest.map((part) => scrubSourcePart(scrub, part))],
+  };
+}
+
+/**
+ * Monitoring data with each panel's `errors` entry scrubbed, the engine's own sentence; every panel key the provider
+ * answered is kept, and data with no `errors` is answered as given. The panels' figures and statement texts are
+ * database content, never scrubbed.
+ */
+export function scrubMonitoringData(scrub: ProviderTextScrub, data: MonitoringData): MonitoringData {
+  if (data.errors === undefined) return data;
+  const errors = Object.fromEntries(
+    Object.entries(data.errors).map(([panel, sentence]) => [panel, scrubProviderText(scrub, sentence)]),
+  );
+  // `Object.entries` widens a panel key to `string`; every key here is one the provider answered in `data.errors`.
+  return { ...data, errors: errors as MonitoringData["errors"] };
+}
+
+/** A maintenance answer with its `message` scrubbed; its verdict, time, `rows` and `fields` are kept as given. */
+export function scrubMaintenanceResult(scrub: ProviderTextScrub, result: MaintenanceResult): MaintenanceResult {
+  return { ...result, message: scrubProviderText(scrub, result.message) };
+}
+
+/**
+ * A maintenance preview with its `summary`, and its `refusal` and `note` when present, scrubbed; its `facts` are
+ * field names and figures, kept as given.
+ */
+export function scrubMaintenancePreview(scrub: ProviderTextScrub, preview: MaintenancePreview): MaintenancePreview {
+  return {
+    ...preview,
+    summary: scrubProviderText(scrub, preview.summary),
+    ...(preview.refusal === undefined ? {} : { refusal: scrubProviderText(scrub, preview.refusal) }),
+    ...(preview.note === undefined ? {} : { note: scrubProviderText(scrub, preview.note) }),
+  };
+}
+
+/**
+ * A key page with its `skipped.reason`, `readOutcome.endReason` and each `readOutcome.provenLoss` entry scrubbed, the
+ * provider's own words. Keys, types, prefixes, the cursor, the total, the skipped count and the scope are kept, and a
+ * page with neither `skipped` nor `readOutcome` is answered as given.
+ */
+export function scrubKeyScanPage(scrub: ProviderTextScrub, page: KeyScanPage): KeyScanPage {
+  const { skipped, readOutcome } = page;
+  if (skipped === undefined && readOutcome === undefined) return page;
+  return {
+    ...page,
+    ...(skipped === undefined
+      ? {}
+      : { skipped: { count: skipped.count, reason: scrubProviderText(scrub, skipped.reason) } }),
+    ...(readOutcome === undefined
+      ? {}
+      : {
+          readOutcome: {
+            scope: readOutcome.scope,
+            endReason: scrubProviderText(scrub, readOutcome.endReason),
+            ...(readOutcome.provenLoss === undefined
+              ? {}
+              : { provenLoss: readOutcome.provenLoss.map((loss) => scrubProviderText(scrub, loss)) }),
+          },
+        }),
   };
 }
 
