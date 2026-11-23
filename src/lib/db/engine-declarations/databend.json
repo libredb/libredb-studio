@@ -31,7 +31,60 @@
     "agentCredential": {
       "form": "pair",
       "supersededBy": []
-    }
+    },
+    "dialog": {
+      "order": null,
+      "labels": [
+        {
+          "field": "warehouse",
+          "text": "Warehouse"
+        }
+      ],
+      "hints": [
+        {
+          "field": "host",
+          "text": "A host name or address, or a pasted https:// address, which is split into Host and Port. Databend Cloud: the host from Connect in the Cloud console, on port 443 with SSL mode verify-system. Self-hosted: the query node, port 8000 unless http_handler_port was changed."
+        },
+        {
+          "field": "user",
+          "text": "A SQL user. On Databend Cloud: cloudapp, or a user created with CREATE USER; the email you sign in to the Cloud console with is not a SQL user."
+        },
+        {
+          "field": "database",
+          "text": "The current database for names a statement does not qualify. Empty means default."
+        },
+        {
+          "field": "warehouse",
+          "text": "Databend Cloud: the warehouse= value of the DSN from Connect. A suspended warehouse resumes on the first statement, opening the connection included, because it reads the object tree, and is billed while it runs; with Warehouse set, Studio sends no background health checks. Self-hosted: leave empty unless your cluster routes requests by warehouse."
+        },
+        {
+          "field": "allowInsecureAuth",
+          "text": "Ticked, the password crosses the network in cleartext to this host. Databend Cloud never needs this: it serves HTTPS on port 443."
+        }
+      ],
+      "placeholders": [
+        {
+          "field": "database",
+          "text": "default"
+        }
+      ],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [
+      "http",
+      "https"
+    ],
+    "credentialWarnings": [
+      {
+        "kind": "pair",
+        "user": "root",
+        "password": "",
+        "message": "Signing in as root with no password works only when the server's root user has no password, and such a user accepts any password or none, so anyone who can reach the server signs in as its administrator. Set a password for root on the server, or connect as a user of your own."
+      }
+    ]
   },
   "facets": {
     "monitoring": {

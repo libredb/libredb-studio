@@ -26,7 +26,19 @@
         "hostPathFields": [],
         "opensLocalFile": false,
         "serverLevelWithoutDatabase": false,
-        "agentCredential": null
+        "agentCredential": null,
+        "dialog": {
+          "order": null,
+          "labels": [],
+          "hints": [],
+          "placeholders": [],
+          "placement": [],
+          "options": [],
+          "shownWhen": [],
+          "absentValues": []
+        },
+        "hostUriSchemes": [],
+        "credentialWarnings": []
       },
       "facets": {
         "monitoring": {

@@ -29,7 +29,41 @@
     "agentCredential": {
       "form": "secret",
       "supersededBy": []
-    }
+    },
+    "dialog": {
+      "order": null,
+      "labels": [
+        {
+          "field": "password",
+          "text": "API key or token"
+        }
+      ],
+      "hints": [
+        {
+          "field": "host",
+          "text": "A name or address, or a pasted http:// or https:// address such as a Weaviate Cloud endpoint, which is split into Host and Port. Studio dials this port only, never Weaviate's gRPC port 50051."
+        },
+        {
+          "field": "password",
+          "text": "Weaviate receives the API key or OIDC access token on every request, so a key needs an SSL mode other than disable, unless the host is this machine or an SSH tunnel carries the connection. A key for a user with only the viewer role is the safest choice."
+        }
+      ],
+      "placeholders": [],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [
+      "http",
+      "https"
+    ],
+    "credentialWarnings": [
+      {
+        "kind": "no-secret",
+        "message": "A Weaviate server with anonymous access on, its default, answers a request that carries no key and grants it every write, so a read-only seed without a key promises a boundary the server does not keep."
+      }
+    ]
   },
   "facets": {
     "monitoring": {

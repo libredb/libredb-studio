@@ -30,7 +30,47 @@
     "agentCredential": {
       "form": "pair",
       "supersededBy": []
-    }
+    },
+    "dialog": {
+      "order": null,
+      "labels": [
+        {
+          "field": "saslMechanism",
+          "text": "SASL mechanism"
+        }
+      ],
+      "hints": [
+        {
+          "field": "saslMechanism",
+          "text": "PLAIN and SCRAM require TLS"
+        }
+      ],
+      "placeholders": [],
+      "placement": [],
+      "options": [
+        {
+          "field": "saslMechanism",
+          "choices": [
+            {
+              "value": "PLAIN",
+              "label": "PLAIN"
+            },
+            {
+              "value": "SCRAM-SHA-256",
+              "label": "SCRAM-SHA-256"
+            },
+            {
+              "value": "SCRAM-SHA-512",
+              "label": "SCRAM-SHA-512"
+            }
+          ]
+        }
+      ],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [],
+    "credentialWarnings": []
   },
   "facets": {
     "monitoring": {

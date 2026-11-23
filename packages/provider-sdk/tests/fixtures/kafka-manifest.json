@@ -37,7 +37,28 @@
         "agentCredential": {
           "form": "pair",
           "supersededBy": []
-        }
+        },
+        "dialog": {
+          "order": null,
+          "labels": [{ "field": "user", "text": "SASL user" }],
+          "hints": [{ "field": "host", "text": "A bootstrap broker: the client learns every other broker from it." }],
+          "placeholders": [],
+          "placement": [],
+          "options": [
+            {
+              "field": "saslMechanism",
+              "choices": [
+                { "value": "PLAIN", "label": "PLAIN" },
+                { "value": "SCRAM-SHA-256", "label": "SCRAM-SHA-256" },
+                { "value": "SCRAM-SHA-512", "label": "SCRAM-SHA-512" }
+              ]
+            }
+          ],
+          "shownWhen": [],
+          "absentValues": []
+        },
+        "hostUriSchemes": [],
+        "credentialWarnings": []
       },
       "facets": {
         "monitoring": {

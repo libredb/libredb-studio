@@ -29,7 +29,50 @@
     "agentCredential": {
       "form": "secret",
       "supersededBy": []
-    }
+    },
+    "dialog": {
+      "order": null,
+      "labels": [
+        {
+          "field": "password",
+          "text": "API key or JWT"
+        }
+      ],
+      "hints": [
+        {
+          "field": "host",
+          "text": "A name or address, or a pasted http:// or https:// address such as http://localhost:6333, which is split into Host and Port. Studio dials this REST port only, never Qdrant's gRPC port 6334 or its cluster port 6335."
+        },
+        {
+          "field": "password",
+          "text": "Qdrant receives the API key or JWT on every request, so a key needs an SSL mode other than disable, unless the host is this machine or an SSH tunnel carries the connection. A read-only or collection-scoped key with an expiry is the safest choice."
+        }
+      ],
+      "placeholders": [],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [
+      "http",
+      "https"
+    ],
+    "credentialWarnings": [
+      {
+        "kind": "jwt",
+        "noExp": true,
+        "access": [
+          "m",
+          "absent"
+        ],
+        "message": "This token declares no expiry, or manage access to the whole server, so it stays valid, and as powerful, until the server's key changes. Prefer a read-only or collection-scoped key with an expiry."
+      },
+      {
+        "kind": "no-secret",
+        "message": "A Qdrant server without an API key, its default, accepts any key or none, so a read-only seed without a key promises a boundary the server does not keep."
+      }
+    ]
   },
   "facets": {
     "monitoring": {

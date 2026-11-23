@@ -30,7 +30,38 @@
     "agentCredential": {
       "form": "pair",
       "supersededBy": []
-    }
+    },
+    "dialog": {
+      "order": null,
+      "labels": [
+        {
+          "field": "database",
+          "text": "Catalog Name"
+        }
+      ],
+      "hints": [
+        {
+          "field": "password",
+          "text": "Trino refuses a password over plain HTTP. Enable TLS below, or leave this empty to connect as an unauthenticated user."
+        },
+        {
+          "field": "database",
+          "text": "The Trino catalog to open, such as tpch or hive. Its schemas are the level below."
+        }
+      ],
+      "placeholders": [
+        {
+          "field": "database",
+          "text": "tpch"
+        }
+      ],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [],
+    "credentialWarnings": []
   },
   "facets": {
     "monitoring": {

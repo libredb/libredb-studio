@@ -31,7 +31,43 @@
     "agentCredential": {
       "form": "pair",
       "supersededBy": []
-    }
+    },
+    "dialog": {
+      "order": null,
+      "labels": [
+        {
+          "field": "database",
+          "text": "Keyspace Name"
+        }
+      ],
+      "hints": [
+        {
+          "field": "database",
+          "text": "The keyspace to open. Tables inside it are the level below; statements can still name any keyspace in full."
+        },
+        {
+          "field": "localDataCenter",
+          "text": "Required: the Cassandra driver refuses to connect without it. A stock single-node install reports datacenter1; the server lists the ones it has if this is wrong."
+        }
+      ],
+      "placeholders": [
+        {
+          "field": "database",
+          "text": "probe"
+        }
+      ],
+      "placement": [
+        {
+          "field": "localDataCenter",
+          "where": "open"
+        }
+      ],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [],
+    "credentialWarnings": []
   },
   "facets": {
     "monitoring": {

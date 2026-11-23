@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "546279754fdf88a07aae4918a4903f6988bc3cdcde1a8da02d0e38dded283fb5";
+export const MANIFEST_SCHEMA_SHA256 = "249d0250e8b59f15fc83d44b92dd89c3a5529af02750236c49d80b71fd4e14f0";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -109,6 +109,125 @@ export interface Connection {
   /** Whether a connection that names no database reaches every database of the server. */
   readonly serverLevelWithoutDatabase: boolean;
   readonly agentCredential: AgentCredential;
+  readonly dialog: ConnectionDialog;
+  /** The URI schemes the dialog's Host box accepts a pasted address in, in the order its refusal names them; empty where it accepts none. */
+  readonly hostUriSchemes: readonly HostUriScheme[];
+  /** The credentials the engine warns about, read by the connection dialog and at seed load, in the order they are read. */
+  readonly credentialWarnings: readonly CredentialWarning[];
+}
+
+/** How the connection dialog presents the engine's fields. Each list holds at most one entry per field, each naming a field the engine takes; a field with no entry keeps the dialog's own word. */
+export interface ConnectionDialog {
+  /** The order the dialog draws the fields in, the fields left out drawn after them; null where the dialog keeps its own order. */
+  readonly order: readonly FieldName[] | null;
+  readonly labels: readonly FieldLabel[];
+  readonly hints: readonly FieldHint[];
+  readonly placeholders: readonly FieldPlaceholder[];
+  /** Where each placeable field the engine takes is drawn; every one of them has an entry. */
+  readonly placement: readonly FieldPlacementEntry[];
+  /** The choices of each select field the engine takes; every one of them has an entry. */
+  readonly options: readonly FieldOptions[];
+  /** The fields the dialog draws only while another field holds one value; a field hidden by its condition is neither saved nor required. */
+  readonly shownWhen: readonly FieldShownWhen[];
+  /** The value a connection that leaves a field absent is read as, declared for a field a condition reads. */
+  readonly absentValues: readonly FieldAbsentValue[];
+}
+
+/** The label the dialog draws for a field in place of its own. */
+export interface FieldLabel {
+  readonly field: FieldName;
+  readonly text: string;
+}
+
+/** The sentence the dialog draws under a field. */
+export interface FieldHint {
+  readonly field: FieldName;
+  readonly text: string;
+}
+
+/** The example the dialog draws in an empty field in place of its own; the empty string means no example. */
+export interface FieldPlaceholder {
+  readonly field: FieldName;
+  readonly text: string;
+}
+
+/** Where the dialog draws one placeable field. */
+export interface FieldPlacementEntry {
+  readonly field: PlaceableFieldName;
+  readonly where: FieldPlacement;
+}
+
+/** The fields the dialog draws either in the open or behind Advanced, by the engine's placement. */
+export type PlaceableFieldName = "authSource" | "localDataCenter" | "serviceName" | "instanceName";
+
+/** open: drawn with the other fields. advanced: drawn behind Advanced. */
+export type FieldPlacement = "open" | "advanced";
+
+/** The fields the dialog draws as a select, whose choices each engine that takes one declares. */
+export type SelectFieldName = "saslMechanism" | "authMethod";
+
+/** The choices of one select field, in the order the dialog lists them. */
+export interface FieldOptions {
+  readonly field: SelectFieldName;
+  readonly choices: readonly FieldChoice[];
+}
+
+/** One choice of a select: the value saved and the label drawn. */
+export interface FieldChoice {
+  readonly value: string;
+  readonly label: string;
+}
+
+/** A field the dialog draws only while its condition holds. */
+export interface FieldShownWhen {
+  readonly field: FieldName;
+  readonly when: FieldCondition;
+}
+
+/** One field equals one value, the field's absent value standing for a value the connection leaves absent. */
+export interface FieldCondition {
+  readonly field: FieldName;
+  readonly equals: string;
+}
+
+/** The value a connection that leaves the field absent is read as, by the dialog, by core and by the provider. */
+export interface FieldAbsentValue {
+  readonly field: FieldName;
+  readonly value: string;
+}
+
+export type HostUriScheme = "http" | "https";
+
+/** A credential the engine warns about. */
+export type CredentialWarning = PairWarning | JwtWarning | NoSecretWarning;
+
+/** A published default user and password: the dialog warns when both are typed, and a read-only seed with them is refused. */
+export interface PairWarning {
+  readonly kind: "pair";
+  readonly user: string;
+  /** The published default password; the empty string where the default is no password. */
+  readonly password: string;
+  /** The warning's sentence, which Studio frames with its own words in the dialog and at seed load. */
+  readonly message: string;
+}
+
+/** A JSON Web Token in the password field, decoded locally: the dialog warns when it declares no expiry or one of the access claims named. */
+export interface JwtWarning {
+  readonly kind: "jwt";
+  readonly noExp: true;
+  readonly access: readonly JwtAccessClaim[];
+  /** The warning's sentence, which Studio frames with its own words in the dialog and at seed load. */
+  readonly message: string;
+}
+
+/** m: the token declares manage access. absent: the token declares no access claim at all. */
+export type JwtAccessClaim = "m" | "absent";
+
+/** A server that accepts a connection with no password: a read-only seed without one is refused. */
+export interface NoSecretWarning {
+  readonly kind: "no-secret";
+  /** The warning's sentence, which Studio frames with its own words in the dialog and at seed load. */
+  readonly message: string;
 }
 
 /** What the connection dialog fills in when the engine is chosen; a key is absent where the dialog fills in nothing. */

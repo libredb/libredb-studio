@@ -30,7 +30,49 @@
     "agentCredential": {
       "form": "pair",
       "supersededBy": []
-    }
+    },
+    "dialog": {
+      "order": null,
+      "labels": [
+        {
+          "field": "password",
+          "text": "Password or token"
+        }
+      ],
+      "hints": [
+        {
+          "field": "host",
+          "text": "A name or address, or a pasted http:// or https:// address, which is split into Host and Port. InfluxDB Cloud endpoints are https on port 443."
+        },
+        {
+          "field": "password",
+          "text": "1.x: the user's password. 2.x and InfluxDB 3: an API token, with User empty."
+        },
+        {
+          "field": "database",
+          "text": "A 1.x database, a 2.x bucket, or an InfluxDB 3 database: the default for a run, not a filter. Empty: the only database the credential can list, or name it in the statement as \"db\"..\"measurement\"."
+        },
+        {
+          "field": "allowInsecureAuth",
+          "text": "Ticked, the password or token crosses the network in cleartext to this host. On InfluxDB 3 Core every token is an admin token that reaches server-side code. Prefer TLS or an SSH tunnel; SSL mode require sends the token to a server whose certificate is not checked."
+        }
+      ],
+      "placeholders": [],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [
+      "http",
+      "https"
+    ],
+    "credentialWarnings": [
+      {
+        "kind": "no-secret",
+        "message": "An InfluxDB 1.x server with authentication off, its default, and an InfluxDB 3 server started with --without-auth accept any credential or none, so a read-only seed without a password or token promises a boundary the server does not keep."
+      }
+    ]
   },
   "facets": {
     "monitoring": {

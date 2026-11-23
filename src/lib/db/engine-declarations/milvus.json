@@ -29,7 +29,55 @@
     "agentCredential": {
       "form": "pair",
       "supersededBy": []
-    }
+    },
+    "dialog": {
+      "order": null,
+      "labels": [
+        {
+          "field": "password",
+          "text": "Password or token"
+        }
+      ],
+      "hints": [
+        {
+          "field": "host",
+          "text": "A name or address, or a pasted http:// or https:// address such as a Zilliz Cloud endpoint, which is split into Host and Port. Port 9091 is Milvus's management port, which Studio never dials."
+        },
+        {
+          "field": "user",
+          "text": "Optional. At most 32 characters, starting with a letter. Leave it empty to put a token in Password or token."
+        },
+        {
+          "field": "password",
+          "text": "Milvus receives the password or token on every call, so a password needs an SSL mode other than disable, unless the host is this machine or an SSH tunnel carries the connection."
+        },
+        {
+          "field": "database",
+          "text": "Optional; empty means default. A dbName in a request body overrides it."
+        }
+      ],
+      "placeholders": [],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [
+      "http",
+      "https"
+    ],
+    "credentialWarnings": [
+      {
+        "kind": "pair",
+        "user": "root",
+        "password": "Milvus",
+        "message": "This is the documented default root credential every Milvus server starts with, and it stays valid until an administrator changes it, so anyone who knows Milvus can sign in with it. Change the root password on the server, or connect as a user of your own."
+      },
+      {
+        "kind": "no-secret",
+        "message": "A Milvus server with authorization off, its default, accepts any credential or none, so a read-only seed without a password promises a boundary the server does not keep."
+      }
+    ]
   },
   "facets": {
     "monitoring": {

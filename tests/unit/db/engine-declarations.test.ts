@@ -14,10 +14,16 @@ import path from "node:path";
 import {
   type AgentCredentialForm,
   compileManifestValidator,
+  type CredentialWarning as ManifestCredentialWarning,
   type EngineDeclaration,
   type FieldName,
+  type FieldPlacement as ManifestFieldPlacement,
   type HostPathField as ManifestHostPathField,
+  type HostUriScheme as ManifestHostUriScheme,
+  type JwtAccessClaim,
   type MaintenanceOperation as ManifestMaintenanceOperation,
+  type PlaceableFieldName,
+  type SelectFieldName,
   type StatementLanguage,
 } from "@libredb/provider-sdk/manifest";
 import {
@@ -27,6 +33,7 @@ import {
   renderEngineDeclaration,
 } from "../../../scripts/generate-engine-declarations";
 import { AGENT_STATEMENT_LANGUAGE, type AgentStatementLanguageId } from "@/lib/agent/agent-manifest";
+import type { HostUriScheme } from "@/lib/connection-host-uri";
 import {
   CONNECTION_FORM_URI_MODE,
   CONNECTION_STRING_ACCEPTED,
@@ -41,6 +48,9 @@ import {
   CONNECTION_FIELD_DESCRIPTORS,
   CONNECTION_FIELDS,
   type ConnectionField,
+  type FieldPlacement,
+  PLACEABLE_FIELDS,
+  type PlaceableField,
   REFUSED_CONNECTION_FIELDS,
   SEED_AGENT_CREDENTIAL,
   SEED_ONLY_FIELD_NAMES,
@@ -48,7 +58,13 @@ import {
   type SeedAgentCredential,
   type SeedOnlyField,
 } from "@/lib/db/connection-fields";
-import { CONNECTION_FORM, offersSslPanel } from "@/lib/db/connection-form";
+import {
+  CONNECTION_FORM,
+  type ConnectionFormSpec,
+  connectionFieldShown,
+  offersSslPanel,
+} from "@/lib/db/connection-form";
+import { CREDENTIAL_WARNINGS, type CredentialWarning } from "@/lib/db/credential-warnings";
 import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import { MONITORING_PANELS } from "@/lib/db/engine-facets/types";
 import { CURATED_OPERATION_KINDS } from "@/lib/db/operations/descriptors";
@@ -80,6 +96,35 @@ function sameList(a: readonly unknown[], b: readonly unknown[]): boolean {
 
 function sorted(values: readonly unknown[]): string[] {
   return values.map(String).sort();
+}
+
+/** A list of entries naming their field, read as a map from field to the member `pick` reads. */
+function byField<Entry extends { readonly field: string }, Value>(
+  entries: readonly Entry[],
+  pick: (entry: Entry) => Value,
+): Record<string, Value> {
+  return Object.fromEntries(entries.map((entry) => [entry.field, pick(entry)]));
+}
+
+/** A partial record of the form as a plain map, an absent record as an empty one. */
+function asMap<Value>(record: Partial<Record<string, Value>> | undefined): Record<string, Value> {
+  return { ...(record ?? {}) } as Record<string, Value>;
+}
+
+/** Whether two values are deeply equal, compared through their JSON with object keys in one order. */
+function sameValue(a: unknown, b: unknown): boolean {
+  const canonical = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(canonical);
+    if (typeof value === "object" && value !== null) {
+      return Object.fromEntries(
+        Object.keys(value)
+          .sort()
+          .map((key) => [key, canonical((value as Record<string, unknown>)[key])]),
+      );
+    }
+    return value;
+  };
+  return JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
 }
 
 describe("the committed declarations", () => {
@@ -282,6 +327,148 @@ describe("the census", () => {
     expect(differing((type, d) => d.agent.statementLanguage === AGENT_STATEMENT_LANGUAGE[type])).toEqual([]);
   });
 
+  test("connection.dialog.order is the form's dialogOrder", () => {
+    const matches = (type: DatabaseType, d: EngineDeclaration): boolean => {
+      const order = CONNECTION_FORM[type].dialogOrder;
+      const declaredOrder = d.connection.dialog.order;
+      return order === undefined ? declaredOrder === null : declaredOrder !== null && sameList(declaredOrder, order);
+    };
+
+    expect(differing(matches)).toEqual([]);
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => declared(type).connection.dialog.order !== null)).toEqual([
+      "bigquery",
+    ]);
+  });
+
+  test("connection.dialog.labels, hints and placeholders are the form's", () => {
+    const text = (entry: { readonly text: string }) => entry.text;
+
+    expect(
+      differing((type, d) =>
+        sameValue(byField(d.connection.dialog.labels, text), asMap(CONNECTION_FORM[type].fieldLabels)),
+      ),
+    ).toEqual([]);
+    expect(
+      differing((type, d) =>
+        sameValue(byField(d.connection.dialog.hints, text), asMap(CONNECTION_FORM[type].fieldHints)),
+      ),
+    ).toEqual([]);
+    expect(
+      differing((type, d) =>
+        sameValue(byField(d.connection.dialog.placeholders, text), asMap(CONNECTION_FORM[type].fieldPlaceholders)),
+      ),
+    ).toEqual([]);
+    const emptyPlaceholders = SHIPPED_DATABASE_TYPES.flatMap((type) =>
+      declared(type)
+        .connection.dialog.placeholders.filter((entry) => entry.text === "")
+        .map((entry) => `${type}.${entry.field}`),
+    );
+    expect(emptyPlaceholders.length).toBeGreaterThan(0);
+  });
+
+  test("connection.dialog.placement is the form's fieldPlacement", () => {
+    expect(
+      differing((type, d) =>
+        sameValue(
+          byField(d.connection.dialog.placement, (entry) => entry.where),
+          asMap(CONNECTION_FORM[type].fieldPlacement),
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  test("connection.dialog.options are the form's fieldOptions, choices in order", () => {
+    const choices = (entry: { readonly choices: readonly { readonly value: string; readonly label: string }[] }) =>
+      entry.choices.map(({ value, label }) => ({ value, label }));
+
+    expect(
+      differing((type, d) =>
+        sameValue(byField(d.connection.dialog.options, choices), asMap(CONNECTION_FORM[type].fieldOptions)),
+      ),
+    ).toEqual([]);
+  });
+
+  test("connection.dialog.shownWhen and absentValues are the form's fieldShownWhen and fieldDefaults", () => {
+    expect(
+      differing((type, d) =>
+        sameValue(
+          byField(d.connection.dialog.shownWhen, ({ when }) => ({ field: when.field, equals: when.equals })),
+          asMap(CONNECTION_FORM[type].fieldShownWhen),
+        ),
+      ),
+    ).toEqual([]);
+    expect(
+      differing((type, d) =>
+        sameValue(
+          byField(d.connection.dialog.absentValues, (entry) => entry.value),
+          asMap(CONNECTION_FORM[type].fieldDefaults),
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  test("a form read from the declaration shows the same fields as the connection form for every value of each controlling field", () => {
+    const outside = `outside-${crypto.randomUUID()}`;
+    const matches = (type: DatabaseType, d: EngineDeclaration): boolean => {
+      const form = CONNECTION_FORM[type];
+      const fromDeclaration: ConnectionFormSpec = {
+        label: form.label,
+        defaultPort: form.defaultPort,
+        showConnectionStringToggle: form.showConnectionStringToggle,
+        connectionFields: d.connection.fields as readonly ConnectionField[],
+        fieldShownWhen: byField(d.connection.dialog.shownWhen, ({ when }) => ({
+          field: when.field as ConnectionField,
+          equals: when.equals,
+        })),
+        fieldDefaults: byField(d.connection.dialog.absentValues, (entry) => entry.value),
+      };
+      const controllers = new Set<ConnectionField>([
+        ...Object.values(form.fieldShownWhen ?? {}).map((condition) => condition.field),
+        ...d.connection.dialog.shownWhen.map(({ when }) => when.field as ConnectionField),
+      ]);
+      return [...controllers].every((controller) => {
+        const values: unknown[] = [
+          ...(form.fieldOptions?.[controller] ?? []).map((choice) => choice.value),
+          undefined,
+          null,
+          "",
+          outside,
+        ];
+        return values.every((value) =>
+          form.connectionFields.every(
+            (field) =>
+              connectionFieldShown(fromDeclaration, field, { [controller]: value }) ===
+              connectionFieldShown(form, field, { [controller]: value }),
+          ),
+        );
+      });
+    };
+
+    expect(differing(matches)).toEqual([]);
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => declared(type).connection.dialog.shownWhen.length > 0)).toEqual([
+      "snowflake",
+    ]);
+  });
+
+  test("connection.hostUriSchemes is the form's hostAcceptsUri, in order", () => {
+    expect(
+      differing((type, d) => sameList(d.connection.hostUriSchemes, CONNECTION_FORM[type].hostAcceptsUri ?? [])),
+    ).toEqual([]);
+  });
+
+  test("connection.credentialWarnings is the engine's CREDENTIAL_WARNINGS row, and the form reads that same row", () => {
+    expect(differing((type, d) => sameValue(d.connection.credentialWarnings, CREDENTIAL_WARNINGS[type] ?? []))).toEqual(
+      [],
+    );
+    expect(
+      SHIPPED_DATABASE_TYPES.filter(
+        (type) =>
+          CREDENTIAL_WARNINGS[type] !== undefined &&
+          CONNECTION_FORM[type].credentialWarnings !== CREDENTIAL_WARNINGS[type],
+      ),
+    ).toEqual([]);
+  });
+
   test("id is the file's type-id", () => {
     expect(differing((type, d) => d.id === type)).toEqual([]);
   });
@@ -318,6 +505,15 @@ describe("the vocabularies", () => {
     expect(enumOf("agentReading")).toEqual([...CURATED_OPERATION_KINDS]);
   });
 
+  test("the placeable fields are PLACEABLE_FIELDS and the select fields are those the descriptors draw as a select", () => {
+    const selects = Object.entries(CONNECTION_FIELD_DESCRIPTORS)
+      .filter(([, descriptor]) => descriptor.slot === "body" && descriptor.control.kind === "select")
+      .map(([field]) => field);
+
+    expect(sorted(enumOf("placeableFieldName"))).toEqual(sorted(PLACEABLE_FIELDS));
+    expect(sorted(enumOf("selectFieldName"))).toEqual(sorted(selects));
+  });
+
   test("the generated unions are Studio's own types", () => {
     const parity: [
       Equal<ManifestMaintenanceOperation, MaintenanceOperation>,
@@ -325,8 +521,14 @@ describe("the vocabularies", () => {
       Equal<FieldName, ConnectionField | SeedOnlyField>,
       Equal<AgentCredentialForm, SeedAgentCredential["form"]>,
       Equal<ManifestHostPathField, HostPathField>,
-    ] = [true, true, true, true, true];
+      Equal<ManifestFieldPlacement, FieldPlacement>,
+      Equal<ManifestHostUriScheme, HostUriScheme>,
+      Equal<ManifestCredentialWarning["kind"], CredentialWarning["kind"]>,
+      Equal<JwtAccessClaim, Extract<CredentialWarning, { kind: "jwt" }>["access"][number]>,
+      Equal<PlaceableFieldName, PlaceableField>,
+      Equal<SelectFieldName, "saslMechanism" | "authMethod">,
+    ] = [true, true, true, true, true, true, true, true, true, true, true];
 
-    expect(parity).toEqual([true, true, true, true, true]);
+    expect(parity).toEqual([true, true, true, true, true, true, true, true, true, true, true]);
   });
 });

@@ -36,6 +36,19 @@ export const SCHEMA_REFUSAL_RULES = Object.freeze([
   "refused-field-declared",
   "seed-only-field-undeclared",
   "host-path-field-undeclared",
+  "field-undeclared",
+  "dialog-entry-duplicate",
+  "placement-missing",
+  "options-missing",
+  "option-value-duplicate",
+  "shown-when-chained",
+  "shown-when-value-not-an-option",
+  "absent-value-not-an-option",
+  "absent-value-unread",
+  "absent-value-missing",
+  "host-uri-schemes-without-host",
+  "credential-warning-field-undeclared",
+  "no-secret-warning-duplicate",
 ] as const);
 
 export type SchemaRefusalRule = (typeof SCHEMA_REFUSAL_RULES)[number];
@@ -167,12 +180,127 @@ export function refusalsOf(errors: readonly AjvError[]): SchemaRefusal[] {
   return ordered(refusals);
 }
 
-/** The rules of one engine's connection the schema cannot state, at pointers under `at`. */
-function engineRuleRefusals(
-  engine: EngineDeclaration,
+/** The field-name vocabularies of the schema the rules read: seed-only, placeable and select. */
+interface FieldVocabularies {
+  readonly seedOnly: ReadonlySet<string>;
+  readonly placeable: ReadonlySet<string>;
+  readonly select: ReadonlySet<string>;
+}
+
+/**
+ * The rules of an engine's connection dialog the schema cannot state, at pointers under `at`. Every entry names a field
+ * the engine takes, once per list. Every placeable and every select field the engine takes has its placement and its
+ * choices, and no two choices of a field share a value. A condition reads a field with no condition of its own, and on
+ * a field with choices names one of them. An absent value is for a field a condition reads and, where the field has
+ * choices, is one of them; every select field a condition reads has one. Where an entry is repeated, the first is the
+ * one the other rules read.
+ */
+function dialogRuleRefusals(
+  connection: EngineDeclaration["connection"],
   at: string,
-  seedOnlyNames: ReadonlySet<string>,
+  vocabularies: FieldVocabularies,
 ): SchemaRefusal[] {
+  const refusals: SchemaRefusal[] = [];
+  const { dialog } = connection;
+  const base = `${at}/connection/dialog`;
+  const fields = new Set<string>(connection.fields);
+  const entryLists = [
+    ["labels", dialog.labels],
+    ["hints", dialog.hints],
+    ["placeholders", dialog.placeholders],
+    ["placement", dialog.placement],
+    ["options", dialog.options],
+    ["shownWhen", dialog.shownWhen],
+    ["absentValues", dialog.absentValues],
+  ] as const;
+  for (const [list, entries] of entryLists) {
+    const seen = new Set<string>();
+    entries.forEach(({ field }, index) => {
+      const pointer = `${base}/${list}/${index}/field`;
+      if (!fields.has(field)) refusals.push(schemaRefusal("field-undeclared", pointer));
+      if (seen.has(field)) refusals.push(schemaRefusal("dialog-entry-duplicate", pointer));
+      seen.add(field);
+    });
+  }
+  dialog.order?.forEach((field, index) => {
+    if (!fields.has(field)) refusals.push(schemaRefusal("field-undeclared", `${base}/order/${index}`));
+  });
+
+  const placed = new Set<string>(dialog.placement.map((entry) => entry.field));
+  const choicesOf = new Map<string, ReadonlySet<string>>();
+  dialog.options.forEach((entry, index) => {
+    const values = new Set<string>();
+    entry.choices.forEach((choice, position) => {
+      if (values.has(choice.value)) {
+        refusals.push(schemaRefusal("option-value-duplicate", `${base}/options/${index}/choices/${position}/value`));
+      }
+      values.add(choice.value);
+    });
+    if (!choicesOf.has(entry.field)) choicesOf.set(entry.field, values);
+  });
+  connection.fields.forEach((field, index) => {
+    if (vocabularies.placeable.has(field) && !placed.has(field)) {
+      refusals.push(schemaRefusal("placement-missing", `${at}/connection/fields/${index}`));
+    }
+    if (vocabularies.select.has(field) && !choicesOf.has(field)) {
+      refusals.push(schemaRefusal("options-missing", `${at}/connection/fields/${index}`));
+    }
+  });
+
+  const conditioned = new Set<string>(dialog.shownWhen.map((entry) => entry.field));
+  const read = new Set<string>(dialog.shownWhen.map((entry) => entry.when.field));
+  const absent = new Set<string>(dialog.absentValues.map((entry) => entry.field));
+  dialog.shownWhen.forEach(({ when }, index) => {
+    const pointer = `${base}/shownWhen/${index}/when`;
+    if (!fields.has(when.field)) refusals.push(schemaRefusal("field-undeclared", `${pointer}/field`));
+    if (conditioned.has(when.field)) refusals.push(schemaRefusal("shown-when-chained", `${pointer}/field`));
+    const choices = choicesOf.get(when.field);
+    if (choices !== undefined && !choices.has(when.equals)) {
+      refusals.push(schemaRefusal("shown-when-value-not-an-option", `${pointer}/equals`));
+    }
+    if (vocabularies.select.has(when.field) && !absent.has(when.field)) {
+      refusals.push(schemaRefusal("absent-value-missing", `${pointer}/field`));
+    }
+  });
+  dialog.absentValues.forEach((entry, index) => {
+    const choices = choicesOf.get(entry.field);
+    if (choices !== undefined && !choices.has(entry.value)) {
+      refusals.push(schemaRefusal("absent-value-not-an-option", `${base}/absentValues/${index}/value`));
+    }
+    if (!read.has(entry.field))
+      refusals.push(schemaRefusal("absent-value-unread", `${base}/absentValues/${index}/field`));
+  });
+  return refusals;
+}
+
+/**
+ * The rules of an engine's Host box and credential warnings the schema cannot state, at pointers under `at`: URI schemes
+ * only where the engine takes a host, a warning only on the fields it reads, and at most one `no-secret` warning.
+ */
+function hostAndWarningRuleRefusals(connection: EngineDeclaration["connection"], at: string): SchemaRefusal[] {
+  const refusals: SchemaRefusal[] = [];
+  const fields = new Set<string>(connection.fields);
+  if (connection.hostUriSchemes.length > 0 && !fields.has("host")) {
+    refusals.push(schemaRefusal("host-uri-schemes-without-host", `${at}/connection/hostUriSchemes`));
+  }
+  let noSecretSeen = false;
+  connection.credentialWarnings.forEach((warning, index) => {
+    const pointer = `${at}/connection/credentialWarnings/${index}`;
+    const reads = warning.kind === "pair" ? ["user", "password"] : ["password"];
+    if (!reads.every((field) => fields.has(field))) {
+      refusals.push(schemaRefusal("credential-warning-field-undeclared", pointer));
+    }
+    if (warning.kind === "no-secret") {
+      if (noSecretSeen) refusals.push(schemaRefusal("no-secret-warning-duplicate", pointer));
+      noSecretSeen = true;
+    }
+  });
+  return refusals;
+}
+
+/** The rules of one engine's connection the schema cannot state, at pointers under `at`. */
+function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies: FieldVocabularies): SchemaRefusal[] {
+  const seedOnlyNames = vocabularies.seedOnly;
   const refusals: SchemaRefusal[] = [];
   const { connection } = engine;
   const fields = new Set<string>(connection.fields);
@@ -190,11 +318,13 @@ function engineRuleRefusals(
       refusals.push(schemaRefusal("host-path-field-undeclared", `${at}/connection/hostPathFields/${index}`));
     }
   });
+  refusals.push(...dialogRuleRefusals(connection, at, vocabularies));
+  refusals.push(...hostAndWarningRuleRefusals(connection, at));
   return refusals;
 }
 
 /** The rules of a whole manifest the schema cannot state: unique engine ids, and compatibility entries that match. */
-function manifestRuleRefusals(manifest: ProviderManifest, seedOnlyNames: ReadonlySet<string>): SchemaRefusal[] {
+function manifestRuleRefusals(manifest: ProviderManifest, vocabularies: FieldVocabularies): SchemaRefusal[] {
   const refusals: SchemaRefusal[] = [];
   const declared = new Set<string>();
   const covered = new Set(manifest.compatibility.map((entry) => entry.engine));
@@ -202,7 +332,7 @@ function manifestRuleRefusals(manifest: ProviderManifest, seedOnlyNames: Readonl
     if (declared.has(engine.id)) refusals.push(schemaRefusal("engine-id-duplicate", `/engines/${index}/id`));
     declared.add(engine.id);
     if (!covered.has(engine.id)) refusals.push(schemaRefusal("compatibility-engine-missing", `/engines/${index}/id`));
-    refusals.push(...engineRuleRefusals(engine, `/engines/${index}`, seedOnlyNames));
+    refusals.push(...engineRuleRefusals(engine, `/engines/${index}`, vocabularies));
   });
   manifest.compatibility.forEach((entry, index) => {
     if (!declared.has(entry.engine)) {
@@ -224,7 +354,11 @@ function manifestRuleRefusals(manifest: ProviderManifest, seedOnlyNames: Readonl
 interface ServedSchema {
   readonly $id: string;
   readonly properties: { readonly contract: { readonly const: string } };
-  readonly $defs: { readonly seedOnlyFieldName: { readonly enum: readonly string[] } };
+  readonly $defs: {
+    readonly seedOnlyFieldName: { readonly enum: readonly string[] };
+    readonly placeableFieldName: { readonly enum: readonly string[] };
+    readonly selectFieldName: { readonly enum: readonly string[] };
+  };
 }
 
 /** The errors a failed ajv validation reported; ajv sets them on every failure, so a failure without them is a fault. */
@@ -247,7 +381,11 @@ export function compileManifestValidator(schemaBytes: Uint8Array): ManifestValid
   const validateEnvelope = ajv.compile({ $ref: `${schema.$id}#/$defs/envelope` });
   const validateDeclaration = ajv.compile({ $ref: `${schema.$id}#/$defs/engineDeclaration` });
   const contract = schema.properties.contract.const;
-  const seedOnlyNames = new Set(schema.$defs.seedOnlyFieldName.enum);
+  const vocabularies: FieldVocabularies = {
+    seedOnly: new Set(schema.$defs.seedOnlyFieldName.enum),
+    placeable: new Set(schema.$defs.placeableFieldName.enum),
+    select: new Set(schema.$defs.selectFieldName.enum),
+  };
 
   return {
     contract,
@@ -259,13 +397,13 @@ export function compileManifestValidator(schemaBytes: Uint8Array): ManifestValid
       }
       if (!validateManifest(value)) return { admitted: false, refusals: refusalsOf(errorsOf(validateManifest)) };
       const manifest = value as ProviderManifest;
-      const refusals = ordered(manifestRuleRefusals(manifest, seedOnlyNames));
+      const refusals = ordered(manifestRuleRefusals(manifest, vocabularies));
       return refusals.length === 0 ? { admitted: true, manifest } : { admitted: false, refusals };
     },
     validateEngine(value) {
       if (!validateDeclaration(value)) return { admitted: false, refusals: refusalsOf(errorsOf(validateDeclaration)) };
       const engine = value as EngineDeclaration;
-      const refusals = ordered(engineRuleRefusals(engine, "", seedOnlyNames));
+      const refusals = ordered(engineRuleRefusals(engine, "", vocabularies));
       return refusals.length === 0 ? { admitted: true, engine } : { admitted: false, refusals };
     },
   };
@@ -315,5 +453,31 @@ export function refusalSentence(refusal: ManifestRefusal): string {
       return `The seed-only field at ${at} is neither one of the engine's connection fields nor a seed-only field name.`;
     case "host-path-field-undeclared":
       return `The host path field at ${at} is not one of the engine's seed-only fields.`;
+    case "field-undeclared":
+      return `The field named at ${at} is not one of the engine's connection fields.`;
+    case "dialog-entry-duplicate":
+      return `The field named at ${at} already has an entry earlier in its list.`;
+    case "placement-missing":
+      return `The placeable field at ${at} has no placement in the engine's connection dialog.`;
+    case "options-missing":
+      return `The select field at ${at} has no choices in the engine's connection dialog.`;
+    case "option-value-duplicate":
+      return `The choice value at ${at} repeats the value of an earlier choice of its field.`;
+    case "shown-when-chained":
+      return `The condition at ${at} reads a field that is itself drawn only under a condition.`;
+    case "shown-when-value-not-an-option":
+      return `The condition value at ${at} is not one of the choices of the field it reads.`;
+    case "absent-value-not-an-option":
+      return `The absent value at ${at} is not one of the choices of its field.`;
+    case "absent-value-unread":
+      return `The field named at ${at} has an absent value, but no condition reads it.`;
+    case "absent-value-missing":
+      return `The select field named at ${at} is read by a condition but declares no absent value.`;
+    case "host-uri-schemes-without-host":
+      return `The URI schemes at ${at} are declared for an engine that takes no host field.`;
+    case "credential-warning-field-undeclared":
+      return `The credential warning at ${at} reads a field that is not one of the engine's connection fields.`;
+    case "no-secret-warning-duplicate":
+      return `The credential warning at ${at} is a second no-secret warning of its engine.`;
   }
 }

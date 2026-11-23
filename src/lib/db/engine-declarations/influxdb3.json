@@ -31,7 +31,49 @@
     "agentCredential": {
       "form": "secret",
       "supersededBy": []
-    }
+    },
+    "dialog": {
+      "order": null,
+      "labels": [
+        {
+          "field": "password",
+          "text": "Token"
+        }
+      ],
+      "hints": [
+        {
+          "field": "host",
+          "text": "A name or address, or a pasted http:// or https:// address, which is split into Host and Port. InfluxDB Cloud endpoints are https on port 443."
+        },
+        {
+          "field": "password",
+          "text": "Empty only for a server started with --without-auth. On InfluxDB 3 Core every token is an admin token."
+        },
+        {
+          "field": "database",
+          "text": "The one InfluxDB 3 database this connection reads. Empty: the only database the token can list; with more than one, set it here."
+        },
+        {
+          "field": "allowInsecureAuth",
+          "text": "Ticked, the password or token crosses the network in cleartext to this host. On InfluxDB 3 Core every token is an admin token that reaches server-side code. Prefer TLS or an SSH tunnel; SSL mode require sends the token to a server whose certificate is not checked."
+        }
+      ],
+      "placeholders": [],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [
+      "http",
+      "https"
+    ],
+    "credentialWarnings": [
+      {
+        "kind": "no-secret",
+        "message": "An InfluxDB 3 server started with --without-auth accepts any token or none, so a read-only seed without a token promises a boundary the server does not keep."
+      }
+    ]
   },
   "facets": {
     "monitoring": {

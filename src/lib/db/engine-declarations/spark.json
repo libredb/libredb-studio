@@ -28,7 +28,66 @@
     "hostPathFields": [],
     "opensLocalFile": false,
     "serverLevelWithoutDatabase": false,
-    "agentCredential": null
+    "agentCredential": null,
+    "dialog": {
+      "order": null,
+      "labels": [
+        {
+          "field": "host",
+          "text": "Host"
+        },
+        {
+          "field": "port",
+          "text": "Port"
+        },
+        {
+          "field": "password",
+          "text": "Token"
+        },
+        {
+          "field": "database",
+          "text": "Catalog"
+        },
+        {
+          "field": "schema",
+          "text": "Namespace"
+        }
+      ],
+      "hints": [
+        {
+          "field": "host",
+          "text": "The host of the Spark Connect server, or of a TLS proxy in front of it. Spark Connect listens on 15002 unless the server was started on another port. Paste an sc:// address with Paste URL."
+        },
+        {
+          "field": "password",
+          "text": "The server's spark.connect.authenticate.token (Spark 4.0 and later), sent on every call. Leave it empty for a server without a token. Studio sends a token only over TLS or an SSH tunnel, unless the host is this machine."
+        },
+        {
+          "field": "database",
+          "text": "The catalog unqualified names resolve in, and the one the tree opens first. Empty: the server's default catalog."
+        },
+        {
+          "field": "schema",
+          "text": "The namespace in that catalog, written as in Spark SQL: parts joined by dots, a part with other characters in backticks. Empty: the catalog's current namespace."
+        }
+      ],
+      "placeholders": [
+        {
+          "field": "database",
+          "text": "server default (spark_catalog)"
+        },
+        {
+          "field": "schema",
+          "text": "catalog default"
+        }
+      ],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [],
+    "credentialWarnings": []
   },
   "facets": {
     "monitoring": {

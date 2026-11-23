@@ -24,7 +24,14 @@
  */
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import type { EngineDeclaration, FieldName } from "@libredb/provider-sdk/manifest";
+import type {
+  ConnectionDialog,
+  CredentialWarning as ManifestCredentialWarning,
+  EngineDeclaration,
+  FieldName,
+  PlaceableFieldName,
+  SelectFieldName,
+} from "@libredb/provider-sdk/manifest";
 import { AGENT_STATEMENT_LANGUAGE } from "../src/lib/agent/agent-manifest";
 import {
   CONNECTION_FORM_URI_MODE,
@@ -39,12 +46,16 @@ import {
 import {
   CONNECTION_FIELD_DESCRIPTORS,
   CONNECTION_FIELDS,
+  type ConnectionField,
+  PLACEABLE_FIELDS,
+  type PlaceableField,
   REFUSED_CONNECTION_FIELDS,
   SEED_AGENT_CREDENTIAL,
   SEED_ONLY_FIELD_NAMES,
   SEED_ONLY_FIELDS,
 } from "../src/lib/db/connection-fields";
-import { CONNECTION_FORM, offersSslPanel } from "../src/lib/db/connection-form";
+import { CONNECTION_FORM, type ConnectionFormSpec, offersSslPanel } from "../src/lib/db/connection-form";
+import { CREDENTIAL_WARNINGS } from "../src/lib/db/credential-warnings";
 import { ENGINE_FACETS } from "../src/lib/db/engine-facets";
 import type { DatabaseType } from "../src/lib/types";
 
@@ -65,6 +76,77 @@ const FIELD_NAMES: ReadonlySet<string> = new Set([
 function fieldName(name: string, type: DatabaseType): FieldName {
   if (!FIELD_NAMES.has(name)) throw new Error(`${type}: "${name}" is not a field name of the provider contract`);
   return name as FieldName;
+}
+
+/** A placeable field of an engine's form as the contract's placeable name. */
+function isPlaceable(field: ConnectionField): field is PlaceableField & PlaceableFieldName {
+  return (PLACEABLE_FIELDS as readonly string[]).includes(field);
+}
+
+/** A field an engine's form declares choices for, as a select field name, or a thrown error naming it where it is not. */
+function selectField(field: ConnectionField, type: DatabaseType): SelectFieldName {
+  const descriptor = CONNECTION_FIELD_DESCRIPTORS[field];
+  if (descriptor.slot !== "body" || descriptor.control.kind !== "select") {
+    throw new Error(`${type}: "${field}" has fieldOptions but the dialog does not draw it as a select`);
+  }
+  return field as SelectFieldName;
+}
+
+/**
+ * How the dialog presents one engine's fields: each per-field record of its form as a list of entries naming their
+ * field, in `fields` order, empty where the form declares none.
+ */
+function buildDialog(
+  form: ConnectionFormSpec,
+  fields: readonly ConnectionField[],
+  type: DatabaseType,
+): ConnectionDialog {
+  const textEntries = (record: Partial<Record<ConnectionField, string>> | undefined) =>
+    fields.flatMap((field) => {
+      const text = record?.[field];
+      return text === undefined ? [] : [{ field, text }];
+    });
+  return {
+    order: form.dialogOrder === undefined ? null : [...form.dialogOrder],
+    labels: textEntries(form.fieldLabels),
+    hints: textEntries(form.fieldHints),
+    placeholders: textEntries(form.fieldPlaceholders),
+    placement: fields.filter(isPlaceable).flatMap((field) => {
+      const where = form.fieldPlacement?.[field];
+      return where === undefined ? [] : [{ field, where }];
+    }),
+    options: fields.flatMap((field) => {
+      const choices = form.fieldOptions?.[field];
+      return choices === undefined
+        ? []
+        : [{ field: selectField(field, type), choices: choices.map(({ value, label }) => ({ value, label })) }];
+    }),
+    shownWhen: fields.flatMap((field) => {
+      const condition = form.fieldShownWhen?.[field];
+      return condition === undefined ? [] : [{ field, when: { field: condition.field, equals: condition.equals } }];
+    }),
+    absentValues: fields.flatMap((field) => {
+      const value = form.fieldDefaults?.[field];
+      return value === undefined ? [] : [{ field, value }];
+    }),
+  };
+}
+
+/**
+ * The engine's credential warnings, read from `CREDENTIAL_WARNINGS` rather than the form's getter over it, so the
+ * declaration names the record it comes from; each written member by member, so every declaration orders them alike.
+ */
+function buildCredentialWarnings(type: DatabaseType): ManifestCredentialWarning[] {
+  return (CREDENTIAL_WARNINGS[type] ?? []).map((warning) => {
+    switch (warning.kind) {
+      case "pair":
+        return { kind: warning.kind, user: warning.user, password: warning.password, message: warning.message };
+      case "jwt":
+        return { kind: warning.kind, noExp: warning.noExp, access: [...warning.access], message: warning.message };
+      case "no-secret":
+        return { kind: warning.kind, message: warning.message };
+    }
+  });
 }
 
 /** One engine's declaration, read from every table the contract states for it. */
@@ -105,6 +187,9 @@ export function buildEngineDeclaration(type: DatabaseType): EngineDeclaration {
         credential === null
           ? null
           : { form: credential.form, supersededBy: credential.supersededBy.map((field) => fieldName(field, type)) },
+      dialog: buildDialog(form, CONNECTION_FIELDS[type], type),
+      hostUriSchemes: [...(form.hostAcceptsUri ?? [])],
+      credentialWarnings: buildCredentialWarnings(type),
     },
     facets: {
       // Written out panel by panel, in MONITORING_PANELS order, so every declaration lists them alike and a panel the

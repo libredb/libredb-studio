@@ -44,7 +44,70 @@
     "agentCredential": {
       "form": "pair",
       "supersededBy": []
-    }
+    },
+    "dialog": {
+      "order": null,
+      "labels": [
+        {
+          "field": "host",
+          "text": "Endpoint URL"
+        },
+        {
+          "field": "user",
+          "text": "Username"
+        },
+        {
+          "field": "password",
+          "text": "Password"
+        },
+        {
+          "field": "securityMode",
+          "text": "Security mode"
+        },
+        {
+          "field": "serverCertificateThumbprint",
+          "text": "Server certificate"
+        }
+      ],
+      "hints": [
+        {
+          "field": "host",
+          "text": "The endpoint exactly as you type it. This is the only address dialled: a server may advertise another, and OPC PLC advertises its own container name, which resolves nowhere."
+        },
+        {
+          "field": "user",
+          "text": "A server username, if the server checks one; empty for an anonymous session."
+        },
+        {
+          "field": "password",
+          "text": "The password for that username. On a server whose UserName token declares its own policy the password is encrypted even in None mode; where it declares none, a password to a host that is not this machine is refused unless an SSH tunnel carries it."
+        },
+        {
+          "field": "securityMode",
+          "text": "None, Sign or SignAndEncrypt. None encrypts nothing and authenticates nobody, so a certificate cannot be pinned there and this connection refuses the pair rather than checking a thumbprint it read over a channel nobody authenticated. There is no fallback: a mode the server does not offer is refused rather than quietly weakened. A secured mode also needs TRUST both ways on the first connect: the server's certificate has to be moved into trusted/certs under the PKI directory, and the server has to accept this client's - until then a secured connect is refused, and the refusal names the directory."
+        },
+        {
+          "field": "serverCertificateThumbprint",
+          "text": "The SHA-256 thumbprint this server's certificate must present, as 64 hexadecimal characters; colons and spaces are ignored. Without it any certificate the trust list accepts is accepted."
+        }
+      ],
+      "placeholders": [
+        {
+          "field": "host",
+          "text": "opc.tcp://plc.example.net:4840/"
+        },
+        {
+          "field": "securityMode",
+          "text": "SignAndEncrypt"
+        }
+      ],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [],
+    "credentialWarnings": []
   },
   "facets": {
     "monitoring": {

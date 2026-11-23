@@ -26,7 +26,50 @@
     "hostPathFields": [],
     "opensLocalFile": false,
     "serverLevelWithoutDatabase": false,
-    "agentCredential": null
+    "agentCredential": null,
+    "dialog": {
+      "order": null,
+      "labels": [
+        {
+          "field": "host",
+          "text": "Host"
+        },
+        {
+          "field": "password",
+          "text": "Community"
+        },
+        {
+          "field": "allowInsecureAuth",
+          "text": "Send the community in clear to an agent that is not on this machine"
+        }
+      ],
+      "hints": [
+        {
+          "field": "host",
+          "text": "A name or address only. If Studio runs in a container, localhost is that container: use host.docker.internal."
+        },
+        {
+          "field": "password",
+          "text": "The read community. It travels in clear in every v2c datagram and there is no transport security under it, so `public` and `private` are the documented defaults every device ships with."
+        },
+        {
+          "field": "allowInsecureAuth",
+          "text": "Ticked, the community travels in clear in every datagram to an agent that is not on this machine. SNMPv2c has no authentication either: an answer can be forged by anything that can reach this connection."
+        }
+      ],
+      "placeholders": [
+        {
+          "field": "password",
+          "text": ""
+        }
+      ],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [],
+    "credentialWarnings": []
   },
   "facets": {
     "monitoring": {

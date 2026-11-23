@@ -23,7 +23,50 @@
     "hostPathFields": [],
     "opensLocalFile": false,
     "serverLevelWithoutDatabase": false,
-    "agentCredential": null
+    "agentCredential": null,
+    "dialog": {
+      "order": null,
+      "labels": [
+        {
+          "field": "database",
+          "text": "Project ID"
+        },
+        {
+          "field": "schema",
+          "text": "Database ID"
+        },
+        {
+          "field": "password",
+          "text": "Service-account key, ADC JSON or access token"
+        }
+      ],
+      "hints": [
+        {
+          "field": "database",
+          "text": "The Google Cloud project that holds the database: 6 to 30 lowercase letters, digits and hyphens, starting with a letter. A legacy project id may carry a domain: prefix."
+        },
+        {
+          "field": "schema",
+          "text": "Empty for the (default) database. A named database's id is 4 to 63 lowercase letters, digits and hyphens, starting with a letter."
+        },
+        {
+          "field": "password",
+          "text": "Studio reads as this credential's IAM identity, and Firebase Security Rules do not apply to it. Grant a dedicated service account roles/datastore.viewer and paste its key. Every read Studio sends is billed to the project; docs/providers/firestore.md lists what each action reads. A pasted access token lasts about an hour. Leave this empty on an emulator server, or for an operator-seeded connection that uses the server's own identity."
+        }
+      ],
+      "placeholders": [
+        {
+          "field": "database",
+          "text": "my-project"
+        }
+      ],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [],
+    "credentialWarnings": []
   },
   "facets": {
     "monitoring": {
