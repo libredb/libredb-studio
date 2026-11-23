@@ -142,6 +142,13 @@ Do not set `DB_HTTP_BLOCK_PRIVATE_HOSTS=true` on such a deployment: it blocks th
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `bigquery` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/sql/bigquery/execution-ui.ts).
 
+### Connect budget
+
+Studio waits for a `bigquery` connection to open, and for its Test connection, at most 140 seconds, longer than the host's default of 70 seconds.
+The connect lists the project's datasets and then runs a `SELECT 1` job, and each is cut at the statement timeout plus the provider's 5 s client grace, so at Studio's default 60 s statement timeout the connect can take 130 s on its own.
+The budget is those two bounds plus 10 s, so a connect that fails answers in BigQuery's words before Studio stops waiting.
+Its row in `CONNECT_BUDGET` is declared in [`src/lib/db/connect-budget.ts`](../../src/lib/db/connect-budget.ts), and the engine declaration states it as `connection.connectBudgetMs`.
+
 ## 4. Seeding
 
 A BigQuery connection is seeded like any other ([SEED_CONNECTIONS.md](../SEED_CONNECTIONS.md)).

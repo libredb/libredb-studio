@@ -35,10 +35,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "queryId must be a string", cancelled: false }, { status: 400 });
     }
 
-    // The open is waited for within the call's open allowance and while the request stays (`openWithinCall`): a request
-    // already aborted, or one that leaves while the connection opens, answers 499 not-sent; a provider already open is
-    // handed over before any wait is read.
-    const provider = await openWithinCall(req.signal, (wait) =>
+    // The open is waited for within its engine's connect budget and while the request stays (`openWithinCall`): a
+    // request already aborted, or one that leaves while the connection opens, answers 499 not-sent; a provider already
+    // open is handed over before any wait is read.
+    const provider = await openWithinCall(req.signal, connection.type, (wait) =>
       getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection), wait),
     );
 

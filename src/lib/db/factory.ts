@@ -14,7 +14,17 @@ import {
   type ProviderOptions,
   type ProviderExecutionContext,
 } from "./types";
-import { buildPhase, ConnectionError, connectPhase, DatabaseConfigError, StudioProfileRefusal } from "./errors";
+import { deadlineSignal } from "@libredb/provider-sdk/calls";
+import {
+  buildPhase,
+  ConnectionError,
+  connectPhase,
+  DatabaseConfigError,
+  markNotSent,
+  StudioProfileRefusal,
+  StudioTimeoutRefusal,
+} from "./errors";
+import { connectBudgetFor, openDeadlineSentence } from "./connect-budget";
 import { errorCode, errorKind } from "./error-record";
 import { providerAuthor } from "./operations/provider-text";
 import { createSSHTunnel, closeSSHTunnel, releaseUnopenedTunnel, tunnelProviderOpened } from "@/lib/ssh/tunnel";
@@ -56,6 +66,7 @@ import {
   type DiscardedFlight,
   discardFlights,
   type Flight,
+  type OpenDeadline,
   openOnce,
   type OpenWait,
 } from "@/lib/provider-host/core/open-once";
@@ -1021,8 +1032,9 @@ interface OpenMeta {
 /**
  * Logs an open that failed after every caller stopped waiting for it, by the connection id and the error's kind and
  * code, never its text, which may carry what the provider said. The open admitted nothing, so nothing else is left to
- * do. A caller leaves an open only through a wait of its own, `getOrCreateProvider`'s fourth argument, which the
- * editor's query and cancel pass; exported for the tests.
+ * do. A caller leaves an open through a wait of its own, `getOrCreateProvider`'s fourth argument, which the editor's
+ * query and cancel pass, and every caller is answered when the open's deadline ends it (`OPEN_DEADLINE`), after which
+ * the open, once its connect settles, closes what it opened and fails as overtaken; exported for the tests.
  */
 export function logUnclaimedOpen(error: unknown, flight: Flight<OpenMeta>): void {
   const id = flight.meta.connectionId;
@@ -1037,6 +1049,26 @@ export function logUnclaimedOpen(error: unknown, flight: Flight<OpenMeta>): void
 }
 
 /**
+ * What an open its engine's connect budget ended answers every caller still waiting: this bundle's
+ * `StudioTimeoutRefusal`, naming the budget, marked not-sent, since no statement was sent.
+ */
+function openExpired(flight: Flight<OpenMeta>): StudioTimeoutRefusal {
+  const error = new StudioTimeoutRefusal(openDeadlineSentence(connectBudgetFor(flight.meta.type)));
+  markNotSent(error);
+  return error;
+}
+
+/**
+ * The deadline of every open of both caches (docs/providers/CONTRACT.md, clause C-55): its engine's connect budget from
+ * the open's start (src/lib/db/connect-budget.ts). At it every caller still waiting is answered `openExpired`, the
+ * next call opens afresh, and the open, once its connect settles, closes what it opened (`connectUnlessOvertaken`).
+ */
+const OPEN_DEADLINE: OpenDeadline<OpenMeta> = {
+  signal: (meta) => deadlineSignal(Date.now() + connectBudgetFor(meta.type)),
+  expired: openExpired,
+};
+
+/**
  * The opens in flight of the writable cache and of the execution-profile cache, one table each, by the key the cache
  * holds what they open under (src/lib/provider-host/core/open-once.ts). Module state of this copy of the factory, as
  * the caches are: each Next.js bundle that loads the factory keeps its own caches and its own opens.
@@ -1046,8 +1078,8 @@ export function logUnclaimedOpen(error: unknown, flight: Flight<OpenMeta>): void
  * when the first closed. Each open admits its own provider into its cache, and checks after its connect whether a
  * removal or a cache close overtook it (`connectUnlessOvertaken`).
  */
-const editorFlights = createOpenFlights<DatabaseProvider, OpenMeta>(logUnclaimedOpen);
-const profiledFlights = createOpenFlights<DatabaseProvider, OpenMeta>(logUnclaimedOpen);
+const editorFlights = createOpenFlights<DatabaseProvider, OpenMeta>(logUnclaimedOpen, OPEN_DEADLINE);
+const profiledFlights = createOpenFlights<DatabaseProvider, OpenMeta>(logUnclaimedOpen, OPEN_DEADLINE);
 
 /**
  * How many closes of the caches (`closeCaches`) are running. An open that settles while one runs is overtaken as one in
@@ -2424,8 +2456,9 @@ async function overtakenOpenStillOpening(overtaken: DiscardedFlight<OpenMeta>): 
  * or shared alike, is torn down (`teardownProvider`): its entry leaves the cache, an open transaction it holds is rolled
  * back within 5 s, and it is closed within 10 s, so the close ends within 15 s whatever the databases do
  * (docs/providers/CONTRACT.md, clause C-45). A rollback or a disconnect that fails is logged with the error's name and
- * message, through the entry's scrub, the text the scrub reads. Every open in flight is overtaken first, so none is
- * admitted after the caches closed, and each is waited for at most the teardown's close deadline (clause C-44). An open
+ * message, through the entry's scrub, the text the scrub reads. Every open in flight, one its own deadline ended that is
+ * still connecting included (clause C-55), is overtaken first, so none is admitted after the caches closed, and each is
+ * waited for at most the teardown's close deadline (clause C-44). An open
  * that starts while the close runs and settles before it ended is overtaken alike (`cacheClosesRunning`): it closes
  * what it opened and admits nothing, so no provider is left in a cache, or dropped from one without a close, when the
  * close answers.

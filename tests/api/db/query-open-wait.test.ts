@@ -2,7 +2,8 @@
  * The query route's open wait against the real factory (docs/providers/CONTRACT.md, clause C-44; docs/API_DOCS.md, "How
  * long the server waits"): a request that leaves while its connection opens is answered at once, 499 not-sent, the
  * open goes on in the factory's open table, and its later failure, which no caller waits for any more, is logged by
- * the connection, the error's kind and its code, never its text.
+ * the connection, the error's kind and its code, never its text. An open its connect budget ends (clause C-55) is
+ * answered 504 not-sent, and the next request opens afresh rather than joining it.
  *
  * Unlike tests/api/db/query.test.ts, this file does not mock `@/lib/db`: the route, the factory, its open table and the
  * PostgreSQL provider are the real ones, and only the session is mocked, to answer as an admin. The connection is an
@@ -17,6 +18,7 @@ import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { logger } from "@/lib/logger";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+import type { DatabaseType } from "@/lib/types";
 import { parseResponseJSON } from "../../helpers/mock-next";
 
 const realAuth = await import("@/lib/auth");
@@ -27,6 +29,19 @@ mock.module("@/lib/auth", () => ({
     kind: "authenticated",
     session: { role: "admin", username: "admin" },
   })),
+}));
+
+/**
+ * The real connect budget table, with `connectBudgetFor` answering `budgetOverride` while a case sets one, so the case
+ * that needs an open's deadline to pass sets it to a few tens of milliseconds for itself.
+ */
+const realConnectBudget = await import("@/lib/db/connect-budget");
+const realConnectBudgetFor = realConnectBudget.connectBudgetFor;
+let budgetOverride: number | undefined;
+mock.module("@/lib/db/connect-budget", () => ({
+  CONNECT_BUDGET: realConnectBudget.CONNECT_BUDGET,
+  openDeadlineSentence: realConnectBudget.openDeadlineSentence,
+  connectBudgetFor: (type: DatabaseType) => budgetOverride ?? realConnectBudgetFor(type),
 }));
 
 const { POST } = await import("@/app/api/db/query/route");
@@ -47,6 +62,7 @@ beforeAll(async () => {
 });
 
 afterEach(async () => {
+  budgetOverride = undefined;
   for (const socket of accepted.splice(0)) socket.destroy();
   await clearProviderCache();
 });
@@ -113,6 +129,61 @@ describe("the query route's open wait, with the real factory", () => {
       ]);
       expect(JSON.stringify(warn.mock.calls)).not.toContain(connection.password);
       expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a connection whose open never settles is opened afresh by the next request after its connect budget", async () => {
+    clearRateLimitState();
+    const address = listener.address();
+    if (address === null || typeof address === "string") throw new Error("The listener has no TCP address.");
+    // Trino bounds nothing of its own on a server that accepts and never answers, so only the open's deadline ends it.
+    const connection = {
+      id: randomUUID(),
+      name: "never answers",
+      type: "trino",
+      host: "127.0.0.1",
+      port: address.port,
+      database: "studio",
+    };
+    budgetOverride = 40;
+    // Each open dials on its own schedule, which may be after its request was answered: the case waits for two dials.
+    const twoDials = new Promise<void>((resolve) => {
+      dialed = () => {
+        if (accepted.length === 2) resolve();
+      };
+    });
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const ask = async () => {
+        const response = await POST(
+          new Request("http://localhost:3000/api/db/query", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ connection, sql: "SELECT 1", queryId: randomUUID() }),
+          }) as never,
+        );
+        return { status: response.status, body: await parseResponseJSON<Record<string, unknown>>(response) };
+      };
+
+      const first = await ask();
+      // The request's own wait starts before the open's and ends a few milliseconds earlier, so a request sent at once
+      // could still join the first open. That open started before the first answer, so its deadline passed at most
+      // one budget after it: the second request is sent after twice that, with a plain await.
+      await new Promise<void>((resolve) => setTimeout(resolve, 80));
+      const second = await ask();
+
+      for (const answer of [first, second]) {
+        expect(answer.status).toBe(504);
+        expect(answer.body).toMatchObject({
+          code: "TIMEOUT_ERROR",
+          kind: "studio-timeout-refusal",
+          outcome: "not-sent",
+        });
+      }
+      await twoDials;
+      expect(accepted).toHaveLength(2);
     } finally {
       warn.mockRestore();
     }

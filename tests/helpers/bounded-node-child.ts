@@ -17,10 +17,20 @@
  *
  * The case function runs from its text, so it names nothing outside itself and reaches its imports only through the
  * `deps` record the child builds. It covers nothing in the test process, by design.
+ *
+ * A module whose real import cannot load under Node (one that reaches a native addon, as the provider factory reaches
+ * ssh2's) is stubbed: each entry of `stubs` is written into the child's temporary directory, and a Bun.build plugin
+ * resolves exactly its specifier to that file, so the child bundles the module under test with the stub in its place.
  */
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+
+/** A module the child's bundle takes in place of the real one: every import of exactly `specifier` reads `source`. */
+export interface ChildStub {
+  readonly specifier: string;
+  readonly source: string;
+}
 
 /** One module the child imports, by absolute path, and the named exports it binds. */
 export interface ChildImport {
@@ -40,6 +50,8 @@ export interface ChildSpec {
   readonly heapLimitMiB: number;
   /** How long the child may run before the spawn kills it. */
   readonly timeoutMs: number;
+  /** The modules the bundle takes in place of the real ones, by exact specifier; none when left out. */
+  readonly stubs?: readonly ChildStub[];
 }
 
 export interface BoundedChild {
@@ -76,11 +88,27 @@ export function boundedChild(spec: ChildSpec): BoundedChild {
           "",
         ].join("\n"),
       );
+      const stubs = (spec.stubs ?? []).map((stub, index) => {
+        const file = path.join(dir, `stub-${index}.ts`);
+        writeFileSync(file, stub.source);
+        return { specifier: stub.specifier, file };
+      });
       const build = await Bun.build({
         entrypoints: [path.join(dir, "child.ts")],
         target: "node",
         format: "esm",
         outdir: dir,
+        plugins: [
+          {
+            name: "bounded-child-stubs",
+            setup(builder) {
+              for (const stub of stubs) {
+                const exactly = new RegExp(`^${stub.specifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
+                builder.onResolve({ filter: exactly }, () => ({ path: stub.file }));
+              }
+            },
+          },
+        ],
       });
       if (!build.success) throw new Error(`Bun.build could not bundle the child: ${build.logs.join("\n")}`);
     },

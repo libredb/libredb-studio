@@ -22,7 +22,6 @@ import {
   scrubObjectDetail,
   withheldProviderError,
 } from "@/lib/db/operations/provider-text";
-import { ConnectionError, waitedSeconds } from "@/lib/db/errors";
 import { executionUiFor } from "@/lib/db/execution-ui";
 import type { clearProviderCache, enabledProviderTypes, getOrCreateProvider } from "@/lib/db/factory";
 import { findKind, kindHasColumns } from "@/lib/db/object-kinds";
@@ -79,15 +78,6 @@ export const TEST_ROUTE = "vscode/connection/test";
 export const RUN_ROUTE = "vscode/query/run";
 /** The label a failure after a cancel stopped waiting is logged under. */
 const CANCEL_ROUTE = "vscode/query/cancel";
-
-/**
- * How long connection/test waits for the test connection core: the 10 s queryTimeout the core gives the provider, plus
- * a second, so a provider that honours that deadline answers in its own words.
- * PostgreSQL's and SQL Server's connect waits for its pool's 60 s acquireTimeout instead (60,242 ms measured against a
- * listener that never answers, where MySQL and MongoDB answered at 10.2 s), and the provider layer is not this
- * channel's to change (D276).
- */
-export const TEST_DEADLINE_MS = 11_000;
 
 /** The user the run gate's advisory warning names for this child: it serves one VS Code window and has no login. */
 export const RUN_CONFIRMATION_USER = "vscode-extension";
@@ -275,8 +265,9 @@ export function createHandlers(
   // As handleObjectRequest (src/lib/api/object-route.ts) resolves it: the cached provider, or a new one opened from
   // the record after the idle sweep closed the old one. Engine-shape checks of a path stay with the provider.
   const providerOf = (record: OpenRecord) => factory.getOrCreateProvider(record.connection, {}, record.posture);
-  // The same provider, waited for only within an editor call's open wait (`openWithinCall`), as the query and cancel
-  // routes wait for theirs: the call stops waiting when the wait ends, and the open goes on for the next call.
+  // The same provider, waited for only within an editor call's open wait, its engine's connect budget
+  // (`openWithinCall`), as the query and cancel routes wait for theirs: the call stops waiting when the wait ends, and
+  // the open goes on for the next call.
   const providerWithin = (record: OpenRecord, wait: OpenWait) =>
     factory.getOrCreateProvider(record.connection, {}, record.posture, wait);
 
@@ -329,31 +320,13 @@ export function createHandlers(
       };
     },
 
-    // At the deadline the signal the core was handed aborts: the core closes a one-shot tunnel at once and the provider
-    // it built once the driver's connect settles, and the answer waits for neither. The race stays, since the core
-    // cannot stop a tunnel that is still opening.
+    // The core bounds the whole test by its own deadline, the engine's connect budget (docs/providers/CONTRACT.md,
+    // clause C-56): at it the core answers a ConnectionError naming the budget, closes a one-shot tunnel at once and
+    // the provider it built once the driver's connect settles.
     async testConnection(params) {
       const { connection, posture } = readConnectionParams(params);
       checkEnabledLocalFile(connection, posture);
-      const stop = new AbortController();
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const deadline = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
-          const late = new ConnectionError(
-            `The connection test got no answer within ${waitedSeconds(TEST_DEADLINE_MS)}: check the address, the port, the network path and that the server is running.`,
-            connection.type,
-          );
-          stop.abort(late);
-          reject(late);
-        }, TEST_DEADLINE_MS);
-      });
-      try {
-        return await answeringFor(connection, () =>
-          Promise.race([factory.testConnection(connection, posture, TEST_ROUTE, stop.signal), deadline]),
-        );
-      } finally {
-        clearTimeout(timer);
-      }
+      return await answeringFor(connection, () => factory.testConnection(connection, posture, TEST_ROUTE));
     },
 
     async openConnection(params) {
@@ -476,7 +449,7 @@ export function createHandlers(
       try {
         return await answeringFor(record.connection, async () => {
           const provider = await scopeToCatalog(
-            await openWithinCall(controller.signal, (wait) => providerWithin(record, wait)),
+            await openWithinCall(controller.signal, record.connection.type, (wait) => providerWithin(record, wait)),
             catalog,
           );
           const { body, resultSetCount } = await runEditorQuery(provider, {
@@ -510,7 +483,9 @@ export function createHandlers(
       if (token.isCancellationRequested) controller.abort();
       try {
         return await answeringFor(record.connection, async () => {
-          const provider = await openWithinCall(controller.signal, (wait) => providerWithin(record, wait));
+          const provider = await openWithinCall(controller.signal, record.connection.type, (wait) =>
+            providerWithin(record, wait),
+          );
           // Through the provider host core's cancel call, bounded by its cleanup deadline and the request's signal.
           const answer = await cancelEditorRun(provider, queryId, controller.signal, CANCEL_ROUTE);
           if (!answer.offered) {

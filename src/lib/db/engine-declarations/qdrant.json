@@ -83,7 +83,8 @@
     "fieldRules": [],
     "hostHint": null,
     "hostIdentity": null,
-    "import": null
+    "import": null,
+    "connectBudgetMs": null
   },
   "facets": {
     "monitoring": {

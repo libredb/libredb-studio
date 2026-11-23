@@ -11,7 +11,7 @@ The SDK package `@libredb/provider-sdk`, under [`packages/provider-sdk`](../../p
 - `compileManifestValidator`, `refusalSentence` and the refusal types, exported from `@libredb/provider-sdk/manifest`.
 - [`codec.ts`](../../packages/provider-sdk/src/values/codec.ts), the value codec, exported from `@libredb/provider-sdk/values`.
 - [`errors/index.ts`](../../packages/provider-sdk/src/errors/index.ts), the error record's shape and vocabularies, the kinds a provider may raise and the driver error row contract, exported from `@libredb/provider-sdk/errors`.
-- [`calls/index.ts`](../../packages/provider-sdk/src/calls/index.ts), the call and context types, `defineProvider`, `checkProviderModule` and `envReader`, the host's checks of a call, `checkExecuteRequest`, `checkConsoleFacet`, `checkRefinement` and `sessionCalls`, `freezeContext` and `freezeData`, the byte budgets `BATCH_MAX_BYTES` and `PAGE_MAX_BYTES` with `encodedRowBytes`, `rowsSource` and `pumpPage`, and a call's deadline, `deadlineSignal`, `checkCallStart` and `awaitWithin`, exported from `@libredb/provider-sdk/calls`.
+- [`calls/index.ts`](../../packages/provider-sdk/src/calls/index.ts), the call and context types, `defineProvider`, `checkProviderModule` and `envReader`, the host's checks of a call, `checkExecuteRequest`, `checkConsoleFacet`, `checkRefinement` and `sessionCalls`, `freezeContext` and `freezeData`, the byte budgets `BATCH_MAX_BYTES` and `PAGE_MAX_BYTES` with `encodedRowBytes`, `rowsSource` and `pumpPage`, and a call's deadline, `deadlineSignal`, `checkCallStart` and `awaitWithin`, and the host's default connect budget, `DEFAULT_CONNECT_BUDGET_MS`, exported from `@libredb/provider-sdk/calls`.
 - `SqlGrammar` and its member types, the compatibility default `DEFAULT_SQL_GRAMMAR`, and `hashRunIsAmbiguous`, exported from `@libredb/provider-sdk/sql`.
 - [`testing/index.ts`](../../packages/provider-sdk/src/testing/index.ts), `serve`, `readFrame`, `roundTripRefusals` and the frame refusals, exported from `@libredb/provider-sdk/testing` only.
 
@@ -635,6 +635,28 @@ The editor opens the engine's tabs under the dialect's name, so a manifest state
 - test `tests/unit/db/kubernetes/history-mask.test.ts` "the dialect declares exactly the console's credential flags"
 - test `tests/unit/editor/tab-language-registry.test.ts` "resolveTabType answers the registry record's tabType before reading the language"
 - test `tests/unit/db/dialect-gates-registry.test.ts` "a record that offers profiling, code generation and a count is offered all three"
+
+### M-51 (normative): The connect budget
+
+An engine states, in `connection.connectBudgetMs`, how long the host waits for an open of the engine and for its Test connection, in milliseconds from the open's start.
+The budget is a whole number from 30,000 to 300,000, or null where the engine takes the host's default, `DEFAULT_CONNECT_BUDGET_MS`, 70,000, which `@libredb/provider-sdk/calls` exports.
+The minimum is an SSH tunnel's 20 s handshake bound plus 10 s for the connect, so no budget ends an open before a legitimate tunnel could open; the maximum bounds the longest any caller waits for an open to five minutes.
+An engine states a budget of its own when its own connect bound at Studio's default statement timeout, plus 10 s for its answer to arrive, is longer than the default, so a provider that bounds its connect answers in its own words before the host does.
+Studio declares each engine's budget in one central table, `CONNECT_BUDGET` in `src/lib/db/connect-budget.ts`, which the generator writes into each declaration and the census reads back.
+
+- schema `/$defs/connectBudget`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a connect budget of null or within 30,000 to 300,000 ms is admitted"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a connect budget below 30,000 ms or above 300,000 ms is refused as out-of-range at the connection's connectBudgetMs"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a connect budget that is not a whole number is refused as wrong-type"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a connection without connectBudgetMs is refused as missing-key"
+- test `packages/provider-sdk/tests/calls/deadline.test.ts` "the host's default connect budget is 70 s, inside the bounds the schema gives a declared one"
+- test `tests/unit/db/engine-declarations.test.ts` "connection.connectBudgetMs is the engine's CONNECT_BUDGET row"
+- test `tests/unit/db/engine-declarations.test.ts` "connectBudgetFor answers, for every engine, the budget its declaration states, or the host's default where it states null"
+- test `tests/unit/db/connect-budget.test.ts` "the host's default is the pools' 60 s acquire bound plus 10 s"
+- test `tests/unit/db/connect-budget.test.ts` "only BigQuery and Snowflake declare a connect budget of their own"
+- test `tests/unit/db/connect-budget.test.ts` "the document of each engine that declares a connect budget states it in seconds, and no other provider document states one"
+- test `tests/unit/db/bigquery/connect-budget.test.ts` "BigQuery's connect budget covers its connect's dataset list and probe job at the default statement timeout, plus 10 s"
+- test `tests/unit/db/snowflake/connect-budget.test.ts` "Snowflake's connect budget covers its connect's two Studio statements at their deadline, plus 10 s"
 
 ## Values
 
@@ -1493,6 +1515,7 @@ Once the host sent the run's cancel, the caller's late handler reads a cancellat
 ### C-29 (informative): What a provider does with the deadline and the signal
 
 A provider derives every driver timeout from `ctx.deadline`, for checkout, connect and execute alike, starts no work on a signal already aborted, and ends its waits when the signal aborts.
+A provider derives its connect's timeouts from the open's deadline, its engine's connect budget, C-55; the bridged providers do not yet, and bound their connect by their own constants and the connection's statement timeout.
 It answers `cancelled: false` for a run it does not know.
 A result source's pulls honour the context of the execute call that answered it.
 A close, and the cancel a stopped wait sends, are called with a context of the host's own, `cleanupContext`, never one that already aborted, C-47.
@@ -1637,7 +1660,7 @@ An open a removal or a close of the caches overtook closes what it opened exactl
 A close of the caches overtakes every open that settles while it runs, one that started after it began included, so it leaves no provider admitted and drops none without a close.
 An open that fails with no caller left is handled by the host, never left as a detached rejection: it is logged by its connection, the error's kind and its code, never its text.
 A caller passes its own wait as the fourth argument of `getOrCreateProvider`.
-The editor's query and its cancel, in the routes and in the VS Code backend, wait for their provider's open at most `OPEN_WAIT_MS`, the pools' 60 s connect bound plus 10 s, or until their caller leaves, whichever comes first.
+The editor's query and its cancel, in the routes and in the VS Code backend, wait for their provider's open at most their engine's connect budget, M-51, or until their caller leaves, whichever comes first.
 
 - test `tests/unit/lib/provider-host/core/open-once.test.ts` "concurrent callers of one key share one open"
 - test `tests/unit/lib/provider-host/core/open-once.test.ts` "a failed open reaches every caller and frees its key"
@@ -1789,10 +1812,10 @@ A refused offset and refused params of a session that refuses a field arrive wit
 - test `tests/unit/lib/provider-host/access.test.ts` "a row no page can hold is answered as StudioByteBudgetRefusal, outcome unknown"
 - test `tests/unit/lib/provider-host/access.test.ts` "any other refusal is a host defect named by its rule"
 - test `tests/unit/lib/provider-host/access.test.ts` "every class the accessor builds is the calling bundle's own"
-- test `tests/unit/lib/api/editor-query.test.ts` "the open allowance is the pools' acquire bound plus ten seconds"
+- test `tests/unit/lib/api/editor-query.test.ts` "the open allowance is the engine's connect budget"
 - test `tests/unit/lib/api/editor-query.test.ts` "an open is handed the call's own wait, which the caller's leaving or the allowance ends"
 - test `tests/unit/lib/api/editor-query.test.ts` "an open the caller left answers QueryCancelledError, not-sent"
-- test `tests/unit/lib/api/editor-query.test.ts` "an open past its allowance answers StudioTimeoutRefusal naming the open, not-sent"
+- test `tests/unit/lib/api/editor-query.test.ts` "an open past its allowance answers StudioTimeoutRefusal naming the engine's budget, not-sent"
 - test `tests/unit/lib/api/editor-query.test.ts` "an open's own failure passes as the same object"
 - test `tests/api/db/query.test.ts` "a request that leaves while its connection opens answers 499 not-sent and runs nothing"
 
@@ -1868,6 +1891,52 @@ The run's cancel is sent as for any stop, C-48, and the page's first batch is cl
 - test `tests/unit/lib/provider-host/core/page-budget-bounds.test.ts` "a large page waiting behind a slot that is never released is stopped at its call's deadline"
 - test `tests/unit/lib/api/editor-query.test.ts` "a large page that waits for the slot past its deadline answers StudioTimeoutRefusal naming that wait, outcome unknown"
 
+### C-55 (normative): An open ends at its engine's connect budget
+
+Each open has a deadline, its engine's connect budget from the open's start, M-51, which the host core reads once when the open starts.
+At that deadline the open is over: every caller still waiting for it, one without a wait of its own included, is answered that the connection did not open within the budget, as Studio's timeout refusal with outcome not-sent.
+The open leaves the open table at its deadline, so the next caller of its key starts a new open instead of joining one that may never settle.
+The open itself goes on until its connect settles, then closes what it opened exactly once and admits nothing, and a failure it settles with is logged as C-44 states.
+A late settle of an expired open never removes the open that replaced it.
+Until it settles, an expired open stays where a cache close still finds it but no caller can join it, so a cache close waits for it as for any open in flight, C-44, and names it when it is still connecting at the close deadline.
+A deadline is the host's, not a removal's: a removal keeps an overtaken open in the table so a caller arriving meanwhile joins it, C-44.
+A provider that bounds nothing of its own on a server that accepts and never answers keeps its socket until its connect settles, since the host closes what an open opened only once it settles.
+
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "an open still pending at its deadline fails every waiting caller with the owner's expired error, and leaves the table"
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "the next caller after an open's deadline starts a new open"
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "a late settle of an expired open leaves the open that replaced it in the table"
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "a late failure of an expired open reaches the unclaimed hook once, never as a detached rejection"
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "an open that settled before its deadline is not expired by it afterwards"
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "a deadline already passed when the open starts expires it at once"
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "a discard still reaches an open its deadline ended while that open is pending, and no longer once it settled"
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "a discard reaches an expired open beside the open that replaced it under its key"
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "the deadline signal is read once per open, with its meta"
+- test `tests/unit/lib/provider-host/core/open-once-bounds.test.ts` "an open that never settles is ended by its own deadline"
+- test `tests/isolated/factory.test.ts` "an open still connecting at its engine's connect budget answers StudioTimeoutRefusal not-sent to every caller, one without a wait included"
+- test `tests/isolated/factory.test.ts` "the next call after an open's deadline builds and connects a new provider"
+- test `tests/isolated/factory.test.ts` "a provider whose connect settles after its open's deadline is closed once and never cached"
+- test `tests/isolated/factory.test.ts` "an execution-profile open ends at the same budget"
+- test `tests/isolated/factory.test.ts` "a cache clear names an open its deadline ended that is still connecting at the cut"
+- test `tests/api/db/query-open-wait.test.ts` "a connection whose open never settles is opened afresh by the next request after its connect budget"
+
+### C-56 (normative): Test connection answers within its engine's connect budget
+
+A Test connection has one deadline, its engine's connect budget from the test's start, M-51, over the whole test: the tunnel's open, the provider's build, its connect, the checks a provider runs only for a test and the health read.
+At that deadline the test answers a connection error naming the budget, never a caution or a degraded success.
+A one-shot tunnel closes at once, a provider already connected is closed at once, and a provider still connecting is closed once its connect settles, since no provider promises a disconnect during its connect.
+The same deadline holds on the Test connection route and in the VS Code backend's `connection/test`, which keeps no deadline of its own.
+
+- test `tests/unit/lib/api/test-connection.test.ts` "a connect still pending at the engine's connect budget rejects with the test's ConnectionError, and its provider is closed once the connect settles"
+- test `tests/unit/lib/api/test-connection.test.ts` "a connect that fails after the deadline gets its provider closed too, and its failure goes nowhere"
+- test `tests/unit/lib/api/test-connection.test.ts` "a deadline that passed while the tunnel opened builds nothing"
+- test `tests/unit/lib/api/test-connection.test.ts` "a deadline that passed while the provider was built starts no connect, and closes what was built"
+- test `tests/unit/lib/api/test-connection.test.ts` "checks or a health read still pending at the deadline answer the test's ConnectionError, never a caution or a degraded success"
+- test `tests/unit/lib/api/test-connection.test.ts` "the deadline names the engine's own budget"
+- test `tests/unit/lib/api/test-connection-bounds.test.ts` "a connect that never settles is cut at the test's deadline"
+- test `tests/api/db/test-connection.test.ts` "a test with no answer within the engine's connect budget answers 503 CONNECTION_ERROR with the test's sentence, and closes its provider once the connect settles"
+- test `vscode-extension/test/unit/backend-handlers.test.ts` "hands the core the connection, posture and route only, so the core's deadline bounds the test"
+- test `vscode-extension/test/unit/backend-handlers.test.ts` "answers the core's deadline error as CONNECTION_ERROR with its sentence, its own status and code"
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:
@@ -1903,6 +1972,7 @@ Against the manifest sketch the design started from:
 - An engine's own id is always one of its fence tags, so a manifest lists only its other tags, and the tags of a language several engines speak are the contract's, M-46.
 - The explain format a manifest states is the one before a connection is measured, M-48.
 - A dialect's tabs are named by the dialect, so a manifest states the name once, M-50.
+- An engine's connect budget is a number of milliseconds or null for the host's default, declared in one central table rather than beside each provider, M-51.
 - An engine's SQL grammar row is one segment, `sqlText`, S-3.
 - A fact the SDK's grammar type may leave out is written at the reading its absence has, and three facts are null where a reading of their own applies, S-4.
 - A trailing limit clause is a pattern's source and flags, S-5.

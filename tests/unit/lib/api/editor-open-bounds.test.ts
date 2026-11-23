@@ -11,14 +11,15 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import path from "node:path";
-import type { OPEN_WAIT_MS, openWithinCall } from "@/lib/api/editor-query";
+import type { openWithinCall } from "@/lib/api/editor-query";
+import type { connectBudgetFor } from "@/lib/db/connect-budget";
 import type { errorKind, errorOutcome } from "@/lib/db/error-record";
 import type { StudioTimeoutRefusal } from "@/lib/db/errors";
 import type { createOpenFlights, openOnce } from "@/lib/provider-host/core/open-once";
 import { boundedChild } from "../../../helpers/bounded-node-child";
 
 interface ChildDeps {
-  readonly OPEN_WAIT_MS: typeof OPEN_WAIT_MS;
+  readonly connectBudgetFor: typeof connectBudgetFor;
   readonly openWithinCall: typeof openWithinCall;
   readonly createOpenFlights: typeof createOpenFlights;
   readonly openOnce: typeof openOnce;
@@ -32,7 +33,8 @@ const SOURCE = path.join(import.meta.dir, "..", "..", "..", "..", "src");
 const child = boundedChild({
   label: "editor-open-bounds",
   imports: [
-    { from: path.join(SOURCE, "lib", "api", "editor-query.ts"), names: ["OPEN_WAIT_MS", "openWithinCall"] },
+    { from: path.join(SOURCE, "lib", "api", "editor-query.ts"), names: ["openWithinCall"] },
+    { from: path.join(SOURCE, "lib", "db", "connect-budget.ts"), names: ["connectBudgetFor"] },
     {
       from: path.join(SOURCE, "lib", "provider-host", "core", "open-once.ts"),
       names: ["createOpenFlights", "openOnce"],
@@ -45,9 +47,10 @@ const child = boundedChild({
     try {
       await deps.openWithinCall(
         new AbortController().signal,
+        "postgres",
         (wait) => deps.openOnce(flights, "key", {}, () => new Promise<object>(() => {}), wait),
-        // The allowance ends 50 ms from now.
-        Date.now() - deps.OPEN_WAIT_MS + 50,
+        // The allowance, the engine's connect budget, ends 50 ms from now.
+        Date.now() - deps.connectBudgetFor("postgres") + 50,
       );
       return "answered";
     } catch (error) {

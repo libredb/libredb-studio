@@ -18,6 +18,19 @@
  * opened, admits nothing and fails its callers. A discarded open stays in the table until it settles, so a caller
  * arriving meanwhile joins it and gets its answer rather than opening a second time beside it.
  *
+ * A table may be created with a deadline, its owner's (docs/providers/CONTRACT.md, clause C-55): when a flight starts,
+ * the table reads `deadline.signal(meta)` once, and when that signal aborts before the open settled, the open is over.
+ * Every caller still waiting rejects with `deadline.expired(flight)`, by reference; the flight leaves the table, so the
+ * next caller of its key starts a new open; and the flight's own signal aborts with the same error, so the open, once
+ * it settles, closes what it opened and admits nothing, and a failure it settles with goes to `unclaimed`. Unlike a
+ * discard, which keeps the open in the table, a deadline is the owner's statement that the open will not be waited for
+ * any more. A flight leaves the table only as its own entry, so a late settle of an expired open never removes the open
+ * that replaced it. Until it settles, an expired open is kept in the table's `expired` set, where no caller can join
+ * it but a discard still answers it, so an owner that closes everything still waits for an open its deadline ended
+ * and can name it when it is still connecting. A deadline already passed when a flight would start expires it at once, and `start` is not run.
+ * Core keeps no timer: the owner's signal carries the time. A table created without a deadline waits for each open
+ * until it settles.
+ *
  * Core answers plain data and passes errors through by reference; it constructs no class a caller in another bundle
  * would test with `instanceof`. It keeps no module state: each table is created by its owner and handed in
  * (tests/unit/lib/provider-host/core-boundary.test.ts).
@@ -34,17 +47,35 @@ export interface Flight<M> {
 interface FlightEntry<T, M> {
   readonly flight: Flight<M>;
   readonly controller: AbortController;
-  readonly open: Promise<T>;
+  /** What a caller waits on: the open's answer, or the owner's expired error once its deadline aborted first. */
+  readonly answer: Promise<T>;
   /** Resolves once the open settled, either way; never rejects. */
   readonly settled: Promise<void>;
   /** The callers still waiting on this open. */
   waiting: number;
+  /** Whether the open's deadline ended it before it settled. */
+  expired: boolean;
 }
 
-/** The opens in flight of one cache, by key, and where a failure no caller waits for goes. */
+/**
+ * An open table's deadline, its owner's: `signal` answers, from a flight's meta, the signal that aborts when that open
+ * is over, read once when the flight starts; `expired` answers the error every caller still waiting then rejects with.
+ */
+export interface OpenDeadline<M> {
+  readonly signal: (meta: M) => AbortSignal;
+  readonly expired: (flight: Flight<M>) => unknown;
+}
+
+/**
+ * The opens in flight of one cache, by key, the opens their deadline ended that are still pending, where a failure no
+ * caller waits for goes, and the opens' deadline.
+ */
 export interface OpenFlights<T, M> {
   readonly entries: Map<string, FlightEntry<T, M>>;
+  /** Opens whose deadline ended them before they settled: no caller joins one, a discard still answers it. */
+  readonly expired: Set<FlightEntry<T, M>>;
   readonly unclaimed: (error: unknown, flight: Flight<M>) => void;
+  readonly deadline: OpenDeadline<M> | undefined;
 }
 
 /** A caller's own wait: it ends when `signal` aborts. */
@@ -58,9 +89,15 @@ export interface DiscardedFlight<M> {
   readonly settled: Promise<void>;
 }
 
-/** A new, empty open table whose failures with no caller left go to `unclaimed`. */
-export function createOpenFlights<T, M>(unclaimed: (error: unknown, flight: Flight<M>) => void): OpenFlights<T, M> {
-  return { entries: new Map(), unclaimed };
+/**
+ * A new, empty open table whose failures with no caller left go to `unclaimed`, and whose opens end at `deadline` when
+ * one is given.
+ */
+export function createOpenFlights<T, M>(
+  unclaimed: (error: unknown, flight: Flight<M>) => void,
+  deadline?: OpenDeadline<M>,
+): OpenFlights<T, M> {
+  return { entries: new Map(), expired: new Set(), unclaimed, deadline };
 }
 
 /** Runs `start`, with a throw before it answers a promise read as its rejection. */
@@ -70,28 +107,80 @@ function startOpen<T, M>(start: (flight: Flight<M>) => Promise<T>, flight: Fligh
   });
 }
 
-/** Starts an open under `key` and records it in `flights` until it settles. */
+/**
+ * What a caller of `entry` waits on: the open itself, or, with a deadline, the open until `deadlineSignal` aborts,
+ * when `expire` ends the entry and answers the error the wait rejects with.
+ */
+function answerWithin<T>(open: Promise<T>, deadlineSignal: AbortSignal, expire: () => unknown): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const stop = (): void => {
+      reject(expire());
+    };
+    deadlineSignal.addEventListener("abort", stop, { once: true });
+    open.then(
+      (value) => {
+        deadlineSignal.removeEventListener("abort", stop);
+        resolve(value);
+      },
+      (error: unknown) => {
+        deadlineSignal.removeEventListener("abort", stop);
+        reject(error);
+      },
+    );
+  });
+}
+
+/**
+ * Starts an open under `key` and records it in `flights` until it settles or its deadline ends it, or, when the
+ * deadline has already passed, answers the owner's expired error without starting it.
+ */
 function startFlight<T, M>(
   flights: OpenFlights<T, M>,
   key: string,
   meta: M,
   start: (flight: Flight<M>) => Promise<T>,
-): FlightEntry<T, M> {
+): FlightEntry<T, M> | { readonly passed: unknown } {
   const controller = new AbortController();
   const flight: Flight<M> = { key, meta, signal: controller.signal };
+  const deadlineSignal = flights.deadline?.signal(meta);
+  if (deadlineSignal?.aborted === true) {
+    const error = (flights.deadline as OpenDeadline<M>).expired(flight);
+    controller.abort(error);
+    return { passed: error };
+  }
   const open = startOpen(start, flight);
   const settled = open.then(
     () => {
-      flights.entries.delete(key);
+      leave();
     },
     (error: unknown) => {
-      flights.entries.delete(key);
+      leave();
       // Attached when the open starts, so it runs before any caller's own handler: `waiting` still counts every caller
-      // the failure reaches, and none is left exactly when the callers that were waiting all stopped.
-      if (entry.waiting === 0) flights.unclaimed(error, flight);
+      // the failure reaches, and none is left exactly when the callers that were waiting all stopped. Once the
+      // deadline ended the open, every caller was answered its expired error, so the failure reaches none of them.
+      if (entry.expired || entry.waiting === 0) flights.unclaimed(error, flight);
     },
   );
-  const entry: FlightEntry<T, M> = { flight, controller, open, settled, waiting: 0 };
+  const answer =
+    deadlineSignal === undefined
+      ? open
+      : answerWithin(open, deadlineSignal, () => {
+          entry.expired = true;
+          leave();
+          flights.expired.add(entry);
+          const error = (flights.deadline as OpenDeadline<M>).expired(flight);
+          controller.abort(error);
+          return error;
+        });
+  const entry: FlightEntry<T, M> = { flight, controller, answer, settled, waiting: 0, expired: false };
+  /**
+   * Removes this entry from the table, and never an entry that replaced it under the same key, and from the expired
+   * set, where only a settle finds it.
+   */
+  function leave(): void {
+    if (flights.entries.get(key) === entry) flights.entries.delete(key);
+    flights.expired.delete(entry);
+  }
   flights.entries.set(key, entry);
   return entry;
 }
@@ -110,10 +199,11 @@ export function openOnce<T, M>(
 ): Promise<T> {
   if (wait?.signal.aborted === true) return Promise.reject(wait.signal.reason);
   const entry = flights.entries.get(key) ?? startFlight(flights, key, meta, start);
+  if ("passed" in entry) return Promise.reject(entry.passed);
   entry.waiting += 1;
   // The table's own handler, attached when the open started, owns what a caller stopped waiting for: the open admits
   // its own result, and a failure with no caller left goes to `unclaimed`. So the late handler has nothing to do.
-  const answer = wait === undefined ? entry.open : awaitWithin(entry.open, wait.signal, () => {});
+  const answer = wait === undefined ? entry.answer : awaitWithin(entry.answer, wait.signal, () => {});
   return answer.finally(() => {
     entry.waiting -= 1;
   });
@@ -121,14 +211,15 @@ export function openOnce<T, M>(
 
 /**
  * Aborts the signal of every open in flight `matches` accepts, with `reason`, and answers those flights. Each stays in
- * the table until its open settles.
+ * the table until its open settles. An open its deadline ended that is still pending is answered too; its signal
+ * already aborted with the expired error, so it keeps that reason.
  */
 export function discardFlights<T, M>(
   flights: OpenFlights<T, M>,
   matches: (flight: Flight<M>) => boolean,
   reason: unknown,
 ): DiscardedFlight<M>[] {
-  return Array.from(flights.entries.values())
+  return [...flights.entries.values(), ...flights.expired]
     .filter((entry) => matches(entry.flight))
     .map((entry) => {
       entry.controller.abort(reason);

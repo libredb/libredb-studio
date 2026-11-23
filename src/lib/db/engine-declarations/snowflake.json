@@ -236,7 +236,8 @@
     ],
     "hostHint": "hostHint",
     "hostIdentity": "hostIdentity",
-    "import": null
+    "import": null,
+    "connectBudgetMs": 80000
   },
   "facets": {
     "monitoring": {

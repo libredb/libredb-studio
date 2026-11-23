@@ -59,7 +59,7 @@ import {
   createBigQueryTransport,
 } from "./transport";
 
-const CLIENT_GRACE_MS = 5_000;
+export const CLIENT_GRACE_MS = 5_000;
 const CATALOG_TIMEOUT_MS = 30_000;
 // The inventory lists each dataset once per kind and again per bulk read; one REST listing serves them all.
 const TABLE_LIST_TTL_MS = 30_000;

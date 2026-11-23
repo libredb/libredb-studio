@@ -104,6 +104,11 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     destination: "engine declaration: connection.agentCredential",
   },
   {
+    module: "src/lib/db/connect-budget.ts",
+    name: "CONNECT_BUDGET",
+    destination: "engine declaration: connection.connectBudgetMs",
+  },
+  {
     module: "src/lib/db/connection-form.ts",
     name: "CONNECTION_FORM",
     destination:

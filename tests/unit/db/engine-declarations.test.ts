@@ -11,6 +11,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { DEFAULT_CONNECT_BUDGET_MS } from "@libredb/provider-sdk/calls";
 import {
   type AgentCredentialForm,
   type BlockCommentRule,
@@ -119,6 +120,7 @@ import { CREDENTIAL_WARNINGS, type CredentialWarning } from "@/lib/db/credential
 import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import { MIGRATION_DDL } from "@/lib/db/migration-ddl";
 import type { CreateTableDdl, MigrationDdlSpec, TableDdlRefused, TableDdlWritten } from "@/lib/db/migration-ddl/types";
+import { CONNECT_BUDGET, connectBudgetFor } from "@/lib/db/connect-budget";
 import { EXECUTION_UI, executionUiFor } from "@/lib/db/execution-ui";
 import type { ConsentDeadline, ExecutionUiSpec } from "@/lib/db/execution-ui/types";
 import { createDatabaseProvider } from "@/lib/db/factory";
@@ -1316,6 +1318,18 @@ describe("the census", () => {
     expect(differing((type, d) => d.connection.opensLocalFile === OPENS_LOCAL_FILE[type])).toEqual([]);
     expect(
       differing((type, d) => d.connection.serverLevelWithoutDatabase === OPENS_SERVER_LEVEL_WITHOUT_DATABASE[type]),
+    ).toEqual([]);
+  });
+
+  test("connection.connectBudgetMs is the engine's CONNECT_BUDGET row", () => {
+    expect(differing((type, d) => d.connection.connectBudgetMs === CONNECT_BUDGET[type])).toEqual([]);
+    // Vacuity: a row states a budget of its own, so the member is not read back as a constant null.
+    expect(SHIPPED_DATABASE_TYPES.some((type) => declared(type).connection.connectBudgetMs !== null)).toBe(true);
+  });
+
+  test("connectBudgetFor answers, for every engine, the budget its declaration states, or the host's default where it states null", () => {
+    expect(
+      differing((type, d) => connectBudgetFor(type) === (d.connection.connectBudgetMs ?? DEFAULT_CONNECT_BUDGET_MS)),
     ).toEqual([]);
   });
 

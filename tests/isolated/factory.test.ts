@@ -64,6 +64,7 @@ import {
   DatabaseConfigError,
   ExecutionProfileError,
   RefusedBeforeSendError,
+  StudioTimeoutRefusal,
   TimeoutError,
   UnknownProviderError,
 } from "@/lib/db/errors";
@@ -436,6 +437,20 @@ mock.module("@/lib/ssh/tunnel", () => ({
   releaseUnopenedTunnel: mockReleaseUnopenedTunnel,
   tunnelProviderOpened: mockTunnelProviderOpened,
   getTunnelInfo: mock(() => undefined),
+}));
+
+/**
+ * The real connect budget table, with `connectBudgetFor` answering `budgetOverride` while a case sets one, so a case
+ * that needs an open's deadline to pass sets it to a few tens of milliseconds for itself and puts it back after; every
+ * other case reads the real budget, which no gated connect here comes near.
+ */
+const realConnectBudget = await import("@/lib/db/connect-budget");
+const realConnectBudgetFor = realConnectBudget.connectBudgetFor;
+let budgetOverride: number | undefined;
+mock.module("@/lib/db/connect-budget", () => ({
+  CONNECT_BUDGET: realConnectBudget.CONNECT_BUDGET,
+  openDeadlineSentence: realConnectBudget.openDeadlineSentence,
+  connectBudgetFor: (type: DatabaseType) => budgetOverride ?? realConnectBudgetFor(type),
 }));
 
 // ============================================================================
@@ -2599,6 +2614,140 @@ describe("a caller's own wait for an open", () => {
   });
 });
 
+// ─── an open's deadline, its engine's connect budget (docs/providers/CONTRACT.md, clause C-55) ──────────────────
+
+describe("an open's deadline, its engine's connect budget", () => {
+  afterEach(() => {
+    budgetOverride = undefined;
+  });
+
+  /** Counts every `disconnect()` of `provider` and resolves `closed` at the first, still running the provider's own. */
+  function watchDisconnects(provider: DatabaseProvider): {
+    readonly count: () => number;
+    readonly closed: Promise<void>;
+  } {
+    let count = 0;
+    let closedOnce: () => void = () => {};
+    const closed = new Promise<void>((resolve) => {
+      closedOnce = resolve;
+    });
+    const original = provider.disconnect.bind(provider);
+    provider.disconnect = async () => {
+      count += 1;
+      await original();
+      closedOnce();
+    };
+    return { count: () => count, closed };
+  }
+
+  const SENTENCE = (seconds: number) =>
+    `The connection did not open within ${seconds} seconds, so Studio stopped waiting for it and sent nothing.`;
+
+  test("an open still connecting at its engine's connect budget answers StudioTimeoutRefusal not-sent to every caller, one without a wait included", async () => {
+    const conn = makeConnection("postgres", { id: "open-deadline-callers" });
+    const gate = await gateConnects(conn);
+    const digests = trackDigests();
+    // Long enough for the joiner's digests to settle and join the open before its deadline.
+    budgetOverride = 500;
+    try {
+      const unbounded = getOrCreateProvider(conn).catch((error: unknown) => error);
+      const joiner = getOrCreateProvider(conn, {}, {}, { signal: new AbortController().signal }).catch(
+        (error: unknown) => error,
+      );
+      await gate.reached(1);
+      await digests.settled();
+      const [first, second] = await Promise.all([unbounded, joiner]);
+
+      expect(first).toBeInstanceOf(StudioTimeoutRefusal);
+      expect(second).toBe(first);
+      expect((first as Error).message).toBe(
+        "The connection did not open within 0.5 seconds, so Studio stopped waiting for it and sent nothing.",
+      );
+      expect(errorKind(first)).toBe("studio-timeout-refusal");
+      expect(errorOutcome(first)).toBe("not-sent");
+      expect(gate.connected).toHaveLength(1);
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      gate.open();
+      gate.restore();
+      digests.restore();
+    }
+  });
+
+  test("the next call after an open's deadline builds and connects a new provider", async () => {
+    const conn = makeConnection("postgres", { id: "open-deadline-next" });
+    const gate = await gateConnects(conn);
+    budgetOverride = 40;
+    try {
+      const expired = await getOrCreateProvider(conn).catch((error: unknown) => error);
+      expect(expired).toBeInstanceOf(StudioTimeoutRefusal);
+      expect(gate.connected).toHaveLength(1);
+
+      budgetOverride = undefined;
+      const next = getOrCreateProvider(conn);
+      await gate.reached(2);
+      expect(gate.connected).toHaveLength(2);
+      expect(gate.connected[1]).not.toBe(gate.connected[0]);
+      gate.open();
+      expect(await next).toBe(gate.connected[1]);
+    } finally {
+      gate.open();
+      gate.restore();
+    }
+  });
+
+  test("a provider whose connect settles after its open's deadline is closed once and never cached", async () => {
+    const conn = makeConnection("postgres", { id: "open-deadline-late" });
+    const gate = await gateConnects(conn);
+    budgetOverride = 40;
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const first = getOrCreateProvider(conn).catch((error: unknown) => error);
+      await gate.reached(1);
+      const late = watchDisconnects(gate.connected[0] as DatabaseProvider);
+      expect(await first).toBeInstanceOf(StudioTimeoutRefusal);
+
+      budgetOverride = undefined;
+      const next = getOrCreateProvider(conn);
+      await gate.reached(2);
+      const replacing = watchDisconnects(gate.connected[1] as DatabaseProvider);
+      gate.open();
+      const provider = await next;
+      await late.closed;
+
+      expect(provider).toBe(gate.connected[1]);
+      expect(late.count()).toBe(1);
+      expect(gate.connected[0]?.isConnected()).toBe(false);
+      expect(replacing.count()).toBe(0);
+      expect(getProviderCacheStats()).toEqual({ size: 1, connections: ["open-deadline-late"] });
+      expect(await getOrCreateProvider(conn)).toBe(provider);
+    } finally {
+      warn.mockRestore();
+      gate.restore();
+    }
+  });
+
+  test("an execution-profile open ends at the same budget", async () => {
+    const conn = makeConnection("postgres", { id: "open-deadline-profiled" });
+    const gate = await gateConnects(conn);
+    budgetOverride = 40;
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const expired = await acquireExecutionProfileProvider(conn, "agent-read-only").catch((error: unknown) => error);
+
+      expect(expired).toBeInstanceOf(StudioTimeoutRefusal);
+      expect((expired as Error).message).toBe(SENTENCE(0.1));
+      expect(errorOutcome(expired)).toBe("not-sent");
+      expect(gate.connected).toHaveLength(1);
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+    } finally {
+      gate.open();
+      warn.mockRestore();
+      gate.restore();
+    }
+  });
+});
+
 // ─── an open a removal or a cache close overtakes (docs/providers/CONTRACT.md, clause C-44) ────────────────────
 
 describe("an open a removal or a cache close overtakes", () => {
@@ -2745,6 +2894,56 @@ describe("an open a removal or a cache close overtakes", () => {
       expect((await opening) as Error).toBeInstanceOf(ConnectionError);
       expect(getProviderCacheStats().size).toBe(0);
     } finally {
+      neverOpens.restore();
+      resetShutdownHooks();
+      warn.mockRestore();
+      error.mockRestore();
+      if (savedVersion !== undefined) process.env.NEXT_PUBLIC_APP_VERSION = savedVersion;
+    }
+  });
+
+  test("a cache clear names an open its deadline ended that is still connecting at the cut", async () => {
+    const hanging = makeConnection("postgres", { id: "expired-still-opening" });
+    const neverOpens = await gateConnects(hanging);
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    const error = spyOn(logger, "error").mockImplementation(() => {});
+    const savedVersion = process.env.NEXT_PUBLIC_APP_VERSION;
+    delete process.env.NEXT_PUBLIC_APP_VERSION;
+    resetShutdownHooks();
+    budgetOverride = 40;
+    try {
+      const expired = await getOrCreateProvider(hanging).catch((failure: unknown) => failure);
+      expect(expired).toBeInstanceOf(StudioTimeoutRefusal);
+      expect(neverOpens.connected).toHaveLength(1);
+      budgetOverride = undefined;
+
+      jest.useFakeTimers();
+      let outcome: unknown;
+      const run = closeProviderCaches().then((result) => {
+        outcome = result;
+      });
+      await settle();
+      // The close waits for the expired open still connecting, as for any open in flight.
+      jest.advanceTimersByTime(9_999);
+      await settle();
+      expect(outcome).toBeUndefined();
+      jest.advanceTimersByTime(1);
+      await run;
+      expect(outcome).toEqual({ cut: 0, failed: 1 });
+      expect(error).toHaveBeenCalledWith(
+        "Provider cache close failed",
+        expect.objectContaining({
+          message: "Providers not closed: expired-still-opening (PostgreSQL provider, bundled with Studio)",
+        }),
+        { route: "shutdown" },
+      );
+      expect(warn.mock.calls.map((call: unknown[]) => String(call[0]))).toContain(
+        "[DB] The open of expired-still-opening was still connecting when the caches closed, after 10000 ms; it closes itself if its connect answers.",
+      );
+    } finally {
+      jest.useRealTimers();
+      budgetOverride = undefined;
+      neverOpens.open();
       neverOpens.restore();
       resetShutdownHooks();
       warn.mockRestore();
@@ -8102,7 +8301,7 @@ describe("a provider receives only its engine's fields on every entry point (FND
   });
 });
 
-const { errorOutcome } = await import("@/lib/db/error-record");
+const { errorKind, errorOutcome } = await import("@/lib/db/error-record");
 
 describe("every refusal raised while a provider is built answers outcome not-sent (FND-2 slice 6c)", () => {
   /** A record whose class makes it something other than plain data. */

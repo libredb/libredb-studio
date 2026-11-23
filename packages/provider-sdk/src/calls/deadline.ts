@@ -15,6 +15,9 @@
  * A cleanup call, a close or the cancel a stopped wait sends, ends work the call it follows started, so it never runs
  * under that call's context, which may have aborted: `cleanupContext` gives it one of its own, `CLEANUP_DEADLINE_MS`
  * ahead (docs/providers/CONTRACT.md, clause C-47).
+ *
+ * `DEFAULT_CONNECT_BUDGET_MS` is the connect budget the manifest's null names: how long the host waits for an open
+ * and a Test connection of an engine that declares none of its own (docs/providers/CONTRACT.md, clause M-51).
  */
 import type { EnvReader } from "./env";
 import { type CallRefusal, CallRefusalError } from "./refusals";
@@ -25,6 +28,13 @@ const TIMER_MAX_MS = 2147483647;
 
 /** How long a cleanup call may take: a close, or the cancel a stopped wait sends. */
 export const CLEANUP_DEADLINE_MS = 10_000;
+
+/**
+ * How long the host waits for an open of an engine whose manifest states `connection.connectBudgetMs: null`, and for
+ * its Test connection, in milliseconds from the open's start (docs/providers/CONTRACT.md, clause M-51). An engine
+ * states its own budget there when its connect takes longer.
+ */
+export const DEFAULT_CONNECT_BUDGET_MS = 70_000;
 
 /**
  * @throws {RangeError} When `deadline` is not a finite number, a host defect.

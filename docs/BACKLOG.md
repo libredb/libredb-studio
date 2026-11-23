@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D504, U17 · 368
+- [Drivers and connections](#drivers-and-connections) — D1-D505, U17 · 368
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -2849,19 +2849,6 @@ Found 2026-10-10 by the review of the S3 provider; not reached by any shipped fl
 
 **Done when:** a `disconnect()` during `connect()`'s probe leaves the provider disconnected and the probe's transport closed once the probe settles, with a test that holds the probe, disconnects, releases it, and expects no stored session and one closed transport.
 
-### D276. No deadline bounds a provider's `connect()` as a whole
-
-`testConnection` (`src/lib/api/test-connection.ts`), which both Test Connection and the VS Code extension's `connection/test` reach, awaits `provider.connect()` with no deadline of its own; the `queryTimeout` it passes bounds each request a provider makes, not the sum of them.
-A provider whose `connect()` makes several requests in turn (discovery, reviews, a paged list) can therefore hold Test Connection for many query timeouts, and a provider that loops on what a server answers holds it until the loop ends.
-The Kubernetes provider bounds its own walks (one deadline per walk and a count of empty pages), and a `disconnect()` closes a session still being opened, but no rule says every provider must.
-Measured 2026-10-21 for the VS Code extension's backend, against a listener on 127.0.0.1 that accepts TCP and never answers, with four engines tested through `testConnection` at once: MongoDB settled at 10,232 ms and MySQL at 10,249 ms on deadlines of their own, while PostgreSQL ("Connection terminated due to connection timeout") and SQL Server ("Failed to connect to 127.0.0.1:<port> in 60000ms") both settled at 60,242 ms, on the 60 s `acquireTimeout` their pools are built with rather than the 10 s `queryTimeout` the test passes.
-A `disconnect()` during that pending connect frees nothing sooner: PostgreSQL's `pool.end()` waited for the pending client until 60,153 ms, and SQL Server's `pool.close()` returned at once while tedious held its socket until its own 60 s connect timeout.
-The extension's `connection/test` answers `CONNECTION_ERROR` after 11 s instead (`TEST_DEADLINE_MS` in `vscode-extension/src/backend/handlers.ts`) and has `testConnection` close the provider when its connect settles, so a PostgreSQL or SQL Server server that takes between 11 and 60 seconds to accept a connection fails that channel's test and passes the web route's.
-
-Found 2026-10-11 by the review of the Kubernetes provider.
-
-**Done when:** the Test Connection route, or `BaseDatabaseProvider`, gives `connect()` one deadline derived from the query timeout, a connect past it is answered with a timeout sentence and its provider disconnected, a test holds a connect open and expects the sentence and the disconnect, and the extension's own `TEST_DEADLINE_MS` race is removed in favour of it.
-
 ### D277. Kubernetes watch and logs are bounded snapshots, never a live stream
 
 `kubectl get -w` lists and then watches for a bounded window (10 s, or `--request-timeout`), and `kubectl logs -f` is refused, because a statement answers one result through the query route and Studio has no stream route (`src/lib/db/providers/platform/kubernetes/console/watch.ts`, `console/logs.ts`).
@@ -4910,6 +4897,16 @@ A text literal inserted into a `VECTOR(*, *)` column is stored as `FLOAT32`, so 
 Measured on Oracle AI Database 26ai Free 23.26.3 with oracledb 26.0.0 in Thin mode, while fixing D499 on 2026-11-23.
 
 **Done when:** the export of a flexible column writes each row with its own format, for example through `TO_VECTOR` with the row's format, and a replay test inserts every format back equal.
+
+### D505. Redis, Oracle and Db2 have no connect bound of their own, and Trino and Couchbase wait six minutes, on a server that accepts and never answers
+
+Against a TCP listener on 127.0.0.1 that accepts and never answers, each provider's `connect()` built by the real factory with no tunnel, at statement timeouts of 4 s, 10 s and 60 s: Trino and Couchbase settled at 361,760 ms on their HTTP client's own timeout, and Redis, Oracle and Db2 were still pending at 420,000 ms.
+Every other probed engine ended its own connect within 65.4 s at the default statement timeout.
+The code agrees: Trino sends its connect probe with no signal, Couchbase's management request has no timeout, Redis bounds only the TCP connect and sends its first commands with no command timeout, and Oracle sets no connect or call timeout on its pool or connection.
+Since the open's deadline (`docs/providers/CONTRACT.md`, clause C-55) the host answers every caller at the engine's connect budget and the next request opens afresh, but the provider's socket stays open until its connect settles, so each such open on these five engines keeps one socket until the server answers or Studio exits.
+Measured 2026-11-23 while planning the open's deadline.
+
+**Done when:** each of the five providers bounds its connect by the open's deadline (clause C-29), and a test per provider against a listener that accepts and never answers expects the connect to settle within its engine's connect budget.
 
 ## Value interpolation
 
