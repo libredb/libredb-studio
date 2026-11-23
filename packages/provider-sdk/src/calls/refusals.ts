@@ -1,5 +1,6 @@
 /**
- * What the host refuses of a call or of its answer (docs/providers/CONTRACT.md, clauses C-9, C-10, C-15 and C-17).
+ * What the host refuses of a call or of its answer (docs/providers/CONTRACT.md, clauses C-9, C-10, C-15, C-17 and
+ * C-27).
  *
  * One vocabulary for every such refusal, each naming its rule and a JSON Pointer rooted at the thing it names, stated
  * beside each rule. No refusal and no sentence carries a value of a request, a refinement or a row: a sentence names
@@ -33,6 +34,10 @@ export const CALL_REFUSAL_RULES = Object.freeze([
   "row-over-page",
   /** A batch of no row that does not say the result is done; the pointer is the batch's own. */
   "batch-empty-not-done",
+  /** A call whose deadline had passed when it was to start; the pointer is into the call's context. */
+  "call-deadline-passed",
+  /** A call whose signal had aborted when it was to start; the pointer is into the call's context. */
+  "call-signal-aborted",
 ] as const);
 
 export type CallRefusalRule = (typeof CALL_REFUSAL_RULES)[number];
@@ -53,12 +58,15 @@ export interface CallRefusal {
   readonly size?: number;
 }
 
-/** Thrown with every refusal of one call, its message their sentences. */
+/**
+ * Thrown with every refusal of one call, its message their sentences. A call refused because its signal aborted
+ * carries the signal's reason as `options.cause`, never in a refusal or the message.
+ */
 export class CallRefusalError extends Error {
   readonly refusals: readonly CallRefusal[];
 
-  constructor(refusals: readonly CallRefusal[]) {
-    super(refusals.map(callRefusalSentence).join(" "));
+  constructor(refusals: readonly CallRefusal[], options?: ErrorOptions) {
+    super(refusals.map(callRefusalSentence).join(" "), options);
     this.name = "CallRefusalError";
     this.refusals = Object.freeze([...refusals]);
   }
@@ -101,5 +109,9 @@ export function callRefusalSentence(refusal: CallRefusal): string {
       return `The row at ${at} of a batch is ${count(refusal.size, "bytes")}, over a whole page's limit of ${count(refusal.limit, "bytes")}, so no page can hold it.`;
     case "batch-empty-not-done":
       return `The batch a result source answered at ${at} holds no row and does not say the result is done, so it is not pulled again.`;
+    case "call-deadline-passed":
+      return `The call's deadline at ${at} had passed when the call was to start, so the provider was not called.`;
+    case "call-signal-aborted":
+      return `The call's signal at ${at} had aborted when the call was to start, so the provider was not called.`;
   }
 }

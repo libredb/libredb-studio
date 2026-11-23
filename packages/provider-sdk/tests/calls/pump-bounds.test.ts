@@ -58,11 +58,15 @@ async function runCase(deps: ChildDeps, name: string): Promise<ChildReport> {
     async close() {},
   };
   try {
-    const page = await deps.pumpPage(source, {
-      maxRows: Number.MAX_SAFE_INTEGER,
-      maxBytes: deps.BATCH_MAX_BYTES,
-      batchMaxBytes: deps.BATCH_MAX_BYTES,
-    });
+    const page = await deps.pumpPage(
+      source,
+      {
+        maxRows: Number.MAX_SAFE_INTEGER,
+        maxBytes: deps.BATCH_MAX_BYTES,
+        batchMaxBytes: deps.BATCH_MAX_BYTES,
+      },
+      { deadline: Date.now() + 3_600_000, signal: new AbortController().signal },
+    );
     return { name, end: page.end, rows: page.rows.length, bytes: page.bytes, pulls };
   } catch (error) {
     return { name, rule: (error as CallRefusalError).refusals?.[0]?.rule ?? String(error), pulls };

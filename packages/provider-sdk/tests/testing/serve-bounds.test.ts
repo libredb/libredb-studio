@@ -95,11 +95,15 @@ async function runCase(deps: ChildDeps, name: string): Promise<ChildReport> {
     const answer = await served.console.execute(opened.handle, { statement: "s", page: { unlimited: true } }, ctx);
     const result = answer.results[0] as ResultSource;
     if (name === "rows") await result.next({ maxRows: 1, maxBytes: 1024 });
-    const page = await deps.pumpPage(result, {
-      maxRows: Number.MAX_SAFE_INTEGER,
-      maxBytes: 1048576,
-      batchMaxBytes: 1048576,
-    });
+    const page = await deps.pumpPage(
+      result,
+      {
+        maxRows: Number.MAX_SAFE_INTEGER,
+        maxBytes: 1048576,
+        batchMaxBytes: 1048576,
+      },
+      { deadline: Date.now() + 3_600_000, signal: new AbortController().signal },
+    );
     return { name, end: page.end, rows: page.rows.length, pulls, frames };
   } catch (error) {
     const failure = error as { name: string; path?: string; refusals?: readonly FrameRefusal[] };

@@ -726,11 +726,15 @@ describe("serve", () => {
     const answer: ExecuteAnswer = await impl.console.execute(opened.handle, request(), callContext());
     const before = frames.length;
 
-    const page = await pumpPage(answer.results[0] as ResultSource, {
-      maxRows: 100,
-      maxBytes: PAGE_MAX_BYTES,
-      batchMaxBytes: 7,
-    });
+    const page = await pumpPage(
+      answer.results[0] as ResultSource,
+      {
+        maxRows: 100,
+        maxBytes: PAGE_MAX_BYTES,
+        batchMaxBytes: 7,
+      },
+      callContext(),
+    );
     const pumped = frames.slice(before);
     const requested = pumped.filter((frame) => frame.direction === "to-provider" && frame.call === "result.next");
 

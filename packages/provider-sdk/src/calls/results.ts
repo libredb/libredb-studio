@@ -1,6 +1,6 @@
 /**
  * The byte budgets of a result, the row measure, a batch holder for rows already in memory and the result pump
- * (docs/providers/CONTRACT.md, clauses C-13 to C-16).
+ * (docs/providers/CONTRACT.md, clauses C-13 to C-16 and C-27).
  *
  * A result crosses from a provider in batches: the host asks a `ResultSource` for at most so many rows and bytes, and
  * the source answers within that, never splitting a row, so a batch of one row may be larger. A row's size is the
@@ -9,12 +9,14 @@
  * `rowsSource` is the provider's side, over rows a driver already materialised. `pumpPage` is the host's side, run in
  * the host's copy of the SDK so every package's batches are measured by one rule: it pulls one batch at a time, the
  * pull being the credit, measures and checks every batch, cuts the page by size, and closes the source once on every
- * path. The pump never keeps a source open across pages.
+ * path. The pump never keeps a source open across pages, and it starts no pull once the call's signal has aborted or
+ * its deadline has passed.
  */
 import { encodeValue } from "../values/codec";
+import { refuseCallStart } from "./deadline";
 import { isPlainRecord, pointerTo, readOwn } from "./records";
 import { type CallRefusal, CallRefusalError } from "./refusals";
-import type { BatchLimit, Column, ResultSource, RowBatch } from "./types";
+import type { BatchLimit, CallContext, Column, ResultSource, RowBatch } from "./types";
 
 /** The most bytes of rows one batch may hold, unless it holds one row. */
 export const BATCH_MAX_BYTES = 1048576;
@@ -173,14 +175,25 @@ function step(batch: unknown, limit: BatchLimit, width: number, bytesLeft: numbe
  * page ends when the source is done, when it holds `limits.maxRows` rows, or when it holds `limits.maxBytes` bytes or
  * the next row would not fit.
  *
+ * `ctx` is the context of the execute call that answered the source, whose deadline and signal every pull runs under:
+ * before each pull the pump refuses, as `checkCallStart` does, a call whose deadline has passed or whose signal has
+ * aborted, so no batch is pulled after either. A pull already in flight is not raced here: the host bounds its wait on
+ * the whole call with `awaitWithin`.
+ *
  * The source is closed exactly once, on every path. A step's failure is thrown after the close; when the close fails
  * too, an `AggregateError` holds both, the step's first, with the close's as its cause, and a close that fails after a
  * good page throws its error.
  *
- * @throws {RangeError} For a limit that is not a positive safe integer, a host defect, before any pull.
- * @throws {CallRefusalError} For a batch a source should not have answered.
+ * @throws {RangeError} For a limit that is not a positive safe integer, or a deadline that is not a finite number, a
+ * host defect, before any pull.
+ * @throws {CallRefusalError} For a batch a source should not have answered, or a pull that would start after the
+ * call's deadline passed or its signal aborted, the signal's reason as its cause.
  */
-export async function pumpPage(source: ResultSource, limits: PumpLimits): Promise<Page> {
+export async function pumpPage(
+  source: ResultSource,
+  limits: PumpLimits,
+  ctx: Pick<CallContext, "deadline" | "signal">,
+): Promise<Page> {
   const rows: (readonly unknown[])[] = [];
   let bytes = 0;
   let end: PageEnd | undefined;
@@ -198,6 +211,7 @@ export async function pumpPage(source: ResultSource, limits: PumpLimits): Promis
         maxRows: maxRows - rows.length,
         maxBytes: Math.min(batchMaxBytes, maxBytes - bytes),
       });
+      refuseCallStart(ctx);
       // oxlint-disable-next-line no-await-in-loop -- one batch at a time: the pull is the credit, so a source holds one batch in flight.
       const added = step(await source.next(limit), limit, width, maxBytes - bytes, maxBytes);
       for (const row of added.rows) rows.push(row);
