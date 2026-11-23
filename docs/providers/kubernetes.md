@@ -64,7 +64,11 @@ The clock, the sleep, the randomness and the transport factory are one injected 
 | `apiPath` | API path | Optional path every request goes under, such as `/k8s/clusters/c-m-abc12` |
 | `tlsServerName` | TLS server name | Optional name the server's certificate is checked against, a kubeconfig's `tls-server-name` |
 
-There is no User field: basic authentication is refused, and a user name from a seed or the API is refused naming the field.
+There is no User field: basic authentication is refused.
+A user name from a seed or the API is refused before the provider is built, whatever its value but empty, so the provider never receives one:
+
+> Kubernetes connections take no user name: basic authentication is refused. Clear User, and put a bearer token under Token or a client certificate under SSL / TLS. Nothing was sent.
+
 The SSL / TLS panel carries the CA and a client certificate and key; the SSH tunnel is offered.
 
 ### 4.2 What is refused at connect

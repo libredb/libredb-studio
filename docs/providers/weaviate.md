@@ -129,7 +129,11 @@ GraphQL answers null for every int outside the 32-bit range, 2^53 - 1 included, 
 | API key or token | An API key or an OIDC access token, sent as `Authorization: Bearer`; empty for anonymous access |
 | SSL / TLS | Off, or the mode, CA and client certificate of the shared panel |
 
-There is no User field and no Database box: Weaviate takes a bearer token alone and has no container level, and a non-empty user from a seed or the API is refused naming the field.
+There is no User field and no Database box: Weaviate takes a bearer token alone and has no container level.
+A user from a seed or the API is refused before the provider is built, whatever its value but empty, so the provider never receives one:
+
+> Weaviate takes no user name: clear the connection's user, and put the API key or OIDC access token in the password. Nothing was sent.
+
 
 ### 4.2 Authentication
 

@@ -402,7 +402,6 @@ describe("a provider module reads only the connection fields its engine declares
         ...(CONNECTION_STRING_ACCEPTED[type] ? ["connectionString"] : []),
         ...(offersSslPanel(type) ? ["ssl"] : []),
         ...(SSH_TUNNEL_REFUSAL[type] === null ? ["host", "port"] : []),
-        ...REFUSED_CONNECTION_FIELDS[type],
         ...PROVIDER_CORE_FIELDS,
       ]);
       const fields: readonly string[] = providerFields(type);
@@ -412,6 +411,14 @@ describe("a provider module reads only the connection fields its engine declares
     }
     expect([...PROVIDER_CORE_FIELDS]).toEqual(["id", "name", "type", "queryTimeout", "readOnly", "managed", "seedId"]);
     expect(Object.isFrozen(PROVIDER_CORE_FIELDS)).toBe(true);
+  });
+
+  test("no engine receives a field its engine refuses", () => {
+    for (const type of SHIPPED_DATABASE_TYPES) {
+      const fields: readonly string[] = providerFields(type);
+      const received = Object.keys(REFUSED_CONNECTION_FIELDS[type]).filter((field) => fields.includes(field));
+      expect({ type, received }).toEqual({ type, received: [] });
+    }
   });
 
   test("providerFields refuses a type that names no provider, by name", () => {

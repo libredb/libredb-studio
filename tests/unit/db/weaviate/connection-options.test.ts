@@ -182,15 +182,6 @@ describe("the bearer token is validated and never echoed", () => {
     }
   });
 
-  test("a user is refused naming the field, because Weaviate takes none", () => {
-    const error = refusal({ ...LOCAL, user: "admin", password: TEST_PASSWORD });
-    expect(error.message).toBe(
-      "Weaviate takes no user name: clear the connection's user, and put the API key or OIDC access token in the password. Nothing was sent.",
-    );
-    expect(error.message).not.toContain("admin");
-    expect(refusal({ ...LOCAL, user: 7 }).message).toBe("The connection's user must be a string; nothing was sent.");
-  });
-
   test("the secret forms are the token's, and each segment of a JWT-shaped OIDC token", () => {
     expect(build({ ...LOCAL, password: TEST_PASSWORD }).secretForms).toEqual(secretForms([TEST_PASSWORD]));
     const jwt = [

@@ -47,6 +47,12 @@ const UNCONNECTED = {
 const unconnected = (type: DatabaseType): DatabaseConnection => ({ ...UNCONNECTED, type }) as DatabaseConnection;
 
 /**
+ * UNCONNECTED without a user, for an engine that takes none: core refuses a connection that sets a field its engine
+ * refuses (`REFUSED_CONNECTION_FIELDS` in src/lib/db/connection-fields.ts) before any provider is built.
+ */
+const unconnectedWithoutUser = (type: DatabaseType): DatabaseConnection => ({ ...unconnected(type), user: undefined });
+
+/**
  * One connection per shipped type-id, as a Record so the compiler owns exhaustiveness.
  *
  * A new member of `DatabaseType` fails to compile here, which is a stronger failure than the
@@ -83,15 +89,17 @@ export const CENSUS_CONNECTION: Readonly<Record<DatabaseType, DatabaseConnection
   neo4j: unconnected("neo4j"),
   // No field beyond UNCONNECTED (vector-family spec 5.7): the constructor validates nothing and opens nothing.
   milvus: unconnected("milvus"),
-  // No field beyond UNCONNECTED (vector-family spec 6.2): the constructor validates nothing and opens nothing; a user is refused at connect, which no census reaches.
-  qdrant: unconnected("qdrant"),
-  weaviate: unconnected("weaviate"),
-  // No field beyond UNCONNECTED (InfluxDB spec 3.3): both constructors validate nothing and open nothing; the
-  // connection's rules, influxdb3's refusal of a user among them, run in connect(), which no census reaches.
+  // UNCONNECTED without a user, which core refuses (vector-family spec 6.2): the constructor validates nothing and
+  // opens nothing.
+  qdrant: unconnectedWithoutUser("qdrant"),
+  weaviate: unconnectedWithoutUser("weaviate"),
+  // No field beyond UNCONNECTED (InfluxDB spec 3.3), and no user on influxdb3, which core refuses: both constructors
+  // validate nothing and open nothing; the connection's rules run in connect(), which no census reaches.
   influxdb: unconnected("influxdb"),
-  influxdb3: unconnected("influxdb3"),
-  // No field beyond UNCONNECTED (SB3-1.3): the constructor validates nothing and opens nothing; the fields are read at connect, which no census reaches.
-  oxia: unconnected("oxia"),
+  influxdb3: unconnectedWithoutUser("influxdb3"),
+  // UNCONNECTED without a user, which core refuses (SB3-1.3): the constructor validates nothing and opens nothing; the
+  // fields are read at connect, which no census reaches.
+  oxia: unconnectedWithoutUser("oxia"),
   // No field beyond UNCONNECTED (design 2.3): the constructor never dials or throws, and the connection's rules,
   // Warehouse's among them, run in connect(), which no census reaches.
   databend: unconnected("databend"),
@@ -100,15 +108,15 @@ export const CENSUS_CONNECTION: Readonly<Record<DatabaseType, DatabaseConnection
   // refused by core before the build. The constructor validates nothing and opens nothing; the account, the token and
   // the role are read at connect, which no census reaches.
   snowflake: { ...unconnected("snowflake"), authMethod: "pat" },
-  // No field beyond UNCONNECTED: the constructor validates nothing and opens nothing; the host, the token, the catalog
-  // and the namespace are read at connect, which no census reaches.
-  spark: unconnected("spark"),
+  // UNCONNECTED without a user, which core refuses: the constructor validates nothing and opens nothing; the host, the
+  // token, the catalog and the namespace are read at connect, which no census reaches.
+  spark: unconnectedWithoutUser("spark"),
   // No field beyond UNCONNECTED: the constructor validates nothing and opens nothing; the fields are read at connect,
   // which no census reaches.
   s3: unconnected("s3"),
-  // No field beyond UNCONNECTED: the constructor validates nothing and opens nothing; the fields are read at connect,
-  // which no census reaches.
-  kubernetes: unconnected("kubernetes"),
+  // UNCONNECTED without a user, which core refuses: the constructor validates nothing and opens nothing; the fields are
+  // read at connect, which no census reaches.
+  kubernetes: unconnectedWithoutUser("kubernetes"),
   mqtt: unconnected("mqtt"),
   // No field beyond UNCONNECTED: `census` is a well-formed project id, and the constructor reads no credential and
   // opens nothing; the credential is resolved at connect, which no census reaches.

@@ -132,13 +132,6 @@ describe("refused before any socket", () => {
     }
   });
 
-  test("Database, Namespaces and TLS server name, named and never quoted", () => {
-    expect(refuse({ database: "secret-value" })).toBe(E.fieldNotOffered("database"));
-    expect(refuse({ namespaces: "a,b" })).toBe(E.fieldNotOffered("namespaces"));
-    expect(refuse({ tlsServerName: "mq.internal" })).toBe(E.fieldNotOffered("tlsServerName"));
-    expect(refuse({ database: "secret-value" })).not.toContain("secret-value");
-  });
-
   test("a host or port carrying a path, query, fragment or userinfo, with the shared sentence as an own error", () => {
     for (const host of [
       "mq.example/rabbitmq",

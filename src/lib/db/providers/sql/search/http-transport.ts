@@ -1816,16 +1816,12 @@ export class SearchHttpTransport implements SearchTransport {
     //
     // Both halves are trimmed first: a trailing newline in either half measured as
     // HTTP 401 on a key that works once the whitespace is gone. OpenSearch is not a
-    // silent drop - the dialect flag is false, so a pair that arrived here (a seed
-    // with no type gate, a stored connection) is refused rather than sent as Basic.
+    // silent drop either: core refuses an OpenSearch connection that sets either half
+    // before the provider is built (`REFUSED_CONNECTION_FIELDS` in
+    // src/lib/db/connection-fields.ts), so no pair reaches its transport, and the
+    // dialect flag still decides that only Elasticsearch sends `ApiKey`.
     const apiKeyId = config.apiKeyId?.trim() ?? "";
     const apiKeySecret = config.apiKeySecret?.trim() ?? "";
-    if (!this.spec.supportsApiKeyAuth && (apiKeyId || apiKeySecret)) {
-      throw new DatabaseConfigError(
-        `${this.spec.label} does not accept API key authentication. Elasticsearch publishes Authorization: ApiKey; nothing here has measured whether OpenSearch's security plugin accepts that scheme, so the pair is refused rather than sent as Basic or as a guessed header.`,
-        this.dialect,
-      );
-    }
     this.authorization =
       this.spec.supportsApiKeyAuth && apiKeyId && apiKeySecret
         ? `ApiKey ${Buffer.from(`${apiKeyId}:${apiKeySecret}`).toString("base64")}`

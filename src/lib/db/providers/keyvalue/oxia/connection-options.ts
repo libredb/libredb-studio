@@ -12,6 +12,9 @@
  * client-certificate preflight (etcd's choice); `readOnlySource`, `callTimeout` and the optional readers
  * are written again from the Milvus provider's file under the isolation rule.
  *
+ * Oxia has no user name: core refuses a connection that sets one before the provider is built
+ * (`REFUSED_CONNECTION_FIELDS` in src/lib/db/connection-fields.ts), so this module never receives it.
+ *
  * The parameter is named `config` on purpose: tests/unit/lib/db-ui-config.test.ts finds which addressing fields a
  * provider reads by the `config.<field>` pattern.
  */
@@ -95,7 +98,6 @@ const MAX_QUERY_TIMEOUT_MS = 2_147_483_647;
 /** The consent box's label as the dialog draws it (src/components/ConnectionModal.tsx), and what it covers. */
 const CONSENT_CLAUSE =
   ' Or tick "Send the password without TLS", which then also covers every address under Data servers.';
-const NO_USER = "Oxia has no user name: clear User. A bearer token goes under Token.";
 const TOKEN_CHARACTERS =
   "The Token holds a character a bearer token cannot carry: only letters, digits and . _ ~ + / = - are allowed, with no space, tab or line break. Paste the token again; nothing was sent.";
 const NAMESPACE_RULE = `The Namespace must be at most ${OXIA_NAMESPACE_MAX_BYTES} bytes of text with no control characters; empty means default. Nothing was sent.`;
@@ -127,7 +129,6 @@ export function buildOxiaConnectionOptions(
           host: canonicalHost(grpcEndpointHost(farEnd.host, WORDS)),
           port: shared(() => validatePort(farEnd.port)),
         };
-  if (optionalText(config.user, "user") !== undefined) throw configError(NO_USER);
   const token = optionalText(config.password, "password");
   if (token !== undefined && !BEARER_TOKEN.test(token)) throw configError(TOKEN_CHARACTERS);
   const namespace = namespaceOf(config.database);

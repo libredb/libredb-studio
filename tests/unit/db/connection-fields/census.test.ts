@@ -9,7 +9,12 @@ import { dirname, join } from "node:path";
 import ts from "typescript";
 import { DB_UI_CONFIG } from "@/lib/db-ui-config";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
-import { CONNECTION_FIELDS, REFUSED_CONNECTION_FIELDS, SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
+import {
+  CONNECTION_FIELD_DESCRIPTORS,
+  CONNECTION_FIELDS,
+  REFUSED_CONNECTION_FIELDS,
+  SEED_ONLY_FIELDS,
+} from "@/lib/db/connection-fields";
 import type { DatabaseType } from "@/lib/types";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
@@ -118,20 +123,24 @@ describe("the connection-field records (src/lib/db/connection-fields.ts)", () =>
     expect(Object.isFrozen(SEED_ONLY_FIELDS)).toBe(true);
     expect(Object.isFrozen(REFUSED_CONNECTION_FIELDS)).toBe(true);
     for (const row of Object.values(REFUSED_CONNECTION_FIELDS)) expect(Object.isFrozen(row)).toBe(true);
+    // Each key is a connection field the dialog's descriptor table knows.
+    for (const row of Object.values(REFUSED_CONNECTION_FIELDS)) {
+      for (const key of Object.keys(row)) expect(Object.hasOwn(CONNECTION_FIELD_DESCRIPTORS, key)).toBe(true);
+    }
   });
 
   test("a refused field is in no row of its own engine's connection fields or seed-only fields", () => {
     for (const id of EVERY_TYPE as DatabaseType[]) {
       const declared: readonly string[] = [...CONNECTION_FIELDS[id], ...(SEED_ONLY_FIELDS[id]?.fields ?? [])];
-      const both = REFUSED_CONNECTION_FIELDS[id].filter((field) => declared.includes(field));
+      const both = Object.keys(REFUSED_CONNECTION_FIELDS[id]).filter((field) => declared.includes(field));
       expect({ id, both }).toEqual({ id, both: [] });
     }
   });
 
-  test("the refused fields are the ones a provider reads only to refuse them, named per engine", () => {
+  test("the refused fields and their sentences, named per engine", () => {
     const refusing = (EVERY_TYPE as DatabaseType[])
-      .filter((id) => REFUSED_CONNECTION_FIELDS[id].length > 0)
-      .map((id) => [id, [...REFUSED_CONNECTION_FIELDS[id]]]);
+      .filter((id) => Object.keys(REFUSED_CONNECTION_FIELDS[id]).length > 0)
+      .map((id) => [id, Object.keys(REFUSED_CONNECTION_FIELDS[id])]);
     expect(Object.fromEntries(refusing)).toEqual({
       influxdb3: ["user"],
       kubernetes: ["user"],
@@ -142,6 +151,25 @@ describe("the connection-field records (src/lib/db/connection-fields.ts)", () =>
       spark: ["user"],
       weaviate: ["user"],
     });
+    for (const id of EVERY_TYPE as DatabaseType[]) {
+      for (const [field, sentence] of Object.entries(REFUSED_CONNECTION_FIELDS[id])) {
+        expect({ id, field, sentence: typeof sentence }).toEqual({ id, field, sentence: "string" });
+        expect((sentence as string).trim().length).toBeGreaterThan(0);
+        expect((sentence as string).trim()).toBe(sentence as string);
+      }
+    }
+  });
+
+  test("each refused field's sentence is quoted in its engine's provider doc", () => {
+    const flatten = (text: string): string => text.replace(/\s+/g, " ");
+    for (const id of EVERY_TYPE as DatabaseType[]) {
+      const row = Object.entries(REFUSED_CONNECTION_FIELDS[id]);
+      if (row.length === 0) continue;
+      const doc = flatten(readFileSync(join(ROOT, "docs/providers", `${id}.md`), "utf8"));
+      for (const [field, sentence] of row) {
+        expect({ id, field, quoted: doc.includes(flatten(sentence as string)) }).toEqual({ id, field, quoted: true });
+      }
+    }
   });
 
   test("a fresh process loads the module on its own", () => {

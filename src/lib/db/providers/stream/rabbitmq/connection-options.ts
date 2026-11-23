@@ -1,8 +1,9 @@
 /**
  * Maps a connection to its two endpoints, the management API and the optional AMQP port, after every refusal of the
- * connection rules: the address, the credentials, the TLS panel, the plaintext rule, the Path prefix and the fields
- * RabbitMQ does not offer. Nothing here opens a socket, and every refusal is an own error from `errors.ts` that names
- * the field and never repeats the value.
+ * connection rules: the address, the credentials, the TLS panel, the plaintext rule and the Path prefix. Nothing here
+ * opens a socket, and every refusal is an own error from `errors.ts` that names the field and never repeats the value.
+ * The fields RabbitMQ does not offer (Database, Namespaces, TLS server name) are refused by core before the provider is
+ * built (`REFUSED_CONNECTION_FIELDS` in src/lib/db/connection-fields.ts), so this module never receives them.
  *
  * A connection sent to the API arrives as the caller wrote it, so every field is checked for its type before it is
  * read. The dialog checks Path prefix and AMQP port with copies of these rules (`RABBITMQ_FIELD_RULES` in
@@ -20,7 +21,6 @@ import {
   configError,
   credentialControl,
   endpointText,
-  fieldNotOffered,
   fieldWrongType,
   PASSWORD_REQUIRED,
   PATH_PREFIX_API_SEGMENT,
@@ -104,10 +104,6 @@ export function readAmqpPort(value: unknown): number | null {
  * the provider was built with, which the management origin's address literal is checked against.
  */
 export function readConnectionOptions(config: DatabaseConnection, egress: EgressDecision): RabbitMQEndpoints {
-  if (optionalText(config.database, "database") !== undefined) throw configError(fieldNotOffered("database"));
-  if (optionalText(config.namespaces, "namespaces") !== undefined) throw configError(fieldNotOffered("namespaces"));
-  if (optionalText(config.tlsServerName, "tlsServerName") !== undefined)
-    throw configError(fieldNotOffered("tlsServerName"));
   const username = usernameOf(config);
   const password = passwordOf(config);
   const pathPrefix = readPathPrefix(config.apiPath);

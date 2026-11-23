@@ -99,7 +99,15 @@ Studio sends the broker GET requests and stream reads only, never a publish or a
 | SSL / TLS | SSL / TLS | One setting for both endpoints: `disable` is `http` and `amqp`, any other mode `https` and `amqps`; one CA set, so paste both CAs if AMQPS and HTTPS use different ones |
 | `allowInsecureAuth` | Send the password without TLS | Drawn only while SSL mode is `disable` |
 
-`database`, `namespaces` and `tlsServerName` are not offered, and a record from a seed or the API that sets one is refused naming the field: virtual hosts are discovered, and the TLS identity is always the host.
+`database`, `namespaces` and `tlsServerName` are not offered: virtual hosts are discovered, and the TLS identity is always the host.
+A record from a seed or the API that sets one, whatever its value but empty, is refused before the provider is built, naming the field, so the provider never receives it:
+
+> RabbitMQ connections take no Database: Studio discovers the virtual hosts from the management API. Clear the field; nothing was sent.
+
+> RabbitMQ connections take no Namespaces: Studio discovers the virtual hosts from the management API. Clear the field; nothing was sent.
+
+> RabbitMQ connections take no TLS server name: the certificate is always checked against Host. Clear the field; nothing was sent.
+
 
 ### 4.2 TLS and the password
 

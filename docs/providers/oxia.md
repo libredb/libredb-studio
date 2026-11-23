@@ -213,7 +213,11 @@ A connection names one endpoint, one namespace and, for a cluster, the data serv
 | Read-only | A fixed label with no box: the mode of section 3.5 |
 
 The Host, Token, Namespace, Data servers and consent rows are the hints the connection dialog shows under each field.
-There is no User field: Oxia has no user name, and a connection that carries one is refused.
+There is no User field: Oxia has no user name.
+A connection that carries one is refused before the provider is built, whatever its value but empty, so the provider never receives it:
+
+> Oxia has no user name: clear User. A bearer token goes under Token.
+
 A Namespace is refused before any call when it is not short text:
 
 > The Namespace must be at most 300 bytes of text with no control characters; empty means default. Nothing was sent.

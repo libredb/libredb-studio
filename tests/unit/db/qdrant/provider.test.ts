@@ -166,7 +166,8 @@ describe("connect", () => {
   });
 
   test("a refused connection builds no client and sends nothing", async () => {
-    const { provider, clients } = providerOf(undefined, { user: "admin" });
+    // A secret holding a line break, which no header can carry.
+    const { provider, clients } = providerOf(undefined, { password: `${crypto.randomUUID()}\n` });
     await expect(provider.connect()).rejects.toThrow(DatabaseConfigError);
     expect(clients.built).toEqual([]);
     expectCalls(clients, []);

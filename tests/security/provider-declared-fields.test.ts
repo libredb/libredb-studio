@@ -9,14 +9,14 @@
  * caller's own, and walks the whole provider for the markers. Nothing connects in the first describe: each build is a
  * dynamic import and a constructor (`tests/helpers/census-connection.ts`).
  *
- * The second describe holds that a field an engine receives only to refuse it (`REFUSED_CONNECTION_FIELDS`) is still
- * refused by name through the factory, at connect and before any socket, against 127.0.0.1 port 1.
+ * The second describe holds that a connection that sets a field its engine refuses (`REFUSED_CONNECTION_FIELDS`) is
+ * refused by `createDatabaseProvider` with the declared sentence, which names the field, before any provider is built.
  *
  * The third holds that a connection whose engine declares a required secret (a `fieldRules` entry with `required` on a
  * field the storage classification calls secret) is refused by `createDatabaseProvider` with the declared sentence
  * when that secret is blank, before any provider is built, while `readProviderDeclarations` still reads it.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
@@ -26,7 +26,8 @@ import { CONNECTION_FORM } from "@/lib/db/connection-form";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { createDatabaseProvider, readProviderDeclarations } from "@/lib/db/factory";
 import { providerFields } from "@/lib/db/provider-connection";
-import type { DatabaseConnection } from "@/lib/db/types";
+import type { DatabaseConnection, DatabaseProvider } from "@/lib/db/types";
+import { databaseErrorBody } from "@/lib/api/error-body";
 import { CONNECTION_FIELDS as FIELD_CLASS } from "@/lib/storage/secret-fields";
 import {
   ADMITTED_FILE,
@@ -66,11 +67,13 @@ const FIELDS = connectionFields();
 /**
  * The fields a record of `type` carries a marker in: every connection field its engine does not receive, except
  * `sshTunnel`, which core reads before any build and refuses unless it is a plain object
- * (tests/security/provider-tunnel-secrets.test.ts holds that no provider receives it).
+ * (tests/security/provider-tunnel-secrets.test.ts holds that no provider receives it), and the fields its engine
+ * refuses by name, which core refuses before any build (the second describe below).
  */
 function plantedFields(type: DatabaseType): string[] {
   const received: readonly string[] = providerFields(type);
-  return FIELDS.filter((field) => field !== "sshTunnel" && !received.includes(field));
+  const refused: readonly string[] = Object.keys(REFUSED_CONNECTION_FIELDS[type]);
+  return FIELDS.filter((field) => field !== "sshTunnel" && !received.includes(field) && !refused.includes(field));
 }
 
 interface Planted {
@@ -196,51 +199,117 @@ describe("every provider is built from only the fields its engine declares (FND-
   );
 });
 
-/** The words each refusal names its field with, as the provider's own sentence spells it. */
-const REFUSAL_NAMES: Readonly<Record<string, RegExp>> = Object.freeze({
-  user: /\buser\b/i,
-  database: /\bDatabase\b/,
-  namespaces: /\bNamespaces\b/,
-  tlsServerName: /\bTLS server name\b/,
-  apiKeyId: /\bAPI key\b/,
-  apiKeySecret: /\bAPI key\b/,
-});
+/**
+ * Each refused (type, field) with the sentence it is refused with: the words the engine's provider said before core
+ * took the refusal over (FND-2 slice 6c), which each engine's provider doc quotes.
+ */
+const OPENSEARCH_API_KEY =
+  "OpenSearch does not accept API key authentication. Elasticsearch publishes Authorization: ApiKey; nothing here has measured whether OpenSearch's security plugin accepts that scheme, so the pair is refused rather than sent as Basic or as a guessed header.";
+const REFUSED_SENTENCES: readonly (readonly [DatabaseType, ConnectionField, string])[] = [
+  ["opensearch", "apiKeyId", OPENSEARCH_API_KEY],
+  ["opensearch", "apiKeySecret", OPENSEARCH_API_KEY],
+  [
+    "qdrant",
+    "user",
+    "Qdrant has no user name: clear the connection's user, and put the API key or JWT in the password. Nothing was sent.",
+  ],
+  [
+    "weaviate",
+    "user",
+    "Weaviate takes no user name: clear the connection's user, and put the API key or OIDC access token in the password. Nothing was sent.",
+  ],
+  ["influxdb3", "user", "InfluxDB 3 has no user name: clear User and put the token in Token."],
+  ["oxia", "user", "Oxia has no user name: clear User. A bearer token goes under Token."],
+  [
+    "spark",
+    "user",
+    "Apache Spark connections take no user: every Studio request uses one fixed Spark Connect user id, and Token is the credential. Clear User. Nothing was sent.",
+  ],
+  [
+    "kubernetes",
+    "user",
+    "Kubernetes connections take no user name: basic authentication is refused. Clear User, and put a bearer token under Token or a client certificate under SSL / TLS. Nothing was sent.",
+  ],
+  [
+    "rabbitmq",
+    "database",
+    "RabbitMQ connections take no Database: Studio discovers the virtual hosts from the management API. Clear the field; nothing was sent.",
+  ],
+  [
+    "rabbitmq",
+    "namespaces",
+    "RabbitMQ connections take no Namespaces: Studio discovers the virtual hosts from the management API. Clear the field; nothing was sent.",
+  ],
+  [
+    "rabbitmq",
+    "tlsServerName",
+    "RabbitMQ connections take no TLS server name: the certificate is always checked against Host. Clear the field; nothing was sent.",
+  ],
+];
 
-const REFUSED_ENTRIES = SHIPPED_DATABASE_TYPES.flatMap((type) =>
-  REFUSED_CONNECTION_FIELDS[type].map((field) => [type, field] as const),
-);
-
-/** The error `connect()` answers for the census record of `type` with `field` set to `value`, or absent when undefined. */
-async function connectError(type: DatabaseType, field: string, value: string | undefined): Promise<unknown> {
+/** The census record of `type` with `field` set to `value`, or without it when `value` is undefined. */
+function refusedRecord(type: DatabaseType, field: string, value: unknown): DatabaseConnection {
   const record: Record<string, unknown> = { ...CENSUS_CONNECTION[type] };
   delete record[field];
   if (value !== undefined) record[field] = value;
-  const provider = await createDatabaseProvider(record as unknown as DatabaseConnection);
-  const error: unknown = await provider.connect().then(
-    () => undefined,
-    (caught: unknown) => caught,
-  );
-  await provider.disconnect().catch(() => undefined);
-  return error;
+  return record as unknown as DatabaseConnection;
 }
 
-describe("a field an engine receives only to refuse it is still refused by name through the factory", () => {
-  test("the entries are the ones the row declares, and each has the words its refusal names it with", () => {
-    expect(REFUSED_ENTRIES.length).toBe(11);
-    for (const [, field] of REFUSED_ENTRIES) expect(Object.hasOwn(REFUSAL_NAMES, field)).toBe(true);
+/** What `createDatabaseProvider` answers for `record`: the provider, or the error it rejects with. */
+async function buildOutcome(record: DatabaseConnection): Promise<unknown> {
+  return await createDatabaseProvider(record).then(
+    (provider) => provider,
+    (caught: unknown) => caught,
+  );
+}
+
+describe("a field its engine refuses is refused by core, by name, before the provider is built (FND-2 slice 6c)", () => {
+  test("the entries are the eleven the row declares, each with the sentence its engine said", () => {
+    const declared = SHIPPED_DATABASE_TYPES.flatMap((type) =>
+      Object.entries(REFUSED_CONNECTION_FIELDS[type]).map(([field, sentence]) => [type, field, sentence]),
+    );
+    const key = (entry: readonly unknown[]): string => `${String(entry[0])}.${String(entry[1])}`;
+    const byKey = (entries: readonly (readonly unknown[])[]) =>
+      [...entries].sort((left, right) => key(left).localeCompare(key(right))).map((entry) => entry.slice());
+    expect(declared.length).toBe(11);
+    expect(byKey(declared)).toEqual(byKey(REFUSED_SENTENCES));
   });
 
-  test.each(REFUSED_ENTRIES)(
-    "%s refuses %s by name at connect, and a record without it is not refused for it",
-    async (type, field) => {
-      const refusal = await connectError(type, field, `refused-${crypto.randomUUID()}`);
-      expect(refusal).toBeInstanceOf(DatabaseConfigError);
-      const sentence = (refusal as Error).message;
-      expect(sentence).toMatch(REFUSAL_NAMES[field]);
-      const others = await Promise.all([undefined, ""].map((value) => connectError(type, field, value)));
-      for (const other of others) {
-        expect(other).toBeInstanceOf(Error);
-        expect((other as Error).message).not.toBe(sentence);
+  test.each(REFUSED_SENTENCES)(
+    "%s: a connection that sets %s is refused before the provider is built, answering not-sent",
+    async (type, field, sentence) => {
+      const value = `refused-${crypto.randomUUID()}`;
+      const log = spyOn(console, "log").mockImplementation(() => {});
+      try {
+        const error = await buildOutcome(refusedRecord(type, field, value));
+        expect(error).toBeInstanceOf(DatabaseConfigError);
+        expect((error as DatabaseConfigError).message).toBe(sentence);
+        expect((error as DatabaseConfigError).provider).toBe(type);
+        expect((error as DatabaseConfigError).message).not.toContain(value);
+        expect(databaseErrorBody(error)?.body.outcome).toBe("not-sent");
+        expect(log.mock.calls.some(([line]) => String(line).startsWith(`[DB] Creating ${type} provider`))).toBe(false);
+      } finally {
+        log.mockRestore();
+      }
+    },
+  );
+
+  test.each(REFUSED_SENTENCES)(
+    "%s: %s counts as set whatever its value, and as absent when undefined, null or empty",
+    async (type, field, sentence) => {
+      const set = await Promise.all(
+        [" ", 42, {}, false].map((value) => buildOutcome(refusedRecord(type, field, value))),
+      );
+      for (const error of set) {
+        expect(error).toBeInstanceOf(DatabaseConfigError);
+        expect((error as DatabaseConfigError).message).toBe(sentence);
+      }
+      const absent = await Promise.all(
+        [undefined, null, ""].map((value) => buildOutcome(refusedRecord(type, field, value))),
+      );
+      for (const provider of absent) {
+        expect(provider).not.toBeInstanceOf(Error);
+        expect(Object.hasOwn((provider as DatabaseProvider).config, field)).toBe(false);
       }
     },
   );

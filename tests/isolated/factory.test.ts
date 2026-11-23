@@ -78,8 +78,9 @@ import { logger } from "@/lib/logger";
 import { resetStorageEncryptionKey } from "@/lib/storage/encryption";
 import { projectSeedConnection } from "@/lib/seed/connection-filter";
 import { closeProviderCaches, resetShutdownHooks } from "@/lib/shutdown";
-import { TUNNEL_ROUTE, type SSHTunnelConfig, type WithTunnelRoute } from "@/lib/types";
+import { TUNNEL_ROUTE, type DatabaseType, type SSHTunnelConfig, type WithTunnelRoute } from "@/lib/types";
 import { providerFields } from "@/lib/db/provider-connection";
+import { REFUSED_CONNECTION_FIELDS, SEED_AGENT_CREDENTIAL } from "@/lib/db/connection-fields";
 import { CassandraTransportError } from "@/lib/db/providers/sql/cassandra/transport";
 import { CouchbaseError } from "@/lib/db/providers/document/couchbase/transport";
 import { DruidTransportError } from "@/lib/db/providers/sql/druid/transport";
@@ -137,6 +138,14 @@ const CENSUS_LIBREDB_FILE = join(tmpdir(), "factory-census.libredb");
 // ============================================================================
 // Helper: build a minimal DatabaseConnection for a given type
 // ============================================================================
+
+/**
+ * Each field the engine of `type` refuses by name, left undefined: core refuses a connection that sets one before the
+ * build (FND-2 slice 6c), and makeConnection's defaults set `user` and `database`.
+ */
+function withoutRefusedFields(type: DatabaseType): Partial<DatabaseConnection> {
+  return Object.fromEntries(Object.keys(REFUSED_CONNECTION_FIELDS[type]).map((field) => [field, undefined]));
+}
 
 function makeConnection(type: string, overrides: Partial<DatabaseConnection> = {}): DatabaseConnection {
   return {
@@ -1058,7 +1067,12 @@ describe("createDatabaseProvider", () => {
   });
 
   test("the execution context rides along to influxdb3: queryReadOnly answers only under the agent profile", async () => {
-    const conn = makeConnection("influxdb3", { port: 18181, password: "not-a-real-token", database: "home" });
+    const conn = makeConnection("influxdb3", {
+      port: 18181,
+      user: undefined,
+      password: "not-a-real-token",
+      database: "home",
+    });
     const profiled = await createDatabaseProvider(conn, {}, { readOnly: true, sendsStatements: true });
     const editor = await createDatabaseProvider(conn);
     if (profiled.queryReadOnly === undefined || editor.queryReadOnly === undefined) throw new Error("no queryReadOnly");
@@ -1263,7 +1277,9 @@ describe("createDatabaseProvider", () => {
 
   test('creates provider for type "spark", unconnected, with the factory passing no transport', async () => {
     const { SparkProvider } = await import("@/lib/db/providers/sql/spark/index");
-    const provider = await createDatabaseProvider(makeConnection("spark", { host: "127.0.0.1", port: 15002 }));
+    const provider = await createDatabaseProvider(
+      makeConnection("spark", { host: "127.0.0.1", port: 15002, user: undefined }),
+    );
     expect(provider).toBeInstanceOf(SparkProvider);
     expect(provider.isConnected()).toBe(false);
     // The third constructor argument, the transport seam, defaults to an empty object when the factory omits it.
@@ -1480,7 +1496,10 @@ describe("createDatabaseProvider", () => {
   });
 
   test("a kubernetes connection is built unconnected, with the kubectl dialect, and keeps readOnly", async () => {
-    const conn = { ...makeConnection("kubernetes", { port: 6443, database: undefined }), readOnly: true };
+    const conn = {
+      ...makeConnection("kubernetes", { port: 6443, database: undefined, user: undefined }),
+      readOnly: true,
+    };
     expect(() => assertReadOnlyHonoured(conn)).not.toThrow();
     const provider = await createDatabaseProvider(conn);
     expect(provider.type).toBe("kubernetes");
@@ -1490,7 +1509,7 @@ describe("createDatabaseProvider", () => {
   });
 
   test("the execution context rides along to kubernetes: queryReadOnly answers only under the agent profile", async () => {
-    const conn = makeConnection("kubernetes", { port: 6443, database: undefined });
+    const conn = makeConnection("kubernetes", { port: 6443, database: undefined, user: undefined });
     const profiled = await createDatabaseProvider(conn, {}, { readOnly: true });
     const editor = await createDatabaseProvider(conn);
     if (profiled.queryReadOnly === undefined || editor.queryReadOnly === undefined) throw new Error("no queryReadOnly");
@@ -1573,10 +1592,9 @@ describe("createDatabaseProvider", () => {
     const declaringTypes: string[] = [];
     const implicitCommitTypes: string[] = [];
     for (const type of SHIPPED_DATABASE_TYPES) {
-      const provider = (await createDatabaseProvider(makeConnection(type, overrides[type] ?? {}))) as unknown as Record<
-        string,
-        unknown
-      >;
+      const provider = (await createDatabaseProvider(
+        makeConnection(type, { ...withoutRefusedFields(type), ...overrides[type] }),
+      )) as unknown as Record<string, unknown>;
       const implementsTrio =
         typeof provider.beginTransaction === "function" &&
         typeof provider.commitTransaction === "function" &&
@@ -1631,7 +1649,9 @@ describe("createDatabaseProvider", () => {
 
     const cannotCancel: string[] = [];
     for (const type of SHIPPED_DATABASE_TYPES) {
-      const provider = await createDatabaseProvider(makeConnection(type, overrides[type] ?? {}));
+      const provider = await createDatabaseProvider(
+        makeConnection(type, { ...withoutRefusedFields(type), ...overrides[type] }),
+      );
       if (!supportsQueryCancel(provider)) cannotCancel.push(type);
     }
 
@@ -3631,16 +3651,16 @@ describe("acquireExecutionProfileProvider", () => {
   }
 
   const kubernetesConn = (overrides: Partial<DatabaseConnection> = {}) =>
-    makeConnection("kubernetes", { id: "k8s-profile", port: 6443, database: undefined, ...overrides });
+    makeConnection("kubernetes", { id: "k8s-profile", port: 6443, database: undefined, user: undefined, ...overrides });
 
-  test("a token engine's agent password alone is the agent's token, and the connection's user is kept", async () => {
+  test("a token engine's agent password alone is the agent's token, and the provider holds no user", async () => {
     const conn = kubernetesConn({ id: "k8s-agent-token", password: "connection-token", agentPassword: "agent-token" });
     const restore = await kubernetesConnectStubbed(conn);
     try {
       const agent = await acquireExecutionProfileProvider(conn, "agent-operations");
 
       expect(agent.config.password).toBe("agent-token");
-      expect(agent.config.user).toBe("test");
+      expect(Object.hasOwn(agent.config, "user")).toBe(false);
       expect(getExecutionProfileCacheStats().size).toBe(1);
     } finally {
       restore();
@@ -3832,6 +3852,25 @@ describe("acquireExecutionProfileProvider", () => {
         connect.mockRestore();
       }
     });
+
+    test.each(["spark", "oxia"])(
+      "%s, which takes no user name, refuses an agent user by name rather than drop it, and connects nothing",
+      async (type) => {
+        const base = makeConnection(type, { id: `${type}-agent-pair`, user: undefined, database: undefined });
+        const connect = await connectStubbed(base);
+        try {
+          const error = await refusal({ ...base, agentUser: "agent", agentPassword: crypto.randomUUID() });
+          expect(error.reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
+          expect(error.message).toBe(
+            `Connection "${type}-agent-pair" configures an agent user, and this engine takes no user name: clear the agent user`,
+          );
+          expect(connect).not.toHaveBeenCalled();
+          expect(getExecutionProfileCacheStats().size).toBe(0);
+        } finally {
+          connect.mockRestore();
+        }
+      },
+    );
 
     test.each(["weaviate", "qdrant"])("%s takes the agent's token alone and refuses an agent user", async (type) => {
       const base = makeConnection(type, { id: `${type}-agent`, user: undefined, port: 6333 });
@@ -6884,4 +6923,86 @@ describe("every refusal raised while a provider is built answers outcome not-sen
     expect(errorOutcome(error)).toBe("not-sent");
     expect(getProviderCacheStats().size).toBe(0);
   });
+});
+
+const { QdrantProvider } = await import("@/lib/db/providers/vector/qdrant/index");
+const { RabbitMQProvider } = await import("@/lib/db/providers/stream/rabbitmq/index");
+const { rabbitmqConnection } = await import("../helpers/rabbitmq-connection");
+
+describe("a field its engine refuses is refused by core on every connect path (FND-2 slice 6c)", () => {
+  const ENTRIES = [
+    {
+      type: "qdrant",
+      field: "user",
+      prototype: QdrantProvider.prototype,
+      record: (value: string) =>
+        makeConnection("qdrant", { id: "qdrant-s6c", port: 6333, database: undefined, user: value }),
+    },
+    {
+      type: "rabbitmq",
+      field: "database",
+      prototype: RabbitMQProvider.prototype,
+      record: (value: string) => rabbitmqConnection({ id: "rabbitmq-s6c", database: value }),
+    },
+  ] as const;
+
+  test.each(ENTRIES.map((entry) => [`${entry.type} ${entry.field}`, entry] as const))(
+    "%s is refused by name on createDatabaseProvider, getOrCreateProvider, acquireExecutionProfileProvider and testConnection, and nothing is cached or connected",
+    async (_name, entry) => {
+      const sentence = (REFUSED_CONNECTION_FIELDS[entry.type] as Readonly<Record<string, string>>)[entry.field];
+      const connect = spyOn(entry.prototype, "connect").mockImplementation(async () => {});
+      const log = spyOn(console, "log").mockImplementation(() => {});
+      try {
+        const value = `refused-${crypto.randomUUID()}`;
+        const record = entry.record(value);
+        for (const attempt of [
+          () => createDatabaseProvider(record),
+          () => getOrCreateProvider(record),
+          () => acquireExecutionProfileProvider(record, "agent-operations"),
+          () => testConnection(record, {}, "/api/db/test-connection"),
+        ]) {
+          // oxlint-disable-next-line no-await-in-loop -- each path is refused before the next is tried.
+          const error: unknown = await attempt().catch((e: unknown) => e);
+          expect(error).toBeInstanceOf(DatabaseConfigError);
+          expect((error as Error).message).toBe(sentence);
+          expect((error as Error).message).not.toContain(value);
+          expect(databaseErrorBody(error)?.body.outcome).toBe("not-sent");
+        }
+        expect(log.mock.calls.some(([line]) => String(line).startsWith(`[DB] Creating ${entry.type} provider`))).toBe(
+          false,
+        );
+        expect(getProviderCacheStats().size).toBe(0);
+        expect(getExecutionProfileCacheStats().size).toBe(0);
+        expect(connect).not.toHaveBeenCalled();
+      } finally {
+        log.mockRestore();
+        connect.mockRestore();
+      }
+    },
+  );
+
+  test("the agent credential is overlaid only into fields its engine receives, and every engine with an agent credential receives them", () => {
+    for (const type of SHIPPED_DATABASE_TYPES) {
+      const credential = SEED_AGENT_CREDENTIAL[type];
+      if (credential === null) continue;
+      const fields: readonly string[] = providerFields(type);
+      expect({ type, password: fields.includes("password") }).toEqual({ type, password: true });
+      if (credential.form !== "secret") expect({ type, user: fields.includes("user") }).toEqual({ type, user: true });
+      // A secret-form engine that refuses a user receives none, so an agent user there is never overlaid.
+      if ("user" in REFUSED_CONNECTION_FIELDS[type])
+        expect({ type, user: fields.includes("user") }).toEqual({ type, user: false });
+    }
+  });
+
+  test.each(ENTRIES.map((entry) => [`${entry.type} ${entry.field}`, entry] as const))(
+    "readProviderDeclarations answers for a %s connection without the field",
+    async (_name, entry) => {
+      const record = entry.record(`refused-${crypto.randomUUID()}`);
+      const without: Record<string, unknown> = { ...record };
+      delete without[entry.field];
+      const declarations = await readProviderDeclarations(record);
+      const expected = await readProviderDeclarations(without as unknown as DatabaseConnection);
+      expect(declarations).toEqual(expected);
+    },
+  );
 });

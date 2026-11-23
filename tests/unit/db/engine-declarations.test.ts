@@ -214,7 +214,9 @@ describe("the census", () => {
   });
 
   test("connection.refused is the engine's REFUSED_CONNECTION_FIELDS row", () => {
-    expect(differing((type, d) => sameList(d.connection.refused, REFUSED_CONNECTION_FIELDS[type]))).toEqual([]);
+    expect(
+      differing((type, d) => sameList(d.connection.refused, Object.keys(REFUSED_CONNECTION_FIELDS[type]))),
+    ).toEqual([]);
   });
 
   test("connection.hostPathFields is the engine's HOST_PATH_FIELDS row", () => {

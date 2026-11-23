@@ -821,8 +821,9 @@ export const CONNECTION_FORM: {
     // The connection-string box reads http:// and https:// as ClickHouse, so the vendor's address belongs in the
     // Host box, which splits it (hostAcceptsUri below, vector-family spec 3.12).
     showConnectionStringToggle: false,
-    // No Database box: Qdrant has no container level. No User field: Qdrant has no user name, and the provider
-    // refuses a non-empty one from a seed or the API naming the field (vector-family spec 4.4). The key or JWT is the password.
+    // No Database box: Qdrant has no container level. No User field: Qdrant has no user name, and core refuses a
+    // non-empty one from a seed or the API naming the field, before the provider is built (vector-family spec 4.4,
+    // `REFUSED_CONNECTION_FIELDS`). The key or JWT is the password.
     connectionFields: CONNECTION_FIELDS.qdrant,
     fieldLabels: { password: "API key or JWT" },
     fieldHints: {
@@ -840,7 +841,8 @@ export const CONNECTION_FORM: {
     // Host box, which splits it (hostAcceptsUri below), as Qdrant's.
     showConnectionStringToggle: false,
     // No Database box: Weaviate has no container level. No User field: an API key and an OIDC access token are both
-    // a bearer token, which is the password, and the provider refuses a non-empty user naming the field.
+    // a bearer token, which is the password, and core refuses a non-empty user naming the field, before the provider
+    // is built (`REFUSED_CONNECTION_FIELDS`).
     connectionFields: CONNECTION_FIELDS.weaviate,
     fieldLabels: { password: "API key or token" },
     fieldHints: {
@@ -876,8 +878,8 @@ export const CONNECTION_FORM: {
     label: "InfluxDB 3 (SQL)",
     defaultPort: "8181",
     showConnectionStringToggle: false,
-    // No User field: InfluxDB 3 has no user name, its token is the password, and the connection layer refuses a user
-    // from a seed or the API naming the field.
+    // No User field: InfluxDB 3 has no user name, its token is the password, and core refuses a user from a seed or
+    // the API naming the field, before the provider is built (`REFUSED_CONNECTION_FIELDS`).
     connectionFields: CONNECTION_FIELDS.influxdb3,
     fieldLabels: { password: "Token" },
     fieldHints: {
@@ -1058,8 +1060,8 @@ export const CONNECTION_FORM: {
     defaultPort: "6443",
     // No URI mode: a cluster address belongs in the Host box, which splits it, and a kubeconfig is not a URI.
     showConnectionStringToggle: false,
-    // No User field: basic authentication is refused, and the provider refuses a user from a seed or the API naming
-    // the field. The SSL panel carries the CA and a client certificate; the SSH tunnel stays offered.
+    // No User field: basic authentication is refused, and core refuses a user from a seed or the API naming the
+    // field, before the provider is built (`REFUSED_CONNECTION_FIELDS`). The SSL panel carries the CA and a client certificate; the SSH tunnel stays offered.
     connectionFields: CONNECTION_FIELDS.kubernetes,
     fieldLabels: {
       host: "API server",

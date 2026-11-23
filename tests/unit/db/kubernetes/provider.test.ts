@@ -155,7 +155,8 @@ describe("connect", () => {
   });
 
   test("a refused connection is refused before any transport is built", async () => {
-    const { provider, transport } = providerWith(fakeCluster(), { user: "admin" });
+    // A token with a Bearer prefix, which Studio adds itself.
+    const { provider, transport } = providerWith(fakeCluster(), { password: `Bearer ${crypto.randomUUID()}` });
     await expect(provider.connect()).rejects.toBeInstanceOf(DatabaseConfigError);
     expect(transport.built).toEqual([]);
   });

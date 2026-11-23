@@ -190,18 +190,6 @@ describe("connect(): the provider's own stage, after resolution (vector-family s
     expect(sent).toEqual(["root", "get_collections"]);
     await provider.disconnect();
   });
-
-  test("a non-empty user is refused naming the field, before any client exists (vector-family spec 4.4)", async () => {
-    const { createClient } = openServer();
-    const provider = new QdrantProvider(
-      connection({ user: "root", password: TEST_PASSWORD }),
-      {},
-      { egress: ALLOWS_PRIVATE_HOSTS },
-      createClient as never,
-    );
-    await expect(provider.connect()).rejects.toThrow(/user/i);
-    expect(createClient).toHaveBeenCalledTimes(0);
-  });
 });
 
 const seed = {

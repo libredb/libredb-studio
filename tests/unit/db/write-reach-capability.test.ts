@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES, WRITE_REACH } from "@/lib/db/compatibility";
+import { REFUSED_CONNECTION_FIELDS } from "@/lib/db/connection-fields";
 import { NON_SQL_DESTRUCTIVE_VOCABULARY } from "@/lib/db/destructive-commands";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { MIGRATION_DDL } from "@/lib/db/migration-ddl";
@@ -148,11 +149,12 @@ describe("WRITE_REACH against each provider's own declaration", () => {
       expect(Object.isFrozen(declared)).toBe(true);
       for (const path of WRITE_PATHS) expect(Object.isFrozen(declared[path])).toBe(true);
       // The capabilities reach the browser through provider-meta, so a connection with other credentials and host
-      // must get the very same object, and no value the census connection supplies may appear in it.
+      // must get the very same object, and no value the census connection supplies may appear in it. The other user
+      // only where the engine takes one: core refuses a user on an engine that refuses it, before the build.
       const other = await createDatabaseProvider({
         ...CENSUS_CONNECTION[type],
         id: "census-other",
-        user: "not-a-real-user",
+        ...("user" in REFUSED_CONNECTION_FIELDS[type] ? {} : { user: "not-a-real-user" }),
         password: OTHER_PASSWORD,
       });
       expect(other.getCapabilities().writeReach).toBe(declared);

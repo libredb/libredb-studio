@@ -12,7 +12,7 @@
  * The credential travels as one `authorization` header, set once per connection, and nowhere else: never in a URL,
  * a query string or a body (E14). `AUTHORIZATION_BY_TYPE` is the whole rule: `influxdb` sends Basic with a user and
  * a password and `Token` with a password alone, which a 1.x server reads as a user's password and a 2.x or 3.x
- * server as a token; `influxdb3` sends `Bearer` and has no user name.
+ * server as a token; `influxdb3` sends `Bearer` and has no user name, which core refuses before the provider is built.
  *
  * Through an SSH tunnel the origin dialled is the local forward, while the endpoint a sentence names, the host the
  * plaintext rule judges and the identity a certificate is checked against are the tunnel's far end.
@@ -128,7 +128,6 @@ export const INFLUX_CONNECTION_SENTENCES = Object.freeze({
   plaintext:
     "This connection would send its password or token to InfluxDB without TLS, to a host that is not this machine, where anyone on the path can read it. Choose an SSL mode under SSL / TLS (docs/providers/influxdb.md has a TLS recipe for each version), connect through an SSH tunnel, or tick Send the password without TLS to accept that risk for this connection. Inside a container, localhost is the container itself, not the host. Nothing was sent.",
   userWithoutPassword: "A user without a password sends nothing InfluxDB reads; fill Password or token, or clear User.",
-  influxdb3User: "InfluxDB 3 has no user name: clear User and put the token in Token.",
   userColon: "User holds a colon, which Basic authentication cannot carry; check the user name.",
   malformed: (field: CredentialField): string =>
     `${field} holds a character outside printable ASCII, which an HTTP header cannot carry; re-enter it.`,
@@ -157,8 +156,9 @@ const DEFAULT_PORT_BY_TYPE: Readonly<Record<InfluxType, number>> = {
 /**
  * The Authorization header value each type sends for a credential, or undefined for none (I6). An empty user or
  * password reads as absent. A credential the type cannot send is refused with a DatabaseConfigError naming the
- * field and never the value: a character outside printable ASCII (C13), a Basic user holding a colon, a user with
- * no password on `influxdb`, and any user on `influxdb3`. `Bearer` is never sent on `influxdb`.
+ * field and never the value: a character outside printable ASCII (C13), a Basic user holding a colon and a user with
+ * no password on `influxdb`. A user on `influxdb3` never arrives: core refuses it before the provider is built.
+ * `Bearer` is never sent on `influxdb`.
  */
 export const AUTHORIZATION_BY_TYPE: Readonly<
   Record<InfluxType, (credential: { readonly user?: string; readonly password?: string }) => string | undefined>
@@ -173,10 +173,9 @@ export const AUTHORIZATION_BY_TYPE: Readonly<
     }
     return `Basic ${Buffer.from(`${user}:${password}`, "utf8").toString("base64")}`;
   },
+  // InfluxDB 3 has no user name: core refuses a connection that sets one before the provider is built
+  // (`REFUSED_CONNECTION_FIELDS` in src/lib/db/connection-fields.ts), so only the token is read.
   influxdb3: (credential) => {
-    if ((credential.user ?? "") !== "") {
-      throw new DatabaseConfigError(INFLUX_CONNECTION_SENTENCES.influxdb3User, "influxdb3");
-    }
     const token = headerText(credential.password, "Token", "influxdb3");
     return token === undefined ? undefined : `Bearer ${token}`;
   },

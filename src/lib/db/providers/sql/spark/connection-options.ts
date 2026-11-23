@@ -1,7 +1,7 @@
 /**
  * Maps an Apache Spark connection to the options its gRPC channel opens with. No socket opens
  * here: every refusal is a DatabaseConfigError raised before any channel is built, and none repeats the value it
- * refuses (the Milvus rule). The checks run in one fixed order, and the first refusal answers: Host, Port, User,
+ * refuses (the Milvus rule). The checks run in one fixed order, and the first refusal answers: Host, Port,
  * Token, Catalog, Namespace, the SSL / TLS panel, the token's plaintext rule, then the query timeout. The SSH tunnel is
  * core's to decide before the provider is built; here only its far end (`TUNNEL_FAR_END`) is read.
  *
@@ -13,12 +13,12 @@
  * Host, Catalog and Namespace read as blank when they are absent, null, empty or only white space. Host and Namespace
  * are otherwise checked and used as written, as the dialog checks them, and the dialog refuses a padded Namespace.
  * Catalog is trimmed before it is checked: Spark looks the catalog name up literally in SET CATALOG, and the dialog
- * accepts both spellings. User takes no value at all: anything but an
- * absent, null or empty User is refused with userNotTaken, whatever its type.
+ * accepts both spellings. User takes no value at all: core refuses a connection that sets one before the provider is
+ * built (`REFUSED_CONNECTION_FIELDS` in src/lib/db/connection-fields.ts), so this module never receives it.
  *
  * The parameter is named `config` on purpose: tests/unit/lib/db-ui-config.test.ts finds which addressing fields a
- * provider reads by the `config.<field>` pattern, and this file reads config.host, config.port, config.user,
- * config.password, config.database and config.schema as written.
+ * provider reads by the `config.<field>` pattern, and this file reads config.host, config.port, config.password,
+ * config.database and config.schema as written.
  */
 import { DatabaseConfigError } from "@/lib/db/errors";
 import {
@@ -52,7 +52,7 @@ export interface SparkConnectionOptions {
 }
 
 /**
- * The field refusals; hostEmpty, tokenCharacters, catalogFormat, namespaceFormat and userNotTaken end with
+ * The field refusals; hostEmpty, tokenCharacters, catalogFormat and namespaceFormat end with
  * "Nothing was sent.". src/lib/db/connection-form.ts copies
  * hostEmpty, tokenCharacters, catalogFormat and namespaceFormat literally into SPARK_FIELD_RULES, and
  * tests/unit/lib/db-ui-config.test.ts holds each copy equal to these.
@@ -65,8 +65,6 @@ export const SPARK_FIELD_SENTENCES = Object.freeze({
   catalogFormat: "Catalog takes one catalog name without dots, as spark.sql.catalog.<name> names it. Nothing was sent.",
   namespaceFormat:
     "Namespace takes a Spark SQL namespace: parts joined by dots, each a letter or _ followed by letters, digits or _, or written in backticks with a backtick doubled; at most 8 parts. Nothing was sent.",
-  userNotTaken:
-    "Apache Spark connections take no user: every Studio request uses one fixed Spark Connect user id, and Token is the credential. Clear User. Nothing was sent.",
   queryTimeout: "Query timeout must be a whole number between 1 and 2147483647 milliseconds.",
 });
 
@@ -93,10 +91,6 @@ export function buildSparkConnectionOptions(
     farEnd === undefined
       ? { host: targetHost, port: targetPort }
       : { host: grpcEndpointHost(farEnd.host, WORDS), port: shared(() => validatePort(farEnd.port)) };
-  // Any User but an absent, null or empty one, whatever its type: Spark Connect's identity is fixed.
-  if (config.user !== undefined && config.user !== null && config.user !== "") {
-    throw configError(SPARK_FIELD_SENTENCES.userNotTaken);
-  }
   const token = optionalText(config.password, "password");
   if (token !== undefined && !SPARK_TOKEN_PATTERN.test(token)) throw configError(SPARK_FIELD_SENTENCES.tokenCharacters);
   const catalog = optionalName(config.database, "database")?.trim();

@@ -133,7 +133,7 @@ describe("the token", () => {
 });
 
 describe("SPARK_FIELD_SENTENCES", () => {
-  test("holds the six field refusals word for word, frozen", () => {
+  test("holds the five field refusals word for word, frozen", () => {
     expect(Object.isFrozen(SPARK_FIELD_SENTENCES)).toBe(true);
     expect(SPARK_FIELD_SENTENCES).toStrictEqual({
       hostEmpty:
@@ -144,8 +144,6 @@ describe("SPARK_FIELD_SENTENCES", () => {
         "Catalog takes one catalog name without dots, as spark.sql.catalog.<name> names it. Nothing was sent.",
       namespaceFormat:
         "Namespace takes a Spark SQL namespace: parts joined by dots, each a letter or _ followed by letters, digits or _, or written in backticks with a backtick doubled; at most 8 parts. Nothing was sent.",
-      userNotTaken:
-        "Apache Spark connections take no user: every Studio request uses one fixed Spark Connect user id, and Token is the credential. Clear User. Nothing was sent.",
       queryTimeout: "Query timeout must be a whole number between 1 and 2147483647 milliseconds.",
     });
   });
@@ -207,9 +205,6 @@ describe("every field refusal, before any socket", () => {
     ["no host", { host: undefined }, SPARK_FIELD_SENTENCES.hostEmpty],
     ["a null host", { host: null }, SPARK_FIELD_SENTENCES.hostEmpty],
     ["a blank host", { host: "   " }, SPARK_FIELD_SENTENCES.hostEmpty],
-    ["a user", { user: "alice" }, SPARK_FIELD_SENTENCES.userNotTaken],
-    ["a user of spaces", { user: " " }, SPARK_FIELD_SENTENCES.userNotTaken],
-    ["a user that is not text", { user: 42 }, SPARK_FIELD_SENTENCES.userNotTaken],
     ["a catalog with a dot", { database: "a.b" }, SPARK_FIELD_SENTENCES.catalogFormat],
     ["a catalog with a control character", { database: "a\tb" }, SPARK_FIELD_SENTENCES.catalogFormat],
     ["a catalog of 256 characters", { database: "c".repeat(256) }, SPARK_FIELD_SENTENCES.catalogFormat],
@@ -247,7 +242,6 @@ describe("every field refusal, before any socket", () => {
 
   test("no sentence repeats the value it refuses", () => {
     for (const [overrides, value] of [
-      [{ user: "alice-the-admin" }, "alice-the-admin"],
       [{ database: "secret.catalog" }, "secret.catalog"],
       [{ schema: "bad..ns" }, "bad..ns"],
     ] as const) {
@@ -259,8 +253,7 @@ describe("every field refusal, before any socket", () => {
 describe("the rules run in one fixed order, so the earlier of two refusals answers", () => {
   test.each([
     ["the host before the port", { host: "" }, { port: 70000 }],
-    ["the port before the user", { port: 70000 }, { user: "alice" }],
-    ["the user before the token", { user: "alice" }, { password: "a\nb" }],
+    ["the port before the token", { port: 70000 }, { password: "a\nb" }],
     ["the token before the catalog", { password: "a\nb" }, { database: "a.b" }],
     ["the catalog before the namespace", { database: "a.b" }, { schema: "a..b" }],
     ["the namespace before the TLS panel", { schema: "a..b" }, { ssl: { mode: "bogus" } }],

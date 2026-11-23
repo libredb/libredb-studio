@@ -80,7 +80,7 @@ Every refusal is raised before any socket opens, and none repeats the value it r
 A Catalog that is not blank is trimmed before it is checked, because Spark looks the name up literally in `SET CATALOG`; Host and Namespace are checked and used as written.
 
 There is no User field: every Studio request uses one fixed Spark Connect identity ([section 10](#10-security)), and Token is the credential.
-A seed or an API call that sets `user` is refused with `Apache Spark connections take no user: every Studio request uses one fixed Spark Connect user id, and Token is the credential. Clear User. Nothing was sent.`
+A seed or an API call that sets `user`, whatever its value but empty, is refused before the provider is built with `Apache Spark connections take no user: every Studio request uses one fixed Spark Connect user id, and Token is the credential. Clear User. Nothing was sent.`, so the provider never receives it.
 
 There is no Read-only toggle: Spark has no engine-side read-only mode, so a `readOnly: true` connection is refused before anything is dialled ([section 10](#10-security)).
 
@@ -196,7 +196,7 @@ connections:
     roles: ["admin", "user"]
 ```
 
-A seed that sets `connectionString` or `readOnly: true` for `spark` is refused when the file loads; one that sets `user` loads, and its connection is refused at connect with the User sentence of [section 2.1](#21-fields).
+A seed that sets `connectionString` or `readOnly: true` for `spark` is refused when the file loads; one that sets `user` loads, and its connection is refused before the provider is built with the User sentence of [section 2.1](#21-fields).
 
 ### Connection string
 

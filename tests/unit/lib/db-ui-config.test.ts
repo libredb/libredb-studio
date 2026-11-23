@@ -35,7 +35,6 @@ import {
   type DatabaseUIConfig,
 } from "@/lib/db-ui-config";
 import { SHIPPED_DATABASE_TYPES, SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
-import { REFUSED_CONNECTION_FIELDS } from "@/lib/db/connection-fields";
 import { requiredSecretRefusal } from "@/lib/db/connection-form";
 import { UnknownProviderError } from "@/lib/db/errors";
 import { SHOWCASE_DATABASE_ORDER, SHOWCASE_RANK, listShowcaseDatabases } from "@/lib/db-showcase";
@@ -82,7 +81,7 @@ import {
 } from "@/lib/db/providers/sql/spark/namespace";
 import { CREDENTIAL_WARNINGS } from "@/lib/db/credential-warnings";
 import { declareHostUri } from "../../helpers/synthetic-host-uri";
-import { providerDirectoryFiles } from "../../helpers/provider-directory-map";
+import { PROVIDER_DIRECTORY_MAP, providerDirectoryFiles } from "../../helpers/provider-directory-map";
 import {
   declareCredentialWarnings,
   SYNTHETIC_NO_SECRET,
@@ -561,41 +560,23 @@ describe("db-ui-config", () => {
     });
 
     /**
-     * A field a provider reads only to refuse it, which the dialog therefore must not offer: Qdrant has no user
-     * name, and its provider refuses a non-empty `config.user` naming the field before any socket (vector-family
-     * spec 4.4), pinned in tests/unit/db/qdrant/credential-record.test.ts. InfluxDB 3 has no user name either: its
-     * token is the password, and the connection layer it shares with the InfluxQL type refuses a user on it (InfluxDB
-     * spec A.3). Oxia has no user name either, and its provider refuses a non-empty `config.user` with "Oxia has no
-     * user name: clear User. A bearer token goes under Token." (SB1-4.3) Kubernetes has no user name either: basic
-     * authentication is refused, and its provider refuses a non-empty `config.user` naming the field. RabbitMQ has no
-     * database: virtual hosts are discovered, and its provider refuses a non-empty `config.database` naming the field.
-     * Apache Spark has no user name either: every request uses one fixed Spark Connect user id, and its provider
-     * refuses a non-empty `config.user` naming the field (Apache Spark). Weaviate has no user name either: an API
-     * key and an OIDC access token are both a bearer token in the password, and its provider refuses a non-empty
-     * `config.user` naming the field (#1566 spec 6.1).
-     * Read from `REFUSED_CONNECTION_FIELDS` (src/lib/db/connection-fields.ts), the row that declares the fields a
-     * provider receives only to refuse them, so one list names them.
+     * A directory that serves two type-ids (`PROVIDER_DIRECTORY_MAP` in tests/helpers/provider-directory-map.ts) has a
+     * connection layer both read, so a field it reads is offered when either type-id's dialog draws it: the
+     * InfluxDB connection layer reads `config.user` for InfluxDB, which InfluxDB 3 refuses. The type-aware census
+     * (tests/unit/lib/db/provider-field-census.test.ts) holds the same union rule. A field an engine refuses by name
+     * is never read by its own provider: core refuses it before the build (`REFUSED_CONNECTION_FIELDS`).
      */
-    const READ_ONLY_TO_REFUSE: Readonly<Record<"user" | "database", readonly DatabaseType[]>> = {
-      user: ALL_TYPES.filter((type) => REFUSED_CONNECTION_FIELDS[type].includes("user")),
-      database: ALL_TYPES.filter((type) => REFUSED_CONNECTION_FIELDS[type].includes("database")),
+    const offeredByDirectory = (type: DatabaseType, field: "user" | "database"): boolean => {
+      const directory = moduleForType(type);
+      const types = Object.hasOwn(PROVIDER_DIRECTORY_MAP, directory)
+        ? ALL_TYPES.filter((other) => moduleForType(other) === directory)
+        : [type];
+      return types.some((other) => getDBConfig(other).connectionFields.includes(field));
     };
-
-    test("every field read only to refuse it is really read and really not offered", () => {
-      for (const [field, types] of Object.entries(READ_ONLY_TO_REFUSE)) {
-        for (const type of types) {
-          expect(new RegExp(`config\\.${field}\\b`).test(providerSource(type))).toBe(true);
-          expect(getDBConfig(type).connectionFields).not.toContain(field);
-        }
-      }
-    });
 
     test.each(["user", "database"] as const)("a provider that reads config.%s is given it", (field) => {
       const diverging = ALL_TYPES.filter(
-        (type) =>
-          !READ_ONLY_TO_REFUSE[field].includes(type) &&
-          new RegExp(`config\\.${field}\\b`).test(providerSource(type)) !==
-            getDBConfig(type).connectionFields.includes(field),
+        (type) => new RegExp(`config\\.${field}\\b`).test(providerSource(type)) !== offeredByDirectory(type, field),
       );
       expect(diverging).toEqual([]);
     });

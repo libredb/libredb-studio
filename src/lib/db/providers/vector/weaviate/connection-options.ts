@@ -12,10 +12,12 @@
  * Weaviate takes an API key and an OIDC access token alike as a bearer token, so the secret sits in the password
  * and travels as one `Authorization: Bearer` header, set once per connection, never in a URL or a query string. No
  * other header is ever set (spec W3): a model-provider key such as `X-OpenAI-Api-Key` cannot be sent. REST and
- * GraphQL share the one port dialled; gRPC (50051) never is.
+ * GraphQL share the one port dialled; gRPC (50051) never is. Weaviate takes no user name: core refuses a connection
+ * that sets one before the provider is built (`REFUSED_CONNECTION_FIELDS` in src/lib/db/connection-fields.ts), so this
+ * module never receives it.
  *
  * The parameter is named `config` on purpose: tests/unit/lib/db-ui-config.test.ts finds which addressing fields a
- * provider reads by the `config.<field>` pattern, and this file reads `config.user` and `config.password` as written.
+ * provider reads by the `config.<field>` pattern, and this file reads `config.password` as written.
  */
 import { readOnlySeedRefusal } from "@/lib/db/credential-warnings";
 import { DatabaseConfigError } from "@/lib/db/errors";
@@ -69,8 +71,6 @@ const SECRET_LABEL = "API key or token";
 const PRINTABLE_ASCII = /^[\x21-\x7E]+$/;
 const MAX_QUERY_TIMEOUT_MS = 2_147_483_647;
 
-const USER_NOT_TAKEN =
-  "Weaviate takes no user name: clear the connection's user, and put the API key or OIDC access token in the password. Nothing was sent.";
 const SECRET_NOT_PRINTABLE =
   "The connection's password (the API key or token) holds a space, a line break, a NUL or another character outside printable ASCII; remove it. Nothing was sent.";
 const SEED_REFUSED =
@@ -131,9 +131,8 @@ function shared<T>(validate: () => T): T {
   }
 }
 
-/** The bearer token, or undefined with none. A user is refused, because Weaviate has none to send it as. */
+/** The bearer token, or undefined with none. Core refused a user before the build, because Weaviate has none to send it as. */
 function credential(config: DatabaseConnection): string | undefined {
-  if (optionalText(config.user, "user") !== undefined) throw configError(USER_NOT_TAKEN);
   const secret = optionalText(config.password, "password");
   if (secret !== undefined && !PRINTABLE_ASCII.test(secret)) throw configError(SECRET_NOT_PRINTABLE);
   return secret;
