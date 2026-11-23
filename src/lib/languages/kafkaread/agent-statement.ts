@@ -17,9 +17,9 @@
  * broker already answered, and is never sent.
  *
  * Not the boundary. The boundary is the provider's structural closed table: the agent's reads reach the client only
- * through `KafkaAgentReadClient` (`client.ts`), which holds the Metadata and ListOffsets reads alone, as
- * tests/unit/db/kafka/seam-guard.test.ts pins. This is what lets the model read why it was refused, before anything is
- * sent.
+ * through `KafkaAgentReadClient` (the Kafka provider's `client.ts`), which holds the Metadata and ListOffsets reads
+ * alone, as tests/unit/db/kafka/seam-guard.test.ts pins. This is what lets the model read why it was refused, before
+ * anything is sent.
  */
 
 import { repeatsAKey } from "@/lib/db/utils/json-repeated-key";

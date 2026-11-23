@@ -12,7 +12,7 @@ import {
   kafkaAgentResult,
   runKafkaAgentRead,
 } from "@/lib/db/providers/stream/kafka/agent-metadata-read";
-import type { KafkaAgentPlan } from "@/lib/db/providers/stream/kafka/agent-statement";
+import type { KafkaAgentPlan } from "@/lib/languages/kafkaread/agent-statement";
 import {
   type KafkaAgentReadClient,
   type KafkaClusterMetadata,

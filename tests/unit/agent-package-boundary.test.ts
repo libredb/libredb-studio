@@ -268,7 +268,6 @@ const NOT_AGENT_CODE: ReadonlySet<string> = new Set([
   "src/lib/db/providers/keyvalue/oxia/agent-metadata-read.ts",
   "src/lib/db/providers/stream/rabbitmq/agent-statement.ts",
   "src/lib/db/providers/stream/rabbitmq/agent-metadata-read.ts",
-  "src/lib/db/providers/stream/kafka/agent-statement.ts",
   "src/lib/db/providers/stream/kafka/agent-metadata-read.ts",
   "src/lib/db/providers/stream/kafka/agent-surface.ts",
   "src/lib/db/providers/objectstore/s3/agent-statement.ts",
@@ -313,6 +312,7 @@ const NOT_AGENT_CODE: ReadonlySet<string> = new Set([
   "src/lib/db/providers/industrial/sparkplug/agent-surface.ts",
   "src/lib/languages/influxql/agent-statement.ts",
   "src/lib/languages/oxiacli/agent-statement.ts",
+  "src/lib/languages/kafkaread/agent-statement.ts",
 ]);
 
 // ---------------------------------------------------------------------------

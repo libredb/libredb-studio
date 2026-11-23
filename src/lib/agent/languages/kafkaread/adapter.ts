@@ -4,7 +4,7 @@
  */
 import { createHash } from "node:crypto";
 import { admitKafkareadStatement } from "@/lib/db/operations/kafkaread-admission";
-import { readKafkaAgentStatement } from "@/lib/db/providers/stream/kafka/agent-statement";
+import { readKafkaAgentStatement } from "@/lib/languages/kafkaread/agent-statement";
 import type { AgentLanguageServerAdapter } from "../pack";
 import { canonicalText } from "../shared";
 

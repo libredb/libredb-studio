@@ -24,7 +24,7 @@ import path from "node:path";
 import { connectionFieldHint, connectionFieldLabel, DB_UI_CONFIG, offersSshTunnel } from "@/lib/db-ui-config";
 import { MCP_STATEMENT_READ, SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
 import { KafkaProvider } from "@/lib/db/providers/stream/kafka";
-import { isWithheldKafkaTopic } from "@/lib/db/providers/stream/kafka/agent-statement";
+import { isWithheldKafkaTopic } from "@/lib/languages/kafkaread/agent-statement";
 import { KAFKA_DEFAULT_PORT } from "@/lib/db/providers/stream/kafka/connection-options";
 import { overviewFrom } from "@/lib/db/providers/stream/kafka/monitoring";
 import { KAFKA_TOPIC_COLUMNS, KAFKA_TOPIC_LIST_CAP } from "@/lib/db/providers/stream/kafka/objects";

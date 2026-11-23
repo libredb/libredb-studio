@@ -81,7 +81,7 @@ import {
   KAFKAREAD_AGENT_MAX_STATEMENT_CHARS,
   kafkareadAgentReadInput,
 } from "@/lib/db/operations/kafkaread-admission";
-import { KAFKA_AGENT_SENTENCES } from "@/lib/db/providers/stream/kafka/agent-statement";
+import { KAFKA_AGENT_SENTENCES } from "@/lib/languages/kafkaread/agent-statement";
 import {
   admitS3apiStatement,
   S3API_AGENT_MAX_STATEMENT_CHARS,

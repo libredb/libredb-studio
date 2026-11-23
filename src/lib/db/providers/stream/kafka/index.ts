@@ -13,14 +13,14 @@
  * is bounded by its limit, its budgets and its timeout, with no server-side evaluation to stop.
  * `prepareQuery` is the base pass-through: the read request carries its own limit (spec 5.1).
  *
- * `queryReadOnly` is the agent's: one read of a closed table of metadata reads (`agent-statement.ts`), sent through
- * the agent's client, which holds the Metadata and ListOffsets reads alone, and answered through a metadata-only
- * projection (`agent-metadata-read.ts`): topic names, partitions, broker node ids and racks, the cluster id and each
- * partition's earliest and end offsets, never a record's key, value, headers or timestamp, a broker's host and port,
- * a config, a log directory or a consumer group. On a handle opened for any agent-mode profile every other surface
- * goes through that client too (`agent-surface.ts`): the editor's read and an object's source are refused, and what
- * needs a withheld read answers its reason, and a platform's own topics are withheld. MCP's `run_kafka_read` reads
- * through the same `queryReadOnly`.
+ * `queryReadOnly` is the agent's: one read of a closed table of metadata reads
+ * (`src/lib/languages/kafkaread/agent-statement.ts`), sent through the agent's client, which holds the Metadata and
+ * ListOffsets reads alone, and answered through a metadata-only projection (`agent-metadata-read.ts`): topic names,
+ * partitions, broker node ids and racks, the cluster id and each partition's earliest and end offsets, never a record's
+ * key, value, headers or timestamp, a broker's host and port, a config, a log directory or a consumer group. On a
+ * handle opened for any agent-mode profile every other surface goes through that client too (`agent-surface.ts`): the
+ * editor's read and an object's source are refused, and what needs a withheld read answers its reason, and a platform's
+ * own topics are withheld. MCP's `run_kafka_read` reads through the same `queryReadOnly`.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
@@ -60,7 +60,11 @@ import {
   kafkaAgentResult,
   runKafkaAgentRead,
 } from "./agent-metadata-read";
-import { isWithheldKafkaTopic, KAFKA_AGENT_SENTENCES, readKafkaAgentStatement } from "./agent-statement";
+import {
+  isWithheldKafkaTopic,
+  KAFKA_AGENT_SENTENCES,
+  readKafkaAgentStatement,
+} from "@/lib/languages/kafkaread/agent-statement";
 import {
   agentCountObjects,
   agentDescribeObject,

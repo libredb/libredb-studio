@@ -1,7 +1,8 @@
 /**
- * What an agent's Kafka read sends and answers: each read of the closed table (`agent-statement.ts`) run over the
- * agent's client, which holds the Metadata and ListOffsets reads alone, and its answer projected to names, counts and
- * flags, with the wording of a failure without the broker's words.
+ * What an agent's Kafka read sends and answers: each read of the closed table
+ * (`src/lib/languages/kafkaread/agent-statement.ts`) run over the agent's client, which holds the Metadata and
+ * ListOffsets reads alone, and its answer projected to names, counts and flags, with the wording of a failure without
+ * the broker's words.
  *
  * Each operation has a typed projection here, and the capability `metadataOnly` states them. No column's name comes
  * from the broker, and no answer is passed on as it came: a broker is its node id, rack and the cluster id, never its
@@ -24,7 +25,7 @@ import {
   projectMetadata,
 } from "@/lib/db/redaction/metadata-only";
 import type { ColumnSchema, QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
-import type { KafkaAgentOperation, KafkaAgentPlan } from "./agent-statement";
+import type { KafkaAgentOperation, KafkaAgentPlan } from "@/lib/languages/kafkaread/agent-statement";
 import {
   type KafkaAgentReadClient,
   KafkaError,

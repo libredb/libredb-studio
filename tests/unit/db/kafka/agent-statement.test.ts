@@ -10,7 +10,7 @@ import {
   KAFKA_AGENT_MAX_LIMIT,
   KAFKA_AGENT_SENTENCES,
   readKafkaAgentStatement,
-} from "@/lib/db/providers/stream/kafka/agent-statement";
+} from "@/lib/languages/kafkaread/agent-statement";
 
 const refused = (text: string) => {
   const reading = readKafkaAgentStatement(text);
