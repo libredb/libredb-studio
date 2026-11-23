@@ -178,7 +178,14 @@ describe("E21-K16: abandoned promises", () => {
       const { executeCall } = consoleCalls(createPageBudget(LARGE_PAGE_SLOTS));
       const stopped: Promise<ExecuteRecord> = executeCall(
         {
-          calls: { console: { execute: { honours: [] }, cancel: "not-offered", endScope: "not-offered" } },
+          calls: {
+            console: {
+              execute: { honours: [] },
+              cancel: "not-offered",
+              endScope: "not-offered",
+              transaction: "not-offered",
+            },
+          },
           execute: () => {
             executeStarted.resolve();
             return answer.promise;

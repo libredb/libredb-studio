@@ -1,6 +1,6 @@
 /**
- * What the host refuses of a call or of its answer (docs/providers/CONTRACT.md, clauses C-9, C-10, C-15, C-17 and
- * C-27).
+ * What the host refuses of a call or of its answer (docs/providers/CONTRACT.md, clauses C-9, C-10, C-15, C-17, C-27
+ * and C-57).
  *
  * One vocabulary for every such refusal, each naming its rule and a JSON Pointer rooted at the thing it names, stated
  * beside each rule. No refusal and no sentence carries a value of a request, a refinement or a row: a sentence names
@@ -14,6 +14,10 @@ export const CALL_REFUSAL_RULES = Object.freeze([
   "request-field-not-honoured",
   /** A `scope` sent to a session that does not offer `console.endScope`; the pointer is into the request. */
   "request-scope-not-offered",
+  /** A statement sent inside a transaction to a session that does not offer `console.transaction`; into the request. */
+  "request-transaction-not-offered",
+  /** A `scope` on a statement sent inside a transaction, which runs on the transaction's session; into the request. */
+  "request-scope-in-transaction",
   /** A console facet the session's calls do not offer; the pointer is into the calls, `name` the facet's call name. */
   "facet-not-offered",
   /** A key a refinement cannot have; the pointer is into the refinement, `name` the key. */
@@ -38,6 +42,13 @@ export const CALL_REFUSAL_RULES = Object.freeze([
   "call-deadline-passed",
   /** A call whose signal had aborted when it was to start; the pointer is into the call's context. */
   "call-signal-aborted",
+  /**
+   * A session state a transaction call or a statement sent inside the transaction answered that the host cannot read:
+   * missing, outside the vocabulary or an accessor, a `stateReported` that is no boolean or answers another action
+   * than begin, a key a transaction answer cannot have (`name` the key), or no record at all; the pointer is into the
+   * answer.
+   */
+  "transaction-answer-unreadable",
 ] as const);
 
 export type CallRefusalRule = (typeof CALL_REFUSAL_RULES)[number];
@@ -49,7 +60,7 @@ export interface CallRefusal {
   readonly pointer: string;
   /**
    * The request field, for a field not honoured, the facet's call name, for a facet not offered, or the key, for a key
-   * a refinement cannot have.
+   * a refinement or a transaction answer cannot have.
    */
   readonly name?: string;
   /** For a budget, what was asked for: a count of rows or of bytes. */
@@ -89,6 +100,10 @@ export function callRefusalSentence(refusal: CallRefusal): string {
       return `The request carries the field ${name} at ${at}, which the session's execute does not honour, so the call was not made.`;
     case "request-scope-not-offered":
       return `The request carries a scope at ${at}, and the session does not offer console.endScope, so the call was not made.`;
+    case "request-transaction-not-offered":
+      return `The request is sent inside a transaction at ${at}, and the session does not offer console.transaction, so the call was not made.`;
+    case "request-scope-in-transaction":
+      return `The request carries a scope at ${at} on a statement sent inside a transaction, which runs on the transaction's own session, so the call was not made.`;
     case "facet-not-offered":
       return `The session does not offer the console facet ${name} at ${at}, so the call was not made.`;
     case "refinement-key-unknown":
@@ -113,5 +128,9 @@ export function callRefusalSentence(refusal: CallRefusal): string {
       return `The call's deadline at ${at} had passed when the call was to start, so the provider was not called.`;
     case "call-signal-aborted":
       return `The call's signal at ${at} had aborted when the call was to start, so the provider was not called.`;
+    case "transaction-answer-unreadable":
+      return refusal.name === undefined
+        ? `The transaction answer value at ${at} is missing, an accessor, or not what the provider contract defines there for the call's action, so no session state was read from it.`
+        : `The transaction answer has the key ${name} at ${at}, which a transaction answer cannot have, so no session state was read from it.`;
   }
 }

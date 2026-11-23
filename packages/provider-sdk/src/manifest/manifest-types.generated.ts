@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "d28107fc4e1ffee1524455db1908aa0033bcbb14b730b7e2b92dfb3b65475d2b";
+export const MANIFEST_SCHEMA_SHA256 = "1fcef8e653ddd72e40a72d0c2fce5af9f0e23a39f44681e338009d23911d80c1";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -86,6 +86,7 @@ export interface ConsoleCalls {
   readonly execute: ExecuteCall;
   readonly cancel: FacetOffer;
   readonly endScope: FacetOffer;
+  readonly transaction: FacetOffer;
 }
 
 /** What the package's console execute does with the optional fields of its request. */

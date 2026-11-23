@@ -187,9 +187,12 @@
         },
         "endScope": {
           "$ref": "#/$defs/facetOffer"
+        },
+        "transaction": {
+          "$ref": "#/$defs/facetOffer"
         }
       },
-      "required": ["execute", "cancel", "endScope"],
+      "required": ["execute", "cancel", "endScope", "transaction"],
       "additionalProperties": false
     },
     "executeCall": {

@@ -3,7 +3,9 @@
  * the optional console facets, the contexts the host passes them, `defineProvider` and `checkProviderModule`, which
  * make and check the record a package's entry default-exports, `envReader`, the declared environment behind
  * `ctx.env`, and the host's checks of a call: `checkExecuteRequest`, which refuses a request field the session does not
- * honour, `checkConsoleFacet`, which refuses a console facet the session does not offer, `checkRefinement` and
+ * honour, `checkConsoleFacet`, which refuses a console facet the session does not offer, `checkTransactionAnswer` and
+ * `checkTransactionStatement`, which refuse a session state a transaction call or a statement inside the transaction
+ * answered that the host cannot read, `checkRefinement` and
  * `sessionCalls`, which narrow a session's calls by the refinement `open` answers, and `freezeContext` and
  * `freezeData`, which deep-freeze the contexts and requests the host passes; and the byte budgets
  * of a result, `BATCH_MAX_BYTES` and `PAGE_MAX_BYTES`, with `encodedRowBytes`, the row measure, `rowsSource`, a batch
@@ -54,4 +56,5 @@ export {
   rowsSource,
 } from "./results";
 export { checkConsoleFacet, checkExecuteRequest, checkRefinement, sessionCalls } from "./session";
+export { checkTransactionAnswer, checkTransactionStatement } from "./transaction";
 export * from "./types";

@@ -35,7 +35,14 @@ const child = boundedChild({
     const ports = { late: () => {}, cancelFailed: () => {} };
     const sessionOver = (source: unknown) =>
       ({
-        calls: { console: { execute: { honours: [] }, cancel: "not-offered", endScope: "not-offered" } },
+        calls: {
+          console: {
+            execute: { honours: [] },
+            cancel: "not-offered",
+            endScope: "not-offered",
+            transaction: "not-offered",
+          },
+        },
         execute: async () => ({ results: [source], warnings: [], executionTimeMs: 1, pageApplied: true }),
       }) as unknown as Parameters<typeof calls.executeCall>[0];
     const request = { statement: "page", page: { limit: 10, offset: 0 } };

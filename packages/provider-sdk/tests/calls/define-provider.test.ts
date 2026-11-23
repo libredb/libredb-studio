@@ -162,6 +162,21 @@ describe("checkProviderModule", () => {
     );
   });
 
+  test("the transaction facet is declared and implemented both ways, like every console facet", () => {
+    const transaction = async () => ({ sessionState: "not-in-transaction" as const });
+    const offered = manifest((m) => (m.calls.console.transaction = "offered"));
+    const implemented = impl((i) => (i.console.transaction = transaction));
+    const name = "console.transaction";
+
+    expect(defineProvider(offered, implemented).impl.console.transaction).toBe(transaction);
+    expect(checkProviderModule(record((r) => (r.manifest = offered)))).toEqual([
+      refusal("facet-unimplemented", "/impl/console/transaction", { name }),
+    ]);
+    expect(checkProviderModule(record((r) => (r.impl = implemented)))).toEqual([
+      refusal("facet-undeclared", "/impl/console/transaction", { name }),
+    ]);
+  });
+
   test("an honours item that is no request field, or one listed twice, is refused as manifest-unreadable", () => {
     const cases: [unknown[], string[]][] = [
       [[1, "params"], ["/0"]],

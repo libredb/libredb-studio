@@ -30,7 +30,14 @@ const child = boundedChild({
     const { executeCall } = deps.consoleCalls(deps.createPageBudget(1));
     const deadline = Date.now() + 50;
     const session = {
-      calls: { console: { execute: { honours: [] }, cancel: "not-offered", endScope: "not-offered" } },
+      calls: {
+        console: {
+          execute: { honours: [] },
+          cancel: "not-offered",
+          endScope: "not-offered",
+          transaction: "not-offered",
+        },
+      },
       execute: () => new Promise<never>(() => {}),
     } as unknown as Parameters<typeof executeCall>[0];
     const record = await executeCall(

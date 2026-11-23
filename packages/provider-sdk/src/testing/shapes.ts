@@ -14,6 +14,7 @@
  * first hole, so a value no frame produced is refused by name rather than walked to its length.
  */
 import { isPlainRecord, pointerTo, readOwn } from "../calls/records";
+import type { SessionState } from "../errors";
 import type {
   AdmittedHostPaths,
   BatchLimit,
@@ -34,6 +35,8 @@ import type {
   PoolSettings,
   RowBatch,
   TlsSettings,
+  TransactionAnswer,
+  TransactionRequest,
   TrustMaterial,
   TunnelFarEnd,
   VectorColumnShape,
@@ -99,6 +102,11 @@ export interface FrameShapes {
     readonly context: ContextData<CallContext>;
     readonly request: EndScopeRequest;
     readonly answer: EndScopeAnswer;
+  };
+  readonly "console.transaction": {
+    readonly context: ContextData<CallContext>;
+    readonly request: TransactionRequest;
+    readonly answer: TransactionAnswer;
   };
   readonly "result.next": { readonly request: BatchLimitData; readonly answer: RowBatch };
   readonly "result.close": Readonly<Record<never, never>>;
@@ -238,6 +246,41 @@ const OPEN_TRANSACTIONS = Object.freeze<Record<EndScopeAnswer["openTransaction"]
   "rolled-back": true,
 });
 
+const SESSION_STATE_WORDS = Object.freeze<Record<SessionState, true>>({
+  "in-transaction": true,
+  "not-in-transaction": true,
+  unknown: true,
+});
+
+/** A transaction request that opens a transaction: the one action that may carry `requireReportedState`. */
+type BeginRequest = Extract<TransactionRequest, { action: "begin" }>;
+
+/** A transaction request of any other action, which carries nothing beside it. */
+type OtherTransactionRequest = Exclude<TransactionRequest, BeginRequest>;
+
+const readBegin = record<BeginRequest>({
+  action: required(vocabulary<BeginRequest["action"]>(Object.freeze({ begin: true }))),
+  requireReportedState: optional(exactlyTrue),
+});
+
+const readOtherAction = record<OtherTransactionRequest>({
+  action: required(
+    vocabulary<OtherTransactionRequest["action"]>(Object.freeze({ commit: true, rollback: true, state: true })),
+  ),
+});
+
+/**
+ * A transaction request, read as the closed shape of the action it names: a record whose `action` is the data value
+ * `begin` is read as a begin, which may carry `requireReportedState`, and any other value as one of the other actions,
+ * which refuses `requireReportedState` as a key it does not define and an `action` that is missing, an accessor or no
+ * action. The `action` is read by its own descriptor, so a getter is never called.
+ */
+const transactionRequest: Reader = (item, pointer, found) => {
+  const action = readOwn(item, "action");
+  const isBegin = isPlainRecord(item) && action.kind === "data" && action.value === "begin";
+  (isBegin ? readBegin : readOtherAction)(item, pointer, found);
+};
+
 /** One value of a connection field: a string, a number, a boolean or a list of strings. */
 const connectionValue: Reader = (item, pointer, found) => {
   if (Array.isArray(item)) listOf(text)(item, pointer, found);
@@ -348,6 +391,7 @@ const executeRequest = record<ExecuteRequest>({
     ),
   ),
   scope: optional(text),
+  transaction: optional(exactlyTrue),
 });
 
 const column = record<Column>({
@@ -380,6 +424,7 @@ const executeAnswer = record<ExecuteAnswerFrame>({
   pageApplied: required(boolean),
   boundApplied: optional(exactlyTrue),
   explainPlan: optional(anyValue),
+  sessionState: optional(vocabulary(SESSION_STATE_WORDS)),
 });
 
 /** The reader of each part of each call's frame, typed so every part `FrameShapes` names has one. */
@@ -398,6 +443,14 @@ const READERS = Object.freeze<{
     context: callContext,
     request: record<EndScopeRequest>({ scope: required(text) }),
     answer: record<EndScopeAnswer>({ openTransaction: required(vocabulary(OPEN_TRANSACTIONS)) }),
+  },
+  "console.transaction": {
+    context: callContext,
+    request: transactionRequest,
+    answer: record<TransactionAnswer>({
+      sessionState: required(vocabulary(SESSION_STATE_WORDS)),
+      stateReported: optional(boolean),
+    }),
   },
   "result.next": {
     request: record<BatchLimitData>({ maxRows: required(number), maxBytes: required(number) }),

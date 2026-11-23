@@ -55,6 +55,7 @@ function callsOf(options: { readonly honours?: ("params" | "offset")[]; readonly
       execute: { honours: options.honours ?? ["params", "offset"] },
       cancel: options.cancel === false ? "not-offered" : "offered",
       endScope: "not-offered",
+      transaction: "not-offered",
     },
   };
 }

@@ -16,7 +16,8 @@
         "honours": []
       },
       "cancel": "not-offered",
-      "endScope": "not-offered"
+      "endScope": "not-offered",
+      "transaction": "not-offered"
     }
   },
   "engines": [

@@ -14,6 +14,7 @@ export const SERVED_CALLS = Object.freeze([
   "console.execute",
   "console.cancel",
   "console.endScope",
+  "console.transaction",
   "result.next",
   "result.close",
 ] as const);

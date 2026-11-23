@@ -7,7 +7,9 @@
  * Its calls are declared once: execute honours `params` and `offset` for every engine, so each provider answers both as
  * it always has, its own `OffsetUnsupportedError` included; `console.cancel` is offered exactly when the provider can
  * cancel (`supportsQueryCancel`); `console.endScope` is not offered, since the run's open transaction is ended inside
- * execute, as `runEditorQuery` always ended it, until it moves onto `console.endScope`.
+ * execute, as `runEditorQuery` always ended it, until it moves onto `console.endScope`; `console.transaction` is not
+ * offered, since the transaction route still calls a provider's transaction methods itself until they move onto the
+ * host core.
  *
  * Its execute runs today's provider steps: `prepareQuery` on a fresh copy of the caller's own options object (the
  * request's resolved page is the contract's view; the options are what a legacy provider has always received), the
@@ -251,6 +253,7 @@ export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepare
         execute: { honours: ["params", "offset"] },
         cancel: canceller === undefined ? "not-offered" : "offered",
         endScope: "not-offered",
+        transaction: "not-offered",
       },
     },
     undefined,

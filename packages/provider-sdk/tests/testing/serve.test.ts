@@ -36,6 +36,8 @@ import {
   type ResultSource,
   type RowBatch,
   rowsSource,
+  type TransactionAnswer,
+  type TransactionRequest,
 } from "@libredb/provider-sdk/calls";
 import { FrameRefusalError, type ServedFrame, type ServedHandle, serve } from "@libredb/provider-sdk/testing";
 import { ValueCodecError } from "@libredb/provider-sdk/values";
@@ -64,14 +66,20 @@ interface Fixture {
   readonly answers: Json;
 }
 
-/** A provider module over the minimal manifest: honours both fields, offers both facets unless told otherwise. */
+/** A provider module over the minimal manifest: honours both fields, offers every facet unless told otherwise. */
 function fixture(
-  options: { readonly cancel?: boolean; readonly endScope?: boolean; readonly honours?: string[] } = {},
+  options: {
+    readonly cancel?: boolean;
+    readonly endScope?: boolean;
+    readonly transaction?: boolean;
+    readonly honours?: string[];
+  } = {},
 ): Fixture {
   const manifest = JSON.parse(readFileSync(path.join(import.meta.dir, "../fixtures/minimal-manifest.json"), "utf8"));
   manifest.calls.console.execute.honours = options.honours ?? ["params", "offset"];
   manifest.calls.console.cancel = options.cancel === false ? "not-offered" : "offered";
   manifest.calls.console.endScope = options.endScope === false ? "not-offered" : "offered";
+  manifest.calls.console.transaction = options.transaction === false ? "not-offered" : "offered";
   manifest.engines[0].facets.monitoring.overview = "not-offered";
   const seen: Seen[] = [];
   const handle: ProviderHandle = { marker: marker() };
@@ -96,6 +104,7 @@ function fixture(
     }),
     cancel: () => ({ cancelled: true }),
     endScope: () => ({ openTransaction: "none" }),
+    transaction: () => ({ sessionState: "in-transaction" }),
   };
   const impl: Json = {
     open: async (ctx: OpenContext) => {
@@ -123,6 +132,12 @@ function fixture(
     impl.console.endScope = async (h: unknown, request: unknown, ctx: CallContext) => {
       seen.push({ call: "console.endScope", handle: h, request, ctx });
       return answers.endScope();
+    };
+  }
+  if (options.transaction !== false) {
+    impl.console.transaction = async (h: unknown, request: unknown, ctx: CallContext) => {
+      seen.push({ call: "console.transaction", handle: h, request, ctx });
+      return answers.transaction();
     };
   }
   return { module: defineProvider(manifest, impl as ProviderImpl<unknown>), seen, handle, answers };
@@ -546,6 +561,108 @@ describe("serve", () => {
     expect(impl.console.endScope).toBeUndefined();
     expect(frames.length).toBe(before);
     expect(fx.seen.map((item) => item.call)).toEqual(["open"]);
+  });
+
+  test("a served transaction call crosses its request and answer as frames, and a statement inside the transaction carries its session state back", async () => {
+    const fx = fixture();
+    const { impl, frames } = served(fx);
+    const opened = await impl.open(openContext());
+    const before = frames.length;
+    const requests: TransactionRequest[] = [
+      { action: "begin", requireReportedState: true },
+      { action: "state" },
+      { action: "commit" },
+      { action: "rollback" },
+    ];
+    const answers: TransactionAnswer[] = [
+      { sessionState: "in-transaction", stateReported: true },
+      { sessionState: "unknown" },
+      { sessionState: "not-in-transaction" },
+      { sessionState: "not-in-transaction" },
+    ];
+    const received: unknown[] = [];
+
+    for (const [index, sent] of requests.entries()) {
+      const answer = answers[index] as TransactionAnswer;
+      fx.answers.transaction = () => answer;
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each frame pair and answer is its own call's.
+      const got = await impl.console.transaction?.(opened.handle, sent, callContext());
+      expect(got).toEqual(answer);
+      expect(got).not.toBe(answer);
+      received.push(got);
+    }
+    const plainExecute = fx.answers.execute;
+    fx.answers.execute = () => ({ ...plainExecute(), sessionState: "in-transaction" });
+    const inTransaction = request((r) => (r.transaction = true));
+    const statement = await impl.console.execute(opened.handle, inTransaction, callContext());
+    const seen = fx.seen.slice(1);
+
+    expect(received.length).toBe(4);
+    expect(frames.slice(before).map((frame) => `${frame.direction} ${frame.call}`)).toEqual(
+      [...requests.map(() => "console.transaction"), "console.execute"].flatMap((call) => [
+        `to-provider ${call}`,
+        `to-host ${call}`,
+      ]),
+    );
+    expect(seen.map((item) => item.call)).toEqual([...requests.map(() => "console.transaction"), "console.execute"]);
+    for (const [index, item] of seen.slice(0, 4).entries()) {
+      expect(item.handle).toBe(fx.handle);
+      expect(item.request).toEqual(requests[index]);
+      expect(item.request).not.toBe(requests[index]);
+      expect(deepFrozen(item.request)).toBe(true);
+      expect(Object.isFrozen(item.ctx)).toBe(true);
+    }
+    const statementSeen = seen[4] as Seen;
+    expect(statementSeen.request).toEqual(inTransaction);
+    expect((statementSeen.request as ExecuteRequest).transaction).toBe(true);
+    expect(statement.sessionState).toBe("in-transaction");
+
+    fx.answers.transaction = () => ({ sessionState: "maybe" });
+    const unreadable = await failure(async () =>
+      impl.console.transaction?.(opened.handle, { action: "state" }, callContext()),
+    );
+    expect((unreadable as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-value-unreadable", call: "console.transaction", part: "answer", pointer: "/sessionState" },
+    ]);
+  });
+
+  test("a transaction call or a statement inside a transaction on a session without console.transaction is refused before any frame", async () => {
+    const declaredNot = fixture({ transaction: false });
+    const withdrawn = fixture();
+    withdrawn.answers.open = () => ({
+      handle: withdrawn.handle,
+      refine: { calls: { console: { transaction: "not-offered" } } },
+    });
+    const notServed = served(declaredNot);
+    const narrowed = served(withdrawn);
+    const declaredSession = await notServed.impl.open(openContext());
+    const narrowedSession = await narrowed.impl.open(openContext());
+    const before = [notServed.frames.length, narrowed.frames.length];
+    const inTransaction = request((r) => (r.transaction = true));
+
+    const declaredStatement = await failure(() =>
+      notServed.impl.console.execute(declaredSession.handle, inTransaction, callContext()),
+    );
+    const narrowedStatement = await failure(() =>
+      narrowed.impl.console.execute(narrowedSession.handle, inTransaction, callContext()),
+    );
+    const narrowedCall = await failure(async () =>
+      narrowed.impl.console.transaction?.(narrowedSession.handle, { action: "begin" }, callContext()),
+    );
+
+    expect(notServed.impl.console.transaction).toBeUndefined();
+    for (const refused of [declaredStatement, narrowedStatement]) {
+      expect(refused).toBeInstanceOf(CallRefusalError);
+      expect((refused as CallRefusalError).refusals).toEqual([
+        { rule: "request-transaction-not-offered", pointer: "/transaction" },
+      ]);
+    }
+    expect((narrowedCall as CallRefusalError).refusals).toEqual([
+      { rule: "facet-not-offered", pointer: "/console/transaction", name: "console.transaction" },
+    ]);
+    expect([notServed.frames.length, narrowed.frames.length]).toEqual(before);
+    expect(declaredNot.seen.map((item) => item.call)).toEqual(["open"]);
+    expect(withdrawn.seen.map((item) => item.call)).toEqual(["open"]);
   });
 
   test("a refinement open answers narrows the served session's calls", async () => {
@@ -1166,13 +1283,13 @@ describe("serve", () => {
 
   test("the served implementation is an implementation of the module's manifest, with the module's facets", () => {
     const both = fixture();
-    const neither = fixture({ cancel: false, endScope: false });
+    const neither = fixture({ cancel: false, endScope: false, transaction: false });
     const servedBoth = serve(both.module);
     const servedNeither = serve(neither.module);
 
     expect(checkProviderModule(defineProvider(both.module.manifest, servedBoth))).toEqual([]);
     expect(checkProviderModule(defineProvider(neither.module.manifest, servedNeither))).toEqual([]);
-    expect(Object.keys(servedBoth.console).sort()).toEqual(["cancel", "endScope", "execute"]);
+    expect(Object.keys(servedBoth.console).sort()).toEqual(["cancel", "endScope", "execute", "transaction"]);
     expect(Object.keys(servedNeither.console)).toEqual(["execute"]);
     expect(Object.isFrozen(servedBoth)).toBe(true);
     expect(Object.isFrozen(servedBoth.console)).toBe(true);

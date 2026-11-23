@@ -4,6 +4,8 @@
  *
  * Each case holds a request to the session's calls, the manifest's `calls` or the narrowed ones a refinement leaves,
  * and asserts the exact refusal list: a pointer into the request, the field's name, and never a value of the request.
+ * A statement sent inside a transaction goes only to a session that offers `console.transaction`, and never with a
+ * scope.
  */
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
@@ -21,12 +23,17 @@ import type { Calls } from "@libredb/provider-sdk/manifest";
 
 /** The calls of a package that honours nothing and offers no facet. */
 const NOTHING: Calls = {
-  console: { execute: { honours: [] }, cancel: "not-offered", endScope: "not-offered" },
+  console: { execute: { honours: [] }, cancel: "not-offered", endScope: "not-offered", transaction: "not-offered" },
 };
 
 /** The calls of a package that honours every field and offers every facet. */
 const EVERYTHING: Calls = {
-  console: { execute: { honours: ["params", "offset"] }, cancel: "offered", endScope: "offered" },
+  console: {
+    execute: { honours: ["params", "offset"] },
+    cancel: "offered",
+    endScope: "offered",
+    transaction: "offered",
+  },
 };
 
 const statement = `select ${randomUUID()}`;
@@ -41,6 +48,9 @@ const allThree: ExecuteRequest = { statement, params: [1], page: { limit: 500, o
 const PARAMS: CallRefusal = { rule: "request-field-not-honoured", pointer: "/params", name: "params" };
 const OFFSET: CallRefusal = { rule: "request-field-not-honoured", pointer: "/page/offset", name: "offset" };
 const SCOPE: CallRefusal = { rule: "request-scope-not-offered", pointer: "/scope" };
+const TRANSACTION: CallRefusal = { rule: "request-transaction-not-offered", pointer: "/transaction" };
+const SCOPE_IN_TRANSACTION: CallRefusal = { rule: "request-scope-in-transaction", pointer: "/scope" };
+const inTransaction: ExecuteRequest = { ...firstPage, transaction: true };
 
 describe("checkExecuteRequest", () => {
   test("a request field the session does not honour is refused before the call", () => {
@@ -69,6 +79,39 @@ describe("checkExecuteRequest", () => {
     expect(checkExecuteRequest(narrowed, scoped)).toEqual([SCOPE]);
     expect(checkExecuteRequest(sessionCalls(EVERYTHING, undefined), allThree)).toEqual([]);
   });
+
+  test("a statement sent inside a transaction to a session without console.transaction is refused before the call", () => {
+    const withdrawn = sessionCalls(EVERYTHING, { calls: { console: { transaction: "not-offered" } } });
+
+    expect(checkExecuteRequest(NOTHING, inTransaction)).toEqual([TRANSACTION]);
+    expect(checkExecuteRequest(withdrawn, inTransaction)).toEqual([TRANSACTION]);
+    expect(checkExecuteRequest(NOTHING, { ...withParams, transaction: true })).toEqual([PARAMS, TRANSACTION]);
+    expect(callRefusalSentence(TRANSACTION)).toBe(
+      'The request is sent inside a transaction at "/transaction", and the session does not offer console.transaction, so the call was not made.',
+    );
+  });
+
+  test("a statement sent inside a transaction never carries a scope", () => {
+    const scopedInTransaction: ExecuteRequest = { ...inTransaction, scope: "s" };
+
+    expect(checkExecuteRequest(EVERYTHING, scopedInTransaction)).toEqual([SCOPE_IN_TRANSACTION]);
+    expect(checkExecuteRequest(NOTHING, scopedInTransaction)).toEqual([SCOPE, SCOPE_IN_TRANSACTION, TRANSACTION]);
+    expect(callRefusalSentence(SCOPE_IN_TRANSACTION)).toBe(
+      'The request carries a scope at "/scope" on a statement sent inside a transaction, which runs on the transaction\'s own session, so the call was not made.',
+    );
+  });
+
+  test("a session that offers console.transaction takes a statement inside its transaction with its params and offset", () => {
+    const narrowed = sessionCalls(EVERYTHING, {
+      calls: { console: { endScope: "not-offered", cancel: "not-offered" } },
+    });
+
+    for (const calls of [EVERYTHING, narrowed]) {
+      expect(checkExecuteRequest(calls, inTransaction)).toEqual([]);
+      expect(checkExecuteRequest(calls, { ...withParams, transaction: true })).toEqual([]);
+      expect(checkExecuteRequest(calls, { ...laterPage, params: [1], transaction: true })).toEqual([]);
+    }
+  });
 });
 
 describe("checkConsoleFacet", () => {
@@ -83,6 +126,22 @@ describe("checkConsoleFacet", () => {
     expect(checkConsoleFacet(narrowed, "endScope")).toEqual([endScope]);
     expect(callRefusalSentence(cancel)).toBe(
       'The session does not offer the console facet "console.cancel" at "/console/cancel", so the call was not made.',
+    );
+  });
+
+  test("the transaction facet is refused by name to a session that does not offer it", () => {
+    const withdrawn = sessionCalls(EVERYTHING, { calls: { console: { transaction: "not-offered" } } });
+    const transaction: CallRefusal = {
+      rule: "facet-not-offered",
+      pointer: "/console/transaction",
+      name: "console.transaction",
+    };
+
+    expect(checkConsoleFacet(NOTHING, "transaction")).toEqual([transaction]);
+    expect(checkConsoleFacet(withdrawn, "transaction")).toEqual([transaction]);
+    expect(checkConsoleFacet(EVERYTHING, "transaction")).toEqual([]);
+    expect(callRefusalSentence(transaction)).toBe(
+      'The session does not offer the console facet "console.transaction" at "/console/transaction", so the call was not made.',
     );
   });
 

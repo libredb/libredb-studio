@@ -2592,6 +2592,16 @@ describe("the calls segment", () => {
     ]);
   });
 
+  test("console calls that leave out transaction are refused as missing-key", () => {
+    expect(refusalsFor(manifest((m) => delete m.calls.console.transaction))).toEqual([
+      refusal("missing-key", "/calls/console", "transaction"),
+    ]);
+    expect(refusalsFor(manifest((m) => (m.calls.console.transaction = "maybe")))).toEqual([
+      refusal("value-not-allowed", "/calls/console/transaction"),
+    ]);
+    expect(refusalsFor(manifest((m) => (m.calls.console.transaction = "offered")))).toEqual([]);
+  });
+
   test("a request field execute does not know, or one listed twice, is refused", () => {
     expect(refusalsFor(manifest((m) => (m.calls.console.execute.honours = ["params", "params"])))).toEqual([
       refusal("duplicate", "/calls/console/execute/honours/1"),

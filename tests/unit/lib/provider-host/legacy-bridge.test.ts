@@ -95,13 +95,34 @@ describe("bridgedConsole", () => {
     const plain = bridgedConsole(fake(resultOf([])), {});
 
     expect(cancelling.session.calls).toEqual({
-      console: { execute: { honours: ["params", "offset"] }, cancel: "offered", endScope: "not-offered" },
+      console: {
+        execute: { honours: ["params", "offset"] },
+        cancel: "offered",
+        endScope: "not-offered",
+        transaction: "not-offered",
+      },
     });
     expect(plain.session.calls.console.cancel).toBe("not-offered");
     expect(typeof cancelling.session.cancel).toBe("function");
     expect(plain.session.cancel).toBeUndefined();
     expect(Object.isFrozen(cancelling.session.calls)).toBe(true);
     expect(Object.isFrozen(cancelling.session.calls.console.execute.honours)).toBe(true);
+  });
+
+  test("a bridged session offers no transaction facet, since the transaction route still calls the provider's transaction methods itself", () => {
+    const transactional = fake(resultOf([]), {
+      beginTransaction: mock(async () => {}),
+      commitTransaction: mock(async () => {}),
+      rollbackTransaction: mock(async () => {}),
+      queryInTransaction: mock(async () => resultOf([])),
+      isInTransaction: mock(() => true),
+    });
+
+    for (const provider of [transactional, fake(resultOf([]))]) {
+      const bridged = bridgedConsole(provider, {});
+      expect(bridged.session.calls.console.transaction).toBe("not-offered");
+      expect(Object.hasOwn(bridged.session, "transaction")).toBe(false);
+    }
   });
 
   test("a legacy provider that writes what it receives changes nothing the host froze", async () => {

@@ -105,7 +105,14 @@ const rowsUpTo = (count: number) => Array.from({ length: count }, (_, index) => 
 /** A session whose execute answers `results`, and no cancel. */
 function sessionOf(results: readonly ResultSource[]): ConsoleSession {
   return {
-    calls: { console: { execute: { honours: ["params", "offset"] }, cancel: "not-offered", endScope: "not-offered" } },
+    calls: {
+      console: {
+        execute: { honours: ["params", "offset"] },
+        cancel: "not-offered",
+        endScope: "not-offered",
+        transaction: "not-offered",
+      },
+    },
     execute: async (): Promise<ExecuteAnswer> => ({ results, warnings: [], executionTimeMs: 1, pageApplied: true }),
   };
 }
@@ -356,7 +363,9 @@ describe("the console execute under the page budget", () => {
     const gate = read.gate(1);
     const cancelled: string[] = [];
     const session: ConsoleSession = {
-      calls: { console: { execute: { honours: [] }, cancel: "offered", endScope: "not-offered" } },
+      calls: {
+        console: { execute: { honours: [] }, cancel: "offered", endScope: "not-offered", transaction: "not-offered" },
+      },
       execute: async (): Promise<ExecuteAnswer> => ({
         results: [read.source],
         warnings: [],
