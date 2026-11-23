@@ -1,15 +1,8 @@
 import { parseConsole, type ConsoleRequest, ConsoleRefusal, consoleTokens } from "@/lib/db/console/parser";
 import { RequestRefusal } from "@/lib/db/console/dialect";
 import { utf8ByteLength } from "@/lib/db/console/bounds";
-import {
-  checkIntRange,
-  isTaggedFloat,
-  isTaggedInt,
-  type TaggedJson,
-  type TaggedObject,
-  taggedNumber,
-  toJsonText,
-} from "@/lib/db/console/tagged-json";
+import { type TaggedJson, type TaggedObject, taggedNumber, toJsonText } from "@/lib/db/console/tagged-json";
+import { hasValue, shownText, taggedReaders } from "@/lib/db/console/tagged-readers";
 import { checkDenseElements, vectorNumbers } from "@/lib/db/vector/dense";
 import type { QueryWarning } from "@/lib/types";
 import type { WeaviateConsoleOp, WeaviateEncodedOp } from "./ops";
@@ -48,7 +41,6 @@ const PROPERTY_NAME = /^[_A-Za-z][_0-9A-Za-z]{0,230}$/;
 const BOOSTED_PROPERTY = /^([_A-Za-z][_0-9A-Za-z]{0,230})(?:\^[0-9]+(?:\.[0-9]+)?)?$/;
 const VECTOR_NAME = /^[_A-Za-z][_0-9A-Za-z]{0,230}$/;
 const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-const SHOWN = 80;
 
 /** A search's target: the vector it searches, or none for BM25. */
 export type SearchKind = "bm25" | "hybrid" | "near-vector" | "near-object";
@@ -118,43 +110,7 @@ function refuseLater(message: string, key: string | null = null): never {
   throw new RequestRefusal(message, 1, key);
 }
 
-function shown(text: string): string {
-  return JSON.stringify(text.length > SHOWN ? `${text.slice(0, SHOWN)}...` : text);
-}
-
-function kindOf(value: TaggedJson | undefined): string {
-  if (value === undefined) return "nothing";
-  if (value === null) return "null";
-  if (Array.isArray(value)) return "a list";
-  if (isTaggedInt(value) || isTaggedFloat(value)) return "a number";
-  if (typeof value === "object") return "an object";
-  return typeof value === "boolean" ? "a boolean" : `a ${typeof value}`;
-}
-
-const isObject = (value: TaggedJson | undefined): value is TaggedObject =>
-  typeof value === "object" && value !== null && !Array.isArray(value) && !isTaggedInt(value) && !isTaggedFloat(value);
-
-const has = (object: TaggedObject, key: string): boolean => Object.hasOwn(object, key) && object[key] !== null;
-
-function objectAt(value: TaggedJson | undefined, where: string): TaggedObject {
-  if (!isObject(value)) return refuse(`${where} must be an object, found ${kindOf(value)}.`, where);
-  return value;
-}
-
-function listAt(value: TaggedJson | undefined, where: string): readonly TaggedJson[] {
-  if (!Array.isArray(value)) return refuse(`${where} must be a list, found ${kindOf(value)}.`, where);
-  return value;
-}
-
-function stringAt(value: TaggedJson | undefined, where: string): string {
-  if (typeof value !== "string") return refuse(`${where} must be a string, found ${kindOf(value)}.`, where);
-  return value;
-}
-
-function booleanAt(value: TaggedJson | undefined, where: string): boolean {
-  if (typeof value !== "boolean") return refuse(`${where} must be true or false, found ${kindOf(value)}.`, where);
-  return value;
-}
+const { objectAt, listAt, stringAt, booleanAt, integerAt, numberAt, wordAt } = taggedReaders(refuse);
 
 /** The object's keys against the closed set of its schema: a refused key with its reason, an unknown key and a missing required key, each by name. */
 function closed(object: TaggedObject, name: WeaviateObjectName, where: string): void {
@@ -163,51 +119,25 @@ function closed(object: TaggedObject, name: WeaviateObjectName, where: string): 
   for (const key of Object.keys(object)) {
     if (keys.includes(key)) continue;
     if (Object.hasOwn(WEAVIATE_REFUSED_KEYS, key)) {
-      refuse(`${where} takes no key ${shown(key)} in this console: ${WEAVIATE_REFUSED_KEYS[key]}.`, key);
+      refuse(`${where} takes no key ${shownText(key)} in this console: ${WEAVIATE_REFUSED_KEYS[key]}.`, key);
     }
-    refuse(`${where} takes no key ${shown(key)}: Weaviate reads ${keys.join(", ")} there and nothing else.`, key);
+    refuse(`${where} takes no key ${shownText(key)}: Weaviate reads ${keys.join(", ")} there and nothing else.`, key);
   }
   for (const key of set.required) {
-    if (!has(object, key)) refuse(`${where} needs the key ${key}.`, key);
+    if (!hasValue(object, key)) refuse(`${where} needs the key ${key}.`, key);
   }
-}
-
-function integerAt(value: TaggedJson | undefined, where: string, min: number, max: number): number {
-  if (value === undefined || !isTaggedInt(value)) {
-    return refuse(`${where} must be an integer, found ${kindOf(value)}.`, where);
-  }
-  if (!checkIntRange(value, "safe") || Number(value.digits) < min || Number(value.digits) > max) {
-    return refuse(`${where} is ${value.digits}; it takes an integer from ${min} to ${max}.`, where);
-  }
-  return Number(value.digits);
-}
-
-function numberAt(value: TaggedJson | undefined, where: string): number {
-  if (value !== undefined && isTaggedFloat(value)) return Number(value.text);
-  if (value !== undefined && isTaggedInt(value)) return Number(value.digits);
-  return refuse(`${where} must be a number, found ${kindOf(value)}.`, where);
-}
-
-function wordAt(value: TaggedJson | undefined, where: string, words: readonly string[]): string {
-  if (typeof value !== "string" || !words.includes(value)) {
-    return refuse(
-      `${where} takes one of ${words.join(", ")}, not ${typeof value === "string" ? shown(value) : kindOf(value)}.`,
-      where,
-    );
-  }
-  return value;
 }
 
 /** Why a collection or alias name cannot reach a path or a GraphQL document, or undefined (spec W1). */
 export function weaviateClassNameRefusal(name: string): string | undefined {
   if (CLASS_NAME.test(name)) return undefined;
   if (name === "") return "A collection name cannot be empty.";
-  return `${shown(name)} is not a Weaviate collection name: it starts with a letter and holds only letters, digits and _, at most 255 characters.`;
+  return `${shownText(name)} is not a Weaviate collection name: it starts with a letter and holds only letters, digits and _, at most 255 characters.`;
 }
 
 export function weaviateTenantNameRefusal(name: string): string | undefined {
   if (TENANT_NAME.test(name)) return undefined;
-  return `${shown(name)} is not a Weaviate tenant name: it holds only letters, digits, - and _, 1 to 64 characters.`;
+  return `${shownText(name)} is not a Weaviate tenant name: it holds only letters, digits, - and _, 1 to 64 characters.`;
 }
 
 /** The name as the server spells it: the first letter capitalised, as Weaviate does with every class name. */
@@ -229,14 +159,15 @@ function tenantAt(value: TaggedJson | string | undefined, where: string): string
 function propertyNameAt(value: TaggedJson | string | undefined, where: string): string {
   const name = typeof value === "string" ? value : stringAt(value, where);
   if (!PROPERTY_NAME.test(name)) {
-    refuse(`${where} is ${shown(name)}, which is not a Weaviate property name.`, where);
+    refuse(`${where} is ${shownText(name)}, which is not a Weaviate property name.`, where);
   }
   return name;
 }
 
 function uuidAt(value: TaggedJson | string | undefined, where: string): string {
   const id = typeof value === "string" ? value : stringAt(value, where);
-  if (!UUID.test(id)) refuse(`${where} is ${shown(id)}, which is not a UUID: Weaviate's object ids are UUIDs.`, where);
+  if (!UUID.test(id))
+    refuse(`${where} is ${shownText(id)}, which is not a UUID: Weaviate's object ids are UUIDs.`, where);
   return id;
 }
 
@@ -249,8 +180,9 @@ function propertyListAt(value: TaggedJson | undefined, where: string, boosted: b
   return list.map((entry, index) => {
     const name = stringAt(entry, `${where}[${index}]`);
     const match = boosted ? BOOSTED_PROPERTY.exec(name) : PROPERTY_NAME.test(name) ? [name, name] : null;
-    if (match === null) refuse(`${where}[${index}] is ${shown(name)}, which is not a Weaviate property name.`, where);
-    if (seen.has(name)) refuse(`${where} names ${shown(name)} twice.`, where);
+    if (match === null)
+      refuse(`${where}[${index}] is ${shownText(name)}, which is not a Weaviate property name.`, where);
+    if (seen.has(name)) refuse(`${where} names ${shownText(name)} twice.`, where);
     seen.add(name);
     return name;
   });
@@ -311,9 +243,9 @@ function readWhere(value: TaggedJson, where: string, walk: FilterWalk, depth: nu
   const filter = objectAt(value, where);
   closed(filter, "WhereFilter", where);
   const operator = wordAt(filter.operator, `${where}.operator`, WEAVIATE_ENUMS.operator);
-  const values = Object.keys(filter).filter((key) => Object.hasOwn(VALUE_KEYS, key) && has(filter, key));
+  const values = Object.keys(filter).filter((key) => Object.hasOwn(VALUE_KEYS, key) && hasValue(filter, key));
   if (LOGICAL.has(operator)) {
-    if (has(filter, "path") || values.length > 0) {
+    if (hasValue(filter, "path") || values.length > 0) {
       refuse(`${where}: ${operator} takes operands only, never a path or a value.`, where);
     }
     const operands = listAt(filter.operands, `${where}.operands`);
@@ -324,14 +256,14 @@ function readWhere(value: TaggedJson, where: string, walk: FilterWalk, depth: nu
     });
     return;
   }
-  if (has(filter, "operands")) refuse(`${where}: ${operator} takes a path and a value, never operands.`, where);
+  if (hasValue(filter, "operands")) refuse(`${where}: ${operator} takes a path and a value, never operands.`, where);
   const path = listAt(filter.path, `${where}.path`);
   if (path.length === 0) refuse(`${where}.path names no property.`, where);
   path.forEach((segment, index) => {
     const name = stringAt(segment, `${where}.path[${index}]`);
     // A path through a cross-reference names the property, the target class, then the target's property.
     if (!PROPERTY_NAME.test(name) && !CLASS_NAME.test(name)) {
-      refuse(`${where}.path[${index}] is ${shown(name)}, which is not a property or class name.`, where);
+      refuse(`${where}.path[${index}] is ${shownText(name)}, which is not a property or class name.`, where);
     }
   });
   if (values.length !== 1) {
@@ -389,7 +321,7 @@ function rowsAt(limit: TaggedJson | undefined, offset: TaggedJson | undefined, d
 function readSearchBody(route: WeaviateRoute, body: TaggedObject, collection: string): WeaviateSearchModel {
   const schema = route.schema as WeaviateObjectName;
   closed(body, schema, "The body");
-  const value = (key: string): TaggedJson | undefined => (has(body, key) ? body[key] : undefined);
+  const value = (key: string): TaggedJson | undefined => (hasValue(body, key) ? body[key] : undefined);
   rowsAt(value("limit"), value("offset"), WEAVIATE_BOUNDS.defaultSearchLimit);
   if (value("autoLimit") !== undefined) integerAt(body.autoLimit, "autoLimit", 1, WEAVIATE_BOUNDS.maxRows);
   const returnProperties =
@@ -431,7 +363,7 @@ function readSearchBody(route: WeaviateRoute, body: TaggedObject, collection: st
   if (maxVectorDistance !== null) numberAt(maxVectorDistance, "maxVectorDistance");
   const targetVector = value("targetVector") === undefined ? null : stringAt(body.targetVector, "targetVector");
   if (targetVector !== null && !VECTOR_NAME.test(targetVector)) {
-    refuse(`targetVector is ${shown(targetVector)}, which is not a Weaviate vector name.`, "targetVector");
+    refuse(`targetVector is ${shownText(targetVector)}, which is not a Weaviate vector name.`, "targetVector");
   }
   const distance = value("distance") ?? null;
   const certainty = value("certainty") ?? null;
@@ -481,7 +413,7 @@ function readSearchBody(route: WeaviateRoute, body: TaggedObject, collection: st
 
 function readAggregateBody(body: TaggedObject, collection: string): WeaviateSearchModel {
   closed(body, "AggregateRequest", "The body");
-  const value = (key: string): TaggedJson | undefined => (has(body, key) ? body[key] : undefined);
+  const value = (key: string): TaggedJson | undefined => (hasValue(body, key) ? body[key] : undefined);
   if (value("returnMetrics") !== undefined) {
     listAt(body.returnMetrics, "returnMetrics").forEach((entry, index) => {
       wordAt(entry, `returnMetrics[${index}]`, WEAVIATE_ENUMS.returnMetrics);
@@ -551,7 +483,7 @@ function readObjectsQuery(query: Readonly<Record<string, string>>): Readonly<Rec
   if (Object.hasOwn(query, "tenant")) tenantAt(query.tenant, "tenant");
   const limit = Object.hasOwn(query, "limit") ? Number(query.limit) : WEAVIATE_BOUNDS.defaultObjectsLimit;
   if (Object.hasOwn(query, "offset") && !/^(0|[1-9][0-9]*)$/.test(query.offset)) {
-    refuse(`offset is ${shown(query.offset)}; it takes an integer from 0 to ${WEAVIATE_BOUNDS.maxRows}.`, "offset");
+    refuse(`offset is ${shownText(query.offset)}; it takes an integer from 0 to ${WEAVIATE_BOUNDS.maxRows}.`, "offset");
   }
   const offset = Object.hasOwn(query, "offset") ? Number(query.offset) : 0;
   if (limit > WEAVIATE_BOUNDS.maxRows || limit + offset > WEAVIATE_BOUNDS.maxRows) {
@@ -607,18 +539,18 @@ function targetOf(plan: WeaviatePlan, facts: WeaviateCollectionFacts): string | 
   if (search.targetVector !== null) {
     if (!facts.vectors.some((vector) => vector.name === search.targetVector)) {
       refuseLater(
-        `targetVector names ${shown(search.targetVector)}, which is no vector of ${shown(facts.name)}: ${present(facts)}.`,
+        `targetVector names ${shownText(search.targetVector)}, which is no vector of ${shownText(facts.name)}: ${present(facts)}.`,
         "targetVector",
       );
     }
     return search.targetVector;
   }
   if (facts.vectors.length === 0) {
-    refuseLater(`The collection ${shown(facts.name)} has no vector to search.`, "targetVector");
+    refuseLater(`The collection ${shownText(facts.name)} has no vector to search.`, "targetVector");
   }
   if (facts.vectors.length > 1) {
     refuseLater(
-      `The collection ${shown(facts.name)} has more than one vector, so the search needs targetVector: ${present(facts)}.`,
+      `The collection ${shownText(facts.name)} has more than one vector, so the search needs targetVector: ${present(facts)}.`,
       "targetVector",
     );
   }
@@ -638,12 +570,15 @@ const COLLECTION_RECORD_OPS: ReadonlySet<WeaviateConsoleOp> = new Set(["collecti
 export function weaviatePhase1(plan: WeaviatePlan, facts: WeaviateCollectionFacts): WeaviatePlan {
   if (facts.multiTenant && plan.tenant === null && !COLLECTION_RECORD_OPS.has(plan.route.op)) {
     refuseLater(
-      `The collection ${shown(facts.name)} is multi-tenant, so the request needs a tenant${plan.route.body === "none" ? " (?tenant=...)" : ' ("tenant": "...")'}. Nothing was read: GET /v1/schema/${facts.name}/tenants lists its tenants and which are HOT, without waking any.`,
+      `The collection ${shownText(facts.name)} is multi-tenant, so the request needs a tenant${plan.route.body === "none" ? " (?tenant=...)" : ' ("tenant": "...")'}. Nothing was read: GET /v1/schema/${facts.name}/tenants lists its tenants and which are HOT, without waking any.`,
       "tenant",
     );
   }
   if (!facts.multiTenant && plan.tenant !== null && plan.route.op !== "tenant") {
-    refuseLater(`The collection ${shown(facts.name)} is not multi-tenant, so the request takes no tenant.`, "tenant");
+    refuseLater(
+      `The collection ${shownText(facts.name)} is not multi-tenant, so the request takes no tenant.`,
+      "tenant",
+    );
   }
   const search = plan.search;
   if (search === null) return plan;
@@ -652,10 +587,10 @@ export function weaviatePhase1(plan: WeaviatePlan, facts: WeaviateCollectionFact
     for (const written of names ?? []) {
       const name = strip ? written.replace(/\^.*$/, "") : written;
       if (!known.has(name))
-        refuseLater(`${where} names ${shown(name)}, which is no property of ${shown(facts.name)}.`, where);
+        refuseLater(`${where} names ${shownText(name)}, which is no property of ${shownText(facts.name)}.`, where);
       if (facts.referenceProperties.has(name)) {
         refuseLater(
-          `${where} names ${shown(name)}, a cross-reference: returning cross-references is outside this version of the console.`,
+          `${where} names ${shownText(name)}, a cross-reference: returning cross-references is outside this version of the console.`,
           where,
         );
       }

@@ -1,4 +1,5 @@
 import type { ConsoleDialectSpec, QueryKeySpec, RouteSpec } from "@/lib/db/console/dialect";
+import { type RefusedRouteClass, refusedRouteSentenceFor } from "@/lib/db/console/route-pattern";
 import type { WeaviateConsoleOp, WeaviateOp } from "./ops";
 
 /**
@@ -11,7 +12,7 @@ import type { WeaviateConsoleOp, WeaviateOp } from "./ops";
  * the top level is the same on 1.38.22 and 1.39.8) does not declare at its level is refused by name, because the server
  * reads past an unknown key without a word, so a misspelled `where` returns unfiltered results (measured, spec A.6).
  *
- * Nothing here is derived at run time. Browser-safe: it imports types only.
+ * Nothing here is derived at run time. Browser-safe: it imports types and the shared console route pattern only.
  */
 
 export const WEAVIATE_CONSOLE: ConsoleDialectSpec = Object.freeze({
@@ -297,16 +298,7 @@ export const WEAVIATE_RUNS =
   "This console runs Weaviate's read requests only, with GET and POST: the meta, schema, shard, tenant, alias and node " +
   "reads, object list and read by id, the bm25, hybrid, near-vector and near-object searches, and aggregate counts.";
 
-/**
- * The routes version 1 does not run, by what they are. A pattern is the path after the prefix, `*` standing for one
- * segment and a trailing `**` for the rest; the first row that matches names the route, so narrower rows come first.
- */
-interface RefusedRouteClass {
-  readonly what: string;
-  readonly patterns: readonly string[];
-  readonly methods?: readonly string[];
-}
-
+/** The routes version 1 does not run, by what they are, narrower rows first (`@/lib/db/console/route-pattern`). */
 const WEAVIATE_REFUSED_ROUTES: readonly RefusedRouteClass[] = Object.freeze([
   {
     what: "a search that sends its text or media to a model provider",
@@ -330,14 +322,6 @@ const WEAVIATE_REFUSED_ROUTES: readonly RefusedRouteClass[] = Object.freeze([
   { what: "a schema, tenant, index or alias change", patterns: ["schema", "schema/**", "aliases", "aliases/**"] },
 ]);
 
-function matches(pattern: string, segments: readonly string[]): boolean {
-  const parts = pattern.split("/");
-  const open = parts[parts.length - 1] === "**";
-  const fixed = open ? parts.slice(0, -1) : parts;
-  if (open ? segments.length <= fixed.length : segments.length !== fixed.length) return false;
-  return fixed.every((part, index) => part === "*" || part === segments[index]);
-}
-
 /**
  * The sentence for a request line version 1 does not run: what the route is, where a row names it, and what the
  * console runs. `path` is the request's path as written, with or without the prefix and any query string.
@@ -348,16 +332,14 @@ export function refusedRouteSentence(method: string, path: string): string {
   const relative = bare.startsWith(WEAVIATE_CONSOLE.pathPrefix)
     ? bare.slice(WEAVIATE_CONSOLE.pathPrefix.length)
     : bare.replace(/^\/+/, "");
-  const segments = relative.split("/");
-  const found = WEAVIATE_REFUSED_ROUTES.find(
-    (row) =>
-      (row.methods === undefined || row.methods.includes(method)) &&
-      row.patterns.some((pattern) => matches(pattern, segments)),
+  return refusedRouteSentenceFor(
+    {
+      pathPrefix: WEAVIATE_CONSOLE.pathPrefix,
+      methods: WEAVIATE_CONSOLE.methods,
+      rows: WEAVIATE_REFUSED_ROUTES,
+      runs: WEAVIATE_RUNS,
+    },
+    method,
+    relative,
   );
-  const line = `${method} ${WEAVIATE_CONSOLE.pathPrefix}${relative}`;
-  if (found !== undefined) return `${line} is ${found.what}, which this console does not run. ${WEAVIATE_RUNS}`;
-  if (!WEAVIATE_CONSOLE.methods.includes(method)) {
-    return `${line} is not a request this console runs: it sends ${WEAVIATE_CONSOLE.methods.join(" and ")} only. ${WEAVIATE_RUNS}`;
-  }
-  return `${line} is not a route this console runs. ${WEAVIATE_RUNS}`;
 }

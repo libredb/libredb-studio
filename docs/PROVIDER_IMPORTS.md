@@ -58,8 +58,10 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/db/console/format.ts` | SDK /console | Pure code of the shared console layer, the same for every console provider. |
 | `src/lib/db/console/guard.ts` | SDK /console | Pure code of the shared console layer, the same for every console provider. |
 | `src/lib/db/console/parser.ts` | SDK /console | Pure code of the shared console layer, the same for every console provider. |
+| `src/lib/db/console/route-pattern.ts` | SDK /console | Pure route pattern matching and the refused-route sentence every request console writes its table for, shipped to the browser as well. |
 | `src/lib/db/console/shell-words.ts` | SDK /console | Pure POSIX shell word reading, shipped to the browser as well. |
 | `src/lib/db/console/tagged-json.ts` | SDK /console | The pure JSON value form a console body is read into. |
+| `src/lib/db/console/tagged-readers.ts` | SDK /console | Pure readers of a tagged JSON body, raising through the language's own refusal function, shipped to the browser as well. |
 | `src/lib/db/credential-warnings.ts` | core only | The seed credential refusal is a core check over a core table keyed by type-id; core runs it before it builds the provider, as FND-2 did for the other connection checks. |
 | `src/lib/db/destructive-vocabulary.ts` | core only | The shape of the confirmation gate's rows, which move into core statement-language family modules in PR 8b and the language slices, so no provider declares one. |
 | `src/lib/db/editor-language/types.ts` | SDK /manifest | The editor language row contract; its Monaco types go with the browser catalog of phase 3. |

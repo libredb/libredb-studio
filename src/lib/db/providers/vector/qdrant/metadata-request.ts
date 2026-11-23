@@ -23,8 +23,9 @@
  * refused, before anything is sent.
  */
 import { RequestRefusal } from "@/lib/db/console/dialect";
+import { kindOf } from "@/lib/db/console/tagged-readers";
 import type { QdrantOp } from "./client";
-import { kindOf, parseQdrantRequest, type QdrantPhase0, qdrantPhase0 } from "./request";
+import { parseQdrantRequest, type QdrantPhase0, qdrantPhase0 } from "./request";
 
 export type QdrantAgentRefusalCode = "request" | "metadata-only" | "count-shape";
 

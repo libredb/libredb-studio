@@ -69,6 +69,7 @@ const EXPORTS: Readonly<Record<string, readonly string[]>> = {
     "parseConsole",
     "readConsoleBody",
   ],
+  "src/lib/db/console/route-pattern.ts": ["RefusedRouteClass", "refusedRouteSentenceFor", "routePatternMatches"],
   "src/lib/db/console/shell-words.ts": [
     "INITIAL_SHELL_LINE_STATE",
     "ShellLineState",
@@ -97,6 +98,7 @@ const EXPORTS: Readonly<Record<string, readonly string[]>> = {
     "taggedNumber",
     "toJsonText",
   ],
+  "src/lib/db/console/tagged-readers.ts": ["hasValue", "isTaggedObject", "kindOf", "shownText", "taggedReaders"],
   "src/lib/db/vector/count.ts": ["countLabel"],
   "src/lib/db/vector/dense.ts": [
     "DTYPE_RANGES",
