@@ -226,6 +226,7 @@ A promise rejection that nothing handles does not stop the server: Next.js logs 
 That is Next.js's own choice: a server component may start a request early and drop its promise when the answer turns out not to be needed, and the rejection of such a promise is no fault.
 Node.js started with `--unhandled-rejections=strict`, for example through `NODE_OPTIONS`, is the one case where it does: Node.js then raises every unhandled rejection as an uncaught exception before Next.js's rejection handling sees it, so the server exits with 70 for it too, and the line begins `Unhandled rejection raised as an uncaught exception`.
 Whether Studio stops on an unhandled rejection too is open until such rejections have been counted in real sessions.
+How a provider's failure ends, by kind and by runtime, is the failure matrix of the provider contract ([C-34](providers/CONTRACT.md#c-34-informative-the-failure-matrix)).
 
 How each channel brings the server back after code 70:
 

@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import {
   BATCH_MAX_BYTES,
   type BatchLimit,
+  type CallContext,
   type CallRefusal,
   CallRefusalError,
   type Column,
@@ -82,6 +83,11 @@ async function drain(source: ResultSource, limit: BatchLimit): Promise<RowBatch[
 
 const SMALL = { maxRows: 100, maxBytes: 1000, batchMaxBytes: 100 };
 
+/** A call context that is live for an hour: its deadline far ahead, its signal never aborted. */
+function live(): Pick<CallContext, "deadline" | "signal"> {
+  return { deadline: Date.now() + 3_600_000, signal: new AbortController().signal };
+}
+
 describe("the byte budgets and the row measure", () => {
   test("the batch and page budgets are one MiB and 32 MiB", () => {
     expect(BATCH_MAX_BYTES).toBe(1048576);
@@ -148,6 +154,7 @@ describe("pumpPage", () => {
         Array.from({ length: 600 }, () => row),
       ),
       { maxRows: 100_000, maxBytes: PAGE_MAX_BYTES, batchMaxBytes: BATCH_MAX_BYTES },
+      live(),
     );
     expect(exact.end).toBe("byte-limit");
     expect(exact.bytes).toBe(PAGE_MAX_BYTES);
@@ -160,6 +167,7 @@ describe("pumpPage", () => {
         Array.from({ length: 600 }, () => uneven),
       ),
       { maxRows: 100_000, maxBytes: PAGE_MAX_BYTES, batchMaxBytes: BATCH_MAX_BYTES },
+      live(),
     );
     expect(cut.end).toBe("byte-limit");
     expect(cut.rows.length).toBe(Math.floor(PAGE_MAX_BYTES / (64 * 1024 + 5)));
@@ -169,10 +177,10 @@ describe("pumpPage", () => {
 
   test("a page ends at its row limit or when the source is done", async () => {
     const rows = Array.from({ length: 30 }, (_, index) => [index]);
-    const all = await pumpPage(rowsSource(ONE, rows), SMALL);
-    const limited = await pumpPage(rowsSource(ONE, rows), { ...SMALL, maxRows: 12 });
-    const exactly = await pumpPage(rowsSource(ONE, rows), { ...SMALL, maxRows: 30 });
-    const empty = await pumpPage(rowsSource(ONE, []), SMALL);
+    const all = await pumpPage(rowsSource(ONE, rows), SMALL, live());
+    const limited = await pumpPage(rowsSource(ONE, rows), { ...SMALL, maxRows: 12 }, live());
+    const exactly = await pumpPage(rowsSource(ONE, rows), { ...SMALL, maxRows: 30 }, live());
+    const empty = await pumpPage(rowsSource(ONE, []), SMALL, live());
 
     expect(all).toEqual({ rows, bytes: rows.reduce((sum, row) => sum + encodedRowBytes(row), 0), end: "done" });
     expect(Object.isFrozen(all)).toBe(true);
@@ -188,16 +196,20 @@ describe("pumpPage", () => {
     const alone = await rowsSource(ONE, [big, [1]]).next({ maxRows: 10, maxBytes: 100 });
     expect(alone).toEqual({ rows: [big], done: false });
 
-    const kept = await pumpPage(rowsSource(ONE, [[1], big, [2]]), SMALL);
+    const kept = await pumpPage(rowsSource(ONE, [[1], big, [2]]), SMALL, live());
     expect(kept.rows).toEqual([[1], big, [2]]);
     expect(kept.end).toBe("done");
 
     const filler = Array.from({ length: 4 }, () => rowOf(80));
-    const endedBefore = await pumpPage(rowsSource(ONE, [...filler, rowOf(900), [2]]), { ...SMALL, maxBytes: 1000 });
+    const endedBefore = await pumpPage(
+      rowsSource(ONE, [...filler, rowOf(900), [2]]),
+      { ...SMALL, maxBytes: 1000 },
+      live(),
+    );
     expect(endedBefore).toEqual({ rows: filler, bytes: 320, end: "byte-limit" });
 
     const source = scripted(ONE, () => ({ rows: [rowOf(1001)], done: true }));
-    const error = await thrownBy(() => pumpPage(source, SMALL));
+    const error = await thrownBy(() => pumpPage(source, SMALL, live()));
     expect(error).toBeInstanceOf(CallRefusalError);
     expect((error as CallRefusalError).refusals).toEqual([
       { rule: "row-over-page", pointer: "/rows/0", limit: 1000, size: 1001 },
@@ -246,7 +258,7 @@ describe("pumpPage", () => {
     const results = await Promise.all(
       cases.map(async ([columns, answer, expected]) => {
         const source = scripted(columns, answer);
-        return { error: await thrownBy(() => pumpPage(source, SMALL)), source, expected };
+        return { error: await thrownBy(() => pumpPage(source, SMALL, live())), source, expected };
       }),
     );
     for (const { error, source, expected } of results) {
@@ -256,7 +268,7 @@ describe("pumpPage", () => {
       expect(source.limits.length).toBe(1);
     }
     const cell = scripted(ONE, () => ({ rows: [[new Map()]], done: true }));
-    expect(await thrownBy(() => pumpPage(cell, SMALL))).toBeInstanceOf(ValueCodecError);
+    expect(await thrownBy(() => pumpPage(cell, SMALL, live()))).toBeInstanceOf(ValueCodecError);
     expect(cell.closes).toBe(1);
   });
 
@@ -268,25 +280,25 @@ describe("pumpPage", () => {
     };
 
     const pull = scripted(ONE, () => Promise.reject(pullFailure));
-    expect(await thrownBy(() => pumpPage(pull, SMALL))).toBe(pullFailure);
+    expect(await thrownBy(() => pumpPage(pull, SMALL, live()))).toBe(pullFailure);
     expect(pull.closes).toBe(1);
 
     const both = scripted(ONE, () => Promise.reject(pullFailure), failingClose);
-    const aggregate = await thrownBy(() => pumpPage(both, SMALL));
+    const aggregate = await thrownBy(() => pumpPage(both, SMALL, live()));
     expect(aggregate).toBeInstanceOf(AggregateError);
     expect((aggregate as AggregateError).errors).toEqual([pullFailure, closeFailure]);
     expect((aggregate as AggregateError).cause).toBe(closeFailure);
     expect(both.closes).toBe(1);
 
     const refusedAndClose = scripted(ONE, () => ({ rows: [], done: false }), failingClose);
-    const refusedAggregate = await thrownBy(() => pumpPage(refusedAndClose, SMALL));
+    const refusedAggregate = await thrownBy(() => pumpPage(refusedAndClose, SMALL, live()));
     expect(refusedAggregate).toBeInstanceOf(AggregateError);
     const [refusal, closed] = (refusedAggregate as AggregateError).errors;
     expect(refusal).toBeInstanceOf(CallRefusalError);
     expect(closed).toBe(closeFailure);
 
     const afterGoodPage = scripted(ONE, () => ({ rows: [[1]], done: true }), failingClose);
-    expect(await thrownBy(() => pumpPage(afterGoodPage, SMALL))).toBe(closeFailure);
+    expect(await thrownBy(() => pumpPage(afterGoodPage, SMALL, live()))).toBe(closeFailure);
     expect(afterGoodPage.closes).toBe(1);
   });
 
@@ -308,7 +320,7 @@ describe("pumpPage", () => {
       close: () => inner.close(),
     };
 
-    const page = await pumpPage(source, { maxRows: 20, maxBytes: 400, batchMaxBytes: 100 });
+    const page = await pumpPage(source, { maxRows: 20, maxBytes: 400, batchMaxBytes: 100 }, live());
 
     let rowsSoFar = 0;
     let bytesSoFar = 0;
@@ -332,7 +344,7 @@ describe("pumpPage", () => {
       names.flatMap((name) =>
         bad.map(async (value) => {
           const source = scripted(ONE, () => ({ rows: [], done: true }));
-          const error = await thrownBy(() => pumpPage(source, { ...SMALL, [name]: value } as typeof SMALL));
+          const error = await thrownBy(() => pumpPage(source, { ...SMALL, [name]: value } as typeof SMALL, live()));
           return { name, error, source };
         }),
       ),
@@ -343,6 +355,77 @@ describe("pumpPage", () => {
       expect(source.limits.length).toBe(0);
       expect(source.closes).toBe(1);
     }
+  });
+
+  test("the pump pulls no batch once the call's signal aborted or its deadline passed, and closes the source once", async () => {
+    const reason = new Error(randomUUID());
+    const abortedSource = scripted(ONE, () => ({ rows: [[1]], done: true }));
+    const abortedError = await thrownBy(() =>
+      pumpPage(abortedSource, SMALL, { deadline: Date.now() + 3_600_000, signal: AbortSignal.abort(reason) }),
+    );
+    expect(abortedError).toBeInstanceOf(CallRefusalError);
+    expect((abortedError as CallRefusalError).refusals).toEqual([{ rule: "call-signal-aborted", pointer: "/signal" }]);
+    expect((abortedError as CallRefusalError).cause).toBe(reason);
+    expect(abortedSource.limits.length).toBe(0);
+    expect(abortedSource.closes).toBe(1);
+
+    const pastSource = scripted(ONE, () => ({ rows: [[1]], done: true }));
+    const pastError = await thrownBy(() =>
+      pumpPage(pastSource, SMALL, { deadline: Date.now() - 1, signal: new AbortController().signal }),
+    );
+    expect(pastError).toBeInstanceOf(CallRefusalError);
+    expect((pastError as CallRefusalError).refusals).toEqual([{ rule: "call-deadline-passed", pointer: "/deadline" }]);
+    expect((pastError as CallRefusalError).cause).toBeUndefined();
+    expect(pastSource.limits.length).toBe(0);
+    expect(pastSource.closes).toBe(1);
+
+    const unreadable = scripted(ONE, () => ({ rows: [[1]], done: true }));
+    const rangeError = await thrownBy(() =>
+      pumpPage(unreadable, SMALL, { deadline: Number.NaN, signal: new AbortController().signal }),
+    );
+    expect(rangeError).toBeInstanceOf(RangeError);
+    expect(unreadable.limits.length).toBe(0);
+    expect(unreadable.closes).toBe(1);
+  });
+
+  test("a call signal that aborts during a page stops the pump before its next pull", async () => {
+    const controller = new AbortController();
+    const reason = new Error(randomUUID());
+    const source = scripted(ONE, () => {
+      controller.abort(reason);
+      return { rows: [[1]], done: false };
+    });
+    const error = await thrownBy(() =>
+      pumpPage(source, SMALL, { deadline: Date.now() + 3_600_000, signal: controller.signal }),
+    );
+    expect(error).toBeInstanceOf(CallRefusalError);
+    expect((error as CallRefusalError).refusals).toEqual([{ rule: "call-signal-aborted", pointer: "/signal" }]);
+    expect((error as CallRefusalError).cause).toBe(reason);
+    expect(source.limits.length).toBe(1);
+    expect(source.closes).toBe(1);
+
+    const closeFailure = new Error(randomUUID());
+    const failing = new AbortController();
+    const failingSource = scripted(
+      ONE,
+      () => {
+        failing.abort(reason);
+        return { rows: [[1]], done: false };
+      },
+      async () => {
+        throw closeFailure;
+      },
+    );
+    const aggregate = await thrownBy(() =>
+      pumpPage(failingSource, SMALL, { deadline: Date.now() + 3_600_000, signal: failing.signal }),
+    );
+    expect(aggregate).toBeInstanceOf(AggregateError);
+    const [refusal, closed] = (aggregate as AggregateError).errors;
+    expect(refusal).toBeInstanceOf(CallRefusalError);
+    expect((refusal as CallRefusalError).refusals).toEqual([{ rule: "call-signal-aborted", pointer: "/signal" }]);
+    expect(closed).toBe(closeFailure);
+    expect(failingSource.limits.length).toBe(1);
+    expect(failingSource.closes).toBe(1);
   });
 
   test("every call refusal of a batch is worded with its counts", () => {

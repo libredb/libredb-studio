@@ -1,6 +1,7 @@
 /**
  * `@libredb/provider-sdk/testing`: the memory test transport, for tests only (docs/providers/CONTRACT.md, clauses C-18
- * to C-25). The package root never re-exports this entry, and Studio's runtime source never imports it.
+ * to C-25, C-27 and C-31 to C-33). The package root never re-exports this entry, and Studio's runtime source never
+ * imports it.
  *
  * `serve` puts a provider module record behind the transport, so a test, the kit and the host core's tests call a
  * provider as JSON frames through the value codec, its handles and result sources kept in tables the served instance

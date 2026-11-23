@@ -1,13 +1,14 @@
 /**
  * A workspace package imports only what it declares, and core reaches a package only by its name
- * (packages/README.md, "Imports"; docs/providers/CONTRACT.md, clause M-17).
+ * (packages/README.md, "Imports"; docs/providers/CONTRACT.md, clauses M-17 and C-42).
  *
  * A package's source and tests import their own files, Node built-ins, the names their `package.json` declares and
  * `@libredb/provider-sdk`; its tests may also import a Bun runtime module such as `bun:test`. Nothing in a package
  * imports an `@/` path or climbs out of its directory, so a package never depends on another package's internals or on
  * Studio's, and moving it to a repository of its own changes no import. Core (`src/`, `bin/`, `scripts/`, `tests/`,
  * `e2e/` and `vscode-extension/src/`) never reaches into `packages/` by path, so what core sees of a package is what
- * its `exports` publish.
+ * its `exports` publish. No package but the kit depends on another provider package: the SDK alone, and the kit in a
+ * package's tests and `devDependencies` only.
  *
  * Specifiers are read with the scanner of `tests/unit/lib/db/provider-imports/scan.ts` (the TypeScript compiler's
  * `preProcessFile`), so a path in a comment or a string is never one. Inward, only core files whose text contains
@@ -22,6 +23,8 @@ import { plantedRoot, REPOSITORY_ROOT, removePlantedRoot } from "../helpers/plan
 import { isSourcePath, moduleSpecifiers } from "./lib/db/provider-imports/scan";
 
 const SDK = "@libredb/provider-sdk";
+/** The provider kit, which a package's tests may import (docs/providers/CONTRACT.md, clause C-42). */
+const KIT = "@libredb/provider-kit";
 const CORE_ROOTS = ["src", "bin", "scripts", "tests", "e2e", "vscode-extension/src"];
 /** Studio's runtime source, which never imports the SDK's testing entry (docs/providers/CONTRACT.md, clause C-18). */
 const RUNTIME_ROOTS = ["src", "bin", "vscode-extension/src"];
@@ -81,6 +84,48 @@ function packageImportFailures(root: string): string[] {
       for (const specifier of moduleSpecifiers(readFileSync(path.join(root, file), "utf8"))) {
         const failure = packageSpecifierFailure(file, specifier, directory, declared);
         if (failure !== null) failures.push(failure);
+      }
+    }
+  }
+  return failures.sort();
+}
+
+const PROVIDER_PACKAGE_PREFIX = "@libredb/provider-";
+const DEPENDENCY_FIELDS = ["dependencies", "peerDependencies", "optionalDependencies", "devDependencies"];
+
+/**
+ * Every way a workspace package under `root` depends on another provider package, sorted (docs/providers/CONTRACT.md,
+ * clause C-42): a name starting `@libredb/provider-` that its source or tests import, or that its `package.json`
+ * declares, other than the SDK and its own name. The kit is admitted in a package's tests and in its `devDependencies`
+ * only. The kit's own package is outside the rule, and its rule is the kit's.
+ */
+function providerDependenceFailures(root: string): string[] {
+  const failures: string[] = [];
+  for (const { directory, manifest } of workspacePackageManifests(root)) {
+    if (manifest.name === KIT) continue;
+    const foreign = (name: string): boolean =>
+      name.startsWith(PROVIDER_PACKAGE_PREFIX) && name !== SDK && name !== manifest.name;
+    for (const field of DEPENDENCY_FIELDS) {
+      for (const name of Object.keys(manifest[field] ?? {}).filter(foreign)) {
+        if (name !== KIT)
+          failures.push(`${directory}/package.json declares "${name}" in ${field}, another provider package`);
+        else if (field !== "devDependencies") {
+          failures.push(
+            `${directory}/package.json declares "${name}" in ${field}, and the kit belongs in devDependencies only`,
+          );
+        }
+      }
+    }
+    for (const file of [
+      ...sourceFilesUnder(root, `${directory}/src`),
+      ...sourceFilesUnder(root, `${directory}/tests`),
+    ]) {
+      const isTest = file.startsWith(`${directory}/tests/`);
+      for (const specifier of moduleSpecifiers(readFileSync(path.join(root, file), "utf8"))) {
+        const name = packageNameOf(specifier);
+        if (!foreign(name)) continue;
+        if (name !== KIT) failures.push(`${file} imports "${specifier}", another provider package`);
+        else if (!isTest) failures.push(`${file} imports "${specifier}", the kit, which only a package's tests import`);
       }
     }
   }
@@ -223,6 +268,66 @@ describe("the package import rule", () => {
       expect(inwardPathFailures(root)).toEqual([
         'scripts/b.ts imports "../packages/provider-planted", reaching a workspace package by path: import it by its name',
         'src/lib/a.ts imports "../../packages/provider-planted/src/index", reaching a workspace package by path: import it by its name',
+      ]);
+    } finally {
+      removePlantedRoot(root);
+    }
+  });
+
+  test("no workspace package imports or declares another provider package", () => {
+    expect(providerDependenceFailures(REPOSITORY_ROOT)).toEqual([]);
+  });
+
+  test("a planted package that imports or declares another provider package fails by file and name, the kit admitted in its tests only", () => {
+    const B = "@libredb/provider-b";
+    const root = plantedRoot({
+      copy: [],
+      workspaces: true,
+      linkNodeModules: false,
+      files: {
+        "packages/provider-a/package.json": JSON.stringify({
+          name: "@libredb/provider-a",
+          dependencies: { [SDK]: "*", [B]: "*", [KIT]: "*" },
+          peerDependencies: { [B]: "*" },
+          optionalDependencies: { [B]: "*" },
+          devDependencies: { [KIT]: "*", [B]: "*" },
+        }),
+        "packages/provider-a/src/index.ts": [
+          `import { b } from "${B}";`,
+          `import type { T } from "${B}/types";`,
+          `export const later = () => import("${B}/later");`,
+          `export const required = () => require("${B}/required");`,
+          `import { check } from "${KIT}";`,
+          `import { defineProvider } from "${SDK}/calls";`,
+          'import "@libredb/provider-a/self";',
+          `// import "${B}/in-a-comment";`,
+          "export const value = [b, check, defineProvider];",
+          "export type U = T;",
+        ].join("\n"),
+        "packages/provider-a/tests/a.test.ts": [
+          `import { check } from "${KIT}/cases";`,
+          `import "${B}/in-tests";`,
+        ].join("\n"),
+        "packages/provider-kit/package.json": JSON.stringify({
+          name: KIT,
+          dependencies: { "@libredb/provider-a": "*" },
+        }),
+        "packages/provider-kit/src/index.ts": 'import "@libredb/provider-a";\n',
+      },
+    });
+    try {
+      expect(providerDependenceFailures(root)).toEqual([
+        `packages/provider-a/package.json declares "${B}" in dependencies, another provider package`,
+        `packages/provider-a/package.json declares "${B}" in devDependencies, another provider package`,
+        `packages/provider-a/package.json declares "${B}" in optionalDependencies, another provider package`,
+        `packages/provider-a/package.json declares "${B}" in peerDependencies, another provider package`,
+        `packages/provider-a/package.json declares "${KIT}" in dependencies, and the kit belongs in devDependencies only`,
+        `packages/provider-a/src/index.ts imports "${B}", another provider package`,
+        `packages/provider-a/src/index.ts imports "${B}/later", another provider package`,
+        `packages/provider-a/src/index.ts imports "${B}/required", another provider package`,
+        `packages/provider-a/src/index.ts imports "${B}/types", another provider package`,
+        `packages/provider-a/src/index.ts imports "${KIT}", the kit, which only a package's tests import`,
+        `packages/provider-a/tests/a.test.ts imports "${B}/in-tests", another provider package`,
       ]);
     } finally {
       removePlantedRoot(root);

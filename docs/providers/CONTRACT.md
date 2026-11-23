@@ -11,7 +11,7 @@ The SDK package `@libredb/provider-sdk`, under [`packages/provider-sdk`](../../p
 - `compileManifestValidator`, `refusalSentence` and the refusal types, exported from `@libredb/provider-sdk/manifest`.
 - [`codec.ts`](../../packages/provider-sdk/src/values/codec.ts), the value codec, exported from `@libredb/provider-sdk/values`.
 - [`errors/index.ts`](../../packages/provider-sdk/src/errors/index.ts), the error record's shape and vocabularies, the kinds a provider may raise and the driver error row contract, exported from `@libredb/provider-sdk/errors`.
-- [`calls/index.ts`](../../packages/provider-sdk/src/calls/index.ts), the call and context types, `defineProvider`, `checkProviderModule` and `envReader`, the host's checks of a call, `checkExecuteRequest`, `checkConsoleFacet`, `checkRefinement` and `sessionCalls`, `freezeContext` and `freezeData`, and the byte budgets `BATCH_MAX_BYTES` and `PAGE_MAX_BYTES` with `encodedRowBytes`, `rowsSource` and `pumpPage`, exported from `@libredb/provider-sdk/calls`.
+- [`calls/index.ts`](../../packages/provider-sdk/src/calls/index.ts), the call and context types, `defineProvider`, `checkProviderModule` and `envReader`, the host's checks of a call, `checkExecuteRequest`, `checkConsoleFacet`, `checkRefinement` and `sessionCalls`, `freezeContext` and `freezeData`, the byte budgets `BATCH_MAX_BYTES` and `PAGE_MAX_BYTES` with `encodedRowBytes`, `rowsSource` and `pumpPage`, and a call's deadline, `deadlineSignal`, `checkCallStart` and `awaitWithin`, exported from `@libredb/provider-sdk/calls`.
 - `SqlGrammar` and its member types, the compatibility default `DEFAULT_SQL_GRAMMAR`, and `hashRunIsAmbiguous`, exported from `@libredb/provider-sdk/sql`.
 - [`testing/index.ts`](../../packages/provider-sdk/src/testing/index.ts), `serve`, `readFrame`, `roundTripRefusals` and the frame refusals, exported from `@libredb/provider-sdk/testing` only.
 
@@ -219,6 +219,7 @@ The list is `tests/unit/db/engine-declarations/inventory.ts`.
 A workspace package's source and tests import their own files, Node built-ins, the names their `package.json` declares and `@libredb/provider-sdk`, and its tests may import a Bun runtime module.
 No package imports a path into Studio's own source or out of its own directory, so no package depends on another package's internals.
 Studio reaches a package only by its package name, never by a path into `packages/`.
+A package depends on no other provider package, C-42.
 
 - test `tests/unit/package-imports.test.ts` "the repository's packages import only what they declare"
 - test `tests/unit/package-imports.test.ts` "core reaches no workspace package by path"
@@ -800,6 +801,7 @@ As it reads each batch, the pump refuses by a rule of `CALL_REFUSAL_RULES` a bat
 It cuts the page by size, ends it at its row limit or when the source is done, and closes the source exactly once on every path, losing no failure: when the close fails after another failure, both are thrown together.
 A limit that is not a positive safe integer is a host defect, refused before any pull.
 The pump never keeps a source open across pages, so a later page is a new execution with an offset, C-9.
+The pump takes the context of the execute call that answered the source and starts no pull once that call's signal has aborted or its deadline has passed, C-27.
 
 - test `packages/provider-sdk/tests/calls/results.test.ts` "a page cut by size at page.maxBytes"
 - test `packages/provider-sdk/tests/calls/results.test.ts` "a page ends at its row limit or when the source is done"
@@ -923,7 +925,185 @@ A served result source asks the provider for exactly the limit it is pulled with
 
 The memory transport keeps frames for tests only, so a test, the kit and the host core's tests see what crossing a JSON boundary does to a call.
 The kit's run in memory calls `serve`, and whether any of the transport's checks run in production is decided with the first host surface.
-Deadlines, cancellation and the failure matrix over `serve` arrive with the calls chapter's next part.
+Its deadline and cancellation rules are C-26 to C-30, and the failure matrix is C-34.
+
+### C-26 (normative): One deadline, owned by the host
+
+Every call's context carries one absolute `deadline`, in epoch milliseconds on the clock `Date.now()` reads, which every step of the call consumes.
+Its `signal` aborts at the deadline with a DOMException named `TimeoutError`, or when the caller goes first, with the caller's own reason.
+`deadlineSignal` builds that signal from the standard `AbortSignal.timeout` and `AbortSignal.any`, and answers a signal already aborted for a deadline already past.
+A deadline that is not a finite number, or one further ahead than a timer waits, 2147483647 milliseconds, is a host defect, refused with a `RangeError` before any signal is built, since Node.js runs a longer timer after one millisecond.
+Node.js does not let the signal's timer keep a process alive, so nothing relies on the signal to do so.
+
+- test `packages/provider-sdk/tests/calls/deadline.test.ts` "a call signal aborts at its deadline with a TimeoutError"
+- test `packages/provider-sdk/tests/calls/deadline.test.ts` "a call signal aborts with the caller's reason when the caller goes first"
+- test `packages/provider-sdk/tests/calls/deadline.test.ts` "a deadline already past answers a signal already aborted"
+- test `packages/provider-sdk/tests/calls/deadline.test.ts` "a deadline that is not a finite number is a host defect, refused before any signal is built"
+- test `packages/provider-sdk/tests/calls/deadline.test.ts` "a deadline further ahead than a timer can wait is refused before any signal is built"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "the provider's context carries the host's deadline and signal, and its signal aborts at the deadline"
+
+### C-27 (normative): No call starts after its signal aborted or its deadline passed
+
+The host checks each call with `checkCallStart` before it makes it, and refuses it by `call-deadline-passed` or `call-signal-aborted`, rules of `CALL_REFUSAL_RULES`, each at a JSON Pointer into the call's context.
+A refusal by `call-signal-aborted` is thrown with the signal's reason as the error's cause, never as a value of the refusal or of its sentence.
+The deadline is read by time, since a signal does not abort at once when its deadline has already passed.
+The served host side runs the check on every call, before any frame and before C-9 and C-17, so a refused call reaches no provider and leaves the session as it was.
+`pumpPage` checks before every pull, so no batch is pulled after either, and a refusal there is thrown after the source's one close, as any failure of a step is, C-15.
+
+- test `packages/provider-sdk/tests/calls/deadline.test.ts` "checkCallStart refuses a call whose deadline passed or whose signal aborted, naming each"
+- test `packages/provider-sdk/tests/calls/deadline.test.ts` "a CallRefusalError carries the signal's reason as its cause"
+- test `packages/provider-sdk/tests/calls/results.test.ts` "the pump pulls no batch once the call's signal aborted or its deadline passed, and closes the source once"
+- test `packages/provider-sdk/tests/calls/results.test.ts` "a call signal that aborts during a page stops the pump before its next pull"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a call whose signal aborted or whose deadline passed is refused before any frame, and the provider is never called"
+
+### C-28 (normative): The host stops waiting at the signal, and an abandoned answer keeps its handler
+
+The host waits on a provider's answer with `awaitWithin`.
+When the answer comes first, the wait settles as the answer does and leaves no listener on the signal.
+When the signal aborts first, or had aborted already, the wait rejects with the signal's reason at once, and the answer keeps a handler for its value and for its error, which hands its late outcome to the host's late handler once, by reference.
+So no abandoned rejection goes unhandled, and the host's late handler closes what a late answer handed over and logs a late failure.
+A late handler that throws is a host defect, and its error is a detached rejection.
+A result source runs under the context of the execute call that answered it, so `next` takes no context, and the host's wait on a page is its wait on that call.
+The memory transport races nothing: an answer the host stopped waiting for is delivered whole, its session token and served sources included, so the late handler closes it once, and what the served host side refuses of a late answer it closes itself, C-23, and hands on as a failure.
+
+- test `packages/provider-sdk/tests/calls/deadline.test.ts` "the host's wait settles as the answer does when the answer comes first, and leaves no listener on the signal"
+- test `packages/provider-sdk/tests/calls/deadline.test.ts` "the host's wait ends at the signal, and the abandoned answer's outcome reaches the late handler once"
+- test `packages/provider-sdk/tests/calls/deadline.test.ts` "a signal aborted before the wait ends it at once, and the answer still reaches the late handler"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "an answer the host stopped waiting for reaches its late handler whole, and the host closes what it handed over once"
+
+### C-29 (informative): What a provider does with the deadline and the signal
+
+A provider derives every driver timeout from `ctx.deadline`, for checkout, connect and execute alike, starts no work on a signal already aborted, and ends its waits when the signal aborts.
+It answers `cancelled: false` for a run it does not know.
+A result source's pulls honour the context of the execute call that answered it.
+The kit checks these, and no such check exists yet.
+
+### C-30 (normative): A session without console.cancel is reported as still running, without a call
+
+The host refuses a cancel to a session that does not offer `console.cancel` before the call, C-17, and reports the run as not cancelled.
+Studio's cancel route answers such a connection with `cancelled: false` and calls nothing.
+
+- test `packages/provider-sdk/tests/calls/request.test.ts` "a console facet the session does not offer is refused before the call"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a request field or a console facet the session does not offer is refused before any frame"
+- test `tests/api/db/cancel.test.ts` "provider without cancelQuery returns 400"
+
+### C-31 (normative): A throw inside a call fails only that call
+
+An error a provider's call throws reaches the host by reference, and that session and every other session keep serving.
+The host core's reading of such an error into an error record arrives with the first host surface.
+
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "an error a call or a source throws reaches the host as the same object"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a call that throws fails only that call, and its session and the served instance keep serving"
+
+### C-32 (normative): The SDK keeps sessions apart
+
+The SDK keeps no state across sessions and installs no process handler, since several copies of it share Studio's process, M-19.
+The memory transport keeps each served instance's sessions in tables of its own, and each call reaches only its own session's handle.
+
+- test `packages/provider-sdk/tests/sdk-purity.test.ts` "SDK source declares no top-level let or var"
+- test `packages/provider-sdk/tests/sdk-purity.test.ts` "SDK source creates no top-level Map, Set, WeakMap or WeakSet"
+- test `packages/provider-sdk/tests/sdk-purity.test.ts` "SDK source never reads process"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "two sessions of one served module reach only their own handles, and one session's error or close leaves the other serving"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "two served instances of one module share no session"
+
+### C-33 (informative): A provider keeps per-session state in its handle
+
+A provider keeps its per-session state, its connection, statement, cursor, transaction and schema, in the handle `open` answers, never in module scope.
+So two sessions opened by two owners exchange no result, handle, error or cached metadata.
+The kit's isolation case checks it, and no such case exists yet.
+
+### C-34 (informative): The failure matrix
+
+How a provider's failure ends, by kind and by runtime.
+The runtimes are Studio's Next.js server, the VS Code extension's backend child under Node.js, the same child under Electron, which is how the extension forks it, and the server under Node.js started with `--unhandled-rejections=strict`.
+Each "held by" cell names the clause that holds the row, or says what will hold it.
+The loader, the kit's fault cases and a measurement under Electron do not exist yet, and the detached rejection row stays open until such rejections have been counted in real sessions.
+
+| Failure | Next.js server | VS Code child, Node.js | VS Code child, Electron | Node.js, strict | Blast radius | Held by |
+|---|---|---|---|---|---|---|
+| The loader refuses a package | Studio starts without its engines | The same | The same | The same | That package's engines | The loader |
+| A package's import throws | Studio starts without its engines | The same | The same | The same | That package's engines | The loader |
+| A package's import passes its deadline | Studio stops waiting and starts without its engines, unless the import is synchronous | The same | The same | The same | That package's engines, or the process | The loader, and C-37 |
+| A synchronous hang, at import or in a call | Every request waits | The same | The same | The same | The process | Only a watchdog outside the process, C-37 |
+| A throw inside a call | That call fails | The same | The same | The same | That call | C-31 |
+| A detached rejection | Logged, and the server keeps serving | The child exits with 1 and the extension restarts it, measured by a probe, not a test | Not measured | The server exits with 70 | None on the server, the process otherwise | C-35, with the server's own choice open |
+| An uncaught exception in a callback | The server exits with 70 | The child exits with 1 and the extension restarts it, measured by a probe, not a test | Not measured | The server exits with 70 | The process | C-35 |
+| A native fault in an addon | The process ends on the signal | The same | The same | The same | The process | The kit's fault cases |
+| A close that never settles at shutdown | Cut after 15 s, exit 143, where Studio owns the exit | Not stated | Not stated | As the server | The shutdown | C-36 |
+
+### C-35 (normative): An uncaught exception stops the server with code 70, and a detached rejection does not
+
+An exception that no code catches stops Studio's server with exit code 70, after one logged line.
+A promise rejection that nothing handles does not stop it, unless Node.js runs with `--unhandled-rejections=strict`, which raises the rejection as an uncaught exception, so the server exits with 70 for it too ([DISTRIBUTION.md](../DISTRIBUTION.md#uncaught-errors-and-restarts)).
+
+- test `tests/unit/lib/uncaught-exception.test.ts` "the listener logs the line once, with no stack even under NODE_ENV=development, then exits with 70"
+- test `tests/unit/lib/uncaught-exception.test.ts` "attaches one uncaughtException listener and nothing else"
+- test `tests/unit/lib/uncaught-exception.test.ts` "logs an unhandled rejection that Node.js raised as an uncaught exception by that origin, then exits with 70"
+- test `tests/unit/uncaught-exception-documentation.test.ts` "it says an unhandled promise rejection does not stop the server, unless Node.js raises it as an exception"
+
+### C-36 (normative): A close that never settles at shutdown is cut
+
+Where Studio owns the exit, a provider cache close still pending 15 s into the shutdown is cut, and the exit code is 143.
+Where Next.js owns the exit, Studio closes no provider.
+
+- test `tests/unit/lib/shutdown-handler.test.ts` "a cache close that never settles is cut after 15 s and the exit code is 143"
+- test `tests/unit/lib/shutdown-handler.test.ts` "where Next.js owns the exit it runs the hooks, closes no provider cache and never exits"
+
+### C-37 (informative): The import deadline cannot stop synchronous code
+
+The loader's deadline on each import is a timer in Studio's own thread, so a synchronous loop at import or in a call blocks it as it blocks every request.
+Only a watchdog outside the process detects a hung process.
+The Helm chart's and the OpenShift operator's liveness probe restarts the pod.
+The Compose healthcheck marks the container unhealthy and restarts nothing.
+npx, the Linux packages' units, Snap, Homebrew, Windows, the desktop shell after its boot and the VS Code extension detect nothing.
+The kit's import-time measurement is the check at a package's build, and no loader exists yet.
+
+### C-38 (normative): Classification is core's, and its verdict is a closed set
+
+Whether a statement needs a confirmation is decided by core's readers over facts core holds, never by a call into a provider.
+The verdict is one of the members of `ConfirmationVerdict`, and a reader that throws asks for a confirmation.
+
+- test `tests/unit/editor/statement-analysis.test.ts` "answers run for a read"
+- test `tests/unit/editor/statement-analysis.test.ts` "answers confirm for a write"
+- test `tests/unit/editor/statement-analysis.test.ts` "refuses a connection-name ask on a nameless connection"
+- test `tests/unit/lib/api/run-confirmation.test.ts` "a reader that throws asks, marked classificationFailed, and logs no text"
+
+### C-39 (normative): A protected read path is a precondition of agent and MCP statements
+
+A provider without `queryReadOnly` is refused for agent and MCP statements before it is connected, and the plain query path is never the fallback.
+
+- test `tests/integration/mcp/run-read-query.test.ts` "without queryReadOnly is refused, and query() is never the fallback"
+- test `tests/isolated/factory.test.ts` "refuses %s on an engine on the review record whose provider implements no read-only statement path, before connecting it, and query() is never the fallback"
+- test `tests/api/agent/handover.test.ts` "refuses to replay on an engine the review record does not list, naming it, and never calls queryReadOnly"
+
+### C-40 (normative): One provider kind, and no named provider method
+
+Every package implements the mandatory calls, `console.execute` among them, so no lifecycle-only kind of provider exists.
+An implementation key the contract does not define is refused, so a dialog action or a dynamic option is never a provider method of its own.
+A host path field is M-12's.
+
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a mandatory call that is missing or no function is refused as call-missing"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an implementation key the contract does not define is refused as impl-key-unknown"
+- schema `/$defs/consoleCalls/required`
+
+### C-41 (informative): Dialog actions, dynamic options and a provider's classification
+
+If a provider ever needs dialog actions or dynamic select options, both come through one fixed facet call with an action id, whose answer may set only declared fields of their declared types.
+If a provider ever answers a classification, it is read from a closed set, and any other answer, an error or a timeout asks for a confirmation.
+No such call exists yet, so nothing checks this.
+
+### C-42 (normative): A package depends on no other provider package
+
+No workspace package but the kit imports, in its source or its tests, or declares, in any dependency field of its `package.json`, a name starting `@libredb/provider-` other than `@libredb/provider-sdk` and its own.
+The kit, `@libredb/provider-kit`, is admitted only in a package's tests and its `devDependencies`.
+
+- test `tests/unit/package-imports.test.ts` "no workspace package imports or declares another provider package"
+- test `tests/unit/package-imports.test.ts` "a planted package that imports or declares another provider package fails by file and name, the kit admitted in its tests only"
+
+### C-43 (informative): A provider depends on no load order
+
+The order of the entries in the lock carries no meaning, and no provider is required for Studio to start.
+The loader holds this, and it does not exist yet.
 
 ## Not yet in this contract
 
@@ -932,7 +1112,6 @@ These chapters are added by the changes that bring their enforcers:
 - Connection string rows: their schemes, their URL TLS and paste readers, and their seed checks.
 - Editor and SQL text: execution UI, the SQL grammar facts as manifest data, SQL writing, migration DDL, generators, editor languages, explain formats and discovery fence tags.
 - Policy and MCP claims, each a request a provider makes that only Studio's review record grants, the agent overlay, and presentation (an icon and a colour).
-- Calls, continued: the cancel, deadline and failure rules.
 - The API report of each SDK entry.
 
 ## Change notes

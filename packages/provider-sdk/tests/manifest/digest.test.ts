@@ -19,13 +19,16 @@ import * as testing from "@libredb/provider-sdk/testing";
 import { decodeValue, encodeValue, ValueCodecError } from "@libredb/provider-sdk/values";
 import { ERROR_KINDS, PROVIDER_ERROR_KINDS, SQLSTATE_PATTERN } from "@libredb/provider-sdk/errors";
 import {
+  awaitWithin,
   BATCH_MAX_BYTES,
   CALL_REFUSAL_RULES,
   CONSOLE_FACETS,
+  checkCallStart,
   checkConsoleFacet,
   checkExecuteRequest,
   checkProviderModule,
   checkRefinement,
+  deadlineSignal,
   defineProvider,
   encodedRowBytes,
   envReader,
@@ -111,6 +114,9 @@ describe("the manifest schema digest", () => {
     expect(packageRoot.encodedRowBytes).toBe(encodedRowBytes);
     expect(packageRoot.BATCH_MAX_BYTES).toBe(BATCH_MAX_BYTES);
     expect(packageRoot.PAGE_MAX_BYTES).toBe(PAGE_MAX_BYTES);
+    expect(packageRoot.deadlineSignal).toBe(deadlineSignal);
+    expect(packageRoot.checkCallStart).toBe(checkCallStart);
+    expect(packageRoot.awaitWithin).toBe(awaitWithin);
   });
 
   test("the package root does not export the testing surface", () => {

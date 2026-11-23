@@ -13,14 +13,18 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
+  awaitWithin,
   type BatchLimit,
   type CallContext,
   CallRefusalError,
   checkProviderModule,
+  deadlineSignal,
   defineProvider,
   envReader,
   type ExecuteAnswer,
   type ExecuteRequest,
+  type LateOutcome,
+  type OpenAnswer,
   type OpenContext,
   PAGE_MAX_BYTES,
   ProviderDefinitionError,
@@ -178,6 +182,46 @@ function deepFrozen(value: unknown): boolean {
 /** `ctx` without its host services, as a frame carries it. */
 function dataOf(ctx: CallContext): Json {
   return Object.fromEntries(Object.entries(ctx).filter(([key]) => key !== "signal" && key !== "env"));
+}
+
+/** `ctx` with its deadline already past. */
+function past<C extends CallContext>(ctx: C): C {
+  return { ...ctx, deadline: Date.now() - 1 };
+}
+
+/** A late handler that records each outcome and resolves `first` with the first one. */
+function lateHandler<T>(): {
+  readonly late: (outcome: LateOutcome<T>) => void;
+  readonly calls: LateOutcome<T>[];
+  readonly first: Promise<LateOutcome<T>>;
+} {
+  const calls: LateOutcome<T>[] = [];
+  const { promise, resolve } = Promise.withResolvers<LateOutcome<T>>();
+  return {
+    late: (outcome) => {
+      calls.push(outcome);
+      resolve(outcome);
+    },
+    calls,
+    first: promise,
+  };
+}
+
+/** A source over one row that counts its closes. */
+function countedSource(): { readonly source: ResultSource; readonly closes: () => number } {
+  let closes = 0;
+  const inner = rowsSource([{ name: "id" }, { name: "label" }], [[1, marker()]], 1);
+  return {
+    source: {
+      columns: inner.columns,
+      next: (limit: BatchLimit) => inner.next(limit),
+      close: async () => {
+        closes += 1;
+        await inner.close();
+      },
+    },
+    closes: () => closes,
+  };
 }
 
 describe("serve", () => {
@@ -726,11 +770,15 @@ describe("serve", () => {
     const answer: ExecuteAnswer = await impl.console.execute(opened.handle, request(), callContext());
     const before = frames.length;
 
-    const page = await pumpPage(answer.results[0] as ResultSource, {
-      maxRows: 100,
-      maxBytes: PAGE_MAX_BYTES,
-      batchMaxBytes: 7,
-    });
+    const page = await pumpPage(
+      answer.results[0] as ResultSource,
+      {
+        maxRows: 100,
+        maxBytes: PAGE_MAX_BYTES,
+        batchMaxBytes: 7,
+      },
+      callContext(),
+    );
     const pumped = frames.slice(before);
     const requested = pumped.filter((frame) => frame.direction === "to-provider" && frame.call === "result.next");
 
@@ -744,6 +792,267 @@ describe("serve", () => {
       "to-host result.close",
     ]);
     expect(pumped).toHaveLength(12);
+  });
+
+  test("a call whose signal aborted or whose deadline passed is refused before any frame, and the provider is never called", async () => {
+    const fx = fixture({ honours: [] });
+    const { impl, frames } = served(fx);
+    const opened = await impl.open(openContext());
+    const before = frames.length;
+    const reason = new Error(marker());
+    const gone = new AbortController();
+    gone.abort(reason);
+    const calls: [string, (ctx: CallContext) => Promise<unknown>][] = [
+      ["open", (ctx) => impl.open({ ...openContext(), deadline: ctx.deadline, signal: ctx.signal })],
+      ["close", (ctx) => impl.close(opened.handle, ctx)],
+      ["console.execute", (ctx) => impl.console.execute(opened.handle, request(), ctx)],
+      ["console.cancel", async (ctx) => impl.console.cancel?.(opened.handle, { runId: marker() }, ctx)],
+      ["console.endScope", async (ctx) => impl.console.endScope?.(opened.handle, { scope: marker() }, ctx)],
+    ];
+
+    const refused = await Promise.all(
+      calls.map(async ([call, run]) => ({
+        call,
+        aborted: await failure(() => run(callContext(gone))),
+        passed: await failure(() => run(past(callContext()))),
+      })),
+    );
+    const withField = await failure(() =>
+      impl.console.execute(
+        opened.handle,
+        request((r) => (r.params = [])),
+        callContext(gone),
+      ),
+    );
+
+    for (const { aborted, passed } of refused) {
+      expect(aborted).toBeInstanceOf(CallRefusalError);
+      expect((aborted as CallRefusalError).refusals).toEqual([{ rule: "call-signal-aborted", pointer: "/signal" }]);
+      expect((aborted as CallRefusalError).cause).toBe(reason);
+      expect(passed).toBeInstanceOf(CallRefusalError);
+      expect((passed as CallRefusalError).refusals).toEqual([{ rule: "call-deadline-passed", pointer: "/deadline" }]);
+      expect((passed as CallRefusalError).cause).toBeUndefined();
+    }
+    expect(refused.map((item) => item.call)).toEqual(calls.map(([call]) => call));
+    expect((withField as CallRefusalError).refusals).toEqual([{ rule: "call-signal-aborted", pointer: "/signal" }]);
+    expect(frames.length).toBe(before);
+    expect(fx.seen.map((item) => item.call)).toEqual(["open"]);
+
+    const answer = await impl.console.execute(opened.handle, request(), callContext());
+    expect(answer.results).toHaveLength(1);
+    await impl.close(opened.handle, callContext());
+    expect(fx.seen.map((item) => item.call)).toEqual(["open", "console.execute", "close"]);
+  });
+
+  test("the provider's context carries the host's deadline and signal, and its signal aborts at the deadline", async () => {
+    const fx = fixture();
+    const { impl } = served(fx);
+    const opened = await impl.open(openContext());
+    fx.answers.execute = () =>
+      new Promise((_, reject) => {
+        const signal = fx.seen.at(-1)?.ctx?.signal as AbortSignal;
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    const deadline = Date.now() + 30;
+    const signal = deadlineSignal(deadline);
+
+    const error = await failure(() =>
+      impl.console.execute(opened.handle, request(), {
+        deadline,
+        signal,
+        env: envReader([], () => undefined),
+      }),
+    );
+
+    const providerCtx = fx.seen.at(-1)?.ctx as CallContext;
+    expect(providerCtx.deadline).toBe(deadline);
+    expect(providerCtx.signal).toBe(signal);
+    expect(error).toBe(signal.reason);
+    expect(error).toBeInstanceOf(DOMException);
+    expect((error as DOMException).name).toBe("TimeoutError");
+  });
+
+  test("an answer the host stopped waiting for reaches its late handler whole, and the host closes what it handed over once", async () => {
+    const fx = fixture();
+    const { impl } = served(fx);
+    const opened = await impl.open(openContext());
+
+    const lateExecute = Promise.withResolvers<unknown>();
+    fx.answers.execute = () => lateExecute.promise;
+    const executeController = new AbortController();
+    const executeHandler = lateHandler<ExecuteAnswer>();
+    const executeWait = awaitWithin(
+      impl.console.execute(opened.handle, request(), callContext(executeController)),
+      executeController.signal,
+      executeHandler.late,
+    );
+    const executeReason = new Error(marker());
+    executeController.abort(executeReason);
+    expect(await failure(() => executeWait)).toBe(executeReason);
+    const counted = countedSource();
+    lateExecute.resolve({ results: [counted.source], warnings: [], executionTimeMs: 0, pageApplied: false });
+    const executeOutcome = await executeHandler.first;
+    expect(executeOutcome.kind).toBe("answered");
+    const lateAnswer = (executeOutcome as { readonly value: ExecuteAnswer }).value;
+    expect(lateAnswer.results).toHaveLength(1);
+    await Promise.all(lateAnswer.results.map((result) => result.close()));
+    expect(counted.closes()).toBe(1);
+    expect(executeHandler.calls).toHaveLength(1);
+
+    const lateFailure = Promise.withResolvers<unknown>();
+    fx.answers.execute = () => lateFailure.promise;
+    const failingController = new AbortController();
+    const failingHandler = lateHandler<ExecuteAnswer>();
+    const failingWait = awaitWithin(
+      impl.console.execute(opened.handle, request(), callContext(failingController)),
+      failingController.signal,
+      failingHandler.late,
+    );
+    const failingReason = new Error(marker());
+    failingController.abort(failingReason);
+    expect(await failure(() => failingWait)).toBe(failingReason);
+    const thrown = new Error(marker());
+    lateFailure.reject(thrown);
+    const failedOutcome = await failingHandler.first;
+    expect(failedOutcome.kind).toBe("failed");
+    expect((failedOutcome as { readonly error: unknown }).error).toBe(thrown);
+
+    const lateRefused = Promise.withResolvers<unknown>();
+    fx.answers.execute = () => lateRefused.promise;
+    const refusedController = new AbortController();
+    const refusedHandler = lateHandler<ExecuteAnswer>();
+    const refusedWait = awaitWithin(
+      impl.console.execute(opened.handle, request(), callContext(refusedController)),
+      refusedController.signal,
+      refusedHandler.late,
+    );
+    refusedController.abort(new Error(marker()));
+    await failure(() => refusedWait);
+    const handedOver = countedSource();
+    lateRefused.resolve({ results: [handedOver.source, 7], warnings: [], executionTimeMs: 0, pageApplied: false });
+    const refusedOutcome = await refusedHandler.first;
+    expect(refusedOutcome.kind).toBe("failed");
+    expect((refusedOutcome as { readonly error: unknown }).error).toBeInstanceOf(FrameRefusalError);
+    expect(handedOver.closes()).toBe(1);
+
+    const lateOpen = Promise.withResolvers<unknown>();
+    const lateHandle = { marker: marker() };
+    fx.answers.open = () => lateOpen.promise;
+    const openController = new AbortController();
+    const openHandler = lateHandler<OpenAnswer<ServedHandle>>();
+    const openWait = awaitWithin(impl.open(openContext(openController)), openController.signal, openHandler.late);
+    const openReason = new Error(marker());
+    openController.abort(openReason);
+    expect(await failure(() => openWait)).toBe(openReason);
+    lateOpen.resolve({ handle: lateHandle });
+    const openOutcome = await openHandler.first;
+    expect(openOutcome.kind).toBe("answered");
+    const token = (openOutcome as { readonly value: OpenAnswer<ServedHandle> }).value.handle;
+    const closesBefore = fx.seen.filter((item) => item.call === "close").length;
+    await impl.close(token, callContext());
+    const closes = fx.seen.filter((item) => item.call === "close");
+    expect(closes.length - closesBefore).toBe(1);
+    expect(closes.at(-1)?.handle).toBe(lateHandle);
+    const after = await failure(() => impl.console.execute(token, request(), callContext()));
+    expect((after as FrameRefusalError).refusals[0]?.rule).toBe("session-not-open");
+    expect(openHandler.calls).toHaveLength(1);
+  });
+
+  test("a call that throws fails only that call, and its session and the served instance keep serving", async () => {
+    const fx = fixture();
+    const { impl } = served(fx);
+    const first = await impl.open(openContext());
+    const second = await impl.open(openContext());
+    const earlier = await impl.console.execute(first.handle, request(), callContext());
+    const thrown = new Error(marker());
+    const honest = fx.answers.execute;
+    let throwOnce = true;
+    fx.answers.execute = () => {
+      if (!throwOnce) return honest();
+      throwOnce = false;
+      throw thrown;
+    };
+
+    expect(await failure(() => impl.console.execute(first.handle, request(), callContext()))).toBe(thrown);
+    const again = await impl.console.execute(first.handle, request(), callContext());
+    const other = await impl.console.execute(second.handle, request(), callContext());
+    const pulled = await (earlier.results[0] as ResultSource).next({ maxRows: 10, maxBytes: 1024 });
+
+    expect(again.results).toHaveLength(1);
+    expect(other.results).toHaveLength(1);
+    expect(pulled.rows).toHaveLength(2);
+    expect(pulled.done).toBe(true);
+  });
+
+  test("two sessions of one served module reach only their own handles, and one session's error or close leaves the other serving", async () => {
+    const fx = fixture();
+    const { impl } = served(fx);
+    fx.answers.open = () => ({
+      handle: { marker: ((fx.seen.at(-1) as Seen).ctx as OpenContext).connection.user as string },
+    });
+    const failing = new Set<string>();
+    const thrown = new Error(marker());
+    fx.answers.execute = () => {
+      const own = ((fx.seen.at(-1) as Seen).handle as ProviderHandle).marker;
+      if (failing.has(own)) throw thrown;
+      return {
+        results: [rowsSource([{ name: "who" }], [[own]], 1)],
+        warnings: [],
+        executionTimeMs: 0,
+        pageApplied: false,
+      };
+    };
+    const ctxA = openContext();
+    const ctxB = openContext();
+    const userA = ctxA.connection.user as string;
+    const userB = ctxB.connection.user as string;
+    const a = await impl.open(ctxA);
+    const b = await impl.open(ctxB);
+
+    /** The one row a session's execute answers, pulled through its served source. */
+    const who = async (handle: ServedHandle): Promise<unknown> => {
+      const answer = await impl.console.execute(handle, request(), callContext());
+      const source = answer.results[0] as ResultSource;
+      const batch = await source.next({ maxRows: 10, maxBytes: 1024 });
+      await source.close();
+      return batch.rows[0]?.[0];
+    };
+
+    expect(userA).not.toBe(userB);
+    expect(await who(a.handle)).toBe(userA);
+    expect(await who(b.handle)).toBe(userB);
+
+    failing.add(userA);
+    expect(await failure(() => impl.console.execute(a.handle, request(), callContext()))).toBe(thrown);
+    expect(await who(b.handle)).toBe(userB);
+    failing.delete(userA);
+
+    await impl.close(a.handle, callContext());
+    const closed = fx.seen.filter((item) => item.call === "close");
+    expect(closed.map((item) => (item.handle as ProviderHandle).marker)).toEqual([userA]);
+    expect(await who(b.handle)).toBe(userB);
+    const refused = await failure(() => impl.console.execute(a.handle, request(), callContext()));
+    expect((refused as FrameRefusalError).refusals[0]?.rule).toBe("session-not-open");
+  });
+
+  test("two served instances of one module share no session", async () => {
+    const fx = fixture();
+    const one = served(fx);
+    const two = served(fx);
+    const opened = await one.impl.open(openContext());
+    const oneBefore = one.frames.length;
+
+    const refused = await failure(() => two.impl.console.execute(opened.handle, request(), callContext()));
+    const closing = await failure(() => two.impl.close(opened.handle, callContext()));
+
+    expect(refused).toBeInstanceOf(FrameRefusalError);
+    expect((refused as FrameRefusalError).refusals[0]?.rule).toBe("session-not-open");
+    expect((closing as FrameRefusalError).refusals[0]?.rule).toBe("session-not-open");
+    expect(two.frames).toHaveLength(0);
+    expect(one.frames).toHaveLength(oneBefore);
+    expect(fx.seen.map((item) => item.call)).toEqual(["open"]);
+    const answer = await one.impl.console.execute(opened.handle, request(), callContext());
+    expect(answer.results).toHaveLength(1);
   });
 
   test("a value that is not a provider module record is refused with every refusal before anything is served", () => {
