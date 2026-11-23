@@ -76,7 +76,11 @@
         "kind": "no-secret",
         "message": "An InfluxDB 3 server started with --without-auth accepts any token or none, so a read-only seed without a token promises a boundary the server does not keep."
       }
-    ]
+    ],
+    "fieldRules": [],
+    "hostHint": null,
+    "hostIdentity": null,
+    "import": null
   },
   "facets": {
     "monitoring": {

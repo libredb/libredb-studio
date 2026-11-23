@@ -59,6 +59,16 @@ const NATIVE = {
 /** The connection of the fixture's one engine. */
 const connectionOf = (m: Json): Json => m.engines[0].connection;
 
+/** A field rule for `field` that states only what `members` gives, every other member null. */
+function fieldRule(field: string, members: Json = {}): Json {
+  return { field, required: null, format: null, charRange: null, check: null, ...members };
+}
+
+/** A format whose pattern is `source` with `flags`, refused with a generated sentence. */
+function format(source: string, flags = ""): Json {
+  return { pattern: { source, flags }, sentence: randomUUID() };
+}
+
 /**
  * The fixture's engine shaped like Snowflake's sign-in: a select, `authMethod`, whose choices are `keypair` and `pat`,
  * a private key shown only on `keypair`, a password shown only on `pat`, and `keypair` as the absent value.
@@ -97,6 +107,20 @@ describe("schema refusals", () => {
     ["engines", (m: Json) => delete m.engines, "", "engines"],
     ["connection.refused", (m: Json) => delete m.engines[0].connection.refused, "/engines/0/connection", "refused"],
     ["connection.dialog", (m: Json) => delete m.engines[0].connection.dialog, "/engines/0/connection", "dialog"],
+    [
+      "connection.fieldRules",
+      (m: Json) => delete m.engines[0].connection.fieldRules,
+      "/engines/0/connection",
+      "fieldRules",
+    ],
+    ["connection.hostHint", (m: Json) => delete m.engines[0].connection.hostHint, "/engines/0/connection", "hostHint"],
+    [
+      "connection.hostIdentity",
+      (m: Json) => delete m.engines[0].connection.hostIdentity,
+      "/engines/0/connection",
+      "hostIdentity",
+    ],
+    ["connection.import", (m: Json) => delete m.engines[0].connection.import, "/engines/0/connection", "import"],
     [
       "connection.dialog.absentValues",
       (m: Json) => delete m.engines[0].connection.dialog.absentValues,
@@ -335,6 +359,125 @@ describe("schema refusals", () => {
     );
 
     expect(refusalsFor(changed)).toEqual([refusal("unknown-key", "/engines/0/connection/refused/0", "value")]);
+  });
+
+  test("a field rule with a pattern, a range and a named check, both host readers and an import are admitted", () => {
+    const changed = manifest((m) => {
+      connectionOf(m).fieldRules = [
+        fieldRule("host", {
+          required: randomUUID(),
+          format: format("^[a-z]+$"),
+          charRange: { min: 3, max: 512, sentence: randomUUID() },
+          check: "hostCheck",
+        }),
+        fieldRule("database", { format: format("^\\p{L}+$", "u") }),
+        fieldRule("user", { required: randomUUID() }),
+      ];
+      connectionOf(m).hostHint = "hostHint";
+      connectionOf(m).hostIdentity = "hostIdentity";
+      connectionOf(m).import = { label: "Import kubeconfig", importer: "importer" };
+    });
+
+    expect(refusalsFor(changed)).toEqual([]);
+  });
+
+  test("a field rule's pattern longer than 512 characters is refused as out-of-range", () => {
+    const long = manifest(
+      (m) => (connectionOf(m).fieldRules = [fieldRule("host", { format: format("a".repeat(513)) })]),
+    );
+    const empty = manifest((m) => (connectionOf(m).fieldRules = [fieldRule("host", { format: format("") })]));
+    const longest = manifest(
+      (m) => (connectionOf(m).fieldRules = [fieldRule("host", { format: format("a".repeat(512)) })]),
+    );
+
+    expect(refusalsFor(long)).toEqual([
+      refusal("out-of-range", "/engines/0/connection/fieldRules/0/format/pattern/source"),
+    ]);
+    expect(refusalsFor(empty)).toEqual([
+      refusal("out-of-range", "/engines/0/connection/fieldRules/0/format/pattern/source"),
+    ]);
+    expect(refusalsFor(longest)).toEqual([]);
+  });
+
+  test("a field rule's pattern with a flag other than u is refused as value-not-allowed", () => {
+    for (const flags of ["g", "y", "ui", "i"]) {
+      const changed = manifest(
+        (m) => (connectionOf(m).fieldRules = [fieldRule("host", { format: format("^a$", flags) })]),
+      );
+
+      expect(refusalsFor(changed)).toEqual([
+        refusal("value-not-allowed", "/engines/0/connection/fieldRules/0/format/pattern/flags"),
+      ]);
+    }
+  });
+
+  test.each([
+    ["an empty required sentence", { required: "" }, "/required"],
+    ["a required sentence longer than 2000 characters", { required: "x".repeat(2001) }, "/required"],
+    [
+      "an empty format sentence",
+      { format: { pattern: { source: "^a$", flags: "" }, sentence: "" } },
+      "/format/sentence",
+    ],
+    ["a range minimum below 0", { charRange: { min: -1, max: 3, sentence: "s" } }, "/charRange/min"],
+    ["a range maximum of 0", { charRange: { min: 0, max: 0, sentence: "s" } }, "/charRange/max"],
+    ["a range maximum above 65535", { charRange: { min: 0, max: 65536, sentence: "s" } }, "/charRange/max"],
+  ])("a field rule with %s is refused as out-of-range", (_name, members, under) => {
+    const changed = manifest((m) => (connectionOf(m).fieldRules = [fieldRule("host", members)]));
+
+    expect(refusalsFor(changed)).toEqual([refusal("out-of-range", `/engines/0/connection/fieldRules/0${under}`)]);
+  });
+
+  test("a fractional range minimum is refused as wrong-type", () => {
+    const changed = manifest(
+      (m) => (connectionOf(m).fieldRules = [fieldRule("host", { charRange: { min: 1.5, max: 3, sentence: "s" } })]),
+    );
+
+    expect(refusalsFor(changed)).toEqual([refusal("wrong-type", "/engines/0/connection/fieldRules/0/charRange/min")]);
+  });
+
+  test("a field rule with a fifth key, or without its check, is refused by key", () => {
+    const fifth = manifest(
+      (m) => (connectionOf(m).fieldRules = [fieldRule("host", { required: "r", message: randomUUID() })]),
+    );
+    const noCheck = manifest((m) => {
+      const rule = fieldRule("host", { required: "r" });
+      delete rule.check;
+      connectionOf(m).fieldRules = [rule];
+    });
+
+    expect(refusalsFor(fifth)).toEqual([refusal("unknown-key", "/engines/0/connection/fieldRules/0", "message")]);
+    expect(refusalsFor(noCheck)).toEqual([refusal("missing-key", "/engines/0/connection/fieldRules/0", "check")]);
+  });
+
+  test("a field rule check named in another form is one no-variant refusal", () => {
+    for (const check of ["Host-check", "", "1check", "x".repeat(65), 7]) {
+      const changed = manifest((m) => (connectionOf(m).fieldRules = [fieldRule("host", { check })]));
+
+      expect(refusalsFor(changed)).toEqual([refusal("no-variant", "/engines/0/connection/fieldRules/0/check")]);
+    }
+  });
+
+  test("a host hint named in another form is one no-variant refusal", () => {
+    const hint = manifest((m) => (connectionOf(m).hostHint = "host hint"));
+    const identity = manifest((m) => (connectionOf(m).hostIdentity = "HostIdentity"));
+
+    expect(refusalsFor(hint)).toEqual([refusal("no-variant", "/engines/0/connection/hostHint")]);
+    expect(refusalsFor(identity)).toEqual([refusal("no-variant", "/engines/0/connection/hostIdentity")]);
+  });
+
+  test("an importer named in another form is refused as pattern-mismatch", () => {
+    const changed = manifest((m) => (connectionOf(m).import = { label: "Import", importer: "import-kubeconfig" }));
+
+    expect(refusalsFor(changed)).toEqual([refusal("pattern-mismatch", "/engines/0/connection/import/importer")]);
+  });
+
+  test("an import without its importer is refused as missing-key, and a label longer than 128 characters as out-of-range", () => {
+    const noImporter = manifest((m) => (connectionOf(m).import = { label: "Import" }));
+    const longLabel = manifest((m) => (connectionOf(m).import = { label: "x".repeat(129), importer: "importer" }));
+
+    expect(refusalsFor(noImporter)).toEqual([refusal("missing-key", "/engines/0/connection/import", "importer")]);
+    expect(refusalsFor(longLabel)).toEqual([refusal("out-of-range", "/engines/0/connection/import/label")]);
   });
 
   test("several failures are each refused, ordered by pointer", () => {
@@ -656,6 +799,91 @@ describe("rules the schema cannot state", () => {
     ]);
   });
 
+  test("a field rule for a field the engine does not take is refused as field-undeclared", () => {
+    const changed = manifest(
+      (m) =>
+        (connectionOf(m).fieldRules = [
+          fieldRule("host", { required: randomUUID() }),
+          fieldRule("warehouse", { format: format("^[a-z]+$") }),
+        ]),
+    );
+
+    expect(refusalsFor(changed)).toEqual([refusal("field-undeclared", "/engines/0/connection/fieldRules/1/field")]);
+  });
+
+  test("two field rules naming one field are refused as field-rule-duplicate at the second", () => {
+    const changed = manifest(
+      (m) =>
+        (connectionOf(m).fieldRules = [
+          fieldRule("host", { required: randomUUID() }),
+          fieldRule("user", { required: randomUUID() }),
+          fieldRule("host", { format: format("^[a-z]+$") }),
+        ]),
+    );
+
+    expect(refusalsFor(changed)).toEqual([refusal("field-rule-duplicate", "/engines/0/connection/fieldRules/2/field")]);
+  });
+
+  test("a field rule that states nothing is refused as field-rule-empty", () => {
+    const changed = manifest(
+      (m) => (connectionOf(m).fieldRules = [fieldRule("user", { required: randomUUID() }), fieldRule("host")]),
+    );
+
+    expect(refusalsFor(changed)).toEqual([refusal("field-rule-empty", "/engines/0/connection/fieldRules/1")]);
+  });
+
+  test("a pattern that does not compile is refused as pattern-invalid", () => {
+    const source = `^(${randomUUID()}`;
+    const changed = manifest((m) => (connectionOf(m).fieldRules = [fieldRule("host", { format: format(source) })]));
+    const notUnicode = manifest(
+      (m) => (connectionOf(m).fieldRules = [fieldRule("host", { format: format("^\\p{L$", "u") })]),
+    );
+    const plain = manifest((m) => (connectionOf(m).fieldRules = [fieldRule("host", { format: format("^\\p{L$") })]));
+
+    const refusals = refusalsFor(changed);
+    expect(refusals).toEqual([refusal("pattern-invalid", "/engines/0/connection/fieldRules/0/format/pattern/source")]);
+    expect(refusalsFor(notUnicode)).toEqual([
+      refusal("pattern-invalid", "/engines/0/connection/fieldRules/0/format/pattern/source"),
+    ]);
+    expect(refusalsFor(plain)).toEqual([]);
+    const sentence = refusalSentence(refusals[0] as ManifestRefusal);
+    expect(sentence).not.toContain(source);
+    expect(sentence).not.toContain("Unterminated");
+    expect(sentence).not.toContain("Invalid regular expression");
+  });
+
+  test("a character range whose minimum exceeds its maximum is refused as char-range-inverted", () => {
+    const inverted = manifest(
+      (m) => (connectionOf(m).fieldRules = [fieldRule("user", { charRange: { min: 9, max: 3, sentence: "s" } })]),
+    );
+    const single = manifest(
+      (m) => (connectionOf(m).fieldRules = [fieldRule("user", { charRange: { min: 3, max: 3, sentence: "s" } })]),
+    );
+
+    expect(refusalsFor(inverted)).toEqual([
+      refusal("char-range-inverted", "/engines/0/connection/fieldRules/0/charRange"),
+    ]);
+    expect(refusalsFor(single)).toEqual([]);
+  });
+
+  test("a host reader on an engine without a host field is refused as host-reader-without-host", () => {
+    const changed = manifest((m) => {
+      connectionOf(m).fields = ["user", "password", "database"];
+      connectionOf(m).hostHint = "hostHint";
+      connectionOf(m).hostIdentity = "hostIdentity";
+    });
+    const withHost = manifest((m) => {
+      connectionOf(m).hostHint = "hostHint";
+      connectionOf(m).hostIdentity = "hostIdentity";
+    });
+
+    expect(refusalsFor(changed)).toEqual([
+      refusal("host-reader-without-host", "/engines/0/connection/hostHint"),
+      refusal("host-reader-without-host", "/engines/0/connection/hostIdentity"),
+    ]);
+    expect(refusalsFor(withHost)).toEqual([]);
+  });
+
   test("a sign-in shaped like Snowflake's is admitted", () => {
     expect(refusalsFor(manifest(signInShaped))).toEqual([]);
   });
@@ -780,6 +1008,29 @@ describe("one engine declaration", () => {
       refusals: [refusal("refused-field-declared", "/connection/refused/0")],
     });
   });
+  test("an engine declaration's field rules and host readers are held to the rules the schema cannot state, at pointers into it", () => {
+    const declaration = engine();
+    declaration.connection.fields = ["user", "password", "database"];
+    declaration.connection.fieldRules = [
+      fieldRule("user", { format: format("^(a"), charRange: { min: 2, max: 1, sentence: "s" } }),
+      fieldRule("user", { required: "r" }),
+      fieldRule("warehouse"),
+    ];
+    declaration.connection.hostIdentity = "hostIdentity";
+
+    expect(validator.validateEngine(declaration)).toEqual({
+      admitted: false,
+      refusals: [
+        refusal("char-range-inverted", "/connection/fieldRules/0/charRange"),
+        refusal("pattern-invalid", "/connection/fieldRules/0/format/pattern/source"),
+        refusal("field-rule-duplicate", "/connection/fieldRules/1/field"),
+        refusal("field-rule-empty", "/connection/fieldRules/2"),
+        refusal("field-undeclared", "/connection/fieldRules/2/field"),
+        refusal("host-reader-without-host", "/connection/hostIdentity"),
+      ],
+    });
+  });
+
   test("an engine declaration's dialog is held to the rules the schema cannot state, at pointers into it", () => {
     const declaration = engine();
     declaration.connection.fields.push("serviceName");
@@ -815,6 +1066,18 @@ describe("refusals carry no value", () => {
         connectionOf(m).dialog.hints = [{ field: "user", text: "The login name." }];
         connectionOf(m).dialog.placeholders = [{ field: "user", text: "admin" }];
         connectionOf(m).credentialWarnings = [{ kind: "no-secret", message: "Set a password." }];
+        connectionOf(m).fieldRules = [
+          fieldRule("host", {
+            required: "Host is required.",
+            format: { pattern: { source: "^[a-z]+$", flags: "u" }, sentence: "Host must be letters." },
+            charRange: { min: 1, max: 9, sentence: "Host is too long." },
+            check: "hostCheck",
+          }),
+        ];
+        connectionOf(m).hostHint = "hostHint";
+        connectionOf(m).hostIdentity = "hostIdentity";
+        connectionOf(m).import = { label: "Import kubeconfig", importer: "importer" };
+        connectionOf(m).refused = [{ field: "region", refusal: "Region is refused." }];
       }),
       planted,
     ) as Json;

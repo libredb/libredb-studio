@@ -72,7 +72,11 @@
         "kind": "no-secret",
         "message": "An InfluxDB 1.x server with authentication off, its default, and an InfluxDB 3 server started with --without-auth accept any credential or none, so a read-only seed without a password or token promises a boundary the server does not keep."
       }
-    ]
+    ],
+    "fieldRules": [],
+    "hostHint": null,
+    "hostIdentity": null,
+    "import": null
   },
   "facets": {
     "monitoring": {

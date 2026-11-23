@@ -17,6 +17,12 @@
  * itself (`{field}`, or `{id}` and `{type}`), so the template is the sentence with each value's place marked, and the
  * census renders it back for every field.
  *
+ * Any other function a table holds is named, never carried, and named by the slot it fills, one convention for every
+ * engine: `<field>Check` for a field rule's check (`hostCheck`), `hostHint` and `hostIdentity` for the Host text
+ * readers, and `importer` for the connection import's parser. The name is read from where the function sits, never from
+ * the function itself, so this script imports no provider module and reads no function's `name`; the census resolves
+ * each name with a table of its own and holds it, by identity, to the function the connection form runs.
+ *
  * Run: bun scripts/generate-engine-declarations.ts --write | --check [--out <directory>]
  * --write writes every declaration and removes a `.json` file for an id no longer shipped, --check exits 1 naming each
  * declaration that differs, is missing or is not a shipped id, and --out names another directory for either, resolved
@@ -25,10 +31,12 @@
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type {
+  BoundedPattern,
   ConnectionDialog,
   CredentialWarning as ManifestCredentialWarning,
   EngineDeclaration,
   FieldName,
+  FieldRule,
   PlaceableFieldName,
   SelectFieldName,
 } from "@libredb/provider-sdk/manifest";
@@ -132,6 +140,52 @@ function buildDialog(
   };
 }
 
+/** A field rule's pattern flags as the contract's flags, or a thrown error naming the rule where they are not. */
+function patternFlags(flags: string, field: ConnectionField, type: DatabaseType): BoundedPattern["flags"] {
+  if (flags !== "" && flags !== "u") {
+    throw new Error(
+      `${type}: the ${field} rule's pattern has flags "${flags}"; the provider contract allows none or u`,
+    );
+  }
+  return flags;
+}
+
+/**
+ * One engine's field rules, one entry per field its form declares a rule for, in `fields` order: each pattern as its
+ * source and flags, and each check named by its slot, `<field>Check`.
+ */
+function buildFieldRules(
+  form: ConnectionFormSpec,
+  fields: readonly ConnectionField[],
+  type: DatabaseType,
+): FieldRule[] {
+  return fields.flatMap((field) => {
+    const rule = form.fieldRules?.[field];
+    if (rule === undefined) return [];
+    return [
+      {
+        field,
+        required: rule.required ?? null,
+        format:
+          rule.format === undefined
+            ? null
+            : {
+                pattern: {
+                  source: rule.format.pattern.source,
+                  flags: patternFlags(rule.format.pattern.flags, field, type),
+                },
+                sentence: rule.format.sentence,
+              },
+        charRange:
+          rule.charRange === undefined
+            ? null
+            : { min: rule.charRange.min, max: rule.charRange.max, sentence: rule.charRange.sentence },
+        check: rule.check === undefined ? null : `${field}Check`,
+      },
+    ];
+  });
+}
+
 /**
  * The engine's credential warnings, read from `CREDENTIAL_WARNINGS` rather than the form's getter over it, so the
  * declaration names the record it comes from; each written member by member, so every declaration orders them alike.
@@ -193,6 +247,10 @@ export function buildEngineDeclaration(type: DatabaseType): EngineDeclaration {
       dialog: buildDialog(form, CONNECTION_FIELDS[type], type),
       hostUriSchemes: [...(form.hostAcceptsUri ?? [])],
       credentialWarnings: buildCredentialWarnings(type),
+      fieldRules: buildFieldRules(form, CONNECTION_FIELDS[type], type),
+      hostHint: form.hostHint === undefined ? null : "hostHint",
+      hostIdentity: form.hostIdentity === undefined ? null : "hostIdentity",
+      import: form.connectionImport === undefined ? null : { label: form.connectionImport.label, importer: "importer" },
     },
     facets: {
       // Written out panel by panel, in MONITORING_PANELS order, so every declaration lists them alike and a panel the

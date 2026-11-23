@@ -60,7 +60,9 @@ import {
 } from "@/lib/db/connection-fields";
 import {
   CONNECTION_FORM,
+  type ConnectionFieldRule,
   type ConnectionFormSpec,
+  connectionFieldRefusal,
   connectionFieldShown,
   offersSslPanel,
 } from "@/lib/db/connection-form";
@@ -69,7 +71,13 @@ import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import { MONITORING_PANELS } from "@/lib/db/engine-facets/types";
 import { CURATED_OPERATION_KINDS } from "@/lib/db/operations/descriptors";
 import { refusedFieldRefusal } from "@/lib/db/provider-connection";
+import {
+  snowflakeAccountRefusal,
+  snowflakeHostHint,
+  snowflakeHostIdentity,
+} from "@/lib/db/providers/sql/snowflake/account-host";
 import type { MaintenanceOperation } from "@/lib/db/types";
+import { importKubeconfig } from "@/lib/kubernetes/kubeconfig-import";
 import { CONNECTION_FIELDS as FIELD_CLASSES } from "@/lib/storage/secret-fields";
 import type { DatabaseConnection, DatabaseType, HostPathField } from "@/lib/types";
 
@@ -126,6 +134,43 @@ function sameValue(a: unknown, b: unknown): boolean {
     return value;
   };
   return JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+}
+
+/**
+ * The census's own resolver of the functions a declaration names: per engine, each name mapped to the function Studio
+ * exports, imported here from its own module. It is written apart from the generator and the inventory, so a name is
+ * held to the function the connection form runs by identity, and never by a function's `name`.
+ */
+const NAMED_FUNCTIONS: Readonly<Partial<Record<DatabaseType, Readonly<Record<string, unknown>>>>> = {
+  snowflake: { hostCheck: snowflakeAccountRefusal, hostHint: snowflakeHostHint, hostIdentity: snowflakeHostIdentity },
+  kubernetes: { importer: importKubeconfig },
+};
+
+/** The function `name` resolves to for `type` through the census's resolver, or undefined where it names none. */
+function resolveNamed(type: DatabaseType, name: string): unknown {
+  const table = NAMED_FUNCTIONS[type];
+  return table !== undefined && Object.hasOwn(table, name) ? table[name] : undefined;
+}
+
+/** Every function-shaped value under `value`, by its dotted path, a RegExp and an object already seen left unread. */
+function functionPaths(value: unknown, at: string, seen = new Set<unknown>()): string[] {
+  if (typeof value === "function") return [at];
+  if (typeof value !== "object" || value === null || value instanceof RegExp || seen.has(value)) return [];
+  seen.add(value);
+  return Object.keys(value).flatMap((key) =>
+    functionPaths((value as Record<string, unknown>)[key], at === "" ? key : `${at}.${key}`, seen),
+  );
+}
+
+/** The slots of a connection form entry whose function the declaration names, as `functionPaths` spells them. */
+function namedSlotPaths(d: EngineDeclaration): string[] {
+  const { connection } = d;
+  return [
+    ...connection.fieldRules.filter((rule) => rule.check !== null).map((rule) => `fieldRules.${rule.field}.check`),
+    ...(connection.hostHint === null ? [] : ["hostHint"]),
+    ...(connection.hostIdentity === null ? [] : ["hostIdentity"]),
+    ...(connection.import === null ? [] : ["connectionImport.load"]),
+  ];
 }
 
 describe("the committed declarations", () => {
@@ -495,6 +540,252 @@ describe("the census", () => {
           CONNECTION_FORM[type].credentialWarnings !== CREDENTIAL_WARNINGS[type],
       ),
     ).toEqual([]);
+  });
+
+  test("connection.fieldRules are the form's fieldRules, each pattern by its source and flags", () => {
+    const fromDeclaration = (d: EngineDeclaration) =>
+      byField(d.connection.fieldRules, (rule) => ({
+        required: rule.required,
+        format:
+          rule.format === null
+            ? null
+            : { source: rule.format.pattern.source, flags: rule.format.pattern.flags, sentence: rule.format.sentence },
+        charRange: rule.charRange,
+        check: rule.check !== null,
+      }));
+    const fromForm = (type: DatabaseType) =>
+      Object.fromEntries(
+        Object.entries(asMap<ConnectionFieldRule>(CONNECTION_FORM[type].fieldRules)).map(([field, rule]) => [
+          field,
+          {
+            required: rule.required ?? null,
+            format:
+              rule.format === undefined
+                ? null
+                : {
+                    source: rule.format.pattern.source,
+                    flags: rule.format.pattern.flags,
+                    sentence: rule.format.sentence,
+                  },
+            charRange: rule.charRange === undefined ? null : { ...rule.charRange },
+            check: rule.check !== undefined,
+          },
+        ]),
+      );
+
+    expect(differing((type, d) => sameValue(fromDeclaration(d), fromForm(type)))).toEqual([]);
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => declared(type).connection.fieldRules.length > 0).length).toBe(6);
+  });
+
+  test("a form whose rules are read from the declaration refuses exactly what the connection form refuses", () => {
+    const corpus: readonly unknown[] = [
+      undefined,
+      null,
+      "",
+      "   ",
+      "a",
+      "x".repeat(600),
+      "\u00e9t\u00e9",
+      "a b",
+      "default, kube-system,monitoring",
+      "/k8s/clusters/c-m-12345",
+      "5432",
+      "70000",
+      "`sales data`",
+      "myorg-myaccount",
+      "https://myorg-myaccount.snowflakecomputing.com",
+      "xy12345.privatelink",
+      crypto.randomUUID(),
+    ];
+    const readForm = (type: DatabaseType, d: EngineDeclaration): ConnectionFormSpec => {
+      const form = CONNECTION_FORM[type];
+      return {
+        label: form.label,
+        defaultPort: form.defaultPort,
+        showConnectionStringToggle: form.showConnectionStringToggle,
+        connectionFields: d.connection.fields as readonly ConnectionField[],
+        fieldShownWhen: byField(d.connection.dialog.shownWhen, ({ when }) => ({
+          field: when.field as ConnectionField,
+          equals: when.equals,
+        })),
+        fieldDefaults: byField(d.connection.dialog.absentValues, (entry) => entry.value),
+        fieldRules: byField(d.connection.fieldRules, (rule): ConnectionFieldRule => {
+          const check = rule.check === null ? undefined : resolveNamed(type, rule.check);
+          return {
+            ...(rule.required === null ? {} : { required: rule.required }),
+            ...(rule.format === null
+              ? {}
+              : {
+                  format: {
+                    pattern: new RegExp(rule.format.pattern.source, rule.format.pattern.flags),
+                    sentence: rule.format.sentence,
+                  },
+                }),
+            ...(rule.charRange === null ? {} : { charRange: rule.charRange }),
+            ...(check === undefined ? {} : { check: check as ConnectionFieldRule["check"] }),
+          };
+        }),
+      };
+    };
+    const matches = (type: DatabaseType, d: EngineDeclaration): boolean => {
+      const form = CONNECTION_FORM[type];
+      const fromDeclaration = readForm(type, d);
+      const controllers = [...new Set(d.connection.dialog.shownWhen.map(({ when }) => when.field))];
+      const states: Record<string, unknown>[] = [
+        {},
+        ...controllers.flatMap((controller) =>
+          [...(form.fieldOptions?.[controller as ConnectionField] ?? []).map((choice) => choice.value), undefined].map(
+            (value) => ({ [controller]: value }),
+          ),
+        ),
+      ];
+      const fields = d.connection.fieldRules.map((rule) => rule.field as ConnectionField);
+      const connection = (values: Record<string, unknown>) =>
+        ({ id: `census-${type}`, name: `census-${type}`, type, ...values }) as DatabaseConnection;
+      return states.every((state) =>
+        corpus.every(
+          (value) =>
+            // Every rule field alone, so a later field's rule is reached past an earlier field's required rule.
+            fields.every(
+              (field) =>
+                connectionFieldRefusal(
+                  { ...fromDeclaration, connectionFields: [field] },
+                  connection({ ...state, [field]: value }),
+                ) ===
+                connectionFieldRefusal(
+                  { ...form, connectionFields: [field] },
+                  connection({ ...state, [field]: value }),
+                ),
+            ) &&
+            // And the whole form, every rule field holding the value, in field order.
+            connectionFieldRefusal(
+              fromDeclaration,
+              connection({ ...Object.fromEntries(fields.map((field) => [field, value])), ...state }),
+            ) ===
+              connectionFieldRefusal(
+                form,
+                connection({ ...Object.fromEntries(fields.map((field) => [field, value])), ...state }),
+              ),
+        ),
+      );
+    };
+
+    expect(differing(matches)).toEqual([]);
+  });
+
+  test("every function a declaration names is, through the census's own resolver, the very function the connection form runs", async () => {
+    const checks = SHIPPED_DATABASE_TYPES.flatMap((type) => {
+      const form = CONNECTION_FORM[type];
+      const { connection } = declared(type);
+      const same = (name: string | null, held: unknown) =>
+        name === null || (held !== undefined && resolveNamed(type, name) === held);
+      const ruleChecks = connection.fieldRules.every((rule) =>
+        same(rule.check, form.fieldRules?.[rule.field as ConnectionField]?.check),
+      );
+      const readers = same(connection.hostHint, form.hostHint) && same(connection.hostIdentity, form.hostIdentity);
+      const imported = connection.import;
+      const load = form.connectionImport?.load;
+      const importer: Promise<boolean> =
+        imported === null
+          ? Promise.resolve(true)
+          : load === undefined
+            ? Promise.resolve(false)
+            : load().then((loaded) => resolveNamed(type, imported.importer) === loaded);
+      return [importer.then((importerMatches) => (ruleChecks && readers && importerMatches ? [] : [type]))];
+    });
+
+    expect((await Promise.all(checks)).flat()).toEqual([]);
+    expect(
+      resolveNamed(
+        "snowflake",
+        declared("snowflake").connection.fieldRules.find((r) => r.field === "host")?.check ?? "",
+      ),
+    ).toBe(snowflakeAccountRefusal);
+    expect(CONNECTION_FORM.snowflake.fieldRules?.host?.check).toBe(snowflakeAccountRefusal);
+  });
+
+  test("every function the connection form holds is named by its engine's declaration, and the resolver names nothing else", () => {
+    expect(
+      differing((type, d) => sameValue(sorted(functionPaths(CONNECTION_FORM[type], "")), sorted(namedSlotPaths(d)))),
+    ).toEqual([]);
+    const named = (type: DatabaseType): string[] => {
+      const { connection } = declared(type);
+      return [
+        ...connection.fieldRules.flatMap((rule) => (rule.check === null ? [] : [rule.check])),
+        ...(connection.hostHint === null ? [] : [connection.hostHint]),
+        ...(connection.hostIdentity === null ? [] : [connection.hostIdentity]),
+        ...(connection.import === null ? [] : [connection.import.importer]),
+      ];
+    };
+    const unnamed = Object.entries(NAMED_FUNCTIONS).flatMap(([type, table]) =>
+      Object.keys(table ?? {})
+        .filter((name) => !named(type as DatabaseType).includes(name))
+        .map((name) => `${type}.${name}`),
+    );
+
+    expect(unnamed).toEqual([]);
+    expect(
+      SHIPPED_DATABASE_TYPES.flatMap((type) => namedSlotPaths(declared(type)).map((slot) => `${type}.${slot}`)),
+    ).toEqual([
+      "snowflake.fieldRules.host.check",
+      "snowflake.hostHint",
+      "snowflake.hostIdentity",
+      "kubernetes.connectionImport.load",
+    ]);
+  });
+
+  test("connection.hostHint, hostIdentity and import are the form's, the import with its label", () => {
+    expect(
+      differing((type, d) => (d.connection.hostHint !== null) === (CONNECTION_FORM[type].hostHint !== undefined)),
+    ).toEqual([]);
+    expect(
+      differing(
+        (type, d) => (d.connection.hostIdentity !== null) === (CONNECTION_FORM[type].hostIdentity !== undefined),
+      ),
+    ).toEqual([]);
+    expect(
+      differing(
+        (type, d) => (d.connection.import?.label ?? null) === (CONNECTION_FORM[type].connectionImport?.label ?? null),
+      ),
+    ).toEqual([]);
+  });
+
+  test("every member of a connection form entry has its member in the declaration", () => {
+    const declaredAt: Readonly<Record<keyof ConnectionFormSpec, string>> = {
+      label: "displayName",
+      defaultPort: "connection.defaults",
+      defaultHost: "connection.defaults",
+      showConnectionStringToggle: "connection.connectionString",
+      connectionFields: "connection.fields",
+      dialogOrder: "connection.dialog.order",
+      fieldLabels: "connection.dialog.labels",
+      fieldHints: "connection.dialog.hints",
+      fieldPlaceholders: "connection.dialog.placeholders",
+      fieldPlacement: "connection.dialog.placement",
+      hostHint: "connection.hostHint",
+      hostIdentity: "connection.hostIdentity",
+      fieldRules: "connection.fieldRules",
+      fieldOptions: "connection.dialog.options",
+      fieldShownWhen: "connection.dialog.shownWhen",
+      fieldDefaults: "connection.dialog.absentValues",
+      showSslPanel: "connection.tls",
+      hostAcceptsUri: "connection.hostUriSchemes",
+      credentialWarnings: "connection.credentialWarnings",
+      connectionImport: "connection.import",
+    };
+    const at = (value: unknown, dotted: string): unknown =>
+      dotted.split(".").reduce<unknown>((node, key) => (node as Record<string, unknown> | undefined)?.[key], value);
+
+    expect(
+      SHIPPED_DATABASE_TYPES.flatMap((type) =>
+        Object.keys(CONNECTION_FORM[type])
+          .filter((member) => !Object.hasOwn(declaredAt, member))
+          .map((member) => `${type}.${member}`),
+      ),
+    ).toEqual([]);
+    expect(differing((_type, d) => Object.values(declaredAt).every((member) => at(d, member) !== undefined))).toEqual(
+      [],
+    );
   });
 
   test("id is the file's type-id", () => {

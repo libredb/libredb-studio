@@ -90,7 +90,58 @@
       "absentValues": []
     },
     "hostUriSchemes": [],
-    "credentialWarnings": []
+    "credentialWarnings": [],
+    "fieldRules": [
+      {
+        "field": "host",
+        "required": "Host is required: the name or address of the Spark Connect server, or of the TLS proxy in front of it. Nothing was sent.",
+        "format": null,
+        "charRange": null,
+        "check": null
+      },
+      {
+        "field": "password",
+        "required": null,
+        "format": {
+          "pattern": {
+            "source": "^(?:[\\x21-\\x7E](?:[\\x20-\\x7E]*[\\x21-\\x7E])?)?$",
+            "flags": ""
+          },
+          "sentence": "Token takes printable ASCII with no space at either end: a gRPC header cannot carry other characters, and Spark compares the token exactly. Nothing was sent."
+        },
+        "charRange": null,
+        "check": null
+      },
+      {
+        "field": "database",
+        "required": null,
+        "format": {
+          "pattern": {
+            "source": "^[^.\\p{Cc}]{1,255}$",
+            "flags": "u"
+          },
+          "sentence": "Catalog takes one catalog name without dots, as spark.sql.catalog.<name> names it. Nothing was sent."
+        },
+        "charRange": null,
+        "check": null
+      },
+      {
+        "field": "schema",
+        "required": null,
+        "format": {
+          "pattern": {
+            "source": "^(?:[A-Za-z_][A-Za-z0-9_]*|`(?:[^`]|``)+`)(?:\\.(?:[A-Za-z_][A-Za-z0-9_]*|`(?:[^`]|``)+`)){0,7}$",
+            "flags": ""
+          },
+          "sentence": "Namespace takes a Spark SQL namespace: parts joined by dots, each a letter or _ followed by letters, digits or _, or written in backticks with a backtick doubled; at most 8 parts. Nothing was sent."
+        },
+        "charRange": null,
+        "check": null
+      }
+    ],
+    "hostHint": null,
+    "hostIdentity": null,
+    "import": null
   },
   "facets": {
     "monitoring": {

@@ -51,6 +51,11 @@ export const SCHEMA_REFUSAL_RULES = Object.freeze([
   "credential-warning-field-undeclared",
   "no-secret-warning-duplicate",
   "env-proxy-variable",
+  "field-rule-duplicate",
+  "field-rule-empty",
+  "pattern-invalid",
+  "char-range-inverted",
+  "host-reader-without-host",
 ] as const);
 
 export type SchemaRefusalRule = (typeof SCHEMA_REFUSAL_RULES)[number];
@@ -300,6 +305,51 @@ function hostAndWarningRuleRefusals(connection: EngineDeclaration["connection"],
   return refusals;
 }
 
+/**
+ * `source` compiled with `flags` as a JavaScript regular expression, or null where it does not compile; the error,
+ * which quotes the source, is dropped.
+ */
+function compiled(source: string, flags: string): RegExp | null {
+  try {
+    return new RegExp(source, flags);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The rules of an engine's field rules and Host text readers the schema cannot state, at pointers under `at`. A rule
+ * names a field the engine takes, at most one rule per field, and states at least one check; its pattern compiles with
+ * its flags, and its character range does not end before it starts. A Host text reader is named only on an engine that
+ * takes a host field. Where a rule is repeated, the first is the one the dialog reads.
+ */
+function fieldRuleRefusals(connection: EngineDeclaration["connection"], at: string): SchemaRefusal[] {
+  const refusals: SchemaRefusal[] = [];
+  const fields = new Set<string>(connection.fields);
+  const seen = new Set<string>();
+  connection.fieldRules.forEach((rule, index) => {
+    const pointer = `${at}/connection/fieldRules/${index}`;
+    if (!fields.has(rule.field)) refusals.push(schemaRefusal("field-undeclared", `${pointer}/field`));
+    if (seen.has(rule.field)) refusals.push(schemaRefusal("field-rule-duplicate", `${pointer}/field`));
+    seen.add(rule.field);
+    if (rule.required === null && rule.format === null && rule.charRange === null && rule.check === null) {
+      refusals.push(schemaRefusal("field-rule-empty", pointer));
+    }
+    if (rule.format !== null && compiled(rule.format.pattern.source, rule.format.pattern.flags) === null) {
+      refusals.push(schemaRefusal("pattern-invalid", `${pointer}/format/pattern/source`));
+    }
+    if (rule.charRange !== null && rule.charRange.min > rule.charRange.max) {
+      refusals.push(schemaRefusal("char-range-inverted", `${pointer}/charRange`));
+    }
+  });
+  for (const reader of ["hostHint", "hostIdentity"] as const) {
+    if (connection[reader] !== null && !fields.has("host")) {
+      refusals.push(schemaRefusal("host-reader-without-host", `${at}/connection/${reader}`));
+    }
+  }
+  return refusals;
+}
+
 /** The rules of one engine's connection the schema cannot state, at pointers under `at`. */
 function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies: FieldVocabularies): SchemaRefusal[] {
   const seedOnlyNames = vocabularies.seedOnly;
@@ -326,6 +376,7 @@ function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies:
   });
   refusals.push(...dialogRuleRefusals(connection, at, vocabularies));
   refusals.push(...hostAndWarningRuleRefusals(connection, at));
+  refusals.push(...fieldRuleRefusals(connection, at));
   return refusals;
 }
 
@@ -503,5 +554,15 @@ export function refusalSentence(refusal: ManifestRefusal): string {
       return `The credential warning at ${at} is a second no-secret warning of its engine.`;
     case "env-proxy-variable":
       return `The environment variable at ${at} is a proxy setting, which a package never reads.`;
+    case "field-rule-duplicate":
+      return `The field named at ${at} already has a rule earlier in the engine's field rules.`;
+    case "field-rule-empty":
+      return `The field rule at ${at} states no check: its required, format, character range and check are all null.`;
+    case "pattern-invalid":
+      return `The pattern at ${at} does not compile as a regular expression with its flags.`;
+    case "char-range-inverted":
+      return `The character range at ${at} has a minimum greater than its maximum.`;
+    case "host-reader-without-host":
+      return `The Host text reader at ${at} is named for an engine that takes no host field.`;
   }
 }

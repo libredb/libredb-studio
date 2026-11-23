@@ -110,7 +110,41 @@
       "https",
       "http"
     ],
-    "credentialWarnings": []
+    "credentialWarnings": [],
+    "fieldRules": [
+      {
+        "field": "database",
+        "required": null,
+        "format": {
+          "pattern": {
+            "source": "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$",
+            "flags": ""
+          },
+          "sentence": "Default namespace must be a DNS-1123 label: at most 63 lower-case letters, digits or hyphens, starting and ending with a letter or digit. Nothing was sent."
+        },
+        "charRange": null,
+        "check": null
+      },
+      {
+        "field": "namespaces",
+        "required": null,
+        "format": {
+          "pattern": {
+            "source": "^[\\s,]*[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?([\\s,]+[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*[\\s,]*$",
+            "flags": ""
+          },
+          "sentence": "Namespaces must list DNS-1123 labels separated by commas or spaces: at most 63 lower-case letters, digits or hyphens each, starting and ending with a letter or digit. Nothing was sent."
+        },
+        "charRange": null,
+        "check": null
+      }
+    ],
+    "hostHint": null,
+    "hostIdentity": null,
+    "import": {
+      "label": "Import kubeconfig",
+      "importer": "importer"
+    }
   },
   "facets": {
     "monitoring": {

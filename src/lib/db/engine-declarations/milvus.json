@@ -77,7 +77,11 @@
         "kind": "no-secret",
         "message": "A Milvus server with authorization off, its default, accepts any credential or none, so a read-only seed without a password promises a boundary the server does not keep."
       }
-    ]
+    ],
+    "fieldRules": [],
+    "hostHint": null,
+    "hostIdentity": null,
+    "import": null
   },
   "facets": {
     "monitoring": {

@@ -90,7 +90,11 @@
         "access": [],
         "message": "This token declares no expiry, so it stays valid until the identity provider's signing key changes, and Oxia has no authorization, so it reads and writes every namespace. Prefer a token with an expiry."
       }
-    ]
+    ],
+    "fieldRules": [],
+    "hostHint": null,
+    "hostIdentity": null,
+    "import": null
   },
   "facets": {
     "monitoring": {

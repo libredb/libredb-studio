@@ -66,7 +66,11 @@
         "kind": "no-secret",
         "message": "A Weaviate server with anonymous access on, its default, answers a request that carries no key and grants it every write, so a read-only seed without a key promises a boundary the server does not keep."
       }
-    ]
+    ],
+    "fieldRules": [],
+    "hostHint": null,
+    "hostIdentity": null,
+    "import": null
   },
   "facets": {
     "monitoring": {
