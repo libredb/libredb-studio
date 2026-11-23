@@ -9,7 +9,7 @@ import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { readBoundParams } from "@/lib/api/bound-params";
-import { checkEditorQuery, runEditorQuery } from "@/lib/api/editor-query";
+import { checkEditorQuery, openWithinCall, runEditorQuery } from "@/lib/api/editor-query";
 import { ObjectRouteError, objectRouteErrorBody, optionalDatabase } from "@/lib/api/object-route";
 import { containerDepth } from "@/lib/db/object-kinds";
 import { getExplainStrategy, type ExplainMode } from "@/lib/explain";
@@ -261,7 +261,13 @@ export async function POST(req: NextRequest) {
     // The DuckDB editor file-access posture rides on the server-derived execution context: an
     // admin keeps the full editor reach, every other role opens with external access off, and so
     // does every role on a seed a non-admin role can use, whose one handle they share (non-admin DuckDB file access).
-    const provider = await editorProvider(guard.session, connection, requestCatalog(body));
+    // The open is waited for within the call's open allowance and while the request stays (`openWithinCall`): a wait
+    // that ends answers 504 or 499, not-sent, and the open goes on for the next request.
+    // `resolved` holds the connection narrowed for the callback, which TypeScript does not narrow `connection` in.
+    const resolved = connection;
+    const provider = await openWithinCall(req.signal, (wait) =>
+      editorProvider(guard.session, resolved, requestCatalog(body), wait),
+    );
 
     // The statement that actually runs. For an explain request it is the one the
     // CONNECTED provider's strategy builds, never the caller's own SQL: falling

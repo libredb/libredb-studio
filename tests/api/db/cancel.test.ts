@@ -259,6 +259,42 @@ describe("POST /api/db/cancel", () => {
     expect(mockCancelProvider.cancelQuery).not.toHaveBeenCalled();
   });
 
+  test("a cancel that leaves while its connection opens answers 499 not-sent and cancels nothing", async () => {
+    let reached: () => void = () => {};
+    const opening = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    const waits: { signal: AbortSignal }[] = [];
+    mockGetOrCreateProvider.mockImplementation(async (...args: unknown[]) => {
+      const wait = args[3] as { signal: AbortSignal };
+      waits.push(wait);
+      reached();
+      // An open that never connects: only the request's own wait ends it, as `openOnce` ends a caller's wait.
+      return new Promise<never>((_resolve, reject) => {
+        wait.signal.addEventListener("abort", () => reject(wait.signal.reason), { once: true });
+      });
+    });
+    const controller = new AbortController();
+    const request = new Request("http://localhost:3000/api/db/cancel", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ queryId: "query-123", connection: validConnection }),
+      signal: controller.signal,
+    });
+    const answer = POST(request as never);
+    await opening;
+    const reason = new Error(`left ${crypto.randomUUID()}`);
+    controller.abort(reason);
+
+    const res = await answer;
+    const body = await parseResponseJSON<Record<string, unknown>>(res);
+
+    expect(waits[0]?.signal.reason).toBe(request.signal.reason);
+    expect(res.status).toBe(499);
+    expect(body).toMatchObject({ code: "QUERY_CANCELLED", kind: "cancelled", outcome: "not-sent" });
+    expect(mockCancelProvider.cancelQuery).not.toHaveBeenCalled();
+  });
+
   test("cancelQuery returning false returns cancelled:false", async () => {
     mockCancelProvider.cancelQuery.mockImplementation(async () => false);
 

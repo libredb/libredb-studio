@@ -2142,6 +2142,62 @@ describe("POST /api/db/query: the request's abort", () => {
     expect(provider.query).not.toHaveBeenCalled();
   });
 
+  test("the provider opens under the request's own open wait", async () => {
+    const provider = createMockProvider();
+    const waits: { signal: AbortSignal }[] = [];
+    mockGetOrCreateProvider.mockImplementation((async (...args: unknown[]) => {
+      waits.push(args[3] as { signal: AbortSignal });
+      return provider;
+    }) as never);
+    const controller = new AbortController();
+    const request = abortableRequest(
+      { connection: validConnection, sql: "SELECT 1", queryId: "q-9-wait" },
+      controller.signal,
+    );
+
+    const res = await POST(request as never);
+    const reason = new Error(`left ${crypto.randomUUID()}`);
+    controller.abort(reason);
+
+    expect(res.status).toBe(200);
+    expect(waits).toHaveLength(1);
+    expect(waits[0]?.signal.aborted).toBe(true);
+    expect(waits[0]?.signal.reason).toBe(request.signal.reason);
+  });
+
+  test("a request that leaves while its connection opens answers 499 not-sent and runs nothing", async () => {
+    const provider = createMockProvider();
+    let reached: () => void = () => {};
+    const opening = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    mockGetOrCreateProvider.mockImplementation((async (...args: unknown[]) => {
+      const wait = args[3] as { signal: AbortSignal };
+      reached();
+      // An open that never connects: only the request's own wait ends it, as `openOnce` ends a caller's wait.
+      return new Promise((_resolve, reject) => {
+        wait.signal.addEventListener("abort", () => reject(wait.signal.reason), { once: true });
+      });
+    }) as never);
+    const controller = new AbortController();
+    const answer = POST(
+      abortableRequest(
+        { connection: validConnection, sql: "SELECT 1", queryId: "q-9-opening" },
+        controller.signal,
+      ) as never,
+    );
+    await opening;
+    controller.abort();
+
+    const res = await answer;
+    const body = await parseResponseJSON<Record<string, unknown>>(res);
+
+    expect(res.status).toBe(499);
+    expect(body).toMatchObject({ code: "QUERY_CANCELLED", kind: "cancelled", outcome: "not-sent" });
+    expect(provider.prepareQuery).not.toHaveBeenCalled();
+    expect(provider.query).not.toHaveBeenCalled();
+  });
+
   test("a provider without cancelQuery sees no cancel", async () => {
     const provider = createMockProvider();
     mockGetOrCreateProvider.mockImplementation(async () => provider as never);

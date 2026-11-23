@@ -926,6 +926,36 @@ describe("query/run", () => {
     });
   });
 
+  it("query/run opens its provider under the run's own open wait, and a token cancelled while it opens answers QUERY_CANCELLED not-sent", async () => {
+    const { handlers, factory, provider } = await openedOn();
+    const waits: { signal: AbortSignal }[] = [];
+    let reached: () => void = () => {};
+    const opening = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    factory.getOrCreateProvider = async (...args) => {
+      const wait = args[3] as { signal: AbortSignal };
+      waits.push(wait);
+      reached();
+      // An open that never connects: only the run's own wait ends it, as the factory's open table ends a caller's wait.
+      return new Promise<never>((_resolve, reject) => {
+        wait.signal.addEventListener("abort", () => reject(wait.signal.reason), { once: true });
+      });
+    };
+    const source = new CancellationTokenSource();
+    const run = handlers.runQuery(RUN, source.token);
+    await opening;
+    assert.equal(waits[0]?.signal.aborted, false);
+    source.cancel();
+
+    const notSent = Object.assign(new QueryCancelledError("The query was cancelled.", "postgres"), {
+      outcome: "not-sent" as const,
+    });
+    await answeredAs(run, notSent);
+    assert.equal(waits[0]?.signal.aborted, true);
+    assert.deepEqual(methodsOf(provider), []);
+  });
+
   it("starts nothing for a request already cancelled", async () => {
     const { handlers, provider } = await openedOn();
     const source = new CancellationTokenSource();

@@ -6,7 +6,7 @@ import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/p
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
-import { cancelEditorRun } from "@/lib/api/editor-query";
+import { cancelEditorRun, openWithinCall } from "@/lib/api/editor-query";
 
 export async function POST(req: NextRequest) {
   // Moved ahead of req.json(): an unauthenticated caller no longer gets a body parsed on its
@@ -35,7 +35,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "queryId must be a string", cancelled: false }, { status: 400 });
     }
 
-    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
+    // The open is waited for within the call's open allowance and while the request stays (`openWithinCall`): a request
+    // already aborted, or one that leaves while the connection opens, answers 499 not-sent; a provider already open is
+    // handed over before any wait is read.
+    const provider = await openWithinCall(req.signal, (wait) =>
+      getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection), wait),
+    );
 
     // Through the provider host core's cancel call, under the cleanup deadline and the request's own signal: a request
     // already aborted calls nothing and answers 499. A provider without the same `supportsQueryCancel` that
