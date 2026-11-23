@@ -21,7 +21,7 @@ const SHARED = "@/lib/db/sql-grammar/shared";
 /** The one non-contract import each listed engine module may make. */
 const LEAVES: Readonly<Record<string, string>> = {
   mongodb: "@/lib/is-record",
-  redis: "./redis-command-text",
+  redis: "@/lib/languages/rediscli/command-text",
 };
 
 const MODULES = engineModules();

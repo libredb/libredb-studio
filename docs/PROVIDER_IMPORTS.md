@@ -131,6 +131,7 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/explain/bigquery-dryrun.ts` | SDK /manifest | A marker the explain strategy writes and the provider reads, which belongs in the provider's explain row. |
 | `src/lib/explain/firestore-explain.ts` | SDK /manifest | A marker the explain strategy writes and the provider reads, which belongs in the provider's explain row. |
 | `src/lib/is-record.ts` | SDK /util | A pure type guard. |
+| `src/lib/languages/rediscli/command-text.ts` | SDK /rediscli | The Redis command line reader of the rediscli statement language family, pure code the redis provider runs and the confirmation gate reads; the SDK republishes a family's readers under the language's subpath. |
 | `src/lib/logger.ts` | host service: logging | The process logger, with its level filtering and the logged-text scrub. |
 | `src/lib/monitoring-cache-ratio.ts` | SDK /monitoring | Pure display text for a cache hit ratio. |
 | `src/lib/sql/grammar.ts` | core only | `resolveSqlGrammar` reads core's SQL grammar registry, so a provider reads its own grammar row instead; the `SqlGrammar` type and the default grammar go to SDK /sql when PR 9 splits the module. |
@@ -221,7 +222,7 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 | `src/lib/connection-string-parser.ts` | 2 paste readers, re-exported (databend, snowflake) | PR 11 connection | the manifest's connection section |
 | `src/lib/db/connection-form.ts` | 1 snowflake account host reader | PR 11 connection | the manifest's connection section |
 | `src/lib/db/connection-string/index.ts` | 43 connection string rows | PR 11 connection | manifest rows: the PR 9 schema, collected by the PR 11 projection |
-| `src/lib/db/destructive-commands.ts` | 22 confirmation vocabulary rows | PR 8b, PR 8 etcdctl, PR 8 fsquery, PR 8 influxql, PR 8 kubectl, PR 8 milvusrpc, PR 8 oxiacli, PR 8 qdrantapi, PR 8 s3api, PR 8 weaviateapi | each row into its statement language's core family module |
+| `src/lib/db/destructive-commands.ts` | 9 confirmation vocabulary rows | PR 8 etcdctl, PR 8 fsquery, PR 8 influxql, PR 8 kubectl, PR 8 milvusrpc, PR 8 oxiacli, PR 8 qdrantapi, PR 8 s3api, PR 8 weaviateapi | each row into its statement language's core family module |
 | `src/lib/db/driver-errors/index.ts` | 7 driver error rows | PR 11 policy | manifest rows: the PR 9 schema, collected by the PR 11 projection |
 | `src/lib/db/editor-language/index.ts` | 15 editor language rows | PR 11 editor and SQL text | manifest rows: the PR 9 schema, collected by the PR 11 projection |
 | `src/lib/db/engine-facets/index.ts` | 43 engine facets rows | PR 11 policy | manifest rows: the PR 9 schema, collected by the PR 11 projection |

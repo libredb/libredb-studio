@@ -91,9 +91,17 @@ const eslintConfig = defineConfig([
   // (0.10.0): the credential-encryption decorator wraps async provider
   // methods, which is exactly the shape this layer exists to catch. A workspace
   // package's source (packages/<name>/src/, packages/README.md) is provider code
-  // staged out of src/lib/db, so it joins the same block.
+  // staged out of src/lib/db, so it joins the same block, and so does
+  // src/lib/languages/**, the statement languages' core family modules that
+  // readers move into out of the provider directories (FND-8).
   ...tseslint.config({
-    files: ["src/app/api/**/*.ts", "src/lib/db/**/*.ts", "src/lib/storage/**/*.ts", "packages/*/src/**/*.ts"],
+    files: [
+      "src/app/api/**/*.ts",
+      "src/lib/db/**/*.ts",
+      "src/lib/languages/**/*.ts",
+      "src/lib/storage/**/*.ts",
+      "packages/*/src/**/*.ts",
+    ],
     languageOptions: {
       parserOptions: {
         projectService: true,

@@ -604,7 +604,7 @@ While custom connections are off, an inline connection answers `403 CUSTOM_CONNE
 
 **A connection type's console text bound:**
 
-A connection type can declare a bound on its statement text in UTF-8 bytes, on its row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/destructive-commands.ts`), declared in the provider's `destructive.ts` module.
+A connection type can declare a bound on its statement text in UTF-8 bytes, on its row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/destructive-commands.ts`), declared in its statement language's family module or, for a row its slice has not moved yet, in the provider's `destructive.ts` module.
 For such a type this route counts the bytes of `sql` after resolving the connection and before reading `params`, building the provider or preparing the statement, so an oversize text opens no socket.
 The bound is read after the request body is parsed, because the type that selects it is inside the body.
 

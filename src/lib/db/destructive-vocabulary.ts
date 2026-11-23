@@ -3,8 +3,10 @@ import type { TypedConfirmationAsk } from "@/lib/db/types";
 /**
  * The shape of one row of the confirmation gate's vocabulary, for an engine whose query text is NOT SQL.
  *
- * Each row is declared beside its provider, in a `destructive.ts` module, and `NON_SQL_DESTRUCTIVE_VOCABULARY` in
- * `./destructive-commands.ts` only collects them. This module is a leaf: it imports nothing but a type, so a row
+ * Each row is declared in its statement language's core family module, `destructive.ts` under
+ * `src/lib/languages/<language>/`, or under `src/lib/db/graph/cypher/` for Cypher, or, until the provider plugin
+ * program's slice for that language moves it, beside its provider in a `destructive.ts` module
+ * (docs/PROVIDER_IMPORTS.md), and `NON_SQL_DESTRUCTIVE_VOCABULARY` in `./destructive-commands.ts` only collects them. This module is a leaf: it imports nothing but a type, so a row
  * module and the gate can both import it in the browser.
  */
 

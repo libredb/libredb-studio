@@ -1,37 +1,39 @@
 import { isReviewedConfirmationClaim } from "@/lib/db/confirmation-claim-review";
 import type { DestructiveVocabulary } from "@/lib/db/destructive-vocabulary";
+import { NEO4J_DESTRUCTIVE_VOCABULARY } from "@/lib/db/graph/cypher/destructive";
 import { FIRESTORE_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/document/firestore/destructive";
-import { MONGODB_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/document/mongodb/destructive";
-import { NEO4J_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/graph/neo4j/destructive";
-import { MODBUS_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/industrial/modbus/destructive";
-import { MTCONNECT_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/industrial/mtconnect/destructive";
-import { OPCUA_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/industrial/opcua/destructive";
-import { SPARKPLUG_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/industrial/sparkplug/destructive";
 import { ETCD_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/keyvalue/etcd/destructive";
-import { MQTT_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/keyvalue/mqtt/destructive";
 import { OXIA_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/keyvalue/oxia/destructive";
-import { REDIS_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/keyvalue/redis-destructive";
-import { NETCONF_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/network/netconf/destructive";
-import { SNMP_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/network/snmp/destructive";
 import { S3_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/objectstore/s3/destructive";
 import { KUBERNETES_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/platform/kubernetes/destructive";
-import { KAFKA_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/stream/kafka/destructive";
-import { RABBITMQ_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/stream/rabbitmq/destructive";
 import { INFLUXDB_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/timeseries/influxdb/influxdb-destructive";
-import { PROMETHEUS_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/timeseries/prometheus/destructive";
 import { MILVUS_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/vector/milvus/destructive";
 import { QDRANT_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/vector/qdrant/destructive";
 import { WEAVIATE_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/vector/weaviate/destructive";
 import { typeIdRow } from "@/lib/db/type-id";
 import type { TypedConfirmationAsk } from "@/lib/db/types";
+import { KAFKA_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/kafkaread/destructive";
+import { MODBUS_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/modbusread/destructive";
+import { MONGODB_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/mongo/destructive";
+import { MQTT_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/mqttread/destructive";
+import { MTCONNECT_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/mtconnectread/destructive";
+import { NETCONF_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/netconfrpc/destructive";
+import { OPCUA_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/opcuaread/destructive";
+import { PROMETHEUS_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/promql/destructive";
+import { RABBITMQ_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/rabbitread/destructive";
+import { REDIS_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/rediscli/destructive";
+import { SNMP_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/snmpget/destructive";
+import { SPARKPLUG_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/sparkplugread/destructive";
 import type { DatabaseType } from "@/lib/types";
 
 /**
  * The confirmation gate's vocabulary for the engines whose query text is NOT SQL.
  *
- * Each engine's row is declared beside its provider, in its `destructive.ts` module, with the shape in
- * `./destructive-vocabulary.ts`; this module only collects the rows and answers the gate from them, so it names no
- * engine's commands, operations or readers of its own.
+ * Each engine's row is declared in its statement language's core family module, `destructive.ts` under
+ * `src/lib/languages/<language>/`, or under `src/lib/db/graph/cypher/` for Cypher, or, until the provider plugin
+ * program's slice for that language moves it, beside its provider in its `destructive.ts` module
+ * (docs/PROVIDER_IMPORTS.md), with the shape in `./destructive-vocabulary.ts`; this module only collects the rows and
+ * answers the gate from them, so it names no engine's commands, operations or readers of its own.
  *
  * `isDangerousQuery` reads a statement's SQL keywords, and for `mongodb` and `redis`
  * it had nothing to read: it returned false outright, so a `FLUSHALL`, a `DEL` and a
