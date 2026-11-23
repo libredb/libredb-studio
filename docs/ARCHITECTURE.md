@@ -423,11 +423,13 @@ With `KUBERNETES_ACCESS_REVIEW=on`, the cluster's own RBAC decides who may use a
 The gate sits in `src/lib/governance/visible.ts`, the one dispatcher the managed list and `resolveConnection` ask, so the list and every route that opens a connection decide alike; the caches live on `globalThis`, because each route handler is bundled apart.
 Behaviour and setup: [`docs/SEED_CONNECTIONS.md`](SEED_CONNECTIONS.md#kubernetes-access-review).
 
-### 4.13. Value codec (`src/lib/db/value-codec.ts`)
+### 4.13. Value codec (`@libredb/provider-sdk/values`)
 
 `encodeValue` and `decodeValue` write a database value as plain JSON and read it back.
+The module is `packages/provider-sdk/src/values/codec.ts`, part of the provider contract ([`docs/providers/CONTRACT.md`](providers/CONTRACT.md#values)), and Studio imports it by the package name.
 A value JSON cannot carry is written as a tagged value, an object whose own keys are exactly `$` and `v`: `i64` for a `bigint` from -2^63 to 2^64 - 1 (decimal digits), `bytes` for a `Uint8Array` (padded base64), `ts` for a valid `Date` (its `toISOString` text) and `nf` for `NaN`, `Infinity` and `-Infinity`.
 The `obj` tag escapes a data object whose own keys are exactly `$` and `v`, so nothing a database hands back is ever read as a tag.
+The tags are stated once, as `$defs/valueTag` in the manifest schema, and `ValueTag` is their generated type.
 Every other value, and every malformed or unknown tag on decode, is refused with a `ValueCodecError` that names the kind and the JSON Pointer of the place, never the value.
 The module uses no Node-only global, so it loads in the browser as well as on the server.
 The SQLite worker's line is the hop that carries it: the parent encodes parameters and decodes answers with the module, and the child's bootstrap carries a restricted copy ([`docs/providers/sqlite.md`](providers/sqlite.md#34-no-transactions-api-no-pool-cancellation-via-the-child-process-worker)).

@@ -3,9 +3,9 @@
  * may have reached the database. Held by seeded property tests where a property is over generated values.
  *
  * The generator is mulberry32 with fixed seeds, written here rather than taken from a property-testing library, as in
- * tests/unit/lib/db/value-codec.test.ts. Every assertion message names the seed and the case, so a failure can be
- * replayed by running that seed alone. Every marker and credential is generated at run time, so no source line holds
- * one.
+ * packages/provider-sdk/tests/values/codec.test.ts. Every assertion message names the seed and the case, so a failure
+ * can be replayed by running that seed alone. Every marker and credential is generated at run time, so no source line
+ * holds one.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";

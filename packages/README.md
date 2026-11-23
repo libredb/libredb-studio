@@ -2,7 +2,7 @@
 
 This directory holds Studio's bun workspace packages: code staged as separate packages inside this repository before it moves to a repository of its own.
 The root `package.json` declares them with `"workspaces": ["packages/*"]`.
-The first package is `packages/provider-sdk/`, `@libredb/provider-sdk`: the provider contract's schema, its generated types and its validator (`docs/providers/CONTRACT.md`).
+The first package is `packages/provider-sdk/`, `@libredb/provider-sdk`: the provider contract's schema, its generated types and its validator, and the value codec (`docs/providers/CONTRACT.md`).
 
 ## Layout
 

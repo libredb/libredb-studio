@@ -20,7 +20,7 @@ import { GET as apiHealth } from "@/app/api/health/route";
 import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
 import { admittedFileConnection } from "@/lib/db/provider-files";
 import { SQLiteWorkerClient } from "@/lib/db/providers/sql/sqlite-worker";
-import { ValueCodecError } from "@/lib/db/value-codec";
+import { ValueCodecError } from "@libredb/provider-sdk/values";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import type { DatabaseConnection } from "@/lib/types";

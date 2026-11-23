@@ -15,6 +15,7 @@ import {
   ManifestSchemaDigestError,
 } from "@libredb/provider-sdk/manifest";
 import * as packageRoot from "@libredb/provider-sdk";
+import { decodeValue, encodeValue, ValueCodecError } from "@libredb/provider-sdk/values";
 
 const SCHEMA_BYTES = readFileSync(path.join(import.meta.dir, "../../src/manifest/manifest.schema.json"));
 
@@ -57,5 +58,11 @@ describe("the manifest schema digest", () => {
   test("the package root exports the manifest surface", () => {
     expect(packageRoot.compileManifestValidator).toBe(compileManifestValidator);
     expect(packageRoot.MANIFEST_SCHEMA_SHA256).toBe(MANIFEST_SCHEMA_SHA256);
+  });
+
+  test("the package root exports the values surface", () => {
+    expect(packageRoot.encodeValue).toBe(encodeValue);
+    expect(packageRoot.decodeValue).toBe(decodeValue);
+    expect(packageRoot.ValueCodecError).toBe(ValueCodecError);
   });
 });

@@ -119,7 +119,6 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/db/utils/result-fields.ts` | SDK /rows | Pure column naming over rows of differing shapes. |
 | `src/lib/db/utils/server-text.ts` | host service: secret scrub | The one boundary a server's text crosses before Studio logs or shows it, the FND-7 scrub the host owns. |
 | `src/lib/db/utils/unwritable-file.ts` | host service: files | It probes the host's file system for write access. |
-| `src/lib/db/value-codec.ts` | SDK /values | The pure codec of a value crossing a JSON boundary. |
 | `src/lib/db/vector/count.ts` | SDK /vector | Pure code of the vector family layer, in words no engine owns. |
 | `src/lib/db/vector/dense.ts` | SDK /vector | Pure code of the vector family layer, in words no engine owns. |
 | `src/lib/db/vector/probe.ts` | SDK /vector | Pure code of the vector family layer, in words no engine owns. |
@@ -175,6 +174,7 @@ These are a snapshot as well.
 - Helper packages travel the same way: `yaml`, `jose` and `@grpc/proto-loader`.
 - `node:` builtins are part of the runtime every provider runs in: `node:crypto` in 17 units, `node:net` in 9 and `node:tls` in 5 are the most used.
 - `monaco-editor` is imported by the 11 editor language rows, and goes with the browser catalog of phase 3.
+- `@libredb/provider-sdk` is the contract every provider builds on, imported by name: `/values` holds the value codec that was `src/lib/db/value-codec.ts`.
 
 ## Imports from core into provider directories
 

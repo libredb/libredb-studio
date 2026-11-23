@@ -1,7 +1,7 @@
 {
   "name": "@libredb/provider-sdk",
   "version": "0.1.0",
-  "description": "The provider contract of LibreDB Studio: the provider manifest schema, its generated types and its validator.",
+  "description": "The provider contract of LibreDB Studio: the provider manifest schema, its generated types and its validator, and the value codec.",
   "license": "MIT",
   "private": true,
   "type": "module",
@@ -9,7 +9,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./manifest": "./src/manifest/index.ts",
-    "./manifest.schema.json": "./src/manifest/manifest.schema.json"
+    "./manifest.schema.json": "./src/manifest/manifest.schema.json",
+    "./values": "./src/values/index.ts"
   },
   "dependencies": {
     "ajv": "^8.17.1"

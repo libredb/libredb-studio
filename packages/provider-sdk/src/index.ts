@@ -1,5 +1,8 @@
 /**
- * `@libredb/provider-sdk`: the provider contract of LibreDB Studio (docs/providers/CONTRACT.md). Contract 0.1 states
- * the manifest, so this entry is the manifest's; `@libredb/provider-sdk/manifest` is the same surface by its own name.
+ * `@libredb/provider-sdk`: the provider contract of LibreDB Studio (docs/providers/CONTRACT.md). This entry is the whole
+ * contract surface: the manifest (`@libredb/provider-sdk/manifest`) and the value codec
+ * (`@libredb/provider-sdk/values`), each also published under its own name. `ValueTag` reaches this entry through both,
+ * as the one binding the manifest types declare.
  */
 export * from "./manifest";
+export * from "./values";

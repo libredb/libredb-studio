@@ -9,8 +9,10 @@ The SDK package `@libredb/provider-sdk`, under [`packages/provider-sdk`](../../p
 - [`manifest.schema.json`](../../packages/provider-sdk/src/manifest/manifest.schema.json), the manifest schema, JSON Schema 2020-12, published as `@libredb/provider-sdk/manifest.schema.json`.
 - [`manifest-types.generated.ts`](../../packages/provider-sdk/src/manifest/manifest-types.generated.ts), the manifest's TypeScript types, generated from the schema.
 - `compileManifestValidator`, `refusalSentence` and the refusal types, exported from `@libredb/provider-sdk/manifest`.
+- [`codec.ts`](../../packages/provider-sdk/src/values/codec.ts), the value codec, exported from `@libredb/provider-sdk/values`.
 
-The schema and the generated types are the source for every vocabulary named here, and this document lists none of them by hand.
+The package root exports every entry's surface.
+The schema, the generated types and the constants the SDK exports are the source for every vocabulary named here, and this document lists none of them by hand.
 
 ## How to read this document
 
@@ -229,10 +231,12 @@ A provider takes every value from the connection and from what the host passes i
 
 The SDK is loaded once into Studio's process and shared by every provider, so its source declares no module-level `let` or `var`, creates no module-level collection, and never reads `process`.
 Each call that compiles a validator builds its own, and two validators share nothing.
+A module-level typed array is listed by file and name: the codec's two lookup tables, which nothing writes after load, and its encode buffer, which each call writes before it reads, so no call reads what another left.
 
 - test `packages/provider-sdk/tests/sdk-purity.test.ts` "SDK source declares no top-level let or var"
 - test `packages/provider-sdk/tests/sdk-purity.test.ts` "SDK source creates no top-level Map, Set, WeakMap or WeakSet"
 - test `packages/provider-sdk/tests/sdk-purity.test.ts` "SDK source never reads process"
+- test `packages/provider-sdk/tests/sdk-purity.test.ts` "SDK source's module-level typed arrays are the codec's lookup tables and its encode buffer"
 - test `packages/provider-sdk/tests/sdk-purity.test.ts` "two validators compiled from the same bytes are independent objects"
 
 ### M-20 (informative): Studio never reads `vendor`
@@ -343,6 +347,73 @@ An engine declares at most one `no-secret` warning, and each warning reads only 
 - test `tests/unit/db/engine-declarations.test.ts` "connection.credentialWarnings is the engine's CREDENTIAL_WARNINGS row, and the form reads that same row"
 - test `tests/unit/lib/db/credential-warnings.test.ts` "refuses the declared pair with the dialog's own sentence"
 
+## Values
+
+A value crosses a JSON boundary, between a provider and the host or between two of the host's own hops, in one form: the value codec of `@libredb/provider-sdk/values`.
+
+### V-1 (normative): One codec, and its tags are the schema's
+
+A value is plain JSON, or a tagged value: an object whose own keys are exactly `$`, the tag, and `v`, its payload.
+The tags are the schema's `valueTag`, typed `ValueTag`, and the codec's module comment states the value and the payload of each.
+`encodeValue` writes only those tags and `decodeValue` reads only those.
+
+- schema `/$defs/valueTag`
+- test `packages/provider-sdk/tests/values/tags.test.ts` "the codec writes and reads exactly the schema's value tags"
+- test `packages/provider-sdk/tests/values/tags.test.ts` "a tag the schema does not name is refused on decode"
+
+### V-2 (normative): Every tag round-trips
+
+A value the codec encodes decodes to the same value, and a JSON value with no tagged kind crosses unchanged.
+
+- test `packages/provider-sdk/tests/values/codec.test.ts` "every bigint from -2^63 to 2^64 - 1 round-trips as its decimal digits"
+- test `packages/provider-sdk/tests/values/codec.test.ts` "every Uint8Array and Buffer round-trips as canonical base64, byte for byte"
+- test `packages/provider-sdk/tests/values/codec.test.ts` "every valid Date round-trips as its toISOString text, the range ends included"
+- test `packages/provider-sdk/tests/values/codec.test.ts` "NaN, Infinity and -Infinity round-trip as their words"
+- test `packages/provider-sdk/tests/values/codec.test.ts` "a JSON value with no tagged kind passes through both ways unchanged"
+
+### V-3 (normative): Nothing a database hands back is read as a tag
+
+A data object whose own keys are exactly `$` and `v` is written as the escape tag, so an object with those two keys on the wire is always a tag.
+
+- test `packages/provider-sdk/tests/values/codec.test.ts` "an object whose keys are exactly $ and v round-trips at any depth and is never read as a tag"
+- test `packages/provider-sdk/tests/values/codec.test.ts` "an object with $ alone or with a third key is not wrapped"
+- test `packages/provider-sdk/tests/values/codec.test.ts` "a __proto__ key stays an own key"
+
+### V-4 (normative): The domain is closed, and a refusal never carries the value
+
+The codec refuses every value outside its domain with a `ValueCodecError` that names the kind and the JSON Pointer of the place, never the value.
+
+- test `packages/provider-sdk/tests/values/codec.test.ts` "every value outside the codec's domain is refused by kind, naming its JSON Pointer and never its value"
+- test `packages/provider-sdk/tests/values/codec.test.ts` "a bigint outside the 64-bit range is refused, naming its path"
+- test `packages/provider-sdk/tests/values/codec.test.ts` "an invalid Date is refused on encode"
+- test `packages/provider-sdk/tests/values/codec.test.ts` "a ValueCodecError is an Error with its own name"
+
+### V-5 (normative): Decoding is strict and canonical
+
+A payload in any spelling but the one the encoder writes, an unknown tag, a payload of the wrong type and a value `JSON.parse` cannot produce are each refused on decode.
+
+- test `packages/provider-sdk/tests/values/codec.test.ts` "digits with a plus sign, a leading zero, an exponent, spaces or -0 are refused on decode"
+- test `packages/provider-sdk/tests/values/codec.test.ts` "base64 that is malformed, unpadded, URL-safe or non-canonical is refused on decode"
+- test `packages/provider-sdk/tests/values/codec.test.ts` "a timestamp that is not exactly toISOString's text is refused on decode"
+- test `packages/provider-sdk/tests/values/codec.test.ts` "an obj payload whose keys are not exactly $ and v is refused on decode"
+- test `packages/provider-sdk/tests/values/codec.test.ts` "an unknown tag or a payload of the wrong type is refused on decode, naming its path"
+- test `packages/provider-sdk/tests/values/codec.test.ts` "decode refuses a value JSON cannot produce"
+
+### V-6 (informative): No tag for a decimal, a date, a time of day or a duration
+
+The codec has no tag for a decimal, a date without a time, a time of day or a duration, because no provider hands it one.
+A later minor of the contract adds such a tag together with the provider that needs it.
+
+### V-7 (informative): The codec loads in a browser
+
+The codec uses no Node-only global, so it loads in a browser as well as on the server.
+Nothing checks this yet.
+
+### V-8 (informative): Nesting depth is not bounded
+
+A value nested deeper than the stack allows throws a `RangeError`, not a `ValueCodecError`.
+A reader that takes documents from outside bounds their depth before it decodes them.
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:
@@ -350,7 +421,7 @@ These chapters are added by the changes that bring their enforcers:
 - Connection rules and connection string rows: field rules as bounded patterns and named server checks, the host hint and identity readers, the connection import, the refusal sentence of each refused field, and the connection string rows with their schemes, URL TLS and paste readers and seed checks.
 - Editor and SQL text: execution UI, SQL grammar, SQL writing, migration DDL, generators, editor languages, explain formats and discovery fence tags.
 - Policy and MCP claims, each a request a provider makes that only Studio's review record grants, the agent overlay, and presentation (an icon and a colour).
-- Values and errors: the value tags of results and the error kinds a provider raises.
+- Errors: the error kinds a provider raises.
 - Calls: how the host calls a provider in its own process, with its deadlines, cancellation and byte budgets.
 - The API report of each SDK entry.
 
@@ -365,6 +436,7 @@ Against the manifest sketch the design started from:
   Left out: a child entry, isolation and heap settings (the child placement is not in this contract), an egress declaration (core decides egress), a spawn declaration (nothing reads one), a Node range (`package.json` `engines.node` states it), and an optional native package with a fallback (it would choose a weaker path without a word).
 - A required `compatibility` list replaces the `upstream` segment, M-14.
 - Field names and their classes are the contract's, not a manifest's, M-9.
+- The value tags keep the names of Studio's value codec, V-1.
 - Facet names keep Studio's own vocabulary, the seven monitoring panels, the maintenance operations and the curated agent readings, rather than new dotted names.
 - The connection dialog's per-field facts, its labels, hints, placeholders, placement, choices, conditions and absent values, are lists of entries that each name their field, rather than maps keyed by field, M-24.
 - A condition is one field equal to one value, with no list of values and no combination of conditions in this contract, M-25.

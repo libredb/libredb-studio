@@ -13,6 +13,9 @@
  * | `nf`    | `NaN`, `Infinity`, `-Infinity`                     | `"NaN"`, `"Infinity"`, `"-Infinity"`      |
  * | `obj`   | a data object whose own keys are exactly `$`, `v`  | that object with its two values encoded   |
  *
+ * The tags are the manifest schema's `$defs/valueTag`, typed `ValueTag`, and
+ * `packages/provider-sdk/tests/values/tags.test.ts` holds this table to that list.
+ *
  * `obj` is the escape: without it a row with columns named `$` and `v` would be read
  * back as a tag. With it, an object with exactly those two keys is ALWAYS a tag on the
  * wire, and nothing a database hands back is ever mistaken for one.
