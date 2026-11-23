@@ -862,11 +862,14 @@ Either refuses a symbol-keyed property by the JSON Pointer of the object that ho
 - test `packages/provider-sdk/tests/calls/freeze.test.ts` "a symbol-keyed property is refused by the pointer of the object that holds it, and nothing is frozen"
 - test `packages/provider-sdk/tests/calls/freeze.test.ts` "an invalid Date is refused by its pointer, as the value codec refuses it, and nothing is frozen"
 
-### C-12 (informative): The host freezes on every call, in every environment
+### C-12 (normative): The host freezes on every call, in every environment
 
 The host passes every context and request through `freezeContext` and `freezeData` on every call, in every environment, production included, so a provider that writes to what the host passed fails the same way in a test and in production, at the line that writes.
 Both freeze in place, so the host builds a fresh context and request for each call, and a value it shares across calls ends frozen.
-The host core that does so arrives with the first host surface, and its test holds it; until then this clause is informative.
+The host core's console calls do so, C-48.
+
+- test `tests/unit/lib/provider-host/core/console.test.ts` "every call gets a fresh context and request, frozen at every depth"
+- test `tests/unit/lib/provider-host/core/console.test.ts` "a cancel of a run the provider does not know answers not cancelled"
 
 ### C-13 (normative): The byte budgets and the row measure
 
@@ -903,6 +906,7 @@ The pump takes the context of the execute call that answered the source and star
 - test `packages/provider-sdk/tests/calls/results.test.ts` "a pump limit that is not a positive safe integer is refused before any pull"
 - test `packages/provider-sdk/tests/calls/pump-bounds.test.ts` "a source that never progresses is refused after one pull, in a bounded child"
 - test `packages/provider-sdk/tests/calls/pump-bounds.test.ts` "a source that never ends is cut at the page's byte budget, in a bounded child"
+- test `tests/unit/lib/provider-host/core/console.test.ts` "the first result is pumped within the limits set from the answer, and every other result is closed once"
 
 ### C-16 (informative): What the byte budgets bound
 
@@ -1058,11 +1062,14 @@ So no abandoned rejection goes unhandled, and the host's late handler closes wha
 A late handler that throws is a host defect, and its error is a detached rejection.
 A result source runs under the context of the execute call that answered it, so `next` takes no context, and the host's wait on a page is its wait on that call.
 The memory transport races nothing: an answer the host stopped waiting for is delivered whole, its session token and served sources included, so the late handler closes it once, and what the served host side refuses of a late answer it closes itself, C-23, and hands on as a failure.
+The host core's execute call closes every source of an execute answer that arrives after its stop and pumps none of them, and hands a failure that arrives after its stop to the caller's late handler once, C-48.
 
 - test `packages/provider-sdk/tests/calls/deadline.test.ts` "the host's wait settles as the answer does when the answer comes first, and leaves no listener on the signal"
 - test `packages/provider-sdk/tests/calls/deadline.test.ts` "the host's wait ends at the signal, and the abandoned answer's outcome reaches the late handler once"
 - test `packages/provider-sdk/tests/calls/deadline.test.ts` "a signal aborted before the wait ends it at once, and the answer still reaches the late handler"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "an answer the host stopped waiting for reaches its late handler whole, and the host closes what it handed over once"
+- test `tests/unit/lib/provider-host/core/console.test.ts` "an answer that arrives after the stop has its sources closed and is never pumped"
+- test `tests/unit/lib/provider-host/core/console.test.ts` "a failure after the stop reaches the late handler once and is never a detached rejection"
 
 ### C-29 (informative): What a provider does with the deadline and the signal
 
@@ -1265,6 +1272,39 @@ The memory transport closes the session of an open answer it refuses under such 
 - test `packages/provider-sdk/tests/calls/deadline.test.ts` "a cleanup call gets a context of its own, ten seconds ahead and never aborted"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a refused open answer's session is closed with a context of its own, not the open's aborted one"
 - test `tests/unit/lib/provider-host/core/teardown.test.ts` "the close deadline is the SDK's cleanup deadline"
+
+### C-48 (normative): The host's console calls
+
+The host core makes each console call through `executeCall` or `cancelCall`, which answer a record of how the call ended and pass a provider's error by reference.
+Before the call it checks the context with `checkCallStart`, C-27, and the request with `checkExecuteRequest`, C-9, or the facet with `checkConsoleFacet`, C-17, and answers each refusal as a record, the signal's reason as its cause when the signal aborted, without calling the provider.
+It then freezes the context and the request in place, C-12, and waits for the call with `awaitWithin` until the context's signal, C-28.
+An execute's run pumps the first result with `pumpPage` within the limits the caller sets from the execute answer, C-15, closes every other result once, and answers a refusal the pump throws as a record.
+A call is stopped exactly when its signal aborted and the wait rejected with that signal's reason, so a provider that throws its own signal's reason is stopped too, and the stop is answered as a record with that reason.
+A stopped execute sends the run's cancel when the session offers `console.cancel` and the request names a run, under a cleanup context of its own, C-47, and a cancel that fails or is cut is handed to the caller, never left as a detached rejection.
+Core constructs no error class a caller tests with `instanceof`: the caller builds its own classes from the records, C-51.
+
+- test `tests/unit/lib/provider-host/core/console.test.ts` "a call whose signal aborted or whose deadline passed is refused as a record, and the provider is never called"
+- test `tests/unit/lib/provider-host/core/console.test.ts` "a request field the session does not honour is refused as a record before the call"
+- test `tests/unit/lib/provider-host/core/console.test.ts` "a row no page can hold is refused as a record, and the source is closed once"
+- test `tests/unit/lib/provider-host/core/console.test.ts` "an error the provider throws reaches the caller as the same object, and every source is closed once"
+- test `tests/unit/lib/provider-host/core/console.test.ts` "a wait the caller's signal ends answers a stop at once and sends the run's cancel with a context of its own"
+- test `tests/unit/lib/provider-host/core/console.test.ts` "no cancel is sent to a session without console.cancel or for a request without a run id"
+- test `tests/unit/lib/provider-host/core/console.test.ts` "a cancel that fails after a stop reaches its handler once"
+- test `tests/unit/lib/provider-host/core/console.test.ts` "a provider that throws its own signal's reason is answered as a stop"
+- test `tests/unit/lib/provider-host/core/console.test.ts` "a cancel to a session without console.cancel is refused as a record, and the provider is never called"
+- test `tests/unit/lib/provider-host/core/console.test.ts` "a cancel whose signal already aborted is refused as a record"
+- test `tests/unit/lib/provider-host/core/console.test.ts` "a cancel the caller stops waiting for answers a stop, and its later failure reaches the late handler once"
+- test `tests/unit/lib/provider-host/core/console-bounds.test.ts` "an execute that never settles is stopped at the call's deadline"
+
+### C-49 (normative): A turn of the event loop before every pull
+
+A source over rows already in memory answers each pull without leaving the microtask queue, so a page pumped from it would hold the event loop until the whole page is measured.
+The host core awaits one `setImmediate` turn before every pull, then refuses the pull, as `checkCallStart` answers, when the call's signal aborted or its deadline passed during that turn, the signal's reason as the refusal's cause.
+So the longest the host holds the event loop over a page is one batch's pull and measure, which the host page benchmark holds under its T4 threshold.
+The turn is the host's and not the SDK pump's, since the pump is also the kit's and runs where fake timers may hold `setImmediate`.
+
+- test `tests/unit/lib/provider-host/core/turns.test.ts` "the host yields one turn of the event loop before every pull"
+- test `tests/unit/lib/provider-host/core/turns.test.ts` "a signal that aborts during the turn stops the pull it precedes"
 
 ## Not yet in this contract
 
