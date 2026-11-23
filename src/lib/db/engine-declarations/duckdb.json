@@ -309,5 +309,6 @@
       "ALTER TABLE cannot add one yet; recreate the table and copy the rows.",
       "Requires table recreation."
     ]
-  }
+  },
+  "sqlGenerators": null
 }

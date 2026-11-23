@@ -253,6 +253,9 @@
         },
         "migrationDdl": {
           "$ref": "#/$defs/migrationDdl"
+        },
+        "sqlGenerators": {
+          "$ref": "#/$defs/sqlGenerators"
         }
       },
       "required": [
@@ -265,7 +268,8 @@
         "editor",
         "sqlText",
         "sqlWriting",
-        "migrationDdl"
+        "migrationDdl",
+        "sqlGenerators"
       ],
       "additionalProperties": false
     },
@@ -1243,7 +1247,7 @@
       ]
     },
     "editor": {
-      "description": "The editor facts of the engine that are data: the keyword its open transaction is committed with, the consent card's deadline, the fence tags naming it, the explain format of its plans and its query dialect. The SQL text facts are sqlText, the SQL writing facts sqlWriting and the migration DDL facts migrationDdl, and generators and editor languages are later parts of the contract.",
+      "description": "The editor facts of the engine that are data: the keyword its open transaction is committed with, the consent card's deadline, the fence tags naming it, the explain format of its plans and its query dialect. The SQL text facts are sqlText, the SQL writing facts sqlWriting, the migration DDL facts migrationDdl and the SQL generator forms sqlGenerators, and editor languages are a later part of the contract.",
       "type": "object",
       "properties": {
         "commitKeyword": {
@@ -2503,6 +2507,59 @@
       "minLength": 1,
       "maxLength": 1024,
       "pattern": "^[^\\r\\n\\u2028\\u2029]+$"
+    },
+    "sqlGenerators": {
+      "description": "What an SQL engine writes apart from Studio's shared SQL forms, or null where it writes the shared forms, quotes a name as its declared identifier quoting or Studio's default says, and counts with COUNT(*). One member per member of Studio's SQL generator row, each function named by the slot it fills. quote: the pure function that quotes a name for the engine, leaving it bare where it round-trips bare and quoting is not forced.",
+      "type": ["object", "null"],
+      "properties": {
+        "quote": {
+          "$ref": "#/$defs/functionName"
+        },
+        "table": {
+          "description": "The pure function that writes the tree click's statement on the quoted address; null where the shared form stands.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "select": {
+          "description": "The pure function that writes Generate Query's statement on the quoted address and its columns; null where the shared form stands.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "selectList": {
+          "description": "The pure function that writes Generate Query's statement on the quoted address and its projected column list; null where the shared form stands.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "countExpression": {
+          "$ref": "#/$defs/countExpression"
+        }
+      },
+      "required": ["quote", "table", "select", "selectList", "countExpression"],
+      "additionalProperties": false
+    },
+    "countExpression": {
+      "description": "The count Generate Count Query writes for the engine, COUNT(*) where the engine's is the shared one: one aggregate call over every row, a letter, then letters, digits or underscores, then (*), up to 64 characters, so it fills one expression of the statement Studio writes and never adds a clause or a statement.",
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[A-Za-z][A-Za-z0-9_]*\\(\\*\\)$"
     },
     "compatibilityEntry": {
       "description": "One product the package was measured against: the engine that serves it, the versions claimed and the versions tested.",

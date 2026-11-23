@@ -6,8 +6,8 @@
  *
  * Each file is a `#/$defs/engineDeclaration` of the provider manifest schema
  * (packages/provider-sdk/src/manifest/manifest.schema.json): the engine's identity, its connection facts, its facets,
- * the statement language agent mode sends it, its editor facts that are data, its SQL text facts, its SQL writing facts
- * and its migration DDL facts. A full manifest also states the package's runtime and the products it was measured
+ * the statement language agent mode sends it, its editor facts that are data, its SQL text facts, its SQL writing facts,
+ * its migration DDL facts and its SQL generator forms. A full manifest also states the package's runtime and the products it was measured
  * against, facts no provider in `src/lib/db/providers/` has yet, so they are written when a provider moves into a package
  * of its own, from this declaration.
  *
@@ -55,6 +55,12 @@
  * statement writers. The generator refuses by name a member of the row, of its CREATE TABLE or of its transaction
  * wrapper it has no place for, and a table DDL or CREATE TABLE form that is neither refused nor written.
  *
+ * The SQL generator forms come from the engine's row in `SQL_ENGINE_GENERATORS`, read as an own key: null where the
+ * engine has no row and writes Studio's shared forms; otherwise each member in the schema's order, each form named by
+ * its slot (`generatorQuote`, `generatorTable`, `generatorSelect` and `generatorSelectList`) or null where the row
+ * leaves it out, and the count expression as the row's, `COUNT(*)` where the row leaves it out, the reading Generate
+ * Count Query gives that absence. The generator refuses by name a member of the row it has no place for.
+ *
  * The editor facts come from `EXECUTION_UI`, the fence tag tables (`ALIAS_ENGINES` and `QUERY_FENCE_ALIASES`),
  * `QUERY_DIALECTS` and each engine's capabilities. The capabilities are read as Studio reads a provider it never
  * connects, `readProviderDeclarations` with the engine's census connection (tests/helpers/census-connection.ts), so the
@@ -91,6 +97,7 @@ import type {
   PlaceableFieldName,
   QueryDialectRow,
   SelectFieldName,
+  SqlGenerators,
   SqlText,
   SqlWriting,
   StatementRedaction,
@@ -129,6 +136,8 @@ import type { ExecutionUiSpec } from "../src/lib/db/execution-ui/types";
 import { MIGRATION_DDL } from "../src/lib/db/migration-ddl";
 import type { MigrationDdlSpec } from "../src/lib/db/migration-ddl/types";
 import { type DialectSpec, QUERY_DIALECTS, type QueryDialect } from "../src/lib/db/query-dialects";
+import { SQL_ENGINE_GENERATORS } from "../src/lib/db/query-generators";
+import type { SqlEngineGenerators } from "../src/lib/db/query-generators/types";
 import { SQL_GRAMMAR } from "../src/lib/db/sql-grammar";
 import type { SqlGrammarSpec, SqlRedaction } from "../src/lib/db/sql-grammar/types";
 import { SQL_WRITING } from "../src/lib/db/sql-writing";
@@ -920,6 +929,40 @@ export function buildMigrationDdl(type: DatabaseType, spec: MigrationDdlSpec = M
   };
 }
 
+/** The members of an SQL generator row the declaration places: a key this list lacks would be dropped. */
+const SQL_GENERATOR_MEMBERS: readonly string[] = ["quote", "table", "select", "selectList", "countExpression"];
+
+/** The engine's row of `SQL_ENGINE_GENERATORS`, read as an own key; undefined where it writes the shared forms. */
+function sqlGeneratorRow(type: DatabaseType): SqlEngineGenerators | undefined {
+  return Object.hasOwn(SQL_ENGINE_GENERATORS, type) ? SQL_ENGINE_GENERATORS[type] : undefined;
+}
+
+/**
+ * One engine's SQL generator forms, read from its row in `SQL_ENGINE_GENERATORS` (a parameter, so a test can hand the
+ * generator another row): null where it has none, otherwise each member in the order of the schema's `sqlGenerators`,
+ * each form named by the slot it fills or null where the row leaves it out, and the count expression as the row's,
+ * `COUNT(*)` where the row leaves it out. A member of the row the declaration has no place for is a thrown error naming
+ * the engine.
+ */
+export function buildSqlGenerators(
+  type: DatabaseType,
+  row: SqlEngineGenerators | undefined = sqlGeneratorRow(type),
+): SqlGenerators {
+  if (row === undefined) return null;
+  for (const key of Object.keys(row)) {
+    if (!SQL_GENERATOR_MEMBERS.includes(key)) {
+      throw new Error(`${type}: the SQL generator member "${key}" has no place in the engine declaration`);
+    }
+  }
+  return {
+    quote: "generatorQuote",
+    table: row.table === undefined ? null : "generatorTable",
+    select: row.select === undefined ? null : "generatorSelect",
+    selectList: row.selectList === undefined ? null : "generatorSelectList",
+    countExpression: row.countExpression ?? "COUNT(*)",
+  };
+}
+
 /** One engine's declaration, read from every table the contract states for it and from its provider's capabilities. */
 export function buildEngineDeclaration(type: DatabaseType, capabilities: ProviderCapabilities): EngineDeclaration {
   const form = CONNECTION_FORM[type];
@@ -989,6 +1032,7 @@ export function buildEngineDeclaration(type: DatabaseType, capabilities: Provide
     sqlText: buildSqlText(type),
     sqlWriting: buildSqlWriting(type),
     migrationDdl: buildMigrationDdl(type),
+    sqlGenerators: buildSqlGenerators(type),
   };
 }
 

@@ -312,5 +312,6 @@
       "The engine has no foreign-key constraint.",
       "Trino SQL has no primary-key constraint."
     ]
-  }
+  },
+  "sqlGenerators": null
 }

@@ -323,5 +323,6 @@
       "The engine has no foreign-key constraint.",
       "REMOVE accepts DEFAULT, MATERIALIZED or ALIAS only; recreate the column."
     ]
-  }
+  },
+  "sqlGenerators": null
 }

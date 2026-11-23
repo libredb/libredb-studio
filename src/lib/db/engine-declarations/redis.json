@@ -284,5 +284,6 @@
     "reasons": [
       "Keys are not tables and have no column definitions to change."
     ]
-  }
+  },
+  "sqlGenerators": null
 }

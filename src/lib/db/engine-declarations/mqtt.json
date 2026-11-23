@@ -302,5 +302,6 @@
     "reasons": [
       "A broker keeps no schema and no catalog, so there is no column definition to change."
     ]
-  }
+  },
+  "sqlGenerators": null
 }

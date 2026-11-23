@@ -766,5 +766,6 @@
       "Snowflake: Cannot generate index DDL. Snowflake has indexes only on hybrid tables; write the index change by hand.",
       "ALTER COLUMN sets a default only to a sequence's NEXTVAL; recreate the column with its default."
     ]
-  }
+  },
+  "sqlGenerators": null
 }

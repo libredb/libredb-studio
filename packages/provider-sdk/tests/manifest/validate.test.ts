@@ -269,6 +269,23 @@ function refusedMigrationDdl(): Json {
   };
 }
 
+/** The SQL generator forms of the fixture's one engine. */
+const sqlGeneratorsOf = (m: Json): Json => m.engines[0].sqlGenerators;
+
+/** The pointer of the fixture's one engine's SQL generator forms. */
+const SQL_GENERATORS = "/engines/0/sqlGenerators";
+
+/** An SQL generator segment naming every form by its slot, counting with `count`. */
+function namedSqlGenerators(count = "COUNT_BIG(*)"): Json {
+  return {
+    quote: "generatorQuote",
+    table: "generatorTable",
+    select: "generatorSelect",
+    selectList: "generatorSelectList",
+    countExpression: count,
+  };
+}
+
 /** One missing-key row per member of the part `of` returns, named `<name>.<member>` and refused at `pointer`. */
 function missingRows(
   name: string,
@@ -352,6 +369,7 @@ describe("schema refusals", () => {
       (m: Json) => (editorOf(m).dialect = { ...dialect(), historyMask: { credentialFlags: ["--token"], bogus: 1 } }),
       "/engines/0/editor/dialect/historyMask",
     ],
+    ["in an SQL generator segment", (m: Json) => (sqlGeneratorsOf(m).bogus = "generatorBogus"), SQL_GENERATORS],
   ])("an unknown key %s is refused as unknown-key at its pointer", (_where, change, pointer) => {
     expect(refusalsFor(manifest(change))).toEqual([refusal("unknown-key", pointer, "bogus")]);
   });
@@ -603,6 +621,14 @@ describe("schema refusals", () => {
       ["note", "clause"],
     ),
     ["migrationDdl", (m: Json) => delete m.engines[0].migrationDdl, "/engines/0", "migrationDdl"],
+    ["sqlGenerators", (m: Json) => delete m.engines[0].sqlGenerators, "/engines/0", "sqlGenerators"],
+    ...missingRows("sqlGenerators", sqlGeneratorsOf, SQL_GENERATORS, [
+      "quote",
+      "table",
+      "select",
+      "selectList",
+      "countExpression",
+    ]),
   ])("a missing %s is refused as missing-key", (_name, change, pointer, key) => {
     expect(refusalsFor(manifest(change))).toEqual([refusal("missing-key", pointer, key)]);
   });
@@ -1604,6 +1630,65 @@ describe("schema refusals", () => {
     ]);
   });
 
+  test("an SQL generator segment naming every form, one naming only its quoting, and a null one are admitted", () => {
+    const named = manifest((m) => (m.engines[0].sqlGenerators = namedSqlGenerators()));
+    const quoteOnly = manifest((m) =>
+      Object.assign(sqlGeneratorsOf(m), { selectList: null, countExpression: "COUNT(*)" }),
+    );
+    const none = manifest((m) => (m.engines[0].sqlGenerators = null));
+
+    expect(sqlGeneratorsOf(manifest())).toEqual({ ...namedSqlGenerators("COUNT(*)"), table: null, select: null });
+    expect(refusalsFor(manifest())).toEqual([]);
+    expect(sqlGeneratorsOf(kafkaManifest())).toBeNull();
+    expect(refusalsFor(kafkaManifest())).toEqual([]);
+    expect(refusalsFor(named)).toEqual([]);
+    expect(refusalsFor(quoteOnly)).toEqual([]);
+    expect(refusalsFor(none)).toEqual([]);
+  });
+
+  test("an SQL generator segment that is not an object or null is refused as wrong-type", () => {
+    const text = manifest((m) => (m.engines[0].sqlGenerators = "generatorQuote"));
+
+    expect(refusalsFor(text)).toEqual([refusal("wrong-type", SQL_GENERATORS)]);
+  });
+
+  test("an SQL generator form named in another form is refused at the form", () => {
+    const quote = manifest((m) => (sqlGeneratorsOf(m).quote = "Generator_quote"));
+    const table = manifest((m) => (sqlGeneratorsOf(m).table = "Generator_quote"));
+    const flag = manifest((m) => (sqlGeneratorsOf(m).table = false));
+    const quoteNull = manifest((m) => (sqlGeneratorsOf(m).quote = null));
+
+    expect(refusalsFor(quote)).toEqual([refusal("pattern-mismatch", `${SQL_GENERATORS}/quote`)]);
+    expect(refusalsFor(table)).toEqual([refusal("no-variant", `${SQL_GENERATORS}/table`)]);
+    expect(refusalsFor(flag)).toEqual([refusal("no-variant", `${SQL_GENERATORS}/table`)]);
+    expect(refusalsFor(quoteNull)).toEqual([refusal("wrong-type", `${SQL_GENERATORS}/quote`)]);
+  });
+
+  test("a count expression that is not one aggregate call over every row is refused as pattern-mismatch, and one longer than 64 characters as out-of-range", () => {
+    const counting = (count: unknown) => manifest((m) => (sqlGeneratorsOf(m).countExpression = count));
+    for (const count of [
+      "COUNT(*); DROP TABLE t",
+      "COUNT(*) AS n",
+      "COUNT(*)\n",
+      "COUNT(1)",
+      "COUNT (*)",
+      "COUNT(DISTINCT x)",
+      "(*)",
+      "1COUNT(*)",
+      "COUNT(*)(*)",
+      "",
+    ]) {
+      expect(refusalsFor(counting(count))).toEqual([refusal("pattern-mismatch", `${SQL_GENERATORS}/countExpression`)]);
+    }
+    for (const count of ["COUNT(*)", "COUNT_BIG(*)", "count(*)", `${"C".repeat(61)}(*)`]) {
+      expect(refusalsFor(counting(count))).toEqual([]);
+    }
+    expect(refusalsFor(counting(`${"C".repeat(62)}(*)`))).toEqual([
+      refusal("out-of-range", `${SQL_GENERATORS}/countExpression`),
+    ]);
+    expect(refusalsFor(counting(null))).toEqual([refusal("wrong-type", `${SQL_GENERATORS}/countExpression`)]);
+  });
+
   test("several failures are each refused, ordered by pointer", () => {
     const changed = manifest((m) => {
       m.bogus = true;
@@ -2415,6 +2500,18 @@ describe("one engine declaration", () => {
       admitted: false,
       refusals: [refusal("no-variant", "/migrationDdl")],
     });
+  });
+
+  test("an engine declaration's SQL generators are refused at their own pointer under validateEngine", () => {
+    const declaration = kafkaManifest().engines[0] as Json;
+    declaration.sqlGenerators = { ...namedSqlGenerators("COUNT(1)"), table: null };
+
+    expect(validator.validateEngine(declaration)).toEqual({
+      admitted: false,
+      refusals: [refusal("pattern-mismatch", "/sqlGenerators/countExpression")],
+    });
+    declaration.sqlGenerators.countExpression = "COUNT(*)";
+    expect<unknown>(validator.validateEngine(declaration)).toEqual({ admitted: true, engine: declaration });
   });
 
   test("an engine declaration's dialog is held to the rules the schema cannot state, at pointers into it", () => {

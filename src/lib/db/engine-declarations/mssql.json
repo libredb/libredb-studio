@@ -321,5 +321,12 @@
     "modifyColumn": "modifyColumn",
     "dropTable": "dropTable",
     "reasons": []
+  },
+  "sqlGenerators": {
+    "quote": "generatorQuote",
+    "table": null,
+    "select": null,
+    "selectList": "generatorSelectList",
+    "countExpression": "COUNT_BIG(*)"
   }
 }

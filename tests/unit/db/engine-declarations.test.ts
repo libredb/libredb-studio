@@ -57,6 +57,7 @@ import {
   buildEngineDeclaration,
   buildFieldRules,
   buildMigrationDdl,
+  buildSqlGenerators,
   buildSqlText,
   buildSqlWriting,
   CAPABILITY_READ_ENVIRONMENT,
@@ -124,6 +125,8 @@ import { CURATED_OPERATION_KINDS } from "@/lib/db/operations/descriptors";
 import { refusedFieldRefusal } from "@/lib/db/provider-connection";
 import { SQL_GRAMMAR } from "@/lib/db/sql-grammar";
 import type { CompletionQuoting, SqlGrammarSpec, SqlRedaction, UpdateTargetGrammar } from "@/lib/db/sql-grammar/types";
+import { SQL_ENGINE_GENERATORS } from "@/lib/db/query-generators";
+import type { SqlEngineGenerators } from "@/lib/db/query-generators/types";
 import { SQL_WRITING } from "@/lib/db/sql-writing";
 import type {
   ExportSpec,
@@ -173,6 +176,7 @@ import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 import { SPAN_STATEMENTS } from "./sql-grammar/fixtures";
 import { engineModules as migrationDdlModules } from "./migration-ddl/modules";
 import { ENGINE_MODULES } from "./sql-writing/engine-modules";
+import { sqlGeneratorModules } from "./engine-declarations/sql-generator-modules";
 import {
   DECLARED_SLOTS,
   type DeclaredSlotName,
@@ -415,9 +419,49 @@ function moduleMigrationDdl(type: DatabaseType): object {
   return row;
 }
 
-/** The row of `table` that `type`'s own engine module exports, on which the census resolves that table's slots. */
-function moduleRow(table: SlotTable, type: DatabaseType): object {
-  return table === "SQL_WRITING" ? moduleSqlWriting(type) : moduleMigrationDdl(type);
+/** The SQL generator modules the query generators' registry imports, read from the registry file's import statements. */
+const SQL_GENERATOR_MODULES = sqlGeneratorModules();
+
+/**
+ * Each SQL engine's generator row as its own module exports it, the module imported by its absolute path, never through
+ * the registry index the generator reads: every SQL generator slot the census's slot table names is resolved on this
+ * row. Only the engines with a row of `SQL_ENGINE_GENERATORS` have one.
+ */
+const MODULE_SQL_GENERATORS: ReadonlyMap<string, unknown> = new Map(
+  await Promise.all(
+    SQL_GENERATOR_MODULES.map(
+      async (engine) =>
+        [
+          engine.id,
+          ((await import(path.join(ROOT, engine.path))) as Record<string, unknown>)[engine.exportName],
+        ] as const,
+    ),
+  ),
+);
+
+/** The engine module's SQL generator row of `type`, which the census holds to be the registry's row. */
+function moduleSqlGenerators(type: DatabaseType): object {
+  const row = MODULE_SQL_GENERATORS.get(type);
+  if (typeof row !== "object" || row === null) throw new Error(`${type}: no SQL generator module exports a row`);
+  return row;
+}
+
+/** The registry's SQL generator row of `type`, read as an own key; undefined where the engine writes the shared forms. */
+function sqlGeneratorRow(type: DatabaseType): SqlEngineGenerators | undefined {
+  return Object.hasOwn(SQL_ENGINE_GENERATORS, type) ? SQL_ENGINE_GENERATORS[type] : undefined;
+}
+
+/**
+ * The row of `table` that `type`'s own engine module exports, on which the census resolves that table's slots; undefined
+ * only for an SQL generator row the engine does not have, since every shipped engine has a row of the other two tables.
+ */
+function moduleRow(table: SlotTable, type: DatabaseType): object | undefined {
+  const rows: Readonly<Record<SlotTable, () => object | undefined>> = {
+    SQL_WRITING: () => moduleSqlWriting(type),
+    MIGRATION_DDL: () => moduleMigrationDdl(type),
+    SQL_ENGINE_GENERATORS: () => (sqlGeneratorRow(type) === undefined ? undefined : moduleSqlGenerators(type)),
+  };
+  return rows[table]();
 }
 
 /** The kinds a bare type family may be, in the order of the schema's `typeFamilies`. */
@@ -461,6 +505,17 @@ const MIGRATION_DDL_FUNCTION_PATHS = schemaFunctionPaths("migrationDdl");
 function migrationDdlNames(d: EngineDeclaration): (readonly [path: string, name: string])[] {
   return MIGRATION_DDL_FUNCTION_PATHS.flatMap((path) => {
     const name = valueAt(d.migrationDdl, path);
+    return typeof name === "string" ? [[path, name] as const] : [];
+  });
+}
+
+/** The function members of a declaration's `sqlGenerators`, by their dotted paths, read off the schema. */
+const SQL_GENERATORS_FUNCTION_PATHS = schemaFunctionPaths("sqlGenerators");
+
+/** Every function name a declaration's `sqlGenerators` states, with the dotted path it is stated at; none where null. */
+function sqlGeneratorNames(d: EngineDeclaration): (readonly [path: string, name: string])[] {
+  return SQL_GENERATORS_FUNCTION_PATHS.flatMap((path) => {
+    const name = valueAt(d.sqlGenerators, path);
     return typeof name === "string" ? [[path, name] as const] : [];
   });
 }
@@ -938,6 +993,19 @@ describe("the committed declarations", () => {
     );
     expect(() => buildMigrationDdl("postgres", partialCreate)).toThrow(
       'postgres: the migration DDL member "createTable.kind" is "partial", neither refused nor written',
+    );
+  });
+
+  test("the generator refuses, by name, an SQL generator member it has no place for", () => {
+    const key = `k${crypto.randomUUID().replaceAll("-", "")}`;
+    const row = SQL_ENGINE_GENERATORS.mssql;
+    if (row === undefined) throw new Error("mssql has no SQL generator row");
+    const planted = { ...row, [key]: null } as SqlEngineGenerators;
+
+    expect(() => buildSqlGenerators("mssql")).not.toThrow();
+    expect(buildSqlGenerators("postgres")).toBeNull();
+    expect(() => buildSqlGenerators("mssql", planted)).toThrow(
+      `mssql: the SQL generator member "${key}" has no place in the engine declaration`,
     );
   });
 
@@ -2345,16 +2413,15 @@ describe("the census", () => {
   test("every slot of the census's slot table is filled by some shipped row of its table", () => {
     const names = Object.keys(DECLARED_SLOTS) as DeclaredSlotName[];
 
-    expect(
-      names.filter(
-        (name) =>
-          !SHIPPED_DATABASE_TYPES.some(
-            (type) => typeof slotFunction(moduleRow(DECLARED_SLOTS[name].table, type), name) === "function",
-          ),
-      ),
-    ).toEqual([]);
-    expect(names.length).toBe(25);
+    const fills = (type: DatabaseType, name: DeclaredSlotName) => {
+      const row = moduleRow(DECLARED_SLOTS[name].table, type);
+      return row !== undefined && typeof slotFunction(row, name) === "function";
+    };
+
+    expect(names.filter((name) => !SHIPPED_DATABASE_TYPES.some((type) => fills(type, name)))).toEqual([]);
+    expect(names.length).toBe(29);
     expect(names.filter((name) => DECLARED_SLOTS[name].table === "MIGRATION_DDL").length).toBe(12);
+    expect(names.filter((name) => DECLARED_SLOTS[name].table === "SQL_ENGINE_GENERATORS").length).toBe(4);
   });
 
   test("every member of an SQL writing row has its member in the declaration", () => {
@@ -2605,6 +2672,96 @@ describe("the census", () => {
           placed(ddl.createTable, createTableAt(ddl.createTable.kind)) &&
           (ddl.transactionWrapper === null || placed(ddl.transactionWrapper, wrapperDeclaredAt))
         );
+      }),
+    ).toEqual([]);
+  });
+
+  test("the SQL generator modules the registry imports are the engines with a row, each exporting its registry row", () => {
+    const ids = Object.keys(SQL_ENGINE_GENERATORS) as DatabaseType[];
+
+    expect(sorted(SQL_GENERATOR_MODULES.map(({ id }) => id))).toEqual(sorted(ids));
+    expect(ids.filter((type) => MODULE_SQL_GENERATORS.get(type) !== SQL_ENGINE_GENERATORS[type])).toEqual([]);
+  });
+
+  test("sqlGenerators is null exactly where the engine has no SQL_ENGINE_GENERATORS row, and states the row's count expression, COUNT(*) where it has none", () => {
+    expect(
+      differing((type, d) => {
+        const row = sqlGeneratorRow(type);
+        if (row === undefined) return d.sqlGenerators === null;
+        return d.sqlGenerators !== null && d.sqlGenerators.countExpression === (row.countExpression ?? "COUNT(*)");
+      }),
+    ).toEqual([]);
+    // Vacuity: some engine writes the shared forms and some does not, and some count is not the shared one.
+    const segments = SHIPPED_DATABASE_TYPES.map((type) => declared(type).sqlGenerators);
+    expect(segments.some((segment) => segment === null)).toBe(true);
+    const counts = segments.flatMap((segment) => (segment === null ? [] : [segment.countExpression]));
+    expect(counts).toContain("COUNT(*)");
+    expect(counts.some((count) => count !== "COUNT(*)")).toBe(true);
+  });
+
+  test("every name an SQL generator declaration states is its member's slot, and resolves through the census's slot table to the very function the engine's own module exports there", () => {
+    const slots = DECLARED_SLOTS as Readonly<Record<string, { readonly table: SlotTable; readonly path: string }>>;
+    expect(
+      SHIPPED_DATABASE_TYPES.flatMap((type) =>
+        sqlGeneratorNames(declared(type)).flatMap(([path, name]) => {
+          const held = valueAt(sqlGeneratorRow(type), path);
+          const isSlot = slots[name]?.table === "SQL_ENGINE_GENERATORS" && slots[name]?.path === path;
+          const resolved = isSlot ? slotFunction(moduleSqlGenerators(type), name as DeclaredSlotName) : undefined;
+          return typeof resolved === "function" && resolved === held ? [] : [`${type}:${path}=${name}`];
+        }),
+      ),
+    ).toEqual([]);
+    // Vacuity: the schema states every SQL generator slot of the table as a function member, and each form other than
+    // the quoting is named on one row and null on another.
+    expect(sorted(SQL_GENERATORS_FUNCTION_PATHS)).toEqual(sorted(tablePaths("SQL_ENGINE_GENERATORS")));
+    const segments = SHIPPED_DATABASE_TYPES.flatMap((type) => {
+      const segment = declared(type).sqlGenerators;
+      return segment === null ? [] : [segment];
+    });
+    for (const form of ["table", "select", "selectList"] as const) {
+      expect(segments.some((segment) => segment[form] === null)).toBe(true);
+      expect(segments.some((segment) => segment[form] !== null)).toBe(true);
+    }
+  });
+
+  test("every function an SQL generator row holds is named at its slot by its engine's declaration, and no slot the row leaves empty is named", () => {
+    expect(
+      SHIPPED_DATABASE_TYPES.flatMap((type) =>
+        functionPaths(sqlGeneratorRow(type), "").flatMap((path) => {
+          const name = slotNameAt("SQL_ENGINE_GENERATORS", path);
+          return name !== undefined && valueAt(declared(type).sqlGenerators, path) === name ? [] : [`${type}:${path}`];
+        }),
+      ),
+    ).toEqual([]);
+    expect(
+      SHIPPED_DATABASE_TYPES.flatMap((type) =>
+        sqlGeneratorNames(declared(type)).flatMap(([path, name]) =>
+          typeof valueAt(sqlGeneratorRow(type), path) === "function" ? [] : [`${type}:${path}=${name}`],
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  test("every member of an SQL generator row has its member in the declaration", () => {
+    const declaredAt: Readonly<Record<keyof SqlEngineGenerators, string>> = {
+      quote: "quote",
+      table: "table",
+      select: "select",
+      selectList: "selectList",
+      countExpression: "countExpression",
+    };
+
+    expect(
+      SHIPPED_DATABASE_TYPES.flatMap((type) =>
+        Object.keys(sqlGeneratorRow(type) ?? {})
+          .filter((member) => !Object.hasOwn(declaredAt, member))
+          .map((member) => `${type}.${member}`),
+      ),
+    ).toEqual([]);
+    expect(
+      differing((_type, d) => {
+        const segment = d.sqlGenerators;
+        return segment === null || Object.values(declaredAt).every((member) => Object.hasOwn(segment, member));
       }),
     ).toEqual([]);
   });

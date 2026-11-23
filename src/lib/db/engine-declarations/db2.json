@@ -293,5 +293,6 @@
     "reasons": [
       "Db2 changes a column with ALTER COLUMN ... SET DATA TYPE and may leave the table REORG-pending; write the change by hand."
     ]
-  }
+  },
+  "sqlGenerators": null
 }

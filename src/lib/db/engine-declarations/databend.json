@@ -373,5 +373,6 @@
       "The engine has no foreign-key constraint.",
       "Databend's CREATE TABLE has no primary-key constraint."
     ]
-  }
+  },
+  "sqlGenerators": null
 }

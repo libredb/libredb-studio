@@ -334,5 +334,6 @@
     "modifyColumn": "modifyColumn",
     "dropTable": "dropTable",
     "reasons": []
-  }
+  },
+  "sqlGenerators": null
 }

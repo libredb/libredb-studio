@@ -23,7 +23,6 @@ const CONNECTION_FIELDS_MODULE = "src/lib/db/connection-fields.ts";
 const POLICY_CLAIM =
   "planned segment: policy claims, each a request a provider makes that only core's review record grants";
 const MCP_CLAIM = "planned segment: MCP claims, each a request a provider makes that only core's review record grants";
-const EDITOR_AND_SQL = "planned segment: editor and SQL text";
 const STATEMENT_FAMILY =
   "core-owned: the vocabulary of a statement language family, which core keeps once for every engine that speaks it";
 
@@ -144,7 +143,11 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     destination:
       "engine declaration: migrationDdl, its table DDL refused with its refusal line or written with its transaction wrapper and CREATE TABLE form, its reasons, each function named by the slot it fills",
   },
-  { module: "src/lib/db/query-generators/index.ts", name: "SQL_ENGINE_GENERATORS", destination: EDITOR_AND_SQL },
+  {
+    module: "src/lib/db/query-generators/index.ts",
+    name: "SQL_ENGINE_GENERATORS",
+    destination: "engine declaration: sqlGenerators, its count expression, each form named by the slot it fills",
+  },
   {
     module: "src/lib/db/sql-grammar/index.ts",
     name: "SQL_GRAMMAR",

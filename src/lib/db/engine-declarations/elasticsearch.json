@@ -278,5 +278,6 @@
     "reasons": [
       "Elasticsearch SQL reads only; change a field by reindexing into an index whose mapping declares it."
     ]
-  }
+  },
+  "sqlGenerators": null
 }

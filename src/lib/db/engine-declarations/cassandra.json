@@ -328,5 +328,6 @@
       "The clause is not in CQL's grammar; enforce the relationship in the application.",
       "CQL never declared one."
     ]
-  }
+  },
+  "sqlGenerators": null
 }

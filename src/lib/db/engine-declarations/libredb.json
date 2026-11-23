@@ -266,5 +266,6 @@
     "reasons": [
       "The embedded engine speaks a JSON command grammar, not SQL DDL."
     ]
-  }
+  },
+  "sqlGenerators": null
 }

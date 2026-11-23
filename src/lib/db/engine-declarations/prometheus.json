@@ -280,5 +280,6 @@
     "reasons": [
       "A metric is written by scrapes and recording rules, not declared with columns, so there is no column definition to change."
     ]
-  }
+  },
+  "sqlGenerators": null
 }

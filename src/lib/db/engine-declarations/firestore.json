@@ -297,5 +297,6 @@
     "reasons": [
       "A document store keeps no schema, so there is no column definition to change."
     ]
-  }
+  },
+  "sqlGenerators": null
 }

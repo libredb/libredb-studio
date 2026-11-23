@@ -339,5 +339,6 @@
       "SQLite declares one only in CREATE TABLE; recreate the table and copy the rows.",
       "Requires table recreation."
     ]
-  }
+  },
+  "sqlGenerators": null
 }
