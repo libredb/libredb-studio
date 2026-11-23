@@ -28,7 +28,32 @@
     "agentCredential": {
       "form": "pair",
       "supersededBy": []
-    }
+    },
+    "dialog": {
+      "order": null,
+      "labels": [],
+      "hints": [
+        {
+          "field": "host",
+          "text": "A name or address only. For etcdctl's --endpoints=https://10.0.0.5:2379, type 10.0.0.5 here, 2379 in Port, and choose an SSL mode under SSL / TLS."
+        },
+        {
+          "field": "user",
+          "text": "Leave User and Password empty to sign in with the client certificate under SSL / TLS (shown in verify-ca and verify-full): etcd uses its Common Name as the user when the server runs with --client-cert-auth. When both are set, etcd uses the password."
+        },
+        {
+          "field": "password",
+          "text": "etcd receives the password, then a token on every call, so a password needs an SSL mode other than disable, with or without an SSH tunnel."
+        }
+      ],
+      "placeholders": [],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [],
+    "credentialWarnings": []
   },
   "facets": {
     "monitoring": {

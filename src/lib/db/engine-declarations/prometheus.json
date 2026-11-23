@@ -28,7 +28,33 @@
     "agentCredential": {
       "form": "pair",
       "supersededBy": []
-    }
+    },
+    "dialog": {
+      "order": null,
+      "labels": [
+        {
+          "field": "user",
+          "text": "User"
+        },
+        {
+          "field": "password",
+          "text": "Password or token"
+        }
+      ],
+      "hints": [
+        {
+          "field": "password",
+          "text": "Leave User empty to send this as a bearer token."
+        }
+      ],
+      "placeholders": [],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [],
+    "credentialWarnings": []
   },
   "facets": {
     "monitoring": {

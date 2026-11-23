@@ -30,7 +30,24 @@
     "agentCredential": {
       "form": "pair",
       "supersededBy": []
-    }
+    },
+    "dialog": {
+      "order": null,
+      "labels": [],
+      "hints": [
+        {
+          "field": "allowInsecureAuth",
+          "text": "With no SSL mode this driver sends the password in cleartext, so the connection is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one."
+        }
+      ],
+      "placeholders": [],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [],
+    "credentialWarnings": []
   },
   "facets": {
     "monitoring": {

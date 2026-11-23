@@ -27,7 +27,59 @@
     "agentCredential": {
       "form": "secret",
       "supersededBy": []
-    }
+    },
+    "dialog": {
+      "order": [
+        "password",
+        "database",
+        "location",
+        "schema"
+      ],
+      "labels": [
+        {
+          "field": "database",
+          "text": "Project ID"
+        },
+        {
+          "field": "schema",
+          "text": "Default dataset"
+        },
+        {
+          "field": "password",
+          "text": "Service-account key JSON or access token"
+        },
+        {
+          "field": "location",
+          "text": "Location"
+        }
+      ],
+      "hints": [
+        {
+          "field": "password",
+          "text": "The whole key file's JSON, or a bearer token. Empty uses the server's own credentials, where the deployment enables them."
+        }
+      ],
+      "placeholders": [
+        {
+          "field": "database",
+          "text": "my-gcp-project"
+        },
+        {
+          "field": "password",
+          "text": "key JSON, a ya29… token, or empty"
+        },
+        {
+          "field": "location",
+          "text": "detected (e.g. EU, US, europe-west3)"
+        }
+      ],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [],
+    "credentialWarnings": []
   },
   "facets": {
     "monitoring": {

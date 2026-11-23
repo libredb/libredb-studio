@@ -31,7 +31,34 @@
     "agentCredential": {
       "form": "pair",
       "supersededBy": []
-    }
+    },
+    "dialog": {
+      "order": null,
+      "labels": [],
+      "hints": [
+        {
+          "field": "authSource",
+          "text": "The database the user was created in, usually admin. Leave empty when the credentials live in the database above."
+        }
+      ],
+      "placeholders": [
+        {
+          "field": "connectionString",
+          "text": "mongodb://localhost:27017/mydb  or  mongodb+srv://..."
+        }
+      ],
+      "placement": [
+        {
+          "field": "authSource",
+          "where": "open"
+        }
+      ],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [],
+    "credentialWarnings": []
   },
   "facets": {
     "monitoring": {

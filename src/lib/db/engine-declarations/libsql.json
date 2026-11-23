@@ -29,7 +29,38 @@
     "agentCredential": {
       "form": "secret",
       "supersededBy": []
-    }
+    },
+    "dialog": {
+      "order": null,
+      "labels": [
+        {
+          "field": "password",
+          "text": "Auth Token"
+        }
+      ],
+      "hints": [
+        {
+          "field": "user",
+          "text": "Only for a self-hosted libSQL server started with SQLD_HTTP_AUTH, which checks a user name and password as HTTP Basic: the Auth Token box then takes the password. Leave it empty for Turso Cloud and for a server that checks tokens."
+        },
+        {
+          "field": "password",
+          "text": "Turso Cloud mints this per database (`turso db tokens create`). A self-hosted libSQL server started without authentication takes none - leave it empty."
+        }
+      ],
+      "placeholders": [
+        {
+          "field": "connectionString",
+          "text": "libsql://<database>-<org>.turso.io?authToken=<jwt>"
+        }
+      ],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [],
+    "credentialWarnings": []
   },
   "facets": {
     "monitoring": {

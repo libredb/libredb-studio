@@ -33,7 +33,81 @@
     "agentCredential": {
       "form": "secret",
       "supersededBy": []
-    }
+    },
+    "dialog": {
+      "order": null,
+      "labels": [
+        {
+          "field": "host",
+          "text": "API server"
+        },
+        {
+          "field": "password",
+          "text": "Token"
+        },
+        {
+          "field": "database",
+          "text": "Default namespace"
+        },
+        {
+          "field": "namespaces",
+          "text": "Namespaces"
+        },
+        {
+          "field": "apiPath",
+          "text": "API path"
+        },
+        {
+          "field": "tlsServerName",
+          "text": "TLS server name"
+        }
+      ],
+      "hints": [
+        {
+          "field": "host",
+          "text": "The API server: a host name or address, or a pasted https:// address such as https://api.example:6443, which is split into Host and Port. A path, such as Rancher's /k8s/clusters/<id>, goes under API path. If Studio runs in a container, localhost is that container: use the cluster's Docker network or host.docker.internal. A typed address also needs SSL Mode under SSL / TLS: verify-full with the cluster's CA, or verify-system; the default, disable, is refused for any host but this machine."
+        },
+        {
+          "field": "port",
+          "text": "kubeadm, k3s and kind serve on 6443; managed clusters (EKS, GKE, AKS, Rancher) usually on 443."
+        },
+        {
+          "field": "password",
+          "text": "A bearer token, without the word Bearer. A ServiceAccount token bound to view or studio-reader is the safest choice; kubectl create token lasts one hour unless --duration says otherwise. Leave empty when a client certificate under SSL / TLS signs in, or for kubectl proxy."
+        },
+        {
+          "field": "database",
+          "text": "Empty means default, as kubectl reads it: the namespace the tree opens on and the console reads when a statement names none."
+        },
+        {
+          "field": "namespaces",
+          "text": "Optional: the namespaces the tree lists, separated by commas or spaces. Set it when this identity may not list namespaces; Studio then reads no namespace list."
+        },
+        {
+          "field": "apiPath",
+          "text": "Optional: a path every request goes under, such as /k8s/clusters/c-m-abc12 for a cluster behind Rancher."
+        },
+        {
+          "field": "tlsServerName",
+          "text": "Optional: the name the API server's certificate is checked against, when it differs from Host (kubeconfig tls-server-name)."
+        }
+      ],
+      "placeholders": [
+        {
+          "field": "database",
+          "text": "default"
+        }
+      ],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [
+      "https",
+      "http"
+    ],
+    "credentialWarnings": []
   },
   "facets": {
     "monitoring": {

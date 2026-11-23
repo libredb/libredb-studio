@@ -30,7 +30,29 @@
     "agentCredential": {
       "form": "pair",
       "supersededBy": []
-    }
+    },
+    "dialog": {
+      "order": null,
+      "labels": [],
+      "hints": [
+        {
+          "field": "serviceName",
+          "text": "If empty, the Database Name field is used as the service name."
+        }
+      ],
+      "placeholders": [],
+      "placement": [
+        {
+          "field": "serviceName",
+          "where": "advanced"
+        }
+      ],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [],
+    "credentialWarnings": []
   },
   "facets": {
     "monitoring": {

@@ -30,7 +30,24 @@
     "agentCredential": {
       "form": "pair",
       "supersededBy": []
-    }
+    },
+    "dialog": {
+      "order": null,
+      "labels": [],
+      "hints": [],
+      "placeholders": [
+        {
+          "field": "connectionString",
+          "text": "mongodb://localhost:27017/mydb  or  mongodb+srv://..."
+        }
+      ],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [],
+    "credentialWarnings": []
   },
   "facets": {
     "monitoring": {

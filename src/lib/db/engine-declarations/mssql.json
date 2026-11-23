@@ -30,7 +30,29 @@
     "agentCredential": {
       "form": "pair",
       "supersededBy": []
-    }
+    },
+    "dialog": {
+      "order": null,
+      "labels": [],
+      "hints": [
+        {
+          "field": "instanceName",
+          "text": "For named instances (e.g. SQLEXPRESS). Leave empty for default instance."
+        }
+      ],
+      "placeholders": [],
+      "placement": [
+        {
+          "field": "instanceName",
+          "where": "advanced"
+        }
+      ],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [],
+    "credentialWarnings": []
   },
   "facets": {
     "monitoring": {

@@ -31,7 +31,38 @@
     "hostPathFields": [],
     "opensLocalFile": false,
     "serverLevelWithoutDatabase": false,
-    "agentCredential": null
+    "agentCredential": null,
+    "dialog": {
+      "order": null,
+      "labels": [
+        {
+          "field": "registerMap",
+          "text": "Register map"
+        }
+      ],
+      "hints": [
+        {
+          "field": "host",
+          "text": "The device enforces nothing of its own, so anything else that reaches its port can write to it. Protection is MODBUS/TCP Security or a network path you control."
+        },
+        {
+          "field": "registerMap",
+          "text": "A JSON array of points, each naming a unit, a table, a zero-based PDU address and a type. Without it a connection can still read a range by address, but no point has a name. Vendor documentation often counts addresses from one; these are the addresses that go on the wire."
+        }
+      ],
+      "placeholders": [
+        {
+          "field": "registerMap",
+          "text": "[{ \"name\": \"volts\", \"unitId\": 1, \"table\": \"holding_register\", \"address\": 100, \"type\": \"uint16\" }]"
+        }
+      ],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [],
+    "credentialWarnings": []
   },
   "facets": {
     "monitoring": {

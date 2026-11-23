@@ -108,22 +108,23 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     module: "src/lib/db/connection-form.ts",
     name: "CONNECTION_FORM",
     destination:
-      "engine declaration: displayName, connection.defaults and connection.tls; the labels, hints, placeholders, placement, rules, options, dialog order and import go to the planned connection presentation segment",
+      "engine declaration: displayName, connection.defaults, connection.tls, connection.dialog, connection.hostUriSchemes and connection.credentialWarnings; the field rules, the host hint and host identity readers and the import go to the planned connection rules segment",
   },
   {
     module: "src/lib/db/connection-string/index.ts",
     name: "CONNECTION_STRING",
-    destination: "planned segment: connection presentation, the connection string schemes and their paste readers",
+    destination:
+      "planned segment: connection string rows, the schemes, their URL TLS and paste readers and seed checks",
   },
   {
     module: "src/lib/db/connection-string/index.ts",
     name: "ENGINE_URI_SCHEMES",
-    destination: "planned segment: connection presentation, the URI schemes derived from the connection string rows",
+    destination: "planned segment: connection string rows, the URI schemes derived from them",
   },
   {
     module: "src/lib/db/credential-warnings.ts",
     name: "CREDENTIAL_WARNINGS",
-    destination: "planned segment: connection presentation, the credential warnings",
+    destination: "engine declaration: connection.credentialWarnings",
   },
   {
     module: "src/lib/db/destructive-commands.ts",

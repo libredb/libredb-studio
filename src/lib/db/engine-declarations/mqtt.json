@@ -30,7 +30,50 @@
     "agentCredential": {
       "form": "pair",
       "supersededBy": []
-    }
+    },
+    "dialog": {
+      "order": null,
+      "labels": [
+        {
+          "field": "database",
+          "text": "Topic filter"
+        }
+      ],
+      "hints": [
+        {
+          "field": "host",
+          "text": "A name or address only. If Studio runs in a container, localhost is that container: use host.docker.internal."
+        },
+        {
+          "field": "user",
+          "text": "A broker username, if the broker checks one; empty for a broker that does not."
+        },
+        {
+          "field": "password",
+          "text": "The password for that username. A password needs an SSL mode other than disable, unless the host is this machine or an SSH tunnel carries the connection."
+        },
+        {
+          "field": "database",
+          "text": "What to subscribe to. Empty means #, every topic except the broker's own $SYS tree, which no # filter reaches. A narrower filter reads less and finishes sooner. $share/, $queue/ and $exclusive/ are refused: each one takes messages away from the devices that need them, and no broker reports that it happened."
+        },
+        {
+          "field": "allowInsecureAuth",
+          "text": "With no SSL mode the username and password cross the network in cleartext. A password sent without TLS to a host that is not this machine is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the broker offers one."
+        }
+      ],
+      "placeholders": [
+        {
+          "field": "database",
+          "text": "#"
+        }
+      ],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [],
+    "credentialWarnings": []
   },
   "facets": {
     "monitoring": {

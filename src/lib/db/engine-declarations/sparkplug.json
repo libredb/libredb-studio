@@ -24,7 +24,38 @@
     "hostPathFields": [],
     "opensLocalFile": false,
     "serverLevelWithoutDatabase": false,
-    "agentCredential": null
+    "agentCredential": null,
+    "dialog": {
+      "order": null,
+      "labels": [
+        {
+          "field": "database",
+          "text": "Group"
+        }
+      ],
+      "hints": [
+        {
+          "field": "host",
+          "text": "A name or address only. If Studio runs in a container, localhost is that container: use host.docker.internal."
+        },
+        {
+          "field": "database",
+          "text": "One Sparkplug group id, or empty for every group. A group is a level of the topic and nothing else: it is not a thing on the broker that can be subscribed to on its own, so an empty field reads every group under spBv1.0 and a filled one reads that group alone."
+        }
+      ],
+      "placeholders": [
+        {
+          "field": "database",
+          "text": ""
+        }
+      ],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [],
+    "credentialWarnings": []
   },
   "facets": {
     "monitoring": {

@@ -258,6 +258,24 @@
         },
         "agentCredential": {
           "$ref": "#/$defs/agentCredential"
+        },
+        "dialog": {
+          "$ref": "#/$defs/connectionDialog"
+        },
+        "hostUriSchemes": {
+          "description": "The URI schemes the dialog's Host box accepts a pasted address in, in the order its refusal names them; empty where it accepts none.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/hostUriScheme"
+          },
+          "uniqueItems": true
+        },
+        "credentialWarnings": {
+          "description": "The credentials the engine warns about, read by the connection dialog and at seed load, in the order they are read.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/credentialWarning"
+          }
         }
       },
       "required": [
@@ -271,8 +289,325 @@
         "hostPathFields",
         "opensLocalFile",
         "serverLevelWithoutDatabase",
-        "agentCredential"
+        "agentCredential",
+        "dialog",
+        "hostUriSchemes",
+        "credentialWarnings"
       ],
+      "additionalProperties": false
+    },
+    "connectionDialog": {
+      "description": "How the connection dialog presents the engine's fields. Each list holds at most one entry per field, each naming a field the engine takes; a field with no entry keeps the dialog's own word.",
+      "type": "object",
+      "properties": {
+        "order": {
+          "description": "The order the dialog draws the fields in, the fields left out drawn after them; null where the dialog keeps its own order.",
+          "type": ["array", "null"],
+          "items": {
+            "$ref": "#/$defs/fieldName"
+          },
+          "uniqueItems": true
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldLabel"
+          }
+        },
+        "hints": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldHint"
+          }
+        },
+        "placeholders": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldPlaceholder"
+          }
+        },
+        "placement": {
+          "description": "Where each placeable field the engine takes is drawn; every one of them has an entry.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldPlacementEntry"
+          }
+        },
+        "options": {
+          "description": "The choices of each select field the engine takes; every one of them has an entry.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldOptions"
+          }
+        },
+        "shownWhen": {
+          "description": "The fields the dialog draws only while another field holds one value; a field hidden by its condition is neither saved nor required.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldShownWhen"
+          }
+        },
+        "absentValues": {
+          "description": "The value a connection that leaves a field absent is read as, declared for a field a condition reads.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldAbsentValue"
+          }
+        }
+      },
+      "required": ["order", "labels", "hints", "placeholders", "placement", "options", "shownWhen", "absentValues"],
+      "additionalProperties": false
+    },
+    "fieldLabel": {
+      "description": "The label the dialog draws for a field in place of its own.",
+      "type": "object",
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/fieldName"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": ["field", "text"],
+      "additionalProperties": false
+    },
+    "fieldHint": {
+      "description": "The sentence the dialog draws under a field.",
+      "type": "object",
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/fieldName"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": ["field", "text"],
+      "additionalProperties": false
+    },
+    "fieldPlaceholder": {
+      "description": "The example the dialog draws in an empty field in place of its own; the empty string means no example.",
+      "type": "object",
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/fieldName"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 256
+        }
+      },
+      "required": ["field", "text"],
+      "additionalProperties": false
+    },
+    "fieldPlacementEntry": {
+      "description": "Where the dialog draws one placeable field.",
+      "type": "object",
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/placeableFieldName"
+        },
+        "where": {
+          "$ref": "#/$defs/fieldPlacement"
+        }
+      },
+      "required": ["field", "where"],
+      "additionalProperties": false
+    },
+    "placeableFieldName": {
+      "description": "The fields the dialog draws either in the open or behind Advanced, by the engine's placement.",
+      "type": "string",
+      "enum": ["authSource", "localDataCenter", "serviceName", "instanceName"]
+    },
+    "fieldPlacement": {
+      "description": "open: drawn with the other fields. advanced: drawn behind Advanced.",
+      "type": "string",
+      "enum": ["open", "advanced"]
+    },
+    "selectFieldName": {
+      "description": "The fields the dialog draws as a select, whose choices each engine that takes one declares.",
+      "type": "string",
+      "enum": ["saslMechanism", "authMethod"]
+    },
+    "fieldOptions": {
+      "description": "The choices of one select field, in the order the dialog lists them.",
+      "type": "object",
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/selectFieldName"
+        },
+        "choices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldChoice"
+          },
+          "minItems": 1
+        }
+      },
+      "required": ["field", "choices"],
+      "additionalProperties": false
+    },
+    "fieldChoice": {
+      "description": "One choice of a select: the value saved and the label drawn.",
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": ["value", "label"],
+      "additionalProperties": false
+    },
+    "fieldShownWhen": {
+      "description": "A field the dialog draws only while its condition holds.",
+      "type": "object",
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/fieldName"
+        },
+        "when": {
+          "$ref": "#/$defs/fieldCondition"
+        }
+      },
+      "required": ["field", "when"],
+      "additionalProperties": false
+    },
+    "fieldCondition": {
+      "description": "One field equals one value, the field's absent value standing for a value the connection leaves absent.",
+      "type": "object",
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/fieldName"
+        },
+        "equals": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": ["field", "equals"],
+      "additionalProperties": false
+    },
+    "fieldAbsentValue": {
+      "description": "The value a connection that leaves the field absent is read as, by the dialog, by core and by the provider.",
+      "type": "object",
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/fieldName"
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": ["field", "value"],
+      "additionalProperties": false
+    },
+    "hostUriScheme": {
+      "type": "string",
+      "enum": ["http", "https"]
+    },
+    "credentialWarning": {
+      "description": "A credential the engine warns about.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/pairWarning"
+        },
+        {
+          "$ref": "#/$defs/jwtWarning"
+        },
+        {
+          "$ref": "#/$defs/noSecretWarning"
+        }
+      ]
+    },
+    "pairWarning": {
+      "description": "A published default user and password: the dialog warns when both are typed, and a read-only seed with them is refused.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "pair"
+        },
+        "user": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "password": {
+          "description": "The published default password; the empty string where the default is no password.",
+          "type": "string",
+          "maxLength": 128
+        },
+        "message": {
+          "description": "The warning's sentence, which Studio frames with its own words in the dialog and at seed load.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": ["kind", "user", "password", "message"],
+      "additionalProperties": false
+    },
+    "jwtWarning": {
+      "description": "A JSON Web Token in the password field, decoded locally: the dialog warns when it declares no expiry or one of the access claims named.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "jwt"
+        },
+        "noExp": {
+          "const": true
+        },
+        "access": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/jwtAccessClaim"
+          },
+          "uniqueItems": true
+        },
+        "message": {
+          "description": "The warning's sentence, which Studio frames with its own words in the dialog and at seed load.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": ["kind", "noExp", "access", "message"],
+      "additionalProperties": false
+    },
+    "jwtAccessClaim": {
+      "description": "m: the token declares manage access. absent: the token declares no access claim at all.",
+      "type": "string",
+      "enum": ["m", "absent"]
+    },
+    "noSecretWarning": {
+      "description": "A server that accepts a connection with no password: a read-only seed without one is refused.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "no-secret"
+        },
+        "message": {
+          "description": "The warning's sentence, which Studio frames with its own words in the dialog and at seed load.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": ["kind", "message"],
       "additionalProperties": false
     },
     "connectionDefaults": {

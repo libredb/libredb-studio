@@ -32,7 +32,159 @@
     "hostPathFields": [],
     "opensLocalFile": false,
     "serverLevelWithoutDatabase": false,
-    "agentCredential": null
+    "agentCredential": null,
+    "dialog": {
+      "order": null,
+      "labels": [
+        {
+          "field": "host",
+          "text": "Account"
+        },
+        {
+          "field": "user",
+          "text": "User"
+        },
+        {
+          "field": "authMethod",
+          "text": "Sign-in"
+        },
+        {
+          "field": "privateKey",
+          "text": "Private key"
+        },
+        {
+          "field": "privateKeyPassphrase",
+          "text": "Passphrase"
+        },
+        {
+          "field": "password",
+          "text": "Access token"
+        },
+        {
+          "field": "warehouse",
+          "text": "Warehouse"
+        },
+        {
+          "field": "database",
+          "text": "Database"
+        },
+        {
+          "field": "schema",
+          "text": "Schema"
+        },
+        {
+          "field": "role",
+          "text": "Role"
+        }
+      ],
+      "hints": [
+        {
+          "field": "host",
+          "text": "An account identifier such as myorg-myaccount, or its https:// URL."
+        },
+        {
+          "field": "user",
+          "text": "The user's login name (LOGIN_NAME)."
+        },
+        {
+          "field": "privateKey",
+          "text": "Paste the private key's contents. Studio reads no key file."
+        },
+        {
+          "field": "privateKeyPassphrase",
+          "text": "Only for an encrypted key."
+        },
+        {
+          "field": "password",
+          "text": "A programmatic access token for this user."
+        },
+        {
+          "field": "warehouse",
+          "text": "Leave empty to use the user's default warehouse. Queries need one; browsing does not."
+        },
+        {
+          "field": "database",
+          "text": "Opened first in the tree, and the default for unqualified names."
+        },
+        {
+          "field": "schema",
+          "text": "The default schema for unqualified names."
+        },
+        {
+          "field": "role",
+          "text": "Every statement runs as this role; Studio checks it when it connects."
+        }
+      ],
+      "placeholders": [
+        {
+          "field": "host",
+          "text": "myorg-myaccount"
+        },
+        {
+          "field": "user",
+          "text": ""
+        },
+        {
+          "field": "privateKey",
+          "text": "-----BEGIN PRIVATE KEY-----"
+        },
+        {
+          "field": "database",
+          "text": ""
+        },
+        {
+          "field": "schema",
+          "text": ""
+        }
+      ],
+      "placement": [],
+      "options": [
+        {
+          "field": "authMethod",
+          "choices": [
+            {
+              "value": "keypair",
+              "label": "Key pair"
+            },
+            {
+              "value": "pat",
+              "label": "Programmatic access token"
+            }
+          ]
+        }
+      ],
+      "shownWhen": [
+        {
+          "field": "privateKey",
+          "when": {
+            "field": "authMethod",
+            "equals": "keypair"
+          }
+        },
+        {
+          "field": "privateKeyPassphrase",
+          "when": {
+            "field": "authMethod",
+            "equals": "keypair"
+          }
+        },
+        {
+          "field": "password",
+          "when": {
+            "field": "authMethod",
+            "equals": "pat"
+          }
+        }
+      ],
+      "absentValues": [
+        {
+          "field": "authMethod",
+          "value": "keypair"
+        }
+      ]
+    },
+    "hostUriSchemes": [],
+    "credentialWarnings": []
   },
   "facets": {
     "monitoring": {

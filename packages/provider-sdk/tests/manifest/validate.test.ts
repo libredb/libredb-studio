@@ -56,6 +56,32 @@ const NATIVE = {
   nodeApi: 8,
 };
 
+/** The connection of the fixture's one engine. */
+const connectionOf = (m: Json): Json => m.engines[0].connection;
+
+/**
+ * The fixture's engine shaped like Snowflake's sign-in: a select, `authMethod`, whose choices are `keypair` and `pat`,
+ * a private key shown only on `keypair`, a password shown only on `pat`, and `keypair` as the absent value.
+ */
+function signInShaped(m: Json): void {
+  const connection = connectionOf(m);
+  connection.fields = ["host", "user", "authMethod", "privateKey", "password", "warehouse"];
+  connection.dialog.options = [
+    {
+      field: "authMethod",
+      choices: [
+        { value: "keypair", label: "Key pair" },
+        { value: "pat", label: "Programmatic access token" },
+      ],
+    },
+  ];
+  connection.dialog.shownWhen = [
+    { field: "privateKey", when: { field: "authMethod", equals: "keypair" } },
+    { field: "password", when: { field: "authMethod", equals: "pat" } },
+  ];
+  connection.dialog.absentValues = [{ field: "authMethod", value: "keypair" }];
+}
+
 describe("schema refusals", () => {
   test.each([
     ["at the top level", (m: Json) => (m.bogus = 1), ""],
@@ -70,6 +96,13 @@ describe("schema refusals", () => {
     ["contract", (m: Json) => delete m.contract, "", "contract"],
     ["engines", (m: Json) => delete m.engines, "", "engines"],
     ["connection.refused", (m: Json) => delete m.engines[0].connection.refused, "/engines/0/connection", "refused"],
+    ["connection.dialog", (m: Json) => delete m.engines[0].connection.dialog, "/engines/0/connection", "dialog"],
+    [
+      "connection.dialog.absentValues",
+      (m: Json) => delete m.engines[0].connection.dialog.absentValues,
+      "/engines/0/connection/dialog",
+      "absentValues",
+    ],
     [
       "facets.monitoring.storage",
       (m: Json) => delete m.engines[0].facets.monitoring.storage,
@@ -164,6 +197,111 @@ describe("schema refusals", () => {
     expect(refusalsFor(changed)).toEqual([refusal("no-variant", "/compatibility/0/versions")]);
   });
 
+  test.each([
+    ["a label longer than 128 characters", "labels", "x".repeat(129)],
+    ["an empty label", "labels", ""],
+    ["a hint longer than 2000 characters", "hints", "x".repeat(2001)],
+    ["an empty hint", "hints", ""],
+    ["a placeholder longer than 256 characters", "placeholders", "x".repeat(257)],
+  ])("%s is refused as out-of-range", (_name, list, text) => {
+    const changed = manifest((m) => (connectionOf(m).dialog[list] = [{ field: "user", text }]));
+
+    expect(refusalsFor(changed)).toEqual([refusal("out-of-range", `/engines/0/connection/dialog/${list}/0/text`)]);
+  });
+
+  test("an empty placeholder is admitted: it means the field shows no example", () => {
+    const changed = manifest((m) => (connectionOf(m).dialog.placeholders = [{ field: "user", text: "" }]));
+
+    expect(refusalsFor(changed)).toEqual([]);
+  });
+
+  test("a placement for a field that is not placeable is refused as value-not-allowed", () => {
+    const changed = manifest((m) => (connectionOf(m).dialog.placement = [{ field: "host", where: "open" }]));
+
+    expect(refusalsFor(changed)).toEqual([
+      refusal("value-not-allowed", "/engines/0/connection/dialog/placement/0/field"),
+    ]);
+  });
+
+  test("a placement other than open or advanced is refused as value-not-allowed", () => {
+    const changed = manifest((m) => {
+      connectionOf(m).fields.push("serviceName");
+      connectionOf(m).dialog.placement = [{ field: "serviceName", where: "hidden" }];
+    });
+
+    expect(refusalsFor(changed)).toEqual([
+      refusal("value-not-allowed", "/engines/0/connection/dialog/placement/0/where"),
+    ]);
+  });
+
+  test("choices for a field that is not a select are refused as value-not-allowed", () => {
+    const changed = manifest(
+      (m) => (connectionOf(m).dialog.options = [{ field: "database", choices: [{ value: "a", label: "A" }] }]),
+    );
+
+    expect(refusalsFor(changed)).toEqual([
+      refusal("value-not-allowed", "/engines/0/connection/dialog/options/0/field"),
+    ]);
+  });
+
+  test("an options entry with no choice is refused as too-few", () => {
+    const changed = manifest((m) => {
+      connectionOf(m).fields.push("saslMechanism");
+      connectionOf(m).dialog.options = [{ field: "saslMechanism", choices: [] }];
+    });
+
+    expect(refusalsFor(changed)).toEqual([refusal("too-few", "/engines/0/connection/dialog/options/0/choices")]);
+  });
+
+  test("a dialog order naming a field twice is refused as duplicate at the second", () => {
+    const changed = manifest((m) => (connectionOf(m).dialog.order = ["user", "host", "user"]));
+
+    expect(refusalsFor(changed)).toEqual([refusal("duplicate", "/engines/0/connection/dialog/order/2")]);
+  });
+
+  test("a condition with a second key is refused as unknown-key", () => {
+    const changed = manifest((m) => {
+      signInShaped(m);
+      connectionOf(m).dialog.shownWhen[0].when.in = ["keypair", "pat"];
+    });
+
+    expect(refusalsFor(changed)).toEqual([
+      refusal("unknown-key", "/engines/0/connection/dialog/shownWhen/0/when", "in"),
+    ]);
+  });
+
+  test("a URI scheme other than http or https is refused as value-not-allowed", () => {
+    const changed = manifest((m) => (connectionOf(m).hostUriSchemes = ["https", "ftp"]));
+
+    expect(refusalsFor(changed)).toEqual([refusal("value-not-allowed", "/engines/0/connection/hostUriSchemes/1")]);
+  });
+
+  test("the three credential warning kinds are admitted, a pair with an empty password among them", () => {
+    const changed = manifest(
+      (m) =>
+        (connectionOf(m).credentialWarnings = [
+          { kind: "pair", user: "root", password: "", message: randomUUID() },
+          { kind: "pair", user: "admin", password: randomUUID(), message: randomUUID() },
+          { kind: "jwt", noExp: true, access: ["m", "absent"], message: randomUUID() },
+          { kind: "jwt", noExp: true, access: [], message: randomUUID() },
+          { kind: "no-secret", message: randomUUID() },
+        ]),
+    );
+
+    expect(refusalsFor(changed)).toEqual([]);
+  });
+
+  test.each([
+    ["of no known kind", { kind: "default", message: "m" }],
+    ["of the jwt kind with noExp false", { kind: "jwt", noExp: false, access: [], message: "m" }],
+    ["of the jwt kind naming one access claim twice", { kind: "jwt", noExp: true, access: ["m", "m"], message: "m" }],
+    ["of the pair kind with no user", { kind: "pair", password: "", message: "m" }],
+  ])("a credential warning %s is one no-variant refusal", (_name, warning) => {
+    const changed = manifest((m) => (connectionOf(m).credentialWarnings = [warning]));
+
+    expect(refusalsFor(changed)).toEqual([refusal("no-variant", "/engines/0/connection/credentialWarnings/0")]);
+  });
+
   test("several failures are each refused, ordered by pointer", () => {
     const changed = manifest((m) => {
       m.bogus = true;
@@ -250,6 +388,224 @@ describe("rules the schema cannot state", () => {
     ]);
   });
 
+  test.each([
+    ["a label", "labels", { field: "warehouse", text: "Warehouse" }],
+    ["a hint", "hints", { field: "warehouse", text: "w" }],
+    ["a placeholder", "placeholders", { field: "warehouse", text: "" }],
+    ["a placement", "placement", { field: "serviceName", where: "open" }],
+    ["an options entry", "options", { field: "saslMechanism", choices: [{ value: "PLAIN", label: "PLAIN" }] }],
+  ])("%s for a field the engine does not take is refused as field-undeclared", (_name, list, entry) => {
+    const changed = manifest((m) => (connectionOf(m).dialog[list] = [entry]));
+
+    expect(refusalsFor(changed)).toEqual([refusal("field-undeclared", `/engines/0/connection/dialog/${list}/0/field`)]);
+  });
+
+  test("an order item naming a field the engine does not take is refused as field-undeclared", () => {
+    const changed = manifest((m) => (connectionOf(m).dialog.order = ["host", "warehouse"]));
+
+    expect(refusalsFor(changed)).toEqual([refusal("field-undeclared", "/engines/0/connection/dialog/order/1")]);
+  });
+
+  test("a condition on, or reading, a field the engine does not take is refused as field-undeclared", () => {
+    const shown = manifest((m) => {
+      signInShaped(m);
+      connectionOf(m).dialog.shownWhen.push({ field: "region", when: { field: "authMethod", equals: "pat" } });
+    });
+    const read = manifest((m) => {
+      signInShaped(m);
+      connectionOf(m).dialog.shownWhen[1].when.field = "region";
+    });
+
+    expect(refusalsFor(shown)).toEqual([refusal("field-undeclared", "/engines/0/connection/dialog/shownWhen/2/field")]);
+    expect(refusalsFor(read)).toEqual([
+      refusal("field-undeclared", "/engines/0/connection/dialog/shownWhen/1/when/field"),
+    ]);
+  });
+
+  test("two entries of one list naming one field are refused as dialog-entry-duplicate at the second", () => {
+    const changed = manifest(
+      (m) =>
+        (connectionOf(m).dialog.labels = [
+          { field: "password", text: "Token" },
+          { field: "user", text: "Login" },
+          { field: "password", text: "Secret" },
+        ]),
+    );
+    const across = manifest((m) => {
+      connectionOf(m).dialog.labels = [{ field: "password", text: "Token" }];
+      connectionOf(m).dialog.hints = [{ field: "password", text: "A token." }];
+    });
+
+    expect(refusalsFor(changed)).toEqual([
+      refusal("dialog-entry-duplicate", "/engines/0/connection/dialog/labels/2/field"),
+    ]);
+    expect(refusalsFor(across)).toEqual([]);
+  });
+
+  test("a placeable field the engine takes with no placement is refused as placement-missing", () => {
+    const changed = manifest((m) => connectionOf(m).fields.push("serviceName"));
+    const placed = manifest((m) => {
+      connectionOf(m).fields.push("serviceName");
+      connectionOf(m).dialog.placement = [{ field: "serviceName", where: "advanced" }];
+    });
+
+    expect(refusalsFor(changed)).toEqual([refusal("placement-missing", "/engines/0/connection/fields/5")]);
+    expect(refusalsFor(placed)).toEqual([]);
+  });
+
+  test("a select field the engine takes with no options is refused as options-missing", () => {
+    const changed = manifest((m) => connectionOf(m).fields.push("saslMechanism"));
+
+    expect(refusalsFor(changed)).toEqual([refusal("options-missing", "/engines/0/connection/fields/5")]);
+  });
+
+  test("two choices of one field with one value are refused as option-value-duplicate at the second", () => {
+    const changed = manifest((m) => {
+      connectionOf(m).fields.push("saslMechanism");
+      connectionOf(m).dialog.options = [
+        {
+          field: "saslMechanism",
+          choices: [
+            { value: "PLAIN", label: "PLAIN" },
+            { value: "SCRAM-SHA-256", label: "SCRAM" },
+            { value: "PLAIN", label: "Plain text" },
+          ],
+        },
+      ];
+    });
+
+    expect(refusalsFor(changed)).toEqual([
+      refusal("option-value-duplicate", "/engines/0/connection/dialog/options/0/choices/2/value"),
+    ]);
+  });
+
+  test("a condition reading a field that has a condition of its own is refused as shown-when-chained", () => {
+    const chained = manifest((m) => {
+      signInShaped(m);
+      connectionOf(m).dialog.shownWhen.push({ field: "warehouse", when: { field: "privateKey", equals: "x" } });
+    });
+    const itself = manifest((m) => {
+      signInShaped(m);
+      connectionOf(m).dialog.shownWhen.push({ field: "warehouse", when: { field: "warehouse", equals: "x" } });
+    });
+
+    expect(refusalsFor(chained)).toEqual([
+      refusal("shown-when-chained", "/engines/0/connection/dialog/shownWhen/2/when/field"),
+    ]);
+    expect(refusalsFor(itself)).toEqual([
+      refusal("shown-when-chained", "/engines/0/connection/dialog/shownWhen/2/when/field"),
+    ]);
+  });
+
+  test("a condition on a select naming a value none of its choices is refused as shown-when-value-not-an-option", () => {
+    const changed = manifest((m) => {
+      signInShaped(m);
+      connectionOf(m).dialog.shownWhen[1].when.equals = "oauth";
+    });
+
+    expect(refusalsFor(changed)).toEqual([
+      refusal("shown-when-value-not-an-option", "/engines/0/connection/dialog/shownWhen/1/when/equals"),
+    ]);
+  });
+
+  test("an absent value that is none of its field's choices is refused as absent-value-not-an-option", () => {
+    const changed = manifest((m) => {
+      signInShaped(m);
+      connectionOf(m).dialog.absentValues[0].value = "oauth";
+    });
+
+    expect(refusalsFor(changed)).toEqual([
+      refusal("absent-value-not-an-option", "/engines/0/connection/dialog/absentValues/0/value"),
+    ]);
+  });
+
+  test("an absent value for a field no condition reads is refused as absent-value-unread", () => {
+    const changed = manifest((m) => {
+      signInShaped(m);
+      connectionOf(m).dialog.absentValues.push({ field: "warehouse", value: "compute" });
+    });
+
+    expect(refusalsFor(changed)).toEqual([
+      refusal("absent-value-unread", "/engines/0/connection/dialog/absentValues/1/field"),
+    ]);
+  });
+
+  test("a select field a condition reads with no absent value is refused as absent-value-missing", () => {
+    const changed = manifest((m) => {
+      signInShaped(m);
+      connectionOf(m).dialog.absentValues = [];
+    });
+    const textField = manifest((m) => {
+      signInShaped(m);
+      connectionOf(m).dialog.shownWhen.push({ field: "warehouse", when: { field: "user", equals: "admin" } });
+    });
+
+    expect(refusalsFor(changed)).toEqual([
+      refusal("absent-value-missing", "/engines/0/connection/dialog/shownWhen/0/when/field"),
+      refusal("absent-value-missing", "/engines/0/connection/dialog/shownWhen/1/when/field"),
+    ]);
+    expect(refusalsFor(textField)).toEqual([]);
+  });
+
+  test("URI schemes on an engine without a host field are refused as host-uri-schemes-without-host", () => {
+    const changed = manifest((m) => {
+      connectionOf(m).fields = ["user", "password", "database"];
+      connectionOf(m).hostUriSchemes = ["https"];
+    });
+    const withHost = manifest((m) => (connectionOf(m).hostUriSchemes = ["https", "http"]));
+
+    expect(refusalsFor(changed)).toEqual([
+      refusal("host-uri-schemes-without-host", "/engines/0/connection/hostUriSchemes"),
+    ]);
+    expect(refusalsFor(withHost)).toEqual([]);
+  });
+
+  test("a credential warning on a field the engine does not take is refused as credential-warning-field-undeclared", () => {
+    const changed = manifest((m) => {
+      connectionOf(m).fields = ["host", "port", "password"];
+      connectionOf(m).credentialWarnings = [
+        { kind: "no-secret", message: randomUUID() },
+        { kind: "pair", user: "admin", password: randomUUID(), message: randomUUID() },
+      ];
+    });
+    const noPassword = manifest((m) => {
+      connectionOf(m).fields = ["host", "port", "user"];
+      connectionOf(m).credentialWarnings = [
+        { kind: "jwt", noExp: true, access: [], message: randomUUID() },
+        { kind: "no-secret", message: randomUUID() },
+        { kind: "pair", user: "admin", password: randomUUID(), message: randomUUID() },
+      ];
+    });
+
+    expect(refusalsFor(changed)).toEqual([
+      refusal("credential-warning-field-undeclared", "/engines/0/connection/credentialWarnings/1"),
+    ]);
+    expect(refusalsFor(noPassword)).toEqual([
+      refusal("credential-warning-field-undeclared", "/engines/0/connection/credentialWarnings/0"),
+      refusal("credential-warning-field-undeclared", "/engines/0/connection/credentialWarnings/1"),
+      refusal("credential-warning-field-undeclared", "/engines/0/connection/credentialWarnings/2"),
+    ]);
+  });
+
+  test("a second no-secret warning is refused as no-secret-warning-duplicate", () => {
+    const changed = manifest(
+      (m) =>
+        (connectionOf(m).credentialWarnings = [
+          { kind: "no-secret", message: randomUUID() },
+          { kind: "jwt", noExp: true, access: ["m"], message: randomUUID() },
+          { kind: "no-secret", message: randomUUID() },
+        ]),
+    );
+
+    expect(refusalsFor(changed)).toEqual([
+      refusal("no-secret-warning-duplicate", "/engines/0/connection/credentialWarnings/2"),
+    ]);
+  });
+
+  test("a sign-in shaped like Snowflake's is admitted", () => {
+    expect(refusalsFor(manifest(signInShaped))).toEqual([]);
+  });
+
   test("the rules run only on a manifest the schema admits", () => {
     const changed = manifest((m) => {
       m.engines.push(structuredClone(m.engines[0]));
@@ -311,6 +667,19 @@ describe("one engine declaration", () => {
       refusals: [refusal("refused-field-declared", "/connection/refused/0")],
     });
   });
+  test("an engine declaration's dialog is held to the rules the schema cannot state, at pointers into it", () => {
+    const declaration = engine();
+    declaration.connection.fields.push("serviceName");
+    declaration.connection.dialog.hints = [{ field: "warehouse", text: "w" }];
+
+    expect(validator.validateEngine(declaration)).toEqual({
+      admitted: false,
+      refusals: [
+        refusal("field-undeclared", "/connection/dialog/hints/0/field"),
+        refusal("placement-missing", "/connection/fields/5"),
+      ],
+    });
+  });
 });
 
 describe("refusals carry no value", () => {
@@ -326,7 +695,16 @@ describe("refusals carry no value", () => {
 
   test("no refusal carries a value of the manifest", () => {
     const planted = `planted-${randomUUID()}`;
-    const changed = plant(manifest(), planted) as Json;
+    const changed = plant(
+      manifest((m) => {
+        signInShaped(m);
+        connectionOf(m).dialog.labels = [{ field: "user", text: "Login" }];
+        connectionOf(m).dialog.hints = [{ field: "user", text: "The login name." }];
+        connectionOf(m).dialog.placeholders = [{ field: "user", text: "admin" }];
+        connectionOf(m).credentialWarnings = [{ kind: "no-secret", message: "Set a password." }];
+      }),
+      planted,
+    ) as Json;
     changed.contract = "0.1";
     changed.engines[0].connection.defaults.port = planted;
     changed.engines[0].connection.seedOnly = plant(SEED_ONLY, planted);

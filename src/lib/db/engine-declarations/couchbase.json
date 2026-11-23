@@ -31,7 +31,29 @@
     "agentCredential": {
       "form": "pair",
       "supersededBy": []
-    }
+    },
+    "dialog": {
+      "order": null,
+      "labels": [
+        {
+          "field": "database",
+          "text": "Bucket Name"
+        }
+      ],
+      "hints": [],
+      "placeholders": [
+        {
+          "field": "connectionString",
+          "text": "couchbase://localhost:8091/travel-sample  or  couchbases://cb.<id>.cloud.couchbase.com/..."
+        }
+      ],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [],
+    "credentialWarnings": []
   },
   "facets": {
     "monitoring": {
