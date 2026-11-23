@@ -1,8 +1,11 @@
 /**
- * The host core instance (docs/providers/CONTRACT.md, clause C-52), part of the provider host core.
+ * The host core instance (docs/providers/CONTRACT.md, clauses C-52 and C-53), part of the provider host core.
  *
  * `createHostCore` answers what a composition root installs once per process (src/lib/provider-host/instance.ts): the
- * core's console calls, `executeCall` and `cancelCall`, by identity, in a frozen object, and nothing else.
+ * core's console calls in a frozen object, and nothing else. `executeCall` is bound to a page budget of
+ * `LARGE_PAGE_SLOTS` slots the core creates for itself (src/lib/provider-host/core/page-budget.ts), so the process holds
+ * one page budget as it holds one core; `cancelCall` pumps nothing and is the console's own function. The budget is not
+ * exposed: it is reached only through the core's execute.
  *
  * Next.js bundles instrumentation apart from every route handler, and each bundle holds its own copy of Studio's error
  * classes (docs/ARCHITECTURE.md, "The provider host core"). The core answers records and constructs no class, so the
@@ -11,15 +14,13 @@
  * built by the caller per call, so the instance holds no port and no logger. The open tables and the teardown stay the
  * factory's, per bundle, since the factory is part of the npm package and needs no core.
  */
-import { cancelCall, executeCall } from "./console";
+import { type ConsoleCalls, consoleCalls } from "./console";
+import { createPageBudget, LARGE_PAGE_SLOTS } from "./page-budget";
 
-/** The host core one process holds: the core's console calls, by identity. */
-export interface HostCore {
-  readonly executeCall: typeof executeCall;
-  readonly cancelCall: typeof cancelCall;
-}
+/** The host core one process holds: the core's console calls, on its page budget. */
+export type HostCore = ConsoleCalls;
 
-/** A new host core instance, frozen, for a composition root to install. */
+/** A new host core instance, with a page budget of its own, frozen, for a composition root to install. */
 export function createHostCore(): HostCore {
-  return Object.freeze({ executeCall, cancelCall });
+  return Object.freeze(consoleCalls(createPageBudget(LARGE_PAGE_SLOTS)));
 }

@@ -645,11 +645,12 @@ A 100,000-row wide page is larger than 32 MiB, so the host answers its first 32 
 
 The runner bundles its case module with `Bun.build` into a temporary directory under `node_modules/.cache`, so the bundle's external packages resolve from the repository's own `node_modules`, then runs one fresh Node child per case and path, one at a time, under `--expose-gc --max-old-space-size=3000` with a 300 s timeout.
 The child's entry is its composition root: it installs the process's host core (`installHostCore(createHostCore(), "benchmark-case")`, `src/lib/provider-host/instance.ts`) before the case runs, as `register()` does for the server.
+The case reads its event-loop slice through that installed core (`hostCore().executeCall`), so the slices run on the process's one page budget as production does, and it releases each page record once the page answered.
 It prints the machine, the runtime, every case and a pass or fail per threshold, and exits 1 when a threshold fails or a case failed.
 The lead runs it on the reference machine before a change to the host's query path, through `heavy` with the production Node: `HEAVY_RUN_MEMORY_MAX=4G heavy bun run bench:host-page -- --node <path to node 26.13.1>`.
 A failed threshold is the owner's decision, never a silent change of the threshold or of the path.
 It never runs in `bun run test`: its timings hold only on an idle machine, not on a shared runner.
-`tests/unit/host-page-benchmark.test.ts`, which does run there, holds that the case module imports the production facade, bridge and core and declares no pump of its own, that both paths answer the same text on a small page of each shape, that the comparison reads every answered row, a page cut by bytes included, and that the runner's thresholds are T1 to T5.
+`tests/unit/host-page-benchmark.test.ts`, which does run there, holds that the case module imports the production facade, bridge and installed core and declares no pump of its own, that both paths answer the same text on a small page of each shape, that the comparison reads every answered row, a page cut by bytes included, and that the runner's thresholds are T1 to T5.
 
 ## Workspace packages (`packages/`)
 

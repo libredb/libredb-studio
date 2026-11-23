@@ -240,8 +240,11 @@ function callContext(deadline: number, caller: AbortSignal): CallContext {
  * accessor that read this bundle's classes stay this bundle's, built per call. It builds a fresh request and
  * context for each call, so the core freezes nothing a caller holds; the core checks the call before it is made,
  * waits for it until its deadline or the caller's going, and pumps its first result within the 32 MiB page budget
- * with a turn of the event loop before every pull. The accessor turns each record the core answers into this bundle's
- * own error class.
+ * with a turn of the event loop before every pull. A page that needs more than one batch waits for the core's one
+ * large-page slot (clause C-53), and the facade releases the page record once it has built the answer body, in a
+ * `finally`, so the next large page waits for no more than that. A page whose wait for the slot its deadline ended
+ * answers `StudioTimeoutRefusal` in a sentence naming that wait, outcome unknown, since the statement ran (clause C-54).
+ * The accessor turns each record the core answers into this bundle's own error class.
  *
  * A caller that goes while the statement runs is answered at once, and the core sends the run's cancel; the
  * statement's own end is handled late, logged by kind and code when it fails, unless it is the provider's cancellation
@@ -255,6 +258,11 @@ export async function runEditorQuery(provider: DatabaseProvider, run: EditorQuer
   const view: CallerView = {
     caller: run.signal,
     deadlineSentence: `The statement did not answer within its timeout of ${waitedSeconds(statementTimeout(provider))} and ${waitedSeconds(EXECUTE_SLACK_MS)} more for the engine's own answer, so Studio stopped waiting for it.`,
+  };
+  // The statement answered, but its page waited for the core's large-page slot until the deadline (clause C-54).
+  const slotView: CallerView = {
+    caller: run.signal,
+    deadlineSentence: `The statement answered, but its page waited for another large page to be answered past its timeout of ${waitedSeconds(statementTimeout(provider))} and ${waitedSeconds(EXECUTE_SLACK_MS)} more, so Studio stopped waiting for it.`,
   };
   const bridged = bridgedConsole(provider, run.options);
   const request: ExecuteRequest = {
@@ -271,69 +279,74 @@ export async function runEditorQuery(provider: DatabaseProvider, run: EditorQuer
     hostPorts(run.route, () => bridged.run.cancelSent),
   );
   if (record.kind === "refused") throw refusalError(record, view);
-  if (record.kind === "stopped") throw stopError(record.reason, view);
-  const { prepared, result, openTransaction } = bridged.answered();
+  if (record.kind === "stopped") {
+    throw stopError(record.reason, record.waitingFor === "large-page-slot" ? slotView : view);
+  }
+  try {
+    const { prepared, result, openTransaction } = bridged.answered();
+    // The page the host pumped holds the rows that fit the page's row limit and its 32 MiB; the answer is the legacy
+    // rows themselves, as the provider returned them, by that count.
+    const pumped = result.rows.slice(0, record.page.rows.length);
+    // A page the host cut by bytes ends before the rows ran out.
+    const byteCut = record.page.end === "byte-limit";
 
-  // The page the host pumped holds the rows that fit the page's row limit and its 32 MiB; the answer is the legacy
-  // rows themselves, as the provider returned them, by that count.
-  const pumped = result.rows.slice(0, record.page.rows.length);
-  // A page the host cut by bytes ends before the rows ran out.
-  const byteCut = record.page.end === "byte-limit";
-
-  // PAGE TWO IS ONLY OFFERED FOR A BOUND THIS LAYER APPLIED (#816).
-  //
-  // `wasLimited` is the limiter saying it rewrote the statement, and it is the only
-  // thing that makes advancing the bound meaningful: a statement returned untouched
-  // (one carrying the user's own `LIMIT 50`, or a ClickHouse query whose trailing
-  // `FORMAT`/`SETTINGS` clause the limiter declines to cut into) runs the same way at
-  // every offset. Without this conjunct such a statement, answering with exactly
-  // `prepared.limit` rows, offered a Load More whose click re-ran it unchanged and
-  // appended the rows already on screen, which the user cannot tell from new ones.
-  //
-  // One rule, per statement, with no branching on database type: if the bound is ours,
-  // pagination is offered; if it is the user's, or the statement could not be
-  // rewritten, it is not.
-  //
-  // The probe row is the proof (#1440): more than `prepared.limit` rows came back, so a next
-  // page exists, and the page itself is cut back to the limit asked for. A page the host cut
-  // by bytes under a bound this layer wrote has a next page too, which the client reads from
-  // its offset plus the rows answered, so it continues after the page's last row.
-  const probed = pageOfProbe(prepared, pumped);
-  const hasMore = probed.hasMore || (byteCut && prepared.wasLimited);
-  const pageRows = probed.rows;
-  const answered = firstResultSet(withScrubbedWarnings(run.scrub, result));
-  return {
-    body: {
-      ...answered,
-      // The probe row is not part of the answer, nor are the rows past a byte cut, so the count that names the rows
-      // is the page's.
-      ...((hasMore || byteCut) && { rowCount: pageRows.length }),
-      // NaN and the infinities as words: `JSON.stringify` would write each as null, which
-      // the grid and every export then show as SQL NULL (`src/lib/non-finite.ts`).
-      rows: rowsWithNonFiniteWords(pageRows),
-      // Present only when there was a transaction to end, the way `/api/db/multi-query`
-      // reports it, so an always-present "none" would announce something that did not happen.
-      // `use-query-execution.ts` raises the notice off this field on BOTH paths; it used to raise
-      // it only inside its `multiStatement` branch, which a lone statement never sets, so this
-      // field was answered and never rendered for its whole first commit.
-      ...(openTransaction === "rolled-back" && { openTransaction }),
-      pagination: {
-        limit: prepared.limit,
-        offset: prepared.offset,
-        hasMore,
-        totalReturned: pageRows.length,
-        // A bound the PROVIDER applied is reported too (#1085, section 5.4). A provider that cuts
-        // its own result, as the Prometheus provider cuts a vector at its series cap, says so on
-        // the result's own `pagination`, and the badge this field drives says "Studio bounded this
-        // result", which is as true of that bound as of the limiter's, and as true of a page the host
-        // cut by bytes. Only a `true` crosses, so a provider cannot clear a filled bound this layer
-        // applied. A short page does not show the limiter badge; `hasMore` above stays on
-        // `prepared.wasLimited`, because an offset can only advance a bound this layer wrote.
-        wasLimited: hasMore || byteCut || result.pagination?.wasLimited === true,
+    // PAGE TWO IS ONLY OFFERED FOR A BOUND THIS LAYER APPLIED (#816).
+    //
+    // `wasLimited` is the limiter saying it rewrote the statement, and it is the only
+    // thing that makes advancing the bound meaningful: a statement returned untouched
+    // (one carrying the user's own `LIMIT 50`, or a ClickHouse query whose trailing
+    // `FORMAT`/`SETTINGS` clause the limiter declines to cut into) runs the same way at
+    // every offset. Without this conjunct such a statement, answering with exactly
+    // `prepared.limit` rows, offered a Load More whose click re-ran it unchanged and
+    // appended the rows already on screen, which the user cannot tell from new ones.
+    //
+    // One rule, per statement, with no branching on database type: if the bound is ours,
+    // pagination is offered; if it is the user's, or the statement could not be
+    // rewritten, it is not.
+    //
+    // The probe row is the proof (#1440): more than `prepared.limit` rows came back, so a next
+    // page exists, and the page itself is cut back to the limit asked for. A page the host cut
+    // by bytes under a bound this layer wrote has a next page too, which the client reads from
+    // its offset plus the rows answered, so it continues after the page's last row.
+    const probed = pageOfProbe(prepared, pumped);
+    const hasMore = probed.hasMore || (byteCut && prepared.wasLimited);
+    const pageRows = probed.rows;
+    const answered = firstResultSet(withScrubbedWarnings(run.scrub, result));
+    return {
+      body: {
+        ...answered,
+        // The probe row is not part of the answer, nor are the rows past a byte cut, so the count that names the rows
+        // is the page's.
+        ...((hasMore || byteCut) && { rowCount: pageRows.length }),
+        // NaN and the infinities as words: `JSON.stringify` would write each as null, which
+        // the grid and every export then show as SQL NULL (`src/lib/non-finite.ts`).
+        rows: rowsWithNonFiniteWords(pageRows),
+        // Present only when there was a transaction to end, the way `/api/db/multi-query`
+        // reports it, so an always-present "none" would announce something that did not happen.
+        // `use-query-execution.ts` raises the notice off this field on BOTH paths; it used to raise
+        // it only inside its `multiStatement` branch, which a lone statement never sets, so this
+        // field was answered and never rendered for its whole first commit.
+        ...(openTransaction === "rolled-back" && { openTransaction }),
+        pagination: {
+          limit: prepared.limit,
+          offset: prepared.offset,
+          hasMore,
+          totalReturned: pageRows.length,
+          // A bound the PROVIDER applied is reported too (#1085, section 5.4). A provider that cuts
+          // its own result, as the Prometheus provider cuts a vector at its series cap, says so on
+          // the result's own `pagination`, and the badge this field drives says "Studio bounded this
+          // result", which is as true of that bound as of the limiter's, and as true of a page the host
+          // cut by bytes. Only a `true` crosses, so a provider cannot clear a filled bound this layer
+          // applied. A short page does not show the limiter badge; `hasMore` above stays on
+          // `prepared.wasLimited`, because an offset can only advance a bound this layer wrote.
+          wasLimited: hasMore || byteCut || result.pagination?.wasLimited === true,
+        },
       },
-    },
-    resultSetCount: result.resultSets?.length ?? 1,
-  };
+      resultSetCount: result.resultSets?.length ?? 1,
+    };
+  } finally {
+    record.release();
+  }
 }
 
 /** What a cancel answers: the provider cannot cancel, or whether the engine stopped the run. */

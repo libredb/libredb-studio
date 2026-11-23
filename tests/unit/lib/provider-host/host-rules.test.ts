@@ -19,7 +19,8 @@ import { ConnectionError, connectPhase, QueryCancelledError } from "@/lib/db/err
 import { providerTextScrub } from "@/lib/db/operations/provider-text";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
-import { type ExecuteRecord, executeCall } from "@/lib/provider-host/core/console";
+import { consoleCalls, type ExecuteRecord } from "@/lib/provider-host/core/console";
+import { createPageBudget, LARGE_PAGE_SLOTS } from "@/lib/provider-host/core/page-budget";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
 import { createMockProvider } from "../../../helpers/mock-provider";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
@@ -174,6 +175,7 @@ describe("E21-K16: abandoned promises", () => {
       const answer = Promise.withResolvers<never>();
       const executeStarted = Promise.withResolvers<void>();
       const coreController = new AbortController();
+      const { executeCall } = consoleCalls(createPageBudget(LARGE_PAGE_SLOTS));
       const stopped: Promise<ExecuteRecord> = executeCall(
         {
           calls: { console: { execute: { honours: [] }, cancel: "not-offered", endScope: "not-offered" } },

@@ -51,7 +51,7 @@ describe("the host page benchmark", () => {
       expect.arrayContaining([
         "@/lib/api/editor-query",
         "@/lib/provider-host/legacy-bridge",
-        "@/lib/provider-host/core/console",
+        "@/lib/provider-host/instance",
       ]),
     );
     expect(declaredNames(text).filter((name) => OWN_PUMP.has(name))).toEqual([]);

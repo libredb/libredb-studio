@@ -9,7 +9,7 @@ import { forgetTrustMaterial } from "@/lib/db/trust-material";
 import * as dataDir from "@/lib/data-dir";
 import { forgetStorageLocation } from "@/lib/data-dir";
 import { logger } from "@/lib/logger";
-import { cancelCall, executeCall } from "@/lib/provider-host/core/console";
+import { cancelCall } from "@/lib/provider-host/core/console";
 import { forgetHostCore, HostCoreBootOrderError, hostCore } from "@/lib/provider-host/instance";
 import * as resealAtBoot from "@/lib/storage/reseal-at-boot";
 import { closeStorageProvider } from "@/lib/storage/factory";
@@ -426,7 +426,7 @@ describe("instrumentation register()", () => {
 
     expect(installedAtReseal).toEqual([false]);
     const core = hostCore();
-    expect(core.executeCall).toBe(executeCall);
+    expect(Object.keys(core).sort()).toEqual(["cancelCall", "executeCall"]);
     expect(core.cancelCall).toBe(cancelCall);
     expect(Object.isFrozen(core)).toBe(true);
   });

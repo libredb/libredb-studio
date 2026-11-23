@@ -1233,6 +1233,7 @@ The budgets bound what crosses from a provider, not what a driver buffers: a dri
 A page of very small rows is bounded in the heap by the host's row limit, not by its bytes, so the host always passes a finite row limit.
 The pump measures a row once, as it reads the batch, and hands on the provider's own row arrays, so a source whose cells change after that read, through a getter or a later write, answers more than was measured.
 In process nothing is framed, so the host measures what a source answers, through the pump's own measure, and a source of the legacy bridge answers each row in the form C-50 states.
+How many pages larger than one batch the host holds at once is bounded by its page budget, C-53.
 
 - test `tests/unit/lib/provider-host/core/console.test.ts` "the first result is pumped within the limits set from the answer, and every other result is closed once"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a cell outside the value codec is measured in its JSON form and answered unchanged"
@@ -1623,7 +1624,7 @@ The memory transport closes the session of an open answer it refuses under such 
 The host core makes each console call through `executeCall` or `cancelCall`, which answer a record of how the call ended and pass a provider's error by reference.
 Before the call it checks the context with `checkCallStart`, C-27, and the request with `checkExecuteRequest`, C-9, or the facet with `checkConsoleFacet`, C-17, and answers each refusal as a record, the signal's reason as its cause when the signal aborted, without calling the provider.
 It then freezes the context and the request in place, C-12, and waits for the call with `awaitWithin` until the context's signal, C-28.
-An execute's run pumps the first result with `pumpPage` within the limits the caller sets from the execute answer, C-15, closes every other result once, and answers a refusal the pump throws as a record.
+An execute's run pumps the first result with `pumpPage` within the limits the caller sets from the execute answer, C-15, under the core's page budget, C-53, closes every other result once, and answers a refusal the pump throws as a record.
 A call is stopped exactly when its signal aborted and the wait rejected with that signal's reason, so a provider that throws its own signal's reason is stopped too, and the stop is answered as a record with that reason.
 A stopped execute sends the run's cancel when the session offers `console.cancel` and the request names a run, under a cleanup context of its own, C-47, and a cancel that fails or is cut is handed to the caller, never left as a detached rejection.
 Core constructs no error class a caller tests with `instanceof`: the caller builds its own classes from the records, C-51.
@@ -1703,14 +1704,15 @@ A refused offset and refused params of a session that refuses a field arrive wit
 
 A process holds one host core, created by `createHostCore` and installed under a registered symbol by the process's composition root, which the install names: the server's instrumentation and the VS Code backend's entry.
 The core holds plain functions, the console calls, and constructs no class, so a caller in any bundle of the process runs the core another bundle installed.
+Its execute runs under a page budget the core creates for itself, C-53, so the process holds one page budget as it holds one core.
 The classes a caller tests with `instanceof` and the ports that read them stay the caller's, built per call, C-51.
 A call made before the core is installed fails by name, as a defect of how the process was composed, and nothing reaches the provider.
-A second install from the same composition root keeps the first core and changes nothing, so the server's `register()` may run again in one process.
+A second install from the same composition root keeps the first core and its page budget and changes nothing, so the server's `register()` may run again in one process.
 A second install from another composition root is refused by name, naming both roots, and the first core stays, so no second core is ever used.
 The library surface never reads the installed core, so an embedder composes nothing.
 The live check `tests/live/host-core-live.ts` holds the same rule against the built standalone server, in CI's "Host Core Live Check".
 
-- test `tests/unit/lib/provider-host/core/host-core.test.ts` "the host core holds the core's console calls, frozen, and nothing else"
+- test `tests/unit/lib/provider-host/core/host-core.test.ts` "the host core holds the console calls on a page budget of its own, frozen, and nothing else"
 - test `tests/unit/lib/provider-host/instance.test.ts` "the host core is installed once per process, under a registered symbol"
 - test `tests/unit/lib/provider-host/instance.test.ts` "a second install from the same composition root keeps the first core, and throws nothing"
 - test `tests/unit/lib/provider-host/instance.test.ts` "a second install from another composition root is refused by name, naming both roots, and the first core stays"
@@ -1725,6 +1727,48 @@ The live check `tests/live/host-core-live.ts` holds the same rule against the bu
 - test `tests/unit/lib/provider-host/cross-bundle.test.ts` "a route runs the host core instrumentation installed, and builds none of its own"
 - test `tests/unit/lib/provider-host/cross-bundle.test.ts` "a refusal the host core answers as a record becomes the route bundle's own class"
 - test `tests/unit/lib/provider-host/cross-bundle.test.ts` "a provider error the route bundle built passes through the host core by reference"
+
+### C-53 (normative): The host's page budget
+
+A host core holds one page budget of large-page slots, and the budget holds one slot.
+Every page takes its first batch without waiting, at most one batch's bytes or one row.
+A page that needs a second batch first takes a slot, waiting for one in arrival order until its call's signal aborts, and runs every later pull under it.
+A waiting page holds its first batch and no slot, so no two pages wait on each other.
+The caller releases a page record once its answer body is built, exactly once, and the host releases a page that ends any other way: a run that answers no page gives its slot back before it answers, and a page answered after its call stopped is released by the host.
+A slot or a page record released twice is refused by name.
+The slot count does not follow the heap limit V8 reports, which adds a young generation whose size differs by Node version and machine.
+The budget does not bound a legacy provider's own rows, held before the first pull, nor the caller's answer text, written from the body after the release, nor one row of up to the whole page taken as a first batch.
+
+- test `tests/unit/lib/provider-host/core/page-budget.test.ts` "a free slot is taken at once, and a host core's budget holds one slot"
+- test `tests/unit/lib/provider-host/core/page-budget.test.ts` "a page that finds every slot held waits, and slots go in arrival order as they are released"
+- test `tests/unit/lib/provider-host/core/page-budget.test.ts` "a wait its signal ends rejects with the signal's reason and leaves the queue"
+- test `tests/unit/lib/provider-host/core/page-budget.test.ts` "a signal already aborted is refused at once and takes no free slot"
+- test `tests/unit/lib/provider-host/core/page-budget.test.ts` "a slot released twice is refused by name"
+- test `tests/unit/lib/provider-host/core/page-budget.test.ts` "a slot count that is not a positive safe integer is refused"
+- test `tests/unit/lib/provider-host/core/page-budget.test.ts` "a page's first pull takes no slot, and every later pull runs under the one slot it took"
+- test `tests/unit/lib/provider-host/core/page-budget.test.ts` "a pull whose wait for a slot the call's signal ends is refused as checkCallStart answers, the signal's reason as its cause, and the source is not pulled"
+- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "every page takes its first batch without waiting"
+- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "of two concurrent large pages the second waits for the slot holding one batch, and is pumped once the first page is released"
+- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "three concurrent large pages are pumped one after another in arrival order, each waiting page holding one batch and no slot"
+- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "a page of one batch answers at once beside a large page that holds the slot"
+- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "a page whose pump is refused or fails, or whose other results fail to close, gives its slot back before the call answers"
+- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "a page answered after its call stopped gives its slot back"
+- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "a page record released twice is refused by name"
+- test `tests/unit/lib/provider-host/core/page-budget-bounds.test.ts` "a large page waiting behind a slot that is never released is stopped at its call's deadline"
+- test `tests/unit/lib/provider-host/core/host-core.test.ts` "each host core holds one large-page slot of its own"
+- test `tests/unit/lib/api/editor-query.test.ts` "a large page's slot is released once its body is built, so the next large page does not wait"
+- test `tests/unit/lib/api/editor-query.test.ts` "two concurrent large pages each answer their whole page"
+
+### C-54 (normative): A wait for a large-page slot that ends
+
+A page whose wait for a large-page slot, C-53, its call's signal ends answers a stop marked as waiting for the slot.
+The caller answers `QueryCancelledError` when its own signal ended the wait, and otherwise `StudioTimeoutRefusal` with Studio's sentence naming that wait, both outcome unknown, since the statement ran.
+The run's cancel is sent as for any stop, C-48, and the page's first batch is closed with its source.
+
+- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "a call whose wait for a slot its caller ends answers a stop marked as waiting for the slot, and holds no slot"
+- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "a call whose wait for a slot its deadline ends answers a stop marked as waiting for the slot"
+- test `tests/unit/lib/provider-host/core/page-budget-bounds.test.ts` "a large page waiting behind a slot that is never released is stopped at its call's deadline"
+- test `tests/unit/lib/api/editor-query.test.ts` "a large page that waits for the slot past its deadline answers StudioTimeoutRefusal naming that wait, outcome unknown"
 
 ## Not yet in this contract
 
@@ -1750,6 +1794,7 @@ Against the manifest sketch the design started from:
 - Facet names keep Studio's own vocabulary, the seven monitoring panels, the maintenance operations and the curated agent readings, rather than new dotted names.
 - The host's own rules for opening and closing sessions and for the legacy provider interface are clauses of the calls chapter, C-44 to C-46, since the host serves today's providers through them.
 - The host core is one instance per process, installed by the process's composition root, C-52, where the sketch named no instance.
+- The host core holds the process's page budget, C-53, where the sketch named none.
 - The connection dialog's per-field facts, its labels, hints, placeholders, placement, choices, conditions and absent values, are lists of entries that each name their field, rather than maps keyed by field, M-24.
 - A condition is one field equal to one value, with no list of values and no combination of conditions in this contract, M-25.
 - A `calls` segment declares the package's optional console facets and the request fields its execute honours.

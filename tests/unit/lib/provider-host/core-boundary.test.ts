@@ -115,6 +115,7 @@ describe("the host core's boundary", () => {
       "console.ts",
       "host-core.ts",
       "open-once.ts",
+      "page-budget.ts",
       "teardown.ts",
       "turns.ts",
     ]);
