@@ -2892,10 +2892,12 @@ interface ActiveSession {
 }
 ```
 
-On `POST /api/db/query`, `POST /api/db/multi-query`, `POST /api/db/transaction`, `POST /api/db/test-connection`, `POST /api/agent/runs`, `POST /api/agent/runs/{runId}/handover` and `POST /api/agent/drive`, an error of any class whose text holds a credential of the request's connection, in any form Studio derives from it, answers Studio's own sentence in `error`, naming the error's class and saying its text was withheld, and the server log line written for it carries that sentence in place of the error.
+On every route under `/api/db` that answers a provider's error (the object routes under `/api/db/objects` among them; `POST /api/db/disconnect` answers none, since the factory logs a provider's failure to disconnect), on `POST /api/admin/fleet-health` and on `POST /api/agent/runs`, `POST /api/agent/runs/{runId}/handover` and `POST /api/agent/drive`, an error of any class whose text holds a credential of the request's connection, in any form Studio derives from it, answers Studio's own sentence in `error`, naming the error's class and saying its text was withheld, and the server log line written for it carries that sentence in place of the error.
 The HTTP status, `code`, `kind`, `outcome` and `retryable` are the error's own, and an answer that is already a fixed sentence of Studio's keeps it.
 A database error's `details` then keeps only `position`, and `fixStatement` is left out.
 A script statement's `error` and every warning's `message`, string `code` and `severity` follow the same rule, and a warning field that holds such a form answers `(Studio withheld this text because it contained a credential of this connection)`.
+An object read's `unavailable`, `sampledFrom`, `indexes.unavailable` and the provider's `truncated.reason`, and a source part's `unavailable`, `truncated.reason` and refused `edit.reason`, follow the same rule and answer that sentence; a source part that the route also bounded keeps Studio's bound sentence after it.
+A column profile's `error` and `warnings` and a fleet health item's `error` follow it as well, and answer Studio's sentence naming the error's class.
 
 ### Error Codes
 
@@ -2964,7 +2966,7 @@ directly by the request middleware (`src/proxy.ts`), before a request ever reach
 Every database error body `createErrorResponse` answers carries `kind` and `outcome` beside `code`.
 An answer without them is not a database error's: an unhandled error (`INTERNAL_ERROR`) and the codes a route or the middleware answers itself carry neither.
 Both are closed vocabularies and never hold the error's text.
-A route that resolves the calling connection (the editor's query, script and transaction routes, the connection test, the agent runs route, the hand-over route and the agent drive route) also answers `sqlState`, the SQLSTATE the driver reported, when there is one and the error's text was not withheld.
+A route that resolves the calling connection and reaches its provider (every such route under `/api/db`, the object routes among them, the agent runs route, the hand-over route and the agent drive route) also answers `sqlState`, the SQLSTATE the driver reported, when there is one and the error's text was not withheld.
 An MCP tool's error answer built from a failure carries the same record, `kind`, `code`, `outcome` and that `sqlState`, in `structuredContent.error` ([MCP](MCP.md)); there every kind can appear, and `code` is the deny code of an `execution-profile` or `studio-profile-refusal` failure.
 
 `kind` names the class of failure, so a client can branch on it without reading the sentence:

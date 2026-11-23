@@ -1,18 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, sep } from "node:path";
+import { basename, join, sep } from "node:path";
 import ts from "typescript";
 
 /**
  * The one scrub of provider text, and who wrote a refusal, held by the syntax tree.
  *
- * On the paths the census covers (`PROVIDER_TEXT_PATHS`: the agent, hand-over and MCP paths, the editor's query, script
- * and transaction routes, the connection test and the VS Code extension's backend child) every text a provider hands
- * core (an error's message, name, stack, detail or fix statement, a result's warnings) passes core's one scrub
+ * On the paths the census covers (`PROVIDER_TEXT_PATHS`: the agent, hand-over and MCP paths, every database route, the
+ * object routes, the fleet health check, the query events those routes record and the VS Code extension's backend
+ * child) every text a provider hands core (an error's message, name, stack, detail or fix statement, a result's
+ * warnings, an object read's sentences) passes core's one scrub
  * (src/lib/db/operations/provider-text.ts) before it reaches a prompt, the ledger, a response, a query event or a log
  * line. The census below records each crossing and the core function it calls, and every other read of such a text on
  * those paths is classified, with its reason, as not provider text.
- * A new read of a provider's text on those paths is a finding until it is recorded as one or the other. The scan is
+ * A new read of a provider's text on those paths is a finding until it is recorded as one or the other, and an error
+ * response rendered there without the connection's scrub is a finding unless it is classified. The scan is
  * syntactic and keyed on names (`error`, `refusal`, `warnings`, `logger.error`, `createErrorResponse`); a provider
  * text carried under another name escapes it, which tests/security/provider-text-scrub.test.ts catches by behaviour.
  *
@@ -140,12 +142,27 @@ type Census = {
   /**
    * Every read of a provider's text, as "file: declaration: read": a text member of a caught error, of an `error` or
    * `refusal` property or of a `refusal`; any `warnings`; any `unavailable` or `sampledFrom` sentence and a
-   * `truncated.reason`; the error a `logger.error` line is given; the error `createErrorResponse` renders.
+   * `truncated.reason`; the error a `logger.error` line is given; the error `createErrorResponse` renders, marked
+   * `, scrub` when its context names the connection's scrub.
    */
   providerTextReads: string[];
   /** The functions and methods each named function or method calls, as a function or as a method. */
   calls: Map<string, Set<string>>;
 };
+
+/** Whether a `createErrorResponse` context is an object literal that names a `scrub`, assigned or shorthand. */
+function givenScrub(context: ts.Expression | undefined): boolean {
+  return (
+    context !== undefined &&
+    ts.isObjectLiteralExpression(context) &&
+    context.properties.some(
+      (property) =>
+        (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)) &&
+        ts.isIdentifier(property.name) &&
+        property.name.text === "scrub",
+    )
+  );
+}
 
 function scan(file: string, text: string): Census {
   const source = parse(file, text);
@@ -191,7 +208,10 @@ function scan(file: string, text: string): Census {
         at(node, `logger.error(${node.arguments[1].getText(source)})`);
       }
       if (ts.isIdentifier(callee) && callee.text === "createErrorResponse" && node.arguments[0] !== undefined) {
-        at(node, `createErrorResponse(${node.arguments[0].getText(source)})`);
+        at(
+          node,
+          `createErrorResponse(${node.arguments[0].getText(source)}${givenScrub(node.arguments[1]) ? ", scrub" : ""})`,
+        );
       }
       const name = ts.isIdentifier(callee)
         ? callee.text
@@ -310,9 +330,9 @@ describe("who wrote a refusal", () => {
 });
 
 /**
- * The paths the census covers: the agent, the hand-over and MCP, and the core read path they share; the editor's query,
- * script and transaction routes, the connection test and the shared steps behind them, the query events those routes
- * record, and the VS Code extension's backend child.
+ * The paths the census covers: the agent, the hand-over and MCP, and the core read path they share; every database
+ * route, the object routes' shared handler, the fleet health check and the shared steps behind them, the query events
+ * those routes record, and the VS Code extension's backend child.
  */
 const PROVIDER_TEXT_PATHS = [
   join("src", "lib", "agent"),
@@ -320,13 +340,12 @@ const PROVIDER_TEXT_PATHS = [
   join("src", "app", "api", "agent"),
   join("src", "app", "api", "mcp"),
   join("src", "lib", "db", "operations", "read-only-statement.ts"),
-  join("src", "app", "api", "db", "query", "route.ts"),
-  join("src", "app", "api", "db", "multi-query", "route.ts"),
-  join("src", "app", "api", "db", "transaction", "route.ts"),
-  join("src", "app", "api", "db", "test-connection", "route.ts"),
+  join("src", "app", "api", "db"),
+  join("src", "app", "api", "admin", "fleet-health"),
+  join("src", "lib", "api", "object-route.ts"),
   join("src", "lib", "api", "editor-query.ts"),
   join("src", "lib", "api", "test-connection.ts"),
-  join("src", "lib", "query-events", "route-events.ts"),
+  join("src", "lib", "query-events"),
   join("vscode-extension", "src", "backend", "handlers.ts"),
 ];
 
@@ -337,7 +356,10 @@ function pathFiles(path: string): string[] {
 const agent = (...path: string[]) => join("src", "lib", "agent", ...path);
 const mcp = (...path: string[]) => join("src", "lib", "mcp", ...path);
 const api = (...path: string[]) => join("src", "app", "api", "agent", ...path);
-const dbRoute = (name: string) => join("src", "app", "api", "db", name, "route.ts");
+const dbRoute = (...path: string[]) => join("src", "app", "api", "db", ...path, "route.ts");
+const objectRoute = join("src", "lib", "api", "object-route.ts");
+const fleetHealth = join("src", "app", "api", "admin", "fleet-health", "route.ts");
+const recordedRun = join("src", "lib", "query-events", "recorded-run.ts");
 const editorQuery = join("src", "lib", "api", "editor-query.ts");
 const testConnectionCore = join("src", "lib", "api", "test-connection.ts");
 const routeEvents = join("src", "lib", "query-events", "route-events.ts");
@@ -396,6 +418,27 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   [editorQuery, "runEditorQuery", "withScrubbedWarnings"],
   [routeEvents, "failure", "providerTextScrub"],
   [routeEvents, "failure", "withheldProviderError"],
+  [recordedRun, "runRecorded", "providerTextScrub"],
+  [recordedRun, "runRecorded", "withheldProviderError"],
+  [dbRoute("cancel"), "POST", "providerTextScrub"],
+  [dbRoute("health"), "POST", "providerTextScrub"],
+  [dbRoute("pool-stats"), "POST", "providerTextScrub"],
+  [dbRoute("provider-meta"), "POST", "providerTextScrub"],
+  [dbRoute("monitoring"), "POST", "providerTextScrub"],
+  [dbRoute("maintenance"), "POST", "providerTextScrub"],
+  [dbRoute("maintenance", "preview"), "POST", "providerTextScrub"],
+  [dbRoute("statement", "analyze"), "POST", "providerTextScrub"],
+  [dbRoute("profile"), "POST", "providerTextScrub"],
+  [dbRoute("profile"), "reasonOf", "withheldProviderError"],
+  [fleetHealth, "POST", "providerTextScrub"],
+  [fleetHealth, "POST", "withheldProviderError"],
+  [objectRoute, "handleObjectRequest", "providerTextScrub"],
+  [dbRoute("objects", "counts"), "POST", "scrubKindCounts"],
+  [dbRoute("objects", "describe"), "POST", "scrubObjectDetail"],
+  [dbRoute("objects", "inventory"), "POST", "scrubObjectDetail"],
+  [dbRoute("objects", "inventory"), "POST", "scrubProviderText"],
+  [dbRoute("objects", "source"), "POST", "scrubSourceDocument"],
+  [dbRoute("objects", "edit-apply"), "POST", "withholdProviderError"],
   [childHandlers, "runQuery", "providerTextScrub"],
   [childHandlers, "answeringFor", "providerTextScrub"],
   [childHandlers, "answeringFor", "toResponseError"],
@@ -469,6 +512,16 @@ const NOT_PROVIDER_TEXT: Readonly<Record<string, string>> = {
     "the audit sink's own failure",
   [`${join("src", "app", "api", "mcp", "route.ts")}: admit: logger.error(undefined)`]: "a fixed log line with no error",
   [`${dbRoute("multi-query")}: carriedChannels: source.warnings`]: "a statement result runStatement scrubbed",
+  [`${dbRoute("disconnect")}: POST: createErrorResponse(error)`]:
+    "a seed resolution or unknown-provider refusal, Studio's own; removeProvider logs a provider's disconnect failure itself and never throws it",
+  [`${dbRoute("disconnect")}: POST: logger.error(error)`]:
+    "the provider cache's own failure; removeProvider logs a provider's disconnect failure itself and never throws it",
+  [`${fleetHealth}: POST: createErrorResponse(error)`]:
+    "the request body's own failure; each connection's failure is answered in its own item",
+  [`${join("src", "lib", "query-events", "sink.ts")}: recordQueryEvent: logger.error(error)`]:
+    "the query event builder's own refusal of an input",
+  [`${objectRoute}: boundText: part.truncated.reason`]:
+    "a source part's sentence the source route scrubbed before bounding it",
   [`${childHandlers}: runTarget: error.message`]: "the run target rule's RangeError, Studio's",
 };
 
@@ -484,6 +537,9 @@ describe("the one scrub of provider text", () => {
       "function walk(detail, count, batch, error) {",
       "  return [detail.indexes.unavailable, count.sampledFrom, batch.truncated.reason, error.reason];",
       "}",
+      "function respond(error, route, scrub) {",
+      "  return [createErrorResponse(error, { route, scrub }), createErrorResponse(error, { route, scrub: scrub })];",
+      "}",
     ].join("\n");
     expect(scan("planted.ts", planted).providerTextReads).toEqual([
       "planted.ts: answer: logger.error(error)",
@@ -495,6 +551,8 @@ describe("the one scrub of provider text", () => {
       "planted.ts: walk: detail.indexes.unavailable",
       "planted.ts: walk: count.sampledFrom",
       "planted.ts: walk: batch.truncated.reason",
+      "planted.ts: respond: createErrorResponse(error, scrub)",
+      "planted.ts: respond: createErrorResponse(error, scrub)",
     ]);
   });
 
@@ -534,5 +592,26 @@ describe("the one scrub of provider text", () => {
     // Every classified read still exists, so the list cannot keep a reason for a read that is gone.
     const found = new Set(findings);
     expect(Object.keys(NOT_PROVIDER_TEXT).filter((entry) => !found.has(entry))).toEqual([]);
+  });
+
+  test("on those paths every createErrorResponse is given the connection's scrub or is classified as rendering no provider text", () => {
+    // A crossing in the same declaration never excuses a call without the scrub: the call renders the error itself.
+    const withoutScrub = PROVIDER_TEXT_PATHS.flatMap(pathFiles)
+      .flatMap((file) => censusOf(file).providerTextReads)
+      .filter((finding) => finding.includes(": createErrorResponse(") && !finding.endsWith(", scrub)"))
+      .filter((finding) => !Object.hasOwn(NOT_PROVIDER_TEXT, finding));
+    expect(withoutScrub).toEqual([]);
+  });
+
+  test("every route that resolves a connection is on the paths the census covers", () => {
+    const covered = new Set(PROVIDER_TEXT_PATHS.flatMap(pathFiles));
+    const routes = FILES.filter(
+      ({ file, census }) =>
+        file.startsWith(join("src", "app", "api") + sep) &&
+        basename(file) === "route.ts" &&
+        census.identifiers.has("resolveConnection"),
+    ).map(({ file }) => file);
+    expect(routes.length).toBeGreaterThan(0);
+    expect(routes.filter((file) => !covered.has(file))).toEqual([]);
   });
 });
