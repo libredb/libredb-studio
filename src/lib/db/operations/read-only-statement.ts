@@ -44,10 +44,10 @@
  *   returns stays the bound there. With `wait: "caller-deadline"` the caller already races its own deadline over this
  *   call (MCP's `raceDeadline`), so no second timer is set.
  *
- * The refusals are the sentences the providers raise (`read-only-budget.ts`), so every reader that classifies a
- * provider's refusal by its opening (`READ_ONLY_REFUSAL_OPENINGS`) reads this function's the same way. A reading that
- * already refuses past its rows or bytes in sentences of its own (the cluster readings' advice to narrow) hands them
- * in, and core raises those.
+ * The refusals are the sentences the providers raise (`read-only-budget.ts`), raised as core's own budget classes, so
+ * every reader, which decides a refusal by its class, reads this function's as a budget refusal whatever its words. A
+ * reading that already refuses past its rows or bytes in sentences of its own (the cluster readings' advice to
+ * narrow) hands them in, and core raises those.
  *
  * Before anything else, an engine Studio's review record does not list (`AGENT_EXECUTION_ENGINES` in
  * src/lib/db/compatibility.ts) is refused by name with `PROFILE_ENGINE_NOT_REVIEWED` (`assertStatementsReviewed`), for a

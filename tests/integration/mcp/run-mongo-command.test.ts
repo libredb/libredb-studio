@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { languageServer } from "@/lib/agent/languages/server";
 import { getServerAuditBuffer } from "@/lib/audit";
+import { ByteBudgetRefusal } from "@/lib/db/errors";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { McpConnectionContext } from "@/lib/mcp/context";
 import { databaseContentNotice, providerTextNotice } from "@/lib/mcp/output";
@@ -337,7 +338,7 @@ describe("the result cap", () => {
 
   test("a read past the provider's byte budget is refused in this arm's words", async () => {
     const queryReadOnly = mock(async () => {
-      throw new Error("Read-only execution exceeded the byte budget: 2000000 bytes > 1048576 allowed");
+      throw new ByteBudgetRefusal("Read-only execution exceeded the byte budget: 2000000 bytes > 1048576 allowed");
     });
     const provider = { getCapabilities: () => ({}), queryReadOnly };
     const result = await direct({ connection_id: "seed:fake", command: JSON.parse(find) }, fakeContext(provider));

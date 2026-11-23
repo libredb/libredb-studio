@@ -5201,7 +5201,7 @@ describe("PostgresProvider", () => {
     test("enforces the byte budget result-side", async () => {
       engine.selectRows = [{ blob: "x".repeat(64) }];
 
-      // The whole sentence, numbers in order: [{"blob":"<64 x>"}] is 77 bytes as JSON (D367).
+      // The whole sentence, numbers in order: [{"blob":"<64 x>"}] is 77 bytes as JSON.
       const refused = await provider
         .queryReadOnly("SELECT blob FROM t", roBudget({ maxResultBytes: 16 }))
         .catch((caught: unknown) => caught);

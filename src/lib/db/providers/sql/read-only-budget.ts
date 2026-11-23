@@ -34,7 +34,7 @@ export function assertReadOnlyBudget(budget: ReadOnlyStatementBudget, provider: 
   }
 }
 
-/** The opening of the row refusal, which MCP's `READ_ONLY_REFUSALS` matches (D367). */
+/** The opening of the row refusal, which every provider's row sentence starts with. */
 export const ROW_BUDGET_PREFIX = "Read-only execution exceeded the row budget";
 
 /** The opening of the byte refusal, the row prefix's twin. */
@@ -45,9 +45,9 @@ export const TIME_BUDGET_PREFIX = "Read-only execution exceeded the time budget"
 
 /**
  * The refusal of a result past the row budget, in the one sentence every provider with a
- * `queryReadOnly` raises (D367). It is a parsed contract, not prose: MCP's `run_read_query`
- * classifies a refusal by its opening (`READ_ONLY_REFUSALS`), and `rowBudgetIn` in
- * `context-snapshot.ts` and the agent's advice read the two numbers back out of it.
+ * `queryReadOnly` raises, as a `RowBudgetRefusal`. Every reader decides the refusal by that class, never
+ * by these words; `rowBudgetIn` in `context-snapshot.ts` reads the two numbers back out of it once the
+ * class says a row budget refused.
  */
 export function rowBudgetSentence(rows: number, allowed: number): string {
   return `${ROW_BUDGET_PREFIX}: ${rows} rows > ${allowed} allowed`;

@@ -2,9 +2,10 @@
  * The openings of SQL Server's own read-only refusals, beside the provider that raises them, and the answer MCP's
  * `run_read_query` gives for the two that are about a result too large to read.
  *
- * Each opening is a parsed contract, not prose: the mapper in `src/lib/mcp/tools/read-query-limits.ts` classifies a
- * refusal by it, through `READ_ONLY_REFUSAL_OPENINGS` in `./read-only-refusals.ts`. This module is a leaf, so the MCP
- * server reads it without loading the driver.
+ * The provider raises each refusal as its budget's class (`CutValueRefusal`, `SerialisedResultRefusal`,
+ * `TimeBudgetRefusal`), and MCP's `run_read_query` answers the first two with the texts below by that class, never by
+ * the opening (`classifyReadQueryFailure` in `src/lib/mcp/tools/read-query-limits.ts`). This module is a leaf, so the
+ * MCP server reads it without loading the driver.
  */
 
 /** The opening of the refusal of a value the server cut at the byte ceiling. */

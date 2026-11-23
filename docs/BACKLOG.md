@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D494, U17 · 364
+- [Drivers and connections](#drivers-and-connections) — D1-D494, U17 · 363
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -3777,15 +3777,6 @@ The agent path maps all three of the driver's transport failures to `ConnectionE
 Found 2026-10-16 in the review of #1790 (issue #1614).
 
 **Done when:** the MongoDB editor path classes `MongoNetworkError`, `MongoNetworkTimeoutError` and `MongoServerSelectionError` as `ConnectionError` by class name, as `TRANSPORT_FAILURES` does, in `query()`, `runMaintenance()` and those four object methods alike, so an object route answers those three as a connection failure rather than an internal error, every other engine's classification is unchanged, and a test pins each class on `query()` and on an object route.
-
-### D367. MySQL's and MongoDB's deadline refusal is no prefix MCP classifies
-
-The row and byte refusals of `queryReadOnly` are built by `rowBudgetSentence` and `byteBudgetSentence` beside `assertReadOnlyBudget` in `src/lib/db/providers/sql/read-only-budget.ts`, which every provider with a `queryReadOnly` calls, and `tests/unit/mcp/read-query-limits.test.ts` fails when a provider file types either sentence out again.
-MySQL's deadline refusal ("Read-only execution exceeded the statement deadline", in `src/lib/db/providers/sql/mysql.ts`, which MongoDB's in `src/lib/db/providers/document/mongodb/agent-read.ts` reuses) is still no prefix of `READ_ONLY_REFUSALS` in `src/lib/mcp/tools/read-query-limits.ts`, so MCP's `run_read_query` classifies it as the timeout only when it settles at or after the call's own deadline, and as an engine error before it.
-
-Found 2026-10-16 in the review of #1790 (issue #1614).
-
-**Done when:** MySQL's deadline refusal is either a `READ_ONLY_REFUSALS` prefix of kind `time` or worded with one that is, and `RAISED_IN` in `tests/unit/mcp/read-query-limits.test.ts` names the files that raise it.
 
 ### D368. Agent connections on PostgreSQL, MySQL and SQL Server carry no application name
 
