@@ -125,7 +125,8 @@ describe("connect (SB1-5.1)", () => {
   });
 
   test("a field the connection rules refuse is refused before any client is built", async () => {
-    const { provider, asked } = providerOver(fakeOf(), oxiaConnection({ user: "someone" }));
+    // A token holding a space, which a bearer token cannot carry.
+    const { provider, asked } = providerOver(fakeOf(), oxiaConnection({ password: `${crypto.randomUUID()} x` }));
     await expect(provider.connect()).rejects.toBeInstanceOf(DatabaseConfigError);
     expect(asked).toEqual([]);
     expect(provider.isConnected()).toBe(false);

@@ -72,6 +72,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { REFUSED_CONNECTION_FIELDS } from "@/lib/db/connection-fields";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { declaredKinds } from "@/lib/db/object-kinds";
 import type { DatabaseConnection } from "@/lib/db/types";
@@ -159,7 +160,10 @@ const core = extractCoreLanguageIds(
     .join("\n"),
 );
 
-/** The unconnected connection shape the census uses, for the same reason: nothing here dials. */
+/**
+ * The unconnected connection shape the census uses, for the same reason: nothing here dials. Each field the engine
+ * refuses by name is left undefined, since core refuses a connection that sets one before the build.
+ */
 const unconnected = (type: DatabaseType): DatabaseConnection =>
   ({
     id: "language-guard",
@@ -175,6 +179,7 @@ const unconnected = (type: DatabaseType): DatabaseConnection =>
     connectionString: "mongodb://127.0.0.1:1/language_guard",
     localDataCenter: "datacenter1",
     createdAt: new Date(0),
+    ...Object.fromEntries(Object.keys(REFUSED_CONNECTION_FIELDS[type]).map((field) => [field, undefined])),
   }) as DatabaseConnection;
 
 /**

@@ -45,9 +45,10 @@ export const PROVIDER_CORE_FIELDS = Object.freeze([
  * 4. `ssl` where the dialog offers the TLS panel (`offersSslPanel` in ./connection-form);
  * 5. `host` and `port` where the engine takes an SSH tunnel (`SSH_TUNNEL_REFUSAL` is null), because core writes the
  *    tunnel's local endpoint there;
- * 6. `REFUSED_CONNECTION_FIELDS`, the fields it receives only to refuse them by name;
- * 7. `PROVIDER_CORE_FIELDS`, Studio's own fields every provider receives.
- * Each field once, in that order. The answer is frozen.
+ * 6. `PROVIDER_CORE_FIELDS`, Studio's own fields every provider receives.
+ * Each field once, in that order. The answer is frozen. A field its engine refuses by name (`REFUSED_CONNECTION_FIELDS`)
+ * is in none of those rows, so no provider receives one: core refuses a connection to be built to connect that sets one
+ * (`refusedFieldRefusal`), and drops it otherwise.
  *
  * @throws {UnknownProviderError} When `type` is absent, not text, or names no provider.
  */
@@ -58,10 +59,29 @@ export function providerFields(type: DatabaseType): readonly (keyof DatabaseConn
     ...(typeIdRow(CONNECTION_STRING_ACCEPTED, type) ? (["connectionString"] as const) : []),
     ...(offersSslPanel(type) ? (["ssl"] as const) : []),
     ...(typeIdRow(SSH_TUNNEL_REFUSAL, type) === null ? (["host", "port"] as const) : []),
-    ...typeIdRow(REFUSED_CONNECTION_FIELDS, type),
     ...PROVIDER_CORE_FIELDS,
   ];
   return Object.freeze([...new Set(fields)]);
+}
+
+/**
+ * The sentence a connection is refused with for setting a field its engine refuses by name (FND-2 slice 6c,
+ * docs/SECURITY.md control 3.41): of the engine's `REFUSED_CONNECTION_FIELDS` row, read through `typeIdRow` so it names
+ * no type id, the sentence of the first field in row order that the connection sets, or undefined when it sets none.
+ * A field is set when the record holds it as its own property with a value other than `undefined`, `null` and `""`,
+ * whatever its type: the engine takes the field in no form, so any value in it is a mistake the operator should see by
+ * name. The sentence names the field and never its value. Pure: it reads its argument and writes nothing.
+ *
+ * @throws {UnknownProviderError} When the record's type names no provider (`typeIdRow`).
+ */
+export function refusedFieldRefusal(connection: DatabaseConnection): string | undefined {
+  const row: Readonly<Record<string, string>> = typeIdRow(REFUSED_CONNECTION_FIELDS, connection.type);
+  for (const [field, sentence] of Object.entries(row)) {
+    if (!Object.hasOwn(connection, field)) continue;
+    const value: unknown = Reflect.get(connection, field);
+    if (value !== undefined && value !== null && value !== "") return sentence;
+  }
+  return undefined;
 }
 
 /**
@@ -185,7 +205,9 @@ export type ProviderConnection = DatabaseConnection & WithTunnelFarEnd & WithLit
  * seal (`connectionFingerprint`) frames the route from the provider's own config, so it must be the record's, and the
  * routes frame the seal on this function's answer for the record they resolved, so both sides digest the same fields.
  * Databend's sign-in latch reads the route through `requireTunnelRoute` in `./utils/require-tunnel-route`. A field the
- * engine does not declare is dropped and never refused: stored records carry fields their engine does not take.
+ * engine does not declare is dropped and never refused here: stored records carry fields their engine does not take.
+ * A field its engine refuses by name is dropped here too; `buildProvider` in `./factory` refuses it first, for a
+ * provider built to connect (`refusedFieldRefusal`).
  *
  * PRECONDITION. The tunnel is one core's decision accepted: its caller, `buildProvider` in `./factory`, runs
  * `assertProviderTunnel` (hence `decideTunnel`) first, which holds `host` and `username` to text on every present

@@ -162,7 +162,7 @@ out in parallel.
 
 - **State machine** — `setConnected()`, `setError()`, `isConnected()`, `ensureConnected()`.
 - **Instrumentation** — `trackQuery()` (active-query counter) and `measureExecution()` (wall-clock timing).
-- **Helpers** — `formatDuration()`, `getSafeConfig()` (password-stripped logging), `logError()`.
+- **Helpers** — `formatDuration()`, `logError()`.
 - **Default `getMonitoringData()`** — orchestrates `getOverview` + `getPerformanceMetrics` +
   `getSlowQueries` + `getActiveSessions` (+ optional tables/indexes/storage) concurrently.
 

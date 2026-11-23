@@ -25,13 +25,14 @@ export class DatabaseError extends Error {
   declare sqlstate?: string;
 
   /**
-   * `not-sent` when the statement this error answers never reached the database: set by the constructor of
-   * `RefusedBeforeSendError`, so every refusal before send carries it, by `connectPhase` on what a provider's
-   * connect raised, and by `assertRequiredSecretsPresent` in ./factory on its refusal of a required secret left blank,
-   * each outside a constructor. Absent otherwise, which `errorOutcome` in ./error-record
-   * reads as `unknown`, because the statement may have run. An own field only when set, so every other error keeps
-   * the own keys it had. An instance a failed connect raised is never raised by a later statement: the factory keeps
-   * no provider whose connect failed.
+   * `not-sent` when the statement this error answers never reached the database. Written in exactly four places: the
+   * constructor of `RefusedBeforeSendError`, so every refusal before send carries it; `connectPhase`, on what a
+   * provider's connect raised; `buildPhase`, which `buildProvider` in ./factory runs, on what building a provider
+   * raised; and `withheldProviderError` in ./operations/provider-text, which copies `not-sent` onto the error it answers
+   * in place of one. Absent otherwise, which `errorOutcome` in ./error-record reads as `unknown`, because the statement
+   * may have run. An own field only when set, so every other error keeps the own keys it had. An instance a failed
+   * build or connect raised is never raised by a later statement: the factory keeps no provider whose build or connect
+   * failed.
    */
   declare outcome?: ExecuteOutcome;
 
@@ -535,7 +536,7 @@ export type ExecutionProfileDenyCode =
  * (#329+) is where that decision belongs.
  */
 export class ExecutionProfileError extends Error {
-  /** As `DatabaseError.outcome`: `not-sent` when `connectPhase` saw a provider's connect raise this refusal. */
+  /** As `DatabaseError.outcome`: `not-sent` when `connectPhase` or `buildPhase` saw a connect or a build raise it. */
   declare outcome?: ExecuteOutcome;
 
   constructor(
@@ -638,7 +639,7 @@ export async function connectPhase(connect: () => Promise<void>): Promise<void> 
     await connect();
   } catch (error) {
     if (!(error instanceof TimeoutError)) {
-      if (error instanceof DatabaseError || error instanceof ExecutionProfileError) error.outcome = "not-sent";
+      markNotSent(error);
       throw error;
     }
     const failure = new ConnectionError(
@@ -649,6 +650,26 @@ export async function connectPhase(connect: () => Promise<void>): Promise<void> 
     failure.outcome = "not-sent";
     throw failure;
   }
+}
+
+/**
+ * Runs a provider's build: every check core makes on the connection and its context, then the provider's constructor.
+ * A build sends no statement, so whatever it rejects with answers `outcome` `not-sent`, for the reason `connectPhase`
+ * gives for a connect: a database error or an execution profile refusal is marked on the instance as raised, and a
+ * value of any other class passes unmarked and answers `unknown`. It resolves to what the build answers.
+ */
+export async function buildPhase<T>(build: () => Promise<T>): Promise<T> {
+  try {
+    return await build();
+  } catch (error) {
+    markNotSent(error);
+    throw error;
+  }
+}
+
+/** Marks a database error or an execution profile refusal `not-sent` on the instance; any other value is left as is. */
+function markNotSent(error: unknown): void {
+  if (error instanceof DatabaseError || error instanceof ExecutionProfileError) error.outcome = "not-sent";
 }
 
 export function isTimeoutError(error: unknown): error is TimeoutError {

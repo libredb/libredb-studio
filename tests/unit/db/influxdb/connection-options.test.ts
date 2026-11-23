@@ -199,17 +199,12 @@ describe("I6: AUTHORIZATION_BY_TYPE, one Authorization header or none", () => {
     }
   });
 
-  test("influxdb3: Bearer with a token, none with nothing, and a user refused whatever the password", () => {
+  test("influxdb3: Bearer with a token, none with nothing", () => {
+    // A user never reaches it: core refuses one on influxdb3 before the provider is built.
     const row = AUTHORIZATION_BY_TYPE.influxdb3;
     expect(row({ password: TEST_PASSWORD })).toBe(`Bearer ${TEST_PASSWORD}`);
     expect(row({ user: "", password: TEST_PASSWORD })).toBe(`Bearer ${TEST_PASSWORD}`);
     expect(row({})).toBeUndefined();
-    for (const credential of [{ user: TEST_USER }, { user: TEST_USER, password: TEST_PASSWORD }]) {
-      const error = refused("influxdb3", () => row(credential));
-      expect(error.message).toBe("InfluxDB 3 has no user name: clear User and put the token in Token.");
-      expect(error.message).toBe(INFLUX_CONNECTION_SENTENCES.influxdb3User);
-      expect(error.message).not.toContain(TEST_USER);
-    }
   });
 
   test("the built options carry exactly one lower-case authorization header, or none", () => {
@@ -227,9 +222,6 @@ describe("I6: AUTHORIZATION_BY_TYPE, one Authorization header or none", () => {
       expect(build(type, { user: null, password: null }).headers).toEqual({});
       expect(build(type, { user: "", password: "" }).headers).toEqual({});
     }
-    expect(refusal("influxdb3", { ...LOCAL, user: TEST_USER, password: TEST_PASSWORD }).message).toBe(
-      INFLUX_CONNECTION_SENTENCES.influxdb3User,
-    );
   });
 
   test("hasUser and hasSecret say what is configured", () => {

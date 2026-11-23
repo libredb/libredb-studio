@@ -9,15 +9,16 @@
  * absent, as does an empty string in a text field, which the dialog writes for a blank box; `readOnly` is the one
  * exception, where a null is refused, as `assertReadOnlyHonoured` does.
  *
- * Qdrant has no user name: the secret, an API key or a JWT, sits in the password and travels as one `api-key`
- * header, set once per connection and never beside an `Authorization` header, in a URL or in a query string. REST
+ * Qdrant has no user name: core refuses a connection that sets one before the provider is built
+ * (`REFUSED_CONNECTION_FIELDS` in src/lib/db/connection-fields.ts), so this module never receives it. The secret, an API
+ * key or a JWT, sits in the password and travels as one `api-key` header, set once per connection and never beside an `Authorization` header, in a URL or in a query string. REST
  * on port 6333 is the only port dialled; 6334 (gRPC) and 6335 (peer traffic) never are.
  *
  * Through an SSH tunnel the origin dialled is the local forward, while the endpoint a sentence names, the host the
  * plaintext rule judges and the identity a certificate is checked against are the tunnel's far end.
  *
  * The parameter is named `config` on purpose: tests/unit/lib/db-ui-config.test.ts finds which addressing fields a
- * provider reads by the `config.<field>` pattern, and this file reads `config.user` and `config.password` as written.
+ * provider reads by the `config.<field>` pattern, and this file reads `config.password` as written.
  */
 import { readOnlySeedRefusal } from "@/lib/db/credential-warnings";
 import { DatabaseConfigError } from "@/lib/db/errors";
@@ -71,8 +72,6 @@ const SECRET_LABEL = "API key";
 const PRINTABLE_ASCII = /^[\x20-\x7E]+$/;
 const MAX_QUERY_TIMEOUT_MS = 2_147_483_647;
 
-const USER_NOT_TAKEN =
-  "Qdrant has no user name: clear the connection's user, and put the API key or JWT in the password. Nothing was sent.";
 const SECRET_NOT_PRINTABLE =
   "The connection's password (the API key or JWT) holds a line break, a NUL or another character outside printable ASCII; remove it. Nothing was sent.";
 const SEED_REFUSED =
@@ -134,9 +133,8 @@ function shared<T>(validate: () => T): T {
   }
 }
 
-/** QE4: the secret, or undefined with none. A user is refused, because Qdrant has none to send it as. */
+/** QE4: the secret, or undefined with none. Core refused a user before the build, because Qdrant has none to send it as. */
 function credential(config: DatabaseConnection): string | undefined {
-  if (optionalText(config.user, "user") !== undefined) throw configError(USER_NOT_TAKEN);
   const secret = optionalText(config.password, "password");
   if (secret !== undefined && !PRINTABLE_ASCII.test(secret)) throw configError(SECRET_NOT_PRINTABLE);
   return secret;

@@ -208,7 +208,7 @@ The connection-string box is not offered, because it reads `http://` and `https:
 
 The token travels as one header, `Authorization: Bearer <token>`, on every request, and never in a URL, a body, an error or a log line.
 A Token left empty sends no header, which only a server started with `--without-auth` accepts.
-A user name from a seed file or the API is refused when the connection opens:
+A user name from a seed file or the API is refused before the provider is built, whatever its value but empty, so the provider never receives one:
 
 > InfluxDB 3 has no user name: clear User and put the token in Token.
 

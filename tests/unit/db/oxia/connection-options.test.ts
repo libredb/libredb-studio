@@ -114,13 +114,6 @@ describe("fields read in order, with every refusal (SB1-4.2)", () => {
     }
   });
 
-  test("4. the user: Oxia has none", () => {
-    expect(refusal({ user: "root" })).toBe("Oxia has no user name: clear User. A bearer token goes under Token.");
-    expect(build({ user: "" }).token).toBeUndefined();
-    expect(build({ user: null }).token).toBeUndefined();
-    expect(refusal({ user: 5 })).toBe("The connection's user must be a string; nothing was sent.");
-  });
-
   test("5. the token: absent, null and empty are none; a bearer token is kept exactly; any other character is refused", () => {
     for (const password of [undefined, null, ""]) {
       const options = build({ password });
@@ -236,7 +229,6 @@ describe("fields read in order, with every refusal (SB1-4.2)", () => {
     // refusal() asserts it on every call of this describe; here on the values a user is most likely to paste.
     for (const overrides of [
       { host: "secret-host.example:6648" },
-      { user: "secret-user" },
       { password: "secret token" },
       { database: "secret\u0007namespace" },
       { dataServers: "secret.example" },
@@ -251,7 +243,6 @@ describe("fields read in order, with every refusal (SB1-4.2)", () => {
     const wrong: Overrides = {
       host: "bad host!",
       port: 0,
-      user: "root",
       password: "a b",
       database: "a\u0007b",
       ssl: { mode: "verify-full", caCert: "not a certificate" },
@@ -262,7 +253,6 @@ describe("fields read in order, with every refusal (SB1-4.2)", () => {
     const steps: ReadonlyArray<readonly [Overrides, string]> = [
       [{ host: "oxia.example" }, "Invalid host"],
       [{ port: 6648 }, "Invalid port"],
-      [{ user: undefined }, "Oxia has no user name"],
       [{ password: TEST_TOKEN }, "The Token holds a character"],
       [{ database: undefined }, "The Namespace must be"],
       [{ ssl: undefined }, "The CA Certificate under SSL / TLS"],

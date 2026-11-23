@@ -95,16 +95,6 @@ describe("connection sentences", () => {
     );
   });
 
-  test("a field not offered is named, never its value", () => {
-    expect(E.fieldNotOffered("database")).toBe(
-      "RabbitMQ connections take no Database: Studio discovers the virtual hosts from the management API. Clear the field; nothing was sent.",
-    );
-    expect(E.fieldNotOffered("namespaces")).toContain("take no Namespaces:");
-    expect(E.fieldNotOffered("tlsServerName")).toBe(
-      "RabbitMQ connections take no TLS server name: the certificate is always checked against Host. Clear the field; nothing was sent.",
-    );
-  });
-
   test("the credential and field sentences name the field", () => {
     expect(E.credentialControl("Username")).toStartWith("Username holds a control character");
     expect(E.credentialControl("Password")).toStartWith("Password holds a control character");

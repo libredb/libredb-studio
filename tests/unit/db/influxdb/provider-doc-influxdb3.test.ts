@@ -204,7 +204,6 @@ describe("docs/providers/influxdb3.md quotes what the code says", () => {
   test("the authentication rules quote the connection options' sentences and the credential warning", () => {
     const auth = flat(sectionOf(DOC, "### 4.2 Authentication"));
     expect(auth).toContain("`Authorization: Bearer <token>`");
-    expect(auth).toContain(`> ${INFLUX_CONNECTION_SENTENCES.influxdb3User}`);
     expect(auth).toContain(`> ${INFLUX_CONNECTION_SENTENCES.malformed("Token")}`);
     const noSecret = CREDENTIAL_WARNINGS.influxdb3?.find((entry) => entry.kind === "no-secret");
     expect(noSecret).toBeDefined();

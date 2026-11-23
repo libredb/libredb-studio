@@ -14,7 +14,7 @@ import {
   type ProviderOptions,
   type ProviderExecutionContext,
 } from "./types";
-import { connectPhase, DatabaseConfigError, StudioProfileRefusal } from "./errors";
+import { buildPhase, connectPhase, DatabaseConfigError, StudioProfileRefusal } from "./errors";
 import { createSSHTunnel, closeSSHTunnel, releaseUnopenedTunnel, tunnelProviderOpened } from "@/lib/ssh/tunnel";
 import type { TunnelInfo } from "@/lib/ssh/tunnel";
 import { isEnvelopeClaim } from "@/lib/storage/envelope-claim";
@@ -23,6 +23,8 @@ import {
   assertConnectionIsPlainData,
   assertExecutionContextIsPlainData,
   providerConnection,
+  providerFields,
+  refusedFieldRefusal,
 } from "./provider-connection";
 import { assertProviderTunnel, decideTunnel } from "./tunnel-decision";
 import { supportsQueryCancel } from "./query-cancel";
@@ -39,6 +41,7 @@ import {
 } from "./compatibility";
 import { assertStatementsReviewed } from "./statement-review";
 import { requiredSecretRefusal } from "./connection-form";
+import { REFUSED_CONNECTION_FIELDS } from "./connection-fields";
 import { assertDatabaseType, typeIdRow } from "./type-id";
 import { enabledProviderTypes } from "./enabled-providers";
 import { TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
@@ -120,6 +123,9 @@ import * as path from "path";
  *   and its access token under a programmatic access token), with the entry's sentence for it, which names the field,
  *   before the provider is built (see assertRequiredSecretsPresent); a provider constructed directly refuses it at
  *   `connect()`
+ *
+ * Every error raised while the provider is built, each refusal above and a provider constructor's own, answers `outcome`
+ * `not-sent` (`buildPhase` in ./errors): a build sends no statement.
  *
  * @example
  * // SQL Database
@@ -301,7 +307,7 @@ export async function createDatabaseProvider(
   options: ProviderOptions = {},
   execution: ProviderExecutionContext = {},
 ): Promise<DatabaseProvider> {
-  return await buildProvider(connection, options, execution, "connect");
+  return await buildPhase(() => buildProvider(connection, options, execution, "connect"));
 }
 
 /**
@@ -331,7 +337,7 @@ export async function readProviderDeclarations(
   connection: DatabaseConnection,
   execution: ProviderExecutionContext = {},
 ): Promise<ProviderDeclarations> {
-  const provider = await buildProvider(connection, {}, execution, "declarations");
+  const provider = await buildPhase(() => buildProvider(connection, {}, execution, "declarations"));
   return {
     capabilities: provider.getCapabilities(),
     labels: provider.getLabels(),
@@ -343,22 +349,33 @@ export async function readProviderDeclarations(
  * Refuse a connection to be built to connect when its engine's form entry declares a required secret that it shows and
  * leaves blank (`requiredSecretRefusal` in ./connection-form), with the entry's own sentence, which names the field as
  * the dialog labels it. Read on the copy the provider would receive, so an agent credential core substituted is the
- * one read. It names no type id: the declaration is the entry's. The refusal answers `outcome` `not-sent`, as the
- * provider's own connect refusal does through `connectPhase`: nothing was sent, though it is raised before that phase.
+ * one read. It names no type id: the declaration is the entry's. The refusal answers `outcome` `not-sent`, as every
+ * refusal raised while a provider is built does (`buildPhase` in ./errors).
  */
 function assertRequiredSecretsPresent(connection: DatabaseConnection): void {
   const refusal = requiredSecretRefusal(connection.type, connection);
   if (refusal === undefined) return;
-  const error = new DatabaseConfigError(refusal, connection.type);
-  error.outcome = "not-sent";
-  throw error;
+  throw new DatabaseConfigError(refusal, connection.type);
 }
 
 /**
- * The build `createDatabaseProvider` and `readProviderDeclarations` share: every check, then the provider. Two rules
+ * Refuse a connection to be built to connect when it sets a field its engine refuses by name, with the sentence the
+ * engine's `REFUSED_CONNECTION_FIELDS` row declares for that field (`refusedFieldRefusal` in ./provider-connection),
+ * which names the field and never its value. It names no type id: the declaration is the row's.
+ */
+function assertNoRefusedField(connection: DatabaseConnection): void {
+  const refusal = refusedFieldRefusal(connection);
+  if (refusal === undefined) return;
+  throw new DatabaseConfigError(refusal, connection.type);
+}
+
+/**
+ * The build `createDatabaseProvider` and `readProviderDeclarations` share: every check, then the provider. Three rules
  * differ by `purpose`: a tunnel that is on must have been opened (see `assertProviderTunnel` in ./tunnel-decision),
- * and a required secret the engine declares must not be blank (`assertRequiredSecretsPresent`), each only for
- * `"connect"`, the build of a provider that may be connected.
+ * a connection must not set a field its engine refuses (`assertNoRefusedField`), and a required secret the engine
+ * declares must not be blank (`assertRequiredSecretsPresent`), each only for `"connect"`, the build of a provider that
+ * may be connected. Both callers run it inside `buildPhase` (./errors), so
+ * every error it raises, a provider constructor's included, answers `outcome` `not-sent`: a build sends no statement.
  */
 async function buildProvider(
   connection: DatabaseConnection,
@@ -392,12 +409,19 @@ async function buildProvider(
   // does not declare (FND-2, docs/SECURITY.md 3.41). When core opens a tunnel (getOrCreateProvider,
   // acquireExecutionProfileProvider, withOneShotTunnel), it dials with those before it calls this function; a tunnel that is on and was not opened was
   // refused above, except for readProviderDeclarations, which never hands its provider out.
+  const record = connection;
   connection = providerConnection(connection);
-  // A provider built to connect is never built without a secret its engine declares it cannot sign in without
-  // (Snowflake's key under Key pair, its token under a programmatic access token): refused by name here, on the copy
-  // above, before any file is admitted, the build context is made or the creation is logged (FND-2 slice 6b,
-  // docs/SECURITY.md 3.41). Reading declarations never signs in, so it does not refuse.
-  if (purpose === "connect") assertRequiredSecretsPresent(connection);
+  if (purpose === "connect") {
+    // A provider built to connect is never built from a connection that sets a field its engine refuses by name
+    // (`REFUSED_CONNECTION_FIELDS`): refused here with the declared sentence, read on the caller's record, since the
+    // copy above dropped the field, after the plain-data refusal and before anything else reads it (FND-2 slice 6c,
+    // docs/SECURITY.md 3.41). Reading declarations never connects, so it does not refuse, and its copy has no such field.
+    assertNoRefusedField(record);
+    // Nor without a secret its engine declares it cannot sign in without (Snowflake's key under Key pair, its token
+    // under a programmatic access token): refused by name here, on the copy above, before any file is admitted, the
+    // build context is made or the creation is logged (FND-2 slice 6b, docs/SECURITY.md 3.41).
+    assertRequiredSecretsPresent(connection);
+  }
   // A SQLite, DuckDB or LibreDB connection (`OPENS_LOCAL_FILE`) is handed the file core admitted, resolved against the
   // working directory now; one of Studio's own storage files, a path the reserved check cannot read, a NUL byte, a
   // connection string that names no file after `file:` or a name that is not text is refused here, by name, before any
@@ -1794,6 +1818,21 @@ function assertAgentCredentialForm(
   }
 }
 
+/**
+ * Refuses an agent user on an engine that refuses a user name (`REFUSED_CONNECTION_FIELDS` in ./connection-fields),
+ * which the overlay in `acquireExecutionProfileProvider` therefore never writes into the connection: without this the
+ * agent would sign in with its password alone and the agent user would be dropped with no error. It runs after
+ * `assertAgentCredentialForm`, whose sentence answers first on an engine that takes the agent's token alone. It names
+ * no type id: the declaration is the row's.
+ */
+function assertAgentUserTaken(connection: DatabaseConnection, credential: { readonly user?: string }): void {
+  if (credential.user === undefined || !("user" in typeIdRow(REFUSED_CONNECTION_FIELDS, connection.type))) return;
+  throw new StudioProfileRefusal(
+    `Connection "${connection.id}" configures an agent user, and this engine takes no user name: clear the agent user`,
+    "AGENT_CREDENTIAL_UNRESOLVABLE",
+  );
+}
+
 /** A service-account key JSON, the one Google credential whose token Studio mints itself, at the scope it asks for. */
 function isServiceAccountKey(secret: string | undefined): boolean {
   try {
@@ -1929,12 +1968,18 @@ export async function acquireExecutionProfileProvider(
   }
 
   // A partial credential is overlaid as it stands so the provider can be built and asked for its form; one it does
-  // not take is refused below, before any connect.
+  // not take is refused below, before any connect. Each half is overlaid only into a field the engine receives
+  // (`providerFields`): an agent user on an engine that takes no user stays out of the record the build reads, so
+  // core's refusal of a field the engine refuses (`assertNoRefusedField`) never speaks for it, and the agent
+  // credential's own refusal below names it.
+  const received: readonly string[] = credential ? providerFields(connection.type) : [];
   let effectiveConnection: DatabaseConnection = credential
     ? {
         ...connection,
-        ...(credential.user === undefined ? {} : { user: credential.user }),
-        ...(credential.password === undefined ? {} : { password: credential.password }),
+        ...(credential.user === undefined || !received.includes("user") ? {} : { user: credential.user }),
+        ...(credential.password === undefined || !received.includes("password")
+          ? {}
+          : { password: credential.password }),
       }
     : connection;
 
@@ -1966,6 +2011,7 @@ export async function acquireExecutionProfileProvider(
   if (credential !== null) {
     try {
       assertAgentCredentialForm(connection, provider, credential.password);
+      assertAgentUserTaken(connection, credential);
     } catch (error) {
       await releaseTunnel();
       throw error;

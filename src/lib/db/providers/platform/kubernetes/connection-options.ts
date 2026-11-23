@@ -8,7 +8,9 @@
  * read. Server code: it imports the node transport and the egress policy, so the browser never imports it. The dialog
  * checks only the default namespace and the Namespaces list, with copies of these patterns in `KUBERNETES_FIELD_RULES`
  * that tests/unit/lib/db-ui-config.test.ts holds to this module; the API path, the TLS server name and the token are
- * checked here alone, at Test Connection, and a seed or an API call never passes the dialog.
+ * checked here alone, at Test Connection, and a seed or an API call never passes the dialog. A user name is refused by
+ * core before the provider is built (`REFUSED_CONNECTION_FIELDS` in src/lib/db/connection-fields.ts), since basic
+ * authentication is not taken, so this module never receives one.
  *
  * The parameter is named `config` on purpose: tests/unit/lib/db-ui-config.test.ts finds which addressing fields a
  * provider reads by the `config.<field>` pattern.
@@ -93,8 +95,6 @@ const MAX_QUERY_TIMEOUT_MS = 2_147_483_647;
 
 /** Every fixed sentence this module throws, so the dialog and the provider doc can be held to the same words. */
 export const KUBERNETES_CONNECTION_SENTENCES = Object.freeze({
-  userNotTaken:
-    "Kubernetes connections take no user name: basic authentication is refused. Clear User, and put a bearer token under Token or a client certificate under SSL / TLS. Nothing was sent.",
   bearerPrefix: 'The Token starts with "Bearer": remove that word, because Studio adds it. Nothing was sent.',
   tokenNotVisible:
     "The Token holds a space, a line break or another character outside visible ASCII; paste the token alone. Nothing was sent.",
@@ -186,7 +186,6 @@ export function readClusterEndpoint(
       throw configError(S.tunnelLinkLocal);
     }
   }
-  if (optionalText(config.user, "user") !== undefined) throw configError(S.userNotTaken);
   const token = tokenOf(config);
   const apiPath = apiPathOf(config);
   const tlsServerName = tlsServerNameOf(config);

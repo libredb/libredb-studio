@@ -126,17 +126,6 @@ export function endpointText(host: string, port: number): string {
 // Connection: fields, TLS and what is refused before any socket
 // =====================================================================================================================
 
-const FIELD_LABELS = { database: "Database", namespaces: "Namespaces", tlsServerName: "TLS server name" } as const;
-
-/** The refusal of a field RabbitMQ does not offer, set from a seed or the API, naming the field and never its value. */
-export function fieldNotOffered(field: "database" | "namespaces" | "tlsServerName"): string {
-  const reason =
-    field === "tlsServerName"
-      ? "the certificate is always checked against Host"
-      : "Studio discovers the virtual hosts from the management API";
-  return `RabbitMQ connections take no ${FIELD_LABELS[field]}: ${reason}. Clear the field; nothing was sent.`;
-}
-
 export const PATH_PREFIX_NO_SLASH = "Path prefix starts with /, for example /rabbitmq.";
 export const PATH_PREFIX_DOT_SEGMENT = "Path prefix may not contain an empty, . or .. segment.";
 export const PATH_PREFIX_NOT_PLAIN = "Path prefix takes a plain path: no %, ? or #.";

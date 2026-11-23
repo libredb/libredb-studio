@@ -25,6 +25,7 @@ import ts from "typescript";
 import { CONNECTION_STRING_ACCEPTED, SHIPPED_DATABASE_TYPES, SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
 import { CONNECTION_FIELDS, REFUSED_CONNECTION_FIELDS, SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
 import { offersSslPanel } from "@/lib/db/connection-form";
+import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { UnknownProviderError } from "@/lib/db/errors";
 import { PROVIDER_CORE_FIELDS, providerFields } from "@/lib/db/provider-connection";
 import type { DatabaseType } from "@/lib/types";
@@ -401,7 +402,6 @@ describe("a provider module reads only the connection fields its engine declares
         ...(CONNECTION_STRING_ACCEPTED[type] ? ["connectionString"] : []),
         ...(offersSslPanel(type) ? ["ssl"] : []),
         ...(SSH_TUNNEL_REFUSAL[type] === null ? ["host", "port"] : []),
-        ...REFUSED_CONNECTION_FIELDS[type],
         ...PROVIDER_CORE_FIELDS,
       ]);
       const fields: readonly string[] = providerFields(type);
@@ -411,6 +411,14 @@ describe("a provider module reads only the connection fields its engine declares
     }
     expect([...PROVIDER_CORE_FIELDS]).toEqual(["id", "name", "type", "queryTimeout", "readOnly", "managed", "seedId"]);
     expect(Object.isFrozen(PROVIDER_CORE_FIELDS)).toBe(true);
+  });
+
+  test("no engine receives a field its engine refuses", () => {
+    for (const type of SHIPPED_DATABASE_TYPES) {
+      const fields: readonly string[] = providerFields(type);
+      const received = Object.keys(REFUSED_CONNECTION_FIELDS[type]).filter((field) => fields.includes(field));
+      expect({ type, received }).toEqual({ type, received: [] });
+    }
   });
 
   test("providerFields refuses a type that names no provider, by name", () => {
@@ -461,6 +469,22 @@ describe("a provider module reads only the connection fields its engine declares
         if (missing.length > 0) unread[type] = [...missing].sort();
       }
       expect(unread).toEqual(DECLARED_AND_UNREAD as Record<string, string[]>);
+    },
+    PROGRAM_TIMEOUT_MS,
+  );
+
+  test(
+    "the base provider every engine extends reads only Studio's own fields",
+    () => {
+      const { scans } = theCensus();
+      const scan = scans.get("src/lib/db/base-provider.ts");
+      expect(scan).toBeDefined();
+      const core: readonly string[] = PROVIDER_CORE_FIELDS;
+      const reads = [...new Set((scan?.reads ?? []).map((read) => read.what))].sort();
+      expect(reads.filter((field) => !core.includes(field))).toEqual([]);
+      const prototype = BaseDatabaseProvider.prototype as unknown as Record<string, unknown>;
+      expect("getSafeConfig" in prototype).toBe(false);
+      expect("getConnectionInfo" in prototype).toBe(false);
     },
     PROGRAM_TIMEOUT_MS,
   );

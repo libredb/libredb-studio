@@ -378,7 +378,7 @@ describe("POST /api/db/statement/analyze under governance, on the connections gr
         code: "CONFIG_ERROR",
         statusCode: 400,
         kind: "config",
-        outcome: "unknown",
+        outcome: "not-sent",
       },
       retryAfter: null,
     });

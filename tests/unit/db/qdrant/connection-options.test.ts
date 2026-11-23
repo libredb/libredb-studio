@@ -173,15 +173,6 @@ describe("QE4: the credential is validated and never echoed", () => {
     }
   });
 
-  test("a user is refused naming the field, because Qdrant has no user name", () => {
-    const error = refusal({ ...local, user: "admin", password: TEST_PASSWORD });
-    expect(error.message).toBe(
-      "Qdrant has no user name: clear the connection's user, and put the API key or JWT in the password. Nothing was sent.",
-    );
-    expect(error.message).not.toContain("admin");
-    expect(refusal({ ...local, user: 7 }).message).toBe("The connection's user must be a string; nothing was sent.");
-  });
-
   test("the secret forms cover the key, and each segment of a JWT (3.9, VF9)", () => {
     expect(build({ ...local, password: TEST_PASSWORD }).secretForms).toEqual(secretForms([TEST_PASSWORD]));
     const jwt = [

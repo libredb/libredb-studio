@@ -5,9 +5,9 @@
  * order the dialog draws them unless the type's form entry declares a `dialogOrder`; `CONNECTION_FORM` (src/lib/db/connection-form.ts) takes each type's array from here by
  * reference, so the list exists once, and the reason a list holds what it does stays beside that type's entry there.
  * `SEED_ONLY_FIELDS` names, per type, the fields a seed of any other type is refused for, with the sentence it is
- * refused with. `REFUSED_CONNECTION_FIELDS` names, per type, the fields its provider receives only to refuse them by
- * name; with the rows above it declares what a provider is built from (`providerFields` in
- * src/lib/db/provider-connection.ts).
+ * refused with; with `CONNECTION_FIELDS` it declares what a provider is built from (`providerFields` in
+ * src/lib/db/provider-connection.ts). `REFUSED_CONNECTION_FIELDS` maps, per type, each field its engine refuses by name
+ * to the sentence core refuses it with before any provider is built; no provider receives one.
  *
  * `CONNECTION_FIELD_DESCRIPTORS` says how the dialog draws each field, as data its one renderer reads.
  *
@@ -652,17 +652,24 @@ export const SEED_ONLY_FIELDS: Readonly<Record<DatabaseType, SeedOnlyFields | nu
   libredb: null,
 });
 
-const NONE: readonly ConnectionField[] = Object.freeze([]);
+/** The sentence one refused field is refused with, keyed by the field. */
+export type RefusedFieldRow = Readonly<Partial<Record<ConnectionField, string>>>;
+
+const NONE: RefusedFieldRow = Object.freeze({});
+
+/** OpenSearch's one sentence for either half of the API key pair, which only Elasticsearch takes. */
+const OPENSEARCH_API_KEY_REFUSAL =
+  "OpenSearch does not accept API key authentication. Elasticsearch publishes Authorization: ApiKey; nothing here has measured whether OpenSearch's security plugin accepts that scheme, so the pair is refused rather than sent as Basic or as a guessed header.";
 
 /**
- * The fields each type's provider receives only to refuse a value in them by name, fields its dialog never draws
- * (FND-2 slice 6). They are part of what the provider is built from (`providerFields` in
- * src/lib/db/provider-connection.ts), so the provider's own refusal, with its documented sentence, still runs on a
- * record that carries one; every other field the engine does not declare is dropped before the provider is built.
- * A later slice moves these refusals into core, before the build, and takes the fields out of what the provider
- * receives.
+ * The fields each type's engine does not take and refuses by name, each mapped to the sentence it is refused with:
+ * fields its dialog never draws, which a seed, a stored record or an embedder could still set (FND-2 slice 6c).
+ * `createDatabaseProvider` refuses a connection that sets one (any value but `undefined`, `null` and `""`) with that
+ * sentence, before any provider is built (`refusedFieldRefusal` in src/lib/db/provider-connection.ts), while
+ * `readProviderDeclarations`, which never connects, drops it; no provider receives one (`providerFields`). Each sentence
+ * is quoted in its engine's provider doc. A field is listed in the order it is checked.
  */
-export const REFUSED_CONNECTION_FIELDS: Readonly<Record<DatabaseType, readonly ConnectionField[]>> = Object.freeze({
+export const REFUSED_CONNECTION_FIELDS: Readonly<Record<DatabaseType, RefusedFieldRow>> = Object.freeze({
   postgres: NONE,
   mysql: NONE,
   sqlite: NONE,
@@ -677,9 +684,9 @@ export const REFUSED_CONNECTION_FIELDS: Readonly<Record<DatabaseType, readonly C
   clickhouse: NONE,
   druid: NONE,
   elasticsearch: NONE,
-  // The API key pair is Elasticsearch's alone: the transport both types share refuses it on OpenSearch rather than
-  // fall back to user and password with no error.
-  opensearch: Object.freeze(["apiKeyId", "apiKeySecret"] as const),
+  // The API key pair is Elasticsearch's alone: the transport both types share sends it only there, and OpenSearch is
+  // refused it rather than fall back to user and password with no error.
+  opensearch: Object.freeze({ apiKeyId: OPENSEARCH_API_KEY_REFUSAL, apiKeySecret: OPENSEARCH_API_KEY_REFUSAL }),
   trino: NONE,
   cassandra: NONE,
   prometheus: NONE,
@@ -687,28 +694,42 @@ export const REFUSED_CONNECTION_FIELDS: Readonly<Record<DatabaseType, readonly C
   etcd: NONE,
   neo4j: NONE,
   milvus: NONE,
-  // No user name: an API key is the password. The provider refuses a user by name.
-  qdrant: Object.freeze(["user"] as const),
-  // No user name: an API key or an OIDC access token is the password. The provider refuses a user by name.
-  weaviate: Object.freeze(["user"] as const),
+  // No user name: an API key is the password.
+  qdrant: Object.freeze({
+    user: "Qdrant has no user name: clear the connection's user, and put the API key or JWT in the password. Nothing was sent.",
+  }),
+  // No user name: an API key or an OIDC access token is the password.
+  weaviate: Object.freeze({
+    user: "Weaviate takes no user name: clear the connection's user, and put the API key or OIDC access token in the password. Nothing was sent.",
+  }),
   influxdb: NONE,
-  // No user name: the token is the password. The connection layer it shares with InfluxDB refuses a user on it.
-  influxdb3: Object.freeze(["user"] as const),
-  // No user name: a bearer token is the password. The provider refuses a user by name.
-  oxia: Object.freeze(["user"] as const),
+  // No user name: the token is the password.
+  influxdb3: Object.freeze({ user: "InfluxDB 3 has no user name: clear User and put the token in Token." }),
+  // No user name: a bearer token is the password.
+  oxia: Object.freeze({ user: "Oxia has no user name: clear User. A bearer token goes under Token." }),
   databend: NONE,
   bigquery: NONE,
   snowflake: NONE,
-  // No user name: every request uses one fixed Spark Connect user id. The provider refuses a user by name.
-  spark: Object.freeze(["user"] as const),
+  // No user name: every request uses one fixed Spark Connect user id.
+  spark: Object.freeze({
+    user: "Apache Spark connections take no user: every Studio request uses one fixed Spark Connect user id, and Token is the credential. Clear User. Nothing was sent.",
+  }),
   s3: NONE,
-  // No user name: basic authentication is refused, a bearer token is the password. The provider refuses a user by name.
-  kubernetes: Object.freeze(["user"] as const),
+  // No user name: basic authentication is refused, a bearer token is the password.
+  kubernetes: Object.freeze({
+    user: "Kubernetes connections take no user name: basic authentication is refused. Clear User, and put a bearer token under Token or a client certificate under SSL / TLS. Nothing was sent.",
+  }),
   mqtt: NONE,
   firestore: NONE,
-  // No database (virtual hosts are discovered), and the namespaces and TLS server name are Kubernetes's boxes. The
-  // provider refuses each by name.
-  rabbitmq: Object.freeze(["database", "namespaces", "tlsServerName"] as const),
+  // No database (virtual hosts are discovered), and the namespaces and TLS server name are Kubernetes's boxes.
+  rabbitmq: Object.freeze({
+    database:
+      "RabbitMQ connections take no Database: Studio discovers the virtual hosts from the management API. Clear the field; nothing was sent.",
+    namespaces:
+      "RabbitMQ connections take no Namespaces: Studio discovers the virtual hosts from the management API. Clear the field; nothing was sent.",
+    tlsServerName:
+      "RabbitMQ connections take no TLS server name: the certificate is always checked against Host. Clear the field; nothing was sent.",
+  }),
   opcua: NONE,
   mtconnect: NONE,
   modbus: NONE,

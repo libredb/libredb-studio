@@ -1492,7 +1492,7 @@ describe("SparkProvider: refusals before any call", () => {
         dialled += 1;
       },
     });
-    const provider = new SparkProvider(connection(1, { user: "alice" }), {}, script);
+    const provider = new SparkProvider(connection(1, { database: "a.b" }), {}, script);
     await expect(provider.connect()).rejects.toBeInstanceOf(DatabaseConfigError);
     expect(dialled).toBe(0);
     expect(script.calls).toStrictEqual([]);

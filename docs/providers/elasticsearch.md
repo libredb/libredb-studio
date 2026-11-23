@@ -398,8 +398,8 @@ whitespace is gone.
 OpenSearch** ([http-transport.ts](../../src/lib/db/providers/sql/search/http-transport.ts)), because
 nothing here has measured whether OpenSearch's security plugin accepts the same scheme. The form
 never offers the fields for that type-id ([connection-form.ts](../../src/lib/db/connection-form.ts)). A seed
-or stored connection that still carries the pair on OpenSearch is **refused** at the transport
-(and at seed parse) rather than dropped with no error — see [opensearch.md §4.1](./opensearch.md#41-configuration-fields).
+or stored connection that still carries the pair on OpenSearch is **refused** before the provider
+is built (and at seed parse) rather than dropped with no error — see [opensearch.md §4.1](./opensearch.md#41-configuration-fields).
 
 **Precedence: the key pair wins when both it and `user`/`password` are set.** It is the scheme
 operators prefer, and a connection edited to add one without clearing the other should use the one

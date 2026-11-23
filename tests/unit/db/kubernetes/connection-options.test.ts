@@ -121,10 +121,6 @@ describe("credentials", () => {
     expect(readClusterEndpoint(proxy, CONTEXT).anonymous).toBe(false);
   });
 
-  test("a user name is refused: basic authentication is never sent", () => {
-    expect(refusal(kubernetesConnection({ user: "admin" })).message).toBe(S.userNotTaken);
-  });
-
   test("a Bearer prefix is refused with a sentence to remove it, in any case", () => {
     expect(refusal(kubernetesConnection({ password: `Bearer ${TEST_TOKEN}` })).message).toBe(S.bearerPrefix);
     expect(refusal(kubernetesConnection({ password: `bearer ${TEST_TOKEN}` })).message).toBe(S.bearerPrefix);

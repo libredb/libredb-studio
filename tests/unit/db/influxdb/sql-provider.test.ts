@@ -531,10 +531,11 @@ describe("connect (spec 6.2, 5.8)", () => {
   });
 
   test("a connection refused by its options sends nothing and builds no client", async () => {
-    const made = harness([], { user: "admin" });
+    // A token holding a line break, which no header can carry.
+    const made = harness([], { password: `${crypto.randomUUID()}\n` });
     const error = await rejection(made.provider.connect());
     expect(error).toBeInstanceOf(DatabaseConfigError);
-    expect(error.message).toBe(INFLUX_CONNECTION_SENTENCES.influxdb3User);
+    expect(error.message).toBe(INFLUX_CONNECTION_SENTENCES.malformed("Token"));
     expect(made.requests).toHaveLength(0);
     expect(made.built()).toBe(0);
     const empty = harness([], { host: "" });

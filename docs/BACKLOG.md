@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D494, U17 · 363
+- [Drivers and connections](#drivers-and-connections) — D1-D495, U17 · 363
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -3483,15 +3483,6 @@ Found 2026-10-12 while designing the Snowflake provider.
 
 **Done when:** the warning is derived from the secret fields of `CONNECTION_FIELDS`, so every secret field written in plain text warns once per connection, with a test over each secret field.
 
-### D333. The connection-string redactor misses several credential names, and `getConnectionInfo` is never called
-
-`redactConnectionString` in `src/lib/db/base-provider.ts` masks a parameter whose name holds `password`, `token`, `sslkey` or `secret`, so `pwd`, `passphrase` and a PEM block written into a parameter pass through.
-`getConnectionInfo`, the only caller of that redactor in the base provider, is declared and called nowhere.
-
-Found 2026-10-12 while designing the Snowflake provider.
-
-**Done when:** the redactor masks `pwd`, `passphrase` and PEM armour with tests, and `getConnectionInfo` is either used where connection details are shown or removed.
-
 ### D334. No census records which fields each engine's connection identity frames
 
 `connectionIdentity` in `src/lib/agent/context-snapshot.ts` and `credentialDigest` in `src/lib/db/provider-cache-key.ts` each frame a hand-kept list of fields, and nothing compares the two lists engine by engine.
@@ -3726,8 +3717,8 @@ Found 2026-10-14 while merging #1759 and #1764; pre-existing since #1518.
 ### D362. A Spark connection takes no agent credential: the factory asks for a user Apache Spark refuses
 
 `assertAgentCredentialForm` in `src/lib/db/factory.ts` takes `agentPassword` alone only from a provider whose capabilities declare a secret-only form, `agentCredential: "token"` or `"service-account-key"`, and asks every engine that declares no form for both `agentUser` and `agentPassword`, which the agent profile then opens with as the connection's user and password.
-`SparkProvider` declares no `agentCredential`, and `src/lib/db/providers/sql/spark/connection-options.ts` refuses any non-empty User with `SPARK_FIELD_SENTENCES.userNotTaken`, since a Spark Connect session's identity is its token.
-So no agent credential works on a Spark connection: an `agentPassword` alone is refused as an incomplete agent credential, and an `agentUser` beside it is refused by Spark's User check.
+`SparkProvider` declares no `agentCredential`, and core refuses any non-empty User on a Spark connection before the provider is built (`REFUSED_CONNECTION_FIELDS` in `src/lib/db/connection-fields.ts`), since a Spark Connect session's identity is its token.
+So no agent credential works on a Spark connection: an `agentPassword` alone is refused as an incomplete agent credential, and an `agentUser` beside it is refused by `assertAgentUserTaken` in `src/lib/db/factory.ts`, since Spark takes no user name.
 Plan-mode grounding and the operations workflow, which both acquire through the `agent-operations` profile, then meet one of the two refusals instead of reading the schema.
 With no agent credential stored, both run under the connection's own token, and the connection dialog has no input for one, so only a record written through the API or storage reaches this.
 `tests/unit/db/agent-credential-capability.test.ts` pins each engine's form in `DECLARED_FORMS`, where the token engines are Kubernetes, Qdrant, Weaviate, libSQL and InfluxDB 3, and Spark has no row, so `SEED_AGENT_CREDENTIAL.spark` in `src/lib/db/connection-fields.ts` is null and a Spark seed that sets either agent field is refused at load.
@@ -4873,6 +4864,17 @@ The census of the fields provider modules read (`tests/unit/lib/db/provider-fiel
 Found 2026-11-23 while planning FND-2 slice 6.
 
 **Done when:** the three form entries declare `showSslPanel: false`, the dialog's rendering of the three is unchanged, and the census's list of declared fields no module reads is empty.
+
+### D495. A refusal the provider factory's entry points raise before the build answers outcome unknown
+
+Every error raised while a provider is built answers `outcome` `not-sent` (`buildPhase` in `src/lib/db/errors.ts`), since a build sends no statement.
+`getOrCreateProvider`, `acquireExecutionProfileProvider` and `withOneShotTunnel` in `src/lib/db/factory.ts` make checks of their own before they build: the type, the id, the enabled set, the read-only mode, plain data, the tunnel decision, the owner pool and the egress decision, and they dial the bastion of a tunnel that is on.
+A refusal from one of those checks, and a failed bastion dial, carries no outcome, so a route body built from it answers `unknown` although nothing was sent.
+`withOneShotTunnel` must not mark what its callback raises, since the callback may send statements.
+
+Found 2026-11-23 while planning FND-2 slice 6c.
+
+**Done when:** each such refusal answers `outcome` `not-sent`, with a test per entry point.
 
 ## Value interpolation
 
