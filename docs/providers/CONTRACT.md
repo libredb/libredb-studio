@@ -11,10 +11,11 @@ The SDK package `@libredb/provider-sdk`, under [`packages/provider-sdk`](../../p
 - `compileManifestValidator`, `refusalSentence` and the refusal types, exported from `@libredb/provider-sdk/manifest`.
 - [`codec.ts`](../../packages/provider-sdk/src/values/codec.ts), the value codec, exported from `@libredb/provider-sdk/values`.
 - [`errors/index.ts`](../../packages/provider-sdk/src/errors/index.ts), the error record's shape and vocabularies, the kinds a provider may raise and the driver error row contract, exported from `@libredb/provider-sdk/errors`.
-- [`calls/index.ts`](../../packages/provider-sdk/src/calls/index.ts), the call and context types, `defineProvider`, `checkProviderModule` and `envReader`, the host's checks of a call, `checkExecuteRequest`, `checkRefinement` and `sessionCalls`, `freezeContext` and `freezeData`, and the byte budgets `BATCH_MAX_BYTES` and `PAGE_MAX_BYTES` with `encodedRowBytes`, `rowsSource` and `pumpPage`, exported from `@libredb/provider-sdk/calls`.
+- [`calls/index.ts`](../../packages/provider-sdk/src/calls/index.ts), the call and context types, `defineProvider`, `checkProviderModule` and `envReader`, the host's checks of a call, `checkExecuteRequest`, `checkConsoleFacet`, `checkRefinement` and `sessionCalls`, `freezeContext` and `freezeData`, and the byte budgets `BATCH_MAX_BYTES` and `PAGE_MAX_BYTES` with `encodedRowBytes`, `rowsSource` and `pumpPage`, exported from `@libredb/provider-sdk/calls`.
 - `SqlGrammar` and its member types, the compatibility default `DEFAULT_SQL_GRAMMAR`, and `hashRunIsAmbiguous`, exported from `@libredb/provider-sdk/sql`.
+- [`testing/index.ts`](../../packages/provider-sdk/src/testing/index.ts), `serve`, `readFrame`, `roundTripRefusals` and the frame refusals, exported from `@libredb/provider-sdk/testing` only.
 
-The package root exports every entry's surface.
+The package root exports every entry's surface but the testing entry's, which only tests import (C-18).
 The schema, the generated types and the constants the SDK exports are the source for every vocabulary named here, and this document lists none of them by hand.
 
 ## How to read this document
@@ -626,7 +627,7 @@ The manifest segment that declares the facts, each pattern as a bounded pattern 
 
 The host calls a provider's implementation in its own process, as async functions.
 Every request and answer is data in the value codec's domain, except the session handle `open` answers, so the calls need no framing.
-The handle holds the session's state and is the package's own: the host never reads it, which a later part of this chapter checks.
+The handle holds the session's state and is the package's own: the host never reads it, which the memory test transport checks, C-22.
 The manifest's `calls` segment declares what the package's code answers beyond the mandatory calls: the optional console facets and the optional request fields its execute honours.
 One implementation serves every engine the package declares, so `calls` is a fact of the package, a sibling of `runtime`, and never a fact of an engine.
 The shapes of each call, its request, its answer and the contexts the host passes are the types `@libredb/provider-sdk/calls` exports.
@@ -640,6 +641,7 @@ The record is frozen, its implementation is frozen in place, and its manifest is
 The record is a plain object with no brand, because several copies of the SDK may share Studio's process.
 Every key the check reads is read as a data property, and an accessor there is refused without its getter being called, so the functions checked are the functions the host calls.
 An `honours` list longer than the request fields is refused by its length, before any item is read, so a sparse array's length bounds no loop of the check.
+So is an engine list, and an engine's maintenance and agent readings lists, longer than the schema's `maxItems` for it: the engine list holds at most 64 engines, a contract limit for a package that serves one provider's engines, and each facet list at most the size of its vocabulary, since each item is listed once.
 
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a provider whose implementation matches its declared calls is defined, and its record is frozen"
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "the manifest in the record is a deep-frozen copy, and the package's own object is left as it was"
@@ -649,6 +651,16 @@ An `honours` list longer than the request fields is refused by its length, befor
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an accessor the check would read is refused as property-not-data, and its getter is never called"
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an honours list longer than the request fields is refused as manifest-unreadable at the list, and no item is read"
 - test `packages/provider-sdk/tests/calls/honours-bounds.test.ts` "a manifest honours list of the longest length is refused at the list, in a bounded child"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an engine list longer than the schema's maxItems is refused as manifest-unreadable at the list, and no engine is read"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a maintenance or agent readings list longer than the schema's maxItems is refused as manifest-unreadable at the list, and no item is read"
+- test `packages/provider-sdk/tests/calls/list-bounds.test.ts` "an engine list of the longest length is refused at the list, in a bounded child"
+- test `packages/provider-sdk/tests/calls/list-bounds.test.ts` "a maintenance list of the longest length is refused at the list, in a bounded child"
+- test `packages/provider-sdk/tests/calls/list-bounds.test.ts` "an agent readings list of the longest length is refused at the list, in a bounded child"
+- schema `/properties/engines/maxItems`
+- schema `/$defs/facets/properties/maintenance/maxItems`
+- schema `/$defs/facets/properties/agentReadings/maxItems`
+- test `packages/provider-sdk/tests/manifest/schema.test.ts` "the engine list is bounded at 64, and each facet list by the size of its vocabulary"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a list longer than its maxItems is refused as too-many"
 
 ### C-2 (informative): The loader checks the record with the host's SDK
 
@@ -806,6 +818,113 @@ A page of very small rows is bounded in the heap by the host's row limit, not by
 The pump measures a row once, as it reads the batch, and hands on the provider's own row arrays, so a source whose cells change after that read, through a getter or a later write, answers more than was measured; whether the host measures the frames it sends instead is decided with the first host surface.
 The host core that pumps every result arrives with the first host surface; until then this clause is informative.
 
+### C-17 (normative): The host calls a console facet only when the session offers it
+
+The host holds every call to a console facet to the session's calls with `checkConsoleFacet` before the call, and refuses it by `facet-not-offered`, a rule of `CALL_REFUSAL_RULES`, when the session's calls do not offer that facet.
+The session's calls are the ones `sessionCalls` answers, so a facet the manifest offers and a refinement narrowed to not-offered is refused too.
+The refusal names the facet by its call name and a JSON Pointer into the session's calls.
+
+- test `packages/provider-sdk/tests/calls/request.test.ts` "a console facet the session does not offer is refused before the call"
+- test `packages/provider-sdk/tests/calls/request.test.ts` "a console facet the session offers is called"
+
+### C-18 (normative): The testing entry is for tests
+
+`@libredb/provider-sdk/testing` holds the memory test transport's pieces, and only tests import it.
+The package root never re-exports it, and Studio's runtime source under `src/`, `bin/` and `vscode-extension/src/` never imports it, in any form, a type import included.
+
+- test `packages/provider-sdk/tests/manifest/digest.test.ts` "the package root does not export the testing surface"
+- test `tests/unit/package-imports.test.ts` "Studio's runtime source never imports the SDK's testing entry"
+- test `tests/unit/package-imports.test.ts` "a planted runtime file that imports the testing entry fails by file and specifier"
+
+### C-19 (normative): serve crosses every call as JSON frames through the value codec
+
+`serve` puts a provider module record behind the memory test transport: every call crosses as one request frame and one answer frame, each the JSON text of what `encodeValue` wrote, parsed and decoded with `decodeValue` on the other side.
+The provider receives decoded copies, its context frozen by `freezeContext` with the host's `signal` and `env` attached by reference, and its request by `freezeData`, and the host's own context and request are left as the host built them.
+The host receives decoded copies of each answer.
+A value outside the codec's domain, an `undefined` optional member included, fails where it is encoded, with the codec's own `ValueCodecError`, before the other side is called, and a frame that `readFrame` or `roundTripRefusals` refuses fails as one `FrameRefusalError`.
+An error either side throws crosses by reference.
+`serve` checks the module with `checkProviderModule` first and serves nothing it refuses, and what it serves is itself an implementation of the module's manifest, with the module's facets.
+
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served module answers every call through one request frame and one answer frame"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "the provider receives decoded copies, frozen at every depth, with the host's signal and environment reader by reference"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "the host's own context and request are left as the host built them, and the host receives decoded copies of each answer"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a value the codec cannot carry, or a frame key the call does not define, fails the call before the provider is called"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "an error a call or a source throws reaches the host as the same object"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a value that is not a provider module record is refused with every refusal before anything is served"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "the served implementation is an implementation of the module's manifest, with the module's facets"
+
+### C-20 (normative): Each part of each frame is read as a closed shape
+
+`readFrame` reads each part of each call's frame, its context, its request and its answer, as the closed shape of the call type it carries.
+A key the shape does not define, a required key the part lacks, and a value of the wrong type, outside its vocabulary, behind an accessor or in a list with a hole are each refused by a rule of `FRAME_REFUSAL_RULES`, at a JSON Pointer into the part, and never with a value of it.
+A page bound is exactly one of its two forms, and a connection's keys are the contract's field names.
+Each reader is declared as the shape of its call type, so a member added to a call type, or to a union it reads, fails typecheck until its reader names it.
+
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a well-formed frame of every call and part is admitted"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a key a frame's shape does not define is refused as frame-key-unknown at its pointer"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a required key a frame lacks is refused as frame-key-missing"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a value of the wrong type or outside its vocabulary is refused as frame-value-unreadable"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a page bound is exactly one of its two forms"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a connection's keys are the contract's field names and each value a connection field value"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "no frame refusal and no sentence carries a value of the frame"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "every frame refusal rule is worded in one sentence"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a FrameRefusalError carries every refusal and words each"
+
+### C-21 (normative): What crosses is compared deep-equal, and whatever the round trip changes is refused
+
+The value a side decodes is compared deep-equal with the value the other side handed, as `roundTripRefusals` does, and never copied with `structuredClone`, so a test sees what a JSON boundary does to a value.
+Whatever the value codec's JSON round trip changes or drops is refused as `round-trip-changed` at its pointer: a symbol-keyed property, at the object that holds it, a non-enumerable property, an accessor, whose getter the comparison never calls, an array's property that is not an index, at the array, and a key, a length or a leaf that differs.
+What the codec defines as equal compares equal: `-0` and `0`, NaN and NaN, a `Uint8Array` subclass such as a Buffer and a plain `Uint8Array` of the same bytes, a `Date` subclass and a `Date` of the same time, and an object with no prototype and one with `Object.prototype`.
+A `Uint8Array` and a `Date` are compared by their bytes and their time alone, so an own property either one carries besides them is not compared: a typed array's own keys are its indices, and walking them would cost a pass over every byte.
+
+- test `packages/provider-sdk/tests/testing/round-trip.test.ts` "a value the codec carries is admitted, with -0, a Buffer, a null-prototype object and Date and Uint8Array subclasses compared as the codec defines them"
+- test `packages/provider-sdk/tests/testing/round-trip.test.ts` "a symbol-keyed property is refused as round-trip-changed at the pointer of the object that holds it"
+- test `packages/provider-sdk/tests/testing/round-trip.test.ts` "a non-enumerable property is refused as round-trip-changed at its pointer"
+- test `packages/provider-sdk/tests/testing/round-trip.test.ts` "an accessor is refused as round-trip-changed at its pointer, and the comparison never calls its getter"
+- test `packages/provider-sdk/tests/testing/round-trip.test.ts` "an array's own property that is not an index is refused as round-trip-changed at the array"
+- test `packages/provider-sdk/tests/testing/round-trip.test.ts` "a received value that differs from the sent one is refused at the pointer where it differs"
+
+### C-22 (normative): A session handle and a result source never cross
+
+Over the memory test transport a session handle and a result source stay in tables the served instance owns, and only their ids cross.
+The host holds a frozen token for each session, looked up by identity, so a copy of a token is foreign, and the provider's calls receive the provider's own handle.
+A closed or foreign token is refused as `session-not-open`, and a closed result source as `result-not-open`, before any frame.
+A close takes its entry out of both tables whatever the provider's close answers, and a close that resolves anything but nothing is refused.
+
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "the session handle and each result source stay in the served instance's tables, and only their ids cross"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a closed or foreign session token is refused as session-not-open before any frame"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a closed result source is refused as result-not-open before any frame"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a close takes the session out of both tables even when the provider's close throws"
+
+### C-23 (normative): The served host side checks each call before any frame, and closes what a refused answer handed over
+
+The served host side refuses before any frame what C-9 and C-17 refuse, holding each call to the session's calls.
+It reads the refinement `open` answers by C-10, so the session's calls are the narrowed ones.
+An answer the host refuses holds nothing open afterwards: a refused open answer closes its session through the provider's `close`, with the open's own context, and a refused execute answer closes each result source it handed over through its own `close`.
+An item of an execute answer's `results` that is not an object is refused at its index, as a hole is, and a source whose `columns` or `rowCount` read throws is closed with the sources before it, the read's own error thrown.
+Every close runs, and when one fails the host receives an `AggregateError` with the refusal first and each close's error after it.
+
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a request field or a console facet the session does not offer is refused before any frame"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a refinement open answers narrows the served session's calls"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "an open answer the host refuses closes its session, and an execute answer the host refuses closes its sources"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a close that fails beside a refused answer is thrown with the refusal first"
+
+### C-24 (normative): A frame never grows past what the provider holds
+
+The transport encodes a value before it stringifies it, and every loop it runs over a provider's array stops at the first hole, so a sparse list of any length is refused at its first hole.
+A served result source asks the provider for exactly the limit it is pulled with, one batch a pull, and buffers nothing ahead, so `pumpPage` cuts a page of a source that never ends at its byte budget.
+
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served result source pulled by pumpPage answers the provider's rows, one frame a batch"
+- test `packages/provider-sdk/tests/testing/serve-bounds.test.ts` "a batch whose rows are a sparse list of the longest length is refused at its first hole, in a bounded child"
+- test `packages/provider-sdk/tests/testing/serve-bounds.test.ts` "an execute answer whose results are a sparse list of the longest length is refused at its first hole, in a bounded child"
+- test `packages/provider-sdk/tests/testing/serve-bounds.test.ts` "a served source that never ends is cut at the page's byte budget, in a bounded child"
+
+### C-25 (informative): The memory transport is a test transport
+
+The memory transport keeps frames for tests only, so a test, the kit and the host core's tests see what crossing a JSON boundary does to a call.
+The kit's run in memory calls `serve`, and whether any of the transport's checks run in production is decided with the first host surface.
+Deadlines, cancellation and the failure matrix over `serve` arrive with the calls chapter's next part.
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:
@@ -813,7 +932,7 @@ These chapters are added by the changes that bring their enforcers:
 - Connection string rows: their schemes, their URL TLS and paste readers, and their seed checks.
 - Editor and SQL text: execution UI, the SQL grammar facts as manifest data, SQL writing, migration DDL, generators, editor languages, explain formats and discovery fence tags.
 - Policy and MCP claims, each a request a provider makes that only Studio's review record grants, the agent overlay, and presentation (an icon and a colour).
-- Calls, continued: the memory test transport, and the cancel, deadline and failure rules.
+- Calls, continued: the cancel, deadline and failure rules.
 - The API report of each SDK entry.
 
 ## Change notes

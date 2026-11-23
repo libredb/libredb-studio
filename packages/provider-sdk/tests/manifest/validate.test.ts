@@ -181,6 +181,14 @@ describe("schema refusals", () => {
     expect(refusalsFor(manifest((m) => (m.engines = [])))).toEqual([refusal("too-few", "/engines")]);
   });
 
+  test("a list longer than its maxItems is refused as too-many", () => {
+    const changed = manifest((m) => {
+      m.engines = Array.from({ length: 65 }, (_, index) => ({ ...structuredClone(m.engines[0]), id: `db${index}` }));
+    });
+
+    expect(refusalsFor(changed)).toEqual([refusal("too-many", "/engines")]);
+  });
+
   test("a field listed twice is refused as duplicate at the second", () => {
     const changed = manifest((m) => m.engines[0].connection.fields.push("host"));
 

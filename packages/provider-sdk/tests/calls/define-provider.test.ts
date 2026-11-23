@@ -24,6 +24,11 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a draft manifest each case bends into a shape the check refuses.
 type Json = Record<string, any>;
 
+/** The manifest schema, whose list bounds the check mirrors. */
+const SCHEMA: Json = JSON.parse(
+  readFileSync(path.join(import.meta.dir, "../../src/manifest/manifest.schema.json"), "utf8"),
+);
+
 /** A manifest offering cancel and not endScope, honouring params, with no engine facet offered. */
 function manifest(change: (draft: Json) => void = () => {}): Json {
   const draft = JSON.parse(readFileSync(path.join(import.meta.dir, "../fixtures/minimal-manifest.json"), "utf8"));
@@ -197,6 +202,62 @@ describe("checkProviderModule", () => {
     ]) {
       expect(checkProviderModule(record((r) => (r.manifest.calls.console.execute.honours = honours)))).toEqual([
         refusal("manifest-unreadable", "/manifest/calls/console/execute/honours"),
+      ]);
+    }
+    expect(reads).toBe(0);
+  });
+
+  test("an engine list longer than the schema's maxItems is refused as manifest-unreadable at the list, and no engine is read", () => {
+    const longest = SCHEMA.properties.engines.maxItems;
+    const engines = (length: number): Json[] =>
+      Array.from({ length }, (_, index) => {
+        const engine = structuredClone(manifest().engines[0]);
+        engine.id = `db${index}`;
+        engine.facets.maintenance = ["vacuum"];
+        return engine;
+      });
+    let reads = 0;
+    const planted = Object.defineProperty(engines(longest + 1), "0", {
+      enumerable: true,
+      get() {
+        reads += 1;
+        return manifest().engines[0];
+      },
+    });
+
+    expect(longest).toBe(64);
+    expect(checkProviderModule(record((r) => (r.manifest.engines = engines(longest))))).toEqual(
+      Array.from({ length: longest }, (_, index) =>
+        refusal("engine-facet-without-call", `/manifest/engines/${index}/facets/maintenance/0`),
+      ),
+    );
+    expect(checkProviderModule(record((r) => (r.manifest.engines = planted)))).toEqual([
+      refusal("manifest-unreadable", "/manifest/engines"),
+    ]);
+    expect(reads).toBe(0);
+  });
+
+  test("a maintenance or agent readings list longer than the schema's maxItems is refused as manifest-unreadable at the list, and no item is read", () => {
+    const vocabularies = { maintenance: "maintenanceOperation", agentReadings: "agentReading" } as const;
+    let reads = 0;
+    for (const [list, vocabulary] of Object.entries(vocabularies)) {
+      const longest = SCHEMA.$defs.facets.properties[list].maxItems;
+      const items = [...(SCHEMA.$defs[vocabulary].enum as string[])];
+      const pointer = `/manifest/engines/0/facets/${list}`;
+      const planted = Object.defineProperty([...items, items[0]], "0", {
+        enumerable: true,
+        get() {
+          reads += 1;
+          return items[0];
+        },
+      });
+
+      expect(items).toHaveLength(longest);
+      expect(checkProviderModule(record((r) => (r.manifest.engines[0].facets[list] = items)))).toEqual(
+        items.map((_, index) => refusal("engine-facet-without-call", `${pointer}/${index}`)),
+      );
+      expect(checkProviderModule(record((r) => (r.manifest.engines[0].facets[list] = planted)))).toEqual([
+        refusal("manifest-unreadable", pointer),
       ]);
     }
     expect(reads).toBe(0);

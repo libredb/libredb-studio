@@ -15,12 +15,14 @@ import {
   ManifestSchemaDigestError,
 } from "@libredb/provider-sdk/manifest";
 import * as packageRoot from "@libredb/provider-sdk";
+import * as testing from "@libredb/provider-sdk/testing";
 import { decodeValue, encodeValue, ValueCodecError } from "@libredb/provider-sdk/values";
 import { ERROR_KINDS, PROVIDER_ERROR_KINDS, SQLSTATE_PATTERN } from "@libredb/provider-sdk/errors";
 import {
   BATCH_MAX_BYTES,
   CALL_REFUSAL_RULES,
   CONSOLE_FACETS,
+  checkConsoleFacet,
   checkExecuteRequest,
   checkProviderModule,
   checkRefinement,
@@ -98,6 +100,7 @@ describe("the manifest schema digest", () => {
     expect(packageRoot.CONSOLE_FACETS).toBe(CONSOLE_FACETS);
     expect(packageRoot.EXECUTE_REQUEST_FIELDS).toBe(EXECUTE_REQUEST_FIELDS);
     expect(packageRoot.checkExecuteRequest).toBe(checkExecuteRequest);
+    expect(packageRoot.checkConsoleFacet).toBe(checkConsoleFacet);
     expect(packageRoot.checkRefinement).toBe(checkRefinement);
     expect(packageRoot.sessionCalls).toBe(sessionCalls);
     expect(packageRoot.CALL_REFUSAL_RULES).toBe(CALL_REFUSAL_RULES);
@@ -108,5 +111,21 @@ describe("the manifest schema digest", () => {
     expect(packageRoot.encodedRowBytes).toBe(encodedRowBytes);
     expect(packageRoot.BATCH_MAX_BYTES).toBe(BATCH_MAX_BYTES);
     expect(packageRoot.PAGE_MAX_BYTES).toBe(PAGE_MAX_BYTES);
+  });
+
+  test("the package root does not export the testing surface", () => {
+    const surface = Object.keys(testing).sort();
+
+    expect(surface).toEqual([
+      "FRAME_PARTS",
+      "FRAME_REFUSAL_RULES",
+      "FrameRefusalError",
+      "SERVED_CALLS",
+      "frameRefusalSentence",
+      "readFrame",
+      "roundTripRefusals",
+      "serve",
+    ]);
+    expect(surface.filter((name) => Object.hasOwn(packageRoot, name))).toEqual([]);
   });
 });

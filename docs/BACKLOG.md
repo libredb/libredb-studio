@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D496, U17 · 364
+- [Drivers and connections](#drivers-and-connections) — D1-D497, U17 · 365
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -4886,6 +4886,17 @@ The contract's host refusal of a request field a session does not honour (`check
 Found 2026-11-23 while planning PR 9 slice 9f2, by reading the code.
 
 **Done when:** a query with a non-zero offset to an engine that does not page by offset is refused before the provider runs, with a test.
+
+### D497. The manifest validator walks a sparse list to its length before it answers
+
+`compileManifestValidator` (`packages/provider-sdk/src/manifest/validate.ts`) runs ajv with `allErrors: true`, so a manifest whose list is sparse and very long, such as an engines list of length 2^32-1, makes it visit every hole.
+Measured on such an engines list in a bounded child: no answer within 30 seconds, and with the schema's `maxItems` on the list the walk runs out of heap, while `allErrors: false` answers at once.
+A manifest read from a JSON file has no holes and is bounded by the file's size, so only a manifest object built in code reaches the walk.
+`checkProviderModule` already refuses such a list before it reads any item (clause C-1 in `docs/providers/CONTRACT.md`).
+
+Found 2026-11-23 while planning PR 9 slice 9f2b.
+
+**Done when:** the validator refuses a list longer than its `maxItems` before ajv walks it, with a test in a bounded child.
 
 ## Value interpolation
 

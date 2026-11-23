@@ -67,6 +67,19 @@ const IMPL_KEYS: readonly string[] = Object.freeze(["open", "close", "console"])
 const CONSOLE_KEYS: readonly string[] = Object.freeze(["execute", ...CONSOLE_FACETS]);
 const OFFERS: readonly unknown[] = Object.freeze(["offered", "not-offered"]);
 const REQUEST_FIELDS: readonly unknown[] = EXECUTE_REQUEST_FIELDS;
+/**
+ * The longest engine list the schema admits, its `/properties/engines/maxItems`; packages/provider-sdk/tests holds it
+ * to the schema file.
+ */
+const ENGINES_MAX = 64;
+/**
+ * The longest maintenance and agent readings lists the schema admits, each list's `maxItems` under
+ * `/$defs/facets/properties`: the size of its vocabulary, since each item is listed once.
+ */
+const FACET_LISTS_MAX: Readonly<Record<"maintenance" | "agentReadings", number>> = Object.freeze({
+  maintenance: 11,
+  agentReadings: 6,
+});
 const CONTRACT_FORM = /^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$/;
 
 /**
@@ -152,7 +165,11 @@ function readCalls(manifest: Fields, refusals: DefinitionRefusal[]): Partial<Rec
   return offers;
 }
 
-/** The refusals of one engine's facets: one for a facet this contract has no call for, or for one it cannot read. */
+/**
+ * The refusals of one engine's facets: one for a facet this contract has no call for, or for one it cannot read. A
+ * maintenance or agent readings list longer than the schema admits is refused as `manifest-unreadable` by its length,
+ * before any item is read: a sparse array's length bounds no loop over it.
+ */
 function readFacets(engine: Fields, at: string, refusals: DefinitionRefusal[]): void {
   const facets = manifestRecord(engine, "facets", `${at}/facets`, refusals);
   if (facets === undefined) return;
@@ -167,12 +184,12 @@ function readFacets(engine: Fields, at: string, refusals: DefinitionRefusal[]): 
       else if (offer === "offered") refusals.push({ rule: "engine-facet-without-call", pointer });
     }
   }
-  for (const list of ["maintenance", "agentReadings"]) {
+  for (const list of ["maintenance", "agentReadings"] as const) {
     const pointer = `${at}/facets/${list}`;
     const read = own(facets, list, pointer, refusals);
     if (read.kind === "accessor") continue;
     const items = valueOf(read);
-    if (!Array.isArray(items)) {
+    if (!Array.isArray(items) || items.length > FACET_LISTS_MAX[list]) {
       refusals.push({ rule: "manifest-unreadable", pointer });
       continue;
     }
@@ -182,12 +199,15 @@ function readFacets(engine: Fields, at: string, refusals: DefinitionRefusal[]): 
   }
 }
 
-/** The refusals of each engine's facets. */
+/**
+ * The refusals of each engine's facets. An engine list longer than the schema admits is refused as
+ * `manifest-unreadable` by its length, before any engine is read: a sparse array's length bounds no loop over it.
+ */
 function readEngines(manifest: Fields, refusals: DefinitionRefusal[]): void {
   const read = own(manifest, "engines", "/manifest/engines", refusals);
   if (read.kind === "accessor") return;
   const engines = valueOf(read);
-  if (!Array.isArray(engines)) {
+  if (!Array.isArray(engines) || engines.length > ENGINES_MAX) {
     refusals.push({ rule: "manifest-unreadable", pointer: "/manifest/engines" });
     return;
   }

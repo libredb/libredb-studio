@@ -83,4 +83,18 @@ describe("the manifest schema", () => {
       })),
     });
   });
+
+  test("the engine list is bounded at 64, and each facet list by the size of its vocabulary", () => {
+    const schema = SCHEMA as {
+      properties: { engines: { maxItems?: unknown } };
+      $defs: Record<string, { enum?: unknown[]; properties?: Record<string, { maxItems?: unknown }> }>;
+    };
+    const facets = schema.$defs.facets?.properties ?? {};
+
+    expect(schema.properties.engines.maxItems).toBe(64);
+    expect(schema.$defs.maintenanceOperation?.enum).toHaveLength(11);
+    expect(facets.maintenance?.maxItems).toBe(schema.$defs.maintenanceOperation?.enum?.length);
+    expect(schema.$defs.agentReading?.enum).toHaveLength(6);
+    expect(facets.agentReadings?.maxItems).toBe(schema.$defs.agentReading?.enum?.length);
+  });
 });
