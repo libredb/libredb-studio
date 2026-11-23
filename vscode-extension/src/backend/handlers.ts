@@ -126,7 +126,7 @@ export interface BackendHandlers {
   listObjects(params: unknown): Promise<DatabaseObject[]>;
   describeObject(params: unknown): Promise<ObjectDetail>;
   runQuery(params: unknown, token: CancellationToken): Promise<QueryPage>;
-  cancelQuery(params: unknown): Promise<CancelResult>;
+  cancelQuery(params: unknown, token: CancellationToken): Promise<CancelResult>;
   shutdown(): Promise<null>;
   listEngines(params: unknown): EngineCatalog;
   parsePastedConnection(params: unknown): PastedConnection;
@@ -499,20 +499,28 @@ export function createHandlers(
     },
 
     // As POST /api/db/cancel: the whole connection's provider, which finds a statement in whichever session runs it.
-    async cancelQuery(params) {
+    async cancelQuery(params, token) {
       const connectionId = connectionIdOf(params);
       const queryId = nonEmptyString(fieldOf(params, "queryId"), "queryId");
       const record = openRecord(connectionId);
-      return await answeringFor(record.connection, async () => {
-        const provider = await providerOf(record);
-        // Through the provider host core's cancel call, bounded by its cleanup deadline. query/cancel reads no
-        // cancellation token, as it never did, so the caller's signal is one nothing aborts.
-        const answer = await cancelEditorRun(provider, queryId, new AbortController().signal, CANCEL_ROUTE);
-        if (!answer.offered) {
-          throw refusal(400, "CANCEL_UNSUPPORTED", "Query cancellation is not supported for this database type");
-        }
-        return { cancelled: answer.cancelled };
-      });
+      // The request's cancellation is the caller going away, as a dropped browser request is the cancel route's: it
+      // ends the wait for the provider's open and for the engine's answer, and a token already cancelled calls nothing.
+      const controller = new AbortController();
+      const listener = token.onCancellationRequested(() => controller.abort());
+      if (token.isCancellationRequested) controller.abort();
+      try {
+        return await answeringFor(record.connection, async () => {
+          const provider = await openWithinCall(controller.signal, (wait) => providerWithin(record, wait));
+          // Through the provider host core's cancel call, bounded by its cleanup deadline and the request's signal.
+          const answer = await cancelEditorRun(provider, queryId, controller.signal, CANCEL_ROUTE);
+          if (!answer.offered) {
+            throw refusal(400, "CANCEL_UNSUPPORTED", "Query cancellation is not supported for this database type");
+          }
+          return { cancelled: answer.cancelled };
+        });
+      } finally {
+        listener.dispose();
+      }
     },
 
     // The dispatcher refuses every request from here on; this closes every pool the factory holds.

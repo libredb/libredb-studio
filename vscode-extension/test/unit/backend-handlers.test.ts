@@ -1598,10 +1598,10 @@ describe("query/cancel", () => {
     let stopped = true;
     const provider = fakeProvider({ cancelQuery: async () => stopped });
     const { handlers } = await openedOn(provider);
-    assert.deepEqual(await handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" }), { cancelled: true });
+    assert.deepEqual(await handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" }, idle), { cancelled: true });
     assert.deepEqual(provider.calls.at(-1), ["cancelQuery", "q-7"]);
     stopped = false;
-    assert.deepEqual(await handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" }), { cancelled: false });
+    assert.deepEqual(await handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" }, idle), { cancelled: false });
   });
 
   it("cancelQuery reaches the provider through the host's cancel call", async () => {
@@ -1609,8 +1609,8 @@ describe("query/cancel", () => {
     const { handlers } = await openedOn(provider);
     const source = readFileSync(path.join(__dirname, "..", "..", "src", "backend", "handlers.ts"), "utf8");
 
-    assert.deepEqual(await handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" }), { cancelled: true });
-    assert.deepEqual(await handlers.cancelQuery({ connectionId: "c1", queryId: "q-8" }), { cancelled: false });
+    assert.deepEqual(await handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" }, idle), { cancelled: true });
+    assert.deepEqual(await handlers.cancelQuery({ connectionId: "c1", queryId: "q-8" }, idle), { cancelled: false });
     assert.deepEqual(
       provider.calls.filter(([method]) => method === "cancelQuery"),
       [
@@ -1625,7 +1625,7 @@ describe("query/cancel", () => {
   it("refuses a provider that cannot cancel (CANCEL_UNSUPPORTED)", async () => {
     const { handlers } = await openedOn();
     await refused(
-      handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" }),
+      handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" }, idle),
       400,
       "Query cancellation is not supported for this database type",
       { code: "CANCEL_UNSUPPORTED" },
@@ -1639,21 +1639,86 @@ describe("query/cancel", () => {
       cancelQuery: async () => true,
     });
     const { handlers, calls } = await openedOn(server);
-    await handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" });
+    await handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" }, idle);
     assert.deepEqual(server.calls, [["cancelQuery", "q-7"]]);
-    assert.deepEqual(calls.at(-1), ["getOrCreateProvider", REVIVED, {}, { allowExternalFileAccess: true }]);
+    const [method, connection, options, posture, wait] = calls.at(-1) as unknown[];
+    assert.deepEqual(
+      [method, connection, options, posture],
+      ["getOrCreateProvider", REVIVED, {}, { allowExternalFileAccess: true }],
+    );
+    assert.ok((wait as { signal: unknown }).signal instanceof AbortSignal);
   });
 
   it("refuses a connection this backend has not opened, and params it cannot read", async () => {
     const { handlers } = await openedOn();
     await refused(
-      handlers.cancelQuery({ connectionId: "c9", queryId: "q-7" }),
+      handlers.cancelQuery({ connectionId: "c9", queryId: "q-7" }, idle),
       404,
       'No connection with id "c9" is open in this LibreDB backend.',
       { code: "CONNECTION_NOT_OPEN" },
     );
-    await refused(handlers.cancelQuery({ connectionId: "c1" }), -32602, "queryId must be a non-empty string");
-    await refused(handlers.cancelQuery({ queryId: "q-7" }), -32602, "connectionId must be a non-empty string");
+    await refused(handlers.cancelQuery({ connectionId: "c1" }, idle), -32602, "queryId must be a non-empty string");
+    await refused(handlers.cancelQuery({ queryId: "q-7" }, idle), -32602, "connectionId must be a non-empty string");
+  });
+
+  it("query/cancel takes its request's cancellation as its caller signal, while the provider opens and while the engine answers", async () => {
+    const notSent = Object.assign(new QueryCancelledError("The query was cancelled.", "postgres"), {
+      outcome: "not-sent" as const,
+    });
+
+    // While the provider opens: the cancel stops waiting, answers not-sent and calls no cancel.
+    const opening = await openedOn(fakeProvider({ cancelQuery: async () => true }));
+    let reached: () => void = () => {};
+    const opened = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    opening.factory.getOrCreateProvider = async (...args) => {
+      const wait = args[3] as { signal: AbortSignal };
+      reached();
+      return new Promise<never>((_resolve, reject) => {
+        wait.signal.addEventListener("abort", () => reject(wait.signal.reason), { once: true });
+      });
+    };
+    const whileOpening = new CancellationTokenSource();
+    const leftOpening = opening.handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" }, whileOpening.token);
+    await opened;
+    whileOpening.cancel();
+    await answeredAs(leftOpening, notSent);
+    assert.deepEqual(opening.provider.calls, []);
+
+    // While the engine answers: the cancel stops waiting at once, and the late answer is not logged as a failure.
+    let answer: (stopped: boolean) => void = () => {};
+    const provider = fakeProvider({ cancelQuery: () => new Promise<boolean>((resolve) => (answer = resolve)) });
+    const { handlers } = await openedOn(provider);
+    const lines: string[] = [];
+    const warn = console.warn;
+    console.warn = (...args: unknown[]) => void lines.push(args.join(" "));
+    try {
+      const whileAnswering = new CancellationTokenSource();
+      const leftAnswering = handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" }, whileAnswering.token);
+      await settled();
+      assert.deepEqual(provider.calls, [["cancelQuery", "q-7"]]);
+      whileAnswering.cancel();
+      await answeredAs(leftAnswering, new QueryCancelledError("The query was cancelled."));
+      answer(true);
+      await settled();
+      assert.deepEqual(lines, []);
+    } finally {
+      console.warn = warn;
+    }
+  });
+
+  it("query/cancel with a token already cancelled calls nothing", async () => {
+    const provider = fakeProvider({ cancelQuery: async () => true });
+    const { handlers } = await openedOn(provider);
+    const source = new CancellationTokenSource();
+    source.cancel();
+    const notSent = Object.assign(new QueryCancelledError("The query was cancelled.", "postgres"), {
+      outcome: "not-sent" as const,
+    });
+
+    await answeredAs(handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" }, source.token), notSent);
+    assert.deepEqual(provider.calls, []);
   });
 });
 
@@ -1943,7 +2008,7 @@ describe("provider errors that hold the connection's credential", () => {
 
   it("query/cancel answers a provider error that holds the connection's credential withheld, with its own status and code", async () => {
     const { handlers } = await openedHolding({ cancelQuery: reject });
-    await withheldAnswer(handlers.cancelQuery({ connectionId: "c1", queryId: "q-1" }), clean);
+    await withheldAnswer(handlers.cancelQuery({ connectionId: "c1", queryId: "q-1" }, idle), clean);
   });
 
   it("objects/selectStatement answers a provider error that holds the connection's credential withheld, with its own status and code", async () => {

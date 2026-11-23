@@ -1347,6 +1347,8 @@ The editor's query and its cancel, in the routes and in the VS Code backend, wai
 - test `tests/api/db/cancel.test.ts` "a cancel that leaves while its connection opens answers 499 not-sent and cancels nothing"
 - test `tests/api/db/query-open-wait.test.ts` "a request that leaves while its connection opens is answered at once, and the open's later failure is logged by connection, kind and code"
 - test `vscode-extension/test/unit/backend-handlers.test.ts` "query/run opens its provider under the run's own open wait, and a token cancelled while it opens answers QUERY_CANCELLED not-sent"
+- test `vscode-extension/test/unit/backend-handlers.test.ts` "query/cancel takes its request's cancellation as its caller signal, while the provider opens and while the engine answers"
+- test `vscode-extension/test/unit/backend-handlers.test.ts` "query/cancel with a token already cancelled calls nothing"
 
 ### C-45 (normative): Teardown under fixed deadlines
 

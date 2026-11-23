@@ -254,6 +254,8 @@ Separately, the `query/run` request carries a JSON-RPC cancellation token: the c
 The same signal ends the run's wait for its provider's open, so a run cancelled while its connection opens is answered at once, `QUERY_CANCELLED` with the outcome not-sent, and runs nothing.
 The run is then answered at once, `QUERY_CANCELLED` with the outcome unknown, and the provider host core sends the provider's cancel under the run's `queryId`; the statement's own end arrives later and is only logged when it fails.
 `query/cancel` reaches the provider through the same host core's cancel call, `cancelEditorRun`, which waits for the engine at most 10 s.
+It waits for its provider's open within the same 70 s as `query/run`, and its own JSON-RPC request's cancellation is its caller signal: a `$/cancelRequest` for it ends the wait for the open and for the engine's answer at once, `QUERY_CANCELLED`, and a request already cancelled calls nothing.
+The extension's own client sends no cancellation for `query/cancel`, so only a JSON-RPC client that cancels the request reaches that signal.
 
 ### Errors
 
