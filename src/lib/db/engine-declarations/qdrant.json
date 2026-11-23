@@ -13,7 +13,10 @@
     },
     "seedOnly": null,
     "refused": [
-      "user"
+      {
+        "field": "user",
+        "refusal": "Qdrant has no user name: clear the connection's user, and put the API key or JWT in the password. Nothing was sent."
+      }
     ],
     "connectionString": {
       "accepted": false,
@@ -72,7 +75,11 @@
         "kind": "no-secret",
         "message": "A Qdrant server without an API key, its default, accepts any key or none, so a read-only seed without a key promises a boundary the server does not keep."
       }
-    ]
+    ],
+    "fieldRules": [],
+    "hostHint": null,
+    "hostIdentity": null,
+    "import": null
   },
   "facets": {
     "monitoring": {

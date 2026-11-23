@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "d9ff2edabf2b72f3688bc3034a0a21ed21dafd8e3cc028a082186026898328b9";
+export const MANIFEST_SCHEMA_SHA256 = "5b1dfa91f48c2d90553ea1fb2a97152334c8a662a909bbe4abb3ef41f1e523e6";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -119,8 +119,8 @@ export interface Connection {
   readonly fields: readonly FieldName[];
   readonly defaults: ConnectionDefaults;
   readonly seedOnly: SeedOnly;
-  /** The fields the provider receives only to refuse a value in them by name; none of them is one of the engine's fields. */
-  readonly refused: readonly FieldName[];
+  /** The fields the engine refuses by name, each with the sentence core refuses a connection that sets it with, in the order core checks them: core refuses such a connection before any provider is built, so no provider receives one. None of them is one of the engine's fields, and each is listed once. */
+  readonly refused: readonly RefusedField[];
   readonly connectionString: ConnectionStringOffer;
   readonly tls: FacetOffer;
   readonly sshTunnel: SshTunnelOffered | SshTunnelRefused;
@@ -136,6 +136,59 @@ export interface Connection {
   readonly hostUriSchemes: readonly HostUriScheme[];
   /** The credentials the engine warns about, read by the connection dialog and at seed load, in the order they are read. */
   readonly credentialWarnings: readonly CredentialWarning[];
+  /** The checks the connection dialog runs on a field before Test Connection and Save send anything, at most one rule per field the engine takes; the dialog checks the fields in the order of fields, so the order of this list carries no meaning. */
+  readonly fieldRules: readonly FieldRule[];
+  /** The function that answers, from the text in the Host box, the sentence the dialog draws in place of the static Host hint while it answers one; null where the engine has none. */
+  readonly hostHint: FunctionName | null;
+  /** The function that answers the server a Host text names, for telling whether a pasted connection string names the server already in the box; null where the text trimmed and lower-cased is its identity. */
+  readonly hostIdentity: FunctionName | null;
+  readonly import: ConnectionImport;
+}
+
+/** The name of a function the package exports, which the manifest names and never carries, local to its engine: a lower-case letter, then up to 63 letters or digits. */
+export type FunctionName = string;
+
+/** The checks on one field: a blank field is refused with required; a field that is not blank must match format, then hold a length within charRange, then pass check. A rule states at least one of them. */
+export interface FieldRule {
+  readonly field: FieldName;
+  /** The sentence a blank field is refused with; null where a blank field passes. */
+  readonly required: string | null;
+  readonly format: FieldFormat;
+  readonly charRange: FieldCharRange;
+  /** The function that reads a field that passes format and charRange and answers its refusal sentence, or nothing where it passes; null where the field has none. */
+  readonly check: FunctionName | null;
+}
+
+/** The pattern a field that is not blank must match, and the sentence it is refused with where it does not; null where the field has none. */
+export type FieldFormat = {
+  readonly pattern: BoundedPattern;
+  readonly sentence: string;
+} | null;
+
+/** A regular expression, its source and flags as JavaScript's RegExp reads them, which must compile. A value is tested with RegExp.prototype.test, so a pattern that must match the whole value writes ^ and $ itself. */
+export interface BoundedPattern {
+  readonly source: string;
+  /** No flag, or u alone. */
+  readonly flags: "" | "u";
+}
+
+/** The length, in characters, a field that is not blank and matches its format must have, both ends included, and the sentence it is refused with otherwise; null where the field has none. */
+export type FieldCharRange = {
+  readonly min: number;
+  readonly max: number;
+  readonly sentence: string;
+} | null;
+
+/** An import the connection dialog offers for a new connection: the action's label, and the function that reads a pasted text into entries, one of which fills the form, without throwing; null where the dialog offers none. */
+export type ConnectionImport = {
+  readonly label: string;
+  readonly importer: FunctionName;
+} | null;
+
+/** A field the engine refuses by name, and the sentence core refuses a connection that sets it with, which names the field and never its value. */
+export interface RefusedField {
+  readonly field: FieldName;
+  readonly refusal: string;
 }
 
 /** How the connection dialog presents the engine's fields. Each list holds at most one entry per field, each naming a field the engine takes; a field with no entry keeps the dialog's own word. */

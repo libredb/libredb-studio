@@ -146,7 +146,7 @@ So a connection whose secret changed is never handed a provider opened under the
 
 ### M-11 (normative): The rules of an engine's connection
 
-A refused field, which the provider receives only to refuse a value in it, is never also one of the engine's fields.
+A refused field is never also one of the engine's fields.
 A seed-only field is one of the engine's fields or a seed-only field name of the vocabulary.
 A host path field is one of the engine's seed-only fields.
 
@@ -355,6 +355,108 @@ An engine declares at most one `no-secret` warning, and each warning reads only 
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "a second no-secret warning is refused as no-secret-warning-duplicate"
 - test `tests/unit/db/engine-declarations.test.ts` "connection.credentialWarnings is the engine's CREDENTIAL_WARNINGS row, and the form reads that same row"
 - test `tests/unit/lib/db/credential-warnings.test.ts` "refuses the declared pair with the dialog's own sentence"
+
+### M-31 (normative): A function is named, never carried
+
+The manifest holds no code: where an engine has a function, its declaration names it, and the package exports it.
+A name is a lower-case letter followed by up to 63 letters or digits, `functionName` in the schema, and it is local to its engine, so two engines of one package may each have a function of one name.
+A package names its functions freely.
+Studio's own declarations name each function by the slot it fills: `<field>Check` for a field rule's check, `hostHint`, `hostIdentity`, and `importer` for the connection import.
+Studio's census holds every name its declarations give to the very function Studio runs, by identity and never by the function's own name, and finds no function Studio runs that a declaration does not name.
+
+- schema `/$defs/functionName`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an importer named in another form is refused as pattern-mismatch"
+- test `tests/unit/db/engine-declarations.test.ts` "every function a declaration names is, through the census's own resolver, the very function the connection form runs"
+- test `tests/unit/db/engine-declarations.test.ts` "every function the connection form holds is named by its engine's declaration, and the resolver names nothing else"
+
+### M-32 (informative): How a package's named functions are found and called
+
+A package will export its named functions in one table, which the SDK's definition step checks against the names its manifest gives.
+The host will call a named function through that table by its name, through one fixed entry point, never as a provider method of its own per function.
+No package function runs in a browser, so Studio calls a named check, hint or identity reader on its server.
+Nothing resolves a package's names yet: until the definition step does, Studio runs its own functions, which its census holds to their names.
+Where an engine names no identity reader, Studio reads a Host text's identity as the text trimmed and lower-cased.
+
+### M-33 (normative): Field rules
+
+An engine may give a field it takes one rule, in `connection.fieldRules`, and a rule states at least one check: `required`, `format`, `charRange` or a named `check`.
+The dialog checks the fields in the order of `connection.fields`, so the order of the rules carries no meaning, and it answers the first refusal it meets.
+On each field it reads `required` first, which refuses a blank field, then, only for a field that is not blank, `format`, `charRange` and `check`, in that order.
+A field hidden by its condition is not checked.
+A field is blank when it holds no value or an empty one; a secret field is also blank when its value is not text or holds only whitespace.
+Core refuses a connection that leaves a shown required secret blank before it builds a provider, with that rule's sentence, and the provider checks again when it connects, because a seed or an API call never passes the dialog.
+
+- schema `/$defs/fieldRule`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a field rule for a field the engine does not take is refused as field-undeclared"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "two field rules naming one field are refused as field-rule-duplicate at the second"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a field rule that states nothing is refused as field-rule-empty"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a character range whose minimum exceeds its maximum is refused as char-range-inverted"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's field rules and host readers are held to the rules the schema cannot state, at pointers into it"
+- test `tests/unit/db/engine-declarations.test.ts` "connection.fieldRules are the form's fieldRules, each pattern by its source and flags"
+- test `tests/unit/db/engine-declarations.test.ts` "a form whose rules are read from the declaration refuses exactly what the connection form refuses"
+- test `tests/unit/lib/db-ui-config.test.ts` "connectionFieldRefusal checks charRange after format"
+- test `tests/unit/lib/db-ui-config.test.ts` "the dialog refuses exactly what core refuses of a required secret"
+
+### M-34 (normative): A bounded pattern
+
+A field rule's format is a bounded pattern: a regular expression's `source`, of 1 to 512 characters, and its `flags`, the empty string or `u`.
+The pattern compiles as JavaScript's `RegExp` reads it, with its flags.
+A value is tested with `RegExp.prototype.test`, which matches anywhere in it, so a pattern that must match the whole value writes `^` and `$` itself.
+The flags `g` and `y` are left out because they make `test` remember where it stopped.
+
+- schema `/$defs/boundedPattern`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a field rule's pattern longer than 512 characters is refused as out-of-range"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a field rule's pattern with a flag other than u is refused as value-not-allowed"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a pattern that does not compile is refused as pattern-invalid"
+- test `tests/unit/db/engine-declarations.test.ts` "connection.fieldRules are the form's fieldRules, each pattern by its source and flags"
+
+### M-35 (informative): Backtracking is not checked yet
+
+A pattern's author keeps it free of catastrophic backtracking, but the validator of this contract does not check it.
+Every pattern Studio declares is, by its census, the source and flags of a pattern its dialog runs today, and each was measured to run in time linear in the length of its input.
+No package Studio does not ship is admitted before contract 1.0, and a regular expression analyzer will check every pattern before one is.
+
+### M-36 (normative): The Host text readers
+
+An engine may name a host hint, `connection.hostHint`, which answers from the text in the Host box a sentence the dialog draws in place of the static Host hint while it answers one.
+An engine may name a host identity, `connection.hostIdentity`, which answers the server a Host text names, so the dialog tells whether a pasted connection string names the server already in the box or another one, whose credentials it then drops.
+Only an engine that takes a `host` field names either.
+
+- schema `/$defs/connection/properties/hostHint`
+- schema `/$defs/connection/properties/hostIdentity`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a host hint named in another form is one no-variant refusal"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a host reader on an engine without a host field is refused as host-reader-without-host"
+- test `tests/unit/db/engine-declarations.test.ts` "every function a declaration names is, through the census's own resolver, the very function the connection form runs"
+- test `tests/unit/db/engine-declarations.test.ts` "connection.hostHint, hostIdentity and import are the form's, the import with its label"
+- test `tests/components/ConnectionModal.test.tsx` "draws no Port box, lets the Account span the row, and shows the host Studio connects to"
+- test `tests/components/ConnectionModal-snowflake.test.tsx` "a second paste naming another account drops the first account's token, database and schema"
+
+### M-37 (normative): The connection import
+
+An engine may offer an import, `connection.import`: the label of the dialog's import action and an importer, a named function that reads a pasted text into entries, one of which fills the form.
+The importer never throws, and none of its sentences quotes the text it reads.
+The dialog offers the import only for a new connection, never while it edits a saved one.
+
+- schema `/$defs/connectionImport`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an import without its importer is refused as missing-key, and a label longer than 128 characters as out-of-range"
+- test `tests/unit/db/engine-declarations.test.ts` "every function a declaration names is, through the census's own resolver, the very function the connection form runs"
+- test `tests/components/ConnectionModal-kubeconfig.test.tsx` "the entry declares it, and its loader resolves to the browser importer itself"
+- test `tests/unit/lib/connection-import-declaration.test.ts` "is declared by exactly the listed entries"
+- test `tests/unit/lib/kubernetes/kubeconfig-import.test.ts` "never throws, whatever the text"
+- test `tests/unit/lib/kubernetes/kubeconfig-import.test.ts` "a context that cannot be imported is refused by its place, never by a value"
+
+### M-38 (normative): A refused field's sentence
+
+Each entry of `connection.refused` names a field the engine refuses and the sentence core refuses a connection that sets it with, which names the field and never its value.
+Core refuses a connection that sets a refused field before it builds any provider, with the sentence of the first such field in the order of the list, so no provider receives one.
+A field is set when the connection holds it with a value other than nothing, null and the empty string, and a list names a field at most once.
+
+- schema `/$defs/refusedField`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a refused entry without its sentence is refused as missing-key"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "two refused entries naming one field are refused as refused-field-duplicate at the second"
+- test `tests/unit/db/engine-declarations.test.ts` "connection.refused is the engine's REFUSED_CONNECTION_FIELDS row, each field with its sentence, in the order core checks them"
+- test `tests/unit/db/engine-declarations.test.ts` "core refuses a connection that sets a refused field with the sentence its declaration states"
+- test `tests/unit/lib/db/provider-connection.test.ts` "the first set field in the row's order answers its sentence"
 
 ## Values
 
@@ -610,7 +712,7 @@ The host's refusal of an undeclared field arrives with the test transport, and t
 
 These chapters are added by the changes that bring their enforcers:
 
-- Connection rules and connection string rows: field rules as bounded patterns and named server checks, the host hint and identity readers, the connection import, the refusal sentence of each refused field, and the connection string rows with their schemes, URL TLS and paste readers and seed checks.
+- Connection string rows: their schemes, their URL TLS and paste readers, and their seed checks.
 - Editor and SQL text: execution UI, the SQL grammar facts as manifest data, SQL writing, migration DDL, generators, editor languages, explain formats and discovery fence tags.
 - Policy and MCP claims, each a request a provider makes that only Studio's review record grants, the agent overlay, and presentation (an icon and a colour).
 - Calls, continued: the memory test transport, refinements and the byte budgets, and the cancel, deadline and failure rules.
@@ -634,3 +736,5 @@ Against the manifest sketch the design started from:
 - A condition is one field equal to one value, with no list of values and no combination of conditions in this contract, M-25.
 - A `calls` segment declares the package's optional console facets and the request fields its execute honours.
   The sketch's dotted facet list is not adopted for calls, which are keyed by the path to their function.
+- A function the manifest names is a name, never code, M-31.
+- A refused field carries the sentence core refuses it with, M-38.

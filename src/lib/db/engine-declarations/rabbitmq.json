@@ -17,9 +17,18 @@
     },
     "seedOnly": null,
     "refused": [
-      "database",
-      "namespaces",
-      "tlsServerName"
+      {
+        "field": "database",
+        "refusal": "RabbitMQ connections take no Database: Studio discovers the virtual hosts from the management API. Clear the field; nothing was sent."
+      },
+      {
+        "field": "namespaces",
+        "refusal": "RabbitMQ connections take no Namespaces: Studio discovers the virtual hosts from the management API. Clear the field; nothing was sent."
+      },
+      {
+        "field": "tlsServerName",
+        "refusal": "RabbitMQ connections take no TLS server name: the certificate is always checked against Host. Clear the field; nothing was sent."
+      }
     ],
     "connectionString": {
       "accepted": false,
@@ -105,7 +114,38 @@
         "password": "guest",
         "message": "guest/guest is RabbitMQ's default administrator, which the official Docker image accepts from any host; create a user for Studio (studio-reader) instead."
       }
-    ]
+    ],
+    "fieldRules": [
+      {
+        "field": "amqpPort",
+        "required": null,
+        "format": {
+          "pattern": {
+            "source": "^(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$",
+            "flags": ""
+          },
+          "sentence": "AMQP port must be a whole number from 1 to 65535, such as 5672. Nothing was sent."
+        },
+        "charRange": null,
+        "check": null
+      },
+      {
+        "field": "apiPath",
+        "required": null,
+        "format": {
+          "pattern": {
+            "source": "^(?:\\/|(?:\\/(?!api(?:\\/|$))(?!\\.{1,2}(?:\\/|$))[A-Za-z0-9._~!$&'()*+,;=:@-]+)+\\/?)$",
+            "flags": ""
+          },
+          "sentence": "Path prefix starts with / and takes a plain path such as /rabbitmq: no empty, . or .. segment, no %, ? or #, and no segment named api. Nothing was sent."
+        },
+        "charRange": null,
+        "check": null
+      }
+    ],
+    "hostHint": null,
+    "hostIdentity": null,
+    "import": null
   },
   "facets": {
     "monitoring": {

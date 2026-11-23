@@ -97,7 +97,7 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
   {
     module: CONNECTION_FIELDS_MODULE,
     name: "REFUSED_CONNECTION_FIELDS",
-    destination: "engine declaration: connection.refused",
+    destination: "engine declaration: connection.refused, each field with its sentence",
   },
   {
     module: CONNECTION_FIELDS_MODULE,
@@ -108,7 +108,7 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     module: "src/lib/db/connection-form.ts",
     name: "CONNECTION_FORM",
     destination:
-      "engine declaration: displayName, connection.defaults, connection.tls, connection.dialog, connection.hostUriSchemes and connection.credentialWarnings; the field rules, the host hint and host identity readers and the import go to the planned connection rules segment",
+      "engine declaration: displayName, connection.defaults, connection.tls, connection.dialog, connection.hostUriSchemes, connection.credentialWarnings, connection.fieldRules, connection.hostHint, connection.hostIdentity and connection.import, each function named by the slot it fills",
   },
   {
     module: "src/lib/db/connection-string/index.ts",

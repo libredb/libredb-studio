@@ -269,12 +269,11 @@
           "$ref": "#/$defs/seedOnly"
         },
         "refused": {
-          "description": "The fields the provider receives only to refuse a value in them by name; none of them is one of the engine's fields.",
+          "description": "The fields the engine refuses by name, each with the sentence core refuses a connection that sets it with, in the order core checks them: core refuses such a connection before any provider is built, so no provider receives one. None of them is one of the engine's fields, and each is listed once.",
           "type": "array",
           "items": {
-            "$ref": "#/$defs/fieldName"
-          },
-          "uniqueItems": true
+            "$ref": "#/$defs/refusedField"
+          }
         },
         "connectionString": {
           "$ref": "#/$defs/connectionStringOffer"
@@ -328,6 +327,38 @@
           "items": {
             "$ref": "#/$defs/credentialWarning"
           }
+        },
+        "fieldRules": {
+          "description": "The checks the connection dialog runs on a field before Test Connection and Save send anything, at most one rule per field the engine takes; the dialog checks the fields in the order of fields, so the order of this list carries no meaning.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldRule"
+          }
+        },
+        "hostHint": {
+          "description": "The function that answers, from the text in the Host box, the sentence the dialog draws in place of the static Host hint while it answers one; null where the engine has none.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hostIdentity": {
+          "description": "The function that answers the server a Host text names, for telling whether a pasted connection string names the server already in the box; null where the text trimmed and lower-cased is its identity.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "import": {
+          "$ref": "#/$defs/connectionImport"
         }
       },
       "required": [
@@ -344,8 +375,140 @@
         "agentCredential",
         "dialog",
         "hostUriSchemes",
-        "credentialWarnings"
+        "credentialWarnings",
+        "fieldRules",
+        "hostHint",
+        "hostIdentity",
+        "import"
       ],
+      "additionalProperties": false
+    },
+    "functionName": {
+      "description": "The name of a function the package exports, which the manifest names and never carries, local to its engine: a lower-case letter, then up to 63 letters or digits.",
+      "type": "string",
+      "pattern": "^[a-z][A-Za-z0-9]{0,63}$"
+    },
+    "fieldRule": {
+      "description": "The checks on one field: a blank field is refused with required; a field that is not blank must match format, then hold a length within charRange, then pass check. A rule states at least one of them.",
+      "type": "object",
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/fieldName"
+        },
+        "required": {
+          "description": "The sentence a blank field is refused with; null where a blank field passes.",
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "format": {
+          "$ref": "#/$defs/fieldFormat"
+        },
+        "charRange": {
+          "$ref": "#/$defs/fieldCharRange"
+        },
+        "check": {
+          "description": "The function that reads a field that passes format and charRange and answers its refusal sentence, or nothing where it passes; null where the field has none.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": ["field", "required", "format", "charRange", "check"],
+      "additionalProperties": false
+    },
+    "fieldFormat": {
+      "description": "The pattern a field that is not blank must match, and the sentence it is refused with where it does not; null where the field has none.",
+      "type": ["object", "null"],
+      "properties": {
+        "pattern": {
+          "$ref": "#/$defs/boundedPattern"
+        },
+        "sentence": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": ["pattern", "sentence"],
+      "additionalProperties": false
+    },
+    "boundedPattern": {
+      "description": "A regular expression, its source and flags as JavaScript's RegExp reads them, which must compile. A value is tested with RegExp.prototype.test, so a pattern that must match the whole value writes ^ and $ itself.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "flags": {
+          "description": "No flag, or u alone.",
+          "type": "string",
+          "enum": ["", "u"]
+        }
+      },
+      "required": ["source", "flags"],
+      "additionalProperties": false
+    },
+    "fieldCharRange": {
+      "description": "The length, in characters, a field that is not blank and matches its format must have, both ends included, and the sentence it is refused with otherwise; null where the field has none.",
+      "type": ["object", "null"],
+      "properties": {
+        "min": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "sentence": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": ["min", "max", "sentence"],
+      "additionalProperties": false
+    },
+    "connectionImport": {
+      "description": "An import the connection dialog offers for a new connection: the action's label, and the function that reads a pasted text into entries, one of which fills the form, without throwing; null where the dialog offers none.",
+      "type": ["object", "null"],
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "importer": {
+          "$ref": "#/$defs/functionName"
+        }
+      },
+      "required": ["label", "importer"],
+      "additionalProperties": false
+    },
+    "refusedField": {
+      "description": "A field the engine refuses by name, and the sentence core refuses a connection that sets it with, which names the field and never its value.",
+      "type": "object",
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/fieldName"
+        },
+        "refusal": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": ["field", "refusal"],
       "additionalProperties": false
     },
     "connectionDialog": {

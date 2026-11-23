@@ -69,7 +69,11 @@
       "absentValues": []
     },
     "hostUriSchemes": [],
-    "credentialWarnings": []
+    "credentialWarnings": [],
+    "fieldRules": [],
+    "hostHint": null,
+    "hostIdentity": null,
+    "import": null
   },
   "facets": {
     "monitoring": {

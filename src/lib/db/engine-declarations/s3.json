@@ -118,7 +118,55 @@
         "password": "rustfsadmin",
         "message": "This is the documented default credential a RustFS server starts with when RUSTFS_ACCESS_KEY and RUSTFS_SECRET_KEY are not set, so anyone who knows RustFS can sign in with it. Set both on the server, or connect with an access key of your own."
       }
-    ]
+    ],
+    "fieldRules": [
+      {
+        "field": "user",
+        "required": null,
+        "format": {
+          "pattern": {
+            "source": "^[\\x21-\\x2b\\x2d\\x2e\\x30-\\x3c\\x3e-\\x7e]+$",
+            "flags": ""
+          },
+          "sentence": "Access key ID must be printable ASCII without spaces, commas, equals signs or slashes, because it is sent inside the signed Authorization header. Nothing was sent."
+        },
+        "charRange": {
+          "min": 3,
+          "max": 512,
+          "sentence": "Access key ID holds 3 to 512 characters, because S3 servers issue no shorter ID and it is sent inside the signed Authorization header. Nothing was sent."
+        },
+        "check": null
+      },
+      {
+        "field": "database",
+        "required": null,
+        "format": {
+          "pattern": {
+            "source": "^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,253}[A-Za-z0-9])?$",
+            "flags": ""
+          },
+          "sentence": "Bucket must be 1 to 255 letters, digits, dots, hyphens or underscores, starting and ending with a letter or digit. Nothing was sent."
+        },
+        "charRange": null,
+        "check": null
+      },
+      {
+        "field": "region",
+        "required": null,
+        "format": {
+          "pattern": {
+            "source": "^[A-Za-z0-9_-]{1,64}$",
+            "flags": ""
+          },
+          "sentence": "Region must be 1 to 64 letters, digits, hyphens or underscores, such as us-east-1. Nothing was sent."
+        },
+        "charRange": null,
+        "check": null
+      }
+    ],
+    "hostHint": null,
+    "hostIdentity": null,
+    "import": null
   },
   "facets": {
     "monitoring": {

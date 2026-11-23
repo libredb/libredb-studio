@@ -184,7 +184,47 @@
       ]
     },
     "hostUriSchemes": [],
-    "credentialWarnings": []
+    "credentialWarnings": [],
+    "fieldRules": [
+      {
+        "field": "host",
+        "required": "Enter Account: an account identifier such as myorg-myaccount, or its URL. Nothing was sent.",
+        "format": null,
+        "charRange": null,
+        "check": "hostCheck"
+      },
+      {
+        "field": "user",
+        "required": "Enter the user's login name. Nothing was sent.",
+        "format": null,
+        "charRange": null,
+        "check": null
+      },
+      {
+        "field": "privateKey",
+        "required": "Paste the private key for key-pair sign-in. Nothing was sent.",
+        "format": null,
+        "charRange": null,
+        "check": null
+      },
+      {
+        "field": "password",
+        "required": "Enter the programmatic access token. Nothing was sent.",
+        "format": null,
+        "charRange": null,
+        "check": null
+      },
+      {
+        "field": "role",
+        "required": "Enter the role every statement runs as. Nothing was sent.",
+        "format": null,
+        "charRange": null,
+        "check": null
+      }
+    ],
+    "hostHint": "hostHint",
+    "hostIdentity": "hostIdentity",
+    "import": null
   },
   "facets": {
     "monitoring": {

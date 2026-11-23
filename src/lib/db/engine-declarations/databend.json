@@ -84,7 +84,32 @@
         "password": "",
         "message": "Signing in as root with no password works only when the server's root user has no password, and such a user accepts any password or none, so anyone who can reach the server signs in as its administrator. Set a password for root on the server, or connect as a user of your own."
       }
-    ]
+    ],
+    "fieldRules": [
+      {
+        "field": "user",
+        "required": "User is required: Databend signs in every request as a SQL user, root on a fresh self-hosted node. Nothing was sent.",
+        "format": null,
+        "charRange": null,
+        "check": null
+      },
+      {
+        "field": "warehouse",
+        "required": null,
+        "format": {
+          "pattern": {
+            "source": "^[A-Za-z0-9_-]{1,63}$",
+            "flags": ""
+          },
+          "sentence": "Warehouse must be 1 to 63 letters, digits, hyphens or underscores, as the warehouse is named in Databend Cloud. Nothing was sent."
+        },
+        "charRange": null,
+        "check": null
+      }
+    ],
+    "hostHint": null,
+    "hostIdentity": null,
+    "import": null
   },
   "facets": {
     "monitoring": {
