@@ -8,6 +8,10 @@
  * of those classes, through an import alias or a namespace import included, and assigns no property named `outcome`:
  * a provider claims not-sent only by raising `refused-before-send`, whose constructor writes it.
  *
+ * One core kind reaches a caller through a provider: `read-allowance-exceeded`, raised by the read allowance core hands
+ * a provider when the provider charges it. The provider code that calls a `charge` method is recorded here, so a new
+ * charge is a reviewed change to this file.
+ *
  * The scans read the TypeScript syntax tree, so a comment naming a class is never a finding, and a finding names its
  * file and innermost named declaration, never a line. Only the files whose text names what a scan looks for are parsed.
  */
@@ -134,6 +138,25 @@ function constructionsOf(files: readonly SourceText[], classes: readonly string[
   return found;
 }
 
+/** Every call in `files` to a method named `charge`: `x.charge(...)`, by the callee's text. */
+function chargeCalls(files: readonly SourceText[]): Finding[] {
+  const found: Finding[] = [];
+  for (const file of files) {
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        node.expression.name.text === "charge"
+      ) {
+        found.push({ file: file.path, declaration: enclosingDeclaration(node), what: node.expression.getText() });
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(parse(file));
+  }
+  return found;
+}
+
 const ASSIGNMENTS = new Set([
   ts.SyntaxKind.EqualsToken,
   ts.SyntaxKind.QuestionQuestionEqualsToken,
@@ -208,6 +231,51 @@ describe("the kinds a provider may raise", () => {
       { file: "src/lib/db/providers/sql/planted.ts", declaration: "read", what: "new StudioTimeoutRefusal" },
       { file: "src/lib/db/providers/sql/planted.ts", declaration: "NotHere", what: "extends FacetNotOfferedError" },
       { file: "src/lib/db/providers/sql/planted.ts", declaration: "Shaped", what: "extends UnknownProviderError" },
+    ]);
+  });
+});
+
+describe("the one core kind a provider passes on", () => {
+  test("provider code charges the read allowance only where the record names, so its refusal is the one core kind a provider passes on", () => {
+    const core: readonly string[] = CORE_ERROR_KINDS;
+    expect(core).toContain("read-allowance-exceeded");
+    expect(errorKind(new errorClasses.ReadAllowanceExceededError("spent", "firestore"))).toBe(
+      "read-allowance-exceeded",
+    );
+    expect(constructionsOf(providerSources(["ReadAllowanceExceededError"]), ["ReadAllowanceExceededError"])).toEqual(
+      [],
+    );
+    expect(chargeCalls(providerSources(["charge("]))).toEqual([
+      {
+        file: "src/lib/db/providers/document/firestore/agent-client.ts",
+        declaration: "send",
+        what: "call.allowance.charge",
+      },
+      {
+        file: "src/lib/db/providers/industrial/modbus/agent-read.ts",
+        declaration: "runModbusAgentRead",
+        what: "allowance.charge",
+      },
+    ]);
+  });
+
+  test("the charge scan finds a charge call, and not a comment or a property named charge", () => {
+    const planted: SourceText[] = [
+      {
+        path: "packages/provider-planted/src/read.ts",
+        text: [
+          "// budget.readAllowance.charge(1, 'a read') is named here only in a comment.",
+          "export function read(budget: { readAllowance: { charge(units: number, label: string): void } }): void {",
+          '  budget.readAllowance.charge(1, "a read");',
+          "  const charge = budget.readAllowance.charge;",
+          "  void charge;",
+          "}",
+        ].join("\n"),
+      },
+    ];
+
+    expect(chargeCalls(planted)).toEqual([
+      { file: "packages/provider-planted/src/read.ts", declaration: "read", what: "budget.readAllowance.charge" },
     ]);
   });
 });

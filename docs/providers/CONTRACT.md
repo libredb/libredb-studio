@@ -423,14 +423,18 @@ The record's shape and vocabularies are the constants `@libredb/provider-sdk/err
 
 ### E-1 (normative): A provider raises only the kinds a provider may raise
 
-A provider raises only errors whose kind is in `PROVIDER_ERROR_KINDS`.
-The other kinds, `CORE_ERROR_KINDS`, are core's own: refusals before any provider is built, refusals of a facet member an engine does not declare, Studio's own refusals marked by a class only core constructs, the scrub's replacement of an error whose text held a credential, and `internal`.
+A provider constructs and extends only error classes whose kind is in `PROVIDER_ERROR_KINDS`.
+The other kinds, `CORE_ERROR_KINDS`, are core's own: refusals before any provider is built, refusals of a facet member an engine does not declare, the refusal of the run's read allowance, Studio's own refusals marked by a class only core constructs, the scrub's replacement of an error whose text held a credential, and `internal`.
 The reason each is core's stands beside the constant.
 The two lists partition `ERROR_KINDS`.
+One core kind reaches a caller through a provider: the read allowance core hands a provider in its statement budget raises `read-allowance-exceeded` when the provider charges past what is left.
+The provider lets that refusal pass unchanged, and never constructs one of its own.
+The provider code that charges the allowance is recorded, so a new charge is noticed.
 
 - test `packages/provider-sdk/tests/errors/kinds.test.ts` "the kinds a provider raises and the kinds only core raises partition the record's kinds"
 - test `tests/unit/db/provider-error-kinds.test.ts` "every error class Studio declares has a kind the contract places"
 - test `tests/unit/db/provider-error-kinds.test.ts` "provider code constructs and extends only classes of the kinds a provider may raise"
+- test `tests/unit/db/provider-error-kinds.test.ts` "provider code charges the read allowance only where the record names, so its refusal is the one core kind a provider passes on"
 - test `tests/unit/lib/db/error-record.test.ts` "every class errors.ts exports has exactly one kind, and no two share one"
 
 ### E-2 (normative): A provider's own class takes its nearest contract class's kind

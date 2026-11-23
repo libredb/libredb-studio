@@ -85,7 +85,10 @@ export const CORE_ERROR_KINDS = [
    * capabilities after connect: a provider declares what it offers, and never discovers a feature by being called.
    */
   "not-offered",
-  /** The read allowance is core's budget across an agent run, charged only by core. */
+  /**
+   * The read allowance is core's budget across an agent run, and core's allowance object raises this refusal: a
+   * provider charges the allowance it is handed and lets the refusal pass unchanged, but never constructs one.
+   */
   "read-allowance-exceeded",
   /** Core's refusal of a provider's answer, in Studio's voice; a provider raises `row-budget-refusal`. */
   "studio-row-budget-refusal",
