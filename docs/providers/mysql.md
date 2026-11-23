@@ -40,7 +40,7 @@ which is the SQL reference implementation. The headline differences:
 | Schema introspection | One set of shared `MATERIALIZED` CTEs behind the object surface | `information_schema` behind the object surface; the bulk column read is four statements per folder ([§7.1](#71-the-object-surface-789)) |
 | Schema scope | All non-system schemas, cross-schema FKs | **Single database** (`TABLE_SCHEMA = <db>`), bare table names, lifted by the object surface ([§7.1](#71-the-object-surface-789)) |
 | Maintenance ops | `vacuum`, `analyze`, `reindex`, `kill` | `analyze`, `optimize`, `check`, `kill` |
-| Query timeout | `statement_timeout` from `queryTimeout` | **Not wired** — no server-side query timeout |
+| Query timeout | `statement_timeout` from `queryTimeout` | **Not wired** in the provider; Studio answers an editor statement still running at `queryTimeout` plus 10 s and kills it with `KILL QUERY` ([§3.5](#35-no-server-side-query-timeout)) |
 | Pool config honored | `min`/`max`/`idleTimeout`/`acquireTimeout` | **`max` only** (`connectionLimit`) |
 | Queries-per-second metric | `undefined` (needs sampling) | Reported (`Queries`/`Uptime`) |
 | BLOB/binary values | driver-native | driver-native ([§3.3](#33-blob--binary-values-reach-every-surface-as-bytes)) |
@@ -437,8 +437,10 @@ decoding paths, and pins the text it receives.
 
 The pool config, built by `buildPoolConfig()` ([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)), intentionally sets only
 mysql2-specific options and **does not** translate `ProviderOptions.queryTimeout` into a server-side
-timeout (MySQL has no direct `statement_timeout` pool option like Postgres). A runaway query is not
-auto-killed by the provider; cancellation is explicit via [`cancelQuery()`](#53-query-cancellation).
+timeout (MySQL has no direct `statement_timeout` pool option like Postgres).
+The provider kills no statement on its own; its kill is [`cancelQuery()`](#53-query-cancellation).
+Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`, and Studio sends the run's cancel, `KILL QUERY` on its thread, when the request named a `queryId`.
 
 ### 3.6 Maintenance over all tables when no target
 
@@ -630,7 +632,7 @@ options set by `buildPoolConfig()` ([`mysql.ts`](../../src/lib/db/providers/sql/
 
 > ⚠️ Only `max` from `DEFAULT_POOL_CONFIG` is honored. `min`, `idleTimeout`, and `acquireTimeout`
 > are **not** mapped (the mysql2 pool model differs from `pg`), and `queryTimeout` is **not** applied
-> (see [§3.5](#35-no-server-side-query-timeout)).
+> by the pool (see [§3.5](#35-no-server-side-query-timeout)).
 >
 > ⚠️ When a **`connectionString`** is supplied, `buildPoolConfig()` returns `{ ...baseConfig, timezone, uri }`
 > and takes the discrete-fields branch **not at all**, so `ssl`/`connection.ssl` and
@@ -2975,10 +2977,10 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
 
 ## 15. Known limitations & future work
 
-- **No server-side query timeout.** The pool ignores `queryTimeout`; a runaway query is not
-  auto-killed (only explicit `cancelQuery()`/`KILL QUERY`). *Future:* derive a per-statement
-  `MAX_EXECUTION_TIME` (the SELECT execution limit) from `queryTimeout`. (Note `wait_timeout` is
-  unrelated — it bounds idle connections, not query execution.)
+- **No server-side query timeout.** The pool ignores `queryTimeout`, so the server never stops a statement on its own.
+  An editor statement still running at `queryTimeout` plus 10 s is answered `504` by Studio and killed with `KILL QUERY` ([§3.5](#35-no-server-side-query-timeout)); any other statement runs until it ends or is cancelled.
+  *Future:* derive a per-statement `MAX_EXECUTION_TIME` (the SELECT execution limit) from `queryTimeout`.
+  (Note `wait_timeout` is unrelated: it bounds idle connections, not query execution.)
 - **Pool tuning is limited** to `max` (`connectionLimit`); `min`/`idleTimeout`/`acquireTimeout` are
   ignored.
 - **Index `scans` is `CARDINALITY`**, an estimate of distinct values — not a real index-usage/scan

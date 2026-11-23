@@ -310,6 +310,9 @@ polling immediately after the DELETE still reported state `QUEUED`, so nothing h
 instant `FAILED`/`CANCELED`. `cancelQuery()` returning `true` means *the coordinator accepted the
 termination*; `false` means only that nothing was ever recorded under that token.
 
+Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`, and Studio sends the run's cancel, `DELETE /v1/query/{id}`, when the request named a `queryId`.
+
 ### 3.8 No keys, no indexes — and why that is a fact about the engine
 
 Not "none found". Trino's `information_schema` holds exactly eight views, measured:

@@ -19,7 +19,7 @@ import { markNotSent, QueryCancelledError, StudioByteBudgetRefusal, StudioTimeou
 import type { RefusedRecord } from "@/lib/provider-host/core/console";
 
 /** The sentence a cancelled query has always been answered with. */
-export const QUERY_CANCELLED_SENTENCE = "The query was cancelled.";
+const QUERY_CANCELLED_SENTENCE = "The query was cancelled.";
 
 /** The words that open the message of a refusal only a defect of Studio's own bridge can cause. */
 export const HOST_DEFECT_PREFIX =

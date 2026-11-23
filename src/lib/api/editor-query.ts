@@ -1,14 +1,24 @@
-import { bridgeAbortToCancel } from "@/lib/api/abort-cancel";
+import {
+  CLEANUP_DEADLINE_MS,
+  type CallContext,
+  deadlineSignal,
+  envReader,
+  type ExecuteRequest,
+  type PageBound,
+} from "@libredb/provider-sdk/calls";
 import { firstResultSet } from "@/lib/api/first-result-set";
-import { pageOfProbe, pageOptionError, probePastPage } from "@/lib/api/page-probe";
+import { pageOfProbe, pageOptionError } from "@/lib/api/page-probe";
 import { consoleTextByteLimit, consoleTextOverLimit } from "@/lib/db/destructive-commands";
-import { QueryCancelledError } from "@/lib/db/errors";
+import { errorCode, errorKind } from "@/lib/db/error-record";
+import { QueryCancelledError, waitedSeconds } from "@/lib/db/errors";
 import { type ProviderTextScrub, withScrubbedWarnings } from "@/lib/db/operations/provider-text";
-import { supportsQueryCancel } from "@/lib/db/query-cancel";
-import { endsOpenQueryTransactions, newQueryCallScope } from "@/lib/db/types";
-import type { DatabaseProvider, OpenQueryTransactionOutcome, QueryPrepareOptions } from "@/lib/db/types";
-import { noteAppendedBound } from "@/lib/db/utils/query-limiter";
+import { DEFAULT_QUERY_TIMEOUT, type DatabaseProvider, type QueryPrepareOptions } from "@/lib/db/types";
+import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { logger } from "@/lib/logger";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
+import { type CallerView, refusalError, stopError } from "@/lib/provider-host/access";
+import { cancelCall, executeCall, type HostCallPorts } from "@/lib/provider-host/core/console";
+import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
 import type { DatabaseType, QueryPagination, QueryResult } from "@/lib/types";
 
 /*
@@ -27,14 +37,16 @@ import type { DatabaseType, QueryPagination, QueryResult } from "@/lib/types";
  */
 
 /**
- * What `checkEditorQuery` reads: the statement as sent, the connection's type, and the page bounds as sent.
- * The statement is `unknown` because the route hands over its body field unchecked; the caller still owns
- * the `sql` and `queryId` field checks.
+ * What `checkEditorQuery` reads: the statement as sent, the connection's type and statement timeout, and the page
+ * bounds as sent. The statement is `unknown` because the route hands over its body field unchecked; the caller still
+ * owns the `sql` and `queryId` field checks. The statement timeout is the connection's own `queryTimeout`, which an
+ * inline connection carries unchecked.
  */
 export interface EditorQueryRequest {
   statement: unknown;
   type: DatabaseType;
   options: unknown;
+  queryTimeout: unknown;
 }
 
 /** A request refused before any provider resolves, with the status and sentence the route answers. */
@@ -43,16 +55,32 @@ export interface EditorQueryRefusal {
   error: string;
 }
 
+/** The longest a timer waits on Node.js, which runs a longer one after one millisecond. */
+const TIMER_MAX_MS = 2_147_483_647;
+
 /**
- * Why this request is refused, or null when neither check refuses it: the page bounds first, then the
- * console text bound of a connection type that declares one. Null does not mean the request can run:
- * only a type with a text bound has its statement held to a string here, so a new caller checks that the
- * statement and the `queryId` are strings itself before it calls `runEditorQuery`. The route checks that
- * `sql` is present and is a string, and that `queryId` is a string, before it calls this.
+ * The connection dialog's bounds of a statement timeout, refused by name here because the host's deadline is computed
+ * from it: a value that is not a whole number of milliseconds made that deadline NaN, and every query answered 500.
+ */
+const QUERY_TIMEOUT_REFUSAL = `The connection's queryTimeout must be a whole number of milliseconds from 1 to ${TIMER_MAX_MS}.`;
+
+/** Whether `value` is a statement timeout the host can wait on: absent, or a whole number from 1 to `TIMER_MAX_MS`. */
+function validQueryTimeout(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  return Number.isInteger(value) && (value as number) >= 1 && (value as number) <= TIMER_MAX_MS;
+}
+
+/**
+ * Why this request is refused, or null when no check refuses it: the page bounds first, then the connection's
+ * statement timeout, then the console text bound of a connection type that declares one. Null does not mean the
+ * request can run: only a type with a text bound has its statement held to a string here, so a new caller checks that
+ * the statement and the `queryId` are strings itself before it calls `runEditorQuery`. The route checks that `sql` is
+ * present and is a string, and that `queryId` is a string, before it calls this.
  */
 export function checkEditorQuery(request: EditorQueryRequest): EditorQueryRefusal | null {
   const optionError = pageOptionError(request.options);
   if (optionError !== null) return { status: 400, error: optionError };
+  if (!validQueryTimeout(request.queryTimeout)) return { status: 400, error: QUERY_TIMEOUT_REFUSAL };
 
   // A connection type that declares a console text bound is held to it here, before the bound parameters, the
   // provider and the statement cache are reached, so an oversize text opens no socket. The answer names the size
@@ -101,57 +129,109 @@ export interface EditorQueryAnswer {
   resultSetCount: number;
 }
 
+/**
+ * How long after the statement timeout the host still waits: the engine's own timeout answer and the rollback of the
+ * run's open transaction (at most 5 s) arrive within it, so today's timeout answer wins wherever the engine answers in
+ * time.
+ */
+export const EXECUTE_SLACK_MS = 10_000;
+
+/** A legacy provider reads no declared environment, so its calls get a reader of none. */
+const NO_ENVIRONMENT = envReader([], () => undefined);
+
+/** The statement timeout `provider` was built with: the connection's own, or Studio's default. */
+function statementTimeout(provider: Pick<DatabaseProvider, "config">): number {
+  return provider.config.queryTimeout ?? DEFAULT_QUERY_TIMEOUT;
+}
+
+/**
+ * When the execute call of a run that starts at `now` on `provider` must have answered: the statement timeout plus
+ * `EXECUTE_SLACK_MS`, capped at the longest a timer waits.
+ */
+export function executeDeadline(provider: Pick<DatabaseProvider, "config">, now: number): number {
+  return now + Math.min(statementTimeout(provider) + EXECUTE_SLACK_MS, TIMER_MAX_MS);
+}
+
+/** The page a request asks for, as the contract states it: every row, or a limit and an offset. */
+function pageBound(options: QueryPrepareOptions): PageBound {
+  if (options.unlimited === true) return { unlimited: true };
+  return { limit: options.limit ?? DEFAULT_QUERY_LIMIT, offset: options.offset ?? 0 };
+}
+
+/**
+ * Where the host core hands what a call no longer waits for, logged under `route`: a failure after the caller left,
+ * and a failed cancel, each by its kind and code and never its text, which can carry a server's words. Once the run's
+ * cancel was sent (`cancelSent`), a `QueryCancelledError` after it is the run's expected end and is not logged.
+ */
+function hostPorts(route: string, cancelSent: () => boolean = () => false): HostCallPorts {
+  return {
+    late: (failure) => {
+      if (failure instanceof QueryCancelledError && cancelSent()) return;
+      logger.warn("A statement Studio stopped waiting for failed afterwards", {
+        route,
+        kind: errorKind(failure),
+        code: errorCode(failure),
+      });
+    },
+    cancelFailed: (failure) =>
+      logger.warn("The cancel sent after the request was aborted failed", {
+        route,
+        kind: errorKind(failure),
+        code: errorCode(failure),
+      }),
+  };
+}
+
+/** A call's context: `deadline`, and a signal that aborts at it or when `caller` aborts first. */
+function callContext(deadline: number, caller: AbortSignal): CallContext {
+  return { deadline, signal: deadlineSignal(deadline, caller), env: NO_ENVIRONMENT };
+}
+
+/*
+ * THE EDITOR QUERY ON THE PROVIDER HOST CORE (docs/providers/CONTRACT.md, clauses C-48 to C-51).
+ *
+ * `runEditorQuery` is the caller facade: it keeps the shape both callers have always used and answers today's body,
+ * while the run goes through the legacy bridge and the host core's execute call. It builds a fresh request and
+ * context for each call, so the core freezes nothing a caller holds; the core checks the call before it is made,
+ * waits for it until its deadline or the caller's going, and pumps its first result within the 32 MiB page budget
+ * with a turn of the event loop before every pull. The accessor turns each record the core answers into this bundle's
+ * own error class.
+ *
+ * A caller that goes while the statement runs is answered at once, and the core sends the run's cancel; the
+ * statement's own end is handled late, logged by kind and code when it fails, unless it is the provider's cancellation
+ * answer to that cancel. A provider that never answers is cut at the deadline, `StudioTimeoutRefusal`, answered 504.
+ */
+
 /** Runs one statement on `provider` and answers its first result set's page. */
 export async function runEditorQuery(provider: DatabaseProvider, run: EditorQueryRun): Promise<EditorQueryAnswer> {
-  const { statement, options } = run;
-  const prepared = provider.prepareQuery(statement, options);
+  const deadline = executeDeadline(provider, Date.now());
+  const view: CallerView = {
+    caller: run.signal,
+    deadlineSentence: `The statement did not answer within its timeout of ${waitedSeconds(statementTimeout(provider))} and ${waitedSeconds(EXECUTE_SLACK_MS)} more for the engine's own answer, so Studio stopped waiting for it.`,
+  };
+  const bridged = bridgedConsole(provider, run.options);
+  const request: ExecuteRequest = {
+    statement: run.statement,
+    page: pageBound(run.options),
+    ...(run.params === undefined ? {} : { params: [...run.params] }),
+    ...(run.queryId === undefined ? {} : { runId: run.queryId }),
+  };
+  const record = await executeCall(
+    bridged.session,
+    request,
+    callContext(deadline, run.signal),
+    bridged.pumpLimits,
+    hostPorts(run.route, () => bridged.run.cancelSent),
+  );
+  if (record.kind === "refused") throw refusalError(record, view);
+  if (record.kind === "stopped") throw stopError(record.reason, view);
+  const { prepared, result, openTransaction } = bridged.answered();
 
-  // The statement that runs asks for a row past the page (#1440); see `probePastPage`.
-  const probe = probePastPage(provider, statement, options, prepared);
-
-  // A SINGLE STATEMENT CAN LEAVE A TRANSACTION OPEN, SO THIS RUN ENDS IT (D74).
-  //
-  // MEASURED 2026-09-15 against PostgreSQL 18.4 through the query route with the real
-  // provider and the real process-wide cache: a lone `BEGIN` answered 200 and released
-  // its pooled client in status `T`, and the next request on the same cached provider,
-  // which is any other signed-in user of that stored connection, ran its `CREATE TABLE`
-  // inside that stranger's transaction, answered 200, and an independent reader saw no
-  // such table. Driven the other way the loss is loud: a `BEGIN` followed by a statement
-  // naming a missing relation leaves the client in `E` and the next request answers 500.
-  //
-  // This `finally` was tried once before and REVERTED, because the ender it calls named
-  // one shared pointer: it rolled back whichever client anybody had recorded last, which
-  // cost a concurrent `/api/db/multi-query` script its committed `CREATE TABLE` and an
-  // interactive `POST /api/db/transaction` session its own. D87 fixed that in the
-  // provider, where the borrowed client is in scope, and the `scope` minted here is what
-  // names this run's own session: nothing this run did not run on can be ended.
-  //
-  // It is a `finally` and not a line after the call because the statement that poisons a
-  // client is usually the one that threw, and the answer must not be able to leave by
-  // a path that skips this.
-  const scope = newQueryCallScope();
-  let openTransaction: OpenQueryTransactionOutcome = "none";
-
-  // Pass queryId to provider for cancellation tracking, and cancel it if the caller goes away while it runs.
-  // A cancel is idempotent, and the bridge cancels only the id this run bound, so it needs no owner check;
-  // the multi-query route's docblock (`src/app/api/db/multi-query/route.ts`) gives both rules in full.
-  const supportsCancel = supportsQueryCancel(provider);
-  const cancelId = supportsCancel ? run.queryId : undefined;
-  // A caller already gone starts nothing.
-  if (run.signal.aborted) throw new QueryCancelledError("The query was cancelled.");
-  const release = bridgeAbortToCancel(run.signal, provider, cancelId, run.route);
-  let result: Awaited<ReturnType<typeof provider.query>>;
-  try {
-    result = await provider.query(probe.query, run.params, cancelId, scope);
-  } catch (error) {
-    // An error that names the bound the limiter added says so, rather than pointing into text the user never wrote.
-    throw noteAppendedBound(error, statement, probe.query);
-  } finally {
-    release();
-    if (endsOpenQueryTransactions(provider)) {
-      openTransaction = await provider.endOpenQueryTransaction(scope);
-    }
-  }
+  // The page the host pumped holds the rows that fit the page's row limit and its 32 MiB; the answer is the legacy
+  // rows themselves, as the provider returned them, by that count.
+  const pumped = result.rows.slice(0, record.page.rows.length);
+  // A page the host cut by bytes ends before the rows ran out.
+  const byteCut = record.page.end === "byte-limit";
 
   // PAGE TWO IS ONLY OFFERED FOR A BOUND THIS LAYER APPLIED (#816).
   //
@@ -168,14 +248,19 @@ export async function runEditorQuery(provider: DatabaseProvider, run: EditorQuer
   // rewritten, it is not.
   //
   // The probe row is the proof (#1440): more than `prepared.limit` rows came back, so a next
-  // page exists, and the page itself is cut back to the limit asked for.
-  const { hasMore, rows: pageRows } = pageOfProbe(prepared, result.rows);
+  // page exists, and the page itself is cut back to the limit asked for. A page the host cut
+  // by bytes under a bound this layer wrote has a next page too, which the client reads from
+  // its offset plus the rows answered, so it continues after the page's last row.
+  const probed = pageOfProbe(prepared, pumped);
+  const hasMore = probed.hasMore || (byteCut && prepared.wasLimited);
+  const pageRows = probed.rows;
   const answered = firstResultSet(withScrubbedWarnings(run.scrub, result));
   return {
     body: {
       ...answered,
-      // The probe row is not part of the answer, so the count that names the rows is the page's.
-      ...(hasMore && { rowCount: pageRows.length }),
+      // The probe row is not part of the answer, nor are the rows past a byte cut, so the count that names the rows
+      // is the page's.
+      ...((hasMore || byteCut) && { rowCount: pageRows.length }),
       // NaN and the infinities as words: `JSON.stringify` would write each as null, which
       // the grid and every export then show as SQL NULL (`src/lib/non-finite.ts`).
       rows: rowsWithNonFiniteWords(pageRows),
@@ -193,13 +278,43 @@ export async function runEditorQuery(provider: DatabaseProvider, run: EditorQuer
         // A bound the PROVIDER applied is reported too (#1085, section 5.4). A provider that cuts
         // its own result, as the Prometheus provider cuts a vector at its series cap, says so on
         // the result's own `pagination`, and the badge this field drives says "Studio bounded this
-        // result", which is as true of that bound as of the limiter's. Only a `true` crosses, so a
-        // provider cannot clear a filled bound this layer applied. A short page does not show
-        // the limiter badge; `hasMore` above stays on
-        // `prepared.wasLimited` alone, because an offset can only advance a bound this layer wrote.
-        wasLimited: hasMore || result.pagination?.wasLimited === true,
+        // result", which is as true of that bound as of the limiter's, and as true of a page the host
+        // cut by bytes. Only a `true` crosses, so a provider cannot clear a filled bound this layer
+        // applied. A short page does not show the limiter badge; `hasMore` above stays on
+        // `prepared.wasLimited`, because an offset can only advance a bound this layer wrote.
+        wasLimited: hasMore || byteCut || result.pagination?.wasLimited === true,
       },
     },
     resultSetCount: result.resultSets?.length ?? 1,
   };
+}
+
+/** What a cancel answers: the provider cannot cancel, or whether the engine stopped the run. */
+export type EditorCancelAnswer = { readonly offered: false } | { readonly offered: true; readonly cancelled: boolean };
+
+/**
+ * Cancels the run `queryId` names on `provider` through the host core's cancel call, under the cleanup deadline,
+ * `CLEANUP_DEADLINE_MS`, and the caller's signal. A provider that cannot cancel is answered `offered: false` without a
+ * call, and each caller keeps its own answer for it; a caller already gone starts nothing.
+ */
+export async function cancelEditorRun(
+  provider: DatabaseProvider,
+  queryId: string,
+  caller: AbortSignal,
+  route: string,
+): Promise<EditorCancelAnswer> {
+  const view: CallerView = {
+    caller,
+    deadlineSentence: `The cancel did not answer within ${waitedSeconds(CLEANUP_DEADLINE_MS)}, so Studio stopped waiting for it.`,
+  };
+  const record = await cancelCall(
+    bridgedConsole(provider, {}).session,
+    { runId: queryId },
+    callContext(Date.now() + CLEANUP_DEADLINE_MS, caller),
+    hostPorts(route),
+  );
+  if (record.kind === "answered") return { offered: true, cancelled: record.cancelled };
+  if (record.kind === "stopped") throw stopError(record.reason, view);
+  if (record.refusals.some((refusal) => refusal.rule === "facet-not-offered")) return { offered: false };
+  throw refusalError(record, view);
 }

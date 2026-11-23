@@ -201,6 +201,10 @@ ignoring it runs a different read from the one that was written. A name is check
 since a name means only what the map says it means. The protocol's bounds are not repeated in the
 parser - it calls `checkRead`, so a limit cannot pass in one file while it fails in another.
 
+Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`.
+This provider cannot cancel a run, so Studio sends no cancel, and the read runs on until its last request ends.
+
 ### 5.1 The socket, and what this section used to say
 
 This section used to say that `query()` refused and `getHealth()` read only the map. Both now reach

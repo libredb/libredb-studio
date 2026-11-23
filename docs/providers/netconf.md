@@ -546,6 +546,11 @@ refusal, and this session did not change it, because the case is unreachable aga
 measured: neither captured reply carries one. A device that does send one gets a named refusal
 instead of silence.
 
+**No editor statement timeout of the provider's own, and no cancel.**
+Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`.
+This provider cannot cancel a run, so Studio sends no cancel, and the read runs on until the device answers it.
+
 **Phase 2, `gnmi`, is not started.**
 
 ## Migration DDL

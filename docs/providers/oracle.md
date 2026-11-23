@@ -289,7 +289,8 @@ const b = { id: 'or-1', name: 'XE', type: 'oracle',
 
 > ⚠️ `acquireTimeout` (from `DEFAULT_POOL_CONFIG`) and `queryTimeout` (a **separate**
 > `ProviderOptions` option, defaulting to `DEFAULT_QUERY_TIMEOUT`) are **not** mapped — there is no
-> provider-driven server-side query timeout (cancellation is explicit, [§5.2](#52-query-cancellation)).
+> provider-driven server-side query timeout (cancellation is explicit, [§5.2](#52-query-cancellation), and Studio's own
+> deadline on an editor statement sends it).
 
 `connect()` is idempotent; `getPoolStats()` ([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts))
 exposes `{ total: connectionsOpen, idle, active: connectionsInUse, waiting: 0 }`.
@@ -659,6 +660,9 @@ A query issued with a `queryId` stores its connection in a `Map`. `cancelQuery(q
 ([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts)) calls `connection.break()` on it —
 interrupting the in-flight OCI call — and returns `true` on success (it does not verify a query was
 actually running). Exposed via `POST /api/db/cancel`.
+
+Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`, and Studio sends the run's cancel, `connection.break()`, when the request named a `queryId`.
 
 ### 5.3 What each Oracle type arrives as
 
@@ -2723,7 +2727,7 @@ A zoned column is written through `FROM_TZ(..., 'UTC')`, which keeps the instant
 | `connection.break()`-interrupted query | maps via the generic path (the driver's `ORA-01013` / "user requested cancel"); other `ORA-*` codes fall through to `QueryError`/`DatabaseError` with the original message |
 
 There is **no** provider-driven server-side query timeout (no `queryTimeout` wiring), so a
-`TimeoutError` only arises from a driver-level timeout message.
+`TimeoutError` arises from a driver-level timeout message, or from Studio's own deadline on an editor statement, which answers it with `kind: "studio-timeout-refusal"` ([§5.2](#52-query-cancellation)).
 
 ---
 
@@ -2956,9 +2960,9 @@ the object tree's own routes under `POST /api/db/objects/*`
   silently ran the **unmodified** query instead of producing a plan. *Future:* build
   `EXPLAIN PLAN FOR …` followed by `SELECT * FROM TABLE(DBMS_XPLAN.DISPLAY())`, then re-enable the
   capability.
-- **No server-side query timeout.** `queryTimeout` is not wired into the pool; runaway queries must
-  be cancelled explicitly via `cancelQuery()` (`connection.break()`). *Future:* set
-  `connection.callTimeout` (node-oracledb's per-round-trip timeout) from `queryTimeout`.
+- **No server-side query timeout.** `queryTimeout` is not wired into the pool, so the provider stops no statement on its own.
+  An editor statement still running at `queryTimeout` plus 10 s is answered `504` by Studio and cancelled with `connection.break()` ([§5.2](#52-query-cancellation)); any other statement runs until it ends or is cancelled explicitly via `cancelQuery()`.
+  *Future:* set `connection.callTimeout` (node-oracledb's per-round-trip timeout) from `queryTimeout`.
 - **`kill` and full monitoring require elevated privileges.** `ALTER SYSTEM KILL SESSION` needs the
   `ALTER SYSTEM` privilege; the `V$` monitoring views need `SELECT` on the `V_$` views. A
   least-privilege application user can neither kill sessions nor read most monitoring (the queries

@@ -426,6 +426,7 @@ const PROVIDER_TEXT_PATHS = [
   join("src", "app", "api", "admin", "fleet-health"),
   join("src", "lib", "api", "object-route.ts"),
   join("src", "lib", "api", "editor-query.ts"),
+  join("src", "lib", "provider-host"),
   join("src", "lib", "api", "test-connection.ts"),
   join("src", "lib", "query-events"),
   join("src", "lib", "db", "factory.ts"),
@@ -444,6 +445,7 @@ const objectRoute = join("src", "lib", "api", "object-route.ts");
 const fleetHealth = join("src", "app", "api", "admin", "fleet-health", "route.ts");
 const recordedRun = join("src", "lib", "query-events", "recorded-run.ts");
 const editorQuery = join("src", "lib", "api", "editor-query.ts");
+const providerHost = (...path: string[]) => join("src", "lib", "provider-host", ...path);
 const testConnectionCore = join("src", "lib", "api", "test-connection.ts");
 const routeEvents = join("src", "lib", "query-events", "route-events.ts");
 const childHandlers = join("vscode-extension", "src", "backend", "handlers.ts");
@@ -596,6 +598,10 @@ const NOT_PROVIDER_TEXT: Readonly<Record<string, string>> = {
     "a Vault error, read before any provider",
   [`${mcp("context.ts")}: load: logger.error(redactError(error))`]: "the seed file's own error",
   [`${mcp("tools", "run-statement.ts")}: build: raw.warnings`]: "a result executeOpened scrubbed before resultOf",
+  [`${providerHost("legacy-bridge.ts")}: execute: result.warnings`]:
+    "a legacy result's warnings carried into the execute answer, which runEditorQuery never renders: it answers the legacy result through withScrubbedWarnings",
+  [`${providerHost("core", "console.ts")}: runExecute: answer.warnings`]:
+    "an execute answer's warnings carried by reference into the page record, which runEditorQuery never renders",
   [`${mcp("tools", "statement-arms.ts")}: fence: refusal.message`]: "the language reader's own refusal, Studio's",
   [`${mcp("bearer.ts")}: authenticateMcpRequest: logger.error(redactError(error))`]: "the token store's own failure",
   [`${mcp("bearer.ts")}: auditMcpDenial: logger.error(auditError)`]: "the audit sink's own failure",

@@ -1394,6 +1394,10 @@ await provider.disconnect();
 
 ## 13. Known limitations & future work
 
+- **No editor statement timeout of the provider's own, and no cancel.**
+  Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+  A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`.
+  This provider cannot cancel a run, so Studio sends no cancel, and the command runs on until it ends.
 - **No multi-key transactions in the query UI.** The `@libredb/libredb` kernel exposes a
   `transact()` method for atomic multi-key writes, but it is not surfaced through the provider's
   command grammar in v1. Deferred to a future release.

@@ -524,6 +524,31 @@ describe("POST /api/db/query", () => {
   // route answers that refusal as the configuration error it is. The replaced factory runs the real
   // check on the connection the route resolved, so a route that dropped or rewrote the field on the way
   // would fail here too.
+  // A provider is built with the connection's own statement timeout, so one that is not a whole number of milliseconds
+  // made the host's deadline NaN and every query on the connection answered 500.
+  test("an inline connection whose statement timeout is not a whole number of milliseconds answers 400 by name and builds nothing", async () => {
+    // The provider the factory builds reads its statement timeout from the connection, as the real one does.
+    mockGetOrCreateProvider.mockImplementation(async (...args: unknown[]) =>
+      Object.assign(createMockProvider(), { config: args[0] as DatabaseConnection }),
+    );
+    try {
+      const req = createMockRequest("/api/db/query", {
+        method: "POST",
+        body: { connection: { ...validConnection, queryTimeout: "abc" }, sql: "SELECT * FROM users" },
+      });
+      const res = await POST(req as never);
+      const data = await parseResponseJSON<{ error: string }>(res);
+
+      expect(res.status).toBe(400);
+      expect(data.error).toBe(
+        "The connection's queryTimeout must be a whole number of milliseconds from 1 to 2147483647.",
+      );
+      expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    } finally {
+      mockGetOrCreateProvider.mockImplementation(async () => mockProvider);
+    }
+  });
+
   test("an inline read-only connection on an engine that does not enforce the mode answers 400 and runs nothing", async () => {
     mockReadProviderDeclarations.mockClear();
     mockGetOrCreateProvider.mockImplementationOnce(async (...args: unknown[]) => {
@@ -2124,6 +2149,62 @@ describe("POST /api/db/query: the request's abort", () => {
     controller.abort();
     await answer;
     expect("cancelQuery" in provider).toBe(false);
+  });
+});
+
+describe("POST /api/db/query: the page's byte budget", () => {
+  const MIB = 1_048_576;
+  const mebibyte = "x".repeat(MIB);
+
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetSession.mockImplementation(async () => ({ role: "admin", username: "admin" }));
+  });
+
+  function answering(rows: Record<string, unknown>[]) {
+    const provider = createMockProvider();
+    (provider.query as ReturnType<typeof mock>).mockImplementation(async () => ({
+      rows,
+      fields: ["n"],
+      rowCount: rows.length,
+      executionTime: 1,
+    }));
+    mockGetOrCreateProvider.mockImplementation(async () => provider as never);
+  }
+
+  test("a page over the byte budget answers the rows that fit, with Load More after them", async () => {
+    answering(Array.from({ length: 40 }, () => ({ n: mebibyte })));
+    const res = await POST(
+      createMockRequest("/api/db/query", {
+        method: "POST",
+        body: { connection: validConnection, sql: "SELECT n FROM t", options: { limit: 50 } },
+      }) as never,
+    );
+    const body = await parseResponseJSON<{ rows: unknown[]; rowCount: number; pagination: Record<string, unknown> }>(
+      res,
+    );
+    const holds = Math.floor(33_554_432 / (MIB + 4));
+
+    expect(res.status).toBe(200);
+    expect(body.rows).toHaveLength(holds);
+    expect(body.rowCount).toBe(holds);
+    expect(body.pagination).toEqual({ limit: 50, offset: 0, hasMore: true, totalReturned: holds, wasLimited: true });
+  });
+
+  test("a row over the byte budget answers 400 with the byte budget's kind", async () => {
+    answering([{ n: "x".repeat(33 * MIB) }]);
+    const res = await POST(
+      createMockRequest("/api/db/query", {
+        method: "POST",
+        body: { connection: validConnection, sql: "SELECT n FROM t" },
+      }) as never,
+    );
+    const body = await parseResponseJSON<Record<string, unknown>>(res);
+
+    expect(res.status).toBe(400);
+    expect(body.code).toBe("QUERY_ERROR");
+    expect(body.kind).toBe("studio-byte-budget-refusal");
+    expect(body.outcome).toBe("unknown");
   });
 });
 

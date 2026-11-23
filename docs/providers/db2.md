@@ -420,13 +420,17 @@ A timestamp stays a string and is never turned into a `Date`, so no time zone sh
 
 ### 7.4 Timeout and cancel
 
-A statement inside a transaction is bounded by the connection's query timeout (60 seconds unless the connection sets one), and nothing else is: `query()` on the shared client, the catalog reads and maintenance are not, and there is no cancel.
+A statement inside a transaction is bounded by the connection's query timeout (60 seconds unless the connection sets one), and nothing else is bounded by the provider: `query()` on the shared client, the catalog reads and maintenance are not, and there is no cancel.
 The bound needs no privilege, because it sends nothing to the server: at the deadline the provider stops waiting, answers a timeout error, forgets the transaction's session and closes it (`boundByClose` in [`driver.ts`](../../src/lib/db/providers/sql/db2/driver.ts)).
 That ends the wait, not the work.
 Measured on 12.1.0.0 through 1.0.25: `close()` called while a statement runs returns only once that statement has ended on the server, 43.9 seconds later on a cross join that ran 45.9 seconds, and the connection closes then.
 `tests/live/db2-live-check.ts` runs it with a 2-second timeout: the wait ended at 2000 ms, the row the transaction had updated stayed locked until the statement ended on the server, 19968 ms after it began, and then read back unchanged.
 So the timeout error says the statement keeps running, that the transaction is over and is rolled back once the connection closes, and that a new transaction is needed to continue.
 The shared client is not bounded the same way, because closing it would wait for the statement just the same and then end every other request on it.
+
+Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`.
+This provider cannot cancel a run, so Studio sends no cancel, and the statement runs on in the server, holding the shared client, until it ends.
 
 An agent statement is bounded the same way, by its call's own connection (section 10.1).
 Cancelling the statement on the server is D392: `db2-node` 1.0.24 does it through `Client.cancel()` and a `queryTimeout`, given a user with monitoring privileges and `EXECUTE` on `SYSPROC.WLM_CANCEL_ACTIVITY`, which this provider does not ask a user to hold.

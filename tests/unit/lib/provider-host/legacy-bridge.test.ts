@@ -19,6 +19,8 @@ import {
   pumpPage,
 } from "@libredb/provider-sdk/calls";
 import type { DatabaseProvider, PreparedQuery, QueryPrepareOptions } from "@/lib/db/types";
+import { runEditorQuery } from "@/lib/api/editor-query";
+import { providerTextScrub } from "@/lib/db/operations/provider-text";
 import { appendedBoundNote } from "@/lib/db/utils/query-limiter";
 import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
 import type { QueryResult } from "@/lib/types";
@@ -232,6 +234,15 @@ describe("bridgedConsole", () => {
     expect(page.bytes).toBe(encodedRowBytes([null, at, {}, 7]) + encodedRowBytes([1, "x", null, 7]));
     expect(bridged.run.result?.rows[0]).toBe(row);
     expect(bridged.run.result?.rows[1]).toBe(clean);
+
+    const { body } = await runEditorQuery(fake(resultOf([row, clean], { fields: ["a", "b", "c", "d"] })), {
+      statement: "SELECT * FROM t LIMIT 5",
+      options: {},
+      signal: new AbortController().signal,
+      route: "test",
+      scrub: providerTextScrub({ id: "c", name: "c", type: "postgres", createdAt: new Date(0) }, "any"),
+    });
+    expect(JSON.stringify(body.rows)).toBe(JSON.stringify([row, clean]));
   });
 
   test("a measuring error other than the codec's passes as the same object", async () => {
@@ -273,8 +284,15 @@ describe("bridgedConsole", () => {
     expect(empty.pumpLimits(emptyAnswer).maxRows).toBe(1);
     const early = bridgedConsole(fake(resultOf([])), {});
     expect(() => early.pumpLimits(emptyAnswer)).toThrow(
-      "The bridge's page limits were read before its execute answered, a defect of the host.",
+      "The bridge's run was read before its execute answered, a defect of the host.",
     );
+    expect(() => early.answered()).toThrow(
+      "The bridge's run was read before its execute answered, a defect of the host.",
+    );
+    const answered = limited.answered();
+    expect(answered.prepared).toBe(limited.run.prepared as PreparedQuery);
+    expect(answered.result).toBe(limited.run.result as QueryResult);
+    expect(answered.openTransaction).toBe("none");
   });
 
   test("a bridged cancel names the run and answers the provider's boolean", async () => {

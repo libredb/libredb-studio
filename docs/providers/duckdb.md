@@ -351,6 +351,9 @@ An `agent-operations` acquisition borrows only a handle of its requester's own e
 rather than declared unsupported: a long analytical scan is exactly the workload a user needs to be
 able to stop, and this engine has no session to `KILL` from a second connection.
 
+Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`, and Studio sends the run's cancel, `interrupt()` on its connection, when the request named a `queryId`.
+
 ### 3.10 `access_mode: 'READ_ONLY'` is not a filesystem sandbox — `enable_external_access` is
 
 Measured, with database writes genuinely refused at the same time: `COPY … TO`, `EXPORT DATABASE`,

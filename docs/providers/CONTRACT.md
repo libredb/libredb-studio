@@ -1059,6 +1059,8 @@ The served host side runs the check on every call, before any frame and before C
 - test `packages/provider-sdk/tests/calls/results.test.ts` "the pump pulls no batch once the call's signal aborted or its deadline passed, and closes the source once"
 - test `packages/provider-sdk/tests/calls/results.test.ts` "a call signal that aborts during a page stops the pump before its next pull"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a call whose signal aborted or whose deadline passed is refused before any frame, and the provider is never called"
+- test `tests/unit/lib/provider-host/host-rules.test.ts` "no statement starts once the call's signal aborted"
+- test `tests/api/db/cancel.test.ts` "a cancel whose caller already left calls nothing and answers 499"
 
 ### C-28 (normative): The host stops waiting at the signal, and an abandoned answer keeps its handler
 
@@ -1069,7 +1071,8 @@ So no abandoned rejection goes unhandled, and the host's late handler closes wha
 A late handler that throws is a host defect, and its error is a detached rejection.
 A result source runs under the context of the execute call that answered it, so `next` takes no context, and the host's wait on a page is its wait on that call.
 The memory transport races nothing: an answer the host stopped waiting for is delivered whole, its session token and served sources included, so the late handler closes it once, and what the served host side refuses of a late answer it closes itself, C-23, and hands on as a failure.
-The host core's execute call closes every source of an execute answer that arrives after its stop and pumps none of them, and hands a failure that arrives after its stop to the caller's late handler once, C-48.
+The host core's execute call closes every source of an execute answer that arrives after its stop and pumps none of them, and hands a failure that arrives after its stop to the caller's late handler once, C-48, which logs it by its kind and code, never its text.
+Once the host sent the run's cancel, the caller's late handler reads a cancellation the provider answers after it, Studio's `QueryCancelledError`, as the run's expected end and logs nothing for it.
 
 - test `packages/provider-sdk/tests/calls/deadline.test.ts` "the host's wait settles as the answer does when the answer comes first, and leaves no listener on the signal"
 - test `packages/provider-sdk/tests/calls/deadline.test.ts` "the host's wait ends at the signal, and the abandoned answer's outcome reaches the late handler once"
@@ -1077,6 +1080,11 @@ The host core's execute call closes every source of an execute answer that arriv
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "an answer the host stopped waiting for reaches its late handler whole, and the host closes what it handed over once"
 - test `tests/unit/lib/provider-host/core/console.test.ts` "an answer that arrives after the stop has its sources closed and is never pumped"
 - test `tests/unit/lib/provider-host/core/console.test.ts` "a failure after the stop reaches the late handler once and is never a detached rejection"
+- test `tests/unit/lib/api/editor-query.test.ts` "a failure after the caller left is logged by kind and code, never its text"
+- test `tests/unit/lib/api/editor-query.test.ts` "the cancellation answer of a run whose cancel the host sent is its expected end, and is not logged"
+- test `tests/unit/lib/api/editor-query.test.ts` "any other late failure is still logged: another error after the cancel, or a cancellation with no cancel sent"
+- test `tests/unit/lib/provider-host/host-rules.test.ts` "an answer the host abandoned keeps its handler"
+- test `tests/unit/lib/provider-host/host-rules.test.ts` "every provider promise the host abandons keeps a rejection handler"
 
 ### C-29 (informative): What a provider does with the deadline and the signal
 
@@ -1094,14 +1102,16 @@ Studio's cancel route answers such a connection with `cancelled: false` and call
 - test `packages/provider-sdk/tests/calls/request.test.ts` "a console facet the session does not offer is refused before the call"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a request field or a console facet the session does not offer is refused before any frame"
 - test `tests/api/db/cancel.test.ts` "provider without cancelQuery returns 400"
+- test `tests/unit/lib/provider-host/host-rules.test.ts` "an engine that cannot cancel is reported still running, and nothing is called"
 
 ### C-31 (normative): A throw inside a call fails only that call
 
 An error a provider's call throws reaches the host by reference, and that session and every other session keep serving.
-The host core's reading of such an error into an error record arrives with the first host surface.
+An error a bridged provider throws reaches the caller by reference, through the host core and the legacy bridge, and is read into an error record where the caller answers it, `databaseErrorBody`.
 
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "an error a call or a source throws reaches the host as the same object"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a call that throws fails only that call, and its session and the served instance keep serving"
+- test `tests/unit/lib/provider-host/host-rules.test.ts` "a socket lost mid-statement answers CONNECTION_ERROR with outcome unknown"
 
 ### C-32 (normative): The SDK keeps sessions apart
 

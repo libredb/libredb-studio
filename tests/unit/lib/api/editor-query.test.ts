@@ -1,7 +1,22 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
-import { checkEditorQuery, runEditorQuery } from "@/lib/api/editor-query";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
+import {
+  checkEditorQuery,
+  type EditorQueryRefusal,
+  EXECUTE_SLACK_MS,
+  executeDeadline,
+  runEditorQuery,
+} from "@/lib/api/editor-query";
+import { databaseErrorBody } from "@/lib/api/error-body";
 import { probePastPage } from "@/lib/api/page-probe";
-import { QueryCancelledError } from "@/lib/db/errors";
+import { errorKind, errorOutcome } from "@/lib/db/error-record";
+import {
+  ConnectionError,
+  QueryCancelledError,
+  QueryError,
+  StudioByteBudgetRefusal,
+  StudioTimeoutRefusal,
+} from "@/lib/db/errors";
+import { logger } from "@/lib/logger";
 import { PROVIDER_TEXT_WITHHELD, providerTextScrub } from "@/lib/db/operations/provider-text";
 import type { DatabaseProvider, PreparedQuery, QueryPrepareOptions } from "@/lib/db/types";
 import { appendedBoundNote, applyQueryLimit } from "@/lib/db/utils/query-limiter";
@@ -73,6 +88,7 @@ describe("checkEditorQuery", () => {
         statement: "x".repeat(9 * 1024 * 1024),
         type: "postgres",
         options: { limit: 500, offset: 0 },
+        queryTimeout: undefined,
       }),
     ).toBeNull();
   });
@@ -80,12 +96,15 @@ describe("checkEditorQuery", () => {
   // The `sql` and `queryId` field checks stay with each caller: a text bound is the only reason this
   // step reads the statement's type, so a caller that skips its own check gets no gate here.
   test("a statement that is not a string is not refused on an engine that declares no text bound", () => {
-    expect(checkEditorQuery({ statement: { evil: 1 }, type: "postgres", options: {} })).toBeNull();
-    expect(checkEditorQuery({ statement: 42, type: "postgres", options: {} })).toBeNull();
+    expect(
+      checkEditorQuery({ statement: { evil: 1 }, type: "postgres", options: {}, queryTimeout: undefined }),
+    ).toBeNull();
+    expect(checkEditorQuery({ statement: 42, type: "postgres", options: {}, queryTimeout: undefined })).toBeNull();
   });
 
   test("page bounds that are not non-negative safe integers are refused with the route's sentences", () => {
-    const check = (options: unknown) => checkEditorQuery({ statement: "SELECT 1", type: "postgres", options });
+    const check = (options: unknown) =>
+      checkEditorQuery({ statement: "SELECT 1", type: "postgres", options, queryTimeout: undefined });
     expect(check("500")).toEqual({ status: 400, error: "options must be an object" });
     expect(check({ limit: -1 })).toEqual({ status: 400, error: "options.limit must be a non-negative integer" });
     expect(check({ offset: 1.5 })).toEqual({ status: 400, error: "options.offset must be a non-negative integer" });
@@ -102,7 +121,8 @@ describe("checkEditorQuery", () => {
   test("the largest page bounds taken are one below Number.MAX_SAFE_INTEGER, and the probe past them runs", () => {
     const largest = Number.MAX_SAFE_INTEGER - 1;
     const statement = "SELECT n FROM t";
-    const check = (options: unknown) => checkEditorQuery({ statement, type: "postgres", options });
+    const check = (options: unknown) =>
+      checkEditorQuery({ statement, type: "postgres", options, queryTimeout: undefined });
     expect(check({ limit: largest, offset: largest })).toBeNull();
     expect(check({ limit: largest + 1 })).toEqual({
       status: 400,
@@ -121,10 +141,27 @@ describe("checkEditorQuery", () => {
     expect(probed.query).toBe(`${statement} LIMIT ${Number.MAX_SAFE_INTEGER}`);
   });
 
+  // The connection dialog writes a whole number of milliseconds from 1 to 2147483647, or nothing; any other value would
+  // make the host's deadline NaN or wrong, so it is refused by name before a provider is built.
+  test("a statement timeout that is not a whole number of milliseconds from 1 to 2147483647 is refused by name", () => {
+    const check = (queryTimeout: unknown) =>
+      checkEditorQuery({ statement: "SELECT 1", type: "postgres", options: {}, queryTimeout });
+    const refused: EditorQueryRefusal = {
+      status: 400,
+      error: "The connection's queryTimeout must be a whole number of milliseconds from 1 to 2147483647.",
+    };
+    for (const value of ["60000", "abc", Number.NaN, 1.5, 0, -1, 2_147_483_648, Number.POSITIVE_INFINITY, true, {}]) {
+      expect(check(value)).toEqual(refused);
+    }
+    for (const value of [undefined, null, 1, 60_000, 2_147_483_647]) {
+      expect(check(value)).toBeNull();
+    }
+  });
+
   test("a declared text bound refuses an oversize text in words and passes one at the bound", () => {
     remove = installStandInVocabulary({ maxTextBytes: 64 });
     const check = (statement: unknown, options: unknown = {}) =>
-      checkEditorQuery({ statement, type: STAND_IN_TYPE, options });
+      checkEditorQuery({ statement, type: STAND_IN_TYPE, options, queryTimeout: undefined });
     expect(check("x".repeat(65))).toEqual({
       status: 413,
       error:
@@ -246,13 +283,21 @@ describe("runEditorQuery", () => {
       settle = resolve;
     });
     const cancelQuery = mock(async () => true);
-    const provider = fake(resultOf(rowsOf(1)), { cancelQuery, query: mock(() => held) });
+    const started = Promise.withResolvers<void>();
+    const query = mock(() => {
+      started.resolve();
+      return held;
+    });
+    const provider = fake(resultOf(rowsOf(1)), { cancelQuery, query });
     const running = runEditorQuery(provider, runOf({ queryId: "q-1", signal: controller.signal }));
+    await started.promise;
     controller.abort();
-    settle(resultOf(rowsOf(1)));
-    await running;
+    const caught = await running.catch((error: unknown) => error);
+    expect(caught).toBeInstanceOf(QueryCancelledError);
+    expect(errorOutcome(caught)).toBe("unknown");
     expect(callsOf(cancelQuery)).toEqual([["q-1"]]);
     expect(callsOf(provider.query)[0][2]).toBe("q-1");
+    settle(resultOf(rowsOf(1)));
   });
 
   test("an abort after the run answered cancels nothing", async () => {
@@ -283,6 +328,7 @@ describe("runEditorQuery", () => {
     const caught = await runEditorQuery(provider, runOf({ signal: controller.signal })).catch((error) => error);
     expect(caught).toBeInstanceOf(QueryCancelledError);
     expect((caught as Error).message).toBe("The query was cancelled.");
+    expect(errorOutcome(caught)).toBe("not-sent");
     expect(callsOf(provider.query)).toHaveLength(0);
   });
 
@@ -346,6 +392,253 @@ describe("runEditorQuery", () => {
   });
 });
 
+describe("runEditorQuery on the host core", () => {
+  const MIB = 1_048_576;
+  /** One cell of exactly a MiB, shared by every row, so a 40 MiB result holds one string. */
+  const mebibyte = "x".repeat(MIB);
+  const bigRows = (count: number) => Array.from({ length: count }, () => ({ n: mebibyte }));
+  /** How many such rows a 32 MiB page holds: each measures `["x...x"]`, its MiB and four bytes. */
+  const PAGE_HOLDS = Math.floor(33_554_432 / (MIB + 4));
+
+  test("the execute deadline is the statement timeout plus ten seconds, capped at the longest timer", () => {
+    const now = Date.now();
+    const withTimeout = createMockProvider({ config: connectionWith({ queryTimeout: 1_000 }) });
+    const withDefault = createMockProvider({ config: connectionWith() });
+    const huge = createMockProvider({ config: connectionWith({ queryTimeout: 2 ** 40 }) });
+
+    expect(EXECUTE_SLACK_MS).toBe(10_000);
+    expect(executeDeadline(withTimeout, now)).toBe(now + 11_000);
+    expect(executeDeadline(withDefault, now)).toBe(now + 70_000);
+    expect(executeDeadline(huge, now)).toBe(now + 2_147_483_647);
+  });
+
+  test("a run past its deadline is refused before the provider is called, not-sent", async () => {
+    const provider = Object.assign(fake(resultOf(rowsOf(1))), {
+      config: connectionWith({ queryTimeout: -EXECUTE_SLACK_MS - 60_000 }),
+    });
+
+    const caught = await runEditorQuery(provider, runOf()).catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(StudioTimeoutRefusal);
+    expect(errorOutcome(caught)).toBe("not-sent");
+    expect(databaseErrorBody(caught)?.body).toMatchObject({
+      code: "TIMEOUT_ERROR",
+      statusCode: 504,
+      kind: "studio-timeout-refusal",
+      outcome: "not-sent",
+    });
+    expect(callsOf(provider.prepareQuery)).toHaveLength(0);
+    expect(callsOf(provider.query)).toHaveLength(0);
+  });
+
+  test("a page cut by bytes continues after its last row when Studio wrote the bound", async () => {
+    const answer = await runEditorQuery(fake(resultOf(bigRows(40))), runOf({ options: { limit: 100 } }));
+
+    expect(answer.body.rows).toHaveLength(PAGE_HOLDS);
+    expect(answer.body.rowCount).toBe(PAGE_HOLDS);
+    expect(answer.body.pagination).toEqual({
+      limit: 100,
+      offset: 0,
+      hasMore: true,
+      totalReturned: PAGE_HOLDS,
+      wasLimited: true,
+    });
+  });
+
+  test("a page cut by bytes of a statement Studio did not bound offers no next page and says Studio bounded it", async () => {
+    const answer = await runEditorQuery(
+      fake(resultOf(bigRows(40))),
+      runOf({ statement: "SELECT n FROM t LIMIT 40", options: { limit: 100 } }),
+    );
+
+    expect(answer.body.rows).toHaveLength(PAGE_HOLDS);
+    expect(answer.body.rowCount).toBe(PAGE_HOLDS);
+    expect(answer.body.pagination).toEqual({
+      limit: 100,
+      offset: 0,
+      hasMore: false,
+      totalReturned: PAGE_HOLDS,
+      wasLimited: true,
+    });
+  });
+
+  test("a result Studio did not bound answers every row, as before", async () => {
+    const answer = await runEditorQuery(
+      fake(resultOf(rowsOf(700))),
+      runOf({ statement: "SELECT n FROM t LIMIT 1000", options: { limit: 2 } }),
+    );
+
+    expect(answer.body.rows).toEqual(rowsOf(700));
+    expect(answer.body.rowCount).toBe(700);
+    expect(answer.body.pagination).toEqual({
+      limit: 2,
+      offset: 0,
+      hasMore: false,
+      totalReturned: 700,
+      wasLimited: false,
+    });
+  });
+
+  test("a row no page can hold is refused in Studio's words", async () => {
+    const caught = await runEditorQuery(
+      fake(resultOf([{ n: "x".repeat(33 * MIB) }])),
+      runOf({ statement: "SELECT n FROM t LIMIT 5" }),
+    ).catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(StudioByteBudgetRefusal);
+    expect((caught as Error).message).toBe(
+      `A row of the result is ${33 * MIB + 4} bytes, over the 33554432 bytes one page of a result may hold, so Studio answers no page of it.`,
+    );
+    expect(errorKind(caught)).toBe("studio-byte-budget-refusal");
+    expect(databaseErrorBody(caught)?.body).toMatchObject({ code: "QUERY_ERROR", statusCode: 400 });
+  });
+
+  test("a failure after the caller left is logged by kind and code, never its text", async () => {
+    const secret = crypto.randomUUID();
+    let fail: (error: unknown) => void = () => {};
+    const held = new Promise<QueryResult>((_resolve, reject) => {
+      fail = reject;
+    });
+    const started = Promise.withResolvers<void>();
+    const provider = fake(resultOf(rowsOf(1)), {
+      query: mock(() => {
+        started.resolve();
+        return held;
+      }),
+    });
+    const logged = Promise.withResolvers<unknown[]>();
+    const warn = spyOn(logger, "warn").mockImplementation((...args: unknown[]) => {
+      if (args[0] === "A statement Studio stopped waiting for failed afterwards") logged.resolve(args);
+    });
+    try {
+      const controller = new AbortController();
+      const running = runEditorQuery(provider, runOf({ signal: controller.signal, route: "late-route" }));
+      await started.promise;
+      controller.abort();
+      expect(await running.catch((error: unknown) => error)).toBeInstanceOf(QueryCancelledError);
+      fail(new QueryError(`relation ${secret} does not exist`, "postgres"));
+
+      const args = await logged.promise;
+      expect(args).toEqual([
+        "A statement Studio stopped waiting for failed afterwards",
+        { route: "late-route", kind: "query", code: "QUERY_ERROR" },
+      ]);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(secret);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  /** A run whose statement is held until the test settles it, on a provider that can cancel, with every warning kept. */
+  async function leftRun(cancelable: boolean) {
+    let fail: (error: unknown) => void = () => {};
+    const started = Promise.withResolvers<void>();
+    const cancelled = Promise.withResolvers<void>();
+    const provider = fake(resultOf(rowsOf(1)), {
+      query: mock(() => {
+        started.resolve();
+        return new Promise<QueryResult>((_resolve, reject) => {
+          fail = reject;
+        });
+      }),
+      ...(cancelable
+        ? {
+            cancelQuery: mock(async () => {
+              cancelled.resolve();
+              return true;
+            }),
+          }
+        : {}),
+    });
+    const warned: unknown[][] = [];
+    const warn = spyOn(logger, "warn").mockImplementation((...args: unknown[]) => {
+      warned.push(args);
+    });
+    const controller = new AbortController();
+    const running = runEditorQuery(provider, runOf({ signal: controller.signal, route: "left-route", queryId: "q-5" }));
+    await started.promise;
+    controller.abort();
+    const answered = await running.catch((error: unknown) => error);
+    if (cancelable) await cancelled.promise;
+    /** Settles the held statement with `error`, then lets its late handler run. */
+    const settle = async (error: unknown) => {
+      fail(error);
+      await new Promise((resolve) => setImmediate(resolve));
+    };
+    return { answered, settle, warned, restore: () => warn.mockRestore() };
+  }
+  const LATE_LINE = "A statement Studio stopped waiting for failed afterwards";
+
+  test("the cancellation answer of a run whose cancel the host sent is its expected end, and is not logged", async () => {
+    const left = await leftRun(true);
+    try {
+      expect(left.answered).toBeInstanceOf(QueryCancelledError);
+      await left.settle(new QueryCancelledError("canceling statement due to user request", "postgres"));
+      expect(left.warned.filter((args) => args[0] === LATE_LINE)).toEqual([]);
+    } finally {
+      left.restore();
+    }
+  });
+
+  test("any other late failure is still logged: another error after the cancel, or a cancellation with no cancel sent", async () => {
+    const afterCancel = await leftRun(true);
+    try {
+      await afterCancel.settle(new QueryError("relation t does not exist", "postgres"));
+      expect(afterCancel.warned.filter((args) => args[0] === LATE_LINE)).toEqual([
+        [LATE_LINE, { route: "left-route", kind: "query", code: "QUERY_ERROR" }],
+      ]);
+    } finally {
+      afterCancel.restore();
+    }
+    const noCancel = await leftRun(false);
+    try {
+      await noCancel.settle(new QueryCancelledError("The query was cancelled.", "postgres"));
+      expect(noCancel.warned.filter((args) => args[0] === LATE_LINE)).toEqual([
+        [LATE_LINE, { route: "left-route", kind: "cancelled", code: "QUERY_CANCELLED" }],
+      ]);
+    } finally {
+      noCancel.restore();
+    }
+  });
+
+  test("a cancel that fails after the caller left is logged by kind and code, never its text", async () => {
+    const secret = crypto.randomUUID();
+    const started = Promise.withResolvers<void>();
+    const provider = fake(resultOf(rowsOf(1)), {
+      query: mock(() => {
+        started.resolve();
+        return new Promise<QueryResult>(() => {});
+      }),
+      cancelQuery: mock(async () => {
+        throw new ConnectionError(`connection to ${secret} refused`, "postgres");
+      }),
+    });
+    const logged = Promise.withResolvers<unknown[]>();
+    const warn = spyOn(logger, "warn").mockImplementation((...args: unknown[]) => {
+      if (args[0] === "The cancel sent after the request was aborted failed") logged.resolve(args);
+    });
+    try {
+      const controller = new AbortController();
+      const running = runEditorQuery(
+        provider,
+        runOf({ signal: controller.signal, route: "cancel-route", queryId: "q-9" }),
+      );
+      await started.promise;
+      controller.abort();
+      expect(await running.catch((error: unknown) => error)).toBeInstanceOf(QueryCancelledError);
+
+      const args = await logged.promise;
+      expect(args).toEqual([
+        "The cancel sent after the request was aborted failed",
+        { route: "cancel-route", kind: "connection", code: "CONNECTION_ERROR" },
+      ]);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(secret);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
 describe("the core's import closure stays free of Next", () => {
   // The VS Code extension's backend child runs this module outside Next, so no value import anywhere
   // in what it reaches may pull in Next, query events or governance.
@@ -356,7 +649,6 @@ describe("the core's import closure stays free of Next", () => {
     // A control on the walk: every module this core imports by value is in it.
     expect(closure.modules).toEqual(
       expect.arrayContaining([
-        "src/lib/api/abort-cancel.ts",
         "src/lib/api/first-result-set.ts",
         "src/lib/api/page-probe.ts",
         "src/lib/db/destructive-commands.ts",
@@ -365,8 +657,13 @@ describe("the core's import closure stays free of Next", () => {
         "src/lib/db/types.ts",
         "src/lib/db/utils/query-limiter.ts",
         "src/lib/non-finite.ts",
+        "src/lib/provider-host/access.ts",
+        "src/lib/provider-host/core/console.ts",
+        "src/lib/provider-host/core/turns.ts",
+        "src/lib/provider-host/legacy-bridge.ts",
       ]),
     );
+    expect(closure.modules).not.toContain("src/lib/api/abort-cancel.ts");
   });
 
   test("a control: the same walk over the query route finds Next and governance", () => {

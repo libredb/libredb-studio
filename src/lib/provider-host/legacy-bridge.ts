@@ -68,10 +68,23 @@ export interface LegacyRun {
   cancelSent: boolean;
 }
 
+/** What a bridged execute that answered left: its prepared query, its legacy result and its transaction's end. */
+export interface AnsweredRun {
+  readonly prepared: PreparedQuery;
+  readonly result: QueryResult;
+  readonly openTransaction: OpenQueryTransactionOutcome;
+}
+
 /** A bridged session, the run its execute fills, and the page limits read from that run. */
 export interface BridgedConsole {
   readonly session: ConsoleSession;
   readonly run: LegacyRun;
+  /**
+   * What the execute that answered left, for the facade to answer from.
+   *
+   * @throws {Error} When execute has not answered, a host defect.
+   */
+  readonly answered: () => AnsweredRun;
   /**
    * The pump's limits for the answer execute gave.
    *
@@ -248,11 +261,16 @@ export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepare
     undefined,
   );
 
-  function pumpLimits(): PumpLimits {
-    const { prepared, result } = run;
+  function answered(): AnsweredRun {
+    const { prepared, result, openTransaction } = run;
     if (prepared === undefined || result === undefined) {
-      throw new Error("The bridge's page limits were read before its execute answered, a defect of the host.");
+      throw new Error("The bridge's run was read before its execute answered, a defect of the host.");
     }
+    return { prepared, result, openTransaction };
+  }
+
+  function pumpLimits(): PumpLimits {
+    const { prepared, result } = answered();
     const maxRows = prepared.wasLimited ? prepared.limit + 1 : Math.max(1, result.rows.length);
     return { maxRows, maxBytes: PAGE_MAX_BYTES, batchMaxBytes: BATCH_MAX_BYTES };
   }
@@ -271,6 +289,7 @@ export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepare
           }),
     }),
     run,
+    answered,
     pumpLimits,
   };
 }

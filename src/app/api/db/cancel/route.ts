@@ -6,7 +6,7 @@ import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/p
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
-import { supportsQueryCancel } from "@/lib/db/query-cancel";
+import { cancelEditorRun } from "@/lib/api/editor-query";
 
 export async function POST(req: NextRequest) {
   // Moved ahead of req.json(): an unauthenticated caller no longer gets a body parsed on its
@@ -37,18 +37,19 @@ export async function POST(req: NextRequest) {
 
     const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
 
-    // The same check `/api/db/provider-meta` reports as `supportsQueryCancel`, so the editor
-    // does not offer a Cancel this refuses (#1364).
-    if (!supportsQueryCancel(provider)) {
+    // Through the provider host core's cancel call, under the cleanup deadline and the request's own signal: a request
+    // already aborted calls nothing and answers 499. A provider without the same `supportsQueryCancel` that
+    // `/api/db/provider-meta` reports is not offered the cancel, so the editor does not offer a Cancel this refuses
+    // (#1364).
+    const answer = await cancelEditorRun(provider, queryId, req.signal, "api/db/cancel");
+    if (!answer.offered) {
       return NextResponse.json(
         { error: "Query cancellation is not supported for this database type", cancelled: false },
         { status: 400 },
       );
     }
 
-    const cancelled = await provider.cancelQuery(queryId);
-
-    return NextResponse.json({ cancelled });
+    return NextResponse.json({ cancelled: answer.cancelled });
   } catch (error) {
     return createErrorResponse(error, { route: "api/db/cancel", scrub });
   }
