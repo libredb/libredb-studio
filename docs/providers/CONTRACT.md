@@ -363,7 +363,7 @@ An engine declares at most one `no-secret` warning, and each warning reads only 
 The manifest holds no code: where an engine has a function, its declaration names it, and the package exports it.
 A name is a lower-case letter followed by up to 63 letters or digits, `functionName` in the schema, and it is local to its engine, so two engines of one package may each have a function of one name.
 A package names its functions freely.
-Studio's own declarations name each function by the slot it fills: `<field>Check` for a field rule's check, `hostHint`, `hostIdentity`, `importer` for the connection import, `urlTls`, `pasteReader` and `seedCheck` for the connection string's URL TLS reader, paste reader and seed check, `redactionReader` for a command redaction's reader, `formatSegment` and `readQuotedQualifier` for the completion readers, and, for the SQL writing functions, `escapeLiteral`, `unescapeLiteral`, `quoteIdentifier`, `placeholder`, `temporalLiteral`, `insertDocuments`, `boundEdit`, `binaryLiteral`, `rewriteDeclared`, `declareFromSample`, `typedLiteral`, `columnWriters` and `createTableKeyClause` for the create table key's clause, and, for the migration DDL functions, `createTablePrimaryKey` and `createTableForeignKey` for a written CREATE TABLE's key writers, `createTableRefusal` for a refused one's line, `columnDef`, `createIndex`, `dropIndex`, `addForeignKey`, `dropForeignKey`, `addColumn`, `dropColumn`, `modifyColumn` and `dropTable`.
+Studio's own declarations name each function by the slot it fills: `<field>Check` for a field rule's check, `hostHint`, `hostIdentity`, `importer` for the connection import, `urlTls`, `pasteReader` and `seedCheck` for the connection string's URL TLS reader, paste reader and seed check, `redactionReader` for a command redaction's reader, `formatSegment` and `readQuotedQualifier` for the completion readers, and, for the SQL writing functions, `escapeLiteral`, `unescapeLiteral`, `quoteIdentifier`, `placeholder`, `temporalLiteral`, `insertDocuments`, `boundEdit`, `binaryLiteral`, `rewriteDeclared`, `declareFromSample`, `typedLiteral`, `columnWriters` and `createTableKeyClause` for the create table key's clause, and, for the migration DDL functions, `createTablePrimaryKey` and `createTableForeignKey` for a written CREATE TABLE's key writers, `createTableRefusal` for a refused one's line, `columnDef`, `createIndex`, `dropIndex`, `addForeignKey`, `dropForeignKey`, `addColumn`, `dropColumn`, `modifyColumn` and `dropTable`, and, for the SQL generator forms, `generatorQuote`, `generatorTable`, `generatorSelect` and `generatorSelectList`.
 Studio's census holds every name its declarations give to the very function Studio runs, by identity and never by the function's own name, and finds no function Studio runs that a declaration does not name.
 
 - schema `/$defs/functionName`
@@ -378,6 +378,8 @@ Studio's census holds every name its declarations give to the very function Stud
 - test `tests/unit/db/engine-declarations.test.ts` "every function an SQL writing row holds is named at its slot by its engine's declaration, and no slot the row leaves empty is named"
 - test `tests/unit/db/engine-declarations.test.ts` "every name a migration DDL declaration states is its member's slot, and resolves through the census's slot table to the very function the engine's own module exports there"
 - test `tests/unit/db/engine-declarations.test.ts` "every function a migration DDL row holds is named at its slot by its engine's declaration, and no slot the row leaves empty is named"
+- test `tests/unit/db/engine-declarations.test.ts` "every name an SQL generator declaration states is its member's slot, and resolves through the census's slot table to the very function the engine's own module exports there"
+- test `tests/unit/db/engine-declarations.test.ts` "every function an SQL generator row holds is named at its slot by its engine's declaration, and no slot the row leaves empty is named"
 
 ### M-32 (informative): How a package's named functions are found and called
 
@@ -1033,6 +1035,78 @@ A migration DDL row is code beside its provider, read by Studio's registry.
 Each engine declaration states the same facts as data, which nothing but Studio's census reads until the schema diff reads admitted manifests.
 Studio runs every migration DDL function in the browser, in the schema diff panel, and none on its server.
 M-32 says no package function runs in a browser, so how a package's migration DDL functions are called is decided when Studio reads admitted manifests.
+
+### S-20 (normative): The SQL generator segment
+
+An SQL engine states, in `sqlGenerators`, what it writes apart from Studio's shared SQL forms.
+The segment is null where the engine writes the shared forms: it quotes a name as its declared identifier quoting or Studio's default says, and counts with `COUNT(*)`.
+Otherwise it names the engine's name quoting, the tree click's statement, Generate Query's statement on the column list and the same statement on the projected column list, each form null where the shared form stands, and states the count Generate Count Query writes, `COUNT(*)` where the engine's is the shared one.
+The segment has one member per member of Studio's SQL generator row, and every member is required.
+Studio's census holds every member of every declaration to the engine's row, and finds no member of a row that its declaration leaves out.
+
+- schema `/$defs/sqlGenerators`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an SQL generator segment naming every form, one naming only its quoting, and a null one are admitted"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an SQL generator form named in another form is refused at the form"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's SQL generators are refused at their own pointer under validateEngine"
+- test `tests/unit/db/engine-declarations.test.ts` "sqlGenerators is null exactly where the engine has no SQL_ENGINE_GENERATORS row, and states the row's count expression, COUNT(*) where it has none"
+- test `tests/unit/db/engine-declarations.test.ts` "every name an SQL generator declaration states is its member's slot, and resolves through the census's slot table to the very function the engine's own module exports there"
+- test `tests/unit/db/engine-declarations.test.ts` "every function an SQL generator row holds is named at its slot by its engine's declaration, and no slot the row leaves empty is named"
+- test `tests/unit/db/engine-declarations.test.ts` "every member of an SQL generator row has its member in the declaration"
+- test `tests/unit/db/engine-declarations.test.ts` "the generator refuses, by name, an SQL generator member it has no place for"
+- test `tests/unit/db/engine-declarations/sql-generators-replay.test.ts` "every SQL engine's generator row, rebuilt from its declaration with each form resolved by its slot, answers the committed generator corpus"
+
+### S-21 (normative): A count expression is one call
+
+A count expression is an aggregate name of letters, digits and underscores, starting with a letter, followed by `(*)`, up to 64 characters.
+So the count a declaration states fills one expression of the statement Studio writes, and never adds a clause or a statement.
+
+- schema `/$defs/countExpression`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a count expression that is not one aggregate call over every row is refused as pattern-mismatch, and one longer than 64 characters as out-of-range"
+- test `tests/unit/db/engine-declarations/sql-generators-replay.test.ts` "every SQL engine's generator row, rebuilt from its declaration with each form resolved by its slot, answers the committed generator corpus"
+
+### S-22 (informative): Studio still reads its SQL generator rows, and where their functions run
+
+An SQL generator row is code beside its provider, read by Studio's registry.
+Each engine declaration states the same facts as data, which nothing but Studio's census reads until Studio reads admitted manifests.
+Studio runs a row's name quoting in the browser and on its server, in the profile route and in the agent's context, and its statement forms and count in the browser.
+M-32 says no package function runs in a browser, so how a package's generator functions are called is decided when Studio reads admitted manifests.
+The query dialects' and the query languages' own generators stay Studio's, keyed by the dialect and the language, while the dialect is one of Studio's (M-50).
+
+### S-23 (normative): The editor language
+
+An engine states, in `editor.language`, the query language it speaks, the Monaco language its query tabs are written and rendered in, one of Studio's editor languages, that language's accent, and whether the language is a console dialect.
+An accent is a border class of one hue of Studio's palette at 40 percent, optionally its `-alt` step, and is none of the three status hues, amber, rose and emerald.
+A console dialect's id is its Monaco id, so a manifest states no second id.
+An engine with no dialect opens its tabs under its query language's tab type: `sql` for sql, `mongodb` for json, and `promql`, `cypher` and `influxql` for their own.
+An engine with a dialect opens them under the dialect's name (M-50), so a manifest states no tab type.
+Two engines that name one editor language state the same accent and console.
+Studio's census holds that for its own declarations, and holds every member to Studio's editor registries.
+
+- schema `/$defs/editorLanguageFacts`
+- schema `/$defs/queryLanguage`
+- schema `/$defs/monacoLanguageId`
+- schema `/$defs/editorAccent`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an editor language with Studio's query language, Monaco language and accent is admitted, and a console language too"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a query language or a Monaco language outside Studio's is refused as value-not-allowed"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an accent that is not one border hue class of Studio's palette, or is a status hue, is refused as pattern-mismatch"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an editor language that states a tab type or a console dialect id is refused as unknown-key"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's editor language is refused at its own pointer under validateEngine"
+- test `tests/unit/db/engine-declarations.test.ts` "editor.language.queryLanguage is the query language the engine's unconnected provider declares"
+- test `tests/unit/db/engine-declarations.test.ts` "a dialect-less engine's tabs take its query language's tab type, and a dialect engine's its dialect's name"
+- test `tests/unit/db/engine-declarations.test.ts` "editor.language.monacoId is the Monaco language Studio's editor renders the engine's tabs in"
+- test `tests/unit/db/engine-declarations.test.ts` "editor.language.accent and console are the EDITOR_LANGUAGES row's, a console registered under its own Monaco id"
+- test `tests/unit/db/engine-declarations.test.ts` "EDITOR_LANGUAGES and DIALECT_EDITORS are the editor language facts the declarations state, one per language and one per tab type"
+- test `tests/unit/db/engine-declarations.test.ts` "every member of an editor language row and of a tab type's editor row has its member in the declaration, or stays browser code"
+- test `tests/unit/db/engine-declarations.test.ts` "the query languages and the editor languages are Studio's"
+- test `tests/unit/db/engine-declarations.test.ts` "the generator refuses, by name, an editor language or tab type member it has no place for"
+- test `tests/unit/db/engine-declarations.test.ts` "the generator refuses, by name, an editor language row or a console whose id is not its Monaco id"
+- test `tests/unit/editor/editor-language-registry.test.ts` "each language takes an accent of its own, and none is a status hue"
+
+### S-24 (informative): What stays Studio's browser code
+
+A language's Monaco registration, its completion source, its formatter, and a console dialect's grammar and routes stay code beside the provider, read by Studio's editor in the browser, until Studio's browser catalog reads them.
+An engine's editor language is one Studio's editor already has.
+How a host reconciles two packages that state one language differently is decided when Studio reads admitted manifests.
 
 ## Calls
 
@@ -1730,7 +1804,6 @@ The live check `tests/live/host-core-live.ts` holds the same rule against the bu
 
 These chapters are added by the changes that bring their enforcers:
 
-- Editor and SQL text: generators and editor languages.
 - Policy and MCP claims, each a request a provider makes that only Studio's review record grants, the agent overlay, and presentation (an icon and a colour).
 - The API report of each SDK entry.
 
@@ -1768,4 +1841,6 @@ Against the manifest sketch the design started from:
 - A map keyed by type name is a list, the bare spellings as entries and the bare type families grouped by kind, S-12.
 - The type vocabulary is a fact of each engine, S-14.
 - An engine's migration DDL row is one segment, `migrationDdl`, in one of its two forms, S-17.
+- An engine's SQL generator row is one segment, `sqlGenerators`, null where the engine writes Studio's shared forms, S-20.
+- An engine's editor language is stated per engine, a console dialect's id being its Monaco id and a dialect-less engine's tab type its query language's, S-23.
 - The sketch's frame cap is replaced by the byte budgets, since calls are unframed in process; the memory test transport keeps frames for tests only.

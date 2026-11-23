@@ -1241,6 +1241,7 @@ Those three reach code and tests only; the four prose greps of the published blo
       A console whose grammar takes credential flags declares them as `historyMask` on the record, so query history stores their values masked (`src/lib/history-mask.ts`).
 - [ ] `src/lib/editor/dialect-editors.ts`: a record in `DIALECT_EDITORS` for the dialect's tab type, the Monaco language it renders in.
       A language of its own also takes an `editor-language.ts` row beside the provider and a key in `EDITOR_LANGUAGES` (`src/lib/db/editor-language/index.ts`), which carries its formatter, if it has one.
+      The two rows are also the source of the engine declaration's `editor.language`, so run `bun run engines:generate` after writing or changing either and commit the regenerated declaration (`docs/providers/CONTRACT.md`, S-23).
 - [ ] `generators.ts` beside the provider: the dialect's `DialectGenerators` row, what a tree click and Generate Query write, and its key in `DIALECT_GENERATORS` (`src/lib/db/query-generators/index.ts`), read before the `json` language's row, or a tree click auto-executes a MongoDB document.
       `docs/providers/kafka.md` section 3.1 is the worked case.
 - [ ] `src/lib/db/providers/document/mongodb/editor-language.ts`: the MongoDB completion source of the shared `json` row (`src/lib/db/editor-language/json.ts`) registers only where the declared capabilities name no JSON dialect.
@@ -1269,6 +1270,7 @@ Those three reach code and tests only; the four prose greps of the published blo
       together or neither compiles
 - [ ] `src/lib/explain/index.ts` — register the strategy
 - [ ] `src/lib/db/query-generators/index.ts`: only if the engine needs its own forms or quoting, an `SqlEngineGenerators` row beside the provider, under its type id in `SQL_ENGINE_GENERATORS`; the default is PostgreSQL-shaped, so check before assuming it fits
+      The row is also the source of the engine declaration's `sqlGenerators` segment, so run `bun run engines:generate` after writing or changing it and commit the regenerated declaration (`docs/providers/CONTRACT.md`, S-20).
 - [ ] `src/lib/db/driver-errors/index.ts`: only if the driver's errors carry code fields or words of their own,
       a `<provider>-driver-errors.ts` row beside the provider (`DriverErrorClassifier`,
       `@libredb/provider-sdk/errors`), added to `DRIVER_ERROR_CLASSIFIERS` in its fixed order;
