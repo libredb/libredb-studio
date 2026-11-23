@@ -10,7 +10,7 @@ import { KafkaProvider } from "@/lib/db/providers/stream/kafka/index";
 import { PrometheusProvider } from "@/lib/db/providers/timeseries/prometheus/index";
 import { generateSelectQuery, generateTableQuery } from "@/lib/query-generators";
 import { statementRefusal } from "@/lib/db/destructive-commands";
-import { INFLUXQL_POLICY_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+import { INFLUXQL_POLICY_SENTENCES } from "@/lib/languages/influxql/policy";
 import type { TypedConfirmationAsk } from "@/lib/db/types";
 import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "@/lib/sql/grammar";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../helpers/stand-in-vocabulary";

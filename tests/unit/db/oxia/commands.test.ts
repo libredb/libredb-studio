@@ -17,14 +17,15 @@ import {
   type ParsedOxiaCommand,
   parseOxiaCommand,
   writeCommandSentence,
-} from "@/lib/db/providers/keyvalue/oxia/commands";
+} from "@/lib/languages/oxiacli/commands";
 import {
   OXIA_LIST_DEFAULT_LIMIT,
   OXIA_MAX_LIMIT,
   OXIA_MAX_TEXT_BYTES,
   OXIA_SCAN_DEFAULT_LIMIT,
-} from "@/lib/db/providers/keyvalue/oxia/constants";
+} from "@/lib/languages/oxiacli/constants";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { statementLanguageFamilyDirectory } from "../../../helpers/statement-language-family";
 
 /** The browser's context: no connection is known. */
 const BROWSER: OxiaParseContext = {};
@@ -765,7 +766,7 @@ describe("a key quoted with quoteShellWord reads back as itself", () => {
 describe("the console modules branch on no type id", () => {
   test.each(["lexer", "commands", "guard"])('%s.ts holds no === "oxia"', (module) => {
     const source = readFileSync(
-      join(import.meta.dir, "..", "..", "..", "..", "src/lib/db/providers/keyvalue/oxia", `${module}.ts`),
+      join(import.meta.dir, "..", "..", "..", "..", statementLanguageFamilyDirectory("oxiacli"), `${module}.ts`),
       "utf8",
     );
     expect(source).not.toContain('=== "oxia"');

@@ -6,8 +6,8 @@
  * table is named in it.
  */
 import { describe, expect, test } from "bun:test";
-import { OXIA_COMMAND_TABLE, parseOxiaCommand } from "@/lib/db/providers/keyvalue/oxia/commands";
-import { readOxiaOperations } from "@/lib/db/providers/keyvalue/oxia/guard";
+import { OXIA_COMMAND_TABLE, parseOxiaCommand } from "@/lib/languages/oxiacli/commands";
+import { readOxiaOperations } from "@/lib/languages/oxiacli/guard";
 import {
   keyOrderWords,
   OXIA_DRAFTED_READS,

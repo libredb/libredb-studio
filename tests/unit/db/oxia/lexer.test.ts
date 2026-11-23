@@ -13,7 +13,7 @@ import {
   type OxiaToken,
   oxiaWords,
   tokenizeOxiaLine,
-} from "@/lib/db/providers/keyvalue/oxia/lexer";
+} from "@/lib/languages/oxiacli/lexer";
 
 function split(text: string): {
   readonly lead: string[];

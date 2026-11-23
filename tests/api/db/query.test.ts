@@ -7,7 +7,7 @@ import { createMockProvider } from "../../helpers/mock-provider";
 import { discoverRoutes } from "../../security/helpers/discover-routes";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { agentReadSqlInput } from "@/lib/db/operations/statement-guard";
-import { OXIA_MAX_TEXT_BYTES } from "@/lib/db/providers/keyvalue/oxia/constants";
+import { OXIA_MAX_TEXT_BYTES } from "@/lib/languages/oxiacli/constants";
 import {
   SNOWFLAKE_ERROR_SENTENCES,
   SnowflakeError,

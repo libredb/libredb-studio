@@ -3,19 +3,20 @@
  * key in the Keys panel, one `oxia client` read command per run in the editor.
  *
  * COMPOSITION AND DELEGATION ONLY. The wire is `grpc-client.ts` behind the `OxiaClient` seam, the connection rules
- * `connection-options.ts`, the grammar `lexer.ts` and `commands.ts`, a command's run `execute.ts` over `walks.ts`, the
- * grid `results.ts`, the object surface `objects.ts`, the Keys panel `key-scan.ts`, health and the overview
- * `monitoring-reads.ts`, and every sentence of a failure `errors.ts`. What stays here is the session's lifecycle, the
- * declarations, the surface every module reads through (the limited client, the brief snapshot cache, the order
- * verdict and its lifetime), each call's deadline, the run registry, and the one failure path every call takes.
+ * `connection-options.ts`, the grammar `lexer.ts` and `commands.ts` (in the oxiacli family module,
+ * `src/lib/languages/oxiacli/`), a command's run `execute.ts` over `walks.ts`, the grid `results.ts`, the object
+ * surface `objects.ts`, the Keys panel `key-scan.ts`, health and the overview `monitoring-reads.ts`, and every sentence
+ * of a failure `errors.ts`. What stays here is the session's lifecycle, the declarations, the surface every module
+ * reads through (the limited client, the brief snapshot cache, the order verdict and its lifetime), each call's
+ * deadline, the run registry, and the one failure path every call takes.
  *
  * `cancelQuery` exists because a run can be stopped; every Oxia run reads, so there is no write already sent to
  * protect. No `getPoolStats` and no transaction methods: each is detected by presence.
  *
- * `queryReadOnly` is the agent's: a closed table of metadata reads (`agent-statement.ts`) over the stub that holds only
- * reads, answered through a metadata-only projection (`agent-metadata-read.ts`). Oxia has no authorization, so the
- * table is the boundary. Key names count as stored values, so a handle opened for any agent-mode profile lists no key
- * and reads no value on any surface. MCP read stays closed on this engine.
+ * `queryReadOnly` is the agent's: a closed table of metadata reads (`src/lib/languages/oxiacli/agent-statement.ts`)
+ * over the stub that holds only reads, answered through a metadata-only projection (`agent-metadata-read.ts`). Oxia has
+ * no authorization, so the table is the boundary. Key names count as stored values, so a handle opened for any
+ * agent-mode profile lists no key and reads no value on any surface. MCP read stays closed on this engine.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError, QueryError, RefusedBeforeSendError, RowBudgetRefusal } from "@/lib/db/errors";
@@ -62,21 +63,20 @@ import {
   oxiaAgentFailure,
   oxiaAgentResult,
 } from "./agent-metadata-read";
-import { type OxiaAgentPlan, readOxiaAgentStatement } from "./agent-statement";
+import { type OxiaAgentPlan, readOxiaAgentStatement } from "@/lib/languages/oxiacli/agent-statement";
 import type { OxiaCallOptions, OxiaClient, OxiaSnapshot } from "./client";
-import { parseOxiaCommand } from "./commands";
+import { parseOxiaCommand } from "@/lib/languages/oxiacli/commands";
 import {
   buildOxiaConnectionOptions,
   type OxiaConnectionOptions,
   oxiaEndpointText,
   oxiaErrorConnection,
 } from "./connection-options";
+import { OXIA_DEFAULT_PORT, OXIA_MAX_LIMIT } from "@/lib/languages/oxiacli/constants";
 import {
   OXIA_CELL_LIMIT,
-  OXIA_DEFAULT_PORT,
   OXIA_HEALTH_DEADLINE_MS,
   OXIA_LIMITER_OPTIONS,
-  OXIA_MAX_LIMIT,
   OXIA_RUN_BYTE_BUDGET,
   OXIA_SNAPSHOT_TTL_MS,
   OXIA_SURFACE_DEADLINE_MS,

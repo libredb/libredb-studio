@@ -9,8 +9,9 @@
  */
 import { describe, expect, test } from "bun:test";
 import type { OxiaCallOptions, OxiaSnapshot } from "@/lib/db/providers/keyvalue/oxia/client";
-import { type ParsedOxiaCommand, parseOxiaCommand } from "@/lib/db/providers/keyvalue/oxia/commands";
-import { OXIA_CELL_LIMIT, OXIA_MAX_LIMIT, OXIA_RUN_BYTE_BUDGET } from "@/lib/db/providers/keyvalue/oxia/constants";
+import { type ParsedOxiaCommand, parseOxiaCommand } from "@/lib/languages/oxiacli/commands";
+import { OXIA_MAX_LIMIT } from "@/lib/languages/oxiacli/constants";
+import { OXIA_CELL_LIMIT, OXIA_RUN_BYTE_BUDGET } from "@/lib/db/providers/keyvalue/oxia/constants";
 import { OxiaError, receiveCapNotice, runBudgetNotice } from "@/lib/db/providers/keyvalue/oxia/errors";
 import { executeOxiaCommand, type OxiaExecutionContext } from "@/lib/db/providers/keyvalue/oxia/execute";
 import type { KeyOrder, OrderVerdict } from "@/lib/db/providers/keyvalue/oxia/order";

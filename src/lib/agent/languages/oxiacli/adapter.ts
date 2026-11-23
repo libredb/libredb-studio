@@ -4,7 +4,7 @@
  */
 import { createHash } from "node:crypto";
 import { admitOxiacliStatement } from "@/lib/db/operations/oxiacli-admission";
-import { readOxiaAgentStatement } from "@/lib/db/providers/keyvalue/oxia/agent-statement";
+import { readOxiaAgentStatement } from "@/lib/languages/oxiacli/agent-statement";
 import type { AgentLanguageServerAdapter } from "../pack";
 import { canonicalText } from "../shared";
 

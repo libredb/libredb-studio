@@ -73,6 +73,7 @@ const FIELDS = "the UI-free connection field table, compile-enforced over the ty
 const CONTRACT = "an engine contract's index, which collects the row each engine declares beside its provider";
 const DEFAULT_ENGINE =
   "a view with no connection open names the product's default connection type, the one constant that names it";
+const OXIA_PROGRAM = "the program name `oxia` an `oxia client` command begins with, not the engine";
 
 /** The registries of spec 5.6, which stay. */
 export const REGISTRIES: readonly Listed[] = [
@@ -338,6 +339,8 @@ export const FALSE_POSITIVES: readonly Listed[] = [
     count: 1,
     reason: "the parameter type of the `WRITE_REACH` registry it is handed, which holds no row here",
   },
+  { path: "src/lib/languages/oxiacli/commands.ts", declaration: "afterOxia", count: 1, reason: OXIA_PROGRAM },
+  { path: "src/lib/languages/oxiacli/lexer.ts", declaration: "leadAndVerb", count: 1, reason: OXIA_PROGRAM },
 ];
 
 /** Every branch of spec 2.6 not yet moved, with the PR that moves it. */

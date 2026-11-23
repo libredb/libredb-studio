@@ -4,7 +4,7 @@ import {
   INFLUXQL_MAX_TEXT_BYTES,
   influxqlRefusal,
   readInfluxqlOperations,
-} from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+} from "@/lib/languages/influxql/policy";
 
 /**
  * InfluxDB's row of the confirmation gate's vocabulary (InfluxDB spec 5.7).

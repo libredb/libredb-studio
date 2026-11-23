@@ -9,7 +9,7 @@ import type {
   OxiaRecordView,
   OxiaVersion,
 } from "@/lib/db/providers/keyvalue/oxia/client";
-import { type OxiaCommand, type ParsedOxiaCommand, parseOxiaCommand } from "@/lib/db/providers/keyvalue/oxia/commands";
+import { type OxiaCommand, type ParsedOxiaCommand, parseOxiaCommand } from "@/lib/languages/oxiacli/commands";
 import { OXIA_CELL_LIMIT } from "@/lib/db/providers/keyvalue/oxia/constants";
 import type { OrderVerdict } from "@/lib/db/providers/keyvalue/oxia/order";
 import { OXIA_RECORD_FIELDS, type OxiaOutcome, oxiaResult } from "@/lib/db/providers/keyvalue/oxia/results";

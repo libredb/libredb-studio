@@ -7,7 +7,7 @@
  * prefix ranges every walk reads, and the discovery probes.
  */
 import type { OxiaGet, OxiaRange } from "./client";
-import { OXIA_INTERNAL_PREFIX } from "./constants";
+import { OXIA_INTERNAL_PREFIX } from "@/lib/languages/oxiacli/constants";
 
 /** The "/" byte (common/compare/encode.go at v0.16.10). */
 const SLASH = 0x2f;

@@ -30,9 +30,9 @@ import { plaintextSecretRefusal, validateHost, validatePort } from "@/lib/db/htt
 import { secretForms } from "@/lib/db/utils/server-text";
 import { type DatabaseConnection, TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
 import type { OxiaEndpoint, OxiaLeader } from "./client";
+import { OXIA_DEFAULT_PORT } from "@/lib/languages/oxiacli/constants";
 import {
   OXIA_DEFAULT_NAMESPACE,
-  OXIA_DEFAULT_PORT,
   OXIA_IP_SERVER_NAME,
   OXIA_LEADER_MAX_BYTES,
   OXIA_MAX_DATA_SERVERS,

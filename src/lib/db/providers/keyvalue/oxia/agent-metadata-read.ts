@@ -2,13 +2,13 @@
  * What an agent's Oxia read answers: rows projected from the server's answer to names, counts and flags alone, and the
  * wording of a failure without Oxia's words.
  *
- * Each operation of the closed table (`agent-statement.ts`) has a typed projection here, and the capability
- * `metadataOnly` states them. No column's name comes from the server, and no answer is passed on as it came: the key a
- * request names is not echoed, a value is reduced to its size in bytes, an ephemeral record's session id and client
- * identity to one flag, the shard map to its shard and leader counts, and the keys of a counted range to how many there
- * are. A cell that does not fit its column's kind refuses the whole answer, as a stored value smuggled into a metadata
- * field would look. The answers are those of tests/fixtures/oxia/0.18.0/agent-boundary/open.json: 64-bit integers come
- * as decimal strings and timestamps as epoch milliseconds.
+ * Each operation of the closed table (`src/lib/languages/oxiacli/agent-statement.ts`) has a typed projection here, and
+ * the capability `metadataOnly` states them. No column's name comes from the server, and no answer is passed on as it
+ * came: the key a request names is not echoed, a value is reduced to its size in bytes, an ephemeral record's session
+ * id and client identity to one flag, the shard map to its shard and leader counts, and the keys of a counted range to
+ * how many there are. A cell that does not fit its column's kind refuses the whole answer, as a stored value smuggled
+ * into a metadata field would look. The answers are those of tests/fixtures/oxia/0.18.0/agent-boundary/open.json:
+ * 64-bit integers come as decimal strings and timestamps as epoch milliseconds.
  */
 import { ByteBudgetRefusal, QueryError, TimeBudgetRefusal } from "@/lib/db/errors";
 import {
@@ -25,7 +25,7 @@ import {
   projectMetadata,
 } from "@/lib/db/redaction/metadata-only";
 import type { QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
-import type { OxiaAgentOperation } from "./agent-statement";
+import type { OxiaAgentOperation } from "@/lib/languages/oxiacli/agent-statement";
 import type { OxiaRecordView, OxiaSnapshot } from "./client";
 import { OXIA_RUN_BYTE_BUDGET, OXIA_TYPE } from "./constants";
 import { type OxiaErrorCategory, OxiaError } from "./errors";

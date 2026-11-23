@@ -11,10 +11,10 @@
 import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import type { KeyScanCapability, KeyScanOptions, KeyScanPage } from "@/lib/db/types";
 import type { OxiaCallOptions, OxiaKeysAnswer } from "./client";
-import { OXIA_INTERNAL_KEY_SENTENCE } from "./commands";
+import { OXIA_INTERNAL_KEY_SENTENCE } from "@/lib/languages/oxiacli/commands";
+import { OXIA_INTERNAL_PREFIX } from "@/lib/languages/oxiacli/constants";
 import {
   OXIA_CURSOR_KEY_MAX_BYTES,
-  OXIA_INTERNAL_PREFIX,
   OXIA_KEY_SCAN_DEFAULT_COUNT,
   OXIA_KEY_SCAN_MAX_COUNT,
   OXIA_TYPE,

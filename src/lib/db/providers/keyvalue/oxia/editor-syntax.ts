@@ -1,6 +1,6 @@
 import type * as Monaco from "monaco-editor";
 import { type ShellLineState, shellLineStatesEqual } from "@/lib/db/console/shell-words";
-import { INITIAL_OXIA_LEX_STATE, type OxiaTokenRole, tokenizeOxiaLine } from "@/lib/db/providers/keyvalue/oxia/lexer";
+import { INITIAL_OXIA_LEX_STATE, type OxiaTokenRole, tokenizeOxiaLine } from "@/lib/languages/oxiacli/lexer";
 
 /**
  * Monaco language for the Oxia editor text, one `oxia client` read command (SB2-4.6), in etcd's shape

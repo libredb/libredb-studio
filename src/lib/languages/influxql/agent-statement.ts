@@ -27,8 +27,8 @@
  * Not the boundary. The boundary is the principal, proved read-only before every agent statement
  * (`influxql-agent-read.ts`); this is what lets the model read why it was refused, before anything is sent.
  */
-import { type InfluxqlToken, lexInfluxql } from "./influxql-lexer";
-import { evaluateInfluxql, type InfluxqlStatementKind } from "./influxql-policy";
+import { type InfluxqlToken, lexInfluxql } from "./lexer";
+import { evaluateInfluxql, type InfluxqlStatementKind } from "./policy";
 
 export type InfluxqlAgentRefusalCode =
   | "policy"

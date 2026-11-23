@@ -9,6 +9,9 @@
  *    `sql-agent-read.ts` and `influxql-agent-read.ts`.
  * 2. No `influxql-*` module imports an `sql-*` module, and no `sql-*` module imports an `influxql-*` module.
  * 3. No shared-layer module imports an `influxql-*` or `sql-*` module.
+ *    For rules 2 and 3, a module of the influxql statement language's core family module, `src/lib/languages/influxql/`
+ *    (the lexer, the policy, the confirmation row and the agent's statement reader), counts as an `influxql-*`
+ *    module, so the halves stay apart for the modules that moved there.
  * 4. Only `client.ts` imports `createNodeTransport`, only `connection-options.ts` imports `nodeTlsMaterial`, and
  *    nothing reaches `fetch`, `node:http` or `node:https` itself.
  * 5. No file outside `routes.ts` holds a string literal whose whole value starts with `/api/` or equals `/query`,
@@ -16,7 +19,8 @@
  * 6. Each layer value-imports only what contract section 1 lets it (types are free): `connection-options.ts` may take
  *    the value `TUNNEL_FAR_END` from `@/lib/types` (the Qdrant shape, architect amendment from T09), the two execution
  *    UI contract modules may take values from `@/lib/db/execution-ui/shared`, their contract's shared building block,
- *    and a file of no layer fails, so a new file is placed in one on purpose. The two SQL grammar modules (engine
+ *    and a file of no layer fails, so a new file is placed in one on purpose. The browser and InfluxQL server layers
+ *    may take values from the influxql family module, which holds the lexer and the policy they read. The two SQL grammar modules (engine
  *    contract spec 5.3) are a layer of their own, which value-imports only the contract's building blocks under
  *    `src/lib/db/sql-grammar/`. Each type-id's migration DDL module (`<type-id>-migration-ddl.ts`) is a contract layer
  *    of its own: it may import values only from `@/lib/db/migration-ddl/*`, its contract's shared building blocks,
@@ -35,10 +39,12 @@ import { readdirSync, readFileSync, realpathSync } from "node:fs";
 import { isBuiltin } from "node:module";
 import { join, posix } from "node:path";
 import ts from "typescript";
+import { statementLanguageFamilyDirectory } from "../../../helpers/statement-language-family";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const DIR = "src/lib/db/providers/timeseries/influxdb";
 const PROVIDERS = "src/lib/db/providers/";
+const FAMILY_DIR = statementLanguageFamilyDirectory("influxql");
 const SQL_BASE = "@/lib/db/providers/sql/sql-base";
 const READ_ONLY_BUDGET = "@/lib/db/providers/sql/read-only-budget";
 
@@ -57,18 +63,12 @@ const SHARED = [
   "influxdb3-execution-ui",
 ];
 const BROWSER = [
-  "influxql-lexer",
-  "influxql-policy",
   "influxql-quote",
   "influxql-generators",
   // The editor's InfluxQL language, its completion and its editor language row, which read only the lexer and quoter.
   "influxql-editor-syntax",
   "influxql-editor-completions",
   "influxql-editor-language",
-  // InfluxDB's row of the confirmation gate, which reads only the InfluxQL policy.
-  "influxdb-destructive",
-  // The agent's reader of one statement, which reads only the lexer and the policy.
-  "influxql-agent-statement",
 ];
 const INFLUXQL_SERVER = ["influxql-results", "influxql-objects", "influxql-provider", "influxql-agent-read"];
 const GRAMMAR = ["influxdb-sql-grammar", "influxdb3-sql-grammar"];
@@ -101,7 +101,8 @@ function layerOf(file: string): Layer | undefined {
 }
 
 const inDirectory = (target: string): boolean => target.startsWith(`${DIR}/`);
-const isInfluxql = (target: string): boolean => inDirectory(target) && stem(target).startsWith("influxql-");
+const isInfluxql = (target: string): boolean =>
+  (inDirectory(target) && stem(target).startsWith("influxql-")) || target.startsWith(`${FAMILY_DIR}/`);
 const isSql = (target: string): boolean => inDirectory(target) && stem(target).startsWith("sql-");
 
 /**
@@ -129,9 +130,12 @@ const CONNECTION_OUTSIDE = [
  */
 const OUTSIDE_VALUES: Readonly<Record<Layer, readonly string[]>> = {
   connection: CONNECTION_OUTSIDE,
-  browser: [],
+  // The influxql family module: the lexer and the policy the editor language reads.
+  browser: [`${FAMILY_DIR}/`],
   "influxql-server": [
     ...CONNECTION_OUTSIDE,
+    // The influxql family module: the lexer, the policy and the agent's statement reader the provider runs.
+    `${FAMILY_DIR}/`,
     "src/lib/db/utils/json-integers.ts",
     "src/lib/db/utils/bounded-limiter.ts",
     "src/lib/db/base-provider.ts",
@@ -387,7 +391,7 @@ describe("planted violations fail by name", () => {
     ],
     [
       "influxql-agent-read.ts",
-      "influxql-policy.ts",
+      "influxql-quote.ts",
       'import { SQLBaseProvider } from "@/lib/db/providers/sql/sql-base";\n',
       `rule 1: ${DIR}/influxql-agent-read.ts imports @/lib/db/providers/sql/sql-base, a module of another provider directory`,
     ],
@@ -416,12 +420,24 @@ describe("planted violations fail by name", () => {
       'import type { InfluxqlToken } from "./influxql-lexer";\n',
       `rule 2: ${DIR}/sql-policy.ts imports ./influxql-lexer across the InfluxQL and SQL halves`,
     ],
+    [
+      "sql-policy.ts",
+      "sql-policy.ts",
+      'import type { InfluxqlToken } from "@/lib/languages/influxql/lexer";\n',
+      `rule 2: ${DIR}/sql-policy.ts imports @/lib/languages/influxql/lexer across the InfluxQL and SQL halves`,
+    ],
     // rule 3
     [
       "run-database.ts",
       "run-database.ts",
       'import { evaluateInfluxql } from "./influxql-policy";\n',
       `rule 3: ${DIR}/run-database.ts is a shared-layer module and imports ./influxql-policy`,
+    ],
+    [
+      "run-database.ts",
+      "run-database.ts",
+      'import { evaluateInfluxql } from "@/lib/languages/influxql/policy";\n',
+      `rule 3: ${DIR}/run-database.ts is a shared-layer module and imports @/lib/languages/influxql/policy`,
     ],
     [
       "errors.ts",
@@ -502,10 +518,10 @@ describe("planted violations fail by name", () => {
       `layer: ${DIR}/connection-options.ts imports a value from @/lib/types, which its layer may not`,
     ],
     [
-      "influxql-lexer.ts",
-      "influxql-lexer.ts",
+      "influxql-quote.ts",
+      "influxql-quote.ts",
       'import { QueryError } from "@/lib/db/errors";\n',
-      `layer: ${DIR}/influxql-lexer.ts imports a value from @/lib/db/errors, which its layer may not`,
+      `layer: ${DIR}/influxql-quote.ts imports a value from @/lib/db/errors, which its layer may not`,
     ],
     [
       "influxql-objects.ts",

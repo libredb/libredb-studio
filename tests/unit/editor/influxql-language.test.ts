@@ -3,11 +3,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import type * as Monaco from "monaco-editor";
-import {
-  INITIAL_INFLUXQL_LINE_STATE,
-  type InfluxqlTokenKind,
-  lexInfluxql,
-} from "@/lib/db/providers/timeseries/influxdb/influxql-lexer";
+import { INITIAL_INFLUXQL_LINE_STATE, type InfluxqlTokenKind, lexInfluxql } from "@/lib/languages/influxql/lexer";
 import {
   INFLUXQL_LANGUAGE_ID,
   InfluxqlTokensState,

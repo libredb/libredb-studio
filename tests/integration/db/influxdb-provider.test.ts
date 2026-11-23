@@ -28,7 +28,7 @@ import { createInfluxClient, type InfluxClientFactory } from "@/lib/db/providers
 import { INFLUX_ERROR_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/errors";
 import { INFLUXQL_AGENT_QUERY_TEXT_SENTENCE } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-read";
 import { influxqlTableQuery } from "@/lib/db/providers/timeseries/influxdb/influxql-generators";
-import { evaluateInfluxql } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+import { evaluateInfluxql } from "@/lib/languages/influxql/policy";
 import { InfluxDBProvider } from "@/lib/db/providers/timeseries/influxdb/influxql-provider";
 import { influxqlSource } from "@/lib/db/providers/timeseries/influxdb/influxql-quote";
 import type { DatabaseConnection } from "@/lib/db/types";

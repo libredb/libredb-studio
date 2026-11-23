@@ -8,8 +8,8 @@
  * classifies it with the confirmation gate's reader.
  */
 import type { ProviderLabels } from "@/lib/db/types";
-import { OXIA_COMMAND_TABLE, type OxiaCommandKind } from "./commands";
-import { OXIA_MAX_LIMIT } from "./constants";
+import { OXIA_COMMAND_TABLE, type OxiaCommandKind } from "@/lib/languages/oxiacli/commands";
+import { OXIA_MAX_LIMIT } from "@/lib/languages/oxiacli/constants";
 import type { OrderVerdict } from "./order";
 
 /** The reads plan mode drafts, in the order of the parser's table: all three. */

@@ -69,7 +69,7 @@ import {
   OXIACLI_AGENT_MAX_STATEMENT_CHARS,
   oxiacliAgentReadInput,
 } from "@/lib/db/operations/oxiacli-admission";
-import { OXIA_AGENT_SENTENCES } from "@/lib/db/providers/keyvalue/oxia/agent-statement";
+import { OXIA_AGENT_SENTENCES } from "@/lib/languages/oxiacli/agent-statement";
 import {
   admitRabbitreadStatement,
   RABBITREAD_AGENT_MAX_STATEMENT_CHARS,
@@ -100,8 +100,8 @@ import {
   snmpgetAgentReadInput,
 } from "@/lib/db/operations/snmpget-admission";
 import { SNMP_AGENT_SENTENCES } from "@/lib/db/providers/network/snmp/agent-statement";
-import { INFLUXQL_AGENT_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-statement";
-import { INFLUXQL_POLICY_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+import { INFLUXQL_AGENT_SENTENCES } from "@/lib/languages/influxql/agent-statement";
+import { INFLUXQL_POLICY_SENTENCES } from "@/lib/languages/influxql/policy";
 
 /**
  * kubectl's server half: the repair ledger's identity of one read, and the row-cap advice written in the command's

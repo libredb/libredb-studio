@@ -35,11 +35,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { QueryCancelledError } from "@/lib/db/errors";
-import {
-  parseOxiaCommand,
-  OXIA_INTERNAL_KEY_SENTENCE,
-  OXIA_REFUSED_COMMANDS,
-} from "@/lib/db/providers/keyvalue/oxia/commands";
+import { parseOxiaCommand, OXIA_INTERNAL_KEY_SENTENCE, OXIA_REFUSED_COMMANDS } from "@/lib/languages/oxiacli/commands";
 import {
   admitLeaders,
   buildOxiaConnectionOptions,
