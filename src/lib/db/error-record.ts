@@ -14,7 +14,8 @@
  *
  * The record holds no text of the error: no message, detail, statement or identifier. The full record is built only
  * by `errorRecord` in src/lib/db/operations/provider-text.ts, which applies the core scrub first, so its string
- * fields are never a credential of the connection. `readErrorRecord` reads one from the wire and refuses anything
+ * fields are never a credential of the connection; a withheld error's record keeps its kind, code and outcome and
+ * leaves out its SQLSTATE. `readErrorRecord` reads one from the wire and refuses anything
  * else by naming the field, never its value.
  *
  * Free of Node-only globals and of server-only imports, so every bundle that carries `./errors` can carry it.

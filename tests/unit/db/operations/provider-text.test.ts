@@ -27,6 +27,7 @@ import {
   TimeBudgetRefusal,
   TimeoutError,
 } from "@/lib/db/errors";
+import { errorOutcome } from "@/lib/db/error-record";
 import {
   errorRecord,
   isStudioRefusal,
@@ -36,6 +37,7 @@ import {
   scrubProviderText,
   scrubProviderWarnings,
   withheldErrorMessage,
+  withheldProviderError,
   withholdProviderError,
   withScrubbedWarnings,
 } from "@/lib/db/operations/provider-text";
@@ -275,6 +277,59 @@ describe("withholdProviderError", () => {
   });
 });
 
+describe("withheldProviderError", () => {
+  const password = generated();
+  const scrub = providerTextScrub(connectionWith({ password }), "any");
+
+  test("answers null for a value none of whose texts holds a form", () => {
+    expect(withheldProviderError(scrub, new QueryError("syntax error", "postgres", "SELEC 1", 1, "near"))).toBeNull();
+    expect(withheldProviderError(scrub, "a thrown string")).toBeNull();
+    expect(withheldProviderError(scrub, { toString: () => "a thrown object" })).toBeNull();
+  });
+
+  test("answers a ProviderTextWithheldError naming the replaced class when any rendered text holds a form", () => {
+    const fromDetail = new QueryError("failed", "postgres", undefined, undefined, `detail ${password}`);
+    const fromFix = new AuthenticationError("denied", "postgres", {
+      fixStatement: `ALTER ROLE x PASSWORD '${password}'`,
+    });
+    const fromSqlstate = new QueryError("failed", "postgres");
+    fromSqlstate.sqlstate = password;
+    for (const [error, replaced] of [
+      [new ConnectionError(`could not connect with ${password}`, "postgres"), "ConnectionError"],
+      [fromDetail, "QueryError"],
+      [fromFix, "AuthenticationError"],
+      [fromSqlstate, "QueryError"],
+      [`failed for ${password}`, "thrown string"],
+    ] as const) {
+      const withheld = withheldProviderError(scrub, error);
+      expect(withheld).toBeInstanceOf(ProviderTextWithheldError);
+      expect(withheld?.message).toBe(withheldErrorMessage(replaced));
+      expect(withheld?.provider).toBe("postgres");
+    }
+  });
+
+  test("keeps not-sent and never changes the error given", async () => {
+    const connectFailure = new ConnectionError(`could not connect with ${password}`, "postgres");
+    const raised = await connectPhase(() => Promise.reject(connectFailure)).catch((error: unknown) => error);
+    const { message, stack } = raised as Error;
+    expect(errorOutcome(withheldProviderError(scrub, raised))).toBe("not-sent");
+    expect((raised as Error).message).toBe(message);
+    expect((raised as Error).stack).toBe(stack);
+    expect(errorOutcome(withheldProviderError(scrub, new ConnectionError(`lost ${password}`, "postgres")))).toBe(
+      "unknown",
+    );
+  });
+
+  test("withholdProviderError answers the withheld error or the value itself", () => {
+    const clean = new QueryError("syntax error", "postgres");
+    expect(withholdProviderError(scrub, clean)).toBe(clean);
+    const held = new QueryError(`syntax error near ${password}`, "postgres");
+    const withheld = withholdProviderError(scrub, held) as Error;
+    expect(withheld).toBeInstanceOf(ProviderTextWithheldError);
+    expect(withheld.message).toBe(withheldProviderError(scrub, held)?.message ?? "");
+  });
+});
+
 describe("scrubProviderWarnings and withScrubbedWarnings", () => {
   const password = generated();
   const scrub = providerTextScrub(connectionWith({ password }), "profiled");
@@ -390,22 +445,22 @@ describe("the error record", () => {
     const error = withSqlstate(new QueryError("relation does not exist", "postgres"), password);
     expect(withholdProviderError(scrub, error)).toBeInstanceOf(ProviderTextWithheldError);
     const record = errorRecord(scrub, error);
-    expect(record).toEqual({ kind: "provider-text-withheld", code: "DATABASE_ERROR", outcome: "unknown" });
+    expect(record).toEqual({ kind: "query", code: "QUERY_ERROR", outcome: "unknown" });
     expect(JSON.stringify(record)).not.toContain(password);
   });
 
-  test("a withheld error keeps the outcome of the error it replaced", async () => {
+  test("a withheld error's record keeps the error's kind, code and outcome", async () => {
     const connectFailure = new ConnectionError(`could not connect with ${password}`, "postgres");
     const raised = await connectPhase(() => Promise.reject(connectFailure)).catch((error: unknown) => error);
     expect(errorRecord(scrub, raised)).toEqual({
-      kind: "provider-text-withheld",
-      code: "DATABASE_ERROR",
+      kind: "connection",
+      code: "CONNECTION_ERROR",
       outcome: "not-sent",
     });
     const refused = withSqlstate(new RefusedBeforeSendError("refused", "postgres"), password);
     expect(errorRecord(scrub, refused)).toEqual({
-      kind: "provider-text-withheld",
-      code: "DATABASE_ERROR",
+      kind: "refused-before-send",
+      code: "QUERY_ERROR",
       outcome: "not-sent",
     });
     const statementFailure = new ConnectionError(`lost ${password}`, "postgres");

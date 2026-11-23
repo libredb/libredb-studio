@@ -2,9 +2,10 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import { checkEditorQuery, runEditorQuery } from "@/lib/api/editor-query";
 import { probePastPage } from "@/lib/api/page-probe";
 import { QueryCancelledError } from "@/lib/db/errors";
+import { PROVIDER_TEXT_WITHHELD, providerTextScrub } from "@/lib/db/operations/provider-text";
 import type { DatabaseProvider, PreparedQuery, QueryPrepareOptions } from "@/lib/db/types";
 import { appendedBoundNote, applyQueryLimit } from "@/lib/db/utils/query-limiter";
-import type { QueryResult } from "@/lib/types";
+import type { DatabaseConnection, QueryResult } from "@/lib/types";
 import { createMockProvider } from "../../../helpers/mock-provider";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../../../helpers/stand-in-vocabulary";
 import { serverOnlyReach, valueImportClosure } from "../../../helpers/value-import-closure";
@@ -37,11 +38,23 @@ function fake(answer: QueryResult | Error, extra: Record<string, unknown> = {}):
     extra,
   );
 }
+const connectionWith = (fields: Partial<DatabaseConnection> = {}) =>
+  ({
+    id: "c1",
+    name: "Prod",
+    type: "postgres",
+    host: "db.internal",
+    createdAt: new Date(0),
+    ...fields,
+  }) as DatabaseConnection;
+/** The scrub of a connection that holds no secret: it withholds nothing. */
+const cleanScrub = providerTextScrub(connectionWith(), "any");
 const runOf = (over: Partial<Parameters<typeof runEditorQuery>[1]> = {}) => ({
   statement: "SELECT n FROM t",
   options: { limit: 2 },
   signal: new AbortController().signal,
   route: "test",
+  scrub: cleanScrub,
   ...over,
 });
 /** The mock behind a fake's method, read back for its recorded calls. */
@@ -284,6 +297,32 @@ describe("runEditorQuery", () => {
     const caught = await runEditorQuery(fake(error), runOf()).catch((thrown) => thrown);
     expect(caught).toBe(error);
     expect(error.message).toBe(`syntax error at or near "LIMIT" ${appendedBoundNote("LIMIT 3 OFFSET 0")}`);
+  });
+
+  test("warnings that hold the connection's credential are withheld field by field, and a numeric code is kept", async () => {
+    const password = crypto.randomUUID();
+    const scrub = providerTextScrub(connectionWith({ password }), "any");
+    const provider = fake(
+      resultOf(rowsOf(1), {
+        warnings: [
+          { message: `a notice about ${password}`, code: 42, severity: `NOTICE ${password}` },
+          { message: "a clean notice", code: `C-${password}`, severity: "WARNING" },
+          { message: "a second clean notice", code: "01000", severity: "WARNING" },
+        ],
+      }),
+    );
+    const answer = await runEditorQuery(provider, runOf({ statement: "SELECT n FROM t LIMIT 5", scrub }));
+    expect(answer.body.warnings).toEqual([
+      { message: PROVIDER_TEXT_WITHHELD, code: 42, severity: PROVIDER_TEXT_WITHHELD },
+      { message: "a clean notice", code: PROVIDER_TEXT_WITHHELD, severity: "WARNING" },
+      { message: "a second clean notice", code: "01000", severity: "WARNING" },
+    ]);
+    expect(JSON.stringify(answer.body)).not.toContain(password);
+    const none = await runEditorQuery(
+      fake(resultOf(rowsOf(1))),
+      runOf({ statement: "SELECT n FROM t LIMIT 5", scrub }),
+    );
+    expect(Object.hasOwn(none.body, "warnings")).toBe(false);
   });
 
   test("NaN and the infinities are answered as words", async () => {

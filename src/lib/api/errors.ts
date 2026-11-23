@@ -6,7 +6,8 @@
 import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import { ApiErrorCode } from "./error-codes";
-import { databaseErrorBody, internalErrorBody, type ApiErrorResponse } from "./error-body";
+import { databaseErrorBody, internalErrorBody, withWithheldText, type ApiErrorResponse } from "./error-body";
+import { type ProviderTextScrub, withheldProviderError } from "@/lib/db/operations/provider-text";
 import {
   LLMError,
   LLMAuthError,
@@ -31,7 +32,17 @@ export type { ApiErrorResponse } from "./error-body";
 // Error → HTTP Mapping
 // ============================================================================
 
-export function createErrorResponse(error: unknown, context?: { route?: string }): NextResponse<ApiErrorResponse> {
+/**
+ * The answer and the log line for a thrown value. `scrub` is the calling connection's core scrub, passed by a route
+ * once its connection is resolved: on the two branches a provider's error reaches (every database error class and the
+ * generic one) an error whose text holds a credential of the connection answers its own status, code, kind, outcome
+ * and `retryable` with only its texts replaced (`withWithheldText`), and its log line carries the withheld error. The
+ * other branches answer Studio's own classes, raised before any provider exists.
+ */
+export function createErrorResponse(
+  error: unknown,
+  context?: { route?: string; scrub?: ProviderTextScrub },
+): NextResponse<ApiErrorResponse> {
   const route = context?.route;
 
   // --- Seed Connection Error ---
@@ -78,10 +89,12 @@ export function createErrorResponse(error: unknown, context?: { route?: string }
   // --- DB: every DatabaseError class, answered by the Next-free error body ---
   const answer = databaseErrorBody(error);
   if (answer !== null) {
+    const withheld = context?.scrub === undefined ? null : withheldProviderError(context.scrub, error);
     const { level, message, context: logContext } = answer.log;
-    if (level === "error") logger.error(message, error, { route, ...logContext });
+    if (level === "error") logger.error(message, withheld ?? error, { route, ...logContext });
     else logger[level](message, { route, ...logContext });
-    return NextResponse.json(answer.body, { status: answer.body.statusCode });
+    const body = withheld === null ? answer.body : withWithheldText(answer.body, withheld.message);
+    return NextResponse.json(body, { status: body.statusCode });
   }
 
   // --- LLM: Safety ---
@@ -175,6 +188,8 @@ export function createErrorResponse(error: unknown, context?: { route?: string }
   }
 
   // --- Generic Error ---
-  logger.error("Unhandled error", error, { route });
-  return NextResponse.json(internalErrorBody(error), { status: 500 });
+  const withheld = context?.scrub === undefined ? null : withheldProviderError(context.scrub, error);
+  logger.error("Unhandled error", withheld ?? error, { route });
+  const body = internalErrorBody(error);
+  return NextResponse.json(withheld === null ? body : withWithheldText(body, withheld.message), { status: 500 });
 }

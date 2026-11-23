@@ -6,10 +6,12 @@ import ts from "typescript";
 /**
  * The one scrub of provider text, and who wrote a refusal, held by the syntax tree.
  *
- * On the agent, hand-over and MCP paths every text a provider hands core (an error's message, name, stack, detail or
- * fix statement, a result's warnings) passes core's one scrub (src/lib/db/operations/provider-text.ts) before it
- * reaches a prompt, the ledger, a response or a log line. The census below records each crossing and the core function
- * it calls, and every other read of such a text on those paths is classified, with its reason, as not provider text.
+ * On the paths the census covers (`PROVIDER_TEXT_PATHS`: the agent, hand-over and MCP paths, the editor's query, script
+ * and transaction routes, the connection test and the VS Code extension's backend child) every text a provider hands
+ * core (an error's message, name, stack, detail or fix statement, a result's warnings) passes core's one scrub
+ * (src/lib/db/operations/provider-text.ts) before it reaches a prompt, the ledger, a response, a query event or a log
+ * line. The census below records each crossing and the core function it calls, and every other read of such a text on
+ * those paths is classified, with its reason, as not provider text.
  * A new read of a provider's text on those paths is a finding until it is recorded as one or the other. The scan is
  * syntactic and keyed on names (`error`, `refusal`, `warnings`, `logger.error`, `createErrorResponse`); a provider
  * text carried under another name escapes it, which tests/security/provider-text-scrub.test.ts catches by behaviour.
@@ -307,13 +309,25 @@ describe("who wrote a refusal", () => {
   });
 });
 
-/** The paths the census covers: the agent, the hand-over and MCP, and the core read path they share. */
+/**
+ * The paths the census covers: the agent, the hand-over and MCP, and the core read path they share; the editor's query,
+ * script and transaction routes, the connection test and the shared steps behind them, the query events those routes
+ * record, and the VS Code extension's backend child.
+ */
 const PROVIDER_TEXT_PATHS = [
   join("src", "lib", "agent"),
   join("src", "lib", "mcp"),
   join("src", "app", "api", "agent"),
   join("src", "app", "api", "mcp"),
   join("src", "lib", "db", "operations", "read-only-statement.ts"),
+  join("src", "app", "api", "db", "query", "route.ts"),
+  join("src", "app", "api", "db", "multi-query", "route.ts"),
+  join("src", "app", "api", "db", "transaction", "route.ts"),
+  join("src", "app", "api", "db", "test-connection", "route.ts"),
+  join("src", "lib", "api", "editor-query.ts"),
+  join("src", "lib", "api", "test-connection.ts"),
+  join("src", "lib", "query-events", "route-events.ts"),
+  join("vscode-extension", "src", "backend", "handlers.ts"),
 ];
 
 function pathFiles(path: string): string[] {
@@ -323,8 +337,13 @@ function pathFiles(path: string): string[] {
 const agent = (...path: string[]) => join("src", "lib", "agent", ...path);
 const mcp = (...path: string[]) => join("src", "lib", "mcp", ...path);
 const api = (...path: string[]) => join("src", "app", "api", "agent", ...path);
+const dbRoute = (name: string) => join("src", "app", "api", "db", name, "route.ts");
+const editorQuery = join("src", "lib", "api", "editor-query.ts");
+const testConnectionCore = join("src", "lib", "api", "test-connection.ts");
+const routeEvents = join("src", "lib", "query-events", "route-events.ts");
+const childHandlers = join("vscode-extension", "src", "backend", "handlers.ts");
 
-/** Every crossing of provider text on the three paths, and the core function each calls: one row per call. */
+/** Every crossing of provider text on the covered paths, and the core function each calls: one row per call. */
 const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: string])[] = [
   [agent("tools.ts"), "runAuditedAgentCall", "providerTextScrub"],
   [agent("tools.ts"), "runAuditedAgentCall", "scrubProviderText"],
@@ -358,6 +377,29 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   [mcp("tools", "inspect-schema.ts"), "inspectSchema", "providerTextError"],
   [mcp("tools", "inspect-schema.ts"), "inspectSchema", "scrubProviderText"],
   [mcp("tools", "inspect-schema.ts"), "inspectTable", "engineMessage"],
+  [dbRoute("query"), "POST", "providerTextScrub"],
+  [dbRoute("multi-query"), "POST", "providerTextScrub"],
+  [dbRoute("multi-query"), "runStatement", "withScrubbedWarnings"],
+  [dbRoute("multi-query"), "statementError", "withholdProviderError"],
+  [dbRoute("transaction"), "POST", "providerTextScrub"],
+  [dbRoute("transaction"), "POST", "withScrubbedWarnings"],
+  [dbRoute("transaction"), "runScriptInTransaction", "withholdProviderError"],
+  [dbRoute("transaction"), "eventError", "withheldProviderError"],
+  [dbRoute("transaction"), "rollBackOnProvider", "withholdProviderError"],
+  [dbRoute("test-connection"), "POST", "providerTextScrub"],
+  [testConnectionCore, "testConnection", "providerTextScrub"],
+  [testConnectionCore, "testConnection", "scrubProviderWarnings"],
+  [testConnectionCore, "testConnection", "withheldProviderError"],
+  [testConnectionCore, "testConnectionCautions", "withholdProviderError"],
+  [editorQuery, "runEditorQuery", "withScrubbedWarnings"],
+  [routeEvents, "failure", "providerTextScrub"],
+  [routeEvents, "failure", "withheldProviderError"],
+  [childHandlers, "runQuery", "providerTextScrub"],
+  [childHandlers, "answeringFor", "providerTextScrub"],
+  [childHandlers, "answeringFor", "withheldProviderError"],
+  [childHandlers, "answeringFor", "toResponseError"],
+  [childHandlers, "toResponseError", "withheldProviderError"],
+  [childHandlers, "toResponseError", "withWithheldText"],
 ];
 
 /** The reason a read of an inventory snapshot's provider sentence is no crossing of its own. */
@@ -427,6 +469,8 @@ const NOT_PROVIDER_TEXT: Readonly<Record<string, string>> = {
   [`${join("src", "app", "api", "mcp", "token", "route.ts")}: POST: logger.error(auditError)`]:
     "the audit sink's own failure",
   [`${join("src", "app", "api", "mcp", "route.ts")}: admit: logger.error(undefined)`]: "a fixed log line with no error",
+  [`${dbRoute("multi-query")}: carriedChannels: source.warnings`]: "a statement result runStatement scrubbed",
+  [`${childHandlers}: runTarget: error.message`]: "the run target rule's RangeError, Studio's",
 };
 
 describe("the one scrub of provider text", () => {
@@ -466,7 +510,7 @@ describe("the one scrub of provider text", () => {
     expect(readers.map(({ file }) => file)).toEqual([]);
   });
 
-  test("on the agent, hand-over and MCP paths only the core module reads secretFieldValues", () => {
+  test("on the paths the census covers only the core module reads secretFieldValues", () => {
     const readers = PROVIDER_TEXT_PATHS.flatMap(pathFiles).filter((file) =>
       censusOf(file).identifiers.has("secretFieldValues"),
     );

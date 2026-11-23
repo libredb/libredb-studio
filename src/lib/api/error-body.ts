@@ -207,3 +207,19 @@ export function internalErrorBody(error: unknown): ApiErrorResponse {
   const message = error instanceof Error ? error.message : "Internal server error";
   return { error: message, code: ApiErrorCode.INTERNAL_ERROR, statusCode: 500 };
 }
+
+/**
+ * The same body with its texts replaced by `message`, for an error whose text holds a credential of the connection:
+ * `error` is `message`, `details` keeps only a numeric `position`, and `fixStatement` is left out, while the status,
+ * `code`, `retryable`, `kind`, `outcome` and every other key stay the error's own. The caller decides whether the
+ * text is withheld and passes the withheld error's message, so this module stays free of the scrub. The body given is
+ * not changed.
+ */
+export function withWithheldText(body: ApiErrorResponse, message: string): ApiErrorResponse {
+  const position = (body.details as { position?: unknown } | undefined)?.position;
+  const answered: ApiErrorResponse = { ...body, error: message };
+  delete answered.details;
+  delete answered.fixStatement;
+  if (typeof position === "number") answered.details = { position };
+  return answered;
+}

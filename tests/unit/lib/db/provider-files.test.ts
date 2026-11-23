@@ -21,6 +21,7 @@ import {
   RESERVED_STORAGE_PATH,
 } from "@/lib/db/provider-files";
 import type { DatabaseConnection } from "@/lib/db/types";
+import { holdsSecretForm, secretForms } from "@/lib/db/utils/server-text";
 import { logger } from "@/lib/logger";
 import {
   ADMITTED_FILE,
@@ -180,6 +181,10 @@ describe("core decides the file a local-file connection opens (FND-2 slice 3)", 
       expect((refused as DatabaseConfigError).message).toBe(NO_FILE_AFTER_SCHEME);
       expect((refused as DatabaseConfigError).provider).toBe("sqlite");
     }
+  });
+
+  test("the refusal of a connection string that is file: holds no form of that connection string", () => {
+    expect(holdsSecretForm(NO_FILE_AFTER_SCHEME, secretForms(["file:"]))).toBe(false);
   });
 
   test("a name that is not text is refused by name", () => {

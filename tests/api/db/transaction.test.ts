@@ -21,8 +21,10 @@ import {
   isAuthenticationError,
   TransactionLostError,
   NO_TRANSACTION_OPENED,
+  ProviderTextWithheldError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import type { BeginTransactionOptions, BeginTransactionResult } from "@/lib/db/types";
 import type { QueryEventInput } from "@/lib/query-events/types";
 import { CONFIRMATION_FIELD_MESSAGE } from "@/lib/api/run-confirmation";
@@ -405,6 +407,69 @@ describe("POST /api/db/transaction", () => {
    * the start of the second. The route runs them in order on the transaction's connection and
    * answers in the multi-statement shape `/api/db/multi-query` uses.
    */
+  describe("provider text that holds the connection's credential", () => {
+    const password = crypto.randomUUID();
+    const send = (body: Record<string, unknown>) =>
+      POST(
+        createMockRequest("/api/db/transaction", {
+          method: "POST",
+          body: { connection: { ...validConnection, password }, ...body },
+        }) as never,
+      );
+
+    test("a script statement's error that holds the connection's credential is withheld", async () => {
+      let call = 0;
+      mockTxProvider.queryInTransaction.mockImplementation(async () => {
+        call++;
+        if (call === 2) throw new QueryError(`syntax error near ${password}`, "postgres");
+        return { rows: [], fields: [], rowCount: 1, executionTime: 1 };
+      });
+      const res = await send({ action: "query", sql: "UPDATE t SET a = 1; SELEC 2" });
+      const data = await parseResponseJSON<{ statements: { status: string; error?: string }[] }>(res);
+      expect(res.status).toBe(200);
+      expect(data.statements[0].status).toBe("success");
+      expect(data.statements[1]).toMatchObject({ status: "error", error: withheldErrorMessage("QueryError") });
+      expect(JSON.stringify(data)).not.toContain(password);
+    });
+
+    test("a query's warning that holds the credential is withheld", async () => {
+      const clean = { message: "a notice of its own", code: "01000" };
+      mockTxProvider.queryInTransaction.mockImplementationOnce(async () => ({
+        rows: [],
+        fields: [],
+        rowCount: 0,
+        executionTime: 1,
+        warnings: [{ message: `a notice about ${password}`, code: "01000" }, clean],
+      }));
+      const res = await send({ action: "query", sql: "SELECT 1" });
+      const data = await parseResponseJSON<{ warnings?: unknown[] }>(res);
+      expect(data.warnings).toEqual([{ message: PROVIDER_TEXT_WITHHELD, code: "01000" }, clean]);
+    });
+
+    test("begin, commit and query failures that hold the credential keep their status and code", async () => {
+      mockTxProvider.beginTransaction.mockImplementationOnce(async () => {
+        throw new QueryError(`could not begin for ${password}`, "postgres");
+      });
+      mockTxProvider.commitTransaction.mockImplementationOnce(async () => {
+        throw new TransactionLostError(`session of ${password} ended`, "postgres");
+      });
+      mockTxProvider.queryInTransaction.mockImplementationOnce(async () => {
+        throw new QueryError(`syntax error near ${password}`, "postgres");
+      });
+      for (const [body, status, code, replaced] of [
+        [{ action: "begin" }, 400, "QUERY_ERROR", "QueryError"],
+        [{ action: "commit" }, 503, "TRANSACTION_LOST", "TransactionLostError"],
+        [{ action: "query", sql: "SELECT 1" }, 400, "QUERY_ERROR", "QueryError"],
+      ] as const) {
+        const res = await send(body);
+        const data = await parseResponseJSON<Record<string, unknown>>(res);
+        expect(res.status).toBe(status);
+        expect(data).toMatchObject({ code, error: withheldErrorMessage(replaced) });
+        expect(JSON.stringify(data)).not.toContain(password);
+      }
+    });
+  });
+
   describe("query action with several statements (#1390)", () => {
     type ScriptAnswer = {
       multiStatement: boolean;
@@ -1783,6 +1848,79 @@ describe("POST /api/db/transaction under governance", () => {
     ]);
     expect(recordedEvents[1]?.transactionId).not.toBe(recordedEvents[0]?.transactionId);
     expect((await send({ action: "rollback" })).status).toBe(200);
+  });
+
+  /** `send` with the connection's password set, so a provider's text can hold it. */
+  function sendHolding(password: string, body: Record<string, unknown>, user?: string) {
+    return POST(
+      createMockRequest("/api/db/transaction", {
+        method: "POST",
+        body: {
+          connection: {
+            ...validConnection,
+            id: "seed:orders",
+            grantLevel: user === "reader" ? "read" : "write",
+            password,
+            ...(user === undefined ? {} : { user }),
+          },
+          ...body,
+        },
+      }) as never,
+    );
+  }
+
+  test("governance: a failed commit's and a failed query's events record the withheld sentence", async () => {
+    const password = crypto.randomUUID();
+    const providers = providerPerOwner();
+    as("alice@example.com", "alice-subject");
+    expect((await sendHolding(password, { action: "begin" })).status).toBe(200);
+    const provider = providers.of("alice-subject");
+    provider?.queryInTransaction.mockImplementationOnce(async () => {
+      throw new QueryError(`syntax error near ${password}`, "postgres");
+    });
+    expect((await sendHolding(password, { action: "query", sql: "SELECT 1" })).status).toBe(400);
+    provider?.commitTransaction.mockImplementationOnce(async () => {
+      throw new QueryError(`commit failed for ${password}`, "postgres");
+    });
+    expect((await sendHolding(password, { action: "commit" })).status).toBe(400);
+
+    expect(recordedEvents.map((event) => [event.statement, event.errorCode, event.errorMessage])).toEqual([
+      ["SELECT 1", "QUERY_ERROR", withheldErrorMessage("QueryError")],
+      ["COMMIT", "QUERY_ERROR", withheldErrorMessage("QueryError")],
+    ]);
+    expect(JSON.stringify(recordedEvents)).not.toContain(password);
+    expect((await sendHolding(password, { action: "rollback" })).status).toBe(200);
+  });
+
+  test("governance: a failed rollback after a credential change logs the withheld error", async () => {
+    // The write and the read credential differ, as they do under governance: the provider rolled back on holds the
+    // write credential that begin resolved, which the request now resolving the read credential does not carry.
+    const writerPassword = crypto.randomUUID();
+    const readerPassword = crypto.randomUUID();
+    const providers = providerPerKey();
+    const errors = spyOn(logger, "error").mockImplementation(() => {});
+    try {
+      as("alice@example.com", "alice-subject");
+      expect((await sendHolding(writerPassword, { action: "begin" }, "writer")).status).toBe(200);
+      providers.of("writer", "alice-subject")?.rollbackTransaction.mockImplementationOnce(async () => {
+        throw new ConnectionError(`connection of ${writerPassword} terminated`, "postgres");
+      });
+
+      const res = await sendHolding(readerPassword, { action: "rollback" }, "reader");
+
+      expect(res.status).toBe(409);
+      expect(errors).toHaveBeenCalledTimes(1);
+      const logged = errors.mock.calls[0]?.[1];
+      expect(logged).toBeInstanceOf(ProviderTextWithheldError);
+      for (const password of [writerPassword, readerPassword]) {
+        expect(JSON.stringify(errors.mock.calls)).not.toContain(password);
+        expect(String((logged as Error).stack)).not.toContain(password);
+      }
+      expect((await sendHolding(readerPassword, { action: "begin" }, "reader")).status).toBe(200);
+      expect((await sendHolding(readerPassword, { action: "rollback" }, "reader")).status).toBe(200);
+    } finally {
+      errors.mockRestore();
+    }
   });
 
   test("governance: a closed admission gate refuses begin and query before the provider runs them", async () => {

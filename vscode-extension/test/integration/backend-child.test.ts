@@ -5,6 +5,7 @@ import { type AddressInfo, createServer, type Socket } from "node:net";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { type CancellationToken, CancellationTokenSource, ErrorCodes, ResponseError } from "vscode-jsonrpc/node";
+import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import type { Container, DatabaseObject, KindCount, ObjectDetail } from "@/lib/db/types";
 import { ENABLED_PROVIDERS } from "../../src/host/channel";
 import {
@@ -324,6 +325,26 @@ describe("the backend child against PostgreSQL, SQL Server, MySQL and MongoDB", 
     const second = await runQuery(sharedChild(), mainId(postgres), postgres.selectFour, { limit: 2, offset: 2 });
     assert.deepEqual(second.rows, [{ n: 3 }, { n: 4 }]);
     assert.equal(second.pagination.hasMore, false);
+  });
+
+  it("withholds a PostgreSQL error that holds the connection's password, keeping its status and code, and answers a clean one in the engine's words", async () => {
+    const password = String(engineOf("postgres").environment.POSTGRES_PASSWORD);
+    const connectionId = mainId(engineFixture("postgres"));
+    // The engine quotes the text it could not read as an integer, so its sentence holds the password.
+    const held = await errorOf(
+      runQuery(sharedChild(), connectionId, `select '${password.replaceAll("'", "''")}'::int`),
+    );
+    assert.equal(held.code, 400);
+    assert.equal(held.data?.code, "QUERY_ERROR");
+    assert.equal(held.data?.kind, "query");
+    assert.equal(held.message, withheldErrorMessage("QueryError"));
+    // Asserted by inclusion and never printed: the message names only the field.
+    assert.equal(JSON.stringify({ message: held.message, data: held.data }).includes(password), false, "the answer");
+
+    const clean = await errorOf(runQuery(sharedChild(), connectionId, "select 'abc'::int"));
+    assert.equal(clean.code, 400);
+    assert.equal(clean.data?.code, "QUERY_ERROR");
+    assert.equal(clean.message, 'invalid input syntax for type integer: "abc"');
   });
 
   it("caps a 100,000-row read at its limit, reads the next page, and carries a 10 MB cell", async () => {

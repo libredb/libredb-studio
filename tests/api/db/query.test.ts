@@ -30,6 +30,7 @@ import {
   isAuthenticationError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import type { DatabaseConnection } from "@/lib/types";
 import type { QueryEventRow } from "@/lib/query-events/types";
 import type { QueryEventBatchWrite, QueryEventWriteFailure } from "@/lib/query-events/postgres-sink";
@@ -736,6 +737,75 @@ describe("POST /api/db/query", () => {
     });
   });
 
+  test("a provider error that holds the connection's credential is withheld, keeping its status, code, kind and outcome", async () => {
+    const password = `${crypto.randomUUID()}/${crypto.randomUUID().slice(0, 8)}`;
+    const connection = { ...validConnection, password };
+    (mockProvider.query as ReturnType<typeof mock>).mockRejectedValueOnce(
+      new QueryError(`syntax error near ${password}`, "postgres"),
+    );
+    const queryRes = await POST(
+      createMockRequest("/api/db/query", { method: "POST", body: { connection, sql: "SELECT 1" } }) as never,
+    );
+    expect(queryRes.status).toBe(400);
+    expect(await parseResponseJSON(queryRes)).toEqual({
+      error: withheldErrorMessage("QueryError"),
+      code: "QUERY_ERROR",
+      statusCode: 400,
+      kind: "query",
+      outcome: "unknown",
+    });
+
+    (mockProvider.query as ReturnType<typeof mock>).mockRejectedValueOnce(
+      new ConnectionError(`could not connect to postgres://u:${encodeURIComponent(password)}@h/db`, "postgres"),
+    );
+    const connectRes = await POST(
+      createMockRequest("/api/db/query", { method: "POST", body: { connection, sql: "SELECT 1" } }) as never,
+    );
+    expect(connectRes.status).toBe(503);
+    const connectBody = await parseResponseJSON(connectRes);
+    expect(connectBody).toEqual({
+      error: withheldErrorMessage("ConnectionError"),
+      code: "CONNECTION_ERROR",
+      statusCode: 503,
+      retryable: true,
+      kind: "connection",
+      outcome: "unknown",
+    });
+    expect(JSON.stringify(connectBody)).not.toContain(encodeURIComponent(password));
+  });
+
+  test("a provider error without the credential answers its own sentence", async () => {
+    const connection = { ...validConnection, password: crypto.randomUUID() };
+    (mockProvider.query as ReturnType<typeof mock>).mockRejectedValueOnce(
+      new QueryError('syntax error at or near "FORM"', "postgres"),
+    );
+    const res = await POST(
+      createMockRequest("/api/db/query", { method: "POST", body: { connection, sql: "SELECT 1" } }) as never,
+    );
+    expect(res.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(res)).error).toBe('syntax error at or near "FORM"');
+  });
+
+  test("a warning that holds the connection's credential is withheld in the body", async () => {
+    const password = crypto.randomUUID();
+    const clean = { message: "a notice of its own", code: "01000", severity: "WARNING" };
+    (mockProvider.query as ReturnType<typeof mock>).mockResolvedValueOnce({
+      rows: [],
+      fields: [],
+      rowCount: 0,
+      executionTime: 1,
+      warnings: [{ message: `a notice about ${password}`, code: "01000", severity: "WARNING" }, clean],
+    });
+    const res = await POST(
+      createMockRequest("/api/db/query", {
+        method: "POST",
+        body: { connection: { ...validConnection, password }, sql: "SELECT 1" },
+      }) as never,
+    );
+    const data = await parseResponseJSON<{ warnings?: unknown[] }>(res);
+    expect(data.warnings).toEqual([{ message: PROVIDER_TEXT_WITHHELD, code: "01000", severity: "WARNING" }, clean]);
+  });
+
   // The probe adds one to the limit, so a limit that is not a number would be concatenated, not added.
   for (const options of [{ limit: "500" }, { limit: -1 }, { limit: 1.5 }, { offset: "0" }, { offset: -5 }, null]) {
     test(`refuses options ${JSON.stringify(options)} before any provider is reached`, async () => {
@@ -1124,9 +1194,23 @@ describe("POST /api/db/query — the editor path stays outside the agent policy 
     expect(dbRouteFiles.every((file) => existsSync(file))).toBe(true);
   });
 
+  /**
+   * The one module of the directory a route may import is the core scrub of a provider's text
+   * (`@/lib/db/operations/provider-text`): it is no policy, gate or audit of the agent, and the editor routes apply it
+   * to what a provider answers, as the agent path does.
+   */
+  const CORE_SCRUB = "@/lib/db/operations/provider-text";
+
   test("no /api/db route imports the agent operations layer", () => {
-    const gated = dbRouteFiles.filter((file) => readFileSync(file, "utf8").includes("@/lib/db/operations"));
+    const gated = dbRouteFiles.filter((file) =>
+      [...readFileSync(file, "utf8").matchAll(/@\/lib\/db\/operations[^"']*/g)].some(([found]) => found !== CORE_SCRUB),
+    );
     expect(gated).toEqual([]);
+  });
+
+  test("a control: the guard sees a route that imports the core scrub, and lets it through", () => {
+    const scrubbing = dbRouteFiles.filter((file) => readFileSync(file, "utf8").includes(CORE_SCRUB));
+    expect(scrubbing.some((file) => file.endsWith(join("db", "query", "route.ts")))).toBe(true);
   });
 });
 
@@ -2240,6 +2324,27 @@ describe("POST /api/db/query: query events under governance", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+
+  test("governance: a failed unit's query event under full capture records the withheld sentence", async () => {
+    settings({ key: "queryLog.statementCapture", value: "full" });
+    const password = crypto.randomUUID();
+    resolveConnectionOverride = async () => ({ ...governedConnection, password });
+    (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => {
+      throw new QueryError(`syntax error near ${password}`, "postgres");
+    });
+
+    const res = await run({ connectionId: "seed:orders", sql: "SELECT 1" });
+
+    expect(res.status).toBe(400);
+    const events = await recordedEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      status: "error",
+      error_code: "QUERY_ERROR",
+      error_message: withheldErrorMessage("QueryError"),
+    });
+    expect(JSON.stringify(events)).not.toContain(password);
   });
 
   test("governance: a non-granted id records a refused event with null engine and access level", async () => {

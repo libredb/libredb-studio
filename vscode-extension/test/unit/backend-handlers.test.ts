@@ -15,6 +15,7 @@ import {
   consoleTextOverLimit,
   NON_SQL_DESTRUCTIVE_VOCABULARY,
 } from "@/lib/db/destructive-commands";
+import { PROVIDER_TEXT_WITHHELD, providerTextScrub, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import { executionUiFor } from "@/lib/db/execution-ui";
 import { generateTableQuery } from "@/lib/query-generators";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
@@ -638,6 +639,7 @@ describe("query/run", () => {
       queryId: "q-1",
       signal: new AbortController().signal,
       route: "test",
+      scrub: providerTextScrub({ ...WIRE, createdAt: new Date(WIRE.createdAt) }, "any"),
     });
     assert.deepEqual(route.body, body);
     assert.equal("explainFormat" in answer, false);
@@ -1266,6 +1268,187 @@ describe("toResponseError", () => {
       assert.equal(Object.hasOwn(data, "outcome"), false);
     }
     assert.deepEqual(toResponseError(new Error("boom")).data, { code: "INTERNAL_ERROR" });
+  });
+});
+
+describe("toResponseError with the connection's scrub", () => {
+  const password = crypto.randomUUID();
+  const scrub = providerTextScrub({ ...REVIVED, password }, "any");
+
+  it("a withheld error keeps its status, code, kind, outcome and retryable, and its message is the withheld sentence", async () => {
+    const failed = await connectPhase(() =>
+      Promise.reject(new ConnectionError(`could not connect as ${password}`, "postgres")),
+    ).catch((error: unknown) => error);
+    const clean = await connectPhase(() => Promise.reject(new ConnectionError("could not connect", "postgres"))).catch(
+      (error: unknown) => error,
+    );
+    const withheld = toResponseError(failed, scrub);
+    const answered = toResponseError(clean, scrub);
+    assert.equal(withheld.code, answered.code);
+    assert.deepEqual(withheld.data, answered.data);
+    assert.equal(withheld.message, withheldErrorMessage("ConnectionError"));
+
+    const detailed = toResponseError(
+      new QueryError("syntax error", "postgres", "SELECT 1", 4, `near ${password}`),
+      scrub,
+    );
+    assert.equal(detailed.code, 400);
+    assert.deepEqual(detailed.data, {
+      code: "QUERY_ERROR",
+      details: { position: 4 },
+      kind: "query",
+      outcome: "unknown",
+    });
+    const fix = toResponseError(
+      new AuthenticationError("denied", "postgres", { fixStatement: `ALTER ROLE x PASSWORD '${password}'` }),
+      scrub,
+    );
+    assert.equal(fix.code, 401);
+    assert.deepEqual(fix.data, { code: "AUTH_ERROR", kind: "authentication", outcome: "unknown" });
+    const plain = toResponseError(new Error(`boom ${password}`), scrub);
+    assert.equal(plain.code, 500);
+    assert.deepEqual(plain.data, { code: "INTERNAL_ERROR" });
+    assert.equal(plain.message, withheldErrorMessage("Error"));
+    for (const error of [withheld, detailed, fix, plain]) {
+      assert.equal(JSON.stringify({ message: error.message, data: error.data }).includes(password), false);
+    }
+  });
+
+  it("a clean error and a ResponseError pass unchanged", () => {
+    const params = invalidParams("connectionId must be a non-empty string");
+    assert.equal(toResponseError(params, scrub), params);
+    const error = new QueryError("syntax error", "postgres", "SELECT 1", 4, "near SELEC");
+    const scrubbed = toResponseError(error, scrub);
+    const plain = toResponseError(error);
+    assert.equal(scrubbed.code, plain.code);
+    assert.equal(scrubbed.message, plain.message);
+    assert.deepEqual(scrubbed.data, plain.data);
+  });
+});
+
+describe("provider errors that hold the connection's credential", () => {
+  const password = crypto.randomUUID();
+  const wire = { ...WIRE, password };
+
+  /** Asserts the call answers a ResponseError that holds no form of the password, with the clean answer's status and code. */
+  async function withheldAnswer(call: Promise<unknown>, clean: unknown): Promise<void> {
+    const expected = toResponseError(clean);
+    await assert.rejects(call, (error) => {
+      assert.ok(error instanceof ResponseError, "expected a ResponseError");
+      assert.equal(error.code, expected.code);
+      assert.equal((error.data as BackendErrorData).code, (expected.data as BackendErrorData).code);
+      assert.equal(error.message, withheldErrorMessage((clean as Error).name));
+      assert.equal(JSON.stringify({ message: error.message, data: error.data }).includes(password), false, "a field");
+      return true;
+    });
+  }
+
+  /** The handlers after an open of the password's record on `provider`. */
+  async function openedHolding(over: ProviderSurface = {}) {
+    const provider = fakeProvider(over);
+    const made = backend(provider);
+    await made.handlers.openConnection({ connection: wire, posture: POSTURE });
+    return made;
+  }
+
+  it("connection/test answers a provider error that holds the connection's credential withheld, with its own status and code", async () => {
+    const { handlers } = backend(fakeProvider(), {
+      testConnection: async () => {
+        throw new ConnectionError(`password authentication failed for ${password}`, "postgres");
+      },
+    });
+    await withheldAnswer(
+      handlers.testConnection({ connection: wire, posture: POSTURE }),
+      new ConnectionError("password authentication failed", "postgres"),
+    );
+  });
+
+  it("connection/open answers a provider error that holds the connection's credential withheld, with its own status and code", async () => {
+    const { handlers } = backend(fakeProvider(), {
+      getOrCreateProvider: async () => {
+        throw new AuthenticationError(`password authentication failed for ${password}`, "postgres");
+      },
+    });
+    await withheldAnswer(
+      handlers.openConnection({ connection: wire, posture: POSTURE }),
+      new AuthenticationError("password authentication failed", "postgres"),
+    );
+  });
+
+  const held = () => new PermissionDeniedError(`permission denied for ${password}`, "postgres");
+  const clean = new PermissionDeniedError("permission denied", "postgres");
+  const reject = async () => {
+    throw held();
+  };
+
+  it("objects/listContainers answers a provider error that holds the connection's credential withheld, with its own status and code", async () => {
+    const { handlers } = await openedHolding({ listContainers: reject });
+    await withheldAnswer(handlers.listContainers({ connectionId: "c1" }), clean);
+  });
+
+  it("objects/countObjects answers a provider error that holds the connection's credential withheld, with its own status and code", async () => {
+    const { handlers } = await openedHolding({ countObjects: reject });
+    await withheldAnswer(handlers.countObjects({ connectionId: "c1", container: ["app"] }), clean);
+  });
+
+  it("objects/listObjects answers a provider error that holds the connection's credential withheld, with its own status and code", async () => {
+    const { handlers } = await openedHolding({ listObjects: reject });
+    await withheldAnswer(handlers.listObjects({ connectionId: "c1", container: ["app"], kind: "table" }), clean);
+  });
+
+  it("objects/describeObject answers a provider error that holds the connection's credential withheld, with its own status and code", async () => {
+    const { handlers } = await openedHolding({ describeObject: reject });
+    await withheldAnswer(handlers.describeObject({ connectionId: "c1", path: ["app", "t"], kind: "table" }), clean);
+  });
+
+  it("query/run answers a provider error that holds the connection's credential withheld, with its own status and code", async () => {
+    const { handlers } = await openedHolding({
+      query: async () => {
+        throw new QueryError(`syntax error near ${password}`, "postgres");
+      },
+    });
+    await withheldAnswer(handlers.runQuery(RUN, idle), new QueryError("syntax error", "postgres"));
+  });
+
+  it("query/cancel answers a provider error that holds the connection's credential withheld, with its own status and code", async () => {
+    const { handlers } = await openedHolding({ cancelQuery: reject });
+    await withheldAnswer(handlers.cancelQuery({ connectionId: "c1", queryId: "q-1" }), clean);
+  });
+
+  it("objects/selectStatement answers a provider error that holds the connection's credential withheld, with its own status and code", async () => {
+    const { handlers, provider } = await openedHolding();
+    (provider as unknown as { getCapabilities: () => never }).getCapabilities = () => {
+      throw held();
+    };
+    await withheldAnswer(
+      handlers.selectStatement({ connectionId: "c1", object: { path: ["app", "t"], kind: "table", name: "t" } }),
+      clean,
+    );
+  });
+
+  it("query/target answers a provider error that holds the connection's credential withheld, with its own status and code", async () => {
+    const { handlers, provider } = await openedHolding();
+    (provider as unknown as { getCapabilities: () => never }).getCapabilities = () => {
+      throw held();
+    };
+    await withheldAnswer(
+      handlers.runTarget({ connectionId: "c1", text: "select 1", selection: { start: 0, end: 0 }, cursor: 0 }),
+      clean,
+    );
+  });
+
+  it("query/run answers a warning that holds the credential withheld", async () => {
+    const { handlers } = await openedHolding({
+      query: async () =>
+        resultOf(rowsOf(1), {
+          warnings: [{ message: `a notice about ${password}`, code: "01000" }, { message: "a clean notice" }],
+        }),
+    });
+    const answer = await handlers.runQuery(RUN, idle);
+    assert.deepEqual(answer.warnings, [
+      { message: PROVIDER_TEXT_WITHHELD, code: "01000" },
+      { message: "a clean notice" },
+    ]);
   });
 });
 

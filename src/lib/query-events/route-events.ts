@@ -9,7 +9,9 @@
  */
 import { clientAddress } from "@/lib/api/client-address";
 import type { Role } from "@/lib/auth";
+import { errorCode as recordCode } from "@/lib/db/error-record";
 import { isDatabaseError, isQueryCancelledError } from "@/lib/db/errors";
+import { providerTextScrub, withheldProviderError } from "@/lib/db/operations/provider-text";
 import type { GovernedConnection } from "@/lib/governance/visible";
 import type { DatabaseConnection } from "@/lib/types";
 import { contractConnectionId } from "./build";
@@ -81,6 +83,17 @@ export interface ExecutedUnit {
   readonly correlationId?: string;
 }
 
+/**
+ * The code and message a failed unit's event records. An error whose text holds a credential of the unit's connection
+ * (core's scrub, `providerTextScrub(connection, "any")`) records the withheld sentence and the error's own API code,
+ * never its SQLSTATE, which is one of the texts the scrub reads.
+ */
+function failure(connection: DatabaseConnection, error: unknown): { errorCode?: string; errorMessage: string } {
+  const withheld = withheldProviderError(providerTextScrub(connection, "any"), error);
+  if (withheld !== null) return { errorCode: recordCode(error), errorMessage: withheld.message };
+  return { errorCode: errorCode(error), errorMessage: error instanceof Error ? error.message : String(error) };
+}
+
 /** Records one unit that ran: `success` with its rows, `cancelled` for a cancel, and `error` for any other failure. */
 export function recordExecutedUnit(request: QueryEventRequest, unit: ExecutedUnit): void {
   const { ended } = unit;
@@ -88,8 +101,7 @@ export function recordExecutedUnit(request: QueryEventRequest, unit: ExecutedUni
     "error" in ended
       ? {
           status: isQueryCancelledError(ended.error) ? ("cancelled" as const) : ("error" as const),
-          errorCode: errorCode(ended.error),
-          errorMessage: ended.error instanceof Error ? ended.error.message : String(ended.error),
+          ...failure(unit.connection, ended.error),
         }
       : { status: "success" as const, rowCount: rowCount(ended.rowCount) };
   recordQueryEvent({
