@@ -672,8 +672,4 @@ export const INWARD_IMPORTS: readonly AllowlistEntry[] = [
     file: "src/lib/kubernetes/kubeconfig-import.ts",
     modules: ["platform/kubernetes/limits.ts"],
   },
-  {
-    file: "src/lib/mcp/tools/read-query-limits.ts",
-    modules: ["sql/read-only-refusals.ts", "sql/read-query-forms.ts"],
-  },
 ];

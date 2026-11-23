@@ -58,7 +58,7 @@ import {
 } from "@/lib/db/errors";
 import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
-import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
+import { readQueryFormsOf } from "@/lib/sql/read-query-forms";
 import {
   CHARACTER_REFUSAL,
   COMMENT_REFUSAL,

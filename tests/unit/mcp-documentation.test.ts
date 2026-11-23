@@ -7,7 +7,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { MCP_EXPOSABLE, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
-import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
+import { readQueryFormsOf } from "@/lib/sql/read-query-forms";
 import { DB_UI_CONFIG, getDBConfig } from "@/lib/db-ui-config";
 import { namedList } from "@/lib/agent/engine-support";
 import { mcpClientConfigs } from "@/lib/mcp/client-config";

@@ -763,7 +763,7 @@ user's own bound is what runs. The trait is declared per product (`acceptsOffset
 so a third product declares its own answer instead of being added to a condition someone has to find.
 
 The refusal is an `OffsetUnsupportedError`, a `QueryError` of its own class (`src/lib/db/errors.ts`).
-MCP's `run_read_query` never asks for that page: this engine's row in `src/lib/db/providers/sql/read-query-forms.ts` says its SQL has no `OFFSET`, so the tool refuses an `offset` before `prepareQuery` runs and names no next offset ([MCP read](#mcp-read)).
+MCP's `run_read_query` never asks for that page: this engine's row in `src/lib/sql/read-query-forms.ts` says its SQL has no `OFFSET`, so the tool refuses an `offset` before `prepareQuery` runs and names no next offset ([MCP read](#mcp-read)).
 
 ### 5.6 This grammar does not write
 

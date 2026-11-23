@@ -23,12 +23,12 @@ import {
   TimeoutError,
 } from "@/lib/db/errors";
 import { rowBudgetRefusal } from "@/lib/db/providers/document/mongodb/agent-read";
-import { READ_QUERY_FORMS, readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
+import { READ_QUERY_FORMS, readQueryFormsOf } from "@/lib/sql/read-query-forms";
 import {
   MSSQL_CUT_VALUE_PREFIX,
   MSSQL_SERIALISED_PREFIX,
   MSSQL_TIME_BUDGET_PREFIX,
-} from "@/lib/db/providers/sql/mssql-read-only-refusals";
+} from "@/lib/sql/mssql-read-only-refusals";
 import {
   BYTE_BUDGET_PREFIX,
   byteBudgetSentence,

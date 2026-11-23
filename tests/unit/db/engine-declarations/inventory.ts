@@ -171,4 +171,10 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     destination:
       "engine declaration: id, every engine's id a fence tag naming it, with editor.fenceAliases naming its other tags",
   },
+  {
+    module: "src/lib/sql/read-query-forms.ts",
+    name: "READ_QUERY_FORMS",
+    destination:
+      "planned segment: MCP read forms, the statements an engine runs among those the read fence admits, its paging clause and its row limiting clause",
+  },
 ];

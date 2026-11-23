@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
-import * as mssqlReadOnlyRefusals from "@/lib/db/providers/sql/mssql-read-only-refusals";
+import * as mssqlReadOnlyRefusals from "@/lib/sql/mssql-read-only-refusals";
 import * as readOnlyBudget from "@/lib/db/providers/sql/read-only-budget";
 
 /**
@@ -10,7 +10,7 @@ import * as readOnlyBudget from "@/lib/db/providers/sql/read-only-budget";
  *
  * A provider refuses a read whose answer or wait passed the row, byte or time field of the `ReadOnlyStatementBudget`
  * it was handed in one of the sentences src/lib/db/providers/sql/read-only-budget.ts and
- * src/lib/db/providers/sql/mssql-read-only-refusals.ts build, and raises it as the class of that budget
+ * src/lib/sql/mssql-read-only-refusals.ts build, and raises it as the class of that budget
  * (`RowBudgetRefusal`, `ByteBudgetRefusal`, `TimeBudgetRefusal`, `CutValueRefusal`, `SerialisedResultRefusal` in
  * src/lib/db/errors.ts), so its error record answers a kind of its own. A refusal it raises before anything was sent
  * stays a `RefusedBeforeSendError`, and one it raises as a timeout a `TimeoutError`: the same refusal, which every

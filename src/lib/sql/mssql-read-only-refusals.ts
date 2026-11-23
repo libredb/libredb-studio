@@ -1,6 +1,7 @@
 /**
- * The openings of SQL Server's own read-only refusals, beside the provider that raises them, and the answer MCP's
- * `run_read_query` gives for the two that are about a result too large to read.
+ * The openings of SQL Server's own read-only refusals, in the SQL family's core module, where the provider that raises
+ * them and MCP's `run_read_query` both read them, and the answer MCP's `run_read_query` gives for the two that are about
+ * a result too large to read.
  *
  * The provider raises each refusal as its budget's class (`CutValueRefusal`, `SerialisedResultRefusal`,
  * `TimeBudgetRefusal`), and MCP's `run_read_query` answers the first two with the texts below by that class, never by

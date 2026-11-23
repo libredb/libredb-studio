@@ -69,7 +69,11 @@ import {
 } from "../../errors";
 import { mapDatabaseError } from "../../map-database-error";
 import { assertReadOnlyBudget, byteBudgetSentence, measureResultBytes, rowBudgetSentence } from "./read-only-budget";
-import { MSSQL_CUT_VALUE_PREFIX, MSSQL_SERIALISED_PREFIX, MSSQL_TIME_BUDGET_PREFIX } from "./mssql-read-only-refusals";
+import {
+  MSSQL_CUT_VALUE_PREFIX,
+  MSSQL_SERIALISED_PREFIX,
+  MSSQL_TIME_BUDGET_PREFIX,
+} from "@/lib/sql/mssql-read-only-refusals";
 import { formatBytes } from "../../utils/pool-manager";
 import { analyzeQuery, assertRowBounds, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
