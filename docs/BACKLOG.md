@@ -34,7 +34,7 @@ None of it is a GitHub issue.
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
 - [Dependencies](#dependencies) — P1-P14 · 12
 - [Documentation](#documentation) — DOC3-DOC38 · 32
-- [Release pipeline](#release-pipeline) — REL1-REL11 · 10
+- [Release pipeline](#release-pipeline) — REL1-REL12 · 11
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 6
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
@@ -8386,6 +8386,16 @@ The same runs saw `e2e/libsql-provider.spec.ts` time out once in its `beforeEach
 Found 2026-11-21 by the E2E flake fixes for REL7 and U145.
 
 **Done when:** the cause is measured, and `bunx playwright test e2e/tab-management.spec.ts --project=chromium --repeat-each=10 --retries=0` passes all its runs beside the rest of the main server's specs at the local default worker count.
+
+### REL12. The library build does not inline a workspace package's declarations
+
+`tsup.config.ts` bundles each workspace package's code through `noExternal` and names the same packages in `dts.resolve`, and docs/TOOLCHAIN.md ("Workspace packages") and packages/README.md ("Library") say the library build bundles their declarations too.
+A probe with the repository's `tsconfig.lib.json` shows it does not: a declaration that reaches a type of `@libredb/provider-sdk` through the package root keeps `from './manifest'`, a path the dist does not have, and one that reaches it through a subpath keeps `from '@libredb/provider-sdk/manifest'`, a package `@libredb/studio` does not depend on.
+No declaration the library build emits reaches an SDK type today, so the packed package is unaffected; `scripts/check-lib-load.mjs` refuses the subpath form by name, and no check refuses the relative form.
+
+Found 2026-11-23 while planning PR 9 slice 9e (the provider SDK's values and errors).
+
+**Done when:** a declaration the library build emits that reaches a workspace package's type carries that type in the dist, a check over the packed declarations refuses an import of a workspace package or of a relative path the dist does not have, and the two doc sentences hold.
 
 ---
 
