@@ -7,7 +7,7 @@
  * command table and cannot drift from what the parser takes.
  */
 import type { ProviderLabels } from "@/lib/db/types";
-import { KUBECTL_COMMAND_TABLE } from "./console/commands";
+import { KUBECTL_COMMAND_TABLE } from "@/lib/languages/kubectl/commands";
 
 /** Two statements the sentence gives as examples: a list, and one object's description. */
 export const KUBECTL_STATEMENT_EXAMPLES: readonly [string, string] = Object.freeze([

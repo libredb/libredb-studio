@@ -1,6 +1,6 @@
 import type { DestructiveVocabulary, OperationReader } from "@/lib/db/destructive-vocabulary";
-import { KUBECTL_MAX_TEXT_BYTES } from "@/lib/db/providers/platform/kubernetes/console/commands";
-import { kubectlRefusal } from "@/lib/db/providers/platform/kubernetes/console/guard";
+import { KUBECTL_MAX_TEXT_BYTES } from "@/lib/languages/kubectl/commands";
+import { kubectlRefusal } from "@/lib/languages/kubectl/guard";
 
 /**
  * kubectl operations that destroy or change anything and reach the server: none, so the set is empty.

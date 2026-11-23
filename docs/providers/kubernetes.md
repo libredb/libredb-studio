@@ -40,8 +40,12 @@ The clock, the sleep, the randomness and the transport factory are one injected 
 | `discovery.ts`, `resolve.ts` | Aggregated discovery, its admission and cache, and kubectl's name resolution |
 | `kinds.ts`, `objects.ts`, `source.ts` | The kind table, the tree surface and the YAML view |
 | `table.ts`, `redaction.ts` | Table answers to grids with the paged walk, and the one place Secret data is removed |
-| `errors.ts`, `labels.ts`, `monitoring.ts`, `connect-warnings.ts`, `limits.ts` | Studio's error sentences, the labels, health, Test Connection's warnings, every cap |
-| `console/` | The kubectl subset: lexer, command table, parser, one reader per command family, paging |
+| `errors.ts`, `labels.ts`, `monitoring.ts`, `connect-warnings.ts`, `limits.ts` | Studio's error sentences, the labels, health, Test Connection's warnings, every other cap |
+| `console/` | One reader per command family, the run that sends a parsed statement to it, and the console's context |
+
+The kubectl statement language lives in its core family module, `src/lib/languages/kubectl/`, which the provider imports.
+The editor, the confirmation gate, the agent and the provider read the kubectl subset from it: the lexer, the command table, the parser, the paging clause, the confirmation row, the five caps a statement is read against (`constants.ts`) and the quantity reader (`quantity.ts`).
+`tests/unit/db/kubernetes/browser-modules.test.ts` holds every module of the kubectl family to family members, the shared console modules and types.
 
 ## 3. Design decisions
 
@@ -334,7 +338,7 @@ Those flags are the console's own `CREDENTIAL_FLAGS` list, which the dialect's r
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/platform/kubernetes/sql-grammar.ts`](../../src/lib/db/providers/platform/kubernetes/sql-grammar.ts), the `kubernetes` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
 `readsSqlText` is `false`: `kubernetes` takes one kubectl subset statement, words split by POSIX shell rules, and a SQL span reader would report its quoting as unreadable and prompt on every run.
-The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/platform/kubernetes/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/kubectl/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 

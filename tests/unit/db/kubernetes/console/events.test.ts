@@ -4,7 +4,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { EVENTS_CAP_SENTENCE, eventTime, listEvents } from "@/lib/db/providers/platform/kubernetes/console/events";
-import { type KubectlStatement, parseKubectl } from "@/lib/db/providers/platform/kubernetes/console/parse";
+import { type KubectlStatement, parseKubectl } from "@/lib/languages/kubectl/parse";
 import { consoleContext, listAnswer, routes, sentLines } from "../../../../helpers/kubernetes-console";
 import { jsonAnswer } from "../../../../helpers/kubernetes-transport";
 import { errorKind } from "@/lib/db/error-record";

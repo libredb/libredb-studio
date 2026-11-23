@@ -6,7 +6,7 @@ import {
   type KubectlContext,
   machineRowLimit,
 } from "@/lib/db/providers/platform/kubernetes/console/context";
-import { AGENT_PAGING_SENTENCE } from "@/lib/db/providers/platform/kubernetes/console/paging";
+import { AGENT_PAGING_SENTENCE } from "@/lib/languages/kubectl/paging";
 import { runKubectl } from "@/lib/db/providers/platform/kubernetes/console/run";
 import {
   MACHINE_DEADLINE_SENTENCE,

@@ -15,7 +15,8 @@
  * `queryReadOnly`. The clock, the randomness and the transport factory are seams.
  *
  * The console is `console/`: `query()` runs one statement through `console/run.ts` under the run registry, so a
- * cancel stops it, and `prepareQuery` pages only the list form of a single-type get (`console/paging.ts`).
+ * cancel stops it, and `prepareQuery` pages only the list form of a single-type get
+ * (`src/lib/languages/kubectl/paging.ts`).
  */
 import { getAppVersion } from "@/lib/app-version";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
@@ -58,7 +59,7 @@ import { createKubernetesClient, DEFAULT_KUBERNETES_SEAMS, type KubernetesCall, 
 import { kubernetesConnectWarnings } from "./connect-warnings";
 import { ExplainCache, resultOf, statementCall } from "./console/context";
 import { EXPLAIN_CACHE_ENTRIES } from "./console/explain";
-import { prepareKubectlQuery } from "./console/paging";
+import { prepareKubectlQuery } from "@/lib/languages/kubectl/paging";
 import { runKubectl } from "./console/run";
 import { type ClusterEndpoint, readClusterEndpoint } from "./connection-options";
 import { DiscoveryCache, readDiscovery, requireSupportedServer } from "./discovery";
@@ -149,7 +150,8 @@ export class KubernetesProvider extends BaseDatabaseProvider {
       queryLanguage: "json",
       queryDialect: "kubectl",
       supportsExplain: false,
-      // The list form of a single-type get is paged by a clause the provider owns (console/paging.ts).
+      // The list form of a single-type get is paged by a clause the kubectl family declares
+      // (src/lib/languages/kubectl/paging.ts).
       supportsExternalQueryLimiting: true,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,

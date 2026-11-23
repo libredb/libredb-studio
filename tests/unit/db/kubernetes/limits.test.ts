@@ -1,21 +1,28 @@
 import { describe, expect, test } from "bun:test";
 import * as limits from "@/lib/db/providers/platform/kubernetes/limits";
+import {
+  KUBERNETES_LOG_LIMIT_BYTES,
+  KUBERNETES_LOG_TAIL_MAX,
+  KUBERNETES_MAX_DOCUMENT_OBJECTS,
+  KUBERNETES_MAX_STATEMENT_ROWS,
+  KUBERNETES_PAGE_SIZE,
+} from "@/lib/languages/kubectl/constants";
 
 describe("kubernetes limits", () => {
-  test("every cap of the provider's limits table, by value", () => {
+  test("every cap of the provider's limits table and the kubectl family's constants, by value", () => {
     expect({
-      page: limits.KUBERNETES_PAGE_SIZE,
-      statementRows: limits.KUBERNETES_MAX_STATEMENT_ROWS,
+      page: KUBERNETES_PAGE_SIZE,
+      statementRows: KUBERNETES_MAX_STATEMENT_ROWS,
       treeObjects: limits.KUBERNETES_TREE_OBJECT_CAP,
       responseBytes: limits.KUBERNETES_MAX_RESPONSE_BYTES,
       documentBytes: limits.KUBERNETES_MAX_DOCUMENT_BYTES,
-      documentObjects: limits.KUBERNETES_MAX_DOCUMENT_OBJECTS,
+      documentObjects: KUBERNETES_MAX_DOCUMENT_OBJECTS,
       documentsBytes: limits.KUBERNETES_MAX_DOCUMENTS_BYTES,
       logTailDefault: limits.KUBERNETES_LOG_TAIL_DEFAULT,
       logRowTail: limits.KUBERNETES_LOG_ROW_TAIL,
-      logTailMax: limits.KUBERNETES_LOG_TAIL_MAX,
+      logTailMax: KUBERNETES_LOG_TAIL_MAX,
       logSelectorTail: limits.KUBERNETES_LOG_SELECTOR_TAIL,
-      logLimitBytes: limits.KUBERNETES_LOG_LIMIT_BYTES,
+      logLimitBytes: KUBERNETES_LOG_LIMIT_BYTES,
       logStreams: limits.KUBERNETES_MAX_LOG_STREAMS,
       watchSeconds: limits.KUBERNETES_WATCH_WINDOW_SECONDS,
       watchBytes: limits.KUBERNETES_WATCH_WINDOW_BYTES,

@@ -4,7 +4,7 @@
  */
 import { createHash } from "node:crypto";
 import { admitKubectlStatement } from "@/lib/db/operations/kubectl-admission";
-import { readKubectlRun } from "@/lib/db/providers/platform/kubernetes/console/paging";
+import { readKubectlRun } from "@/lib/languages/kubectl/paging";
 import type { AgentLanguageServerAdapter } from "../pack";
 import { canonicalText } from "../shared";
 

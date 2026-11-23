@@ -17,14 +17,9 @@ import {
   notInV1OutputSentence,
   notReadOnlySentence,
   tooManyNamesSentence,
-} from "@/lib/db/providers/platform/kubernetes/console/commands";
-import { KUBERNETES_LOG_LIMIT_BYTES, KUBERNETES_LOG_TAIL_MAX } from "@/lib/db/providers/platform/kubernetes/limits";
-import {
-  goDurationMs,
-  isPageable,
-  type KubectlStatement,
-  parseKubectl,
-} from "@/lib/db/providers/platform/kubernetes/console/parse";
+} from "@/lib/languages/kubectl/commands";
+import { KUBERNETES_LOG_LIMIT_BYTES, KUBERNETES_LOG_TAIL_MAX } from "@/lib/languages/kubectl/constants";
+import { goDurationMs, isPageable, type KubectlStatement, parseKubectl } from "@/lib/languages/kubectl/parse";
 
 const MARKER = "marker-value-never-echoed";
 

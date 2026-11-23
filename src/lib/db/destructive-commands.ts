@@ -5,7 +5,7 @@ import { FIRESTORE_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/document/fi
 import { ETCD_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/keyvalue/etcd/destructive";
 import { OXIA_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/oxiacli/destructive";
 import { S3_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/objectstore/s3/destructive";
-import { KUBERNETES_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/platform/kubernetes/destructive";
+import { KUBERNETES_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/kubectl/destructive";
 import { INFLUXDB_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/influxql/destructive";
 import { MILVUS_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/vector/milvus/destructive";
 import { QDRANT_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/vector/qdrant/destructive";

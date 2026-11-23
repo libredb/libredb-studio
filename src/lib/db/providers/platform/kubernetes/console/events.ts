@@ -16,7 +16,8 @@
 import { QueryError, RowBudgetRefusal } from "@/lib/db/errors";
 import { rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
 import { ACCEPT_JSON } from "../client";
-import { KUBERNETES_EVENTS_READ_MAX, KUBERNETES_EVENTS_SHOWN, KUBERNETES_PAGE_SIZE, KUBERNETES_TYPE } from "../limits";
+import { KUBERNETES_PAGE_SIZE } from "@/lib/languages/kubectl/constants";
+import { KUBERNETES_EVENTS_READ_MAX, KUBERNETES_EVENTS_SHOWN, KUBERNETES_TYPE } from "../limits";
 import { MACHINE_REDACTED, redactResponse } from "../redaction";
 import { fieldSelectorValue } from "../request-policy";
 import { type KubeTable, parseTable, scanTable } from "../table";
@@ -31,7 +32,7 @@ import {
   stringOf,
   textGrid,
 } from "./context";
-import type { KubectlStatement } from "./parse";
+import type { KubectlStatement } from "@/lib/languages/kubectl/parse";
 
 type EventsStatement = Extract<KubectlStatement, { readonly command: "events" }>;
 

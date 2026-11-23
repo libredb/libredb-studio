@@ -13,7 +13,7 @@ import {
   KUBECTL_VALUE_GLOBAL_FLAGS,
   kubectlWords,
   tokenizeKubectlLine,
-} from "@/lib/db/providers/platform/kubernetes/console/lexer";
+} from "@/lib/languages/kubectl/lexer";
 
 function split(text: string): { readonly lead: string[]; readonly words: string[] } {
   const read = kubectlWords(text);

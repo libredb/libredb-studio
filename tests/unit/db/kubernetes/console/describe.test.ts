@@ -6,7 +6,7 @@
 import { describe, expect, test } from "bun:test";
 import type { NodeRequest } from "@/lib/db/http/node-transport";
 import { describeObject } from "@/lib/db/providers/platform/kubernetes/console/describe";
-import { type KubectlStatement, parseKubectl } from "@/lib/db/providers/platform/kubernetes/console/parse";
+import { type KubectlStatement, parseKubectl } from "@/lib/languages/kubectl/parse";
 import {
   consoleContext,
   listAnswer,

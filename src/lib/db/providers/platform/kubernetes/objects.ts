@@ -51,7 +51,8 @@ import {
   objectNameOf,
   objectSegment,
 } from "./kinds";
-import { KUBERNETES_MAX_IN_FLIGHT, KUBERNETES_PAGE_SIZE, KUBERNETES_TREE_OBJECT_CAP, KUBERNETES_TYPE } from "./limits";
+import { KUBERNETES_PAGE_SIZE } from "@/lib/languages/kubectl/constants";
+import { KUBERNETES_MAX_IN_FLIGHT, KUBERNETES_TREE_OBJECT_CAP, KUBERNETES_TYPE } from "./limits";
 import { redactResponse } from "./redaction";
 import { isRequestableName, type KubernetesRequest, planRequest } from "./request-policy";
 import { cellOf, type KubeTable, parseTable, scanTable, type TableRow } from "./table";

@@ -3,7 +3,7 @@
  * masks, so a line pasted with a token or a Secret's value is stored without it, whatever form the flag takes.
  */
 import { describe, expect, test } from "bun:test";
-import { CREDENTIAL_FLAGS } from "@/lib/db/providers/platform/kubernetes/console/commands";
+import { CREDENTIAL_FLAGS } from "@/lib/languages/kubectl/commands";
 import { QUERY_DIALECTS } from "@/lib/db/query-dialects";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { historyMaskOf, maskStatementForHistory } from "@/lib/history-mask";

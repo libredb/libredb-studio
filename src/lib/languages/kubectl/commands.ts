@@ -3,7 +3,8 @@
  * column, the commands and flags it refuses, and every refusal sentence.
  *
  * Pure, and shipped to the browser: the parser (`parse.ts`), the confirmation gate's row and the plan-mode sentence
- * of `labels.ts` read the same table, so what the editor refuses, what plan mode is told and what runs cannot drift.
+ * of the provider's `labels.ts` read the same table, so what the editor refuses, what plan mode is told and what runs
+ * cannot drift.
  * A refusal names a command or a flag and never quotes a value the user typed.
  */
 
@@ -357,7 +358,7 @@ export function booleanValueSentence(spelling: string): string {
 const usageSpelling = (spec: KubectlFlagSpec): string =>
   spec.shorthand === undefined ? `--${spec.name}` : `-${spec.shorthand}|--${spec.name}`;
 
-/** The table as usage lines, for labels.ts and the provider doc. */
+/** The table as usage lines, for the provider's labels.ts and its doc. */
 export const KUBECTL_COMMAND_TABLE: ReadonlyArray<{
   readonly command: KubectlCommandName;
   readonly arguments: string;
@@ -367,7 +368,7 @@ export const KUBECTL_COMMAND_TABLE: ReadonlyArray<{
     Object.freeze({
       command: spec.command,
       arguments: spec.arguments,
-      flags: Object.freeze(spec.flags.map(usageSpelling)),
+      flags: Object.freeze(spec.flags.map((flag) => usageSpelling(flag))),
     }),
   ),
 );

@@ -6,7 +6,7 @@ import { describe, expect, test } from "bun:test";
 import { parse as parseYaml } from "yaml";
 import { TransportError } from "@/lib/db/http/node-transport";
 import { getDocuments } from "@/lib/db/providers/platform/kubernetes/console/get-documents";
-import { type KubectlStatement, parseKubectl } from "@/lib/db/providers/platform/kubernetes/console/parse";
+import { type KubectlStatement, parseKubectl } from "@/lib/languages/kubectl/parse";
 import {
   consoleContext,
   listAnswer,

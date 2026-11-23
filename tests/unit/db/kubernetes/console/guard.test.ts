@@ -3,9 +3,9 @@
  * sentence before anything is sent; a read is sent.
  */
 import { describe, expect, test } from "bun:test";
-import { kubectlRefusal } from "@/lib/db/providers/platform/kubernetes/console/guard";
-import { PAGING_CLAUSE_SENTENCE } from "@/lib/db/providers/platform/kubernetes/console/paging";
-import { parseKubectl } from "@/lib/db/providers/platform/kubernetes/console/parse";
+import { kubectlRefusal } from "@/lib/languages/kubectl/guard";
+import { PAGING_CLAUSE_SENTENCE } from "@/lib/languages/kubectl/paging";
+import { parseKubectl } from "@/lib/languages/kubectl/parse";
 
 describe("kubectlRefusal", () => {
   test.each([

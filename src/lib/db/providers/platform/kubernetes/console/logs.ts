@@ -25,11 +25,13 @@ import { ACCEPT_JSON } from "../client";
 import type { IndexedResource } from "../discovery";
 import {
   KUBERNETES_LOG_LIMIT_BYTES,
+  KUBERNETES_MAX_STATEMENT_ROWS,
+  KUBERNETES_PAGE_SIZE,
+} from "@/lib/languages/kubectl/constants";
+import {
   KUBERNETES_LOG_SELECTOR_TAIL,
   KUBERNETES_LOG_TAIL_DEFAULT,
   KUBERNETES_MAX_LOG_STREAMS,
-  KUBERNETES_MAX_STATEMENT_ROWS,
-  KUBERNETES_PAGE_SIZE,
   KUBERNETES_TYPE,
 } from "../limits";
 import { redactResponse } from "../redaction";
@@ -45,7 +47,7 @@ import {
   stringOf,
   textGrid,
 } from "./context";
-import type { KubectlStatement } from "./parse";
+import type { KubectlStatement } from "@/lib/languages/kubectl/parse";
 
 type LogsStatement = Extract<KubectlStatement, { readonly command: "logs" }>;
 

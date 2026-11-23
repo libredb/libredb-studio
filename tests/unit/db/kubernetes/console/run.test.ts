@@ -3,7 +3,7 @@
  * statement sends nothing, and a type the server stopped serving reads discovery again once and runs once more.
  */
 import { describe, expect, test } from "bun:test";
-import { PAGING_CLAUSE_SENTENCE } from "@/lib/db/providers/platform/kubernetes/console/paging";
+import { PAGING_CLAUSE_SENTENCE } from "@/lib/languages/kubectl/paging";
 import { runKubectl } from "@/lib/db/providers/platform/kubernetes/console/run";
 import {
   consoleContext,
