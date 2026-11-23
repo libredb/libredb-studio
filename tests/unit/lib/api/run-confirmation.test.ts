@@ -6,7 +6,12 @@ import {
   gateRun,
   type RunGateRequest,
 } from "@/lib/api/run-confirmation";
-import { forgetUsedRunConfirmations, verifyRunConfirmation } from "@/lib/api/run-confirmation-token";
+import {
+  forgetUsedRunConfirmations,
+  runConfirmationIssuerForProcess,
+  runConfirmationIssuerForSession,
+  verifyRunConfirmation,
+} from "@/lib/api/run-confirmation-token";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { INVALID_RUN_CONFIRMATION_SETTING } from "@/lib/config/run-confirmation";
 import { TYPED_NAME_MISSING_REFUSAL } from "@/lib/editor/statement-analysis";
@@ -30,7 +35,7 @@ const postgres: DatabaseConnection = {
 function request(overrides: Partial<RunGateRequest> = {}): RunGateRequest {
   return {
     route: "query",
-    session: { username: "alice", role: "user", iat: 1_700_000_000 },
+    issuer: runConfirmationIssuerForSession({ username: "alice", role: "user", iat: 1_700_000_000 }),
     connection: postgres,
     catalog: undefined,
     sql: "DELETE FROM t",
@@ -74,6 +79,36 @@ describe("the run confirmation gate (FND-5)", () => {
       { route: "api/db/query", type: "postgres", user: "alice" },
     ]);
     expect(JSON.stringify(warn.mock.calls)).not.toContain("DELETE");
+  });
+
+  test("the advisory warning names the issuer's user and the route's log label", async () => {
+    const issuer = runConfirmationIssuerForProcess("vscode-extension");
+    expect(await gateRun(request({ route: "vscode/query/run", issuer }), clock)).toEqual({
+      kind: "run",
+      unconfirmed: true,
+    });
+    expect(await gateRun(request({ route: "multi-query" }), clock)).toEqual({ kind: "run", unconfirmed: true });
+    expect(warn.mock.calls).toEqual([
+      [
+        "A statement that needs a confirmation ran without one",
+        { route: "vscode/query/run", type: "postgres", user: "vscode-extension" },
+      ],
+      [
+        "A statement that needs a confirmation ran without one",
+        { route: "api/db/multi-query", type: "postgres", user: "alice" },
+      ],
+    ]);
+  });
+
+  test("a read with no token runs for a session with no issue time", async () => {
+    const issuer = runConfirmationIssuerForSession({ username: "alice", role: "user" });
+    const decisions = await Promise.all(
+      [undefined, "ask"].map((confirmation) => gateRun(request({ issuer, sql: "SELECT 1", confirmation }), clock)),
+    );
+    expect(decisions).toEqual([
+      { kind: "run", unconfirmed: false },
+      { kind: "run", unconfirmed: false },
+    ]);
   });
 
   test("a read runs in either mode, unmarked and unlogged, with or without the field", async () => {
@@ -131,7 +166,7 @@ describe("the run confirmation gate (FND-5)", () => {
       await verifyRunConfirmation(
         token,
         {
-          session: asked.session,
+          issuer: asked.issuer,
           connection: asked.connection,
           catalog: asked.catalog,
           route: asked.route,

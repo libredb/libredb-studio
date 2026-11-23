@@ -39,6 +39,8 @@ export interface ResultsPresenter {
 export interface PageRead {
   documentUri: string;
   connectionId: string;
+  /** The run's connection name, which the question a page read meets names. */
+  connectionName: string;
   statement: string;
   catalog?: string;
   limit: number;
@@ -227,6 +229,7 @@ export class ResultsViewPresenter implements ResultsPresenter, ResultsSession {
     const read: PageRead = {
       documentUri: this.uriOf(known) as string,
       connectionId: known.connectionId,
+      connectionName: known.connectionName,
       statement: known.statement,
       ...(known.catalog === undefined ? {} : { catalog: known.catalog }),
       limit: state.limit,

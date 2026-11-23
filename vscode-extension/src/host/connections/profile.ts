@@ -4,7 +4,7 @@
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { typeIdRefusal } from "@/lib/db/type-id";
 import { secretFieldValues, withoutSecretFields, withSecretFieldValues } from "@/lib/storage/secret-fields";
-import type { SSLMode } from "@/lib/types";
+import type { ConnectionEnvironment, SSLMode } from "@/lib/types";
 import type { WireConnection } from "../../protocol";
 import { ID_PATTERN, isPlainObject, SECRET_PATHS, secretPathsIn } from "./secret-keys";
 
@@ -27,6 +27,23 @@ const SSL_MODE_KEYS: Readonly<Record<SSLMode, true>> = {
 
 /** The five SSLMode values. */
 export const SSL_MODES: readonly SSLMode[] = Object.freeze(Object.keys(SSL_MODE_KEYS) as SSLMode[]);
+
+/**
+ * Every ConnectionEnvironment as a key, so an environment missing here or one the type does not have fails the
+ * typecheck. production is the one the run gate reads: there every statement it asks about asks for the name.
+ */
+const ENVIRONMENT_KEYS: Readonly<Record<ConnectionEnvironment, true>> = {
+  production: true,
+  staging: true,
+  development: true,
+  local: true,
+  other: true,
+};
+
+/** The five ConnectionEnvironment values, which the manifest's libredb.connections schema declares. */
+export const ENVIRONMENTS: readonly ConnectionEnvironment[] = Object.freeze(
+  Object.keys(ENVIRONMENT_KEYS) as ConnectionEnvironment[],
+);
 
 const EXTERNAL: ReadonlySet<string> = new Set(EXTERNAL_DATABASE_TYPES);
 
@@ -72,7 +89,7 @@ function readEntry(element: unknown, n: number, seen: Set<string>): ProfileItem 
 
 /** Rules 5 to 10 for an element whose id and name are usable: the first one it breaks, else undefined. */
 function refusalOf(entry: Record<string, unknown>, name: string): string | undefined {
-  const { type, createdAt, port, ssl, secretFields } = entry;
+  const { type, createdAt, port, ssl, environment, secretFields } = entry;
   // A type that is missing, not text or names no provider gets the sentence Studio refuses it with (`typeIdRefusal`).
   // A type id outside EXTERNAL is the embedded LibreDB store; a type the channel does not enable passes, and its open
   // answers the factory gate's sentence.
@@ -89,6 +106,10 @@ function refusalOf(entry: Record<string, unknown>, name: string): string | undef
   }
   if (ssl !== undefined && !(isPlainObject(ssl) && SSL_MODES.some((mode) => mode === ssl.mode))) {
     return `The connection ${name} has an ssl setting whose mode is not disable, require, verify-system, verify-ca or verify-full.`;
+  }
+  // Refused rather than read as not production: "Production" would otherwise silently ask for no name.
+  if (environment !== undefined && !ENVIRONMENTS.some((known) => known === environment)) {
+    return `The connection ${name} has an environment that is not production, staging, development, local or other.`;
   }
   // Refused rather than moved: a value in user settings has already travelled with Settings Sync.
   const secret = secretPathsIn(entry)[0];

@@ -9,6 +9,7 @@ import {
   type MessageConnection,
   ResponseError,
 } from "vscode-jsonrpc";
+import type { RunConfirmationOffer } from "@/lib/api/run-confirmation";
 import type {
   BackendApi,
   BackendErrorCode,
@@ -39,6 +40,8 @@ export class BackendError extends Error {
   readonly retryable?: boolean;
   readonly details?: unknown;
   readonly fixStatement?: string;
+  /** On a CONFIRMATION_REQUIRED only: the offer the run gate answered, which the host asks the person about. */
+  readonly confirmation?: RunConfirmationOffer;
 
   constructor(
     readonly status: number,
@@ -52,6 +55,7 @@ export class BackendError extends Error {
     this.retryable = more.retryable;
     this.details = more.details;
     this.fixStatement = more.fixStatement;
+    this.confirmation = more.confirmation;
   }
 }
 

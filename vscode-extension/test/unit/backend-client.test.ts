@@ -35,7 +35,7 @@ import { TEST_PASSWORD } from "../fakes/credentials";
 const RETYPED_PASSWORD = ["n3w", "2"].join("-");
 
 const INITIALIZED: InitializeResult = {
-  protocolVersion: 1,
+  protocolVersion: 2,
   runtime: { node: "24.21.0", electron: "43.7.7", modules: "148", platform: "linux", arch: "x64" },
   enabledProviders: ["postgres", "mssql", "mysql", "mongodb"],
 };
@@ -226,6 +226,25 @@ describe("BackendClient", () => {
         );
       });
     }
+
+    it("keeps a 428's confirmation on the BackendError", async () => {
+      const { client, serve } = setup();
+      const confirmation = {
+        token: crypto.randomUUID(),
+        expiresAt: new Date(0).toISOString(),
+        unreadable: false,
+        typedConfirmation: null,
+        classificationFailed: false,
+      };
+      serve(METHODS.testConnection, () => {
+        throw new ResponseError(428, "m", { code: "CONFIRMATION_REQUIRED", confirmation });
+      });
+      const error = await rejection(client.testConnection(PARAMS));
+      assert.ok(error instanceof BackendError);
+      assert.equal(error.status, 428);
+      assert.equal(error.code, "CONFIRMATION_REQUIRED");
+      assert.deepEqual(error.confirmation, confirmation);
+    });
 
     for (const status of [ErrorCodes.InvalidParams, ErrorCodes.ServerNotInitialized]) {
       it(`gives ${status}, which carries no data.code, the code null`, async () => {
@@ -1118,7 +1137,7 @@ describe("BackendClient", () => {
   it("answers initialize with the link's handshake and sends nothing", async () => {
     const { client, received } = setup();
     const api: BackendApi = client;
-    assert.deepEqual(await api.initialize({ protocolVersion: 1 }), INITIALIZED);
+    assert.deepEqual(await api.initialize({ protocolVersion: 2 }), INITIALIZED);
     assert.deepEqual(received, []);
   });
 

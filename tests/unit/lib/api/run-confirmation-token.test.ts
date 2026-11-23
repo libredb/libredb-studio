@@ -5,8 +5,11 @@ import {
   mintRunConfirmation,
   RUN_CONFIRMATION_TTL_SECONDS,
   type RunConfirmationBinding,
+  runConfirmationIssuerForProcess,
+  runConfirmationIssuerForSession,
   verifyRunConfirmation,
 } from "@/lib/api/run-confirmation-token";
+import type { UserPayload } from "@/lib/auth";
 import { sha256Hex } from "@/lib/api/utf16-digest";
 import { signJWT } from "@/lib/auth";
 import { getJwtSecret } from "@/lib/config/auth-env";
@@ -30,9 +33,14 @@ function connection(): DatabaseConnection {
   };
 }
 
+/** The session the fixture's binding is minted for; a test that varies it builds its own issuer from it. */
+function session(): UserPayload & { iat?: number } {
+  return { username: "alice", role: "user", iat: 1_700_000_000 };
+}
+
 function binding(): RunConfirmationBinding {
   return {
-    session: { username: "alice", role: "user", iat: 1_700_000_000 },
+    issuer: runConfirmationIssuerForSession(session()),
     connection: connection(),
     catalog: undefined,
     route: "query",
@@ -77,27 +85,72 @@ describe("the run confirmation token (FND-5)", () => {
 
   test("refused for another username", async () => {
     const token = await minted();
-    const offered = { ...binding(), session: { ...binding().session, username: "bob" } };
+    const offered = { ...binding(), issuer: runConfirmationIssuerForSession({ ...session(), username: "bob" }) };
     expect(await refusal(token, offered)).toBe("this confirmation was issued for another session");
   });
 
   test("refused for another role", async () => {
     const token = await minted();
-    const offered: RunConfirmationBinding = { ...binding(), session: { ...binding().session, role: "admin" } };
+    const offered = { ...binding(), issuer: runConfirmationIssuerForSession({ ...session(), role: "admin" }) };
     expect(await refusal(token, offered)).toBe("this confirmation was issued for another session");
   });
 
   test("refused for another session issue time", async () => {
     const token = await minted();
-    const offered = { ...binding(), session: { ...binding().session, iat: 1_700_000_001 } };
+    const offered = { ...binding(), issuer: runConfirmationIssuerForSession({ ...session(), iat: 1_700_000_001 }) };
     expect(await refusal(token, offered)).toBe("this confirmation was issued for another session");
   });
 
   test("refused for a session that carries no issue time, by name rather than bound to a default", async () => {
-    const offered = { ...binding(), session: { username: "alice", role: "user" as const } };
+    const offered = { ...binding(), issuer: runConfirmationIssuerForSession({ username: "alice", role: "user" }) };
     await expect(mintRunConfirmation(offered, at(NOW))).rejects.toThrow(
       "The session carries no issue time, so a run confirmation cannot be bound to it",
     );
+  });
+
+  test("a session with no issue time is refused at mint and at verify, not when its issuer is built", async () => {
+    const issuer = runConfirmationIssuerForSession({ username: "alice", role: "user" });
+    expect(issuer.user).toBe("alice");
+    const sentence = "The session carries no issue time, so a run confirmation cannot be bound to it";
+    await expect(mintRunConfirmation({ ...binding(), issuer }, at(NOW))).rejects.toThrow(sentence);
+    const token = await minted();
+    await expect(verifyRunConfirmation(token, { ...binding(), issuer }, at(NOW))).rejects.toThrow(sentence);
+  });
+
+  test("a process issuer's token verifies once", async () => {
+    const issuer = runConfirmationIssuerForProcess("vscode-extension");
+    expect(issuer.user).toBe("vscode-extension");
+    const offered: RunConfirmationBinding = { ...binding(), issuer, route: "vscode/query/run" };
+    const token = await minted(offered);
+    expect(await refusal(token, offered)).toBeUndefined();
+    expect(await refusal(token, offered)).toBe("this confirmation has already been used");
+  });
+
+  test("a token one process issuer minted is not verifiable under another", async () => {
+    const first: RunConfirmationBinding = {
+      ...binding(),
+      issuer: runConfirmationIssuerForProcess("vscode-extension"),
+      route: "vscode/query/run",
+    };
+    const second: RunConfirmationBinding = { ...first, issuer: runConfirmationIssuerForProcess("vscode-extension") };
+    const token = await minted(first);
+    expect(await refusal(token, second)).toBe("this confirmation could not be verified");
+    // The control: the issuer that minted it still verifies it, so the issuer alone was refused.
+    expect(await refusal(token, first)).toBeUndefined();
+  });
+
+  test("a session issuer's token is not verifiable under a process issuer, and the reverse", async () => {
+    const processBinding: RunConfirmationBinding = {
+      ...binding(),
+      issuer: runConfirmationIssuerForProcess("vscode-extension"),
+    };
+    expect(await refusal(await minted(), processBinding)).toBe("this confirmation could not be verified");
+    expect(await refusal(await minted(processBinding), binding())).toBe("this confirmation could not be verified");
+  });
+
+  test("a token minted on vscode/query/run is refused on query", async () => {
+    const token = await minted({ ...binding(), route: "vscode/query/run" });
+    expect(await refusal(token, binding())).toBe("this confirmation was issued for another route");
   });
 
   test.each([

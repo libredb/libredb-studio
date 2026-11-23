@@ -14,6 +14,7 @@ import { BindingStore, editorRelease } from "./editor/bindings";
 import { cancelQuery, changeConnection, type EditorCommandDeps, newQuery, selectRows } from "./editor/commands";
 import { ContextKeys } from "./editor/context-keys";
 import { DocumentLifecycle } from "./editor/document-lifecycle";
+import { askToRun } from "./editor/run-confirmation";
 import { runQuery } from "./editor/run-query";
 import { RunRegistry } from "./editor/run-registry";
 import { RunService } from "./editor/run-service";
@@ -121,7 +122,15 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   // The log keeps one metadata line per run beside the view: the only run history a window reload leaves.
   const presenter = fanOut(results, new LogResultsPresenter(log));
-  const service = new RunService({ client, runs, presenter, opened, window: vscode.window, newQueryId: randomUUID });
+  const service = new RunService({
+    client,
+    runs,
+    presenter,
+    opened,
+    window: vscode.window,
+    newQueryId: randomUUID,
+    confirm: (ask, token) => askToRun(vscode.window, ask, token),
+  });
   const statusBar = new ConnectionStatusBar({ window: vscode.window, bindings, runs, store, icons });
   const lifecycle = new DocumentLifecycle({
     workspace: vscode.workspace,

@@ -11,6 +11,13 @@ import {
 import { runEditorQuery } from "@/lib/api/editor-query";
 import { databaseErrorBody, internalErrorBody, TIMEOUT_SENTENCE } from "@/lib/api/error-body";
 import {
+  CONFIRMATION_FIELD_MESSAGE,
+  CONFIRMATION_REQUIRED_MESSAGE,
+  CONFIRMATION_TYPED_MESSAGE,
+} from "@/lib/api/run-confirmation";
+import { INVALID_RUN_CONFIRMATION_SETTING } from "@/lib/config/run-confirmation";
+import { TYPED_NAME_MISSING_REFUSAL } from "@/lib/editor/statement-analysis";
+import {
   consoleTextByteLimit,
   consoleTextOverLimit,
   NON_SQL_DESTRUCTIVE_VOCABULARY,
@@ -42,6 +49,7 @@ import {
   createHandlers,
   invalidParams,
   nodeMeetsFloor,
+  RUN_CONFIRMATION_USER,
   RUN_ROUTE,
   refusal,
   registerHandlers,
@@ -51,7 +59,13 @@ import {
 } from "../../src/backend/handlers";
 import { ConnectionRegistry } from "../../src/backend/registry";
 import { ENABLED_PROVIDERS } from "../../src/host/channel";
-import { type BackendErrorData, EXIT_NOTIFICATION, METHODS } from "../../src/protocol";
+import {
+  type BackendErrorData,
+  EXIT_NOTIFICATION,
+  METHODS,
+  type QueryPage,
+  type RunTargetResult,
+} from "../../src/protocol";
 import {
   CAPS,
   type FakeProvider,
@@ -158,8 +172,8 @@ describe("the child's refusals", () => {
 describe("initialize", () => {
   it("answers the protocol version, the runtime and the enabled providers", () => {
     const { handlers } = backend();
-    assert.deepEqual(handlers.initialize({ protocolVersion: 1 }), {
-      protocolVersion: 1,
+    assert.deepEqual(handlers.initialize({ protocolVersion: 2 }), {
+      protocolVersion: 2,
       runtime: { node: "24.21.0", electron: "43.7.7", modules: "148", platform: "linux", arch: "x64" },
       enabledProviders: ["postgres", "mssql", "mysql", "mongodb"],
     });
@@ -169,16 +183,16 @@ describe("initialize", () => {
     const versions: NodeJS.ProcessVersions = { ...RUNTIME.versions };
     delete versions.electron;
     const { factory } = fakeFactory(fakeProvider(), { enabledProviderTypes: () => null });
-    const answer = createHandlers(factory, { ...RUNTIME, versions }).initialize({ protocolVersion: 1 });
+    const answer = createHandlers(factory, { ...RUNTIME, versions }).initialize({ protocolVersion: 2 });
     assert.equal(answer.runtime.electron, null);
     assert.equal(answer.enabledProviders, null);
   });
 
   it("refuses another protocol version", () => {
     refusedNow(
-      () => backend().handlers.initialize({ protocolVersion: 2 }),
+      () => backend().handlers.initialize({ protocolVersion: 3 }),
       500,
-      "The LibreDB backend speaks protocol version 1, but the extension sent version 2. Reinstall the LibreDB extension.",
+      "The LibreDB backend speaks protocol version 2, but the extension sent version 3. Reinstall the LibreDB extension.",
       { code: "PROTOCOL_MISMATCH" },
     );
   });
@@ -187,7 +201,7 @@ describe("initialize", () => {
     const { factory } = fakeFactory();
     const handlers = createHandlers(factory, { ...RUNTIME, versions: { ...RUNTIME.versions, node: "22.11.0" } });
     refusedNow(
-      () => handlers.initialize({ protocolVersion: 1 }),
+      () => handlers.initialize({ protocolVersion: 2 }),
       500,
       "The LibreDB backend needs Node 24.0.0 or later and was started on Node 22.11.0.",
       { code: "RUNTIME_UNSUPPORTED" },
@@ -621,6 +635,37 @@ const methodsOf = (provider: FakeProvider) => provider.calls.map(([method]) => m
 /** Lets every promise the run awaits settle, so a provider call the run makes next has been made. */
 const settled = () => new Promise((resolve) => setImmediate(resolve));
 
+/** Clears LIBREDB_RUN_CONFIRMATION before each test of the enclosing describe and puts it back after each. */
+function restoresRunConfirmationMode(): void {
+  const original = process.env.LIBREDB_RUN_CONFIRMATION;
+  beforeEach(() => {
+    delete process.env.LIBREDB_RUN_CONFIRMATION;
+  });
+  afterEach(() => {
+    if (original === undefined) delete process.env.LIBREDB_RUN_CONFIRMATION;
+    else process.env.LIBREDB_RUN_CONFIRMATION = original;
+  });
+}
+
+/** What an offer reads as once `shaped` has checked its token and expiry: the gate asks, nothing typed. */
+const ASKED = {
+  token: "<token>",
+  expiresAt: "<expiry>",
+  unreadable: false,
+  typedConfirmation: null,
+  classificationFailed: false,
+};
+
+/** The target's answer with its offer's token and expiry checked for shape and replaced by `ASKED`'s words. */
+function shaped(answer: RunTargetResult): RunTargetResult {
+  const offer = answer.confirmation;
+  assert.ok(offer !== null, "expected an offer");
+  assert.equal(typeof offer.token, "string");
+  assert.ok(offer.token.length > 0);
+  assert.equal(new Date(offer.expiresAt).toISOString(), offer.expiresAt);
+  return { ...answer, confirmation: { ...offer, token: ASKED.token, expiresAt: ASKED.expiresAt } };
+}
+
 describe("query/run", () => {
   it("answers the query route's body for the same provider outputs (criterion 5)", async () => {
     const { handlers } = await openedOn();
@@ -812,6 +857,221 @@ describe("query/run", () => {
   });
 });
 
+describe("the confirmation gate on query/run (FND-5 6e)", () => {
+  restoresRunConfirmationMode();
+  const WRITE = "DELETE FROM t";
+  const write = { ...RUN, statement: WRITE };
+
+  /** The token query/target mints for `statement` on `connectionId`, read off its offer. */
+  async function tokenFor(
+    handlers: BackendHandlers,
+    statement: string,
+    connectionId = "c1",
+    catalog?: string,
+  ): Promise<string> {
+    const answer = await handlers.runTarget({
+      connectionId,
+      text: statement,
+      selection: { start: 0, end: 0 },
+      cursor: 0,
+      ...(catalog !== undefined && { catalog }),
+    });
+    assert.ok(answer.confirmation !== null, "expected an offer");
+    return answer.confirmation.token;
+  }
+
+  /** Whether the provider was asked to run anything. */
+  const ran = (provider: FakeProvider) => methodsOf(provider).includes("query");
+
+  /** The 428's data: its code and its offer. */
+  async function asked(call: Promise<unknown>, message = CONFIRMATION_REQUIRED_MESSAGE) {
+    let data: BackendErrorData | undefined;
+    await assert.rejects(call, (error) => {
+      assert.ok(error instanceof ResponseError);
+      assert.equal(error.code, 428);
+      assert.equal(error.message, message);
+      data = error.data as BackendErrorData;
+      return true;
+    });
+    assert.ok(data !== undefined);
+    assert.equal(data.code, "CONFIRMATION_REQUIRED");
+    assert.ok(data.confirmation !== undefined);
+    assert.equal(typeof data.confirmation.token, "string");
+    return data.confirmation;
+  }
+
+  const invalid = (call: Promise<unknown>, reason: string) =>
+    refused(call, 400, reason, { code: "CONFIRMATION_INVALID" });
+
+  it("answers a write sent with ask 428 with a token, and asks the provider to run nothing", async () => {
+    const { handlers, provider, calls } = await openedOn();
+    const before = calls.length;
+    const offer = await asked(handlers.runQuery({ ...write, confirmation: "ask" }, idle));
+    assert.deepEqual({ ...offer, token: "<token>", expiresAt: "<expiry>" }, ASKED);
+    assert.equal(calls.length, before, "no provider is built for a request the gate answers");
+    assert.deepEqual(provider.calls, []);
+  });
+
+  it("runs a write sent with no field in advisory, marked unconfirmed with one warning, and asks in required", async () => {
+    const { handlers, provider } = await openedOn();
+    const lines: string[] = [];
+    const warn = console.warn;
+    console.warn = (...args: unknown[]) => void lines.push(args.join(" "));
+    let page: QueryPage;
+    try {
+      page = await handlers.runQuery(write, idle);
+    } finally {
+      console.warn = warn;
+    }
+    assert.equal(page.confirmation, "unconfirmed");
+    assert.equal(ran(provider), true);
+    assert.equal(RUN_CONFIRMATION_USER, "vscode-extension");
+    assert.equal(lines.length, 1);
+    assert.match(
+      lines[0],
+      /\{route=vscode\/query\/run, type=postgres, user=vscode-extension\} A statement that needs a confirmation ran without one$/,
+    );
+    assert.equal("confirmation" in (await handlers.runQuery(RUN, idle)), false, "a read is not marked");
+
+    process.env.LIBREDB_RUN_CONFIRMATION = "required";
+    provider.calls.length = 0;
+    await asked(handlers.runQuery(write, idle));
+    assert.equal(ran(provider), false);
+  });
+
+  it("runs a write once with the token query/target minted for it, and refuses the same token again", async () => {
+    const { handlers, provider } = await openedOn();
+    const token = await tokenFor(handlers, WRITE);
+    const page = await handlers.runQuery({ ...write, confirmation: { token } }, idle);
+    assert.equal("confirmation" in page, false);
+    assert.equal(methodsOf(provider).filter((method) => method === "query").length, 1);
+    await invalid(
+      handlers.runQuery({ ...write, confirmation: { token } }, idle),
+      "this confirmation has already been used",
+    );
+    assert.equal(methodsOf(provider).filter((method) => method === "query").length, 1);
+  });
+
+  it("refuses a token another child, another statement, another connection or another catalog was minted for, and a fabricated one", async () => {
+    const { handlers, provider } = await openedOn(
+      fakeProvider({ getCapabilities: () => ({ ...SQL_CAPS, catalogSessions: true }) as ProviderCapabilities }),
+    );
+    await handlers.openConnection({ connection: { ...WIRE, id: "c2", host: "db2.internal" }, posture: POSTURE });
+    provider.calls.length = 0;
+
+    const other = await openedOn();
+    const fromAnotherChild = await tokenFor(other.handlers, WRITE);
+    await invalid(
+      handlers.runQuery({ ...write, confirmation: { token: fromAnotherChild } }, idle),
+      "this confirmation could not be verified",
+    );
+
+    const forAnotherStatement = await tokenFor(handlers, "DELETE FROM u");
+    await invalid(
+      handlers.runQuery({ ...write, confirmation: { token: forAnotherStatement } }, idle),
+      "this confirmation was issued for another statement",
+    );
+
+    const onAnotherConnection = await tokenFor(handlers, WRITE, "c2");
+    await invalid(
+      handlers.runQuery({ ...write, confirmation: { token: onAnotherConnection } }, idle),
+      "this confirmation was issued for another connection",
+    );
+
+    const inAnotherCatalog = await tokenFor(handlers, WRITE, "c1", "sales");
+    await invalid(
+      handlers.runQuery({ ...write, catalog: "billing", confirmation: { token: inAnotherCatalog } }, idle),
+      "this confirmation was issued for another connection",
+    );
+
+    await invalid(
+      handlers.runQuery({ ...write, confirmation: { token: crypto.randomUUID() } }, idle),
+      "this confirmation could not be verified",
+    );
+    assert.equal(ran(provider), false);
+  });
+
+  it("asks for a production connection's name whatever the request sends, and runs only with it", async () => {
+    const name = crypto.randomUUID();
+    const { handlers, provider } = await openedOn(fakeProvider(), { ...WIRE, name, environment: "production" });
+    const typedAsk = { type: "connection-name", expected: name, targets: [] };
+    for (const mode of ["advisory", "required"]) {
+      process.env.LIBREDB_RUN_CONFIRMATION = mode;
+      for (const confirmation of ["ask", undefined]) {
+        // oxlint-disable-next-line no-await-in-loop -- each mode is set in the environment before its run.
+        const offer = await asked(handlers.runQuery({ ...write, confirmation }, idle), CONFIRMATION_TYPED_MESSAGE);
+        assert.deepEqual(offer.typedConfirmation, typedAsk);
+      }
+    }
+    delete process.env.LIBREDB_RUN_CONFIRMATION;
+    const token = await tokenFor(handlers, WRITE);
+    const again = await asked(
+      handlers.runQuery({ ...write, confirmation: { token } }, idle),
+      CONFIRMATION_TYPED_MESSAGE,
+    );
+    assert.notEqual(again.token, token);
+    await invalid(
+      handlers.runQuery({ ...write, confirmation: { token, typed: crypto.randomUUID() } }, idle),
+      "the typed confirmation does not match what this statement asks to be typed",
+    );
+    assert.equal(ran(provider), false);
+    // The first token was spent by neither refusal.
+    await handlers.runQuery({ ...write, confirmation: { token, typed: name } }, idle);
+    assert.equal(methodsOf(provider).filter((method) => method === "query").length, 1);
+    await handlers.runQuery({ ...RUN, confirmation: "ask" }, idle);
+    assert.equal(methodsOf(provider).filter((method) => method === "query").length, 2);
+  });
+
+  it("classifies a page read like any run", async () => {
+    const { handlers, provider } = await openedOn();
+    await asked(handlers.runQuery({ ...write, offset: 2, confirmation: "ask" }, idle));
+    assert.equal(ran(provider), false);
+  });
+
+  it("refuses a malformed field with the route's sentence and no data, and runs nothing", async () => {
+    const { handlers, provider } = await openedOn();
+    for (const confirmation of [{ token: 1 }, "yes"]) {
+      // oxlint-disable-next-line no-await-in-loop -- each refusal is checked on its own.
+      await refused(handlers.runQuery({ ...RUN, confirmation }, idle), 400, CONFIRMATION_FIELD_MESSAGE);
+    }
+    assert.equal(ran(provider), false);
+  });
+
+  it("refuses an unreadable run confirmation setting by name, and runs nothing", async () => {
+    const { handlers, provider } = await openedOn();
+    process.env.LIBREDB_RUN_CONFIRMATION = "strict";
+    await assert.rejects(
+      handlers.runQuery(RUN, idle),
+      (error) => error instanceof DatabaseConfigError && error.message === INVALID_RUN_CONFIRMATION_SETTING,
+    );
+    assert.equal(ran(provider), false);
+  });
+
+  it("keeps a refusal of the bounds or the text bound whatever confirmation holds", async () => {
+    const { handlers, calls } = backend();
+    await handlers.openConnection({ connection: WIRE, posture: POSTURE });
+    await handlers.openConnection({ connection: { ...WIRE, id: "c2", type: "influxdb" }, posture: POSTURE });
+    const before = calls.length;
+    await refused(
+      handlers.runQuery({ ...write, limit: -1, confirmation: "yes" }, idle),
+      -32602,
+      "options.limit must be a non-negative integer",
+    );
+    const bound = consoleTextByteLimit("influxdb");
+    assert.ok(bound !== undefined);
+    const text = "x".repeat(bound + 1);
+    const sentence = consoleTextOverLimit(text, bound);
+    assert.ok(sentence !== undefined);
+    await refused(
+      handlers.runQuery({ ...RUN, connectionId: "c2", statement: text, confirmation: { token: 1 } }, idle),
+      413,
+      sentence,
+      { code: "TEXT_TOO_LARGE" },
+    );
+    assert.equal(calls.length, before);
+  });
+});
+
 describe("objects/selectStatement", () => {
   const ORDERS = { path: ["public", "orders"], name: "orders", kind: "table" };
   const COLUMNS: ColumnSchema[] = [
@@ -915,6 +1175,7 @@ describe("objects/selectStatement", () => {
 });
 
 describe("query/target", () => {
+  restoresRunConfirmationMode();
   const TEXT = "select 1;\nselect 2;";
   const NONE = { start: 0, end: 0 };
   const target = (handlers: BackendHandlers, text: string, cursor: number, selection: unknown = NONE) =>
@@ -940,8 +1201,8 @@ describe("query/target", () => {
 
   it("answers the cursor's statement, without its terminator, and where it sits", async () => {
     const { handlers } = await on();
-    const first = { statement: "select 1", range: { start: 0, end: 8 }, dangerous: false };
-    const second = { statement: "select 2", range: { start: 10, end: 18 }, dangerous: false };
+    const first = { statement: "select 1", range: { start: 0, end: 8 }, confirmation: null };
+    const second = { statement: "select 2", range: { start: 10, end: 18 }, confirmation: null };
     assert.deepEqual(await target(handlers, TEXT, 3), first);
     // At the end of the first statement, and on the newline after its terminator, the first is the one before.
     assert.deepEqual(await target(handlers, TEXT, 8), first);
@@ -956,51 +1217,118 @@ describe("query/target", () => {
     assert.deepEqual(await target(handlers, TEXT, 0, { start: 10, end: 18 }), {
       statement: "select 2",
       range: { start: 10, end: 18 },
-      dangerous: false,
+      confirmation: null,
     });
     const spaced = "select 1;\n   \nselect 2;";
     assert.deepEqual(await target(handlers, spaced, 3, { start: 10, end: 13 }), {
       statement: "select 1",
       range: { start: 0, end: 8 },
-      dangerous: false,
+      confirmation: null,
     });
   });
 
   it("answers an empty statement with no range for a text that holds no code", async () => {
     const { handlers } = await on();
-    assert.deepEqual(await target(handlers, "-- only a note\n/* and this */", 0), { statement: "", dangerous: false });
-    assert.deepEqual(await target(handlers, "", 0), { statement: "", dangerous: false });
+    assert.deepEqual(await target(handlers, "-- only a note\n/* and this */", 0), {
+      statement: "",
+      confirmation: null,
+    });
+    assert.deepEqual(await target(handlers, "", 0), { statement: "", confirmation: null });
   });
 
   it("answers the whole text with no range in an editor language other than sql, whatever the cursor", async () => {
     const { handlers } = await on({ ...SQL_CAPS, queryLanguage: "json" } as ProviderCapabilities);
     const text = '{ "collection": "orders" }';
-    assert.deepEqual(await target(handlers, text, 0), { statement: text, dangerous: false });
-    assert.deepEqual(await target(handlers, text, 12), { statement: text, dangerous: false });
+    assert.deepEqual(await target(handlers, text, 0), { statement: text, confirmation: null });
+    assert.deepEqual(await target(handlers, text, 12), { statement: text, confirmation: null });
   });
 
-  it("flags a target the web editor would ask about, and only that one", async () => {
+  it("offers a confirmation for a target the gate asks about, and only that one", async () => {
     const { handlers } = await on();
     const text = "select 1;\ndelete from t;";
     assert.deepEqual(await target(handlers, text, 3), {
       statement: "select 1",
       range: { start: 0, end: 8 },
-      dangerous: false,
+      confirmation: null,
     });
-    assert.deepEqual(await target(handlers, text, 12), {
+    assert.deepEqual(shaped(await target(handlers, text, 12)), {
       statement: "delete from t",
       range: { start: 10, end: 23 },
-      dangerous: true,
+      confirmation: ASKED,
     });
   });
 
-  it("flags a selection that holds a write behind a read, which the gate splits as the runner does", async () => {
+  it("offers a confirmation for a selection that holds a write behind a read, which the gate splits as the runner does", async () => {
     const { handlers } = await on();
-    assert.deepEqual(await target(handlers, "select 1; drop table t", 0, { start: 0, end: 22 }), {
+    assert.deepEqual(shaped(await target(handlers, "select 1; drop table t", 0, { start: 0, end: 22 })), {
       statement: "select 1; drop table t",
       range: { start: 0, end: 22 },
-      dangerous: true,
+      confirmation: ASKED,
     });
+  });
+
+  it("offers an unreadable run as unreadable", async () => {
+    const { handlers } = await on();
+    const text = "SELECT E'\\'; DELETE FROM t";
+    const answer = shaped(await target(handlers, text, 0, { start: 0, end: text.length }));
+    assert.deepEqual(answer.confirmation, { ...ASKED, unreadable: true });
+  });
+
+  it("asks for a production connection's name on a write, and nothing on a read", async () => {
+    const name = crypto.randomUUID();
+    const { handlers } = await openedOn(fakeProvider({ getCapabilities: () => SQL_CAPS }), {
+      ...WIRE,
+      name,
+      environment: "production",
+    });
+    assert.deepEqual(shaped(await target(handlers, "DELETE FROM t", 0)).confirmation, {
+      ...ASKED,
+      typedConfirmation: { type: "connection-name", expected: name, targets: [] },
+    });
+    assert.equal((await target(handlers, "SELECT 1", 0)).confirmation, null);
+  });
+
+  it("asks for the row's text on an etcd lease revoke off production", async () => {
+    const lease = "694d77aa9e38260f";
+    const etcd = await openedOn(
+      fakeProvider({ getCapabilities: () => ({ ...SQL_CAPS, queryLanguage: "json" }) as ProviderCapabilities }),
+      { ...WIRE, type: "etcd", environment: "development" },
+    );
+    const revoke = `lease revoke ${lease}`;
+    assert.deepEqual(shaped(await target(etcd.handlers, revoke, 0)).confirmation, {
+      ...ASKED,
+      typedConfirmation: { type: "text", expected: lease },
+    });
+  });
+
+  it("refuses a write on a nameless production connection with the route's sentence and no data", async () => {
+    const { handlers } = await openedOn(fakeProvider({ getCapabilities: () => SQL_CAPS }), {
+      ...WIRE,
+      name: "",
+      environment: "production",
+    });
+    await refused(target(handlers, "DELETE FROM t", 0), 400, TYPED_NAME_MISSING_REFUSAL);
+  });
+
+  it("refuses a catalog that is present and not a non-empty string", async () => {
+    const { handlers } = await on();
+    for (const catalog of ["", 3]) {
+      // oxlint-disable-next-line no-await-in-loop -- each refusal is checked on its own.
+      await refused(
+        handlers.runTarget({ connectionId: "c1", text: TEXT, selection: NONE, cursor: 0, catalog }),
+        -32602,
+        "catalog must be a non-empty string",
+      );
+    }
+  });
+
+  it("refuses an unreadable run confirmation setting by name", async () => {
+    const { handlers } = await on();
+    process.env.LIBREDB_RUN_CONFIRMATION = "strict";
+    await assert.rejects(
+      target(handlers, "select 1", 0),
+      (error) => error instanceof DatabaseConfigError && error.message === INVALID_RUN_CONFIRMATION_SETTING,
+    );
   });
 
   it("reads the target under the connection's type", async () => {
@@ -1009,8 +1337,8 @@ describe("query/target", () => {
     const whole = { start: 0, end: text.length };
     const postgres = await on();
     const mysql = await openedOn(fakeProvider({ getCapabilities: () => SQL_CAPS }), { ...WIRE, type: "mysql" });
-    assert.equal((await target(postgres.handlers, text, 0, whole)).dangerous, true);
-    assert.equal((await target(mysql.handlers, text, 0, whole)).dangerous, false);
+    assert.notEqual((await target(postgres.handlers, text, 0, whole)).confirmation, null);
+    assert.equal((await target(mysql.handlers, text, 0, whole)).confirmation, null);
   });
 
   it("reads an EXPLAIN chain as long as the analyze route's bound without running out of stack", async function () {
@@ -1022,22 +1350,22 @@ describe("query/target", () => {
     const { handlers } = await on();
     const write = `${"EXPLAIN ANALYZE ".repeat(62_500)}DELETE FROM t`;
     const read = `${"EXPLAIN ANALYZE ".repeat(62_500)}SELECT 1`;
-    assert.equal((await target(handlers, write, 0, { start: 0, end: write.length })).dangerous, true);
-    assert.equal((await target(handlers, read, 0, { start: 0, end: read.length })).dangerous, false);
+    assert.notEqual((await target(handlers, write, 0, { start: 0, end: write.length })).confirmation, null);
+    assert.equal((await target(handlers, read, 0, { start: 0, end: read.length })).confirmation, null);
   });
 
-  it("flags a non-SQL target by its engine's own vocabulary", async () => {
+  it("offers a confirmation for a non-SQL target by its engine's own vocabulary", async () => {
     const mongo = await openedOn(
       fakeProvider({ getCapabilities: () => ({ ...SQL_CAPS, queryLanguage: "json" }) as ProviderCapabilities }),
       { ...WIRE, type: "mongodb" },
     );
     const drop = '{ "collection": "orders", "operation": "deleteMany", "filter": {} }';
-    assert.deepEqual(await target(mongo.handlers, drop, 0), { statement: drop, dangerous: true });
+    assert.deepEqual(shaped(await target(mongo.handlers, drop, 0)), { statement: drop, confirmation: ASKED });
     const find = '{ "collection": "orders", "operation": "find" }';
-    assert.deepEqual(await target(mongo.handlers, find, 0), { statement: find, dangerous: false });
+    assert.deepEqual(await target(mongo.handlers, find, 0), { statement: find, confirmation: null });
   });
 
-  it("flags a statement a row's claim would spare when Studio's review record does not list the claim", async () => {
+  it("offers a confirmation for a statement a row's claim would spare when Studio's review record does not list the claim", async () => {
     // A row that decides alone is the gate's whole answer only where the record lists its claim
     // (`CONFIRMATION_CLAIM_REVIEW`); this one is planted under trino, whose text is SQL, so the DROP is read as SQL.
     const table = NON_SQL_DESTRUCTIVE_VOCABULARY as unknown as Record<string, unknown>;
@@ -1046,10 +1374,10 @@ describe("query/target", () => {
     try {
       const trino = await openedOn(fakeProvider({ getCapabilities: () => SQL_CAPS }), { ...WIRE, type: "trino" });
       const drop = "DROP TABLE t";
-      assert.deepEqual(await target(trino.handlers, drop, 0), {
+      assert.deepEqual(shaped(await target(trino.handlers, drop, 0)), {
         statement: drop,
         range: { start: 0, end: drop.length },
-        dangerous: true,
+        confirmation: ASKED,
       });
     } finally {
       delete table.trino;
@@ -1059,7 +1387,7 @@ describe("query/target", () => {
   it("reads a listed exempt form as exempt", async () => {
     const snowflake = await openedOn(fakeProvider({ getCapabilities: () => SQL_CAPS }), { ...WIRE, type: "snowflake" });
     const session = "ALTER SESSION SET QUERY_TAG = 'x'";
-    assert.equal((await target(snowflake.handlers, session, 0)).dangerous, false);
+    assert.equal((await target(snowflake.handlers, session, 0)).confirmation, null);
   });
 
   it("answers runTarget's RangeError as InvalidParams with its sentence", async () => {
@@ -1472,7 +1800,7 @@ describe("registerHandlers", () => {
   /** served, after an initialize the child answered. */
   async function initialized(over: Partial<BackendHandlers> = {}, made = fakeFactory()) {
     const session = served(over, made);
-    await session.host.sendRequest(METHODS.initialize, { protocolVersion: 1 });
+    await session.host.sendRequest(METHODS.initialize, { protocolVersion: 2 });
     return session;
   }
 
@@ -1495,9 +1823,9 @@ describe("registerHandlers", () => {
       code: -32002,
       message: "The LibreDB backend has not been initialized.",
     });
-    assert.equal((await answeredError(host, METHODS.initialize, { protocolVersion: 2 })).code, 500);
+    assert.equal((await answeredError(host, METHODS.initialize, { protocolVersion: 3 })).code, 500);
     assert.equal((await answeredError(host, METHODS.closeConnection, { connectionId: "c1" })).code, -32002);
-    await host.sendRequest(METHODS.initialize, { protocolVersion: 1 });
+    await host.sendRequest(METHODS.initialize, { protocolVersion: 2 });
     assert.equal(await host.sendRequest(METHODS.closeConnection, { connectionId: "c1" }), null);
   });
 
@@ -1506,7 +1834,7 @@ describe("registerHandlers", () => {
     const notInitialized = { code: -32002, message: "The LibreDB backend has not been initialized." };
     assert.deepEqual(await answeredError(host, METHODS.listEngines, {}), notInitialized);
     assert.deepEqual(await answeredError(host, METHODS.parsePastedConnection, { text: "hello" }), notInitialized);
-    await host.sendRequest(METHODS.initialize, { protocolVersion: 1 });
+    await host.sendRequest(METHODS.initialize, { protocolVersion: 2 });
     assert.deepEqual(
       await host.sendRequest(METHODS.listEngines, {}),
       engineCatalog(["postgres", "mssql", "mysql", "mongodb"]),
@@ -1658,7 +1986,7 @@ describe("registerHandlers", () => {
       data: { code: "SHUTTING_DOWN" },
     };
     assert.deepEqual(await answeredError(host, METHODS.runQuery, RUN), shuttingDown);
-    assert.deepEqual(await answeredError(host, METHODS.initialize, { protocolVersion: 1 }), shuttingDown);
+    assert.deepEqual(await answeredError(host, METHODS.initialize, { protocolVersion: 2 }), shuttingDown);
     assert.deepEqual(await answeredError(host, METHODS.listEngines, {}), shuttingDown);
     assert.deepEqual(await answeredError(host, METHODS.parsePastedConnection, { text: "hello" }), shuttingDown);
   });

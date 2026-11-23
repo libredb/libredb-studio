@@ -347,7 +347,7 @@ describe("activate's editors", () => {
 });
 
 const INITIALIZED: InitializeResult = {
-  protocolVersion: 1,
+  protocolVersion: 2,
   runtime: { node: "24.21.0", electron: "43.7.7", modules: "148", platform: "linux", arch: "x64" },
   enabledProviders: ["postgres", "mssql", "mysql", "mongodb"],
 };
@@ -372,7 +372,7 @@ function serveBackend(): RunQueryParams[] {
   const child = createMessageConnection(new StreamMessageReader(up), new StreamMessageWriter(down));
   const runs: RunQueryParams[] = [];
   child.onRequest(METHODS.openConnection, () => ({ description: ZERO_LEVELS }));
-  child.onRequest(METHODS.runTarget, (params: RunTargetParams) => ({ statement: params.text, dangerous: false }));
+  child.onRequest(METHODS.runTarget, (params: RunTargetParams) => ({ statement: params.text, confirmation: null }));
   child.onRequest(METHODS.runQuery, (params: RunQueryParams) => {
     runs.push(params);
     return PAGE;

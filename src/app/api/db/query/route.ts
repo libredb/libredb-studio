@@ -20,6 +20,7 @@ import type { ExplainFormat, QueryPrepareOptions } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { admitQueryExecution } from "@/lib/query-events/admission";
 import { gateRun } from "@/lib/api/run-confirmation";
+import { runConfirmationIssuerForSession } from "@/lib/api/run-confirmation-token";
 import { queryEventStart } from "@/lib/query-events/build";
 import {
   queryEventRequest,
@@ -236,7 +237,7 @@ export async function POST(req: NextRequest) {
     // provider, so a request it answers opens nothing, runs nothing and records no query event.
     const gate = await gateRun({
       route: "query",
-      session: guard.session,
+      issuer: runConfirmationIssuerForSession(guard.session),
       connection,
       catalog: requestCatalog(body),
       sql,

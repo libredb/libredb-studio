@@ -17,7 +17,8 @@ import { ProfileConnectionSource } from "../../src/host/connections/connection-s
 import { ConnectionStore } from "../../src/host/connections/connection-store";
 import type { ProfileEntry } from "../../src/host/connections/profile";
 import { BindingStore } from "../../src/host/editor/bindings";
-import { RUN_ANYWAY, runQuery } from "../../src/host/editor/run-query";
+import { askToRun, RUN_ANYWAY } from "../../src/host/editor/run-confirmation";
+import { runQuery } from "../../src/host/editor/run-query";
 import { RunRegistry } from "../../src/host/editor/run-registry";
 import { RunService } from "../../src/host/editor/run-service";
 import { OpenConnections } from "../../src/host/open-connections";
@@ -218,6 +219,7 @@ describe("the Results view against PostgreSQL, SQL Server, MySQL and MongoDB", (
       presenter,
       opened,
       window,
+      confirm: (ask, token) => askToRun(window, ask, token),
       newQueryId: () => {
         minted += 1;
         return randomUUID();
@@ -417,6 +419,7 @@ describe("the Results view against PostgreSQL, SQL Server, MySQL and MongoDB", (
       assert.equal(read.offset, 2);
       assert.equal(read.limit, 2);
       assert.equal(read.statement, fixture.selectFour);
+      assert.equal(read.confirmation, "ask", "a page read asks the gate");
       assert.notEqual(read.queryId, runQueryId);
       assert.deepEqual(
         more.map((message) => message.type),
@@ -549,11 +552,14 @@ describe("the Results view against PostgreSQL, SQL Server, MySQL and MongoDB", (
       } finally {
         answerMessages(() => undefined);
       }
-      // The real child's verdict reaches the host here: the gate flags the UPDATE and Run asks before sending it.
+      // The real child's verdict reaches the host here: the gate asks about the UPDATE and Run asks before sending it.
       assert.deepEqual(
         shownMessages.slice(shown).map(({ level, options, items }) => ({ level, options, items })),
         [{ level: "warning", options: { modal: true, detail: statement }, items: [RUN_ANYWAY] }],
       );
+      // The run carried the token the child's query/target minted for the UPDATE.
+      const carried = host.sent.at(-1)?.confirmation;
+      assert.ok(typeof carried === "object" && typeof carried.token === "string");
       const { page } = succeeded(messages);
       assert.equal(page.rowCount, 3);
       assert.deepEqual(page.rows, []);

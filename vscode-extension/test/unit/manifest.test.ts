@@ -5,6 +5,7 @@ import { CONNECTION_FORM, CONNECTION_PICKER_ORDER } from "@/lib/db/connection-fo
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { ICON_OUTPUT } from "../../scripts/marketplace-icon.mjs";
 import { ENABLED_PROVIDERS, HELD_BACK } from "../../src/host/channel";
+import { ENVIRONMENTS } from "../../src/host/connections/profile";
 import { CONNECTIONS_VIEW, RESULTS_CONTAINER, RESULTS_VIEW, VIEW_CONTAINER } from "../../src/host/names";
 import { FLOOR_NODE, STABLE_RUNTIME } from "../vscode-floor";
 
@@ -37,6 +38,7 @@ const CONNECTIONS_SCHEMA = {
       authSource: { type: "string" },
       ssl: { type: "object", required: ["mode"], properties: { mode: { type: "string" } } },
       createdAt: { type: "string" },
+      environment: { type: "string", enum: ["production", "staging", "development", "local", "other"] },
       secretFields: { type: "array", uniqueItems: true, items: { type: "string" } },
     },
   },
@@ -194,6 +196,11 @@ describe("the manifest", () => {
     });
     assert.equal("ignoreSync" in manifest.contributes.configuration.properties["libredb.connections"], false);
     assert.equal("restrictedConfigurations" in manifest.capabilities.untrustedWorkspaces, false);
+  });
+
+  it("declares the environments the profile accepts", () => {
+    const declared = manifest.contributes.configuration.properties["libredb.connections"].items.properties.environment;
+    assert.deepEqual(declared.enum, ENVIRONMENTS);
   });
 
   it("declares libredb.query.rowLimit from 1 to 10000, application-scoped, defaulting to DEFAULT_QUERY_LIMIT", () => {

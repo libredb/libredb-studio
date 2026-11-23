@@ -21,7 +21,8 @@ import { ConnectionStore } from "../../src/host/connections/connection-store";
 import type { ProfileEntry } from "../../src/host/connections/profile";
 import { BindingStore } from "../../src/host/editor/bindings";
 import { cancelQuery, type EditorCommandDeps, newQuery, selectRows } from "../../src/host/editor/commands";
-import { NOTHING_TO_RUN, RUN_ANYWAY, runQuery } from "../../src/host/editor/run-query";
+import { askToRun, RUN_ANYWAY } from "../../src/host/editor/run-confirmation";
+import { NOTHING_TO_RUN, runQuery } from "../../src/host/editor/run-query";
 import { RunRegistry } from "../../src/host/editor/run-registry";
 import { RunService } from "../../src/host/editor/run-service";
 import { OpenConnections } from "../../src/host/open-connections";
@@ -601,6 +602,7 @@ describe("the Connections tree against PostgreSQL, SQL Server, MySQL and MongoDB
         presenter,
         opened,
         window,
+        confirm: (ask, token) => askToRun(window, ask, token),
         newQueryId: () => {
           minted += 1;
           return randomUUID();

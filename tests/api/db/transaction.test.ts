@@ -28,7 +28,11 @@ import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operation
 import type { BeginTransactionOptions, BeginTransactionResult } from "@/lib/db/types";
 import type { QueryEventInput } from "@/lib/query-events/types";
 import { CONFIRMATION_FIELD_MESSAGE } from "@/lib/api/run-confirmation";
-import { forgetUsedRunConfirmations, mintRunConfirmation } from "@/lib/api/run-confirmation-token";
+import {
+  forgetUsedRunConfirmations,
+  mintRunConfirmation,
+  runConfirmationIssuerForSession,
+} from "@/lib/api/run-confirmation-token";
 
 // ─── Create mock provider with transaction methods ──────────────────────────
 const baseMockProvider = createMockProvider();
@@ -2181,7 +2185,7 @@ describe("POST /api/db/transaction: the server's confirmation of a run", () => {
 
     test("a token minted on this route is refused on POST /api/db/query's route name, and the reverse here", async () => {
       const issued = await mintRunConfirmation({
-        session,
+        issuer: runConfirmationIssuerForSession(session),
         connection: validConnection as never,
         catalog: undefined,
         route: "query",

@@ -40,7 +40,11 @@ import {
   CONFIRMATION_REQUIRED_MESSAGE,
   CONFIRMATION_TYPED_MESSAGE,
 } from "@/lib/api/run-confirmation";
-import { forgetUsedRunConfirmations, mintRunConfirmation } from "@/lib/api/run-confirmation-token";
+import {
+  forgetUsedRunConfirmations,
+  mintRunConfirmation,
+  runConfirmationIssuerForSession,
+} from "@/lib/api/run-confirmation-token";
 import { INVALID_RUN_CONFIRMATION_SETTING } from "@/lib/config/run-confirmation";
 
 // ─── Mock provider ──────────────────────────────────────────────────────────
@@ -2613,7 +2617,7 @@ describe("POST /api/db/query: the server's confirmation of a run", () => {
 
     test("a token issued on another route is refused", async () => {
       const issued = await mintRunConfirmation({
-        session,
+        issuer: runConfirmationIssuerForSession(session),
         connection: validConnection as DatabaseConnection,
         catalog: undefined,
         route: "transaction",

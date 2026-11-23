@@ -1953,9 +1953,9 @@ describe("POST /api/db/multi-query: the server's confirmation of a run", () => {
 
     test("a token issued for the single-statement route is refused here", async () => {
       // The same statement, asked on POST /api/db/query's route name, through the token module itself.
-      const { mintRunConfirmation } = await import("@/lib/api/run-confirmation-token");
+      const { mintRunConfirmation, runConfirmationIssuerForSession } = await import("@/lib/api/run-confirmation-token");
       const issued = await mintRunConfirmation({
-        session,
+        issuer: runConfirmationIssuerForSession(session),
         connection: validConnection as never,
         catalog: undefined,
         route: "query",
