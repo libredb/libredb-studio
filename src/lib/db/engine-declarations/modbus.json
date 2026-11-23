@@ -29,6 +29,7 @@
       "seedCheck": null
     },
     "tls": "offered",
+    "readsTrustMaterial": false,
     "sshTunnel": {
       "offered": true
     },
@@ -301,5 +302,18 @@
       "A Modbus register has no column definition anywhere: the device holds 16-bit words and single bits with no name, no type and no unit, and what gives them meaning is the register map the user wrote, so there is nothing a client could change here."
     ]
   },
-  "sqlGenerators": null
+  "sqlGenerators": null,
+  "policy": {
+    "writeReach": "none",
+    "readsFileAccessPosture": false,
+    "deniedFileAccessRefusal": null,
+    "singleWriterFile": false,
+    "readRootsRequired": false
+  },
+  "mcp": {
+    "exposable": false,
+    "statementRead": false,
+    "metadataReadChangesState": false,
+    "agentCredentialRequired": false
+  }
 }

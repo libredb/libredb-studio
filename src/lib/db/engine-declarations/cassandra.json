@@ -25,6 +25,7 @@
       "seedCheck": null
     },
     "tls": "offered",
+    "readsTrustMaterial": false,
     "sshTunnel": {
       "offered": false,
       "refusal": "Apache Cassandra does not run through an SSH tunnel: the tunnel forwards one address, and the driver reaches every other node of the ring at the address that node advertises. Connect to the cluster directly, or turn the tunnel off."
@@ -336,5 +337,18 @@
       "CQL never declared one."
     ]
   },
-  "sqlGenerators": null
+  "sqlGenerators": null,
+  "policy": {
+    "writeReach": "open",
+    "readsFileAccessPosture": false,
+    "deniedFileAccessRefusal": null,
+    "singleWriterFile": false,
+    "readRootsRequired": false
+  },
+  "mcp": {
+    "exposable": true,
+    "statementRead": true,
+    "metadataReadChangesState": false,
+    "agentCredentialRequired": false
+  }
 }

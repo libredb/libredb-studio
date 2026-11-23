@@ -23,6 +23,7 @@
       "seedCheck": null
     },
     "tls": "offered",
+    "readsTrustMaterial": false,
     "sshTunnel": {
       "offered": true
     },
@@ -288,5 +289,18 @@
       "A metric is written by scrapes and recording rules, not declared with columns, so there is no column definition to change."
     ]
   },
-  "sqlGenerators": null
+  "sqlGenerators": null,
+  "policy": {
+    "writeReach": "none",
+    "readsFileAccessPosture": false,
+    "deniedFileAccessRefusal": null,
+    "singleWriterFile": false,
+    "readRootsRequired": false
+  },
+  "mcp": {
+    "exposable": true,
+    "statementRead": false,
+    "metadataReadChangesState": false,
+    "agentCredentialRequired": false
+  }
 }

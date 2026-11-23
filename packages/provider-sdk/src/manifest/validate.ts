@@ -68,6 +68,10 @@ export const SCHEMA_REFUSAL_RULES = Object.freeze([
   "fence-alias-generic",
   "wrapper-group-count",
   "type-name-duplicate",
+  "statement-read-unexposed",
+  "agent-credential-form-missing",
+  "read-roots-field-undeclared",
+  "denied-file-access-unread",
 ] as const);
 
 export type SchemaRefusalRule = (typeof SCHEMA_REFUSAL_RULES)[number];
@@ -465,8 +469,32 @@ function editorRuleRefusals(engine: EngineDeclaration, at: string, vocabularies:
 }
 
 /**
- * The rules of one engine's connection, editor, SQL text and SQL writing facts the schema cannot state, at pointers
- * under `at`.
+ * The rules of one engine's policy and MCP claims the schema cannot state, at pointers under `at`. Each checks a
+ * request, never the value Studio grants it: a statement read only on an engine exposed to MCP, an agent credential
+ * required only of an engine whose seeds take one, read roots required only of an engine whose seeds can declare them,
+ * and a denied file access refusal only on an engine that reads the file-access posture.
+ */
+function claimRuleRefusals(engine: EngineDeclaration, at: string): SchemaRefusal[] {
+  const refusals: SchemaRefusal[] = [];
+  const { connection, mcp, policy } = engine;
+  if (mcp.statementRead && !mcp.exposable) {
+    refusals.push(schemaRefusal("statement-read-unexposed", `${at}/mcp/statementRead`));
+  }
+  if (mcp.agentCredentialRequired && connection.agentCredential === null) {
+    refusals.push(schemaRefusal("agent-credential-form-missing", `${at}/mcp/agentCredentialRequired`));
+  }
+  if (policy.readRootsRequired && !(connection.seedOnly?.fields ?? []).includes("agentReadRoots")) {
+    refusals.push(schemaRefusal("read-roots-field-undeclared", `${at}/policy/readRootsRequired`));
+  }
+  if (policy.deniedFileAccessRefusal !== null && !policy.readsFileAccessPosture) {
+    refusals.push(schemaRefusal("denied-file-access-unread", `${at}/policy/deniedFileAccessRefusal`));
+  }
+  return refusals;
+}
+
+/**
+ * The rules of one engine's connection, editor, SQL text, SQL writing facts and claims the schema cannot state, at
+ * pointers under `at`.
  */
 function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies: FieldVocabularies): SchemaRefusal[] {
   const seedOnlyNames = vocabularies.seedOnly;
@@ -498,6 +526,7 @@ function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies:
   refusals.push(...editorRuleRefusals(engine, at, vocabularies));
   refusals.push(...clausePatternRefusals(engine, at));
   refusals.push(...sqlWritingRuleRefusals(engine, at, vocabularies));
+  refusals.push(...claimRuleRefusals(engine, at));
   return refusals;
 }
 
@@ -726,5 +755,13 @@ export function refusalSentence(refusal: ManifestRefusal): string {
       return `The wrapper pattern at ${at} does not capture exactly one group, the wrapped type.`;
     case "type-name-duplicate":
       return `The type name at ${at} is already named earlier in the same table.`;
+    case "statement-read-unexposed":
+      return `The statement read claim at ${at} is made for an engine whose MCP claims do not expose it.`;
+    case "agent-credential-form-missing":
+      return `The agent credential claim at ${at} is made for an engine whose seeds take no agent credential.`;
+    case "read-roots-field-undeclared":
+      return `The read roots claim at ${at} is made for an engine whose seed-only fields do not name agentReadRoots.`;
+    case "denied-file-access-unread":
+      return `The denied file access refusal at ${at} is stated for an engine that reads no file-access posture.`;
   }
 }

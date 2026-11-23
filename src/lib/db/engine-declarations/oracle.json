@@ -31,6 +31,7 @@
       "seedCheck": null
     },
     "tls": "offered",
+    "readsTrustMaterial": false,
     "sshTunnel": {
       "offered": true
     },
@@ -328,5 +329,18 @@
     "select": null,
     "selectList": "generatorSelectList",
     "countExpression": "COUNT(*)"
+  },
+  "policy": {
+    "writeReach": "open",
+    "readsFileAccessPosture": false,
+    "deniedFileAccessRefusal": null,
+    "singleWriterFile": false,
+    "readRootsRequired": false
+  },
+  "mcp": {
+    "exposable": true,
+    "statementRead": true,
+    "metadataReadChangesState": false,
+    "agentCredentialRequired": false
   }
 }

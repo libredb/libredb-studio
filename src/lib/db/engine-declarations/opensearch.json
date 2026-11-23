@@ -32,6 +32,7 @@
       "seedCheck": null
     },
     "tls": "offered",
+    "readsTrustMaterial": false,
     "sshTunnel": {
       "offered": true
     },
@@ -282,5 +283,18 @@
       "OpenSearch SQL reads only; change a field by reindexing into an index whose mapping declares it."
     ]
   },
-  "sqlGenerators": null
+  "sqlGenerators": null,
+  "policy": {
+    "writeReach": "open",
+    "readsFileAccessPosture": false,
+    "deniedFileAccessRefusal": null,
+    "singleWriterFile": false,
+    "readRootsRequired": false
+  },
+  "mcp": {
+    "exposable": true,
+    "statementRead": true,
+    "metadataReadChangesState": false,
+    "agentCredentialRequired": false
+  }
 }

@@ -32,10 +32,12 @@ import {
   type InsertForm,
   type JwtAccessClaim,
   type MaintenanceOperation as ManifestMaintenanceOperation,
+  type McpClaims,
   type MigrationDdl,
   type MonacoLanguageId,
   type NonFiniteLiterals,
   type PlaceableFieldName,
+  type PolicyClaims,
   type ProcedureBodies,
   type QueryDialect as ManifestQueryDialect,
   type QueryLanguage,
@@ -45,6 +47,7 @@ import {
   type StatementLanguage,
   type StatementRedaction,
   type TypeFamilies,
+  type WriteReachClaim,
 } from "@libredb/provider-sdk/manifest";
 import type {
   BlockCommentGrammar,
@@ -77,14 +80,26 @@ import type { HostUriScheme } from "@/lib/connection-host-uri";
 import { PASTE_FORMATS_TEXT } from "@/lib/connection-paste-formats";
 import { detectConnectionStringType, parseConnectionString, pasteText } from "@/lib/connection-string-parser";
 import {
+  AGENT_EXECUTION_ENGINES,
   CONNECTION_FORM_URI_MODE,
   CONNECTION_STRING_ACCEPTED,
   EXTERNAL_DATABASE_TYPES,
   HOST_PATH_FIELDS,
+  MCP_AGENT_CREDENTIAL_REQUIRED,
+  MCP_EXPOSABLE,
+  MCP_METADATA_READ_CHANGES_STATE,
+  MCP_STATEMENT_READ,
   OPENS_LOCAL_FILE,
   OPENS_SERVER_LEVEL_WITHOUT_DATABASE,
+  READ_ONLY_ENFORCED,
+  READ_ROOTS_REQUIRED,
+  READS_FILE_ACCESS_POSTURE,
+  READS_TRUST_MATERIAL,
+  REFUSES_DENIED_FILE_ACCESS,
   SHIPPED_DATABASE_TYPES,
+  SINGLE_WRITER_FILE,
   SSH_TUNNEL_REFUSAL,
+  WRITE_REACH,
 } from "@/lib/db/compatibility";
 import {
   CONNECTION_FIELD_DESCRIPTORS,
@@ -134,6 +149,7 @@ import type { EditorLanguageContribution } from "@/lib/db/editor-language/types"
 import { SQL_ENGINE_GENERATORS } from "@/lib/db/query-generators";
 import type { SqlEngineGenerators } from "@/lib/db/query-generators/types";
 import { SQL_WRITING } from "@/lib/db/sql-writing";
+import type { WriteReach } from "@/lib/db/write-reach";
 import type {
   ExportSpec,
   ExportTypeVocabulary,
@@ -170,6 +186,7 @@ import { getExplainStrategy } from "@/lib/explain";
 import { DIALECT_EDITORS, type DialectEditor } from "@/lib/editor/dialect-editors";
 import { editorLanguageOf, resolveTabType } from "@/lib/editor/tab-language";
 import { historyMaskOf } from "@/lib/history-mask";
+import { type McpExposure, mcpStatementEngines } from "@/lib/mcp/tools/served-engines";
 import type { NonFiniteWord } from "@/lib/non-finite";
 import { importKubeconfig } from "@/lib/kubernetes/kubeconfig-import";
 import { writesUnderGrammar } from "@/lib/sql/dangerous-query";
@@ -1190,6 +1207,36 @@ describe("the committed declarations", () => {
     }
   });
 });
+
+/**
+ * Studio's review record of each policy claim, by the member that requests it: the table of `src/lib/db/compatibility.ts`
+ * every gate reads and each declaration's request is generated from (docs/providers/CONTRACT.md, clause M-52). Written
+ * here apart from the generator, and typed by the schema's members, so a member the schema gains fails the typecheck
+ * here until its record is named.
+ */
+const POLICY_CLAIM_RECORDS: { readonly [K in keyof PolicyClaims]: Readonly<Record<DatabaseType, PolicyClaims[K]>> } = {
+  writeReach: WRITE_REACH,
+  readsFileAccessPosture: READS_FILE_ACCESS_POSTURE,
+  deniedFileAccessRefusal: REFUSES_DENIED_FILE_ACCESS,
+  singleWriterFile: SINGLE_WRITER_FILE,
+  readRootsRequired: READ_ROOTS_REQUIRED,
+};
+
+/** Studio's review record of each MCP claim, by the member that requests it, written as `POLICY_CLAIM_RECORDS` is. */
+const MCP_CLAIM_RECORDS: { readonly [K in keyof McpClaims]: Readonly<Record<DatabaseType, McpClaims[K]>> } = {
+  exposable: MCP_EXPOSABLE,
+  statementRead: MCP_STATEMENT_READ,
+  metadataReadChangesState: MCP_METADATA_READ_CHANGES_STATE,
+  agentCredentialRequired: MCP_AGENT_CREDENTIAL_REQUIRED,
+};
+
+/** A record over the shipped ids, each id's value read from its committed declaration by `read`. */
+function declaredRecord<Value>(read: (declaration: EngineDeclaration) => Value): Readonly<Record<DatabaseType, Value>> {
+  return Object.fromEntries(SHIPPED_DATABASE_TYPES.map((type) => [type, read(declared(type))])) as Record<
+    DatabaseType,
+    Value
+  >;
+}
 
 describe("the census", () => {
   test("displayName is the connection form's label", () => {
@@ -2960,6 +3007,77 @@ describe("the census", () => {
     expect(differing((_type, d) => stated.every((member) => Object.hasOwn(d.editor.language, member)))).toEqual([]);
   });
 
+  test("every claim of the policy and MCP segments is the row of Studio's review record of it", () => {
+    const policyMembers = Object.keys(POLICY_CLAIM_RECORDS) as (keyof PolicyClaims)[];
+    const mcpMembers = Object.keys(MCP_CLAIM_RECORDS) as (keyof McpClaims)[];
+    const readBack = [
+      ...policyMembers.map(
+        (member) =>
+          [
+            `policy.${member}`,
+            differing((type, d) => d.policy[member] === POLICY_CLAIM_RECORDS[member][type]),
+          ] as const,
+      ),
+      ...mcpMembers.map(
+        (member) =>
+          [`mcp.${member}`, differing((type, d) => d.mcp[member] === MCP_CLAIM_RECORDS[member][type])] as const,
+      ),
+    ];
+
+    expect(readBack.filter(([, ids]) => ids.length > 0).map(([claim, ids]) => `${claim}: ${ids.join(", ")}`)).toEqual(
+      [],
+    );
+    expect(readBack.length).toBe(9);
+  });
+
+  test("READ_ONLY_ENFORCED is true exactly where the declaration's write reach is not open", () => {
+    expect(differing((type, d) => READ_ONLY_ENFORCED[type] === (d.policy.writeReach !== "open"))).toEqual([]);
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => READ_ONLY_ENFORCED[type]).length).toBeGreaterThan(0);
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => !READ_ONLY_ENFORCED[type]).length).toBeGreaterThan(0);
+  });
+
+  test("each declaration's policy and MCP segments hold exactly the claims Studio keeps a review record of", () => {
+    const policyMembers = sorted(Object.keys(POLICY_CLAIM_RECORDS));
+    const mcpMembers = sorted(Object.keys(MCP_CLAIM_RECORDS));
+
+    expect(sorted(Object.keys(SCHEMA.$defs.policyClaims?.properties ?? {}))).toEqual(policyMembers);
+    expect(sorted(SCHEMA.$defs.policyClaims?.required ?? [])).toEqual(policyMembers);
+    expect(sorted(Object.keys(SCHEMA.$defs.mcpClaims?.properties ?? {}))).toEqual(mcpMembers);
+    expect(sorted(SCHEMA.$defs.mcpClaims?.required ?? [])).toEqual(mcpMembers);
+    expect(
+      differing(
+        (_type, d) =>
+          sameList(sorted(Object.keys(d.policy)), policyMembers) && sameList(sorted(Object.keys(d.mcp)), mcpMembers),
+      ),
+    ).toEqual([]);
+  });
+
+  test("MCP serves statements on exactly the engines the declarations' claims and Studio's agent execution record give it", () => {
+    const exposure: McpExposure = {
+      executes: AGENT_EXECUTION_ENGINES,
+      exposable: declaredRecord((d) => d.mcp.exposable),
+      statementRead: declaredRecord((d) => d.mcp.statementRead),
+      language: declaredRecord((d) => d.agent.statementLanguage) as unknown as McpExposure["language"],
+    };
+    const languages = (SCHEMA.$defs.statementLanguage?.enum ?? []).filter(
+      (language): language is AgentStatementLanguageId => language !== null,
+    );
+    const served = languages.map((language) => [language, mcpStatementEngines(language, exposure)] as const);
+
+    expect(
+      served.filter(([language, engines]) => !sameList(engines, mcpStatementEngines(language))).map(([l]) => l),
+    ).toEqual([]);
+    expect(languages.length).toBeGreaterThan(0);
+    expect(served.some(([, engines]) => engines.length > 0)).toBe(true);
+  });
+
+  test("connection.readsTrustMaterial is the engine's READS_TRUST_MATERIAL row", () => {
+    expect(differing((type, d) => d.connection.readsTrustMaterial === READS_TRUST_MATERIAL[type])).toEqual([]);
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => declared(type).connection.readsTrustMaterial)).toEqual(
+      SHIPPED_DATABASE_TYPES.filter((type) => READS_TRUST_MATERIAL[type]),
+    );
+  });
+
   test("id is the file's type-id", () => {
     expect(differing((type, d) => d.id === type)).toEqual([]);
   });
@@ -3036,7 +3154,9 @@ describe("the vocabularies", () => {
       Equal<CreateTable["kind"], CreateTableDdl["kind"]>,
       Equal<QueryLanguage, ProviderCapabilities["queryLanguage"]>,
       Equal<MonacoLanguageId, EditorLanguage>,
+      Equal<WriteReachClaim, WriteReach>,
     ] = [
+      true,
       true,
       true,
       true,
@@ -3068,7 +3188,7 @@ describe("the vocabularies", () => {
       true,
     ];
 
-    expect<readonly boolean[]>(parity).toEqual(Array.from({ length: 29 }, () => true));
+    expect<readonly boolean[]>(parity).toEqual(Array.from({ length: 30 }, () => true));
   });
 
   test("the explain formats, the query dialects and the generic fence tags are Studio's", () => {

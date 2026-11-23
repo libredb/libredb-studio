@@ -20,6 +20,7 @@
       "seedCheck": null
     },
     "tls": "not-offered",
+    "readsTrustMaterial": false,
     "sshTunnel": {
       "offered": false,
       "refusal": "Firestore does not run through an SSH tunnel: every request goes over TLS to Google's API hosts, and a tunnel forwards one address of the several the provider reaches. Turn the tunnel off."
@@ -305,5 +306,18 @@
       "A document store keeps no schema, so there is no column definition to change."
     ]
   },
-  "sqlGenerators": null
+  "sqlGenerators": null,
+  "policy": {
+    "writeReach": "none",
+    "readsFileAccessPosture": false,
+    "deniedFileAccessRefusal": null,
+    "singleWriterFile": false,
+    "readRootsRequired": false
+  },
+  "mcp": {
+    "exposable": false,
+    "statementRead": false,
+    "metadataReadChangesState": false,
+    "agentCredentialRequired": false
+  }
 }

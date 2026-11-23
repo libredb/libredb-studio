@@ -7,7 +7,8 @@
  * Each file is a `#/$defs/engineDeclaration` of the provider manifest schema
  * (packages/provider-sdk/src/manifest/manifest.schema.json): the engine's identity, its connection facts, its facets,
  * the statement language agent mode sends it, its editor facts that are data with the language its tabs are written and
- * rendered in, its SQL text facts, its SQL writing facts, its migration DDL facts and its SQL generator forms. A full
+ * rendered in, its SQL text facts, its SQL writing facts, its migration DDL facts, its SQL generator forms, and its
+ * policy and MCP claims. A full
  * manifest also states the package's runtime and the products it was measured against, facts no provider in
  * `src/lib/db/providers/` has yet, so they are written when a provider moves into a package of its own, from this
  * declaration.
@@ -64,6 +65,15 @@
  * its slot (`generatorQuote`, `generatorTable`, `generatorSelect` and `generatorSelectList`) or null where the row
  * leaves it out, and the count expression as the row's, `COUNT(*)` where the row leaves it out, the reading Generate
  * Count Query gives that absence. The generator refuses by name a member of the row it has no place for.
+ *
+ * The policy and MCP claims come from the claim tables of `src/lib/db/compatibility.ts`, one member each: `policy` from
+ * `WRITE_REACH`, `READS_FILE_ACCESS_POSTURE`, `REFUSES_DENIED_FILE_ACCESS`, `SINGLE_WRITER_FILE` and
+ * `READ_ROOTS_REQUIRED`, and `mcp` from `MCP_EXPOSABLE`, `MCP_STATEMENT_READ`, `MCP_METADATA_READ_CHANGES_STATE` and
+ * `MCP_AGENT_CREDENTIAL_REQUIRED`. Each table is Studio's review record of its claim, which every gate reads, and a
+ * member is a request, never a fact Studio believes as declared (docs/providers/CONTRACT.md, clause M-52), so the
+ * declaration states each shipped engine's request as its record's row. `READ_ONLY_ENFORCED` has no member, since Studio
+ * derives it from the write reach, and `connection.readsTrustMaterial`, which is no claim, is `READS_TRUST_MATERIAL`'s
+ * row.
  *
  * The editor facts come from `EXECUTION_UI`, the fence tag tables (`ALIAS_ENGINES` and `QUERY_FENCE_ALIASES`),
  * `QUERY_DIALECTS`, the editor language tables (`EDITOR_LANGUAGES` and `DIALECT_EDITORS`) and each engine's
@@ -125,10 +135,20 @@ import {
   CONNECTION_STRING_ACCEPTED,
   HOST_PATH_FIELDS,
   isExternalDatabaseType,
+  MCP_AGENT_CREDENTIAL_REQUIRED,
+  MCP_EXPOSABLE,
+  MCP_METADATA_READ_CHANGES_STATE,
+  MCP_STATEMENT_READ,
   OPENS_LOCAL_FILE,
   OPENS_SERVER_LEVEL_WITHOUT_DATABASE,
+  READ_ROOTS_REQUIRED,
+  READS_FILE_ACCESS_POSTURE,
+  READS_TRUST_MATERIAL,
+  REFUSES_DENIED_FILE_ACCESS,
   SHIPPED_DATABASE_TYPES,
+  SINGLE_WRITER_FILE,
   SSH_TUNNEL_REFUSAL,
+  WRITE_REACH,
 } from "../src/lib/db/compatibility";
 import {
   CONNECTION_FIELD_DESCRIPTORS,
@@ -1082,6 +1102,7 @@ export function buildEngineDeclaration(type: DatabaseType, capabilities: Provide
       })),
       connectionString: buildConnectionString(type),
       tls: offersSslPanel(type) ? "offered" : "not-offered",
+      readsTrustMaterial: READS_TRUST_MATERIAL[type],
       sshTunnel: sshRefusal === null ? { offered: true } : { offered: false, refusal: sshRefusal },
       hostPathFields: [...HOST_PATH_FIELDS[type]],
       opensLocalFile: OPENS_LOCAL_FILE[type],
@@ -1120,6 +1141,19 @@ export function buildEngineDeclaration(type: DatabaseType, capabilities: Provide
     sqlWriting: buildSqlWriting(type),
     migrationDdl: buildMigrationDdl(type),
     sqlGenerators: buildSqlGenerators(type),
+    policy: {
+      writeReach: WRITE_REACH[type],
+      readsFileAccessPosture: READS_FILE_ACCESS_POSTURE[type],
+      deniedFileAccessRefusal: REFUSES_DENIED_FILE_ACCESS[type],
+      singleWriterFile: SINGLE_WRITER_FILE[type],
+      readRootsRequired: READ_ROOTS_REQUIRED[type],
+    },
+    mcp: {
+      exposable: MCP_EXPOSABLE[type],
+      statementRead: MCP_STATEMENT_READ[type],
+      metadataReadChangesState: MCP_METADATA_READ_CHANGES_STATE[type],
+      agentCredentialRequired: MCP_AGENT_CREDENTIAL_REQUIRED[type],
+    },
   };
 }
 

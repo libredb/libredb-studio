@@ -292,6 +292,49 @@ function namedSqlGenerators(count = "COUNT_BIG(*)"): Json {
   };
 }
 
+/** The policy claims of the fixture's one engine. */
+const policyOf = (m: Json): Json => m.engines[0].policy;
+
+/** The pointer of the fixture's one engine's policy claims. */
+const POLICY = "/engines/0/policy";
+
+/** The MCP claims of the fixture's one engine. */
+const mcpOf = (m: Json): Json => m.engines[0].mcp;
+
+/** The pointer of the fixture's one engine's MCP claims. */
+const MCP = "/engines/0/mcp";
+
+/** A refusal sentence a test states as an engine's denied file access refusal. */
+const DENIED_FILE_ACCESS_REFUSAL =
+  "Kafka connections require an administrator because this client cannot confine file access.";
+
+/**
+ * Every claim of the fixture's one engine at its restrictive value, the value under which every gate that reads the
+ * claim refuses, withholds or keeps apart the most, with the seeds declaring read roots so the rules hold on an engine
+ * that has an agent credential form, as Kafka's has.
+ */
+function restrictiveClaims(m: Json): void {
+  Object.assign(policyOf(m), {
+    writeReach: "open",
+    readsFileAccessPosture: true,
+    deniedFileAccessRefusal: DENIED_FILE_ACCESS_REFUSAL,
+    singleWriterFile: false,
+    readRootsRequired: true,
+  });
+  Object.assign(mcpOf(m), {
+    exposable: false,
+    statementRead: false,
+    metadataReadChangesState: true,
+    agentCredentialRequired: true,
+  });
+  connectionOf(m).seedOnly = {
+    fields: ["agentReadRoots"],
+    scope: "each",
+    refusal: "{field} is Kafka only.",
+    projectionRefusal: null,
+  };
+}
+
 /** One missing-key row per member of the part `of` returns, named `<name>.<member>` and refused at `pointer`. */
 function missingRows(
   name: string,
@@ -638,6 +681,22 @@ describe("schema refusals", () => {
       "selectList",
       "countExpression",
     ]),
+    ["policy", (m: Json) => delete m.engines[0].policy, "/engines/0", "policy"],
+    ["mcp", (m: Json) => delete m.engines[0].mcp, "/engines/0", "mcp"],
+    ...missingRows("policy", policyOf, POLICY, [
+      "writeReach",
+      "readsFileAccessPosture",
+      "deniedFileAccessRefusal",
+      "singleWriterFile",
+      "readRootsRequired",
+    ]),
+    ...missingRows("mcp", mcpOf, MCP, [
+      "exposable",
+      "statementRead",
+      "metadataReadChangesState",
+      "agentCredentialRequired",
+    ]),
+    ...missingRows("connection", connectionOf, "/engines/0/connection", ["readsTrustMaterial"]),
   ])("a missing %s is refused as missing-key", (_name, change, pointer, key) => {
     expect(refusalsFor(manifest(change))).toEqual([refusal("missing-key", pointer, key)]);
   });
@@ -1803,6 +1862,80 @@ describe("schema refusals", () => {
     expect(refusalsFor(changed)).toEqual([refusal("missing-key", "/engines/0/connection", "connectBudgetMs")]);
   });
 
+  test("a policy and an MCP segment at every claim's restrictive value are admitted", () => {
+    const restrictive = kafkaManifest();
+    restrictiveClaims(restrictive);
+
+    expect(policyOf(manifest())).toEqual({
+      writeReach: "open",
+      readsFileAccessPosture: false,
+      deniedFileAccessRefusal: null,
+      singleWriterFile: false,
+      readRootsRequired: false,
+    });
+    expect(mcpOf(manifest())).toEqual({
+      exposable: false,
+      statementRead: false,
+      metadataReadChangesState: false,
+      agentCredentialRequired: false,
+    });
+    expect(connectionOf(manifest()).readsTrustMaterial).toBe(false);
+    expect(refusalsFor(manifest())).toEqual([]);
+    expect(policyOf(kafkaManifest()).writeReach).toBe("none");
+    expect(mcpOf(kafkaManifest())).toEqual({
+      exposable: true,
+      statementRead: true,
+      metadataReadChangesState: false,
+      agentCredentialRequired: false,
+    });
+    expect(refusalsFor(kafkaManifest())).toEqual([]);
+    expect(refusalsFor(restrictive)).toEqual([]);
+  });
+
+  test("a write reach outside the claim's values is refused as value-not-allowed", () => {
+    for (const reach of ["partial", "OPEN"]) {
+      const changed = manifest((m) => (policyOf(m).writeReach = reach));
+
+      expect(refusalsFor(changed)).toEqual([refusal("value-not-allowed", `${POLICY}/writeReach`)]);
+    }
+    for (const reach of ["none", "guarded", "open"]) {
+      expect(refusalsFor(manifest((m) => (policyOf(m).writeReach = reach)))).toEqual([]);
+    }
+  });
+
+  test("a claim that is not of its type is refused as wrong-type", () => {
+    const exposable = manifest((m) => (mcpOf(m).exposable = "yes"));
+    const posture = manifest((m) => (policyOf(m).readsFileAccessPosture = 1));
+    const refusalFlag = manifest((m) => (policyOf(m).deniedFileAccessRefusal = false));
+    const trust = manifest((m) => (connectionOf(m).readsTrustMaterial = null));
+
+    expect(refusalsFor(exposable)).toEqual([refusal("wrong-type", `${MCP}/exposable`)]);
+    expect(refusalsFor(posture)).toEqual([refusal("wrong-type", `${POLICY}/readsFileAccessPosture`)]);
+    expect(refusalsFor(refusalFlag)).toEqual([refusal("wrong-type", `${POLICY}/deniedFileAccessRefusal`)]);
+    expect(refusalsFor(trust)).toEqual([refusal("wrong-type", "/engines/0/connection/readsTrustMaterial")]);
+  });
+
+  test("a denied file access refusal that is empty or longer than 2000 characters is refused as out-of-range", () => {
+    const refusing = (sentence: string) =>
+      manifest((m) => Object.assign(policyOf(m), { readsFileAccessPosture: true, deniedFileAccessRefusal: sentence }));
+
+    expect(refusalsFor(refusing(""))).toEqual([refusal("out-of-range", `${POLICY}/deniedFileAccessRefusal`)]);
+    expect(refusalsFor(refusing("x".repeat(2001)))).toEqual([
+      refusal("out-of-range", `${POLICY}/deniedFileAccessRefusal`),
+    ]);
+    expect(refusalsFor(refusing("x".repeat(2000)))).toEqual([]);
+  });
+
+  test("read-only enforcement, Studio's agent execution record and the trust material are no claims, each refused as unknown-key", () => {
+    const readOnly = manifest((m) => (policyOf(m).readOnlyEnforced = true));
+    const execution = manifest((m) => (mcpOf(m).agentExecution = true));
+    const trust = manifest((m) => (policyOf(m).readsTrustMaterial = false));
+
+    expect(refusalsFor(readOnly)).toEqual([refusal("unknown-key", POLICY, "readOnlyEnforced")]);
+    expect(refusalsFor(execution)).toEqual([refusal("unknown-key", MCP, "agentExecution")]);
+    expect(refusalsFor(trust)).toEqual([refusal("unknown-key", POLICY, "readsTrustMaterial")]);
+  });
+
   test("several failures are each refused, ordered by pointer", () => {
     const changed = manifest((m) => {
       m.bogus = true;
@@ -2393,6 +2526,47 @@ describe("rules the schema cannot state", () => {
     }
   });
 
+  test("a statement read on an engine not exposed to MCP is refused as statement-read-unexposed", () => {
+    const changed = kafkaManifest();
+    mcpOf(changed).exposable = false;
+
+    expect(mcpOf(changed).statementRead).toBe(true);
+    expect(refusalsFor(changed)).toEqual([refusal("statement-read-unexposed", `${MCP}/statementRead`)]);
+  });
+
+  test("an agent credential required of an engine whose seeds take none is refused as agent-credential-form-missing", () => {
+    const changed = manifest((m) => (mcpOf(m).agentCredentialRequired = true));
+
+    expect(connectionOf(changed).agentCredential).toBeNull();
+    expect(refusalsFor(changed)).toEqual([refusal("agent-credential-form-missing", `${MCP}/agentCredentialRequired`)]);
+  });
+
+  test("read roots required of an engine whose seeds cannot declare them are refused as read-roots-field-undeclared", () => {
+    const unseeded = manifest((m) => (policyOf(m).readRootsRequired = true));
+    const otherField = kafkaManifest();
+    policyOf(otherField).readRootsRequired = true;
+    connectionOf(otherField).seedOnly = {
+      fields: ["securityPolicyUri"],
+      scope: "each",
+      refusal: "{field} is Kafka only.",
+      projectionRefusal: null,
+    };
+
+    expect(connectionOf(unseeded).seedOnly).toBeNull();
+    expect(refusalsFor(unseeded)).toEqual([refusal("read-roots-field-undeclared", `${POLICY}/readRootsRequired`)]);
+    expect(refusalsFor(otherField)).toEqual([refusal("read-roots-field-undeclared", `${POLICY}/readRootsRequired`)]);
+  });
+
+  test("a denied file access refusal on an engine that reads no file-access posture is refused as denied-file-access-unread", () => {
+    const unread = manifest((m) => (policyOf(m).deniedFileAccessRefusal = DENIED_FILE_ACCESS_REFUSAL));
+    const read = manifest((m) =>
+      Object.assign(policyOf(m), { readsFileAccessPosture: true, deniedFileAccessRefusal: DENIED_FILE_ACCESS_REFUSAL }),
+    );
+
+    expect(refusalsFor(unread)).toEqual([refusal("denied-file-access-unread", `${POLICY}/deniedFileAccessRefusal`)]);
+    expect(refusalsFor(read)).toEqual([]);
+  });
+
   test("a sign-in shaped like Snowflake's is admitted", () => {
     expect(refusalsFor(manifest(signInShaped))).toEqual([]);
   });
@@ -2638,6 +2812,35 @@ describe("one engine declaration", () => {
     expect<unknown>(validator.validateEngine(declaration)).toEqual({ admitted: true, engine: declaration });
   });
 
+  test("an engine declaration's claims are held to the rules the schema cannot state, at pointers into it", () => {
+    const declaration = engine();
+    Object.assign(declaration.policy, {
+      deniedFileAccessRefusal: DENIED_FILE_ACCESS_REFUSAL,
+      readRootsRequired: true,
+    });
+    Object.assign(declaration.mcp, { statementRead: true, agentCredentialRequired: true });
+
+    expect(validator.validateEngine(declaration)).toEqual({
+      admitted: false,
+      refusals: [
+        refusal("agent-credential-form-missing", "/mcp/agentCredentialRequired"),
+        refusal("statement-read-unexposed", "/mcp/statementRead"),
+        refusal("denied-file-access-unread", "/policy/deniedFileAccessRefusal"),
+        refusal("read-roots-field-undeclared", "/policy/readRootsRequired"),
+      ],
+    });
+  });
+
+  test("an engine declaration's write reach is refused at its own pointer under validateEngine", () => {
+    const declaration = kafkaManifest().engines[0] as Json;
+    declaration.policy.writeReach = "partial";
+
+    expect(validator.validateEngine(declaration)).toEqual({
+      admitted: false,
+      refusals: [refusal("value-not-allowed", "/policy/writeReach")],
+    });
+  });
+
   test("an engine declaration's dialog is held to the rules the schema cannot state, at pointers into it", () => {
     const declaration = engine();
     declaration.connection.fields.push("serviceName");
@@ -2719,6 +2922,14 @@ describe("refusals carry no value", () => {
     expect(JSON.stringify(refusals)).not.toContain(planted);
     expect(JSON.stringify(engineVerdict)).not.toContain(planted);
     for (const item of refusals) expect(refusalSentence(item)).not.toContain(planted);
+
+    const sentence = `planted-${randomUUID()} cannot confine file access.`;
+    const ruled = manifest((m) => (policyOf(m).deniedFileAccessRefusal = sentence));
+    const ruledRefusals = refusalsFor(ruled);
+
+    expect(ruledRefusals).toEqual([refusal("denied-file-access-unread", `${POLICY}/deniedFileAccessRefusal`)]);
+    expect(JSON.stringify(ruledRefusals)).not.toContain(sentence);
+    for (const item of ruledRefusals) expect(refusalSentence(item)).not.toContain(sentence);
   });
 
   test("no SQL writing rule refusal carries the pattern or the type name it refuses", () => {

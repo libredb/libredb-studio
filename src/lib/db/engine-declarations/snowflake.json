@@ -37,6 +37,7 @@
       "seedCheck": "seedCheck"
     },
     "tls": "not-offered",
+    "readsTrustMaterial": false,
     "sshTunnel": {
       "offered": false,
       "refusal": "Snowflake does not run through an SSH tunnel: the driver reaches the account's Snowflake hosts over HTTPS, and a tunnel forwards one address. Turn the tunnel off."
@@ -774,5 +775,18 @@
       "ALTER COLUMN sets a default only to a sequence's NEXTVAL; recreate the column with its default."
     ]
   },
-  "sqlGenerators": null
+  "sqlGenerators": null,
+  "policy": {
+    "writeReach": "open",
+    "readsFileAccessPosture": false,
+    "deniedFileAccessRefusal": null,
+    "singleWriterFile": false,
+    "readRootsRequired": false
+  },
+  "mcp": {
+    "exposable": true,
+    "statementRead": false,
+    "metadataReadChangesState": false,
+    "agentCredentialRequired": false
+  }
 }

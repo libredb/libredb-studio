@@ -31,6 +31,7 @@
       "seedCheck": null
     },
     "tls": "offered",
+    "readsTrustMaterial": false,
     "sshTunnel": {
       "offered": false,
       "refusal": "Couchbase does not run through an SSH tunnel: the tunnel forwards one port, and queries go to the query service, on another port, at the address the cluster's node map advertises. Turn the tunnel off."
@@ -306,5 +307,18 @@
     "select": "generatorSelect",
     "selectList": null,
     "countExpression": "COUNT(*)"
+  },
+  "policy": {
+    "writeReach": "open",
+    "readsFileAccessPosture": false,
+    "deniedFileAccessRefusal": null,
+    "singleWriterFile": false,
+    "readRootsRequired": false
+  },
+  "mcp": {
+    "exposable": true,
+    "statementRead": true,
+    "metadataReadChangesState": false,
+    "agentCredentialRequired": false
   }
 }
