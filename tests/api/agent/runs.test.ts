@@ -1793,7 +1793,7 @@ describe("POST /api/agent/runs on a server-level connection (#1530)", () => {
     expect(body.error).toBe(message);
   });
 
-  test("a start whose editor provider fails with the connection's credential in its text answers without it, and logs without it", async () => {
+  test("a start whose editor provider fails with the connection's credential in its text answers its status, code and kind without it, and logs without it", async () => {
     const password = `${crypto.randomUUID()}/${crypto.randomUUID().slice(0, 8)}`;
     mockResolveConnection.mockImplementation(async () => ({ ...SERVER, password }));
     mockForCatalog.mockImplementation(async () => {
@@ -1804,9 +1804,12 @@ describe("POST /api/agent/runs on a server-level connection (#1530)", () => {
     );
     try {
       const res = await POST(startRequest({ ...VALID_BODY, catalog: "shop" }));
-      const body = JSON.stringify(await parseResponseJSON<Record<string, unknown>>(res));
+      const answer = await parseResponseJSON<Record<string, unknown>>(res);
+      const body = JSON.stringify(answer);
 
-      expect(body).toContain(withheldErrorMessage("ConnectionError"));
+      expect(res.status).toBe(503);
+      expect(answer).toMatchObject({ code: "CONNECTION_ERROR", retryable: true, kind: "connection" });
+      expect(answer.error).toBe(withheldErrorMessage("ConnectionError"));
       const calls = JSON.stringify(
         logged.flatMap((spy) => spy.mock.calls),
         (_key, value: unknown) => (value instanceof Error ? { message: value.message, stack: value.stack } : value),
@@ -1821,7 +1824,7 @@ describe("POST /api/agent/runs on a server-level connection (#1530)", () => {
     }
   });
 
-  test("under an agent credential, a start whose editor provider echoes the connection's own password answers and logs without it, since that provider is built from it", async () => {
+  test("under an agent credential, a start whose editor provider echoes the connection's own password answers its status, code and kind and logs without it, since that provider is built from it", async () => {
     const password = `${crypto.randomUUID()}/${crypto.randomUUID().slice(0, 8)}`;
     mockResolveConnection.mockImplementation(async () => ({
       ...SERVER,
@@ -1837,9 +1840,12 @@ describe("POST /api/agent/runs on a server-level connection (#1530)", () => {
     );
     try {
       const res = await POST(startRequest({ ...VALID_BODY, catalog: "shop" }));
-      const body = JSON.stringify(await parseResponseJSON<Record<string, unknown>>(res));
+      const answer = await parseResponseJSON<Record<string, unknown>>(res);
+      const body = JSON.stringify(answer);
 
-      expect(body).toContain(withheldErrorMessage("ConnectionError"));
+      expect(res.status).toBe(503);
+      expect(answer).toMatchObject({ code: "CONNECTION_ERROR", retryable: true, kind: "connection" });
+      expect(answer.error).toBe(withheldErrorMessage("ConnectionError"));
       const calls = JSON.stringify(
         logged.flatMap((spy) => spy.mock.calls),
         (_key, value: unknown) => (value instanceof Error ? { message: value.message, stack: value.stack } : value),

@@ -580,20 +580,34 @@ describe("a replay whose provider's text carries the connection's credential", (
     ["a string the acquisition rejects with", (text) => text, "acquire"],
   ];
 
+  type AnswerBody = { error: string; code?: string; kind?: string; outcome?: string; retryable?: boolean };
+
+  /** The status and the closed fields of an answer: what a client branches on, never its text. */
+  function closedFields(status: number, body: AnswerBody) {
+    return { status, code: body.code, kind: body.kind, outcome: body.outcome, retryable: body.retryable };
+  }
+
   test.each(failures.flatMap(([label, make, phase]) => forms.map((form) => [label, form, make, phase] as const)))(
-    "%s holding %s reaches neither the body nor the log",
+    "%s holding %s keeps the status, code, kind and outcome its error answers, and neither the body nor the log holds it",
     async (_label, form, make, phase) => {
       mockResolveConnection.mockResolvedValue({ ...SEED_CONNECTION, password } as never);
+      const clean = make("could not run as the reader");
       const failure = make(`could not run as ${form}`);
-      if (phase === "acquire") mockAcquire.mockRejectedValueOnce(failure);
-      else mockQueryReadOnly.mockRejectedValueOnce(failure);
+      const reject = (value: unknown) =>
+        phase === "acquire" ? mockAcquire.mockRejectedValueOnce(value) : mockQueryReadOnly.mockRejectedValueOnce(value);
       const logged = [spyOn(logger, "error"), spyOn(logger, "warn"), spyOn(logger, "info")].map((spy) =>
         spy.mockImplementation(() => {}),
       );
       try {
+        reject(clean);
+        const cleanRes = await POST(request(), params());
+        const cleanBody = await parseResponseJSON<AnswerBody>(cleanRes);
+        for (const spy of logged) spy.mockClear();
+        reject(failure);
         const res = await POST(request(), params());
-        const body = await parseResponseJSON<{ error: string }>(res);
+        const body = await parseResponseJSON<AnswerBody>(res);
 
+        expect(closedFields(res.status, body)).toEqual(closedFields(cleanRes.status, cleanBody));
         expect(body.error).toBe(
           withheldErrorMessage(failure instanceof Error ? failure.name : `thrown ${typeof failure}`),
         );
@@ -611,6 +625,44 @@ describe("a replay whose provider's text carries the connection's credential", (
       }
     },
   );
+
+  test("a provider's row budget refusal holding the credential keeps its kind", async () => {
+    mockResolveConnection.mockResolvedValue({ ...SEED_CONNECTION, password } as never);
+    mockQueryReadOnly.mockRejectedValueOnce(new RowBudgetRefusal(`too many rows for ${password}`, "postgres"));
+    const quiet = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const res = await POST(request(), params());
+      const body = await parseResponseJSON<AnswerBody>(res);
+
+      expect(res.status).toBe(400);
+      expect(body.code).toBe("QUERY_ERROR");
+      expect(body.kind).toBe("row-budget-refusal");
+      expect(body.error).toBe(withheldErrorMessage("QueryError"));
+      expect(JSON.stringify(body)).not.toContain(password);
+    } finally {
+      quiet.mockRestore();
+      mockResolveConnection.mockResolvedValue(SEED_CONNECTION);
+    }
+  });
+
+  test("a failure with a SQLSTATE answers it beside its kind", async () => {
+    mockResolveConnection.mockResolvedValue({ ...SEED_CONNECTION, password } as never);
+    const failure = new QueryError('relation "orders" does not exist', "postgres");
+    failure.sqlstate = "42P01";
+    mockQueryReadOnly.mockRejectedValueOnce(failure);
+    const quiet = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const res = await POST(request(), params());
+      const body = await parseResponseJSON<AnswerBody & { sqlState?: string }>(res);
+
+      expect(res.status).toBe(400);
+      expect(body.kind).toBe("query");
+      expect(body.sqlState).toBe("42P01");
+    } finally {
+      quiet.mockRestore();
+      mockResolveConnection.mockResolvedValue(SEED_CONNECTION);
+    }
+  });
 
   test("under an agent credential, an echo of the connection's own password is kept as written, since the hand-over's provider never receives it", async () => {
     mockResolveConnection.mockResolvedValue({
