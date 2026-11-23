@@ -27,6 +27,7 @@ import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 import type { DatabaseConnection } from "@/lib/types";
 import { admitQueryExecution } from "@/lib/query-events/admission";
 import { gateRun } from "@/lib/api/run-confirmation";
+import { runConfirmationIssuerForSession } from "@/lib/api/run-confirmation-token";
 import { queryEventStart } from "@/lib/query-events/build";
 import {
   type QueryEventRequest,
@@ -308,7 +309,7 @@ export async function POST(req: NextRequest) {
     // nothing, runs nothing and records no query event.
     const gate = await gateRun({
       route: "multi-query",
-      session: guard.session,
+      issuer: runConfirmationIssuerForSession(guard.session),
       connection,
       catalog: requestCatalog(body),
       sql,

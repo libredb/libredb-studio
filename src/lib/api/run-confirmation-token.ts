@@ -7,13 +7,22 @@
  * server and catalog, the same route, the same statement and bound values, and the same reading of the statement. It
  * lives five minutes and is accepted once per process.
  *
- * HS256 through `jose` under HMAC(JWT_SECRET, `RUN_CONFIRMATION_KEY_LABEL`), the derivation the object edit plan token
+ * The secret a token is keyed by and the session it binds come from its issuer (`RunConfirmationIssuer`), so two
+ * backends mint and check the same token:
+ *
+ * - The server's run routes use `runConfirmationIssuerForSession`: the secret is JWT_SECRET and the session is the
+ *   signed-in user's username, role and session issue time.
+ * - The VS Code extension's backend child, which has neither a JWT_SECRET nor a signed-in user, uses
+ *   `runConfirmationIssuerForProcess`: 32 random bytes and a random session id drawn when the child creates its
+ *   handlers, held only in its memory, so a token from another child or from before a restart is not verifiable.
+ *
+ * HS256 through `jose` under HMAC(secret, `RUN_CONFIRMATION_KEY_LABEL`), the derivation the object edit plan token
  * and the agent drive token use under their own labels, so neither a session cookie nor any other token of this server
  * verifies as a run confirmation, and a run confirmation is neither of those.
  *
  * The payload of a JWS is readable by whoever holds the token, so each binding claim (`sid`, `cid`, `sd`, `vd`) is
- * keyed: HMAC under HMAC(JWT_SECRET, `RUN_CONFIRMATION_BINDING_LABEL`) of the SHA-256 of the framed binding text.
- * Without the server key a claim says nothing about the session, the connection, the statement or the verdict.
+ * keyed: HMAC under HMAC(secret, `RUN_CONFIRMATION_BINDING_LABEL`) of the SHA-256 of the framed binding text.
+ * Without the issuer's secret a claim says nothing about the session, the connection, the statement or the verdict.
  */
 import { SignJWT, jwtVerify } from "jose";
 import type { UserPayload } from "@/lib/auth";
@@ -44,8 +53,56 @@ const RUN_CONFIRMATION_BINDING_LABEL = "libredb.run-confirmation.binding.v1";
 /** The claim set's version, checked on every verification. */
 const CLAIMS_VERSION = 1;
 
-/** The run route a token was minted on, so a token a SANDBOX run earned on `transaction` cannot confirm another. */
-export type RunConfirmationRoute = "query" | "multi-query" | "transaction";
+/**
+ * The run route a token was minted on, so a token a SANDBOX run earned on `transaction` cannot confirm another.
+ * `vscode/query/run` is the VS Code extension's backend child's `query/run` request.
+ */
+export type RunConfirmationRoute = "query" | "multi-query" | "transaction" | "vscode/query/run";
+
+/**
+ * Who mints and checks a token: the secret its keys are derived from, the session text it binds, and the user the
+ * gate's advisory warning names.
+ */
+export interface RunConfirmationIssuer {
+  /** The secret the signing and binding keys are derived from, read on every call. */
+  secret(): Uint8Array;
+  /** The session a token binds, as text; throws where the session cannot be bound. */
+  session(): string;
+  /** The user the gate's log line names. */
+  readonly user: string;
+}
+
+/**
+ * The issuer of the server's run routes: JWT_SECRET, read per call, and the session the route's guard read, its
+ * username, its role and its own `iat`, so a token outlives neither a sign-out and sign-in nor a role change. Every
+ * session `guardRoute` admits carries a numeric `iat` (signJWT sets it on every cookie Studio signs, and a bearer access
+ * token is admitted only with one), so a session without one is refused by name when a token is minted or checked
+ * rather than bound to a default. A request that needs no token never reads it.
+ */
+export function runConfirmationIssuerForSession(
+  session: UserPayload & { readonly iat?: number },
+): RunConfirmationIssuer {
+  return {
+    secret: getJwtSecret,
+    session: () => {
+      if (typeof session.iat !== "number") {
+        throw new Error("The session carries no issue time, so a run confirmation cannot be bound to it");
+      }
+      return frame(session.username) + frame(session.role) + frame(String(session.iat));
+    },
+    user: session.username,
+  };
+}
+
+/**
+ * The issuer of a process that has no signed-in session: a random 32-byte secret and a random session id, drawn at
+ * this call and held only in memory. A token it mints verifies under no other issuer, so it dies with the process.
+ */
+export function runConfirmationIssuerForProcess(user: string): RunConfirmationIssuer {
+  const secret = crypto.getRandomValues(new Uint8Array(32));
+  const session = frame(crypto.randomUUID());
+  return { secret: () => secret, session: () => session, user };
+}
 
 /**
  * The server's reading of a statement a token can carry: `run` (the gate does not ask) or `confirm`, with what the
@@ -62,8 +119,8 @@ export type RunVerdict =
 
 /** Everything a token is bound to, read from the request the route is answering. */
 export interface RunConfirmationBinding {
-  /** The session the route's guard read: a token binds its username, its role and the session's own `iat`. */
-  readonly session: UserPayload & { readonly iat?: number };
+  /** Who mints and checks the token: its secret and the session it binds. */
+  readonly issuer: RunConfirmationIssuer;
   /** The connection this request resolved, after any override the route applies: its server, never its id. */
   readonly connection: DatabaseConnection;
   /** The database a server-level connection runs the statement in (`requestCatalog`), or undefined. */
@@ -108,17 +165,17 @@ export async function mintRunConfirmation(
   const expiresAt = issuedAt + RUN_CONFIRMATION_TTL_SECONDS;
   const token = await new SignJWT({
     v: CLAIMS_VERSION,
-    sid: await sessionDigest(binding.session),
-    cid: await connectionDigest(binding.connection, binding.catalog),
+    sid: await keyedDigest(binding.issuer, binding.issuer.session()),
+    cid: await connectionDigest(binding.issuer, binding.connection, binding.catalog),
     rt: binding.route,
-    sd: await statementDigest(binding.statement, binding.params),
-    vd: await keyedDigest(verdictText(binding.verdict)),
+    sd: await statementDigest(binding.issuer, binding.statement, binding.params),
+    vd: await keyedDigest(binding.issuer, verdictText(binding.verdict)),
   })
     .setProtectedHeader({ alg: "HS256" })
     .setJti(crypto.randomUUID())
     .setIssuedAt(issuedAt)
     .setExpirationTime(expiresAt)
-    .sign(await runConfirmationKey());
+    .sign(await runConfirmationKey(binding.issuer));
   return { token, expiresAt };
 }
 
@@ -136,7 +193,9 @@ export async function verifyRunConfirmation(
 ): Promise<RunConfirmationCheck> {
   let claims: Record<string, unknown>;
   try {
-    const { payload } = await jwtVerify(token, await runConfirmationKey(), { currentDate: new Date(clock()) });
+    const { payload } = await jwtVerify(token, await runConfirmationKey(binding.issuer), {
+      currentDate: new Date(clock()),
+    });
     claims = payload as Record<string, unknown>;
   } catch (error) {
     return {
@@ -146,16 +205,16 @@ export async function verifyRunConfirmation(
   }
   if (claims.v !== CLAIMS_VERSION) return { valid: false, reason: "this confirmation could not be verified" };
   if (claims.rt !== binding.route) return { valid: false, reason: "this confirmation was issued for another route" };
-  if (claims.sid !== (await sessionDigest(binding.session))) {
+  if (claims.sid !== (await keyedDigest(binding.issuer, binding.issuer.session()))) {
     return { valid: false, reason: "this confirmation was issued for another session" };
   }
-  if (claims.cid !== (await connectionDigest(binding.connection, binding.catalog))) {
+  if (claims.cid !== (await connectionDigest(binding.issuer, binding.connection, binding.catalog))) {
     return { valid: false, reason: "this confirmation was issued for another connection" };
   }
-  if (claims.sd !== (await statementDigest(binding.statement, binding.params))) {
+  if (claims.sd !== (await statementDigest(binding.issuer, binding.statement, binding.params))) {
     return { valid: false, reason: "this confirmation was issued for another statement" };
   }
-  if (claims.vd !== (await keyedDigest(verdictText(binding.verdict)))) {
+  if (claims.vd !== (await keyedDigest(binding.issuer, verdictText(binding.verdict)))) {
     return { valid: false, reason: "this confirmation was issued for another reading of the statement" };
   }
   const used = usedTokens();
@@ -173,37 +232,35 @@ function frame(value: string): string {
 }
 
 /**
- * The session: its username, its role and its own `iat`, so a token outlives neither a sign-out and sign-in nor a
- * role change. Every session `guardRoute` admits carries a numeric `iat` (signJWT sets it on every cookie Studio signs,
- * and a bearer access token is admitted only with one), so a session without one is refused by name here rather than
- * bound to a default.
- */
-async function sessionDigest(session: UserPayload & { readonly iat?: number }): Promise<string> {
-  if (typeof session.iat !== "number") {
-    throw new Error("The session carries no issue time, so a run confirmation cannot be bound to it");
-  }
-  return keyedDigest(frame(session.username) + frame(session.role) + frame(String(session.iat)));
-}
-
-/**
  * The server the statement reaches, by `connectionFingerprint` and never by the connection's id (an inline id is a
  * string the caller typed), framed with the catalog, where the absence of one is its own value.
  */
-async function connectionDigest(connection: DatabaseConnection, catalog: string | undefined): Promise<string> {
+async function connectionDigest(
+  issuer: RunConfirmationIssuer,
+  connection: DatabaseConnection,
+  catalog: string | undefined,
+): Promise<string> {
   const server = await connectionFingerprint(connection);
-  return keyedDigest(frame(server) + (catalog === undefined ? frame("catalog:none") : frame(`catalog:${catalog}`)));
+  return keyedDigest(
+    issuer,
+    frame(server) + (catalog === undefined ? frame("catalog:none") : frame(`catalog:${catalog}`)),
+  );
 }
 
 /**
  * The statement's UTF-16 code units and its bound values, each value tagged with its type so the number 1 and the
  * string "1" differ, and the absence of `params` its own value.
  */
-async function statementDigest(statement: string, params: readonly unknown[] | undefined): Promise<string> {
+async function statementDigest(
+  issuer: RunConfirmationIssuer,
+  statement: string,
+  params: readonly unknown[] | undefined,
+): Promise<string> {
   const values =
     params === undefined
       ? frame("params:none")
       : frame(`params:${params.length}`) + params.map((value) => frame(`${typeof value}:${String(value)}`)).join("");
-  return keyedDigest(frame(statement) + values);
+  return keyedDigest(issuer, frame(statement) + values);
 }
 
 /** The verdict, field by field, in a fixed order. */
@@ -225,10 +282,10 @@ function verdictText(verdict: RunVerdict): string {
  * A binding claim: HMAC-SHA-256, lowercase hex, under the binding key, of `sha256Hex(text)`. The inner digest keeps the
  * one definition of a string's bytes (UTF-16 code units, lone surrogates included) in `sha256Hex`; the HMAC keys it.
  */
-async function keyedDigest(text: string): Promise<string> {
+async function keyedDigest(issuer: RunConfirmationIssuer, text: string): Promise<string> {
   const key = await crypto.subtle.importKey(
     "raw",
-    (await derivedKey(RUN_CONFIRMATION_BINDING_LABEL)).buffer as ArrayBuffer,
+    (await derivedKey(RUN_CONFIRMATION_BINDING_LABEL, issuer.secret())).buffer as ArrayBuffer,
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign"],
@@ -239,19 +296,19 @@ async function keyedDigest(text: string): Promise<string> {
     .join("");
 }
 
-/** The signing key: HMAC(JWT_SECRET, `RUN_CONFIRMATION_KEY_LABEL`). */
-function runConfirmationKey(): Promise<Uint8Array> {
-  return derivedKey(RUN_CONFIRMATION_KEY_LABEL);
+/** The signing key: HMAC(the issuer's secret, `RUN_CONFIRMATION_KEY_LABEL`). */
+function runConfirmationKey(issuer: RunConfirmationIssuer): Promise<Uint8Array> {
+  return derivedKey(RUN_CONFIRMATION_KEY_LABEL, issuer.secret());
 }
 
 /**
- * HMAC(JWT_SECRET, label), derived per call rather than cached, for the reason `planSigningKey` in
+ * HMAC(secret, label), derived per call rather than cached, for the reason `planSigningKey` in
  * src/lib/api/object-edit-plan-token.ts records: a cache would hold a key that outlived a rotated secret.
  */
-async function derivedKey(label: string): Promise<Uint8Array> {
+async function derivedKey(label: string, secret: Uint8Array): Promise<Uint8Array> {
   // Copied into its own buffer: `BufferSource` requires an `ArrayBuffer`, and a Uint8Array's backing store is typed as
   // possibly shared.
-  const raw = getJwtSecret().slice().buffer as ArrayBuffer;
+  const raw = secret.slice().buffer as ArrayBuffer;
   const base = await crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const derived = await crypto.subtle.sign("HMAC", base, new TextEncoder().encode(label));
   return new Uint8Array(derived);

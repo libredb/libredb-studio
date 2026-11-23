@@ -2,7 +2,8 @@
  * @file The server's confirmation gate on a run (FND-5, docs/API_DOCS.md "Server confirmation of a run").
  *
  * `POST /api/db/query`, `POST /api/db/multi-query` and `POST /api/db/transaction` (its `query` action) call `gateRun`
- * after their own field checks and before the admission gate and any provider. It classifies the submitted statement
+ * after their own field checks and before the admission gate and any provider, and so does the VS Code extension's
+ * backend child on every `query/run` (route `vscode/query/run`, docs/VSCODE_EXTENSION.md). It classifies the submitted statement
  * with `confirmationVerdict`, the reading the web editor's dialog and `POST /api/db/statement/analyze` take, and
  * decides what the request gets, by the request's `confirmation` field and the mode (`LIBREDB_RUN_CONFIRMATION`):
  *
@@ -27,11 +28,11 @@
  * connection's name on a production connection (refused where it has none), and one error line names the route, the
  * connection type and the error's name, never the statement.
  */
-import type { UserPayload } from "@/lib/auth";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import {
   mintRunConfirmation,
   type RunConfirmationBinding,
+  type RunConfirmationIssuer,
   type RunConfirmationRoute,
   type RunVerdict,
   verifyRunConfirmation,
@@ -44,6 +45,7 @@ import {
   TYPED_NAME_MISSING_REFUSAL,
 } from "@/lib/editor/statement-analysis";
 import { logger } from "@/lib/logger";
+import type { TypedConfirmation } from "@/lib/editor/statement-analysis";
 import type { DatabaseConnection } from "@/lib/types";
 
 /** The refusal of a `confirmation` field of any other shape, before anything is classified. */
@@ -63,10 +65,35 @@ export const CONFIRMATION_REQUIRED_MESSAGE =
 export const CONFIRMATION_TYPED_MESSAGE =
   "This statement needs a typed confirmation before it runs: send the same request again with the confirmation token in this answer and, as typed, the value its typedConfirmation expects.";
 
+/** The label each route's log lines name, so a line says which surface ran the statement. */
+const ROUTE_LOG_LABELS: Readonly<Record<RunConfirmationRoute, string>> = {
+  query: "api/db/query",
+  "multi-query": "api/db/multi-query",
+  transaction: "api/db/transaction",
+  "vscode/query/run": "vscode/query/run",
+};
+
+/** The `confirmation` object of a 428 answer: the token to send back and what the gate asks. */
+export interface RunConfirmationOffer {
+  readonly token: string;
+  /** When the token expires, as an ISO time. */
+  readonly expiresAt: string;
+  readonly unreadable: boolean;
+  readonly typedConfirmation: TypedConfirmation | null;
+  readonly classificationFailed: boolean;
+}
+
+/** The body of a gate answer: the sentence, the code where it has one, and the 428's offer. */
+export interface RunGateAnswerBody {
+  readonly error: string;
+  readonly code?: ApiErrorCode;
+  readonly confirmation?: RunConfirmationOffer;
+}
+
 export interface RunGateRequest {
   readonly route: RunConfirmationRoute;
-  /** The session the route's guard read. */
-  readonly session: UserPayload & { readonly iat?: number };
+  /** Who mints and checks the token: the route's signed-in session, or the VS Code backend child's own process. */
+  readonly issuer: RunConfirmationIssuer;
   /** The connection the request resolved, after any override the route applies to it. */
   readonly connection: DatabaseConnection;
   /** The request's catalog (`requestCatalog`). */
@@ -87,7 +114,7 @@ export interface RunGateRequest {
  */
 export type RunGateDecision =
   | { readonly kind: "run"; readonly unconfirmed: boolean }
-  | { readonly kind: "answer"; readonly status: number; readonly body: Record<string, unknown> };
+  | { readonly kind: "answer"; readonly status: number; readonly body: RunGateAnswerBody };
 
 type ConfirmationField =
   | { readonly kind: "absent" }
@@ -114,7 +141,7 @@ function classify(request: RunGateRequest): RunVerdict | { readonly decision: "r
     return verdict.decision === "confirm" ? { ...verdict, classificationFailed: false } : verdict;
   } catch (error) {
     logger.error("The confirmation gate could not read a statement, so it asks for a confirmation", undefined, {
-      route: `api/db/${request.route}`,
+      route: ROUTE_LOG_LABELS[request.route],
       type: request.connection.type,
       errorName: error instanceof Error ? error.name : typeof error,
     });
@@ -145,7 +172,7 @@ export async function gateRun(request: RunGateRequest, clock: () => number = Dat
   }
 
   const binding: RunConfirmationBinding = {
-    session: request.session,
+    issuer: request.issuer,
     connection: request.connection,
     catalog: request.catalog,
     route: request.route,
@@ -197,9 +224,9 @@ function invalid(reason: string): RunGateDecision {
 /** Advisory mode sparing a caller that did not ask: the statement runs, and the answer and one warning say so. */
 function ranUnconfirmed(request: RunGateRequest): RunGateDecision {
   logger.warn("A statement that needs a confirmation ran without one", {
-    route: `api/db/${request.route}`,
+    route: ROUTE_LOG_LABELS[request.route],
     type: request.connection.type,
-    user: request.session.username,
+    user: request.issuer.user,
   });
   return { kind: "run", unconfirmed: true };
 }

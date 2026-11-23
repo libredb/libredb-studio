@@ -39,6 +39,7 @@ import { clientAddress } from "@/lib/api/client-address";
 import type { GovernedConnection } from "@/lib/governance/visible";
 import { admitQueryExecution } from "@/lib/query-events/admission";
 import { gateRun } from "@/lib/api/run-confirmation";
+import { runConfirmationIssuerForSession } from "@/lib/api/run-confirmation-token";
 import { queryEventStart } from "@/lib/query-events/build";
 import type { QueryEventStart } from "@/lib/query-events/types";
 import {
@@ -334,7 +335,7 @@ export async function POST(req: NextRequest) {
       }
       const gate = await gateRun({
         route: "transaction",
-        session: guard.session,
+        issuer: runConfirmationIssuerForSession(guard.session),
         connection,
         catalog,
         sql,
