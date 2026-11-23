@@ -61,6 +61,7 @@ import {
 } from "../../types";
 import {
   ByteBudgetRefusal,
+  checkoutPhase,
   DatabaseConfigError,
   ConnectionError,
   ExecutionProfileError,
@@ -3472,7 +3473,11 @@ export class MySQLProvider extends SQLBaseProvider {
 
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {
-        const conn = await this.pool!.getConnection();
+        // A failure to take the connection precedes the send, so it answers not-sent (CONTRACT E-5).
+        const conn = await checkoutPhase(
+          () => this.pool!.getConnection(),
+          (error) => mapDatabaseError(error, "mysql", sql),
+        );
         try {
           // Track thread ID for cancellation support
           if (queryId) {

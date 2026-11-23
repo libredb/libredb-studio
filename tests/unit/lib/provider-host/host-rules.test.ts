@@ -15,7 +15,7 @@ import { BATCH_MAX_BYTES, envReader, PAGE_MAX_BYTES, rowsSource } from "@libredb
 import { cancelEditorRun, runEditorQuery } from "@/lib/api/editor-query";
 import { databaseErrorBody } from "@/lib/api/error-body";
 import { errorOutcome } from "@/lib/db/error-record";
-import { ConnectionError, connectPhase, QueryCancelledError } from "@/lib/db/errors";
+import { checkoutPhase, ConnectionError, connectPhase, QueryCancelledError } from "@/lib/db/errors";
 import { providerTextScrub } from "@/lib/db/operations/provider-text";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
@@ -245,6 +245,28 @@ describe("E23-K1: what a lost or failed connection answers", () => {
     expect(databaseErrorBody(caught)?.body).toMatchObject({
       code: "CONNECTION_ERROR",
       statusCode: 503,
+      outcome: "not-sent",
+    });
+  });
+
+  test("a checkout failure inside execute answers not-sent", async () => {
+    const refused = new ConnectionError("connect ECONNREFUSED 127.0.0.1:5432", "postgres");
+    const provider = Object.assign(createMockProvider({ config: connection }), {
+      query: mock(() =>
+        checkoutPhase(
+          () => Promise.reject(new Error("connect ECONNREFUSED 127.0.0.1:5432")),
+          () => refused,
+        ),
+      ),
+    });
+
+    const caught = await runEditorQuery(provider, runOf(new AbortController().signal)).catch((error: unknown) => error);
+
+    expect(caught).toBe(refused);
+    expect(databaseErrorBody(caught)?.body).toMatchObject({
+      code: "CONNECTION_ERROR",
+      statusCode: 503,
+      kind: "connection",
       outcome: "not-sent",
     });
   });

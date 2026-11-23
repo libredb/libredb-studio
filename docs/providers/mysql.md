@@ -22,7 +22,7 @@
 | **Base** | [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts) |
 | **Tests** | [`tests/integration/db/mysql-provider.test.ts`](../../tests/integration/db/mysql-provider.test.ts) |
 | **Write reach** | open: the editor, inline row edit, Import, Generate Test Data, Create Table, maintenance (`analyze`, `optimize`, `check`, `kill`) and the transaction route all send writes |
-| **Failed statement outcome** | unknown: the provider takes a connection from the pool (`pool.getConnection()`) before it sends the statement, and that failure answers `unknown` like every other |
+| **Failed statement outcome** | checkout-not-sent: a failure to take a connection from the pool (`pool.getConnection()`), which comes before anything is sent, answers outcome `not-sent`, and every failure after it `unknown` |
 
 ---
 
@@ -2498,7 +2498,7 @@ Native `mysql2` errors are mapped by the shared `mapDatabaseError()`
 | A refused account, by errno: `1045` and `1698` a refused login (`sqlState` `28000`), `1820` and `1862` an expired password, `3118` a locked account, `3955` an account blocked after failed logins | `AuthenticationError`, answered `401 AUTH_ERROR` |
 | Connection refused / DNS (`ECONNREFUSED`, `getaddrinfo`) | `ConnectionError` |
 | Killed query (*"Query execution was interrupted"*) | `QueryCancelledError` |
-| Driver message contains *timeout* / *timed out* (e.g. `Lock wait timeout exceeded`, connection-acquire timeout) | `TimeoutError` |
+| Driver message contains *timeout* / *timed out* (e.g. `Lock wait timeout exceeded`) | `TimeoutError` |
 | Other server errors (most `ER_*` codes) | `QueryError` / `DatabaseError` carrying the original message |
 
 The two refusals are told apart by the errno, not by the words: `1044` and `1227` begin "Access denied" as a refused login does, and the agent read-only profile met both as "Authentication failed" before they had their own class ([§12.1](#121-the-principal-is-the-first-layer-because-a-read-only-transaction-ends-where-ddl-begins)).
@@ -2511,6 +2511,12 @@ MariaDB answers the same numbers, and TiDB declares the same `1142`, `1143` and 
 > `TimeoutError` (the mapping is provider-agnostic). What MySQL lacks is a **server-side query
 > timeout derived from `queryTimeout`** — the provider never configures one
 > ([§3.5](#35-no-server-side-query-timeout)), so it won't auto-kill a long-running query on its own.
+
+The editor's statement (`query`) takes its connection from the pool through `checkoutPhase` before it sends anything, so a failure of that checkout answers `not-sent` and the class its `mysql2` error maps to: `ConnectionError` for a refused or unreachable server, `PoolExhaustedError` for `Pool is closed.`, `AuthenticationError` for a refused account ([CONTRACT](./CONTRACT.md), E-5).
+Before this, the checkout sat outside the mapping, so its failure reached the route as the raw driver error and answered `500 INTERNAL_ERROR` with the driver's text.
+The pool queues a checkout without bound (`waitForConnections: true`, `queueLimit: 0`, and `mysql2` has no acquire timeout), so a full pool waits until Studio's deadline on the statement, which answers `504` with `outcome` `unknown`.
+A connection lost after it was taken (`PROTOCOL_CONNECTION_LOST`) answers `unknown`, since the statement may have reached the server.
+The other paths that take a connection (the agent's read-only profile, a held transaction, the catalog and monitoring reads) still answer `unknown` for a failed checkout.
 
 ---
 

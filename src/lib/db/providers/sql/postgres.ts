@@ -79,6 +79,7 @@ import { connectionFingerprint } from "../../connection-fingerprint";
 import { comparePaths } from "../../object-path";
 import {
   ByteBudgetRefusal,
+  checkoutPhase,
   DatabaseConfigError,
   ConnectionError,
   DatabaseError,
@@ -3508,7 +3509,11 @@ export class PostgresProvider extends SQLBaseProvider {
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {
         try {
-          const client = await this.pool!.connect();
+          // A failure to take the client precedes the send, so it answers not-sent (CONTRACT E-5).
+          const client = await checkoutPhase(
+            () => this.pool!.connect(),
+            (error) => mapDatabaseError(error, "postgres", sql),
+          );
           try {
             // Track PID for cancellation support
             if (queryId) {

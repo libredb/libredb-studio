@@ -14,6 +14,7 @@ import {
   ExecutionProfileError,
   PermissionDeniedError,
   QueryError,
+  TimeoutError,
 } from "@/lib/db/errors";
 import { createErrorResponse } from "@/lib/api/errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
@@ -1033,6 +1034,77 @@ describe("OracleProvider", () => {
   // =========================================================================
 
   describe("query()", () => {
+    /** A pool that hands `connect()` its one connection and then refuses every checkout with `error`. */
+    function poolRefusingAfterConnect(error: Error) {
+      let checkouts = 0;
+      mockCreatePoolFn = async () => ({
+        getConnection: async () => {
+          checkouts += 1;
+          if (checkouts > 1) throw error;
+          connectionLog.push({ event: "acquire" });
+          return createMockConnection();
+        },
+        close: async () => {},
+        connectionsOpen: 1,
+        connectionsInUse: 1,
+      });
+    }
+
+    test("a pool checkout that fails answers its mapped class with outcome not-sent and sends nothing", async () => {
+      poolRefusingAfterConnect(
+        new Error(
+          "NJS-503: connection to host 127.0.0.1 port 1521 could not be established. (CONNECTION_ID=x)\nconnect ECONNREFUSED 127.0.0.1:1521",
+        ),
+      );
+      await provider.connect();
+      connectionLog = [];
+
+      const refused = await provider.query("INSERT INTO orders VALUES (1)").catch((error: unknown) => error);
+
+      expect(refused).toBeInstanceOf(ConnectionError);
+      expect((refused as ConnectionError).outcome).toBe("not-sent");
+      expect(connectionLog).toEqual([]);
+      const response = createErrorResponse(refused, { route: "api/db/query" });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({
+        code: ApiErrorCode.CONNECTION_ERROR,
+        statusCode: 503,
+        kind: "connection",
+        outcome: "not-sent",
+      });
+    });
+
+    test("a pool checkout that waits out the queue timeout answers a ConnectionError naming the wait, not-sent", async () => {
+      poolRefusingAfterConnect(
+        new Error("NJS-040: connection request timeout. Request exceeded queueTimeout of 60000"),
+      );
+      await provider.connect();
+
+      const refused = await provider.query("SELECT 1 FROM dual").catch((error: unknown) => error);
+
+      expect(refused).toBeInstanceOf(ConnectionError);
+      expect(refused).not.toBeInstanceOf(TimeoutError);
+      expect((refused as ConnectionError).message).toMatch(
+        /^No connection of the pool came free or opened within \d+(?:\.\d)? seconds?, so the statement was not sent: every connection may be in use, or the server may not be answering\.$/,
+      );
+      expect((refused as ConnectionError).cause).toBeInstanceOf(TimeoutError);
+      expect((refused as ConnectionError).outcome).toBe("not-sent");
+    });
+
+    test("a statement that fails after its connection was taken answers outcome unknown", async () => {
+      await provider.connect();
+      connectionLog = [];
+      mockExecuteFn = async () => {
+        throw new Error("NJS-500: connection to the Oracle Database was broken");
+      };
+
+      const failed = await provider.query("UPDATE orders SET total = 0").catch((error: unknown) => error);
+
+      expect(failed).toBeInstanceOf(DatabaseError);
+      expect((failed as DatabaseError).outcome).toBeUndefined();
+      expect(connectionLog.map((entry) => entry.event)).toEqual(["acquire", "execute", "close"]);
+    });
+
     test("returns rows and fields from metaData", async () => {
       await provider.connect();
       const result = await provider.query("SELECT * FROM DUAL");

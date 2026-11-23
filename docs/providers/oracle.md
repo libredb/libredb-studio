@@ -24,7 +24,7 @@
 | **Base** | [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts) |
 | **Tests** | [`tests/integration/db/oracle-provider.test.ts`](../../tests/integration/db/oracle-provider.test.ts), and over the real Thin transport [`tests/integration/db/oracle-thin-transport.test.ts`](../../tests/integration/db/oracle-thin-transport.test.ts) |
 | **Write reach** | open: the editor, inline row edit, Import, Generate Test Data, Create Table, maintenance (`analyze`, `optimize`, `kill`) and the transaction route all send writes |
-| **Failed statement outcome** | unknown: the provider takes a connection from the pool (`pool.getConnection()`) before it sends the statement, and that failure answers `unknown` like every other |
+| **Failed statement outcome** | checkout-not-sent: a failure to take a connection from the pool (`pool.getConnection()`), which comes before anything is sent, answers outcome `not-sent`, and every failure after it `unknown` |
 
 ---
 
@@ -2729,6 +2729,11 @@ A zoned column is written through `FROM_TZ(..., 'UTC')`, which keeps the instant
 
 There is **no** provider-driven server-side query timeout (no `queryTimeout` wiring), so a
 `TimeoutError` arises from a driver-level timeout message, or from Studio's own deadline on an editor statement, which answers it with `kind: "studio-timeout-refusal"` ([§5.2](#52-query-cancellation)).
+
+The editor's statement (`query`) takes its connection from the pool through `checkoutPhase` before it sends anything, so a failure of that checkout answers `not-sent` and keeps the class its `oracledb` error maps to: `NJS-503` a `ConnectionError`, `NJS-065` (a closed pool) a `PoolExhaustedError`, a refused credential an `AuthenticationError` ([CONTRACT](./CONTRACT.md), E-5).
+A checkout that waits out the pool's `queueTimeout` (`NJS-040`, 60 s by default) is no statement timeout: it answers `503 CONNECTION_ERROR`, `not-sent`, with `No connection of the pool came free or opened within <n> seconds, so the statement was not sent: every connection may be in use, or the server may not be answering.`
+A connection lost after it was taken (`NJS-500`) answers `unknown`, since the statement may have reached the server.
+The other paths that take a connection (the agent's read-only profile, a held transaction, the catalog and monitoring reads) still answer `unknown` for a failed checkout.
 
 ---
 

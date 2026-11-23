@@ -540,6 +540,8 @@ Before the statement, the server waits for the connection to open at most its en
 A connection still not open at that point answers `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "not-sent"`.
 The open itself ends at the same budget for every request waiting for it on every route that opens a connection, each answered the same 504 ([`docs/providers/CONTRACT.md`](providers/CONTRACT.md), clause C-55).
 The next request after it opens the connection afresh rather than waiting on an open that may never settle.
+On an open connection, a provider that takes a connection from its pool before it sends the statement (each engine's document says whether it does, in its `Failed statement outcome` row) answers a failure of that checkout with `outcome: "not-sent"`.
+A checkout that waits out the pool's own bound answers `503 CONNECTION_ERROR` with `kind: "connection"` and `outcome: "not-sent"`: "No connection of the pool came free or opened within 60 seconds, so the statement was not sent: every connection may be in use, or the server may not be answering.", with the time it waited.
 The statement's own deadline starts once the connection is open, so it stays the statement timeout plus 10 s.
 
 A page holds at most 32 MiB of rows, each measured as the UTF-8 length of its JSON text.
@@ -3043,7 +3045,7 @@ A provider's budget refusal made before it sent anything answers `refused-before
 
 `outcome` says whether the statement may have reached the database:
 
-- `not-sent`: the provider's connect failed, Studio refused the connection while building its provider, or Studio refused the statement before sending it, so the database never received it.
+- `not-sent`: the provider's connect failed, Studio refused the connection while building its provider, Studio refused the statement before sending it, or the provider could not take a connection from its pool before sending the statement (the engine's document says whether it can tell), so the database never received it.
 - `unknown`: any other failure. The statement may have reached the database and run even though the answer is an error, so check the data before running work that changes it again.
 
 Neither value makes any Studio client send the request again, as for `retryable`.

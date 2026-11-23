@@ -25,6 +25,7 @@ import {
   PermissionDeniedError,
   PoolExhaustedError,
   QueryError,
+  TimeoutError,
   TransactionLostError,
   NO_ACTIVE_TRANSACTION,
   NO_TRANSACTION_OPENED,
@@ -1260,6 +1261,77 @@ describe("PostgresProvider", () => {
 
       expect(refused).toBeInstanceOf(AuthenticationError);
       expect(createErrorResponse(refused, { route: "api/db/query" }).status).toBe(401);
+    });
+
+    /** Make the provider's pool refuse its next checkout with `error`, the way `pg-pool` rejects `connect()`. */
+    function refuseCheckout(error: Error) {
+      (lastPool as unknown as { connect: () => Promise<unknown> }).connect = () => Promise.reject(error);
+    }
+
+    test("a pool checkout that fails answers its mapped class with outcome not-sent and sends nothing", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const sent: string[] = [];
+      mockQueryFn = async (sql) => {
+        sent.push(sql);
+        return { rows: [] };
+      };
+      refuseCheckout(Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:5432"), { code: "ECONNREFUSED" }));
+
+      const refused = await provider.query("INSERT INTO orders VALUES (1)").catch((error: unknown) => error);
+
+      expect(refused).toBeInstanceOf(ConnectionError);
+      expect((refused as ConnectionError).outcome).toBe("not-sent");
+      expect(sent).toEqual([]);
+      const response = createErrorResponse(refused, { route: "api/db/query" });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({
+        code: ApiErrorCode.CONNECTION_ERROR,
+        statusCode: 503,
+        kind: "connection",
+        outcome: "not-sent",
+      });
+    });
+
+    test("a pool checkout that waits out the pool's bound answers a ConnectionError naming the wait, not-sent", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      refuseCheckout(new Error("timeout exceeded when trying to connect"));
+
+      const refused = await provider.query("SELECT 1").catch((error: unknown) => error);
+
+      expect(refused).toBeInstanceOf(ConnectionError);
+      expect(refused).not.toBeInstanceOf(TimeoutError);
+      expect((refused as ConnectionError).message).toMatch(
+        /^No connection of the pool came free or opened within \d+(?:\.\d)? seconds?, so the statement was not sent: every connection may be in use, or the server may not be answering\.$/,
+      );
+      expect((refused as ConnectionError).cause).toBeInstanceOf(TimeoutError);
+      const response = createErrorResponse(refused, { route: "api/db/query" });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({
+        code: ApiErrorCode.CONNECTION_ERROR,
+        statusCode: 503,
+        kind: "connection",
+        outcome: "not-sent",
+      });
+    });
+
+    test("a statement that fails after its connection was taken answers outcome unknown", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const released = spyOn(mockClient, "release");
+      mockQueryFn = async () => {
+        throw new Error("Connection terminated unexpectedly");
+      };
+
+      const failed = await provider.query("UPDATE orders SET total = 0").catch((error: unknown) => error);
+
+      expect(failed).toBeInstanceOf(DatabaseError);
+      expect(failed).not.toBeInstanceOf(ConnectionError);
+      expect((failed as DatabaseError).outcome).toBeUndefined();
+      expect(errorKind(failed)).toBe("database");
+      expect(released).toHaveBeenCalledTimes(1);
+      released.mockRestore();
     });
   });
 

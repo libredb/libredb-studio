@@ -57,6 +57,7 @@ import {
 } from "../../../object-kinds";
 import { comparePaths } from "../../../object-path";
 import {
+  checkoutPhase,
   DatabaseConfigError,
   ConnectionError,
   ExecutionProfileError,
@@ -2072,7 +2073,11 @@ export class OracleProvider extends SQLBaseProvider {
       const { result, executionTime } = await this.measureExecution(async () => {
         let conn: oracledb.Connection | undefined;
         try {
-          conn = await this.pool!.getConnection();
+          // A failure to take the connection precedes the send, so it answers not-sent (CONTRACT E-5).
+          conn = await checkoutPhase(
+            () => this.pool!.getConnection(),
+            (error) => mapDatabaseError(error, "oracle", sql),
+          );
 
           if (queryId) {
             this.runningConns.set(queryId, conn);

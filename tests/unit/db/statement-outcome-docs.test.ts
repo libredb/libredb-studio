@@ -22,7 +22,7 @@ const ROOT = path.resolve(import.meta.dir, "../../..");
 const ROW = /^\| \*\*Failed statement outcome\*\* \| (checkout-not-sent|unknown): (.+) \|$/;
 
 /** The type-ids whose provider code runs a checkout through `checkoutPhase`. */
-const CLAIMING: readonly DatabaseType[] = [];
+const CLAIMING: readonly DatabaseType[] = ["mysql", "oracle", "postgres"];
 
 interface SourceText {
   readonly path: string;

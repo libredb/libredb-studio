@@ -16,8 +16,10 @@ import {
   ConnectionError,
   DatabaseConfigError,
   ExecutionProfileError,
+  DatabaseError,
   NO_TRANSACTION_OPENED,
   PermissionDeniedError,
+  PoolExhaustedError,
   QueryError,
   TRANSACTION_STATE_UNREPORTED,
 } from "@/lib/db/errors";
@@ -1158,6 +1160,80 @@ describe("MySQLProvider", () => {
       expect(Array.isArray(result.fields)).toBe(true);
       expect(typeof result.executionTime).toBe("number");
       expect(typeof result.rowCount).toBe("number");
+    });
+
+    test("a pool checkout that fails answers its mapped class with outcome not-sent, not an internal error", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const refusal = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:3306"), { code: "ECONNREFUSED" });
+      const getConnection = spyOn(mockPool, "getConnection").mockRejectedValueOnce(refusal);
+      const executed = spyOn(mockConnection, "execute");
+      const queried = spyOn(mockConnection, "query");
+      try {
+        const refused = await provider.query("INSERT INTO orders VALUES (1)").catch((error: unknown) => error);
+
+        expect(refused).toBeInstanceOf(ConnectionError);
+        expect((refused as ConnectionError).outcome).toBe("not-sent");
+        expect(executed).not.toHaveBeenCalled();
+        expect(queried).not.toHaveBeenCalled();
+        const response = createErrorResponse(refused, { route: "api/db/query" });
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({
+          code: ApiErrorCode.CONNECTION_ERROR,
+          statusCode: 503,
+          kind: "connection",
+          outcome: "not-sent",
+        });
+      } finally {
+        getConnection.mockRestore();
+        executed.mockRestore();
+        queried.mockRestore();
+      }
+    });
+
+    test("a closed pool answers PoolExhaustedError, not-sent", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const getConnection = spyOn(mockPool, "getConnection").mockRejectedValueOnce(new Error("Pool is closed."));
+      try {
+        const refused = await provider.query("SELECT 1").catch((error: unknown) => error);
+
+        expect(refused).toBeInstanceOf(PoolExhaustedError);
+        expect((refused as PoolExhaustedError).outcome).toBe("not-sent");
+        const response = createErrorResponse(refused, { route: "api/db/query" });
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({
+          code: ApiErrorCode.POOL_EXHAUSTED,
+          statusCode: 503,
+          outcome: "not-sent",
+        });
+      } finally {
+        getConnection.mockRestore();
+      }
+    });
+
+    test("a statement that fails after its connection was taken answers outcome unknown", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const released = spyOn(mockConnection, "release");
+      mockExecuteFn = () =>
+        Promise.reject(
+          Object.assign(new Error("Connection lost: The server closed the connection."), {
+            code: "PROTOCOL_CONNECTION_LOST",
+          }),
+        );
+      try {
+        const failed = await provider.query("UPDATE orders SET total = 0").catch((error: unknown) => error);
+
+        expect(failed).toBeInstanceOf(DatabaseError);
+        expect((failed as DatabaseError).outcome).toBeUndefined();
+        expect(await createErrorResponse(failed, { route: "api/db/query" }).json()).toMatchObject({
+          outcome: "unknown",
+        });
+        expect(released).toHaveBeenCalledTimes(1);
+      } finally {
+        released.mockRestore();
+      }
     });
 
     test("result contains sanitized rows", async () => {

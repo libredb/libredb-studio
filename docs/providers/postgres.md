@@ -23,7 +23,7 @@
 | **Base** | [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts) |
 | **Tests** | [`tests/integration/db/postgres-provider.test.ts`](../../tests/integration/db/postgres-provider.test.ts) |
 | **Write reach** | open: the editor, inline row edit, Import, Generate Test Data, Create Table, the function and procedure object edit, maintenance (`vacuum`, `analyze`, `reindex`, `kill`) and the transaction route all send writes, and the database role is the boundary |
-| **Failed statement outcome** | unknown: the provider takes a connection from the pool (`pool.connect()`) before it sends the statement, and that failure answers `unknown` like every other |
+| **Failed statement outcome** | checkout-not-sent: a failure to take a connection from the pool (`pool.connect()`), which comes before anything is sent, answers outcome `not-sent`, and every failure after it `unknown` |
 
 ---
 
@@ -2548,7 +2548,7 @@ the shared hierarchy:
 | SQL syntax / bad column / relation | `QueryError` (with position when available) |
 | `statement_timeout` or `lock_timeout` exceeded (`canceling statement due to statement timeout` / `due to lock timeout`) | `TimeoutError` — a time budget elapsed, so since #1145 `mapDatabaseError()` recognises these **before** its cancellation branch and keeps the engine's text |
 | User cancel via `pg_cancel_backend` (`canceling statement due to user request`) | `QueryCancelledError` |
-| Generic timeout / connection-acquire timeout (message contains "timeout"/"timed out") | `TimeoutError` |
+| Generic timeout (message contains "timeout"/"timed out") | `TimeoutError`, except a pool wait in the editor's statement, which answers the `ConnectionError` below |
 | A privilege the role lacks (SQLSTATE `42501`: `permission denied for table orders`, `must be owner of table orders`) | `PermissionDeniedError`, answered `403 PERMISSION_DENIED` with `Permission denied: ` before the server's sentence |
 | A refused credential (SQLSTATE class `28`: `28P01` a wrong password, `28000` a `pg_hba.conf` refusal or an unknown role) | `AuthenticationError`, answered `401 AUTH_ERROR` |
 | Pool exhausted / too many connections | `PoolExhaustedError` |
@@ -2558,6 +2558,11 @@ The two refusals are read from the SQLSTATE and never from the words, so `column
 Only an error `pg` raises itself, which carries no SQLSTATE, is read by its words, such as `SASL: SCRAM-SERVER-FIRST-MESSAGE: client password must be a string`.
 
 A connect that fails answers `outcome` `not-sent`, and so does a statement Studio refuses before sending it; a statement that fails after it was sent answers `unknown`, because PostgreSQL may have run it ([API reference](../API_DOCS.md#error-kind-and-outcome)).
+
+The editor's statement (`query`) takes its client from the pool through `checkoutPhase` before it sends anything, so a failure of that checkout answers `not-sent` and keeps the class its `pg` error maps to: a refused connection `ConnectionError`, a refused credential `AuthenticationError`, an ended pool `PoolExhaustedError` ([CONTRACT](./CONTRACT.md), E-5).
+A checkout that waits out the pool's bound (`connectionTimeoutMillis`, which is `acquireTimeout`), on a busy pool or a new client that does not open, is no statement timeout: it answers `503 CONNECTION_ERROR`, `not-sent`, with `No connection of the pool came free or opened within <n> seconds, so the statement was not sent: every connection may be in use, or the server may not be answering.`
+A connection lost after the client was taken, `Connection terminated unexpectedly` included, answers `unknown`, since the statement may have reached the server.
+The other paths that take a client (the agent's read-only profile, a held transaction, the catalog and monitoring reads) still answer `unknown` for a failed checkout.
 
 ---
 
