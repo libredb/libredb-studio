@@ -5,14 +5,17 @@
  * `runRecorded()` asks `admitQueryExecution()` before the unit runs, so with `queryLog.onSinkFailure` at `refuse` a
  * sink that cannot record turns the request away before anything reaches the database, and records that refusal as
  * one `refused` event. Otherwise it runs the unit and records one event with the status it ended in: `success`,
- * `cancelled` for a cancelled statement, else `error`, with the error's code. The unit's own answer or error reaches
- * the caller unchanged.
+ * `cancelled` for a cancelled statement, else `error`, with the error's code and message. A message that holds a
+ * credential of the unit's connection (core's scrub, `providerTextScrub(connection, "any")`) is recorded as the withheld
+ * sentence beside the error's own API code. The unit's own answer or error reaches the caller unchanged.
  *
  * Outside governance the gate never refuses and `recordQueryEvent()` does nothing, so a route answers exactly as it
  * did before it ran its unit through here.
  */
 import type { UserPayload } from "@/lib/auth";
+import { errorCode as recordCode } from "@/lib/db/error-record";
 import { isQueryCancelledError } from "@/lib/db/errors";
+import { providerTextScrub, withheldProviderError } from "@/lib/db/operations/provider-text";
 import type { GovernedConnection } from "@/lib/governance/visible";
 import type { DatabaseConnection } from "@/lib/types";
 import { admitQueryExecution } from "./admission";
@@ -84,10 +87,13 @@ export async function runRecorded<T>(
   try {
     result = await run();
   } catch (error) {
-    record(isQueryCancelledError(error) ? "cancelled" : "error", {
-      errorCode: codeOf(error),
-      errorMessage: messageOf(error),
-    });
+    const withheld = withheldProviderError(providerTextScrub(unit.connection, "any"), error);
+    record(
+      isQueryCancelledError(error) ? "cancelled" : "error",
+      withheld === null
+        ? { errorCode: codeOf(error), errorMessage: messageOf(error) }
+        : { errorCode: recordCode(error), errorMessage: withheld.message },
+    );
     throw error;
   }
   record("success", rowCount === undefined ? {} : { rowCount: rowCount(result) });

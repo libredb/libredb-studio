@@ -1402,6 +1402,27 @@ describe("POST /api/db/profile under governance", () => {
     });
   });
 
+  test("governance: a profile that fails with an error holding the connection's credential records the withheld sentence", async () => {
+    settings({ "queryLog.statementCapture": "full" });
+    const password = crypto.randomUUID();
+    const provider = createMockProvider({ capabilities: { queryLanguage: "sql" } });
+    (provider.query as ReturnType<typeof mock>).mockImplementation(async () => {
+      throw new QueryError(`relation for ${password} does not exist`, "postgres");
+    });
+    mockGetOrCreateProvider.mockResolvedValueOnce(provider);
+    const body = { connection: { ...governedConnection, password }, tablePath: ["public", "users"], columns: ["id"] };
+
+    const res = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
+
+    expect(res.status).toBe(400);
+    expect(onlyRow()).toMatchObject({
+      status: "error",
+      error_code: "QUERY_ERROR",
+      error_message: withheldErrorMessage("QueryError"),
+    });
+    expect(JSON.stringify(recordedEvents)).not.toContain(password);
+  });
+
   test("governance: refuse mode with a backing-off sink answers 503 AUDIT_UNAVAILABLE before any read and records a refused event", async () => {
     settings({ "queryLog.onSinkFailure": "refuse" });
     sinkState = { ...sinkState, backingOff: true, queued: 3, lastSqlstate: "57P01" };
