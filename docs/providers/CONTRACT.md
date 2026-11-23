@@ -201,6 +201,8 @@ A declaration is not a full manifest: the runtime and compatibility segments des
 ### M-16 (normative): Every per-engine table is accounted for
 
 Every per-engine table in Studio's source, outside the provider directory, is either read into the engine declarations or listed with the contract segment it is planned for or the reason Studio keeps it.
+A per-engine table here is a module-level variable whose type, written on its declaration or in its initializer (a `satisfies` or `as` type, or the type arguments of `new Map<...>()`), is a `Record`, a mapped type or a `Map` keyed by `DatabaseType`.
+A table written as an array of rows, or as an object whose type is only inferred, is outside this clause.
 The list is `tests/unit/db/engine-declarations/inventory.ts`.
 
 - test `tests/unit/db/engine-table-inventory.test.ts` "every per-engine table in src is in the inventory"

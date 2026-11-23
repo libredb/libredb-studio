@@ -3,9 +3,11 @@
  * in the engine declarations, or the inventory names the contract segment they are planned for or the reason core
  * keeps them.
  *
- * A per-engine table is a module-level variable outside the provider directory whose declared type, or whose
- * `satisfies` clause, is a `Record`, a mapped type or a `Map` keyed by `DatabaseType`. A new table that is in neither
- * list fails here by module and name, so the contract cannot fall behind a table without anyone deciding where it goes.
+ * A per-engine table is a module-level variable outside the provider directory whose declared type, a `satisfies` or
+ * `as` type in its initializer, or the type arguments of a `new` expression in its initializer (`new Map<DatabaseType,
+ * T>()`), is a `Record`, a mapped type or a `Map` keyed by `DatabaseType`. A table written as an array of rows or as an
+ * object whose type is only inferred is not one. A new table that is in neither list fails here by module and name, so
+ * the contract cannot fall behind a table without anyone deciding where it goes.
  */
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
@@ -51,7 +53,11 @@ function perEngineTables(files: readonly SourceText[]): Table[] {
       for (const declaration of statement.declarationList.declarations) {
         const types: string[] = declaration.type ? [declaration.type.getText(source)] : [];
         const visit = (node: ts.Node): void => {
-          if (ts.isSatisfiesExpression(node)) types.push(node.type.getText(source));
+          if (ts.isSatisfiesExpression(node) || ts.isAsExpression(node)) types.push(node.type.getText(source));
+          if (ts.isNewExpression(node) && node.typeArguments) {
+            const typeArguments = node.typeArguments.map((argument) => argument.getText(source)).join(", ");
+            types.push(`${node.expression.getText(source)}<${typeArguments}>`);
+          }
           ts.forEachChild(node, visit);
         };
         if (declaration.initializer) visit(declaration.initializer);
@@ -118,6 +124,9 @@ describe("the per-engine table inventory", () => {
           "const OTHER = Object.freeze({} as const satisfies Record<DatabaseType, string>);",
           "const MAPPED: { [T in DatabaseType]: number } = {};",
           "const PLAIN: Record<string, boolean> = {};",
+          "const MEMO = new Map<DatabaseType, number>();",
+          "const CAST = Object.freeze({} as Record<DatabaseType, number>);",
+          "const NAMES = new Map<string, DatabaseType>();",
           "function local() { const INNER: Record<DatabaseType, boolean> = {}; return INNER; }",
         ].join("\n"),
       },
@@ -126,7 +135,9 @@ describe("the per-engine table inventory", () => {
     const plantedTables = perEngineTables(planted);
 
     expect(plantedTables.map(key)).toEqual([
+      "src/lib/planted.ts CAST",
       "src/lib/planted.ts MAPPED",
+      "src/lib/planted.ts MEMO",
       "src/lib/planted.ts OTHER",
       "src/lib/planted.ts ROWS",
     ]);
@@ -136,7 +147,12 @@ describe("the per-engine table inventory", () => {
         { module: "src/lib/planted.ts", name: "GONE", destination: "engine declaration: connection" },
       ]),
     ).toEqual({
-      unlisted: ["src/lib/planted.ts MAPPED", "src/lib/planted.ts OTHER"],
+      unlisted: [
+        "src/lib/planted.ts CAST",
+        "src/lib/planted.ts MAPPED",
+        "src/lib/planted.ts MEMO",
+        "src/lib/planted.ts OTHER",
+      ],
       stale: ["src/lib/planted.ts GONE"],
     });
   });
