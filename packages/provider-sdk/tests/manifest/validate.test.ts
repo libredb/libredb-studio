@@ -122,6 +122,62 @@ function everyGrammarFact(m: Json): void {
   });
 }
 
+/** The SQL writing facts of the fixture's one engine. */
+const sqlWritingOf = (m: Json): Json => m.engines[0].sqlWriting;
+
+/** The type vocabulary of the fixture's one engine's result export. */
+const vocabularyOf = (m: Json): Json => m.engines[0].sqlWriting.export.typeVocabulary;
+
+/** The pointer of the fixture's one engine's SQL writing facts. */
+const SQL_WRITING = "/engines/0/sqlWriting";
+
+/** The pointer of the fixture's one engine's type vocabulary. */
+const VOCABULARY = `${SQL_WRITING}/export/typeVocabulary`;
+
+/** A type pattern of `source` with `flags`. */
+function typePattern(source: string, flags = ""): Json {
+  return { source, flags };
+}
+
+/**
+ * SQL writing facts naming every hook a row may leave out, with a bound edit, every key float64, a standing-alone name,
+ * a bare spelling, own non-finite literals, an INSERT written as a SELECT and a create table key whose note is two
+ * comment lines.
+ */
+function everySqlWritingHook(m: Json): void {
+  const writing = sqlWritingOf(m);
+  Object.assign(writing, {
+    placeholder: "placeholder",
+    temporalLiteral: "temporalLiteral",
+    insertDocuments: "insertDocuments",
+  });
+  Object.assign(writing.inlineEdit, { float64TypeNames: "all", boundEdit: "boundEdit" });
+  Object.assign(writing.export, {
+    standsAlone: ["varchar", "timestamp with time zone"],
+    bareSpelling: [
+      { name: "bit", spelling: "bit(64)" },
+      { name: "time", spelling: "time(6)" },
+    ],
+    nonFinite: { NaN: "'NaN'::FLOAT", Infinity: "CAST('Infinity' AS DOUBLE)", "-Infinity": "-9e999" },
+    insertForm: "select",
+    rewriteDeclared: "rewriteDeclared",
+    declareFromSample: "declareFromSample",
+    typedLiteral: "typedLiteral",
+    columnWriters: "columnWriters",
+    createTableKey: { note: "-- One key.\n-- Confirm it.\n", clause: "createTableKeyClause" },
+  });
+}
+
+/** One missing-key row per member of the part `of` returns, named `<name>.<member>` and refused at `pointer`. */
+function missingRows(
+  name: string,
+  of: (m: Json) => Json,
+  pointer: string,
+  members: readonly string[],
+): (readonly [string, (m: Json) => boolean, string, string])[] {
+  return members.map((member) => [`${name}.${member}`, (m: Json) => delete of(m)[member], pointer, member] as const);
+}
+
 /** A fresh copy of the Kafka-shaped fixture, whose one engine is `kafka`. */
 function kafkaManifest(): Json {
   return JSON.parse(readFileSync(path.join(import.meta.dir, "../fixtures/kafka-manifest.json"), "utf8"));
@@ -365,6 +421,85 @@ describe("schema refusals", () => {
           `${SQL_TEXT}/completion`,
           member,
         ] as const,
+    ),
+    ["sqlWriting", (m: Json) => delete m.engines[0].sqlWriting, "/engines/0", "sqlWriting"],
+    ...missingRows("sqlWriting", sqlWritingOf, SQL_WRITING, [
+      "escapeLiteral",
+      "unescapeLiteral",
+      "quoteIdentifier",
+      "placeholder",
+      "temporalLiteral",
+      "inlineEdit",
+      "export",
+      "insertDocuments",
+    ]),
+    ...missingRows("sqlWriting.inlineEdit", (m) => sqlWritingOf(m).inlineEdit, `${SQL_WRITING}/inlineEdit`, [
+      "instantTypeNames",
+      "exactDecimalTypeNames",
+      "float64TypeNames",
+      "boundEdit",
+    ]),
+    ...missingRows("sqlWriting.export", (m) => sqlWritingOf(m).export, `${SQL_WRITING}/export`, [
+      "ddlTypes",
+      "standsAlone",
+      "bareSpelling",
+      "typeVocabulary",
+      "binaryLiteral",
+      "nonFinite",
+      "insertForm",
+      "rewriteDeclared",
+      "declareFromSample",
+      "typedLiteral",
+      "columnWriters",
+      "createTableKey",
+    ]),
+    ...missingRows(
+      "sqlWriting.export.ddlTypes",
+      (m) => sqlWritingOf(m).export.ddlTypes,
+      `${SQL_WRITING}/export/ddlTypes`,
+      ["text", "integer", "numeric", "boolean", "timestamp", "binary"],
+    ),
+    ...missingRows(
+      "sqlWriting.export.nonFinite",
+      (m) => sqlWritingOf(m).export.nonFinite,
+      `${SQL_WRITING}/export/nonFinite`,
+      ["NaN", "Infinity", "-Infinity"],
+    ),
+    ...missingRows("sqlWriting.export.typeVocabulary", vocabularyOf, VOCABULARY, [
+      "bareTypeFamily",
+      "floatType",
+      "exactNumericType",
+      "numericWrapper",
+    ]),
+    ...missingRows(
+      "sqlWriting.export.typeVocabulary.bareTypeFamily",
+      (m) => vocabularyOf(m).bareTypeFamily,
+      `${VOCABULARY}/bareTypeFamily`,
+      ["text", "integer", "numeric", "boolean", "timestamp", "binary"],
+    ),
+    ...missingRows(
+      "sqlWriting.export.typeVocabulary.floatType",
+      (m) => vocabularyOf(m).floatType,
+      `${VOCABULARY}/floatType`,
+      ["source", "flags"],
+    ),
+    ...missingRows(
+      "sqlWriting.export.bareSpelling entry",
+      (m) => {
+        sqlWritingOf(m).export.bareSpelling = [{ name: "bit", spelling: "bit(64)" }];
+        return sqlWritingOf(m).export.bareSpelling[0];
+      },
+      `${SQL_WRITING}/export/bareSpelling/0`,
+      ["name", "spelling"],
+    ),
+    ...missingRows(
+      "sqlWriting.export.createTableKey",
+      (m) => {
+        everySqlWritingHook(m);
+        return sqlWritingOf(m).export.createTableKey;
+      },
+      `${SQL_WRITING}/export/createTableKey`,
+      ["note", "clause"],
     ),
   ])("a missing %s is refused as missing-key", (_name, change, pointer, key) => {
     expect(refusalsFor(manifest(change))).toEqual([refusal("missing-key", pointer, key)]);
@@ -1039,6 +1174,151 @@ describe("schema refusals", () => {
     ]);
   });
 
+  test("an SQL writing segment with every hook named, a create table key, a bare spelling and every key float64 is admitted", () => {
+    const full = manifest(everySqlWritingHook);
+    const flagged = ["", "i", "u", "iu"].map((flags) =>
+      manifest((m) => {
+        vocabularyOf(m).floatType.flags = flags;
+        vocabularyOf(m).numericWrapper.flags = flags;
+      }),
+    );
+    const longest = manifest((m) => {
+      sqlWritingOf(m).inlineEdit.instantTypeNames = [`d${"a".repeat(63)}`];
+      sqlWritingOf(m).export.standsAlone = [`a${" b".repeat(31)}c`];
+      sqlWritingOf(m).export.ddlTypes.text = `N${"A".repeat(63)}`;
+      sqlWritingOf(m).export.nonFinite.NaN = `'${"x".repeat(61)}'`;
+    });
+
+    expect(refusalsFor(full)).toEqual([]);
+    for (const changed of flagged) expect(refusalsFor(changed)).toEqual([]);
+    expect(refusalsFor(longest)).toEqual([]);
+  });
+
+  test("an inline edit type name that is not one lower-case word is refused as pattern-mismatch", () => {
+    for (const name of ["Timestamp", "timestamp with time zone", "", "1date", "date-time", `d${"a".repeat(64)}`]) {
+      const instant = manifest((m) => (sqlWritingOf(m).inlineEdit.instantTypeNames = [name]));
+      const exact = manifest((m) => (sqlWritingOf(m).inlineEdit.exactDecimalTypeNames = ["numeric", name]));
+
+      expect(refusalsFor(instant)).toEqual([
+        refusal("pattern-mismatch", `${SQL_WRITING}/inlineEdit/instantTypeNames/0`),
+      ]);
+      expect(refusalsFor(exact)).toEqual([
+        refusal("pattern-mismatch", `${SQL_WRITING}/inlineEdit/exactDecimalTypeNames/1`),
+      ]);
+    }
+  });
+
+  test("a declared type name that is not lower-case words separated by single spaces is refused as pattern-mismatch", () => {
+    for (const name of ["Text", "a  b", "decimal(10)", " text", "text ", "a\tb", ""]) {
+      const alone = manifest((m) => (sqlWritingOf(m).export.standsAlone = [name]));
+      const spelled = manifest((m) => (sqlWritingOf(m).export.bareSpelling = [{ name, spelling: "bit(64)" }]));
+      const family = manifest((m) => vocabularyOf(m).bareTypeFamily.boolean.push(name));
+
+      expect(refusalsFor(alone)).toEqual([refusal("pattern-mismatch", `${SQL_WRITING}/export/standsAlone/0`)]);
+      expect(refusalsFor(spelled)).toEqual([refusal("pattern-mismatch", `${SQL_WRITING}/export/bareSpelling/0/name`)]);
+      expect(refusalsFor(family)).toEqual([refusal("pattern-mismatch", `${VOCABULARY}/bareTypeFamily/boolean/0`)]);
+    }
+    const long = manifest((m) => (sqlWritingOf(m).export.standsAlone = ["a".repeat(65)]));
+
+    expect(refusalsFor(long)).toEqual([refusal("out-of-range", `${SQL_WRITING}/export/standsAlone/0`)]);
+  });
+
+  test("a DDL type, a bare spelling or a non-finite literal that would not stay on its line is refused as pattern-mismatch", () => {
+    for (const spelling of ["TEXT;", "TEXT\nDROP TABLE t", "TEXT\r", "1TEXT", "", `T${"A".repeat(64)}`]) {
+      const ddl = manifest((m) => (sqlWritingOf(m).export.ddlTypes.text = spelling));
+      const bare = manifest((m) => (sqlWritingOf(m).export.bareSpelling = [{ name: "bit", spelling }]));
+
+      expect(refusalsFor(ddl)).toEqual([refusal("pattern-mismatch", `${SQL_WRITING}/export/ddlTypes/text`)]);
+      expect(refusalsFor(bare)).toEqual([refusal("pattern-mismatch", `${SQL_WRITING}/export/bareSpelling/0/spelling`)]);
+    }
+    for (const literal of ["NULL\n", " NULL", "NULL ", "NULL ", "", "é", "x".repeat(65)]) {
+      const changed = manifest((m) => (sqlWritingOf(m).export.nonFinite["-Infinity"] = literal));
+
+      expect(refusalsFor(changed)).toEqual([refusal("pattern-mismatch", `${SQL_WRITING}/export/nonFinite/-Infinity`)]);
+    }
+  });
+
+  test("a create table key note that is not whole comment lines is refused as pattern-mismatch", () => {
+    const keyed = (note: string) =>
+      manifest((m) => (sqlWritingOf(m).export.createTableKey = { note, clause: "createTableKeyClause" }));
+    for (const note of ["CREATE TABLE x;\n", "-- a", "-- a\nDROP TABLE t;\n", "-- a\r\n", "-- a b\n", "--a\n", ""]) {
+      expect(refusalsFor(keyed(note))).toEqual([
+        refusal("pattern-mismatch", `${SQL_WRITING}/export/createTableKey/note`),
+      ]);
+    }
+    const long = keyed(`-- ${"a".repeat(1021)}\n`);
+    const longest = keyed(`-- ${"a".repeat(1020)}\n`);
+
+    expect(refusalsFor(long)).toEqual([refusal("out-of-range", `${SQL_WRITING}/export/createTableKey/note`)]);
+    expect(refusalsFor(longest)).toEqual([]);
+  });
+
+  test("a type pattern longer than 512 characters is refused as out-of-range, and one not written with ^ and $ as pattern-mismatch", () => {
+    const long = manifest((m) => (vocabularyOf(m).floatType = typePattern(`^${"a".repeat(511)}$`, "i")));
+    const longest = manifest((m) => (vocabularyOf(m).floatType = typePattern(`^${"a".repeat(510)}$`, "i")));
+
+    expect(refusalsFor(long)).toEqual([refusal("out-of-range", `${VOCABULARY}/floatType/source`)]);
+    expect(refusalsFor(longest)).toEqual([]);
+    for (const source of ["real$", "^real", "real", "$^", "^"]) {
+      const changed = manifest((m) => (vocabularyOf(m).exactNumericType = typePattern(source, "i")));
+      const expected =
+        source.length < 2
+          ? [
+              refusal("out-of-range", `${VOCABULARY}/exactNumericType/source`),
+              refusal("pattern-mismatch", `${VOCABULARY}/exactNumericType/source`),
+            ]
+          : [refusal("pattern-mismatch", `${VOCABULARY}/exactNumericType/source`)];
+
+      expect(refusalsFor(changed)).toEqual(expected);
+    }
+  });
+
+  test("a type pattern whose flags are not none, i, u or iu is refused as value-not-allowed", () => {
+    for (const flags of ["g", "m", "y", "gi", "s", "d", "ui"]) {
+      const changed = manifest((m) => (vocabularyOf(m).numericWrapper.flags = flags));
+
+      expect(refusalsFor(changed)).toEqual([refusal("value-not-allowed", `${VOCABULARY}/numericWrapper/flags`)]);
+    }
+  });
+
+  test("float64 type names that are neither a list nor all are one refusal at the member", () => {
+    for (const names of ["some", true, null, ["Double"], ["double", "double"]]) {
+      const changed = manifest((m) => (sqlWritingOf(m).inlineEdit.float64TypeNames = names));
+
+      expect(refusalsFor(changed)).toEqual([refusal("no-variant", `${SQL_WRITING}/inlineEdit/float64TypeNames`)]);
+    }
+  });
+
+  test("an insert form outside values and select is refused as value-not-allowed", () => {
+    for (const form of ["merge", "VALUES", ""]) {
+      const changed = manifest((m) => (sqlWritingOf(m).export.insertForm = form));
+
+      expect(refusalsFor(changed)).toEqual([refusal("value-not-allowed", `${SQL_WRITING}/export/insertForm`)]);
+    }
+  });
+
+  test("a hook that is not a function name or null is refused, and a type name listed twice in one list as duplicate at the later", () => {
+    const hook = manifest((m) => (sqlWritingOf(m).export.typedLiteral = "Typed literal"));
+    const required = manifest((m) => (sqlWritingOf(m).escapeLiteral = null));
+    const instant = manifest((m) => (sqlWritingOf(m).inlineEdit.instantTypeNames = ["date", "timestamp", "date"]));
+    const alone = manifest((m) => (sqlWritingOf(m).export.standsAlone = ["text", "text"]));
+    const family = manifest((m) => vocabularyOf(m).bareTypeFamily.integer.push("year"));
+    const spelled = manifest(
+      (m) =>
+        (sqlWritingOf(m).export.bareSpelling = [
+          { name: "bit", spelling: "bit(64)" },
+          { name: "bit", spelling: "bit(64)" },
+        ]),
+    );
+
+    expect(refusalsFor(hook)).toEqual([refusal("no-variant", `${SQL_WRITING}/export/typedLiteral`)]);
+    expect(refusalsFor(required)).toEqual([refusal("wrong-type", `${SQL_WRITING}/escapeLiteral`)]);
+    expect(refusalsFor(instant)).toEqual([refusal("duplicate", `${SQL_WRITING}/inlineEdit/instantTypeNames/2`)]);
+    expect(refusalsFor(alone)).toEqual([refusal("duplicate", `${SQL_WRITING}/export/standsAlone/1`)]);
+    expect(refusalsFor(family)).toEqual([refusal("duplicate", `${VOCABULARY}/bareTypeFamily/integer/1`)]);
+    expect(refusalsFor(spelled)).toEqual([refusal("duplicate", `${SQL_WRITING}/export/bareSpelling/1`)]);
+  });
+
   test("several failures are each refused, ordered by pointer", () => {
     const changed = manifest((m) => {
       m.bogus = true;
@@ -1428,6 +1708,93 @@ describe("rules the schema cannot state", () => {
     expect(sentence).not.toContain("Invalid regular expression");
   });
 
+  test("a type pattern that does not compile is refused as pattern-invalid", () => {
+    const source = `^(${randomUUID()}$`;
+    const changed = manifest((m) => (vocabularyOf(m).floatType = typePattern(source, "i")));
+    const notUnicode = manifest((m) => (vocabularyOf(m).exactNumericType = typePattern("^\\p{L$", "u")));
+    const plain = manifest((m) => (vocabularyOf(m).exactNumericType = typePattern("^\\p{L$")));
+    const all = manifest((m) => {
+      vocabularyOf(m).floatType = typePattern("^[$");
+      vocabularyOf(m).exactNumericType = typePattern("^)$");
+      vocabularyOf(m).numericWrapper = typePattern("^(?<a>x)(?<a>y)$");
+    });
+
+    const refusals = refusalsFor(changed);
+    expect(refusals).toEqual([refusal("pattern-invalid", `${VOCABULARY}/floatType/source`)]);
+    expect(refusalsFor(notUnicode)).toEqual([refusal("pattern-invalid", `${VOCABULARY}/exactNumericType/source`)]);
+    expect(refusalsFor(plain)).toEqual([]);
+    expect(refusalsFor(all)).toEqual([
+      refusal("pattern-invalid", `${VOCABULARY}/exactNumericType/source`),
+      refusal("pattern-invalid", `${VOCABULARY}/floatType/source`),
+      refusal("pattern-invalid", `${VOCABULARY}/numericWrapper/source`),
+    ]);
+    const sentence = refusalSentence(refusals[0] as ManifestRefusal);
+    expect(sentence).not.toContain(source);
+    expect(sentence).not.toContain("Invalid regular expression");
+  });
+
+  test("a wrapper pattern that does not capture exactly one group is refused as wrapper-group-count", () => {
+    const wrapped = (source: string, flags = "") =>
+      manifest((m) => (vocabularyOf(m).numericWrapper = typePattern(source, flags)));
+    const pointer = `${VOCABULARY}/numericWrapper/source`;
+
+    for (const source of ["^Nullable\\(.*\\)$", "^(a)(b)$", "^(?:Nullable)\\(.*\\)$", "^((a))$", "^\\(.*\\)$"]) {
+      expect(refusalsFor(wrapped(source))).toEqual([refusal("wrapper-group-count", pointer)]);
+    }
+    for (const source of [
+      "^Nullable\\((.*)\\)$",
+      "^(?:Nullable|LowCardinality)\\((.*)\\)$",
+      "^(?<inner>.*)$",
+      "^(a)|(?:b)$",
+    ]) {
+      expect(refusalsFor(wrapped(source))).toEqual([]);
+    }
+    expect(refusalsFor(wrapped("^Nullable\\((\\p{L}+)\\)$", "u"))).toEqual([]);
+    expect(refusalsFor(wrapped("^(x$"))).toEqual([refusal("pattern-invalid", pointer)]);
+    expect(refusalsFor(wrapped("^(x)$", "i"))).toEqual([]);
+  });
+
+  test("a type name under two families, or a bare spelling named twice, is refused as type-name-duplicate at the later", () => {
+    const families = manifest((m) => {
+      const family = vocabularyOf(m).bareTypeFamily;
+      family.binary.push("varchar");
+      family.boolean.push("decimal");
+      family.timestamp.push("decimal");
+    });
+    const spellings = manifest(
+      (m) =>
+        (sqlWritingOf(m).export.bareSpelling = [
+          { name: "bit", spelling: "bit(64)" },
+          { name: "time", spelling: "time(6)" },
+          { name: "bit", spelling: "bit(1)" },
+        ]),
+    );
+    const apart = manifest((m) => {
+      sqlWritingOf(m).export.bareSpelling = [{ name: "decimal", spelling: "decimal(38, 10)" }];
+      sqlWritingOf(m).export.standsAlone = ["decimal"];
+    });
+    const reordered = manifest((m) => {
+      const { text, integer, numeric, boolean, timestamp, binary } = vocabularyOf(m).bareTypeFamily;
+      vocabularyOf(m).bareTypeFamily = { binary: [...binary, "varchar"], timestamp, boolean, numeric, integer, text };
+    });
+    const timestamp = vocabularyOf(manifest()).bareTypeFamily.timestamp.length;
+    const binary = vocabularyOf(manifest()).bareTypeFamily.binary.length;
+
+    expect(refusalsFor(families)).toEqual([
+      refusal("type-name-duplicate", `${VOCABULARY}/bareTypeFamily/binary/${binary}`),
+      refusal("type-name-duplicate", `${VOCABULARY}/bareTypeFamily/boolean/0`),
+      refusal("type-name-duplicate", `${VOCABULARY}/bareTypeFamily/timestamp/${timestamp}`),
+    ]);
+    expect(refusalsFor(spellings)).toEqual([
+      refusal("type-name-duplicate", `${SQL_WRITING}/export/bareSpelling/2/name`),
+    ]);
+    expect(refusalsFor(apart)).toEqual([]);
+    // The kinds are read in the schema's order, so the name under binary is the later even where binary is written first.
+    expect(refusalsFor(reordered)).toEqual([
+      refusal("type-name-duplicate", `${VOCABULARY}/bareTypeFamily/binary/${binary}`),
+    ]);
+  });
+
   test("a character range whose minimum exceeds its maximum is refused as char-range-inverted", () => {
     const inverted = manifest(
       (m) => (connectionOf(m).fieldRules = [fieldRule("user", { charRange: { min: 9, max: 3, sentence: "s" } })]),
@@ -1723,6 +2090,29 @@ describe("one engine declaration", () => {
     });
   });
 
+  test("an engine declaration's SQL writing facts are held to the rules the schema cannot state, at pointers into it", () => {
+    const declaration = engine();
+    const writing = declaration.sqlWriting;
+    writing.export.typeVocabulary.floatType = typePattern("^(x$", "i");
+    writing.export.typeVocabulary.numericWrapper = typePattern("^x$");
+    writing.export.typeVocabulary.bareTypeFamily.integer.push("money");
+    writing.export.bareSpelling = [
+      { name: "bit", spelling: "bit(64)" },
+      { name: "bit", spelling: "bit(1)" },
+    ];
+
+    expect(validator.validateEngine(declaration)).toEqual({
+      admitted: false,
+      refusals: [
+        refusal("type-name-duplicate", "/sqlWriting/export/bareSpelling/1/name"),
+        // money is the numeric family's last name, and integer comes before numeric in the schema's kind order.
+        refusal("type-name-duplicate", "/sqlWriting/export/typeVocabulary/bareTypeFamily/numeric/5"),
+        refusal("pattern-invalid", "/sqlWriting/export/typeVocabulary/floatType/source"),
+        refusal("wrapper-group-count", "/sqlWriting/export/typeVocabulary/numericWrapper/source"),
+      ],
+    });
+  });
+
   test("an engine declaration's dialog is held to the rules the schema cannot state, at pointers into it", () => {
     const declaration = engine();
     declaration.connection.fields.push("serviceName");
@@ -1787,6 +2177,7 @@ describe("refusals carry no value", () => {
         sqlTextOf(m).redaction = { kind: "sql", nameQuote: "`" };
         sqlTextOf(m).updateTarget.extraSetOperators = ["MINUS"];
         sqlTextOf(m).completion = { formatSegment: "formatSegment", readQuotedQualifier: "readQuotedQualifier" };
+        everySqlWritingHook(m);
       }),
       planted,
     ) as Json;
@@ -1803,6 +2194,37 @@ describe("refusals carry no value", () => {
     expect(JSON.stringify(refusals)).not.toContain(planted);
     expect(JSON.stringify(engineVerdict)).not.toContain(planted);
     for (const item of refusals) expect(refusalSentence(item)).not.toContain(planted);
+  });
+
+  test("no SQL writing rule refusal carries the pattern or the type name it refuses", () => {
+    const name = `t${randomUUID().replaceAll("-", "")}`;
+    const invalid = `^(${randomUUID()}$`;
+    const ungrouped = `^${randomUUID()}$`;
+    const changed = manifest((m) => {
+      vocabularyOf(m).floatType = typePattern(invalid, "i");
+      vocabularyOf(m).numericWrapper = typePattern(ungrouped);
+      vocabularyOf(m).bareTypeFamily.text.push(name);
+      vocabularyOf(m).bareTypeFamily.binary.push(name);
+      sqlWritingOf(m).export.bareSpelling = [
+        { name, spelling: "bit(64)" },
+        { name, spelling: "bit(1)" },
+      ];
+    });
+
+    const refusals = refusalsFor(changed);
+
+    expect(refusals.map((item) => (item as SchemaRefusal).rule)).toEqual([
+      "type-name-duplicate",
+      "type-name-duplicate",
+      "pattern-invalid",
+      "wrapper-group-count",
+    ]);
+    for (const item of refusals) {
+      for (const value of [name, invalid, ungrouped]) {
+        expect(JSON.stringify(item)).not.toContain(value);
+        expect(refusalSentence(item)).not.toContain(value);
+      }
+    }
   });
 
   test("no fence alias refusal carries the alias it refuses", () => {

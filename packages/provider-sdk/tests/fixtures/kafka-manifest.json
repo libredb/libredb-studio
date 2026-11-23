@@ -163,6 +163,102 @@
           "formatSegment": "formatSegment",
           "readQuotedQualifier": "readQuotedQualifier"
         }
+      },
+      "sqlWriting": {
+        "escapeLiteral": "escapeLiteral",
+        "unescapeLiteral": "unescapeLiteral",
+        "quoteIdentifier": "quoteIdentifier",
+        "placeholder": "placeholder",
+        "temporalLiteral": "temporalLiteral",
+        "inlineEdit": {
+          "instantTypeNames": [],
+          "exactDecimalTypeNames": [],
+          "float64TypeNames": "all",
+          "boundEdit": "boundEdit"
+        },
+        "export": {
+          "ddlTypes": {
+            "text": "TEXT",
+            "integer": "BIGINT",
+            "numeric": "DOUBLE PRECISION",
+            "boolean": "BOOLEAN",
+            "timestamp": "TIMESTAMP",
+            "binary": "BLOB"
+          },
+          "standsAlone": ["varchar"],
+          "bareSpelling": [
+            {
+              "name": "timestamp",
+              "spelling": "timestamp(6)"
+            }
+          ],
+          "typeVocabulary": {
+            "bareTypeFamily": {
+              "text": [
+                "character varying",
+                "varchar",
+                "varchar2",
+                "nvarchar",
+                "nvarchar2",
+                "character",
+                "char",
+                "nchar",
+                "text",
+                "ntext",
+                "tinytext",
+                "mediumtext",
+                "longtext",
+                "clob",
+                "nclob",
+                "enum",
+                "set",
+                "uniqueidentifier",
+                "rowid"
+              ],
+              "integer": ["year"],
+              "numeric": ["numeric", "decimal", "number", "binary_double", "binary_float", "money"],
+              "boolean": [],
+              "timestamp": [
+                "timestamp",
+                "timestamp without time zone",
+                "timestamp with time zone",
+                "datetime",
+                "datetime2",
+                "smalldatetime",
+                "datetimeoffset"
+              ],
+              "binary": ["binary", "varbinary", "raw", "blob", "tinyblob", "mediumblob", "longblob", "bytea", "image"]
+            },
+            "floatType": {
+              "source": "^(double( precision)?|real|float\\d*|binary_(double|float))$",
+              "flags": "i"
+            },
+            "exactNumericType": {
+              "source": "^(numeric|decimal|number|decfloat)(\\s*\\(\\s*\\d+\\s*(,\\s*-?\\d+\\s*)?\\))?$",
+              "flags": "i"
+            },
+            "numericWrapper": {
+              "source": "^\\s*(?:Nullable|LowCardinality)\\((.*)\\)\\s*$",
+              "flags": ""
+            }
+          },
+          "binaryLiteral": "binaryLiteral",
+          "nonFinite": {
+            "NaN": "'NaN'",
+            "Infinity": "'Infinity'",
+            "-Infinity": "'-Infinity'"
+          },
+          "insertForm": "select",
+          "rewriteDeclared": null,
+          "declareFromSample": null,
+          "typedLiteral": "typedLiteral",
+          "columnWriters": null,
+          "createTableKey": {
+            "note": "-- A result set carries no key of its own.\n-- Confirm the first column is unique per row.\n",
+            "clause": "createTableKeyClause"
+          }
+        },
+        "insertDocuments": null
       }
     }
   ],

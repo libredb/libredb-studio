@@ -17,6 +17,7 @@ import {
   type BracketRule,
   compileManifestValidator,
   type CredentialWarning as ManifestCredentialWarning,
+  type DdlTypeSpellings,
   type EngineDeclaration,
   type ExplainFormat as ManifestExplainFormat,
   type FieldName,
@@ -26,8 +27,10 @@ import {
   type HashRule,
   type HostPathField as ManifestHostPathField,
   type HostUriScheme as ManifestHostUriScheme,
+  type InsertForm,
   type JwtAccessClaim,
   type MaintenanceOperation as ManifestMaintenanceOperation,
+  type NonFiniteLiterals,
   type PlaceableFieldName,
   type ProcedureBodies,
   type QueryDialect as ManifestQueryDialect,
@@ -36,6 +39,7 @@ import {
   type SelectFieldName,
   type StatementLanguage,
   type StatementRedaction,
+  type TypeFamilies,
 } from "@libredb/provider-sdk/manifest";
 import type {
   BlockCommentGrammar,
@@ -51,6 +55,7 @@ import {
   buildEngineDeclaration,
   buildFieldRules,
   buildSqlText,
+  buildSqlWriting,
   CAPABILITY_READ_ENVIRONMENT,
   declarationDirectoryProblems,
   EDITOR_TABLES,
@@ -114,6 +119,14 @@ import { CURATED_OPERATION_KINDS } from "@/lib/db/operations/descriptors";
 import { refusedFieldRefusal } from "@/lib/db/provider-connection";
 import { SQL_GRAMMAR } from "@/lib/db/sql-grammar";
 import type { CompletionQuoting, SqlGrammarSpec, SqlRedaction, UpdateTargetGrammar } from "@/lib/db/sql-grammar/types";
+import { SQL_WRITING } from "@/lib/db/sql-writing";
+import type {
+  ExportSpec,
+  ExportTypeVocabulary,
+  InferredKind,
+  InlineEditSpec,
+  SqlWritingSpec,
+} from "@/lib/db/sql-writing/types";
 import { MONGODB_SQL_GRAMMAR } from "@/lib/db/providers/document/mongodb/sql-grammar";
 import { REDIS_SQL_GRAMMAR } from "@/lib/db/providers/keyvalue/redis-sql-grammar";
 import { POSTGRES_SQL_GRAMMAR } from "@/lib/db/providers/sql/postgres-sql-grammar";
@@ -141,6 +154,7 @@ import { SPARK_CONNECTION_STRING } from "@/lib/db/providers/sql/spark/connection
 import type { ExplainFormat, MaintenanceOperation, ProviderCapabilities } from "@/lib/db/types";
 import { getExplainStrategy } from "@/lib/explain";
 import { historyMaskOf } from "@/lib/history-mask";
+import type { NonFiniteWord } from "@/lib/non-finite";
 import { importKubeconfig } from "@/lib/kubernetes/kubeconfig-import";
 import { writesUnderGrammar } from "@/lib/sql/dangerous-query";
 import { ALIAS_ENGINES, fenceTagEngine, isQueryFenceTag, QUERY_FENCE_ALIASES } from "@/lib/sql/fence-tags";
@@ -152,6 +166,14 @@ import type { DatabaseConnection, DatabaseType, HostPathField } from "@/lib/type
 import { readCensusCapabilities } from "../../helpers/census-capabilities";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 import { SPAN_STATEMENTS } from "./sql-grammar/fixtures";
+import { ENGINE_MODULES } from "./sql-writing/engine-modules";
+import {
+  DECLARED_SLOTS,
+  type DeclaredSlotName,
+  slotFunction,
+  slotNameAt,
+  valueAt,
+} from "./engine-declarations/declared-slots";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 const SCRIPT = path.join(ROOT, "scripts/generate-engine-declarations.ts");
@@ -336,6 +358,64 @@ function sqlTextNames(d: EngineDeclaration): string[] {
     ...(completion.formatSegment === null ? [] : [completion.formatSegment]),
     ...(completion.readQuotedQualifier === null ? [] : [completion.readQuotedQualifier]),
   ];
+}
+
+/**
+ * Each engine's SQL writing row as its own module exports it, the module found on disk by
+ * tests/unit/db/sql-writing/engine-modules.ts and imported by its absolute path, never through the registry index the
+ * generator reads: every slot the census's slot table names is resolved on this row.
+ */
+const MODULE_SQL_WRITING: ReadonlyMap<string, unknown> = new Map(
+  await Promise.all(
+    ENGINE_MODULES.map(
+      async (engine) =>
+        [engine.id, ((await import(engine.absPath)) as Record<string, unknown>)[engine.exportName]] as const,
+    ),
+  ),
+);
+
+/** The engine module's row of `type`, which the census holds to be the registry's row. */
+function moduleSqlWriting(type: DatabaseType): object {
+  const row = MODULE_SQL_WRITING.get(type);
+  if (typeof row !== "object" || row === null) throw new Error(`${type}: no SQL writing module on disk exports a row`);
+  return row;
+}
+
+/** The kinds a bare type family may be, in the order of the schema's `typeFamilies`. */
+const TYPE_FAMILY_KINDS = Object.keys(SCHEMA.$defs.typeFamilies?.properties ?? {}) as InferredKind[];
+
+/**
+ * The dotted path of every member the schema's `$defs/<name>` states as a function name, a member that refers to a
+ * definition with members of its own followed into it, so the census finds every name a declaration states from the
+ * schema itself.
+ */
+function schemaFunctionPaths(name: string, at = ""): string[] {
+  const definition = SCHEMA.$defs[name] as { properties?: Record<string, SchemaMember> } | undefined;
+  return Object.entries(definition?.properties ?? {}).flatMap(([member, schema]) => {
+    const path = at === "" ? member : `${at}.${member}`;
+    const refs = [schema, ...(schema.oneOf ?? [])].flatMap((branch) =>
+      branch.$ref === undefined ? [] : [branch.$ref.replace("#/$defs/", "")],
+    );
+    if (refs.includes("functionName")) return [path];
+    return refs.flatMap((ref) => schemaFunctionPaths(ref, path));
+  });
+}
+
+/** A member of a schema definition, as far as `schemaFunctionPaths` reads it. */
+interface SchemaMember {
+  readonly $ref?: string;
+  readonly oneOf?: readonly SchemaMember[];
+}
+
+/** The function members of a declaration's `sqlWriting`, by their dotted paths, read off the schema. */
+const SQL_WRITING_FUNCTION_PATHS = schemaFunctionPaths("sqlWriting");
+
+/** Every function name a declaration's `sqlWriting` states, with the dotted path it is stated at. */
+function sqlWritingNames(d: EngineDeclaration): (readonly [path: string, name: string])[] {
+  return SQL_WRITING_FUNCTION_PATHS.flatMap((path) => {
+    const name = valueAt(d.sqlWriting, path);
+    return typeof name === "string" ? [[path, name] as const] : [];
+  });
 }
 
 /**
@@ -679,6 +759,71 @@ describe("the committed declarations", () => {
       source: "\\s+X\\s*$",
       flags: "iu",
     });
+  });
+
+  test("the generator refuses, by name, an SQL writing member it has no place for", () => {
+    const key = `k${crypto.randomUUID().replaceAll("-", "")}`;
+    const row = SQL_WRITING.cassandra;
+    const { export: facts } = row;
+    const tableKey = facts.createTableKey;
+    if (tableKey === undefined) throw new Error("cassandra's SQL writing row declares no create table key");
+    const planted: [SqlWritingSpec, string][] = [
+      [{ ...row, [key]: null }, key],
+      [{ ...row, inlineEdit: { ...row.inlineEdit, [key]: null } }, `inlineEdit.${key}`],
+      [{ ...row, export: { ...facts, [key]: null } }, `export.${key}`],
+      [{ ...row, export: { ...facts, ddlTypes: { ...facts.ddlTypes, [key]: "TEXT" } } }, `export.ddlTypes.${key}`],
+      [{ ...row, export: { ...facts, nonFinite: { ...facts.nonFinite, [key]: "NULL" } } }, `export.nonFinite.${key}`],
+      [
+        { ...row, export: { ...facts, typeVocabulary: { ...facts.typeVocabulary, [key]: /^x$/ } } },
+        `export.typeVocabulary.${key}`,
+      ],
+      [{ ...row, export: { ...facts, createTableKey: { ...tableKey, [key]: null } } }, `export.createTableKey.${key}`],
+    ];
+
+    expect(() => buildSqlWriting("cassandra", row)).not.toThrow();
+    for (const [spec, member] of planted) {
+      expect(() => buildSqlWriting("cassandra", spec)).toThrow(
+        `cassandra: the SQL writing member "${member}" has no place in the engine declaration`,
+      );
+    }
+  });
+
+  test("the generator refuses, by name, a type pattern whose flags the contract does not allow", () => {
+    const row = SQL_WRITING.clickhouse;
+    const withVocabulary = (vocabulary: Partial<ExportTypeVocabulary>): SqlWritingSpec => ({
+      ...row,
+      export: { ...row.export, typeVocabulary: { ...row.export.typeVocabulary, ...vocabulary } },
+    });
+    const refused: [Partial<ExportTypeVocabulary>, string, string][] = [
+      [{ floatType: /x/g }, "floatType", "g"],
+      [{ numericWrapper: /^(x)$/m }, "numericWrapper", "m"],
+      [{ exactNumericType: /^x$/iy }, "exactNumericType", "iy"],
+      [{ floatType: new RegExp("^x$", "is") }, "floatType", "is"],
+    ];
+
+    for (const [vocabulary, member, flags] of refused) {
+      expect(() => buildSqlWriting("clickhouse", withVocabulary(vocabulary))).toThrow(
+        `clickhouse: the type pattern "${member}" has flags "${flags}"; the provider contract allows none, i, u or iu`,
+      );
+    }
+    const allowed = buildSqlWriting("clickhouse", withVocabulary({ floatType: /^x$/u, numericWrapper: /^(x)$/iu }));
+
+    expect(allowed.export.typeVocabulary.floatType).toEqual({ source: "^x$", flags: "u" });
+    expect(allowed.export.typeVocabulary.numericWrapper).toEqual({ source: "^(x)$", flags: "iu" });
+  });
+
+  test("the generator refuses, by name, a bare type family outside the inferred kinds", () => {
+    const row = SQL_WRITING.postgres;
+    const name = `t${crypto.randomUUID().replaceAll("-", "")}`;
+    const family = { ...row.export.typeVocabulary.bareTypeFamily, [name]: "json" } as Record<string, InferredKind>;
+    const spec: SqlWritingSpec = {
+      ...row,
+      export: { ...row.export, typeVocabulary: { ...row.export.typeVocabulary, bareTypeFamily: family } },
+    };
+
+    expect(() => buildSqlWriting("postgres", spec)).toThrow(
+      `postgres: the bare type "${name}" has the family "json", which is not an inferred kind of the provider contract`,
+    );
   });
 
   test("--check names a differing, missing or extra file, and --write writes every declaration and removes a stray one", () => {
@@ -1952,6 +2097,244 @@ describe("the census", () => {
     ).toEqual([]);
   });
 
+  test("the SQL writing modules found on disk are the shipped engines, each exporting its registry row", () => {
+    expect(sorted(ENGINE_MODULES.map(({ id }) => id))).toEqual(sorted(SHIPPED_DATABASE_TYPES));
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => MODULE_SQL_WRITING.get(type) !== SQL_WRITING[type])).toEqual([]);
+  });
+
+  test("sqlWriting.inlineEdit is the row's, each type name set in its order and float64 as all where every key is", () => {
+    expect(
+      differing((type, d) => {
+        const row = SQL_WRITING[type].inlineEdit;
+        const edit = d.sqlWriting.inlineEdit;
+        const float64 =
+          row.float64TypeNames === "all"
+            ? edit.float64TypeNames === "all"
+            : edit.float64TypeNames !== "all" && sameList(edit.float64TypeNames, [...row.float64TypeNames]);
+        return (
+          sameList(edit.instantTypeNames, [...row.instantTypeNames]) &&
+          sameList(edit.exactDecimalTypeNames, [...row.exactDecimalTypeNames]) &&
+          float64
+        );
+      }),
+    ).toEqual([]);
+    // Vacuity: some engine keys every column float64 and some lists its float64 names, and the lists hold more than
+    // one name, so their order is read.
+    const edits = SHIPPED_DATABASE_TYPES.map((type) => declared(type).sqlWriting.inlineEdit);
+    expect(edits.some((edit) => edit.float64TypeNames === "all")).toBe(true);
+    expect(edits.some((edit) => edit.float64TypeNames !== "all" && edit.float64TypeNames.length > 1)).toBe(true);
+    expect(edits.some((edit) => edit.instantTypeNames.length > 1 && edit.exactDecimalTypeNames.length > 1)).toBe(true);
+  });
+
+  test("sqlWriting.export states the row's DDL types, standing-alone names, bare spellings, non-finite literals and insert form", () => {
+    expect(
+      differing((type, d) => {
+        const row = SQL_WRITING[type].export;
+        const facts = d.sqlWriting.export;
+        return (
+          sameValue(facts.ddlTypes, row.ddlTypes) &&
+          sameList(Object.keys(facts.ddlTypes), TYPE_FAMILY_KINDS) &&
+          sameList(facts.standsAlone, [...row.standsAlone]) &&
+          sameList(
+            facts.bareSpelling.map(({ name, spelling }) => `${name}=${spelling}`),
+            Object.entries(row.bareSpelling).map(([name, spelling]) => `${name}=${spelling}`),
+          ) &&
+          sameValue(facts.nonFinite, row.nonFinite) &&
+          facts.insertForm === row.insertForm
+        );
+      }),
+    ).toEqual([]);
+    // Vacuity: some engine states a bare spelling, a standing-alone name, an INSERT written as a SELECT, a DDL type of
+    // its own and a non-finite literal other than NULL.
+    const facts = SHIPPED_DATABASE_TYPES.map((type) => declared(type).sqlWriting.export);
+    expect(facts.some((fact) => fact.bareSpelling.length > 1)).toBe(true);
+    expect(facts.some((fact) => fact.standsAlone.length > 1)).toBe(true);
+    expect(facts.some((fact) => fact.insertForm === "select")).toBe(true);
+    expect(new Set(facts.map((fact) => fact.ddlTypes.numeric)).size).toBeGreaterThan(1);
+    expect(facts.some((fact) => Object.values(fact.nonFinite).some((literal) => literal !== "NULL"))).toBe(true);
+  });
+
+  test("sqlWriting.export.typeVocabulary is the row's, its bare type families grouped by kind and each pattern by its source and flags", () => {
+    const pattern = ({ source, flags }: RegExp) => ({ source, flags });
+    expect(
+      differing((type, d) => {
+        const row = SQL_WRITING[type].export.typeVocabulary;
+        const vocabulary = d.sqlWriting.export.typeVocabulary;
+        const families = vocabulary.bareTypeFamily as Readonly<Record<InferredKind, readonly string[]>>;
+        const readBack = TYPE_FAMILY_KINDS.flatMap((kind) => families[kind].map((name) => [name, kind] as const));
+        return (
+          sameList(Object.keys(families), TYPE_FAMILY_KINDS) &&
+          readBack.length === Object.keys(row.bareTypeFamily).length &&
+          sameValue(Object.fromEntries(readBack), row.bareTypeFamily) &&
+          sameValue(vocabulary.floatType, pattern(row.floatType)) &&
+          sameValue(vocabulary.exactNumericType, pattern(row.exactNumericType)) &&
+          sameValue(vocabulary.numericWrapper, pattern(row.numericWrapper))
+        );
+      }),
+    ).toEqual([]);
+    // Vacuity: the families span several kinds and the patterns carry flags, so neither is read back as a constant.
+    const vocabulary = declared("postgres").sqlWriting.export.typeVocabulary;
+    expect(TYPE_FAMILY_KINDS.filter((kind) => vocabulary.bareTypeFamily[kind].length > 0).length).toBeGreaterThan(3);
+    expect(vocabulary.floatType.flags).toBe("i");
+  });
+
+  test("sqlWriting.export.createTableKey carries the row's note where the row has a key", () => {
+    expect(
+      differing((type, d) => {
+        const row = SQL_WRITING[type].export.createTableKey;
+        const key = d.sqlWriting.export.createTableKey;
+        return row === undefined ? key === null : key !== null && key.note === row.note;
+      }),
+    ).toEqual([]);
+    // Vacuity: some engine has a key the result cannot supply.
+    expect(SHIPPED_DATABASE_TYPES.some((type) => declared(type).sqlWriting.export.createTableKey !== null)).toBe(true);
+  });
+
+  test("every name an SQL writing declaration states is its member's slot, and resolves through the census's slot table to the very function the engine's own module exports there", () => {
+    const slots = DECLARED_SLOTS as Readonly<Record<string, { readonly path: string }>>;
+    expect(
+      SHIPPED_DATABASE_TYPES.flatMap((type) =>
+        sqlWritingNames(declared(type)).flatMap(([path, name]) => {
+          const held = valueAt(SQL_WRITING[type], path);
+          const resolved = Object.hasOwn(slots, name)
+            ? slotFunction(moduleSqlWriting(type), name as DeclaredSlotName)
+            : undefined;
+          const isSlot = slots[name]?.path === path;
+          return isSlot && typeof resolved === "function" && resolved === held ? [] : [`${type}:${path}=${name}`];
+        }),
+      ),
+    ).toEqual([]);
+    // Vacuity: the schema states every slot of the table as a function member, and the declarations name them.
+    expect(sorted(SQL_WRITING_FUNCTION_PATHS)).toEqual(sorted(Object.values(DECLARED_SLOTS).map(({ path }) => path)));
+    expect(SHIPPED_DATABASE_TYPES.flatMap((type) => sqlWritingNames(declared(type))).length).toBeGreaterThan(190);
+  });
+
+  test("every function an SQL writing row holds is named at its slot by its engine's declaration, and no slot the row leaves empty is named", () => {
+    expect(
+      SHIPPED_DATABASE_TYPES.flatMap((type) =>
+        functionPaths(SQL_WRITING[type], "").flatMap((path) => {
+          const name = slotNameAt("SQL_WRITING", path);
+          return name !== undefined && valueAt(declared(type).sqlWriting, path) === name ? [] : [`${type}:${path}`];
+        }),
+      ),
+    ).toEqual([]);
+    expect(
+      SHIPPED_DATABASE_TYPES.flatMap((type) =>
+        sqlWritingNames(declared(type)).flatMap(([path, name]) =>
+          typeof valueAt(SQL_WRITING[type], path) === "function" ? [] : [`${type}:${path}=${name}`],
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  test("every slot of the census's slot table is filled by some shipped SQL writing row", () => {
+    const names = Object.keys(DECLARED_SLOTS) as DeclaredSlotName[];
+
+    expect(
+      names.filter(
+        (name) =>
+          !SHIPPED_DATABASE_TYPES.some((type) => typeof slotFunction(moduleSqlWriting(type), name) === "function"),
+      ),
+    ).toEqual([]);
+    expect(names.length).toBe(13);
+  });
+
+  test("every member of an SQL writing row has its member in the declaration", () => {
+    const specDeclaredAt: Readonly<Record<keyof SqlWritingSpec, string>> = {
+      escapeLiteral: "escapeLiteral",
+      unescapeLiteral: "unescapeLiteral",
+      quoteIdentifier: "quoteIdentifier",
+      placeholder: "placeholder",
+      temporalLiteral: "temporalLiteral",
+      inlineEdit: "inlineEdit",
+      export: "export",
+      insertDocuments: "insertDocuments",
+    };
+    const inlineEditDeclaredAt: Readonly<Record<keyof InlineEditSpec, string>> = {
+      instantTypeNames: "instantTypeNames",
+      exactDecimalTypeNames: "exactDecimalTypeNames",
+      float64TypeNames: "float64TypeNames",
+      boundEdit: "boundEdit",
+    };
+    const exportDeclaredAt: Readonly<Record<keyof ExportSpec, string>> = {
+      ddlTypes: "ddlTypes",
+      standsAlone: "standsAlone",
+      bareSpelling: "bareSpelling",
+      typeVocabulary: "typeVocabulary",
+      binaryLiteral: "binaryLiteral",
+      nonFinite: "nonFinite",
+      insertForm: "insertForm",
+      rewriteDeclared: "rewriteDeclared",
+      declareFromSample: "declareFromSample",
+      typedLiteral: "typedLiteral",
+      columnWriters: "columnWriters",
+      createTableKey: "createTableKey",
+    };
+    const vocabularyDeclaredAt: Readonly<Record<keyof ExportTypeVocabulary, string>> = {
+      bareTypeFamily: "bareTypeFamily",
+      floatType: "floatType",
+      exactNumericType: "exactNumericType",
+      numericWrapper: "numericWrapper",
+    };
+    const kindDeclaredAt: Readonly<Record<InferredKind, string>> = {
+      text: "text",
+      integer: "integer",
+      numeric: "numeric",
+      boolean: "boolean",
+      timestamp: "timestamp",
+      binary: "binary",
+    };
+    const nonFiniteDeclaredAt: Readonly<Record<NonFiniteWord, string>> = {
+      NaN: "NaN",
+      Infinity: "Infinity",
+      "-Infinity": "-Infinity",
+    };
+    const tableKeyDeclaredAt: Readonly<Record<keyof NonNullable<ExportSpec["createTableKey"]>, string>> = {
+      note: "note",
+      clause: "clause",
+    };
+    const unplaced = (row: object, declaredAt: object, at: string) =>
+      Object.keys(row)
+        .filter((member) => !Object.hasOwn(declaredAt, member))
+        .map((member) => `${at}${member}`);
+    const placed = (declaration: object, declaredAt: object) =>
+      Object.values(declaredAt).every((member) => Object.hasOwn(declaration, member));
+
+    expect(
+      SHIPPED_DATABASE_TYPES.flatMap((type) => {
+        const row = SQL_WRITING[type];
+        const facts = row.export;
+        return [
+          ...unplaced(row, specDeclaredAt, ""),
+          ...unplaced(row.inlineEdit, inlineEditDeclaredAt, "inlineEdit."),
+          ...unplaced(facts, exportDeclaredAt, "export."),
+          ...unplaced(facts.ddlTypes, kindDeclaredAt, "export.ddlTypes."),
+          ...unplaced(facts.nonFinite, nonFiniteDeclaredAt, "export.nonFinite."),
+          ...unplaced(facts.typeVocabulary, vocabularyDeclaredAt, "export.typeVocabulary."),
+          ...(facts.createTableKey === undefined
+            ? []
+            : unplaced(facts.createTableKey, tableKeyDeclaredAt, "export.createTableKey.")),
+        ].map((member) => `${type}.${member}`);
+      }),
+    ).toEqual([]);
+    expect(
+      differing((_type, d) => {
+        const { sqlWriting } = d;
+        const facts = sqlWriting.export;
+        return (
+          placed(sqlWriting, specDeclaredAt) &&
+          placed(sqlWriting.inlineEdit, inlineEditDeclaredAt) &&
+          placed(facts, exportDeclaredAt) &&
+          placed(facts.ddlTypes, kindDeclaredAt) &&
+          placed(facts.nonFinite, nonFiniteDeclaredAt) &&
+          placed(facts.typeVocabulary, vocabularyDeclaredAt) &&
+          placed(facts.typeVocabulary.bareTypeFamily, kindDeclaredAt) &&
+          (facts.createTableKey === null || placed(facts.createTableKey, tableKeyDeclaredAt))
+        );
+      }),
+    ).toEqual([]);
+  });
+
   test("id is the file's type-id", () => {
     expect(differing((type, d) => d.id === type)).toEqual([]);
   });
@@ -2020,7 +2403,15 @@ describe("the vocabularies", () => {
       Equal<ScriptFacts["separatorLine"], ScriptGrammar["separatorLine"]>,
       Equal<Exclude<FormatterLanguage, "postgresql">, NonNullable<SqlGrammar["formatterLanguage"]>>,
       Equal<StatementRedaction["kind"], SqlRedaction["kind"]>,
+      Equal<keyof DdlTypeSpellings, InferredKind>,
+      Equal<keyof TypeFamilies, InferredKind>,
+      Equal<keyof NonFiniteLiterals, NonFiniteWord>,
+      Equal<InsertForm, ExportSpec["insertForm"]>,
     ] = [
+      true,
+      true,
+      true,
+      true,
       true,
       true,
       true,
@@ -2044,7 +2435,7 @@ describe("the vocabularies", () => {
       true,
     ];
 
-    expect<readonly boolean[]>(parity).toEqual(Array.from({ length: 21 }, () => true));
+    expect<readonly boolean[]>(parity).toEqual(Array.from({ length: 25 }, () => true));
   });
 
   test("the explain formats, the query dialects and the generic fence tags are Studio's", () => {

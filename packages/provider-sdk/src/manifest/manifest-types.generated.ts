@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "d3d656d48b7abaa4c478351a1bff81f53874bfb9c1c82e6eb5c8dfc3fe685aa3";
+export const MANIFEST_SCHEMA_SHA256 = "88f7719ad7fce172ab26b221dbb9c04d26083abbbf356214eec4ee2cdf970c4e";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -110,6 +110,7 @@ export interface EngineDeclaration {
   readonly agent: Agent;
   readonly editor: Editor;
   readonly sqlText: SqlText;
+  readonly sqlWriting: SqlWriting;
 }
 
 /** external: a database the user already runs, which Studio is pointed at. embedded: a store Studio carries and creates itself. */
@@ -528,7 +529,7 @@ export type StatementLanguage =
   | "sparkplugread"
   | null;
 
-/** The editor facts of the engine that are data: the keyword its open transaction is committed with, the consent card's deadline, the fence tags naming it, the explain format of its plans and its query dialect. The SQL text facts are sqlText, and SQL writing, migration DDL, generators and editor languages are later parts of the contract. */
+/** The editor facts of the engine that are data: the keyword its open transaction is committed with, the consent card's deadline, the fence tags naming it, the explain format of its plans and its query dialect. The SQL text facts are sqlText and the SQL writing facts sqlWriting, and migration DDL, generators and editor languages are later parts of the contract. */
 export interface Editor {
   /** The one word that keeps an open transaction on the engine, which the notice Studio shows when a statement left a transaction open and it was rolled back names: a letter, then up to 31 letters, digits or underscores. */
   readonly commitKeyword: string;
@@ -799,6 +800,133 @@ export interface CompletionReaders {
   /** The pure function that reads, from the text up to a dot, the qualifier before the dot when it is quoted; null where the engine has no such reading. */
   readonly readQuotedQualifier: FunctionName | null;
 }
+
+/** The engine's SQL writing facts: how a generated statement spells a literal, a name, a bind and a temporal literal for the engine, what its inline edit and its result export read, and how a document insert is written where its console text is a request. One member per member of Studio's SQL writing row, each function named by the slot it fills. escapeLiteral: the pure function that writes a text as the engine's whole quoted literal. unescapeLiteral: the pure function that reads a whole literal back to its text. quoteIdentifier: the pure function that quotes a name so its closing quote cannot end it. binaryLiteral, under export, writes bytes as a literal the engine accepts. */
+export interface SqlWriting {
+  readonly escapeLiteral: FunctionName;
+  readonly unescapeLiteral: FunctionName;
+  readonly quoteIdentifier: FunctionName;
+  /** The pure function that writes the bind placeholder for a 1-based position; null where the engine quotes each value instead of binding it. */
+  readonly placeholder: FunctionName | null;
+  /** The pure function that writes a date or timestamp text as the engine's literal of that kind, or answers none to quote it; null where every such text is quoted. */
+  readonly temporalLiteral: FunctionName | null;
+  readonly inlineEdit: InlineEditFacts;
+  readonly export: ExportFacts;
+  /** The pure function that writes the request inserting documents at an address, for an engine whose console text is a request rather than a statement; null where the test data generator writes an INSERT. */
+  readonly insertDocuments: FunctionName | null;
+}
+
+/** What the inline edit reads for the engine: the type names that make a key column date-time, exact decimal and float64, each read against the first word of the column's declared type, lower-cased and with its wrappers off. */
+export interface InlineEditFacts {
+  readonly instantTypeNames: KeyTypeNames;
+  readonly exactDecimalTypeNames: KeyTypeNames;
+  readonly float64TypeNames: Float64TypeNames;
+  /** The pure function that writes the SET right-hand side of one edit that is not NULL, or answers none to bind the text unchanged; null where every edit binds its text unchanged. */
+  readonly boundEdit: FunctionName | null;
+}
+
+/** Type names a key column's declared type is compared with, each once; an empty list where no name makes a key column of that kind. */
+export type KeyTypeNames = readonly KeyTypeName[];
+
+/** One type name as the inline edit compares it: a lower-case letter, then up to 63 lower-case letters, digits or underscores, since the inline edit reads only the lower-cased first word of a declared type. */
+export type KeyTypeName = string;
+
+/** The type names that make a key column float64, or all where every key column of the engine is float64. */
+export type Float64TypeNames = KeyTypeNames | "all";
+
+/** What the result export writes for the engine: the CREATE TABLE type of each inferred kind, the declared type names kept as they are, the bare names written with a spelling of their own, the patterns a declared type is read with, the literal NaN and the infinities are written as, and whether an INSERT takes VALUES or SELECT. A hook the engine lacks is null. */
+export interface ExportFacts {
+  readonly ddlTypes: DdlTypeSpellings;
+  /** The bare declared type names the engine stands behind, written through as they are; empty where every bare name is re-spelled from its family. */
+  readonly standsAlone: readonly DeclaredTypeName[];
+  /** The bare declared type names the engine narrows below the value its driver hands back, each with the spelling written instead, each name once; empty where the engine narrows none. */
+  readonly bareSpelling: readonly BareSpellingEntry[];
+  readonly typeVocabulary: TypeVocabulary;
+  readonly binaryLiteral: FunctionName;
+  readonly nonFinite: NonFiniteLiterals;
+  readonly insertForm: InsertForm;
+  /** The pure function that rewrites a declared type before a CREATE TABLE takes it; null where no type is rewritten. */
+  readonly rewriteDeclared: FunctionName | null;
+  /** The pure function that answers a column's type from its declared type and its first value, or none to leave it; null where no type is read from a value. */
+  readonly declareFromSample: FunctionName | null;
+  /** The pure function that writes a cell from its column's declared type, or none to leave it to the generic writer; null where the generic writer writes every cell. */
+  readonly typedLiteral: FunctionName | null;
+  /** The pure function that prepares one literal writer per column from the declared types; null where no column has a writer of its own. */
+  readonly columnWriters: FunctionName | null;
+  readonly createTableKey: CreateTableKey;
+}
+
+/** How the engine spells each inferred kind of column in a CREATE TABLE. */
+export interface DdlTypeSpellings {
+  readonly text: SqlTypeSpelling;
+  readonly integer: SqlTypeSpelling;
+  readonly numeric: SqlTypeSpelling;
+  readonly boolean: SqlTypeSpelling;
+  readonly timestamp: SqlTypeSpelling;
+  readonly binary: SqlTypeSpelling;
+}
+
+/** An SQL type as a CREATE TABLE writes it, verbatim: a letter, then up to 63 letters, digits, underscores, spaces, parentheses or commas, so it never ends its line or its statement. */
+export type SqlTypeSpelling = string;
+
+/** A bare declared type name as the export compares it: lower-case words separated by one space, each a lower-case letter, then lower-case letters, digits or underscores, since the export reads a declared type trimmed, lower-cased and with each run of whitespace one space. */
+export type DeclaredTypeName = string;
+
+/** A bare declared type name and the spelling the export writes in its place. */
+export interface BareSpellingEntry {
+  readonly name: DeclaredTypeName;
+  readonly spelling: SqlTypeSpelling;
+}
+
+/** The patterns the export reads a declared type with for the engine. bareTypeFamily: the bare names whose parameters the result does not carry, grouped by the inferred kind each is re-spelled from. floatType: a declared type that holds a binary float, tested against the trimmed type. exactNumericType: an exact numeric type that can hold an infinity, tested against the trimmed type. numericWrapper: a wrapper that changes nothing about whether a column holds numbers, whose one capturing group is the wrapped type. */
+export interface TypeVocabulary {
+  readonly bareTypeFamily: TypeFamilies;
+  readonly floatType: TypePattern;
+  readonly exactNumericType: TypePattern;
+  readonly numericWrapper: TypePattern;
+}
+
+/** The bare declared type names of each inferred kind, each name under one kind only; an empty list where no name is of that kind. */
+export interface TypeFamilies {
+  readonly text: DeclaredTypeNames;
+  readonly integer: DeclaredTypeNames;
+  readonly numeric: DeclaredTypeNames;
+  readonly boolean: DeclaredTypeNames;
+  readonly timestamp: DeclaredTypeNames;
+  readonly binary: DeclaredTypeNames;
+}
+
+/** Bare declared type names, each once. */
+export type DeclaredTypeNames = readonly DeclaredTypeName[];
+
+/** A pattern a declared type is read with: its source and flags as JavaScript's RegExp reads them, which must compile. The source opens with ^ and closes with $, since it is tested against a whole type. */
+export interface TypePattern {
+  readonly source: string;
+  /** No flag, i, u or iu: a flag that remembers where a match stopped, or that changes where $ matches, is not one a type pattern takes. */
+  readonly flags: "" | "i" | "u" | "iu";
+}
+
+/** How the export writes NaN and the infinities into a float column, each as a literal the engine reads back; NULL where the engine cannot store the value. */
+export interface NonFiniteLiterals {
+  readonly NaN: NonFiniteLiteral;
+  readonly Infinity: NonFiniteLiteral;
+  readonly "-Infinity": NonFiniteLiteral;
+}
+
+/** A literal an INSERT writes verbatim: printable ASCII, 1 to 64 characters, with no space at either end and no line break. */
+export type NonFiniteLiteral = string;
+
+/** How an INSERT is written. values: INSERT INTO t (...) VALUES (...). select: INSERT INTO t (...) SELECT .... */
+export type InsertForm = "values" | "select";
+
+/** A key a CREATE TABLE needs that a result cannot supply: the note written above the statement, and the pure function, clause, that writes the key's definition from the quoted column names; null where the engine takes a table without one. */
+export type CreateTableKey = {
+  readonly note: CommentLines;
+  readonly clause: FunctionName;
+} | null;
+
+/** Whole SQL comment lines, each -- and a space, then text with no line break, then a line feed, up to 1024 characters in all, so the text written above a statement never becomes one. */
+export type CommentLines = string;
 
 /** One product the package was measured against: the engine that serves it, the versions claimed and the versions tested. */
 export interface CompatibilityEntry {
