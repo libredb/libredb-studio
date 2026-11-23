@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "d9ff2edabf2b72f3688bc3034a0a21ed21dafd8e3cc028a082186026898328b9";
+export const MANIFEST_SCHEMA_SHA256 = "cc9a96ef7bee794026deeccc1cf124a13f0f7612cd4f544ad8c9c57247fa702f";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -119,8 +119,8 @@ export interface Connection {
   readonly fields: readonly FieldName[];
   readonly defaults: ConnectionDefaults;
   readonly seedOnly: SeedOnly;
-  /** The fields the provider receives only to refuse a value in them by name; none of them is one of the engine's fields. */
-  readonly refused: readonly FieldName[];
+  /** The fields the engine refuses by name, each with the sentence core refuses a connection that sets it with, in the order core checks them: core refuses such a connection before any provider is built, so no provider receives one. None of them is one of the engine's fields, and each is listed once. */
+  readonly refused: readonly RefusedField[];
   readonly connectionString: ConnectionStringOffer;
   readonly tls: FacetOffer;
   readonly sshTunnel: SshTunnelOffered | SshTunnelRefused;
@@ -136,6 +136,12 @@ export interface Connection {
   readonly hostUriSchemes: readonly HostUriScheme[];
   /** The credentials the engine warns about, read by the connection dialog and at seed load, in the order they are read. */
   readonly credentialWarnings: readonly CredentialWarning[];
+}
+
+/** A field the engine refuses by name, and the sentence core refuses a connection that sets it with, which names the field and never its value. */
+export interface RefusedField {
+  readonly field: FieldName;
+  readonly refusal: string;
 }
 
 /** How the connection dialog presents the engine's fields. Each list holds at most one entry per field, each naming a field the engine takes; a field with no entry keeps the dialog's own word. */

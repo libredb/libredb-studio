@@ -17,9 +17,18 @@
     },
     "seedOnly": null,
     "refused": [
-      "database",
-      "namespaces",
-      "tlsServerName"
+      {
+        "field": "database",
+        "refusal": "RabbitMQ connections take no Database: Studio discovers the virtual hosts from the management API. Clear the field; nothing was sent."
+      },
+      {
+        "field": "namespaces",
+        "refusal": "RabbitMQ connections take no Namespaces: Studio discovers the virtual hosts from the management API. Clear the field; nothing was sent."
+      },
+      {
+        "field": "tlsServerName",
+        "refusal": "RabbitMQ connections take no TLS server name: the certificate is always checked against Host. Clear the field; nothing was sent."
+      }
     ],
     "connectionString": {
       "accepted": false,

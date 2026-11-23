@@ -17,7 +17,10 @@
     },
     "seedOnly": null,
     "refused": [
-      "user"
+      {
+        "field": "user",
+        "refusal": "Kubernetes connections take no user name: basic authentication is refused. Clear User, and put a bearer token under Token or a client certificate under SSL / TLS. Nothing was sent."
+      }
     ],
     "connectionString": {
       "accepted": false,

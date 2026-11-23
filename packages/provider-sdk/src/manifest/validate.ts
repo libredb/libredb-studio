@@ -34,6 +34,7 @@ export const SCHEMA_REFUSAL_RULES = Object.freeze([
   "compatibility-engine-undeclared",
   "compatibility-endpoint-untested",
   "refused-field-declared",
+  "refused-field-duplicate",
   "seed-only-field-undeclared",
   "host-path-field-undeclared",
   "field-undeclared",
@@ -305,8 +306,12 @@ function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies:
   const refusals: SchemaRefusal[] = [];
   const { connection } = engine;
   const fields = new Set<string>(connection.fields);
-  connection.refused.forEach((field, index) => {
-    if (fields.has(field)) refusals.push(schemaRefusal("refused-field-declared", `${at}/connection/refused/${index}`));
+  const refusedSeen = new Set<string>();
+  connection.refused.forEach(({ field }, index) => {
+    const pointer = `${at}/connection/refused/${index}`;
+    if (fields.has(field)) refusals.push(schemaRefusal("refused-field-declared", pointer));
+    if (refusedSeen.has(field)) refusals.push(schemaRefusal("refused-field-duplicate", pointer));
+    refusedSeen.add(field);
   });
   const seedOnly = new Set<string>(connection.seedOnly?.fields ?? []);
   connection.seedOnly?.fields.forEach((field, index) => {
@@ -464,6 +469,8 @@ export function refusalSentence(refusal: ManifestRefusal): string {
       return `The range endpoint at ${at} is not one of the entry's tested versions.`;
     case "refused-field-declared":
       return `The refused field at ${at} is also one of the engine's connection fields.`;
+    case "refused-field-duplicate":
+      return `The refused field at ${at} is already refused by an earlier entry.`;
     case "seed-only-field-undeclared":
       return `The seed-only field at ${at} is neither one of the engine's connection fields nor a seed-only field name.`;
     case "host-path-field-undeclared":

@@ -302,6 +302,41 @@ describe("schema refusals", () => {
     expect(refusalsFor(changed)).toEqual([refusal("no-variant", "/engines/0/connection/credentialWarnings/0")]);
   });
 
+  test("refused entries, each a field with its sentence, are admitted", () => {
+    const changed = manifest(
+      (m) =>
+        (connectionOf(m).refused = [
+          { field: "apiKeyId", refusal: randomUUID() },
+          { field: "apiKeySecret", refusal: "x".repeat(2000) },
+        ]),
+    );
+
+    expect(refusalsFor(changed)).toEqual([]);
+  });
+
+  test("a refused entry without its sentence is refused as missing-key", () => {
+    const changed = manifest((m) => (connectionOf(m).refused = [{ field: "region" }]));
+
+    expect(refusalsFor(changed)).toEqual([refusal("missing-key", "/engines/0/connection/refused/0", "refusal")]);
+  });
+
+  test.each([
+    ["an empty sentence", ""],
+    ["a sentence longer than 2000 characters", "x".repeat(2001)],
+  ])("a refused entry with %s is refused as out-of-range", (_name, sentence) => {
+    const changed = manifest((m) => (connectionOf(m).refused = [{ field: "region", refusal: sentence }]));
+
+    expect(refusalsFor(changed)).toEqual([refusal("out-of-range", "/engines/0/connection/refused/0/refusal")]);
+  });
+
+  test("a refused entry with a third key is refused as unknown-key", () => {
+    const changed = manifest(
+      (m) => (connectionOf(m).refused = [{ field: "region", refusal: randomUUID(), value: randomUUID() }]),
+    );
+
+    expect(refusalsFor(changed)).toEqual([refusal("unknown-key", "/engines/0/connection/refused/0", "value")]);
+  });
+
   test("several failures are each refused, ordered by pointer", () => {
     const changed = manifest((m) => {
       m.bogus = true;
@@ -358,9 +393,28 @@ describe("rules the schema cannot state", () => {
   });
 
   test("a refused field that is also declared is refused as refused-field-declared", () => {
-    const changed = manifest((m) => (m.engines[0].connection.refused = ["region", "user"]));
+    const changed = manifest(
+      (m) =>
+        (m.engines[0].connection.refused = [
+          { field: "region", refusal: randomUUID() },
+          { field: "user", refusal: randomUUID() },
+        ]),
+    );
 
     expect(refusalsFor(changed)).toEqual([refusal("refused-field-declared", "/engines/0/connection/refused/1")]);
+  });
+
+  test("two refused entries naming one field are refused as refused-field-duplicate at the second", () => {
+    const changed = manifest(
+      (m) =>
+        (m.engines[0].connection.refused = [
+          { field: "region", refusal: randomUUID() },
+          { field: "apiKeyId", refusal: randomUUID() },
+          { field: "region", refusal: randomUUID() },
+        ]),
+    );
+
+    expect(refusalsFor(changed)).toEqual([refusal("refused-field-duplicate", "/engines/0/connection/refused/2")]);
   });
 
   test("a seed-only field neither declared nor a seed-only name is refused as seed-only-field-undeclared", () => {
@@ -719,7 +773,7 @@ describe("one engine declaration", () => {
 
   test("an engine declaration is held to the rules of its own connection", () => {
     const declaration = engine();
-    declaration.connection.refused = ["password"];
+    declaration.connection.refused = [{ field: "password", refusal: randomUUID() }];
 
     expect(validator.validateEngine(declaration)).toEqual({
       admitted: false,

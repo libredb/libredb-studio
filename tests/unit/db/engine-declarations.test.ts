@@ -68,9 +68,10 @@ import { CREDENTIAL_WARNINGS, type CredentialWarning } from "@/lib/db/credential
 import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import { MONITORING_PANELS } from "@/lib/db/engine-facets/types";
 import { CURATED_OPERATION_KINDS } from "@/lib/db/operations/descriptors";
+import { refusedFieldRefusal } from "@/lib/db/provider-connection";
 import type { MaintenanceOperation } from "@/lib/db/types";
 import { CONNECTION_FIELDS as FIELD_CLASSES } from "@/lib/storage/secret-fields";
-import type { DatabaseType, HostPathField } from "@/lib/types";
+import type { DatabaseConnection, DatabaseType, HostPathField } from "@/lib/types";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 const SCRIPT = path.join(ROOT, "scripts/generate-engine-declarations.ts");
@@ -258,10 +259,37 @@ describe("the census", () => {
     expect(SHIPPED_DATABASE_TYPES.filter((type) => declared(type).connection.seedOnly !== null).length).toBe(4);
   });
 
-  test("connection.refused is the engine's REFUSED_CONNECTION_FIELDS row", () => {
+  test("connection.refused is the engine's REFUSED_CONNECTION_FIELDS row, each field with its sentence, in the order core checks them", () => {
+    const entries = (d: EngineDeclaration) => d.connection.refused.map(({ field, refusal }) => [field, refusal]);
+
+    expect(differing((type, d) => sameValue(entries(d), Object.entries(REFUSED_CONNECTION_FIELDS[type])))).toEqual([]);
     expect(
-      differing((type, d) => sameList(d.connection.refused, Object.keys(REFUSED_CONNECTION_FIELDS[type]))),
-    ).toEqual([]);
+      SHIPPED_DATABASE_TYPES.filter((type) => declared(type).connection.refused.length > 0).length,
+    ).toBeGreaterThan(0);
+  });
+
+  test("core refuses a connection that sets a refused field with the sentence its declaration states", () => {
+    const connection = (type: DatabaseType, fields: readonly string[]): DatabaseConnection =>
+      ({
+        id: `census-${type}`,
+        name: `census-${type}`,
+        type,
+        ...Object.fromEntries(fields.map((field) => [field, crypto.randomUUID()])),
+      }) as DatabaseConnection;
+    const matches = (type: DatabaseType, d: EngineDeclaration): boolean => {
+      const { refused } = d.connection;
+      const fields = refused.map((entry) => entry.field);
+      return (
+        refused.every(
+          ({ field, refusal }) =>
+            typeof refusal === "string" && refusedFieldRefusal(connection(type, [field])) === refusal,
+        ) &&
+        refusedFieldRefusal(connection(type, fields)) === refused[0]?.refusal &&
+        refusedFieldRefusal(connection(type, [])) === undefined
+      );
+    };
+
+    expect(differing(matches)).toEqual([]);
   });
 
   test("connection.hostPathFields is the engine's HOST_PATH_FIELDS row", () => {

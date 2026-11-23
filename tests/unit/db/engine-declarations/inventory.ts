@@ -97,7 +97,7 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
   {
     module: CONNECTION_FIELDS_MODULE,
     name: "REFUSED_CONNECTION_FIELDS",
-    destination: "engine declaration: connection.refused",
+    destination: "engine declaration: connection.refused, each field with its sentence",
   },
   {
     module: CONNECTION_FIELDS_MODULE,

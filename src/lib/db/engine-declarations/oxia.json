@@ -16,7 +16,10 @@
     },
     "seedOnly": null,
     "refused": [
-      "user"
+      {
+        "field": "user",
+        "refusal": "Oxia has no user name: clear User. A bearer token goes under Token."
+      }
     ],
     "connectionString": {
       "accepted": false,

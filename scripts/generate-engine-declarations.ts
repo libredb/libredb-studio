@@ -176,7 +176,10 @@ export function buildEngineDeclaration(type: DatabaseType): EngineDeclaration {
               projectionRefusal:
                 seedOnly.projectionRefusal === null ? null : seedOnly.projectionRefusal("{id}", "{type}"),
             },
-      refused: Object.keys(REFUSED_CONNECTION_FIELDS[type]).map((field) => fieldName(field, type)),
+      refused: Object.entries(REFUSED_CONNECTION_FIELDS[type]).map(([field, refusal]) => ({
+        field: fieldName(field, type),
+        refusal,
+      })),
       connectionString: { accepted: CONNECTION_STRING_ACCEPTED[type], dialogOffersUri: CONNECTION_FORM_URI_MODE[type] },
       tls: offersSslPanel(type) ? "offered" : "not-offered",
       sshTunnel: sshRefusal === null ? { offered: true } : { offered: false, refusal: sshRefusal },

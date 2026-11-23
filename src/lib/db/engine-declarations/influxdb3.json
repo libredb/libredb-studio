@@ -15,7 +15,10 @@
     },
     "seedOnly": null,
     "refused": [
-      "user"
+      {
+        "field": "user",
+        "refusal": "InfluxDB 3 has no user name: clear User and put the token in Token."
+      }
     ],
     "connectionString": {
       "accepted": false,

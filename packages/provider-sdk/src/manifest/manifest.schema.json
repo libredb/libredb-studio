@@ -269,12 +269,11 @@
           "$ref": "#/$defs/seedOnly"
         },
         "refused": {
-          "description": "The fields the provider receives only to refuse a value in them by name; none of them is one of the engine's fields.",
+          "description": "The fields the engine refuses by name, each with the sentence core refuses a connection that sets it with, in the order core checks them: core refuses such a connection before any provider is built, so no provider receives one. None of them is one of the engine's fields, and each is listed once.",
           "type": "array",
           "items": {
-            "$ref": "#/$defs/fieldName"
-          },
-          "uniqueItems": true
+            "$ref": "#/$defs/refusedField"
+          }
         },
         "connectionString": {
           "$ref": "#/$defs/connectionStringOffer"
@@ -346,6 +345,22 @@
         "hostUriSchemes",
         "credentialWarnings"
       ],
+      "additionalProperties": false
+    },
+    "refusedField": {
+      "description": "A field the engine refuses by name, and the sentence core refuses a connection that sets it with, which names the field and never its value.",
+      "type": "object",
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/fieldName"
+        },
+        "refusal": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": ["field", "refusal"],
       "additionalProperties": false
     },
     "connectionDialog": {

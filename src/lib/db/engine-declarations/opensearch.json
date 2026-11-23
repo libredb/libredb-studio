@@ -14,8 +14,14 @@
     },
     "seedOnly": null,
     "refused": [
-      "apiKeyId",
-      "apiKeySecret"
+      {
+        "field": "apiKeyId",
+        "refusal": "OpenSearch does not accept API key authentication. Elasticsearch publishes Authorization: ApiKey; nothing here has measured whether OpenSearch's security plugin accepts that scheme, so the pair is refused rather than sent as Basic or as a guessed header."
+      },
+      {
+        "field": "apiKeySecret",
+        "refusal": "OpenSearch does not accept API key authentication. Elasticsearch publishes Authorization: ApiKey; nothing here has measured whether OpenSearch's security plugin accepts that scheme, so the pair is refused rather than sent as Basic or as a guessed header."
+      }
     ],
     "connectionString": {
       "accepted": false,

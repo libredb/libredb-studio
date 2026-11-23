@@ -15,7 +15,10 @@
     },
     "seedOnly": null,
     "refused": [
-      "user"
+      {
+        "field": "user",
+        "refusal": "Apache Spark connections take no user: every Studio request uses one fixed Spark Connect user id, and Token is the credential. Clear User. Nothing was sent."
+      }
     ],
     "connectionString": {
       "accepted": false,
