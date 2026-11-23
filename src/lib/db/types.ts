@@ -930,8 +930,9 @@ export interface KindRowAction {
 
 /**
  * The shapes an engine takes the agent's own credential in, `ProviderCapabilities.agentCredential`, read from
- * `agentUser` and `agentPassword`. An agent credential beside a connection string is refused in every form, because
- * the connection string's own credential would win.
+ * `agentUser` and `agentPassword`. The factory reads each engine's form from `AGENT_CREDENTIAL_FORM` in
+ * `src/lib/db/connection-fields.ts`, where null is the absent form. An agent credential beside a connection string is
+ * refused in every form, because the connection string's own credential would win.
  *
  * - absent: `agentUser` and `agentPassword`, both required.
  * - `"token"`: `agentPassword` alone, as the bearer token the agent's acquisitions send instead of the connection's
@@ -1396,13 +1397,16 @@ export interface ProviderCapabilities {
    * is already open, keyed by the RESOLVED FILE PATH rather than the connection id: the
    * second opener is usually a different connection record pointing at the same file.
    *
+   * Studio never reads this declaration where it decides: the provider cache key and the
+   * single-writer borrow read `SINGLE_WRITER_FILE` in `src/lib/db/compatibility.ts`,
+   * Studio's review record of the claim, which `tests/unit/db/compatibility.test.ts` holds
+   * equal to this declaration for every shipped type-id (docs/providers/CONTRACT.md,
+   * clause M-57). Absent reads as "this engine serves as many handles as we open", the
+   * ordinary case, and the one every client-server engine is in.
+   *
    * Optional for the same published-interface reason as `supportsInlineRowEdit`
    * (`src/exports/types.ts`): a required field added after the fact stops every
-   * external implementer compiling. Consumers therefore gate on `=== true`, so an
-   * absent flag reads as "this engine serves as many handles as we open" - the
-   * ordinary case, and the one every client-server engine is in. Reading
-   * `connection.type` at the consumer was the alternative and is forbidden by
-   * `CLAUDE.md`.
+   * external implementer compiling.
    */
   singleWriterFile?: boolean;
   /**
@@ -1428,10 +1432,12 @@ export interface ProviderCapabilities {
   readonly writeReach?: Readonly<Record<WritePath, WritePathReach>>;
   /**
    * How this engine takes the agent's own credential, one of the `AgentCredentialForm` forms; absent is the
-   * user-and-password form. `acquireExecutionProfileProvider` in `src/lib/db/factory.ts` reads it from the provider
-   * it builds and refuses a credential in a shape the form does not take before that provider connects, so no
-   * `connection.type` branch is needed (forbidden by `CLAUDE.md`), and
-   * `tests/unit/db/agent-credential-capability.test.ts` pins which engines declare which form.
+   * user-and-password form. Studio never reads this declaration where it decides: every agent acquisition
+   * (`acquireExecutionProfileProvider` in `src/lib/db/factory.ts`) reads the engine's row of `AGENT_CREDENTIAL_FORM`
+   * in `src/lib/db/connection-fields.ts`, Studio's review record of the claim, and refuses a credential in a shape
+   * the form does not take before the provider connects (docs/providers/CONTRACT.md, clause M-57).
+   * `tests/unit/db/agent-credential-capability.test.ts` holds that record equal to this declaration for every shipped
+   * type-id.
    *
    * Optional for the same published-interface reason as `supportsInlineRowEdit`.
    */

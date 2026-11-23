@@ -118,6 +118,12 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     destination: claim("connection.agentCredential"),
   },
   {
+    module: CONNECTION_FIELDS_MODULE,
+    name: "AGENT_CREDENTIAL_FORM",
+    destination:
+      "planned segment: the provider's policy facts, with the agent credential form an engine's provider requests, which this table grants as Studio's review record of the claim",
+  },
+  {
     module: "src/lib/db/connect-budget.ts",
     name: "CONNECT_BUDGET",
     destination: "engine declaration: connection.connectBudgetMs",

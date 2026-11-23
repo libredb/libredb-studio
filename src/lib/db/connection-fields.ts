@@ -16,6 +16,7 @@
  * is a module of its own.
  */
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
+import type { AgentCredentialForm } from "./types";
 
 /** One addressing field, named by the same list that decides whether a save writes it. */
 export type ConnectionField =
@@ -741,10 +742,11 @@ export const REFUSED_CONNECTION_FIELDS: Readonly<Record<DatabaseType, RefusedFie
 
 /**
  * What an agent credential on a seed of one engine is: `agentUser` and `agentPassword`, the principal every agent
- * execution profile and every MCP call on that seed signs in as. It mirrors the provider's `AgentCredentialForm`
- * (src/lib/db/types.ts), which the factory checks again at open: "pair" is a user and a password together, the form a
- * provider that declares none takes; "dedicated-pair" is the same with a user other than the connection's own; and
- * "secret" is `agentPassword` alone, a bearer token or a service-account key. A null row takes none.
+ * execution profile and every MCP call on that seed signs in as. It is a coarser view of the engine's
+ * `AGENT_CREDENTIAL_FORM` row (below), which the factory checks again at open: "pair" is a user and a password
+ * together, the form a null `AGENT_CREDENTIAL_FORM` row takes; "dedicated-pair" is the same with a user other than the
+ * connection's own; and "secret" is `agentPassword` alone, a bearer token or a service-account key. A null row takes
+ * none.
  */
 export interface SeedAgentCredential {
   readonly form: "pair" | "dedicated-pair" | "secret";
@@ -762,10 +764,10 @@ const DEDICATED_PAIR: SeedAgentCredential = Object.freeze({ form: "dedicated-pai
  * `tests/unit/db/agent-credential-capability.test.ts` holds each row to its provider's declared form and to the
  * engine's `CONNECTION_FIELDS` row, so a provider that changes its form fails there until its row here follows.
  *
- * A null row where the provider declares no form is a row the factory would ask for a user and a password, on an
- * engine that has no field to put one in (no password: SQLite, DuckDB, MTConnect, Modbus, Sparkplug B), signs in with
- * a secret and no user (Spark, Oxia, Firestore, SNMP), or would not be narrowed by one (Snowflake, whose key-pair
- * sign-in ignores the password and whose statements all run as the connection's role).
+ * A null row where the engine's `AGENT_CREDENTIAL_FORM` row is null too is a row the factory would ask for a user and
+ * a password, on an engine that has no field to put one in (SQLite, DuckDB, MTConnect, Modbus and Sparkplug B have no
+ * password field), signs in with a secret and no user (Spark, Oxia, Firestore, SNMP), or would not be narrowed by one
+ * (Snowflake, whose key-pair sign-in ignores the password and whose statements all run as the connection's role).
  *
  * This table is Studio's review record of the claim an engine declaration requests at `connection.agentCredential`, and
  * every gate reads it: the declaration states each shipped engine's request as this table's row, and the table is never
@@ -818,4 +820,74 @@ export const SEED_AGENT_CREDENTIAL: Readonly<Record<DatabaseType, SeedAgentCrede
   snmp: null,
   sparkplug: null,
   libredb: null,
+});
+
+/**
+ * The form each engine takes the agent's own credential in, one of the `AgentCredentialForm` forms (src/lib/db/types.ts).
+ * A null row is the user-and-password pair: reading it, the factory asks the engine for `agentUser` and
+ * `agentPassword` together. It is the row of an engine whose provider declares no form.
+ *
+ * Every agent acquisition reads its row (`assertAgentCredentialForm` in src/lib/db/factory.ts) before the provider it
+ * built connects, and no gate reads the provider's own `agentCredential`. A hand-written literal and never computed
+ * from the providers, because this module imports none; `tests/unit/db/agent-credential-capability.test.ts` holds each
+ * row equal to its provider's declaration, so a provider that changes its form fails there until its row here follows.
+ *
+ * It is not `SEED_AGENT_CREDENTIAL`, which is coarser: its "secret" covers both secret-only forms, and its null covers
+ * both `"none"` and engines that take the pair at open but no agent credential on a seed.
+ *
+ * This table is Studio's review record of the claim a provider declares at `ProviderCapabilities.agentCredential`
+ * (docs/providers/CONTRACT.md, clause M-57).
+ */
+export const AGENT_CREDENTIAL_FORM: Readonly<Record<DatabaseType, AgentCredentialForm | null>> = Object.freeze({
+  postgres: null,
+  mysql: null,
+  sqlite: null,
+  duckdb: null,
+  // The agent's bearer token for the database, sent instead of the connection's own.
+  libsql: "token",
+  mongodb: null,
+  redis: null,
+  oracle: null,
+  db2: null,
+  mssql: null,
+  couchbase: null,
+  clickhouse: null,
+  druid: null,
+  elasticsearch: null,
+  opensearch: null,
+  trino: null,
+  cassandra: null,
+  prometheus: null,
+  kafka: null,
+  etcd: null,
+  neo4j: null,
+  milvus: null,
+  // The agent's API key or JWT, sent instead of the connection's own.
+  qdrant: "token",
+  // The agent's API key, sent instead of the connection's own.
+  weaviate: "token",
+  influxdb: null,
+  // The agent's token, sent as the bearer credential instead of the connection's own.
+  influxdb3: "token",
+  oxia: null,
+  databend: null,
+  // A service-account key JSON, from which the provider mints its own token at the scope it asks for.
+  bigquery: "service-account-key",
+  snowflake: null,
+  spark: null,
+  // An access key ID and secret of its own: an agent key ID equal to the connection's names the same key.
+  s3: "dedicated-user",
+  // The agent's bearer token, whose RBAC bounds what the agent reads.
+  kubernetes: "token",
+  mqtt: null,
+  firestore: null,
+  rabbitmq: null,
+  opcua: null,
+  mtconnect: null,
+  modbus: null,
+  netconf: null,
+  snmp: null,
+  sparkplug: null,
+  // An embedded store has no principal to sign an agent in as.
+  libredb: "none",
 });

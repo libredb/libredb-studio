@@ -627,6 +627,10 @@ export const REFUSES_DENIED_FILE_ACCESS: Readonly<Record<DatabaseType, string | 
  * answering, and `tests/unit/db/compatibility.test.ts` holds every entry equal to what that engine's
  * provider declares. Frozen like the records above it.
  *
+ * The single-writer borrow reads it too (`getOrCreateProvider` registers a file only for an engine this table names),
+ * though it decides once a provider is built: the built provider's own `singleWriterFile` reaches no gate
+ * (docs/providers/CONTRACT.md, clause M-57).
+ *
  * This table is Studio's review record of the claim an engine declaration requests at `policy.singleWriterFile`, and
  * every gate reads it: the declaration states each shipped engine's request as this table's row, and the table is never
  * a projection of declarations (docs/providers/CONTRACT.md, clause M-52).

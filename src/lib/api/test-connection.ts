@@ -138,7 +138,7 @@ export async function testConnection(
     if (deadline.aborted) throw expired();
     /*
       The handle already holding this connection's file, on an engine that admits
-      only one (`ProviderCapabilities.singleWriterFile`; #498).
+      only one (`SINGLE_WRITER_FILE` in src/lib/db/compatibility.ts; #498).
 
       Building a second provider there does not test the connection - it is refused
       by the exclusive lock the LIVE connection holds, and the route reported that

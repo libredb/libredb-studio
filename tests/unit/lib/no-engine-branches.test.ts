@@ -103,6 +103,7 @@ export const REGISTRIES: readonly Listed[] = [
     "SEED_ONLY_FIELDS",
     "REFUSED_CONNECTION_FIELDS",
     "SEED_AGENT_CREDENTIAL",
+    "AGENT_CREDENTIAL_FORM",
   ].map((declaration) => ({
     path: "src/lib/db/connection-fields.ts",
     declaration,
