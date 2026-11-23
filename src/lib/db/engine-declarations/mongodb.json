@@ -101,5 +101,14 @@
   },
   "agent": {
     "statementLanguage": "mongo"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "mongo"
+    ],
+    "explainFormat": null,
+    "dialect": null
   }
 }

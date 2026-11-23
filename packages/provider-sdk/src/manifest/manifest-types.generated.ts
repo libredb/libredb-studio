@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "2d09cb7757d8ba6f681a5879207e75fca9f04567e139797c604af239592a69ef";
+export const MANIFEST_SCHEMA_SHA256 = "0ccab5e28af89ee7c608de85e4894029f5c2747c7c8298f521acacddf9085d8b";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -108,6 +108,7 @@ export interface EngineDeclaration {
   readonly connection: Connection;
   readonly facets: Facets;
   readonly agent: Agent;
+  readonly editor: Editor;
 }
 
 /** external: a database the user already runs, which Studio is pointed at. embedded: a store Studio carries and creates itself. */
@@ -525,6 +526,89 @@ export type StatementLanguage =
   | "mqttread"
   | "sparkplugread"
   | null;
+
+/** The editor facts of the engine that are data: the keyword its open transaction is committed with, the consent card's deadline, the fence tags naming it, the explain format of its plans and its query dialect. The engine's SQL grammar, SQL writing, migration DDL, generators and editor languages are later parts of the contract. */
+export interface Editor {
+  /** The one word that keeps an open transaction on the engine, which the notice Studio shows when a statement left a transaction open and it was rolled back names: a letter, then up to 31 letters, digits or underscores. */
+  readonly commitKeyword: string;
+  readonly consentDeadline: ConsentDeadline;
+  /** The fence tags, other than the engine's own id, that name the engine: a fenced block a model writes under one of them holds a statement for this engine. The engine's id is always a fence tag naming it, so it is never listed here, and a generic fence tag names no engine, so it is never listed either. */
+  readonly fenceAliases: readonly FenceTag[];
+  readonly explainFormat: ExplainFormat;
+  readonly dialect: QueryDialectRow;
+}
+
+/** The chip and the sentence the agent's consent card shows for an engine whose long read ends differently from the others, or null where the engine has none. chip: the label in the card's bounds row. sentence: the paragraph under the card's box. */
+export type ConsentDeadline = {
+  readonly chip: string;
+  readonly sentence: string;
+} | null;
+
+/** A markdown fence tag as Studio reads it, lower-cased: a lower-case letter, then up to 31 lower-case letters or digits, the form of an engine id. */
+export type FenceTag = string;
+
+/** The fence tags of a query language several engines speak: a block under one of them holds a query and names no engine, so no engine declares one as an alias. */
+export type GenericFenceTag = "sql" | "cql";
+
+/** The format of the engine's query plans, one of Studio's explain strategies, as the provider declares it for a connection it has not connected; Studio reads a plan with that format's strategy. Null where the engine offers no explain. */
+export type ExplainFormat =
+  | "postgres-json"
+  | "postgres-text"
+  | "postgres-text-analyze"
+  | "mysql-json"
+  | "mysql-text"
+  | "sqlite-queryplan"
+  | "couchbase-json"
+  | "clickhouse-json"
+  | "druid-native"
+  | "trino-json"
+  | "duckdb-json"
+  | "databend-text"
+  | "bigquery-dryrun"
+  | "snowflake-json"
+  | "firestore-explain"
+  | "spark-text"
+  | null;
+
+/** A query dialect Studio's editor reads: a grammar of JSON or of a command line that is neither MongoDB's JSON nor SQL. */
+export type QueryDialect =
+  | "libredb"
+  | "redis"
+  | "kafka"
+  | "etcd"
+  | "milvus"
+  | "qdrant"
+  | "weaviate"
+  | "oxia"
+  | "s3"
+  | "mqtt"
+  | "firestore"
+  | "rabbitmq"
+  | "kubectl"
+  | "opcua"
+  | "mtconnect"
+  | "modbus"
+  | "netconf"
+  | "snmp"
+  | "sparkplug";
+
+/** The engine's query dialect and what the editor offers for it, or null where the engine declares no dialect. name: the dialect, under whose name the editor opens the engine's tabs. offersColumnProfiling: whether Profile is offered. offersCodeGeneration: whether the code generator is offered. offersCountQuery: whether Generate Count Query is offered. offersSqlExport: whether the result export menu offers SQL INSERT statements and CREATE TABLE DDL. historyMask: the flags whose values query history never keeps. */
+export type QueryDialectRow = {
+  readonly name: QueryDialect;
+  readonly offersColumnProfiling: boolean;
+  readonly offersCodeGeneration: boolean;
+  readonly offersCountQuery: boolean;
+  readonly offersSqlExport: boolean;
+  readonly historyMask: HistoryMask;
+} | null;
+
+/** The command-line flags whose values query history never keeps, each once, or null where history keeps a statement as typed. */
+export type HistoryMask = {
+  readonly credentialFlags: readonly CredentialFlag[];
+} | null;
+
+/** A long command-line option: two hyphens, a lower-case letter, then up to 62 lower-case letters, digits or hyphens. */
+export type CredentialFlag = string;
 
 /** One product the package was measured against: the engine that serves it, the versions claimed and the versions tested. */
 export interface CompatibilityEntry {

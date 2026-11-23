@@ -92,6 +92,20 @@
       },
       "agent": {
         "statementLanguage": "kafkaread"
+      },
+      "editor": {
+        "commitKeyword": "COMMIT",
+        "consentDeadline": null,
+        "fenceAliases": ["kafkaread"],
+        "explainFormat": null,
+        "dialect": {
+          "name": "kafka",
+          "offersColumnProfiling": false,
+          "offersCodeGeneration": false,
+          "offersCountQuery": false,
+          "offersSqlExport": true,
+          "historyMask": null
+        }
       }
     }
   ],

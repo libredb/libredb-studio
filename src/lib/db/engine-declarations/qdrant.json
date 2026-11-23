@@ -104,5 +104,21 @@
   },
   "agent": {
     "statementLanguage": "qdrantapi"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "qdrantapi"
+    ],
+    "explainFormat": null,
+    "dialect": {
+      "name": "qdrant",
+      "offersColumnProfiling": false,
+      "offersCodeGeneration": false,
+      "offersCountQuery": false,
+      "offersSqlExport": false,
+      "historyMask": null
+    }
   }
 }

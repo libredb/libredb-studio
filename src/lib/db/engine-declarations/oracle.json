@@ -94,5 +94,14 @@
   },
   "agent": {
     "statementLanguage": "sql"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "plsql"
+    ],
+    "explainFormat": null,
+    "dialect": null
   }
 }

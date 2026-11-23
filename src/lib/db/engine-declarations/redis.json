@@ -79,5 +79,21 @@
   },
   "agent": {
     "statementLanguage": "rediscli"
+  },
+  "editor": {
+    "commitKeyword": "EXEC",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "rediscli"
+    ],
+    "explainFormat": null,
+    "dialect": {
+      "name": "redis",
+      "offersColumnProfiling": false,
+      "offersCodeGeneration": true,
+      "offersCountQuery": false,
+      "offersSqlExport": true,
+      "historyMask": null
+    }
   }
 }

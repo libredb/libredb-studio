@@ -62,6 +62,26 @@ const connectionOf = (m: Json): Json => m.engines[0].connection;
 /** The connection string of the fixture's one engine. */
 const connectionStringOf = (m: Json): Json => m.engines[0].connection.connectionString;
 
+/** The editor facts of the fixture's one engine. */
+const editorOf = (m: Json): Json => m.engines[0].editor;
+
+/** A fresh copy of the Kafka-shaped fixture, whose one engine is `kafka`. */
+function kafkaManifest(): Json {
+  return JSON.parse(readFileSync(path.join(import.meta.dir, "../fixtures/kafka-manifest.json"), "utf8"));
+}
+
+/** A dialect row named `kubectl` that offers nothing and masks `flags`. */
+function dialect(flags: unknown[] | null = ["--token"]): Json {
+  return {
+    name: "kubectl",
+    offersColumnProfiling: false,
+    offersCodeGeneration: false,
+    offersCountQuery: false,
+    offersSqlExport: true,
+    historyMask: flags === null ? null : { credentialFlags: flags },
+  };
+}
+
 /** A paste reader named `pasteReader`, not a catch-all, naming `formats`. */
 function paste(formats: unknown[] = ["exampledb://"]): Json {
   return { reader: "pasteReader", catchAll: false, formats };
@@ -106,6 +126,18 @@ describe("schema refusals", () => {
     ["in an engine", (m: Json) => (m.engines[0].bogus = 1), "/engines/0"],
     ["in a connection", (m: Json) => (m.engines[0].connection.bogus = 1), "/engines/0/connection"],
     ["in a native package", (m: Json) => (m.runtime.native = [{ ...NATIVE, bogus: 1 }]), "/runtime/native/0"],
+    ["in an editor", (m: Json) => (editorOf(m).bogus = 1), "/engines/0/editor"],
+    [
+      "in a consent deadline",
+      (m: Json) => (editorOf(m).consentDeadline = { chip: "c", sentence: "s", bogus: 1 }),
+      "/engines/0/editor/consentDeadline",
+    ],
+    ["in a dialect row", (m: Json) => (editorOf(m).dialect = { ...dialect(), bogus: 1 }), "/engines/0/editor/dialect"],
+    [
+      "in a history mask",
+      (m: Json) => (editorOf(m).dialect = { ...dialect(), historyMask: { credentialFlags: ["--token"], bogus: 1 } }),
+      "/engines/0/editor/dialect/historyMask",
+    ],
   ])("an unknown key %s is refused as unknown-key at its pointer", (_where, change, pointer) => {
     expect(refusalsFor(manifest(change))).toEqual([refusal("unknown-key", pointer, "bogus")]);
   });
@@ -164,6 +196,47 @@ describe("schema refusals", () => {
       (m: Json) => delete m.engines[0].facets.monitoring.storage,
       "/engines/0/facets/monitoring",
       "storage",
+    ],
+    ["editor", (m: Json) => delete m.engines[0].editor, "/engines/0", "editor"],
+    ...["commitKeyword", "consentDeadline", "fenceAliases", "explainFormat", "dialect"].map(
+      (member) => [`editor.${member}`, (m: Json) => delete editorOf(m)[member], "/engines/0/editor", member] as const,
+    ),
+    ...["chip", "sentence"].map(
+      (member) =>
+        [
+          `editor.consentDeadline.${member}`,
+          (m: Json) => {
+            editorOf(m).consentDeadline = { chip: "c", sentence: "s" };
+            delete editorOf(m).consentDeadline[member];
+          },
+          "/engines/0/editor/consentDeadline",
+          member,
+        ] as const,
+    ),
+    ...[
+      "name",
+      "offersColumnProfiling",
+      "offersCodeGeneration",
+      "offersCountQuery",
+      "offersSqlExport",
+      "historyMask",
+    ].map(
+      (member) =>
+        [
+          `editor.dialect.${member}`,
+          (m: Json) => {
+            editorOf(m).dialect = dialect();
+            delete editorOf(m).dialect[member];
+          },
+          "/engines/0/editor/dialect",
+          member,
+        ] as const,
+    ),
+    [
+      "editor.dialect.historyMask.credentialFlags",
+      (m: Json) => (editorOf(m).dialect = { ...dialect(), historyMask: {} }),
+      "/engines/0/editor/dialect/historyMask",
+      "credentialFlags",
     ],
   ])("a missing %s is refused as missing-key", (_name, change, pointer, key) => {
     expect(refusalsFor(manifest(change))).toEqual([refusal("missing-key", pointer, key)]);
@@ -607,6 +680,92 @@ describe("schema refusals", () => {
     ]);
   });
 
+  test("an editor with a consent deadline, fence aliases, an explain format and a dialect with a history mask is admitted", () => {
+    const full = manifest((m) => {
+      m.engines[0].editor = {
+        commitKeyword: "EXEC",
+        consentDeadline: { chip: "x".repeat(128), sentence: "y".repeat(2000) },
+        fenceAliases: ["exampleql", `q${"a".repeat(31)}`],
+        explainFormat: "postgres-json",
+        dialect: dialect(["--token", "--client-key", `--${"a".repeat(63)}`]),
+      };
+    });
+
+    expect(refusalsFor(manifest())).toEqual([]);
+    expect(refusalsFor(kafkaManifest())).toEqual([]);
+    expect(refusalsFor(full)).toEqual([]);
+  });
+
+  test("a commit keyword that is not one word is refused as pattern-mismatch", () => {
+    for (const keyword of ["COMMIT WORK", "1COMMIT", "", "A".repeat(33), "COMMIT;"]) {
+      const changed = manifest((m) => (editorOf(m).commitKeyword = keyword));
+
+      expect(refusalsFor(changed)).toEqual([refusal("pattern-mismatch", "/engines/0/editor/commitKeyword")]);
+    }
+    const longest = manifest((m) => (editorOf(m).commitKeyword = `C${"o_1".repeat(10)}T`));
+
+    expect(refusalsFor(longest)).toEqual([]);
+  });
+
+  test("a consent deadline chip longer than 128 characters or a sentence longer than 2000 is refused as out-of-range", () => {
+    const longChip = manifest((m) => (editorOf(m).consentDeadline = { chip: "x".repeat(129), sentence: "s" }));
+    const longSentence = manifest((m) => (editorOf(m).consentDeadline = { chip: "c", sentence: "y".repeat(2001) }));
+    const empty = manifest((m) => (editorOf(m).consentDeadline = { chip: "", sentence: "" }));
+
+    expect(refusalsFor(longChip)).toEqual([refusal("out-of-range", "/engines/0/editor/consentDeadline/chip")]);
+    expect(refusalsFor(longSentence)).toEqual([refusal("out-of-range", "/engines/0/editor/consentDeadline/sentence")]);
+    expect(refusalsFor(empty)).toEqual([
+      refusal("out-of-range", "/engines/0/editor/consentDeadline/chip"),
+      refusal("out-of-range", "/engines/0/editor/consentDeadline/sentence"),
+    ]);
+  });
+
+  test("a fence alias that is not a lower-case tag is refused as pattern-mismatch, one listed twice as duplicate, and a seventeenth as too-many", () => {
+    for (const alias of ["PgSQL", "pg-sql", "1sql", "", `q${"a".repeat(32)}`]) {
+      const changed = manifest((m) => (editorOf(m).fenceAliases = [alias]));
+
+      expect(refusalsFor(changed)).toEqual([refusal("pattern-mismatch", "/engines/0/editor/fenceAliases/0")]);
+    }
+    const twice = manifest((m) => (editorOf(m).fenceAliases = ["exampleql", "exampleql"]));
+    const many = manifest((m) => (editorOf(m).fenceAliases = Array.from({ length: 17 }, (_, index) => `q${index}`)));
+
+    expect(refusalsFor(twice)).toEqual([refusal("duplicate", "/engines/0/editor/fenceAliases/1")]);
+    expect(refusalsFor(many)).toEqual([refusal("too-many", "/engines/0/editor/fenceAliases")]);
+  });
+
+  test("an explain format outside Studio's strategies is one refusal at the editor's explain format", () => {
+    const changed = manifest((m) => (editorOf(m).explainFormat = "oracle-xplan"));
+
+    expect(refusalsFor(changed)).toEqual([refusal("value-not-allowed", "/engines/0/editor/explainFormat")]);
+  });
+
+  test("a dialect outside Studio's dialects is refused as value-not-allowed", () => {
+    const changed = manifest((m) => (editorOf(m).dialect = { ...dialect(), name: "graphql" }));
+
+    expect(refusalsFor(changed)).toEqual([refusal("value-not-allowed", "/engines/0/editor/dialect/name")]);
+  });
+
+  test("a history mask with no flag is refused as too-few, and a flag that is not a long option as pattern-mismatch", () => {
+    const none = manifest((m) => (editorOf(m).dialect = dialect([])));
+    const many = manifest(
+      (m) => (editorOf(m).dialect = dialect(Array.from({ length: 33 }, (_, index) => `--f${index}`))),
+    );
+    const twice = manifest((m) => (editorOf(m).dialect = dialect(["--token", "--token"])));
+
+    expect(refusalsFor(none)).toEqual([refusal("too-few", "/engines/0/editor/dialect/historyMask/credentialFlags")]);
+    expect(refusalsFor(many)).toEqual([refusal("too-many", "/engines/0/editor/dialect/historyMask/credentialFlags")]);
+    expect(refusalsFor(twice)).toEqual([
+      refusal("duplicate", "/engines/0/editor/dialect/historyMask/credentialFlags/1"),
+    ]);
+    for (const flag of ["-t", "--Token", "token", "--", `--${"a".repeat(64)}`]) {
+      const changed = manifest((m) => (editorOf(m).dialect = dialect([flag])));
+
+      expect(refusalsFor(changed)).toEqual([
+        refusal("pattern-mismatch", "/engines/0/editor/dialect/historyMask/credentialFlags/0"),
+      ]);
+    }
+  });
+
   test("several failures are each refused, ordered by pointer", () => {
     const changed = manifest((m) => {
       m.bogus = true;
@@ -1031,6 +1190,63 @@ describe("rules the schema cannot state", () => {
     expect(refusalsFor(withPaste)).toEqual([]);
   });
 
+  /** The fixture with a second engine, `otherdb`, and its compatibility entry. */
+  const withSecond = (m: Json) => {
+    m.engines.push(second(m));
+    m.compatibility.push({ ...structuredClone(m.compatibility[0]), engine: "otherdb" });
+  };
+
+  test("a fence alias equal to an engine id of the manifest is refused as fence-alias-engine-id", () => {
+    const own = kafkaManifest();
+    own.engines[0].editor.fenceAliases = ["kafkaread", "kafka"];
+    const earlier = manifest((m) => {
+      withSecond(m);
+      m.engines[1].editor.fenceAliases = ["exampledb"];
+    });
+    const later = manifest((m) => {
+      withSecond(m);
+      m.engines[0].editor.fenceAliases = ["otherdb"];
+    });
+
+    expect(refusalsFor(own)).toEqual([refusal("fence-alias-engine-id", "/engines/0/editor/fenceAliases/1")]);
+    expect(validator.validateEngine(own.engines[0])).toEqual({
+      admitted: false,
+      refusals: [refusal("fence-alias-engine-id", "/editor/fenceAliases/1")],
+    });
+    expect(refusalsFor(earlier)).toEqual([refusal("fence-alias-engine-id", "/engines/1/editor/fenceAliases/0")]);
+    expect(refusalsFor(later)).toEqual([refusal("fence-alias-engine-id", "/engines/0/editor/fenceAliases/0")]);
+    expect(validator.validateEngine(later.engines[0]).admitted).toBe(true);
+  });
+
+  test("a fence alias an earlier engine declares is refused as fence-alias-duplicate at the later", () => {
+    const changed = manifest((m) => {
+      withSecond(m);
+      m.engines[0].editor.fenceAliases = ["exampleql"];
+      m.engines[1].editor.fenceAliases = ["otherql", "exampleql"];
+    });
+    const distinct = manifest((m) => {
+      withSecond(m);
+      m.engines[0].editor.fenceAliases = ["exampleql"];
+      m.engines[1].editor.fenceAliases = ["otherql"];
+    });
+
+    expect(refusalsFor(changed)).toEqual([refusal("fence-alias-duplicate", "/engines/1/editor/fenceAliases/1")]);
+    expect(validator.validateEngine(changed.engines[1]).admitted).toBe(true);
+    expect(refusalsFor(distinct)).toEqual([]);
+  });
+
+  test("a generic fence tag declared as an alias is refused as fence-alias-generic", () => {
+    for (const tag of ["sql", "cql"]) {
+      const changed = manifest((m) => (editorOf(m).fenceAliases = ["exampleql", tag]));
+
+      expect(refusalsFor(changed)).toEqual([refusal("fence-alias-generic", "/engines/0/editor/fenceAliases/1")]);
+      expect(validator.validateEngine(changed.engines[0])).toEqual({
+        admitted: false,
+        refusals: [refusal("fence-alias-generic", "/editor/fenceAliases/1")],
+      });
+    }
+  });
+
   test("a sign-in shaped like Snowflake's is admitted", () => {
     expect(refusalsFor(manifest(signInShaped))).toEqual([]);
   });
@@ -1191,6 +1407,19 @@ describe("one engine declaration", () => {
     });
   });
 
+  test("an engine declaration's fence aliases are held to the rules the schema cannot state, at pointers into it", () => {
+    const declaration = engine();
+    declaration.editor.fenceAliases = ["exampledb", "sql", "exampleql"];
+
+    expect(validator.validateEngine(declaration)).toEqual({
+      admitted: false,
+      refusals: [
+        refusal("fence-alias-engine-id", "/editor/fenceAliases/0"),
+        refusal("fence-alias-generic", "/editor/fenceAliases/1"),
+      ],
+    });
+  });
+
   test("an engine declaration's dialog is held to the rules the schema cannot state, at pointers into it", () => {
     const declaration = engine();
     declaration.connection.fields.push("serviceName");
@@ -1244,6 +1473,13 @@ describe("refusals carry no value", () => {
           paste: { reader: "pasteReader", catchAll: true, formats: ["exampledb://"] },
           seedCheck: "seedCheck",
         });
+        m.engines[0].editor = {
+          commitKeyword: "EXEC",
+          consentDeadline: { chip: "Killed at its timeout", sentence: "The read ends at the timeout." },
+          fenceAliases: ["exampleql", "sql"],
+          explainFormat: "postgres-json",
+          dialect: dialect(["--token"]),
+        };
       }),
       planted,
     ) as Json;
@@ -1260,6 +1496,32 @@ describe("refusals carry no value", () => {
     expect(JSON.stringify(refusals)).not.toContain(planted);
     expect(JSON.stringify(engineVerdict)).not.toContain(planted);
     for (const item of refusals) expect(refusalSentence(item)).not.toContain(planted);
+  });
+
+  test("no fence alias refusal carries the alias it refuses", () => {
+    const tag = `q${randomUUID().replaceAll("-", "").slice(0, 24)}`;
+    const keyword = `K${randomUUID().replaceAll("-", "").slice(0, 24)}`;
+    const changed = manifest((m) => {
+      m.engines.push({ ...structuredClone(m.engines[0]), id: tag });
+      m.compatibility.push({ ...structuredClone(m.compatibility[0]), engine: tag });
+      m.engines[0].editor.commitKeyword = keyword;
+      m.engines[0].editor.fenceAliases = [tag, "sql"];
+      m.engines[1].editor.fenceAliases = [tag];
+    });
+
+    const refusals = refusalsFor(changed);
+
+    expect(refusals).toEqual([
+      refusal("fence-alias-engine-id", "/engines/0/editor/fenceAliases/0"),
+      refusal("fence-alias-generic", "/engines/0/editor/fenceAliases/1"),
+      refusal("fence-alias-duplicate", "/engines/1/editor/fenceAliases/0"),
+      refusal("fence-alias-engine-id", "/engines/1/editor/fenceAliases/0"),
+    ]);
+    for (const item of refusals) {
+      expect(JSON.stringify(item)).not.toContain(tag);
+      expect(refusalSentence(item)).not.toContain(tag);
+      expect(refusalSentence(item)).not.toContain(keyword);
+    }
   });
 });
 

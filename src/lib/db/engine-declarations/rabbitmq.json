@@ -168,5 +168,21 @@
   },
   "agent": {
     "statementLanguage": "rabbitread"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "rabbitread"
+    ],
+    "explainFormat": null,
+    "dialect": {
+      "name": "rabbitmq",
+      "offersColumnProfiling": false,
+      "offersCodeGeneration": false,
+      "offersCountQuery": false,
+      "offersSqlExport": false,
+      "historyMask": null
+    }
   }
 }

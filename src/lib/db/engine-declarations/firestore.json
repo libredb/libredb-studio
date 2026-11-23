@@ -93,5 +93,21 @@
   },
   "agent": {
     "statementLanguage": "fsquery"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "fsquery"
+    ],
+    "explainFormat": "firestore-explain",
+    "dialect": {
+      "name": "firestore",
+      "offersColumnProfiling": false,
+      "offersCodeGeneration": false,
+      "offersCountQuery": true,
+      "offersSqlExport": false,
+      "historyMask": null
+    }
   }
 }

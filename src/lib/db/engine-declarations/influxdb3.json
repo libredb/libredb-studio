@@ -103,5 +103,12 @@
   },
   "agent": {
     "statementLanguage": "sql"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [],
+    "explainFormat": null,
+    "dialect": null
   }
 }

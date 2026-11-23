@@ -90,5 +90,12 @@
   },
   "agent": {
     "statementLanguage": "sql"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [],
+    "explainFormat": "clickhouse-json",
+    "dialect": null
   }
 }

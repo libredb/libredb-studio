@@ -73,5 +73,21 @@
   },
   "agent": {
     "statementLanguage": "mtconnectread"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "mtconnectread"
+    ],
+    "explainFormat": null,
+    "dialect": {
+      "name": "mtconnect",
+      "offersColumnProfiling": false,
+      "offersCodeGeneration": false,
+      "offersCountQuery": false,
+      "offersSqlExport": true,
+      "historyMask": null
+    }
   }
 }

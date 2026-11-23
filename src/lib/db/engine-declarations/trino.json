@@ -94,5 +94,12 @@
   },
   "agent": {
     "statementLanguage": "sql"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [],
+    "explainFormat": "trino-json",
+    "dialect": null
   }
 }

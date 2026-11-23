@@ -170,5 +170,12 @@
   },
   "agent": {
     "statementLanguage": null
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [],
+    "explainFormat": "spark-text",
+    "dialect": null
   }
 }

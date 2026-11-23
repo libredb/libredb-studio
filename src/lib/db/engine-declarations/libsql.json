@@ -99,5 +99,14 @@
   },
   "agent": {
     "statementLanguage": "sql"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "turso"
+    ],
+    "explainFormat": "sqlite-queryplan",
+    "dialect": null
   }
 }

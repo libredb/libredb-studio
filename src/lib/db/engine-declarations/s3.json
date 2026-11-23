@@ -189,5 +189,21 @@
   },
   "agent": {
     "statementLanguage": "s3api"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "s3api"
+    ],
+    "explainFormat": null,
+    "dialect": {
+      "name": "s3",
+      "offersColumnProfiling": false,
+      "offersCodeGeneration": false,
+      "offersCountQuery": false,
+      "offersSqlExport": false,
+      "historyMask": null
+    }
   }
 }

@@ -17,6 +17,9 @@ import { rabbitmqConnection } from "./rabbitmq-connection";
  * `Record<DatabaseType, DatabaseConnection>` goes stale the first time an engine's port moves in
  * only one of them, and the record exists so that a new member of the union is a COMPILE error
  * rather than a missing row. Two records defeat exactly that.
+ *
+ * `scripts/generate-engine-declarations.ts` reads it too, so an engine's census connection is also the connection its
+ * committed declaration's explain format and query dialect are read with.
  */
 
 /**
