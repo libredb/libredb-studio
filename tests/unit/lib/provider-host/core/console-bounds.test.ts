@@ -9,40 +9,31 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import path from "node:path";
-import type { executeCall } from "@/lib/provider-host/core/console";
+import type { consoleCalls } from "@/lib/provider-host/core/console";
+import type { createPageBudget } from "@/lib/provider-host/core/page-budget";
 import { boundedChild } from "../../../../helpers/bounded-node-child";
 
 interface ChildDeps {
-  readonly executeCall: typeof executeCall;
+  readonly consoleCalls: typeof consoleCalls;
+  readonly createPageBudget: typeof createPageBudget;
 }
+
+const CORE = path.join(import.meta.dir, "..", "..", "..", "..", "..", "src", "lib", "provider-host", "core");
 
 const child = boundedChild({
   label: "console-bounds",
   imports: [
-    {
-      from: path.join(
-        import.meta.dir,
-        "..",
-        "..",
-        "..",
-        "..",
-        "..",
-        "src",
-        "lib",
-        "provider-host",
-        "core",
-        "console.ts",
-      ),
-      names: ["executeCall"],
-    },
+    { from: path.join(CORE, "console.ts"), names: ["consoleCalls"] },
+    { from: path.join(CORE, "page-budget.ts"), names: ["createPageBudget"] },
   ],
   runCase: async (deps: ChildDeps) => {
+    const { executeCall } = deps.consoleCalls(deps.createPageBudget(1));
     const deadline = Date.now() + 50;
     const session = {
       calls: { console: { execute: { honours: [] }, cancel: "not-offered", endScope: "not-offered" } },
       execute: () => new Promise<never>(() => {}),
     } as unknown as Parameters<typeof executeCall>[0];
-    const record = await deps.executeCall(
+    const record = await executeCall(
       session,
       { statement: "never", page: { limit: 1, offset: 0 } },
       { deadline, signal: AbortSignal.timeout(50), env: { get: () => undefined } },

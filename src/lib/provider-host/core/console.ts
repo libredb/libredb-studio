@@ -9,16 +9,21 @@
  *
  * The call is waited for with `awaitWithin` until the context's signal. An execute's run is the provider's execute,
  * then the first result pumped by the SDK's `pumpPage` within the limits `pumpLimits` sets from the answer, with a
- * turn of the event loop before every pull (`withTurns`, clause C-49), then every other result closed once. A
- * `CallRefusalError` the pump throws is answered as a record, `called` true. When the run sees the signal aborted after
- * execute answered, it closes every source and pumps nothing.
+ * turn of the event loop before every pull (`withTurns`, clause C-49) and under the page budget the calls are bound to
+ * (`withLargePageSlot`, clause C-53), then every other result closed once. A `CallRefusalError` the pump throws is
+ * answered as a record, `called` true. When the run sees the signal aborted after execute answered, it closes every
+ * source and pumps nothing.
+ *
+ * A page record holds its page's large-page slot, if it took one, until the caller calls its `release`, exactly once,
+ * after building its answer body. A run that ends without a page gives the slot back before it answers or throws, and a
+ * page answered after the wait on its call ended is released by the call's late handler.
  *
  * A wait the signal ends answers a stop, the signal's reason by reference: a call is stopped exactly when its signal
  * aborted and the rejection is that signal's reason, so a provider that throws its own signal's reason is stopped too.
  * A stopped execute sends the run's cancel, when the session offers `console.cancel` and the request names a run, under
  * a cleanup context of its own (`cleanupContext`), and a cancel that fails or is cut reaches `ports.cancelFailed`. The
  * run it stopped waiting for keeps its handler: a later failure reaches `ports.late` once, and a later answer has
- * already closed what it held.
+ * already closed what it held and given back its slot.
  *
  * Core answers plain records and passes a provider's errors by reference; it constructs no class a caller in another
  * bundle would test with `instanceof`, so the caller's accessor builds its own classes from the records. It imports only
@@ -48,6 +53,7 @@ import {
   type Warning,
 } from "@libredb/provider-sdk/calls";
 import type { Calls } from "@libredb/provider-sdk/manifest";
+import { type PageBudget, type PageHold, withLargePageSlot } from "./page-budget";
 import { withTurns } from "./turns";
 
 /** One session as the host core calls it: its calls, and its console functions with the handle already bound. */
@@ -87,6 +93,13 @@ export interface PageRecord {
   readonly executionTimeMs: number;
   readonly warnings: readonly Warning[];
   readonly explainPlan?: unknown;
+  /**
+   * Ends the page's hold on its large-page slot, if it took one: the caller calls it exactly once, after building its
+   * answer body.
+   *
+   * @throws {Error} For a record already released, a defect of its caller.
+   */
+  readonly release: () => void;
 }
 
 export type ExecuteRecord = RefusedRecord | StoppedRecord | PageRecord;
@@ -100,6 +113,9 @@ export interface HostCallPorts {
   /** A failure or a cut of the cancel a stopped execute sent. */
   readonly cancelFailed: (error: unknown) => void;
 }
+
+const RECORD_RELEASED_TWICE =
+  "A page record was released twice, a defect of its caller: each page record is released exactly once, after its answer body is built.";
 
 const EMPTY_PAGE: Page = Object.freeze({ rows: Object.freeze([]), bytes: 0, end: "done" });
 
@@ -117,6 +133,36 @@ function stoppedBy(ctx: CallContext, error: unknown): boolean {
 function lateFailure(ctx: CallContext, port: (error: unknown) => void): (outcome: LateOutcome<unknown>) => void {
   return (outcome) => {
     if (outcome.kind === "failed" && !stoppedBy(ctx, outcome.error)) port(outcome.error);
+  };
+}
+
+/** The late handler of an execute: a page answered after the wait ended is released, a failure goes to `lateFailure`. */
+function lateExecute(ctx: CallContext, port: (error: unknown) => void): (outcome: LateOutcome<ExecuteRecord>) => void {
+  const failure = lateFailure(ctx, port);
+  return (outcome) => {
+    if (outcome.kind === "answered") {
+      if (outcome.value.kind === "page") outcome.value.release();
+      return;
+    }
+    failure(outcome);
+  };
+}
+
+/** Gives back the slot `hold` holds, if any, and forgets it. */
+function releaseHold(hold: PageHold): void {
+  const { slot } = hold;
+  if (slot === undefined) return;
+  delete hold.slot;
+  slot.release();
+}
+
+/** The release of a page record over `hold`: once, and refused by name after that. */
+function recordRelease(hold: PageHold): () => void {
+  let released = false;
+  return () => {
+    if (released) throw new Error(RECORD_RELEASED_TWICE);
+    released = true;
+    releaseHold(hold);
   };
 }
 
@@ -150,8 +196,13 @@ function sessionCancel(session: ConsoleSession, request: CancelRequest, ctx: Cal
   return session.cancel(request, ctx);
 }
 
-/** The run of an execute call: the provider's execute, its first result pumped, every other result closed. */
+/**
+ * The run of an execute call: the provider's execute, its first result pumped under `budget`, every other result
+ * closed. The slot the page takes is recorded in `hold`, and given back on every path that answers no page.
+ */
 async function runExecute(
+  budget: PageBudget,
+  hold: PageHold,
   session: ConsoleSession,
   request: ExecuteRequest,
   ctx: CallContext,
@@ -173,8 +224,12 @@ async function runExecute(
   const [first, ...rest] = sources;
   let page: Page;
   try {
-    page = first === undefined ? EMPTY_PAGE : await pumpPage(withTurns(first, ctx), limits, ctx);
+    page =
+      first === undefined
+        ? EMPTY_PAGE
+        : await pumpPage(withLargePageSlot(withTurns(first, ctx), budget, ctx, hold), limits, ctx);
   } catch (error) {
+    releaseHold(hold);
     const closeErrors = await closeEach(rest);
     if (closeErrors.length > 0) throw withCloseErrors(error, closeErrors);
     if (!(error instanceof CallRefusalError)) throw error;
@@ -186,6 +241,7 @@ async function runExecute(
     };
   }
   const closeErrors = await closeEach(rest);
+  if (closeErrors.length > 0) releaseHold(hold);
   if (closeErrors.length === 1) throw closeErrors[0];
   if (closeErrors.length > 1) throw new AggregateError(closeErrors, "Closing a run's other result sources failed.");
   return {
@@ -198,6 +254,7 @@ async function runExecute(
     executionTimeMs: answer.executionTimeMs,
     warnings: answer.warnings,
     ...(answer.explainPlan === undefined ? {} : { explainPlan: answer.explainPlan }),
+    release: recordRelease(hold),
   };
 }
 
@@ -223,12 +280,13 @@ function cancelStoppedRun(
 
 /**
  * One console execute on `session`: checked, frozen, waited for until `ctx.signal`, its first result pumped within
- * `pumpLimits(answer)`, answered as a record.
+ * `pumpLimits(answer)` under `budget`, answered as a record.
  *
  * @throws The provider's error, or a pull's, by reference, after every source is closed once; an `AggregateError` when
  * a close failed beside it.
  */
-export async function executeCall(
+async function executeCall(
+  budget: PageBudget,
   session: ConsoleSession,
   request: ExecuteRequest,
   ctx: CallContext,
@@ -241,11 +299,12 @@ export async function executeCall(
   if (fields.length > 0) return refusedBefore(fields, ctx);
   freezeContext(ctx);
   freezeData(request);
+  const hold: PageHold = { waiting: false };
   try {
     return await awaitWithin(
-      startCall(() => runExecute(session, request, ctx, pumpLimits)),
+      startCall(() => runExecute(budget, hold, session, request, ctx, pumpLimits)),
       ctx.signal,
-      lateFailure(ctx, ports.late),
+      lateExecute(ctx, ports.late),
     );
   } catch (error) {
     if (!stoppedBy(ctx, error)) throw error;
@@ -283,4 +342,28 @@ export async function cancelCall(
     if (!stoppedBy(ctx, error)) throw error;
     return { kind: "stopped", reason: error };
   }
+}
+
+/** A console execute bound to a page budget: the arguments of `executeCall` after its budget. */
+export type ExecuteCall = (
+  session: ConsoleSession,
+  request: ExecuteRequest,
+  ctx: CallContext,
+  pumpLimits: (answer: ExecuteAnswer) => PumpLimits,
+  ports: HostCallPorts,
+) => Promise<ExecuteRecord>;
+
+/** The console calls one host core holds: the execute bound to its page budget, and the cancel, which pumps nothing. */
+export interface ConsoleCalls {
+  readonly executeCall: ExecuteCall;
+  readonly cancelCall: typeof cancelCall;
+}
+
+/** The console calls with every execute's page run under `budget` (clause C-53). */
+export function consoleCalls(budget: PageBudget): ConsoleCalls {
+  return {
+    executeCall: (session, request, ctx, pumpLimits, ports) =>
+      executeCall(budget, session, request, ctx, pumpLimits, ports),
+    cancelCall,
+  };
 }

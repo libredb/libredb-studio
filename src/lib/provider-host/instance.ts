@@ -11,8 +11,9 @@
  *
  * Each install names its composition root, one of `HostCoreRoot`. A call made before the install fails with
  * `HostCoreBootOrderError`, by name: a missing core is a deployment defect, and a core created on demand would be a
- * second core beside the installed one. A second install from the same root keeps the first core and changes nothing:
- * the core holds no state, so the second one is simply not used. That is what lets `register()` run again in one
+ * second core beside the installed one, with a page budget of its own (clause C-53). A second install from the same
+ * root keeps the first core and changes nothing: the first core keeps its page budget and every page it holds, and the
+ * second core is never used, so it holds no page. That is what lets `register()` run again in one
  * process, as the uncaught-exception exit and the shutdown handler it installs beside the core already allow. A second
  * install from another root is a process composed twice, refused by `HostCoreBootOrderError` naming both roots, and the
  * first core stays. So no second core is ever used. `register()` was measured to run once per server process under

@@ -494,6 +494,37 @@ describe("runEditorQuery on the host core", () => {
     });
   });
 
+  /** A fake whose result is `count` rows of a MiB each, so each batch holds one row and the page needs `count`. */
+  const largeFake = (count: number, queryTimeout: number) =>
+    Object.assign(fake(resultOf(bigRows(count))), { config: connectionWith({ queryTimeout }) });
+
+  test("a large page's slot is released once its body is built, so the next large page does not wait", async () => {
+    // A deadline a second ahead: a page that waited for a slot never released would answer the deadline's stop.
+    const queryTimeout = 1_000 - EXECUTE_SLACK_MS;
+
+    const first = await runEditorQuery(largeFake(3, queryTimeout), runOf({ options: { limit: 100 } }));
+    const second = await runEditorQuery(largeFake(3, queryTimeout), runOf({ options: { limit: 100 } }));
+
+    expect(first.body.rows).toEqual(bigRows(3));
+    expect(second.body.rows).toEqual(bigRows(3));
+    expect(second.body.pagination.hasMore).toBe(false);
+  });
+
+  test("two concurrent large pages each answer their whole page", async () => {
+    // A deadline two seconds ahead, so a page left waiting fails the case well inside its timeout.
+    const queryTimeout = 2_000 - EXECUTE_SLACK_MS;
+    const alone = await runEditorQuery(largeFake(3, queryTimeout), runOf({ options: { limit: 100 } }));
+
+    const [one, two] = await Promise.all([
+      runEditorQuery(largeFake(3, queryTimeout), runOf({ options: { limit: 100 } })),
+      runEditorQuery(largeFake(3, queryTimeout), runOf({ options: { limit: 100 } })),
+    ]);
+
+    expect(alone.body.rows).toHaveLength(3);
+    expect(one.body).toEqual(alone.body);
+    expect(two.body).toEqual(alone.body);
+  });
+
   test("a row no page can hold is refused in Studio's words", async () => {
     const caught = await runEditorQuery(
       fake(resultOf([{ n: "x".repeat(33 * MIB) }])),

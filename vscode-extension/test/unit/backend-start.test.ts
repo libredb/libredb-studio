@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { type Clock, install } from "@sinonjs/fake-timers";
-import { cancelCall, executeCall } from "@/lib/provider-host/core/console";
+import { cancelCall } from "@/lib/provider-host/core/console";
 import { forgetHostCore, HostCoreBootOrderError, hostCore } from "@/lib/provider-host/instance";
 import type { BackendFactory } from "../../src/backend/handlers";
 import {
@@ -241,7 +241,6 @@ describe("the child entry", () => {
 
     const core = hostCore();
     assert.deepEqual(Object.keys(core).sort(), ["cancelCall", "executeCall"]);
-    assert.equal(core.executeCall, executeCall);
     assert.equal(core.cancelCall, cancelCall);
     assert.ok(Object.isFrozen(core));
   });

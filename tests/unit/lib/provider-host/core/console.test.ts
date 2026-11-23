@@ -7,9 +7,10 @@
  * Every session here is a fake whose `execute`, `cancel` and sources the test drives through promises it settles
  * itself; no assertion follows a timer. A late handler resolves a promise the test awaits, so an abandoned rejection
  * with no handler fires while the test runs and fails it. `console-bounds.test.ts` holds a run that never settles with
- * a real deadline in a bounded Node child.
+ * a real deadline in a bounded Node child, and `console-pages.test.ts` the page budget the execute runs under. Each test
+ * runs on console calls bound to a page budget of its own.
  */
-import { describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import {
   BATCH_MAX_BYTES,
@@ -31,10 +32,18 @@ import type { Calls } from "@libredb/provider-sdk/manifest";
 import {
   type ConsoleSession,
   cancelCall,
+  consoleCalls,
+  type ExecuteCall,
   type ExecuteRecord,
-  executeCall,
   type HostCallPorts,
 } from "@/lib/provider-host/core/console";
+import { createPageBudget } from "@/lib/provider-host/core/page-budget";
+
+let executeCall: ExecuteCall;
+
+beforeEach(() => {
+  executeCall = consoleCalls(createPageBudget(1)).executeCall;
+});
 
 const HOUR = 3_600_000;
 const marker = (): string => randomUUID();
@@ -286,6 +295,7 @@ describe("executeCall", () => {
       executionTimeMs: 7,
       warnings: answer.warnings,
       explainPlan: answer.explainPlan,
+      release: expect.any(Function),
     });
     expect((record as { readonly warnings: unknown }).warnings).toBe(answer.warnings);
     expect(first.seen).toEqual({ pulls: 1, closes: 1 });
@@ -305,6 +315,7 @@ describe("executeCall", () => {
       pageApplied: false,
       executionTimeMs: 4,
       warnings: [],
+      release: expect.any(Function),
     });
   });
 

@@ -544,6 +544,8 @@ A page holds at most 32 MiB of rows, each measured as the UTF-8 length of its JS
 A result larger than that is answered with the rows that fit, `rowCount` and `pagination.totalReturned` naming how many, and `pagination.wasLimited` true.
 When the server's own limiter bounded the statement, `pagination.hasMore` is true too, and the next page is requested as any other, with `offset` advanced by the rows received, so it continues after the last row answered; a statement the limiter did not bound answers `hasMore: false`.
 A single row larger than 32 MiB answers `400 QUERY_ERROR` with `kind: "studio-byte-budget-refusal"` and `outcome: "unknown"`, naming the row's size and the page's budget.
+A page larger than one batch, 1 MiB, waits while another such page is answered: the server answers one at a time per process ([`docs/providers/CONTRACT.md`](providers/CONTRACT.md), clause C-53).
+Each such page waits within its own statement's deadline, and a page of one batch never waits.
 
 A caller that goes away while the statement runs, a browser that drops the request, is answered at once with `499 QUERY_CANCELLED` and `outcome: "unknown"`, and the server sends the run's cancel under the `queryId` the request named, when the provider can cancel.
 The statement's own end arrives after that answer; a failure there is logged by its kind and code, never its text, except the engine's cancellation answer to the cancel the server sent, which is the run's expected end.

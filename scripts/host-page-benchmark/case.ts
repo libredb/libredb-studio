@@ -18,7 +18,8 @@
  *
  * Heap: the live heap after a forced gc, read at every turn the host yields while it pumps and at the answer, minus
  * the live heap with the provider's rows built. Slice: the longest gap between two `setImmediate` turns of a ticker
- * while `executeCall` runs over the bridge, the part of the host path P-21's slice measured; the facade's
+ * while the installed host core's `executeCall` runs over the bridge, on the process's one page budget as production
+ * runs it, the part of the host path P-21's slice measured, each page released once it answered; the facade's
  * whole-page `rowsWithNonFiniteWords` and the route's `JSON.stringify` are today's cost on both paths.
  */
 import { deadlineSignal, encodedRowBytes, envReader, PAGE_MAX_BYTES } from "@libredb/provider-sdk/calls";
@@ -28,7 +29,7 @@ import { pageOfProbe, probePastPage } from "@/lib/api/page-probe";
 import { providerTextScrub, withScrubbedWarnings } from "@/lib/db/operations/provider-text";
 import { type DatabaseProvider, newQueryCallScope, type PreparedQuery, type QueryPrepareOptions } from "@/lib/db/types";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
-import { executeCall } from "@/lib/provider-host/core/console";
+import { hostCore } from "@/lib/provider-host/instance";
 import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
 
@@ -319,7 +320,7 @@ async function executeSlice(shape: Shape, rows: Record<string, unknown>[]): Prom
     if (running) setImmediate(tick);
   };
   setImmediate(tick);
-  const record = await executeCall(
+  const record = await hostCore().executeCall(
     bridged.session,
     { statement: STATEMENT, page: { limit: 500, offset: 0 } },
     { deadline, signal: deadlineSignal(deadline), env: envReader([], () => undefined) },
@@ -328,6 +329,7 @@ async function executeSlice(shape: Shape, rows: Record<string, unknown>[]): Prom
   );
   running = false;
   if (record.kind !== "page") throw new Error(`The host's execute call answered ${record.kind}, not a page.`);
+  record.release();
   return Math.max(longest, performance.now() - last);
 }
 
