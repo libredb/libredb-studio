@@ -19,7 +19,7 @@ import { countCodeStatements, splitExecutionUnits, type ExecutionUnit } from "@/
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { noteAppendedBound } from "@/lib/db/utils/query-limiter";
 import { withTimeout } from "@/lib/db/utils/pool-manager";
-import { NO_ACTIVE_TRANSACTION, QueryError } from "@/lib/db/errors";
+import { isDatabaseError, NO_ACTIVE_TRANSACTION, QueryError } from "@/lib/db/errors";
 import { logger } from "@/lib/logger";
 import {
   type ProviderTextScrub,
@@ -229,14 +229,17 @@ function eventRowCount(count: number | undefined): number | undefined {
 }
 
 /**
- * What a query event says of a failure: the API code a database error carries, and its text, which is the withheld
- * sentence when the text holds a credential of the connection (core's scrub).
+ * What a query event says of a failure (docs/GOVERNANCE.md#query-events): the SQLSTATE the driver reported, else the
+ * API code the error carries, and its text. When the text holds a credential of the connection (core's scrub) the
+ * event records the withheld sentence and the API code, never the SQLSTATE, which is one of the texts the scrub reads.
  */
 function eventError(scrub: ProviderTextScrub, error: unknown): { errorCode?: string; errorMessage?: string } {
   const code: unknown = (error as { code?: unknown } | null)?.code;
+  const apiCode = typeof code === "string" ? code : undefined;
   const withheld = withheldProviderError(scrub, error);
-  const errorMessage = withheld?.message ?? (error instanceof Error ? error.message : String(error));
-  return { errorCode: typeof code === "string" ? code : undefined, errorMessage };
+  if (withheld !== null) return { errorCode: apiCode, errorMessage: withheld.message };
+  const sqlstate = isDatabaseError(error) ? error.sqlstate : undefined;
+  return { errorCode: sqlstate ?? apiCode, errorMessage: error instanceof Error ? error.message : String(error) };
 }
 
 /**

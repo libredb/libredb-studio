@@ -9,8 +9,9 @@
  * - `sqlState`: the five-character SQLSTATE the driver reported, when it reported one (`DatabaseError.sqlstate`).
  * - `engineCode`: an engine's own error code. Defined and read here; no error carries one yet.
  * - `outcome`: `not-sent` when the statement never reached the database, because Studio refused it before sending
- *   it, the provider's connect failed, or the provider's checkout of a connection or session before the send failed
- *   (`checkoutPhase`); `unknown` otherwise, since the statement may have run.
+ *   it, the provider's connect failed, the provider's checkout of a connection or session before the send failed
+ *   (`checkoutPhase`), or the provider found a held transaction's session already ended before sending
+ *   (`TransactionLostError` raised with `beforeSend`); `unknown` otherwise, since the statement may have run.
  * - `sessionState`: whether the session is in a transaction. Defined and read here; no error carries one yet.
  *
  * The record holds no text of the error: no message, detail, statement or identifier. The full record is built only

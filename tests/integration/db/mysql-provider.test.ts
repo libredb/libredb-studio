@@ -34,7 +34,7 @@ import { CATALOG_TYPE_RULES } from "@/lib/db/providers/sql/mysql";
 import { MYSQL_CREATE_TABLE } from "@/lib/db/providers/sql/mysql-create-table";
 import { diffSchemas } from "@/lib/schema-diff/diff-engine";
 import type { DetailedObject } from "@/lib/db/detailed-object";
-import { errorKind } from "@/lib/db/error-record";
+import { errorKind, errorOutcome } from "@/lib/db/error-record";
 
 // ============================================================================
 // Mock mysql2/promise BEFORE importing the provider
@@ -2227,7 +2227,7 @@ describe("MySQLProvider", () => {
       ["a non-parse error (1105)", Object.assign(new Error("transaction already begun"), { errno: 1105 })],
       ["a fatal parse error", Object.assign(new Error("Connection lost"), { errno: 1064, fatal: true })],
     ] as const) {
-      test(`a BEGIN refused with ${label} is raised as is, with no START TRANSACTION`, async () => {
+      test(`a BEGIN refused with ${label} is raised as its mapped class, with no START TRANSACTION`, async () => {
         mockExecuteFn = (sql: string) =>
           sql === "BEGIN" ? Promise.reject(failure) : (answering({ "START TRANSACTION": 0 })(sql) as never);
         provider = new MySQLProvider(makeMySQLConfig());
@@ -2235,7 +2235,9 @@ describe("MySQLProvider", () => {
         const release = spyOn(mockConnection, "release");
         try {
           protocolCalls.length = 0;
-          await expect(provider.beginTransaction()).rejects.toBe(failure);
+          const raised = await provider.beginTransaction().catch((error: unknown) => error);
+          expect(raised).toBeInstanceOf(DatabaseError);
+          expect((raised as DatabaseError).message).toContain(failure.message);
           expect(protocolCalls.map((call) => call.sql)).toEqual(["BEGIN"]);
           expect(provider.isInTransaction()).toBe(false);
           expect(release).toHaveBeenCalledTimes(1);
@@ -2244,6 +2246,128 @@ describe("MySQLProvider", () => {
         }
       });
     }
+
+    test("a begin whose pool checkout fails answers its mapped class with outcome not-sent, not an internal error", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const refusal = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:3306"), { code: "ECONNREFUSED" });
+      const getConnection = spyOn(mockPool, "getConnection").mockRejectedValueOnce(refusal);
+      const executed = spyOn(mockConnection, "execute");
+      const queried = spyOn(mockConnection, "query");
+      try {
+        const refused = await provider.beginTransaction().catch((error: unknown) => error);
+
+        expect(refused).toBeInstanceOf(ConnectionError);
+        expect((refused as ConnectionError).outcome).toBe("not-sent");
+        expect(executed).not.toHaveBeenCalled();
+        expect(queried).not.toHaveBeenCalled();
+        expect(provider.isInTransaction()).toBe(false);
+        const response = createErrorResponse(refused, { route: "api/db/transaction" });
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({
+          code: ApiErrorCode.CONNECTION_ERROR,
+          statusCode: 503,
+          kind: "connection",
+          outcome: "not-sent",
+        });
+      } finally {
+        getConnection.mockRestore();
+        executed.mockRestore();
+        queried.mockRestore();
+      }
+      // Nothing was left claimed, so a begin on a pool that answers opens a transaction.
+      await provider.beginTransaction();
+      expect(provider.isInTransaction()).toBe(true);
+      await provider.rollbackTransaction();
+    });
+
+    test("a begin on a closed pool answers PoolExhaustedError, not-sent", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const getConnection = spyOn(mockPool, "getConnection").mockRejectedValueOnce(new Error("Pool is closed."));
+      try {
+        const refused = await provider.beginTransaction().catch((error: unknown) => error);
+
+        expect(refused).toBeInstanceOf(PoolExhaustedError);
+        expect((refused as PoolExhaustedError).outcome).toBe("not-sent");
+        expect(provider.isInTransaction()).toBe(false);
+        const response = createErrorResponse(refused, { route: "api/db/transaction" });
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({
+          code: ApiErrorCode.POOL_EXHAUSTED,
+          statusCode: 503,
+          outcome: "not-sent",
+        });
+      } finally {
+        getConnection.mockRestore();
+      }
+    });
+
+    test.each([
+      ["commitTransaction", "commit"],
+      ["rollbackTransaction", "rollback"],
+    ] as const)(
+      "%s whose connection is lost answers a DatabaseError with outcome unknown and releases the connection",
+      async (end, driverMethod) => {
+        provider = new MySQLProvider(makeMySQLConfig());
+        await provider.connect();
+        await provider.beginTransaction();
+        const lost = Object.assign(new Error("Connection lost: The server closed the connection."), {
+          code: "PROTOCOL_CONNECTION_LOST",
+          fatal: true,
+        });
+        const driverEnd = spyOn(mockConnection, driverMethod).mockRejectedValueOnce(lost);
+        const release = spyOn(mockConnection, "release");
+        try {
+          const failed = await provider[end]().catch((error: unknown) => error);
+
+          expect(failed).toBeInstanceOf(DatabaseError);
+          expect(failed).not.toBe(lost);
+          expect(errorOutcome(failed)).toBe("unknown");
+          expect(release).toHaveBeenCalledTimes(1);
+          expect(provider.isInTransaction()).toBe(false);
+          const response = createErrorResponse(failed, { route: "api/db/transaction" });
+          expect(response.status).toBe(500);
+          expect(await response.json()).toMatchObject({
+            code: ApiErrorCode.DATABASE_ERROR,
+            statusCode: 500,
+            kind: "database",
+            outcome: "unknown",
+          });
+        } finally {
+          driverEnd.mockRestore();
+          release.mockRestore();
+        }
+      },
+    );
+
+    test("a COMMIT refused for a deadlock answers its mapped class with the SQLSTATE kept", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      await provider.beginTransaction();
+      const deadlock = Object.assign(new Error("Deadlock found when trying to get lock; try restarting transaction"), {
+        errno: 1213,
+        code: "ER_LOCK_DEADLOCK",
+        sqlState: "40001",
+      });
+      const commit = spyOn(mockConnection, "commit").mockRejectedValueOnce(deadlock);
+      const release = spyOn(mockConnection, "release");
+      try {
+        const failed = await provider.commitTransaction().catch((error: unknown) => error);
+
+        expect(failed).toBeInstanceOf(DatabaseError);
+        expect((failed as DatabaseError).sqlstate).toBe("40001");
+        expect(errorOutcome(failed)).toBe("unknown");
+        expect(release).toHaveBeenCalledTimes(1);
+        expect(provider.isInTransaction()).toBe(false);
+        const response = createErrorResponse(failed, { route: "api/db/transaction" });
+        expect(response.status).toBe(500);
+        expect(await response.json()).toMatchObject({ code: ApiErrorCode.DATABASE_ERROR, outcome: "unknown" });
+      } finally {
+        commit.mockRestore();
+        release.mockRestore();
+      }
+    });
 
     test("a statement MySQL commits implicitly ends the session, so no rollback is pretended", async () => {
       mockExecuteFn = answering({ BEGIN: 16387, INSERT: 3, CREATE: 16386 });

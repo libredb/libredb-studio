@@ -25,9 +25,10 @@ export class DatabaseError extends Error {
   declare sqlstate?: string;
 
   /**
-   * `not-sent` when the statement this error answers never reached the database. Written in exactly six places: the
-   * constructor of `RefusedBeforeSendError`, so every refusal before send carries it; `connectPhase`, on what a
-   * provider's connect raised, the `ConnectionError` of an open a removal or a cache close overtook included (the
+   * `not-sent` when the statement this error answers never reached the database. Written in exactly seven places: the
+   * constructor of `RefusedBeforeSendError`, so every refusal before send carries it; the constructor of
+   * `TransactionLostError`, when the provider raising it says it found the held session ended before sending;
+   * `connectPhase`, on what a provider's connect raised, the `ConnectionError` of an open a removal or a cache close overtook included (the
    * factory raises it inside the connect it runs there); `buildPhase`, which `buildProvider` in ./factory runs, on what building a provider
    * raised; `withheldProviderError` in ./operations/provider-text, which copies `not-sent` onto the error it answers
    * in place of one; and the provider host's accessor (src/lib/provider-host/access.ts), through `markNotSent`, on the
@@ -163,11 +164,22 @@ export class ConnectionError extends DatabaseError {
  * transaction with its session, so the provider holds none from then on and its next call answers
  * `NO_ACTIVE_TRANSACTION`. A `ConnectionError`, because the connection and not the statement failed, with the code
  * `TRANSACTION_LOST`, which the editor reads as the end of its transaction.
+ *
+ * `beforeSend: true` is the provider saying it found the session ended before it sent anything of the call, so the
+ * error answers `outcome` `not-sent` (docs/providers/CONTRACT.md, E-5). Without it the outcome stays `unknown`, since
+ * a provider may raise this class for a session that ended while the call ran.
  */
 export class TransactionLostError extends ConnectionError {
-  constructor(message: string, provider?: DatabaseType, host?: string, port?: number) {
+  constructor(
+    message: string,
+    provider?: DatabaseType,
+    host?: string,
+    port?: number,
+    options: { readonly beforeSend?: true } = {},
+  ) {
     super(message, provider, host, port, ApiErrorCode.TRANSACTION_LOST);
     this.name = "TransactionLostError";
+    if (options.beforeSend === true) this.outcome = "not-sent";
     Object.setPrototypeOf(this, TransactionLostError.prototype);
   }
 }

@@ -21,14 +21,19 @@
  */
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { NO_ACTIVE_TRANSACTION, TransactionLostError } from "@/lib/db/errors";
+import { DatabaseError, NO_ACTIVE_TRANSACTION, QueryError, TransactionLostError } from "@/lib/db/errors";
+import { errorOutcome } from "@/lib/db/error-record";
 import { PostgresProvider } from "@/lib/db/providers/sql/postgres";
 import type { DatabaseConnection } from "@/lib/types";
 
 const PG_CONTAINER = `${process.env.LIBREDB_LIVE_PG_CONTAINER_PREFIX ?? "libredb-live-held-session-pg"}-${randomBytes(4).toString("hex")}`;
-const PG_ADMIN_PASSWORD = "held-session-password";
+/** A fresh password for each run: the check starts its own container and creates the agent role itself. */
+function runPassword(prefix: string): string {
+  return `${prefix}-${randomBytes(12).toString("hex")}`;
+}
+const PG_ADMIN_PASSWORD = runPassword("pg");
 const AGENT_USER = "agent_readonly";
-const AGENT_PASSWORD = "held-session-agent-password";
+const AGENT_PASSWORD = runPassword("agent");
 const LOST =
   /^The transaction was lost: its database session ended \(.+\)\. The server rolls back what was still open in the session when it ended, but a COMMIT that had already reached the server stays committed, so check the data before running the work again\. Begin a new transaction to continue\.$/;
 const NOT_ACTIVE = new RegExp(`^${NO_ACTIVE_TRANSACTION}$`);
@@ -61,6 +66,8 @@ async function startPostgres(): Promise<number> {
     "--rm",
     "--name",
     PG_CONTAINER,
+    "--memory",
+    "1g",
     "-e",
     `POSTGRES_PASSWORD=${PG_ADMIN_PASSWORD}`,
     "-p",
@@ -107,6 +114,27 @@ function expectLost(label: string, outcome: { error?: Error }): void {
   expectRejected(label, outcome, LOST);
   if (!(outcome.error instanceof TransactionLostError)) {
     throw new Error(`${label}: expected a TransactionLostError, got ${outcome.error?.constructor.name}`);
+  }
+  // Found before anything was sent, so the answer says the call never reached the server.
+  if (errorOutcome(outcome.error) !== "not-sent") {
+    throw new Error(`${label}: expected outcome not-sent, got ${errorOutcome(outcome.error)}`);
+  }
+}
+
+/** A failure the server or the driver answered after the call was sent: a Studio class, never a lost transaction. */
+function expectSentFailure(
+  label: string,
+  outcome: { error?: Error },
+  expected: abstract new (...args: never[]) => DatabaseError,
+): void {
+  if (outcome.error === undefined) throw new Error(`${label}: expected an error, but it succeeded`);
+  if (!(outcome.error instanceof expected) || outcome.error instanceof TransactionLostError) {
+    throw new Error(`${label}: expected a ${expected.name}, got ${outcome.error.constructor.name}`, {
+      cause: outcome.error,
+    });
+  }
+  if (errorOutcome(outcome.error) !== "unknown") {
+    throw new Error(`${label}: expected outcome unknown, got ${errorOutcome(outcome.error)}`);
   }
 }
 
@@ -203,6 +231,41 @@ async function heldTransactionCases(connection: DatabaseConnection): Promise<voi
         await sleep(200);
         expectLost("COMMIT", await settled(() => provider.commitTransaction()));
         await expectRows("the committed row", provider, 1);
+      },
+    );
+
+    await check(
+      "a COMMIT the server refuses for a deferred constraint answers a QueryError, and the provider holds no transaction",
+      async () => {
+        await provider.query(
+          "CREATE TABLE IF NOT EXISTS held_session_deferred (n int CONSTRAINT held_session_deferred_n UNIQUE DEFERRABLE INITIALLY DEFERRED)",
+        );
+        await provider.query("TRUNCATE held_session_deferred");
+        await provider.beginTransaction();
+        await provider.queryInTransaction("INSERT INTO held_session_deferred VALUES (1)");
+        await provider.queryInTransaction("INSERT INTO held_session_deferred VALUES (1)");
+        const commit = await settled(() => provider.commitTransaction());
+        expectSentFailure("COMMIT", commit, QueryError);
+        if (!commit.error?.message.includes("held_session_deferred_n")) {
+          throw new Error(`COMMIT: the error does not name the constraint: ${commit.error?.message}`);
+        }
+        if (provider.isInTransaction()) throw new Error("the provider still reports the transaction open");
+        await expectOne("the next pooled statement", provider);
+      },
+    );
+
+    await check(
+      "a COMMIT queued behind a statement that ends the session answers a DatabaseError, not the driver's error, and the provider holds no transaction",
+      async () => {
+        await provider.beginTransaction();
+        // Both at once, so the COMMIT is sent on the held client before the statement ahead of it ends the session.
+        const statement = settled(() => provider.queryInTransaction("SELECT pg_terminate_backend(pg_backend_pid())"));
+        const commit = settled(() => provider.commitTransaction());
+        expectRejected("the statement", await statement, /terminating connection due to administrator command/);
+        expectSentFailure("COMMIT", await commit, DatabaseError);
+        if (provider.isInTransaction()) throw new Error("the provider still reports the transaction open");
+        await sleep(200);
+        await expectOne("the next pooled statement", provider);
       },
     );
 

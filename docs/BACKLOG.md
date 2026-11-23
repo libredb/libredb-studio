@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D505, U17 · 368
+- [Drivers and connections](#drivers-and-connections) — D1-D580, U17 · 369
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -4907,6 +4907,16 @@ Since the open's deadline (`docs/providers/CONTRACT.md`, clause C-55) the host a
 Measured 2026-11-23 while planning the open's deadline.
 
 **Done when:** each of the five providers bounds its connect by the open's deadline (clause C-29), and a test per provider against a listener that accepts and never answers expects the connect to settle within its engine's connect budget.
+
+### D580. A SQL Server COMMIT or ROLLBACK sent while a statement of the same transaction runs is refused by the driver, and the provider forgets a transaction still open
+
+`Transaction.commit` and `Transaction.rollback` in `mssql` 12.7.14 (`lib/base/transaction.js`) answer `EREQINPROG` ("Can't commit transaction. There is a request in progress.") while a request of the transaction is still running, before they send anything, and keep the connection and the open transaction.
+`commitTransaction` and `rollbackTransaction` in `src/lib/db/providers/sql/mssql.ts` clear `txTransaction` and `txActive` in their `finally` all the same, so `isInTransaction()` answers false, the transaction route records the transaction `rolled-back`, and the connection with its locks stays held by the dropped `Transaction` object until the pool closes.
+An API client or a second request of the transaction's owner reaches it by sending the COMMIT or ROLLBACK while a `query` action of the same transaction runs.
+Measured 2026-11-23 with the real `mssql` `Transaction` over a fake pool and connection: the COMMIT answered `EREQINPROG`, only `BEGIN` had been sent, and the pool released nothing.
+GOV23 is the same driver behaviour met by the timer's rollback.
+
+**Done when:** a COMMIT or ROLLBACK the driver refuses with `EREQINPROG` leaves the provider holding the transaction, so a later COMMIT or ROLLBACK can still end it, the mssql document states it, and a test with a `Transaction` double that answers `EREQINPROG` shows `isInTransaction()` still true and the connection released once the transaction ends.
 
 ## Value interpolation
 

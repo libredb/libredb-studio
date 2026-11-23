@@ -4075,7 +4075,11 @@ export class MySQLProvider extends SQLBaseProvider {
   public async beginTransaction(options: BeginTransactionOptions = {}): Promise<BeginTransactionResult> {
     this.ensureConnected();
     if (this.txActive) throw new QueryError("Transaction already active", "mysql");
-    const conn = await this.pool!.getConnection();
+    // A failure to take the connection precedes the BEGIN, so it answers not-sent (CONTRACT E-5).
+    const conn = await checkoutPhase(
+      () => this.pool!.getConnection(),
+      (error) => mapDatabaseError(error, "mysql", "BEGIN"),
+    );
     this.txConn = conn;
     // Sent directly rather than through the driver's own `beginTransaction()`, because that
     // method resolves to nothing and the OK packet is the evidence: a server of the MySQL wire
@@ -4088,7 +4092,7 @@ export class MySQLProvider extends SQLBaseProvider {
     } catch (error) {
       conn.release();
       this.txConn = null;
-      throw error;
+      throw mapDatabaseError(error, "mysql", "BEGIN");
     }
     // Neither bit set (or no header) is a server that reports no transaction state at all,
     // which is a different answer from bit 1 alone, "autocommit, and no transaction open".
@@ -4120,6 +4124,8 @@ export class MySQLProvider extends SQLBaseProvider {
     const conn = this.txConn;
     try {
       await conn.commit();
+    } catch (error) {
+      throw mapDatabaseError(error, "mysql", "COMMIT");
     } finally {
       this.releaseHeldConnection(conn);
     }
@@ -4131,6 +4137,8 @@ export class MySQLProvider extends SQLBaseProvider {
     const conn = this.txConn;
     try {
       await conn.rollback();
+    } catch (error) {
+      throw mapDatabaseError(error, "mysql", "ROLLBACK");
     } finally {
       this.releaseHeldConnection(conn);
     }

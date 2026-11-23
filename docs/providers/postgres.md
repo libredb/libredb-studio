@@ -23,7 +23,7 @@
 | **Base** | [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts) |
 | **Tests** | [`tests/integration/db/postgres-provider.test.ts`](../../tests/integration/db/postgres-provider.test.ts) |
 | **Write reach** | open: the editor, inline row edit, Import, Generate Test Data, Create Table, the function and procedure object edit, maintenance (`vacuum`, `analyze`, `reindex`, `kill`) and the transaction route all send writes, and the database role is the boundary |
-| **Failed statement outcome** | checkout-not-sent: a failure to take a connection from the pool (`pool.connect()`), which comes before anything is sent, answers outcome `not-sent`, and every failure after it `unknown` |
+| **Failed statement outcome** | checkout-not-sent: a failure to take a connection from the pool (`pool.connect()`) for a statement or for a transaction's `BEGIN`, which comes before anything is sent, answers outcome `not-sent`, so does a call on a held transaction whose session had already ended, and every failure after it `unknown` |
 
 ---
 
@@ -2096,9 +2096,9 @@ the client is not returned to the pool until commit/rollback. Surfaced via `POST
 
 | Method | Behaviour |
 |--------|-----------|
-| `beginTransaction()` | Acquires a client, runs `BEGIN`, arms a **5-minute auto-rollback** timer ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts), duration set by `TX_TIMEOUT_MS`). Throws if one is already active, and refuses a `BEGIN` that opened nothing ([§8.0](#80-a-begin-that-opens-nothing-and-a-statement-that-ends-the-transaction)). |
+| `beginTransaction()` | Acquires a client through `checkoutPhase`, so a failed checkout answers `not-sent` ([§11](#11-error-handling)), runs `BEGIN`, arms a **5-minute auto-rollback** timer ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts), duration set by `TX_TIMEOUT_MS`). Throws if one is already active, and refuses a `BEGIN` that opened nothing ([§8.0](#80-a-begin-that-opens-nothing-and-a-statement-that-ends-the-transaction)). |
 | `queryInTransaction(sql, params?)` | Runs on the transaction's client. Throws if none active. Ends the session when the statement ended the transaction itself ([§8.0](#80-a-begin-that-opens-nothing-and-a-statement-that-ends-the-transaction)), and reports the transaction lost when its database session has ended ([§8.0.2](#802-a-session-that-ends-while-a-statement-or-the-transaction-holds-it)). |
-| `commitTransaction()` / `rollbackTransaction()` | Ends the transaction, clears the timer, releases the client. Throws if none active, and reports the transaction lost when its database session has ended ([§8.0.2](#802-a-session-that-ends-while-a-statement-or-the-transaction-holds-it)). |
+| `commitTransaction()` / `rollbackTransaction()` | Ends the transaction, clears the timer, releases the client. A `COMMIT` or `ROLLBACK` that fails answers its mapped class with `outcome` `unknown` ([§11](#11-error-handling)), and the provider holds no transaction after it. Throws if none active, and reports the transaction lost when its database session has ended ([§8.0.2](#802-a-session-that-ends-while-a-statement-or-the-transaction-holds-it)). |
 | `expireTransaction()` | The timeout callback — auto-`ROLLBACK` to prevent leaked locks if a transaction is abandoned. |
 | `isInTransaction()` | Current state. |
 
@@ -2196,10 +2196,10 @@ Each of these is reported as a named error, and the provider never retries, reco
   The agent read-only path then meets a dead client at its `ROLLBACK` and hands the client back with that error, so the pool discards it.
 - **A call already sent or queued on that client fails with the driver's error.**
   A statement sent at once after one whose session ended can be handed the same pooled client before its socket has closed, and a `commitTransaction()` sent at once, or queued behind the failing statement, meets the same client.
-  Each answers `Connection terminated unexpectedly` (HTTP 500), and the provider holds no transaction after such a COMMIT or ROLLBACK.
+  Each answers `Connection terminated unexpectedly` as a `DatabaseError` (`500 DATABASE_ERROR`, `outcome` `unknown`), and the provider holds no transaction after such a COMMIT or ROLLBACK.
   Once the connection has ended, `pg` marks the client unqueryable and `pg-pool` discards it on release, so it is never handed out again and later statements get a fresh session.
 - **A held transaction is reported lost.**
-  The next `queryInTransaction()`, `commitTransaction()` or `rollbackTransaction()` after the client heard its session end sends nothing and answers a `TransactionLostError` (HTTP 503 `TRANSACTION_LOST`): `The transaction was lost: its database session ended (<the server's or the driver's message>). The server rolls back what was still open in the session when it ended, but a COMMIT that had already reached the server stays committed, so check the data before running the work again. Begin a new transaction to continue.`
+  The next `queryInTransaction()`, `commitTransaction()` or `rollbackTransaction()` after the client heard its session end sends nothing and answers a `TransactionLostError` (HTTP 503 `TRANSACTION_LOST`, `outcome` `not-sent`, since nothing was sent): `The transaction was lost: its database session ended (<the server's or the driver's message>). The server rolls back what was still open in the session when it ended, but a COMMIT that had already reached the server stays committed, so check the data before running the work again. Begin a new transaction to continue.`
   The sentence does not claim that nothing was committed.
   A COMMIT can reach the server and its answer be lost with the session: a typed `COMMIT` whose answer a network reset lost, a `COMMIT` followed in the same text by a statement that ended the session, or a `COMMIT; BEGIN` text that left a new transaction open.
   Measured on PostgreSQL 17, each of these committed its rows while the next call reported the transaction lost.
@@ -2552,7 +2552,7 @@ the shared hierarchy:
 | A privilege the role lacks (SQLSTATE `42501`: `permission denied for table orders`, `must be owner of table orders`) | `PermissionDeniedError`, answered `403 PERMISSION_DENIED` with `Permission denied: ` before the server's sentence |
 | A refused credential (SQLSTATE class `28`: `28P01` a wrong password, `28000` a `pg_hba.conf` refusal or an unknown role) | `AuthenticationError`, answered `401 AUTH_ERROR` |
 | Pool exhausted / too many connections | `PoolExhaustedError` |
-| A call on a held transaction whose database session has ended | `TransactionLostError`, a `ConnectionError`, answered `503 TRANSACTION_LOST` with the transaction-lost sentence ([§8.0.2](#802-a-session-that-ends-while-a-statement-or-the-transaction-holds-it)) |
+| A call on a held transaction whose database session has ended | `TransactionLostError`, a `ConnectionError`, answered `503 TRANSACTION_LOST`, `outcome` `not-sent`, with the transaction-lost sentence ([§8.0.2](#802-a-session-that-ends-while-a-statement-or-the-transaction-holds-it)) |
 
 The two refusals are read from the SQLSTATE and never from the words, so `column "password" does not exist` (`42703`) is a `QueryError`.
 Only an error `pg` raises itself, which carries no SQLSTATE, is read by its words, such as `SASL: SCRAM-SERVER-FIRST-MESSAGE: client password must be a string`.
@@ -2562,7 +2562,9 @@ A connect that fails answers `outcome` `not-sent`, and so does a statement Studi
 The editor's statement (`query`) takes its client from the pool through `checkoutPhase` before it sends anything, so a failure of that checkout answers `not-sent` and keeps the class its `pg` error maps to: a refused connection `ConnectionError`, a refused credential `AuthenticationError`, an ended pool `PoolExhaustedError` ([CONTRACT](./CONTRACT.md), E-5).
 A checkout that waits out the pool's bound (`connectionTimeoutMillis`, which is `acquireTimeout`), on a busy pool or a new client that does not open, is no statement timeout: it answers `503 CONNECTION_ERROR`, `not-sent`, with `No connection of the pool came free or opened within <n> seconds, so the statement was not sent: every connection may be in use, or the server may not be answering.`
 A connection lost after the client was taken, `Connection terminated unexpectedly` included, answers `unknown`, since the statement may have reached the server.
-The other paths that take a client (the agent's read-only profile, a held transaction, the catalog and monitoring reads) still answer `unknown` for a failed checkout.
+A transaction's `beginTransaction()` takes its client the same way before it sends the `BEGIN`, so a failed checkout there answers `not-sent` in the same class, and a pool wait that ran out the same `503 CONNECTION_ERROR` and sentence.
+The `BEGIN` itself, a `COMMIT` and a `ROLLBACK` that fail answer the class their `pg` error maps to, with `outcome` `unknown`, as a statement does: a lost connection `500 DATABASE_ERROR`, a deferred constraint a `COMMIT` checks (`23505`) `400 QUERY_ERROR`.
+The other paths that take a client (the agent's read-only profile, the catalog and monitoring reads) still answer `unknown` for a failed checkout.
 
 ---
 

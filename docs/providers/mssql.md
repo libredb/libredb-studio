@@ -596,10 +596,12 @@ with a 5-minute auto-rollback on an owned provider only ([§3.6](#36-transaction
 
 | Method | Behaviour |
 |--------|-----------|
-| `beginTransaction()` | `new mssql.Transaction(pool)` + `begin()`. Throws if one is active. |
+| `beginTransaction()` | `new mssql.Transaction(pool)` + `begin()`. Throws if one is active. A `begin()` that fails answers its mapped class with `outcome` `unknown`, since the driver takes the pooled connection inside `begin()` and no failure can be shown to come before the send. |
 | `queryInTransaction(sql, params?)` | Runs on a `new mssql.Request(transaction)`. Throws if none active. |
-| `commitTransaction()` / `rollbackTransaction()` | `commit()`/`rollback()`. Throws if none active. |
+| `commitTransaction()` / `rollbackTransaction()` | `commit()`/`rollback()`. Throws if none active. A failure answers its mapped class with `outcome` `unknown`, and the provider holds no transaction after it. |
 | `isInTransaction()` | Current state. |
+
+A COMMIT or ROLLBACK sent while a statement of the same transaction runs is refused by the driver before it sends anything (`EREQINPROG`, "Can't commit transaction. There is a request in progress."), and the provider then holds no transaction although the server still does, with the connection and its locks held until the pool closes (D580 in [BACKLOG.md](../BACKLOG.md)).
 
 ### 6.1 `endOpenQueryTransaction()` is NOT implemented here, because the driver cannot be asked
 
@@ -1602,6 +1604,8 @@ error token but keeps only the last as `loginError`. `buildConfig()` installs a 
 that watches them, and `connect()` reports the 4060 sentence rather than the 18456 one (#1451). The
 ordering in the table above is the same problem from the other side: the real 4060 text ends in *The
 login failed.*, so testing *login failed* first would classify it as an `AuthenticationError`.
+
+A transaction's `begin()`, `commit()` and `rollback()` that fail are mapped like a statement's failure, and answer `outcome` `unknown` ([§6](#6-transactions)).
 
 Because `requestTimeout` *is* wired ([§3.5](#35-a-query-timeout-is-wired-driver-enforced)) — even
 though it's driver-enforced rather than server-side — an overrunning query genuinely produces a

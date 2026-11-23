@@ -3740,13 +3740,17 @@ export class PostgresProvider extends SQLBaseProvider {
     this.ensureConnected();
     this.refuseWithoutCatalog();
     if (this.txActive) throw new QueryError("Transaction already active", "postgres");
-    this.txClient = await this.pool!.connect();
+    // A failure to take the client precedes the BEGIN, so it answers not-sent (CONTRACT E-5).
+    this.txClient = await checkoutPhase(
+      () => this.pool!.connect(),
+      (error) => mapDatabaseError(error, "postgres", "BEGIN"),
+    );
     try {
       await this.txClient.query("BEGIN");
     } catch (error) {
       this.txClient.release();
       this.txClient = null;
-      throw error;
+      throw mapDatabaseError(error, "postgres", "BEGIN");
     }
     // The ReadyForQuery byte after BEGIN is the server saying whether a transaction is open.
     // A PostgreSQL-wire relative can accept the statement and open none: RisingWave answers
@@ -3771,6 +3775,8 @@ export class PostgresProvider extends SQLBaseProvider {
     const client = this.txClient;
     try {
       await client.query("COMMIT");
+    } catch (error) {
+      throw mapDatabaseError(error, "postgres", "COMMIT");
     } finally {
       this.releaseHeldClient(client);
     }
@@ -3783,6 +3789,8 @@ export class PostgresProvider extends SQLBaseProvider {
     const client = this.txClient;
     try {
       await client.query("ROLLBACK");
+    } catch (error) {
+      throw mapDatabaseError(error, "postgres", "ROLLBACK");
     } finally {
       this.releaseHeldClient(client);
     }
@@ -3799,7 +3807,8 @@ export class PostgresProvider extends SQLBaseProvider {
    * session's error, so the pool discards it, and the provider holds no transaction from here on:
    * this call reports the loss and the next one answers `NO_ACTIVE_TRANSACTION`. A
    * `TransactionLostError`, a `ConnectionError`, because the connection and not the statement is
-   * what failed.
+   * what failed, raised with `beforeSend`, so it answers `not-sent`: the session is read before any
+   * `client.query`, and `pg` refuses a query on a client whose connection ended without writing it.
    */
   private refuseLostTransaction(client: PoolClient): void {
     const ended = endedSessions.get(client);
@@ -3808,7 +3817,9 @@ export class PostgresProvider extends SQLBaseProvider {
     this.txClient = null;
     this.txActive = false;
     client.release(ended);
-    throw new TransactionLostError(transactionLostSentence(ended), "postgres", this.config.host, this.config.port);
+    throw new TransactionLostError(transactionLostSentence(ended), "postgres", this.config.host, this.config.port, {
+      beforeSend: true,
+    });
   }
 
   /**
