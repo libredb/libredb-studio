@@ -7,6 +7,8 @@ import { type CancellationToken, ErrorCodes, type MessageConnection, ResponseErr
 import { checkEditorQuery, runEditorQuery } from "@/lib/api/editor-query";
 import { databaseErrorBody, internalErrorBody, withWithheldText } from "@/lib/api/error-body";
 import { pageOptionError } from "@/lib/api/page-probe";
+import { gateRun, type RunGateAnswerBody, type RunGateRequest } from "@/lib/api/run-confirmation";
+import { runConfirmationIssuerForProcess } from "@/lib/api/run-confirmation-token";
 import type { testConnection } from "@/lib/api/test-connection";
 import { parseConnectionString } from "@/lib/connection-string-parser";
 import { scopeToCatalog } from "@/lib/db/catalog-scope";
@@ -20,7 +22,6 @@ import { supportsQueryCancel } from "@/lib/db/query-cancel";
 import type { Container, DatabaseObject, KindCount, ObjectDetail, QueryPrepareOptions } from "@/lib/db/types";
 import { editorLanguageOf } from "@/lib/editor/tab-language";
 import { generateTableQuery } from "@/lib/query-generators";
-import { isDangerousQuery } from "@/lib/sql/dangerous-query";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { type RunTarget, runnableTarget } from "@/lib/sql/run-target";
 import type { ColumnSchema, DatabaseConnection } from "@/lib/types";
@@ -76,6 +77,9 @@ export const RUN_ROUTE = "vscode/query/run";
  * channel's to change (D276).
  */
 export const TEST_DEADLINE_MS = 11_000;
+
+/** The user the run gate's advisory warning names for this child: it serves one VS Code window and has no login. */
+export const RUN_CONFIRMATION_USER = "vscode-extension";
 
 /** Params the child cannot read: InvalidParams, naming the field, with no data. */
 export function invalidParams(message: string): ResponseError<void> {
@@ -165,6 +169,24 @@ function databaseObjectOf(value: unknown): DatabaseObject {
   return value as unknown as DatabaseObject;
 }
 
+/** The catalog field of query/run and query/target: absent, or a non-empty string. */
+function catalogOf(params: unknown): string | undefined {
+  const catalog = fieldOf(params, "catalog");
+  return catalog === undefined ? undefined : nonEmptyString(catalog, "catalog");
+}
+
+/**
+ * The run gate's answer as the JSON-RPC error the route's answer would be: the route's status as the code and its
+ * sentence; a body with a code carries it as data.code, a 428's offer beside it; a body without one carries no data.
+ */
+function gateAnswerError(status: number, body: RunGateAnswerBody): ResponseError<BackendErrorData | void> {
+  if (body.code === undefined) return new ResponseError<void>(status, body.error);
+  return new ResponseError<BackendErrorData>(status, body.error, {
+    code: body.code,
+    ...(body.confirmation !== undefined && { confirmation: body.confirmation }),
+  });
+}
+
 /** The connectionId every request after connection/open names its connection by. */
 function connectionIdOf(params: unknown): string {
   return nonEmptyString(fieldOf(params, "connectionId"), "connectionId");
@@ -209,6 +231,22 @@ export function createHandlers(
   runtime: BackendRuntime,
   registry: ConnectionRegistry = new ConnectionRegistry(),
 ): BackendHandlers {
+  // The run confirmation's issuer: this child's own secret and session, drawn once and held only in its memory, so a
+  // token from another child or from before a restart is not verifiable (docs/VSCODE_EXTENSION.md section 7).
+  const issuer = runConfirmationIssuerForProcess(RUN_CONFIRMATION_USER);
+  /** The run gate's request for a statement on an open record, as the query route builds it for one statement. */
+  const gateRequest = (record: OpenRecord, catalog: string | undefined, sql: string, confirmation: unknown) =>
+    ({
+      route: RUN_ROUTE,
+      issuer,
+      connection: record.connection,
+      catalog,
+      sql,
+      params: undefined,
+      confirmation,
+      explain: false,
+    }) satisfies RunGateRequest;
+
   /** The record connection/open stored for this id, or the CONNECTION_NOT_OPEN refusal the host reopens on. */
   const openRecord = (connectionId: string): OpenRecord => {
     const record = registry.get(connectionId);
@@ -379,8 +417,7 @@ export function createHandlers(
       const connectionId = connectionIdOf(params);
       const queryId = nonEmptyString(fieldOf(params, "queryId"), "queryId");
       const statement = aString(fieldOf(params, "statement"), "statement");
-      const catalogField = fieldOf(params, "catalog");
-      const catalog = catalogField === undefined ? undefined : nonEmptyString(catalogField, "catalog");
+      const catalog = catalogOf(params);
       const bounds = { limit: fieldOf(params, "limit"), offset: fieldOf(params, "offset") };
       // Its sentence names options.limit as the route's body does, so both channels word it once.
       const boundsError = pageOptionError(bounds);
@@ -395,6 +432,10 @@ export function createHandlers(
       if (refused !== null) {
         throw refused.status === 413 ? refusal(413, "TEXT_TOO_LARGE", refused.error) : invalidParams(refused.error);
       }
+      // The server's run gate, after the fields, the bounds and the text bound and before any provider, as the route
+      // orders it: a request it answers builds no provider and runs nothing. A page read is classified like any run.
+      const gate = await gateRun(gateRequest(record, catalog, statement, fieldOf(params, "confirmation")));
+      if (gate.kind === "answer") throw gateAnswerError(gate.status, gate.body);
 
       // A cancelled request is the caller going away, as a dropped browser request is the route's.
       const controller = new AbortController();
@@ -411,7 +452,11 @@ export function createHandlers(
             route: RUN_ROUTE,
             scrub: providerTextScrub(record.connection, "any"),
           });
-          return { ...body, ...(resultSetCount > 1 && { resultSetCount }) };
+          return {
+            ...body,
+            ...(resultSetCount > 1 && { resultSetCount }),
+            ...(gate.unconfirmed && { confirmation: "unconfirmed" as const }),
+          };
         });
       } finally {
         listener.dispose();
@@ -477,8 +522,8 @@ export function createHandlers(
 
     // The web editor's run target rule on the offsets the host's editor reports, through runnableTarget: a target with
     // no code under the sql editor language answers "", so the host's one blank check says "Nothing to run." (builder's
-    // call 4). The target also carries the web editor's confirmation gate's verdict, read under the connection's type,
-    // for the host to ask on.
+    // call 4). The target also carries the server's run gate's verdict on it, asked with "ask" on the catalog the run
+    // will reach: null where the gate does not ask, else the 428's offer with a token query/run accepts once.
     async runTarget(params) {
       const connectionId = connectionIdOf(params);
       const text = aString(fieldOf(params, "text"), "text");
@@ -489,6 +534,7 @@ export function createHandlers(
         end: anInteger(selectionField.end, "selection.end"),
       };
       const cursor = anInteger(fieldOf(params, "cursor"), "cursor");
+      const catalog = catalogOf(params);
       const record = openRecord(connectionId);
       const capabilities = await answeringFor(record.connection, async () =>
         (await providerOf(record)).getCapabilities(),
@@ -506,8 +552,12 @@ export function createHandlers(
         throw error instanceof RangeError ? invalidParams(error.message) : error;
       }
       // Nothing to run asks nothing.
-      if (rule.editorLanguage === "sql" && target.statement === "") return { statement: "", dangerous: false };
-      return { ...target, dangerous: isDangerousQuery(target.statement, record.connection.type) };
+      if (rule.editorLanguage === "sql" && target.statement === "") return { statement: "", confirmation: null };
+      const gate = await gateRun(gateRequest(record, catalog, target.statement, "ask"));
+      if (gate.kind === "run") return { ...target, confirmation: null };
+      // Asked with "ask", the gate answers a 428 with its offer or a refusal, which is this request's answer.
+      if (gate.status !== 428 || gate.body.confirmation === undefined) throw gateAnswerError(gate.status, gate.body);
+      return { ...target, confirmation: gate.body.confirmation };
     },
   };
 }

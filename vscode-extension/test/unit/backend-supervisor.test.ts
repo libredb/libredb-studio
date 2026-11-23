@@ -24,7 +24,7 @@ import { answerMessages, shownMessages, window } from "../fakes/vscode";
 import { TEST_PASSWORD } from "../fakes/credentials";
 
 const INITIALIZED = {
-  protocolVersion: 1,
+  protocolVersion: 2,
   runtime: { node: "24.21.0", electron: "43.7.7", modules: "148", platform: "linux", arch: "x64" },
   enabledProviders: ["postgres", "mssql", "mysql", "mongodb"],
 };
@@ -150,7 +150,7 @@ describe("BackendSupervisor", () => {
     assert.equal(supervisor.state, "starting");
     assert.equal(supervisor.pid, children[0].pid);
     assert.deepEqual(children[0].received, [
-      { jsonrpc: "2.0", id: 0, method: "initialize", params: { protocolVersion: 1 } },
+      { jsonrpc: "2.0", id: 0, method: "initialize", params: { protocolVersion: 2 } },
     ]);
     await ready;
     assert.equal(supervisor.state, "ready");

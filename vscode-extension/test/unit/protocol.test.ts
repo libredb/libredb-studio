@@ -33,7 +33,12 @@ describe("the backend protocol", () => {
       runTarget: "query/target",
     });
     assert.equal(EXIT_NOTIFICATION, "exit");
-    assert.equal(PROTOCOL_VERSION, 1);
+  });
+
+  it("speaks protocol version 2", () => {
+    // Version 2 carries the run confirmation (FND-5 slice 6e): a version 1 child would answer no offer and run a write
+    // the host never asked about, so the handshake refuses that pair.
+    assert.equal(PROTOCOL_VERSION, 2);
   });
 
   it("gives no two methods one name", () => {

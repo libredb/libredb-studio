@@ -71,14 +71,14 @@ describe("startBackend", () => {
   it("answers initialize over the IPC channel with its runtime and its enabled providers", async () => {
     const proc = new FakeProcess();
     const connection = startBackend(proc, fakeFactory(async () => {}).factory, ">=24.0.0");
-    proc.emit("message", { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1 } });
+    proc.emit("message", { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 2 } });
     await settle();
     assert.deepEqual(proc.sent, [
       {
         jsonrpc: "2.0",
         id: 1,
         result: {
-          protocolVersion: 1,
+          protocolVersion: 2,
           runtime: { node: "24.21.0", electron: "43.7.7", modules: "148", platform: "linux", arch: "x64" },
           enabledProviders: ["postgres", "mssql", "mysql", "mongodb"],
         },

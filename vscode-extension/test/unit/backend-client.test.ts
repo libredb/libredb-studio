@@ -35,7 +35,7 @@ import { TEST_PASSWORD } from "../fakes/credentials";
 const RETYPED_PASSWORD = ["n3w", "2"].join("-");
 
 const INITIALIZED: InitializeResult = {
-  protocolVersion: 1,
+  protocolVersion: 2,
   runtime: { node: "24.21.0", electron: "43.7.7", modules: "148", platform: "linux", arch: "x64" },
   enabledProviders: ["postgres", "mssql", "mysql", "mongodb"],
 };
@@ -1118,7 +1118,7 @@ describe("BackendClient", () => {
   it("answers initialize with the link's handshake and sends nothing", async () => {
     const { client, received } = setup();
     const api: BackendApi = client;
-    assert.deepEqual(await api.initialize({ protocolVersion: 1 }), INITIALIZED);
+    assert.deepEqual(await api.initialize({ protocolVersion: 2 }), INITIALIZED);
     assert.deepEqual(received, []);
   });
 

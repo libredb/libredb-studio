@@ -186,10 +186,10 @@ describe("the backend child against PostgreSQL, SQL Server, MySQL and MongoDB", 
     }
   });
 
-  it("answers initialize with protocol version 1, the enabled providers and the runtime it runs on", async () => {
+  it("answers initialize with protocol version 2, the enabled providers and the runtime it runs on", async () => {
     const answer = await freshChild().initialize();
     console.log(`initialize answered ${JSON.stringify(answer)}`);
-    assert.equal(answer.protocolVersion, 1);
+    assert.equal(answer.protocolVersion, 2);
     assert.deepEqual(answer.enabledProviders, ENABLED_PROVIDERS);
     if (runtime.name === "node") {
       assert.equal(answer.runtime.electron, null);
@@ -206,11 +206,11 @@ describe("the backend child against PostgreSQL, SQL Server, MySQL and MongoDB", 
     const session = freshChild();
     const early = await errorOf(runQuery(session, "postgres-main", "select 1"));
     assert.equal(early.code, ErrorCodes.ServerNotInitialized);
-    const mismatch = await errorOf(session.initialize(2));
+    const mismatch = await errorOf(session.initialize(3));
     assert.equal(mismatch.code, 500);
     assert.equal(
       mismatch.message,
-      "The LibreDB backend speaks protocol version 1, but the extension sent version 2. Reinstall the LibreDB extension.",
+      "The LibreDB backend speaks protocol version 2, but the extension sent version 3. Reinstall the LibreDB extension.",
     );
     assert.deepEqual(mismatch.data, { code: "PROTOCOL_MISMATCH" });
   });

@@ -14,6 +14,7 @@ import {
   METHODS,
   type OpenResult,
   type QueryPage,
+  type RunConfirmationParam,
   type RunTargetResult,
   type TestConnectionResult,
   type WireConnection,
@@ -62,13 +63,22 @@ describe("SQLite in the backend child", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  const run = (connectionId: string, statement: string) =>
+  const run = (connectionId: string, statement: string, confirmation?: RunConfirmationParam) =>
     session.connection.sendRequest<QueryPage>(METHODS.runQuery, {
       connectionId,
       queryId: randomUUID(),
       statement,
       limit: 500,
       offset: 0,
+      ...(confirmation !== undefined && { confirmation }),
+    });
+
+  const target = (connectionId: string, text: string) =>
+    session.connection.sendRequest<RunTargetResult>(METHODS.runTarget, {
+      connectionId,
+      text,
+      selection: { start: 0, end: 0 },
+      cursor: 0,
     });
 
   it("tests, opens and runs statements on a database file in a trusted workspace, through the worker", async () => {
@@ -90,20 +100,59 @@ describe("SQLite in the backend child", () => {
     assert.doesNotMatch(session.stderr(), /SQLite worker exited/);
   });
 
-  it("flags a write on query/target and leaves a read unflagged, as the bundled gate reads them", async () => {
+  it("offers a confirmation for a write on query/target, none for a read, and runs a write only with its token, once", async () => {
     await session.connection.sendRequest<OpenResult>(
       METHODS.openConnection,
-      params(sqlite("flag", join(dir, "flag.db"))),
+      params(sqlite("confirm", join(dir, "confirm.db"))),
     );
-    const target = (text: string) =>
-      session.connection.sendRequest<RunTargetResult>(METHODS.runTarget, {
-        connectionId: "flag",
-        text,
-        selection: { start: 0, end: 0 },
-        cursor: 0,
-      });
-    assert.equal((await target("DELETE FROM t")).dangerous, true);
-    assert.equal((await target("SELECT 1")).dangerous, false);
+    await run("confirm", "create table t (n integer)");
+    const offered = await target("confirm", "DELETE FROM t");
+    assert.ok(offered.confirmation !== null);
+    assert.equal(offered.confirmation.typedConfirmation, null);
+    assert.equal((await target("confirm", "SELECT 1")).confirmation, null);
+
+    const asked = await errorOf(run("confirm", "DELETE FROM t", "ask"));
+    assert.equal(asked.code, 428);
+    assert.equal(asked.data?.code, "CONFIRMATION_REQUIRED");
+    assert.equal(typeof asked.data?.confirmation?.token, "string");
+
+    const token = offered.confirmation.token;
+    await run("confirm", "DELETE FROM t", { token });
+    const again = await errorOf(run("confirm", "DELETE FROM t", { token }));
+    assert.equal(again.code, 400);
+    assert.equal(again.message, "this confirmation has already been used");
+    assert.equal(again.data?.code, "CONFIRMATION_INVALID");
+
+    const another = (await target("confirm", "DELETE FROM t WHERE n = 1")).confirmation;
+    assert.ok(another !== null);
+    const misplaced = await errorOf(run("confirm", "DELETE FROM t", { token: another.token }));
+    assert.equal(misplaced.message, "this confirmation was issued for another statement");
+    assert.equal(misplaced.data?.code, "CONFIRMATION_INVALID");
+  });
+
+  it("asks for a production connection's name and runs a write only with it", async () => {
+    const name = randomUUID();
+    const file = join(dir, "production.db");
+    // The table is created through a development connection to the same file, so the production case asks only once.
+    await session.connection.sendRequest<OpenResult>(METHODS.openConnection, params(sqlite("setup", file)));
+    await run("setup", "create table t (n integer)");
+    await session.connection.sendRequest<OpenResult>(
+      METHODS.openConnection,
+      params({ ...sqlite("production", file), name, environment: "production" }),
+    );
+    await run("production", "SELECT 1", "ask");
+    const offered = (await target("production", "DELETE FROM t")).confirmation;
+    assert.ok(offered !== null);
+    assert.deepEqual(offered.typedConfirmation, { type: "connection-name", expected: name, targets: [] });
+
+    const tokenAlone = await errorOf(run("production", "DELETE FROM t", { token: offered.token }));
+    assert.equal(tokenAlone.code, 428);
+    const wrongName = await errorOf(run("production", "DELETE FROM t", { token: offered.token, typed: randomUUID() }));
+    assert.equal(wrongName.code, 400);
+    assert.equal(wrongName.data?.code, "CONFIRMATION_INVALID");
+    await run("production", "DELETE FROM t", { token: offered.token, typed: name });
+    const spent = await errorOf(run("production", "DELETE FROM t", { token: offered.token, typed: name }));
+    assert.equal(spent.message, "this confirmation has already been used");
   });
 
   it("refuses a relative path before the provider builds, and leaves no file in the extension's folder", async () => {
