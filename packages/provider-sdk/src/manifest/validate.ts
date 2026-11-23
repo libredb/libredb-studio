@@ -385,12 +385,13 @@ function clausePatternRefusals(engine: EngineDeclaration, at: string): SchemaRef
 
 /**
  * How many capturing groups the compiled `pattern` has. `exec` answers one slot per capturing group plus one for the
- * match (ECMAScript's RegExpBuiltinExec), and an empty alternative appended to the source always matches the empty
- * string, so the count is exact without reading the source: a group the matching alternative never enters is still a
- * slot, undefined.
+ * match (ECMAScript's RegExpBuiltinExec), and an empty alternative put before the source matches the empty string at
+ * once, so the count is exact without reading the source: a group the matching alternative never enters is still a
+ * slot, undefined. The empty alternative goes first because alternatives are tried left to right: the declared pattern
+ * is never entered, so a pattern that backtracks without end on the empty string is counted as quickly as any other.
  */
 function capturingGroups(pattern: RegExp): number {
-  const answer = new RegExp(`${pattern.source}|`, pattern.flags).exec("");
+  const answer = new RegExp(`|${pattern.source}`, pattern.flags).exec("");
   return (answer?.length ?? 0) - 1;
 }
 

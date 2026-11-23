@@ -953,6 +953,7 @@ So nothing a declaration states becomes a statement of the file an export writes
 Each engine states the vocabulary its declared types are read with: its bare type families grouped by kind, and three patterns.
 Each pattern is a `source` of 2 to 512 characters, written with `^` and `$`, and its `flags`, none, `i`, `u` or `iu`, and it compiles as JavaScript's `RegExp` reads it with its flags.
 `floatType` and `exactNumericType` are tested against a whole type, and `numericWrapper` captures exactly one group, the type it wraps.
+The validator counts that group without running the declared pattern, so a wrapper that backtracks without end on some text is admitted or refused as quickly as any other.
 
 - schema `/$defs/typeVocabulary`
 - schema `/$defs/typePattern`
@@ -961,6 +962,7 @@ Each pattern is a `source` of 2 to 512 characters, written with `^` and `$`, and
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "a type pattern whose flags are not none, i, u or iu is refused as value-not-allowed"
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "a type pattern that does not compile is refused as pattern-invalid"
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "a wrapper pattern that does not capture exactly one group is refused as wrapper-group-count"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a wrapper pattern that backtracks without end on the empty string is still counted at once"
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's SQL writing facts are held to the rules the schema cannot state, at pointers into it"
 - test `tests/unit/db/engine-declarations.test.ts` "the generator refuses, by name, a type pattern whose flags the contract does not allow"
 - test `tests/unit/db/engine-declarations.test.ts` "the generator refuses, by name, a bare type family outside the inferred kinds"

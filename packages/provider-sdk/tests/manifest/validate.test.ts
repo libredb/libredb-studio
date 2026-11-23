@@ -5,7 +5,7 @@
  * Each case starts from the minimal fixture, changes one thing, and asserts the exact refusal list, so a change in how
  * ajv reports an error fails here rather than reaching a host as a different refusal.
  */
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -18,6 +18,7 @@ import {
   type SchemaRefusalRule,
 } from "@libredb/provider-sdk/manifest";
 import { errorsOf, refusalsOf } from "../../src/manifest/validate";
+import { boundedChild } from "../helpers/node-child";
 
 const SCHEMA_BYTES = readFileSync(path.join(import.meta.dir, "../../src/manifest/manifest.schema.json"));
 const validator = compileManifestValidator(SCHEMA_BYTES);
@@ -138,6 +139,54 @@ const VOCABULARY = `${SQL_WRITING}/export/typeVocabulary`;
 function typePattern(source: string, flags = ""): Json {
   return { source, flags };
 }
+
+const SCHEMA_PATH = path.join(import.meta.dir, "../../src/manifest/manifest.schema.json");
+
+interface WrapperCountDeps {
+  readonly compileManifestValidator: typeof compileManifestValidator;
+  readonly manifest: Json;
+  readonly readFileSync: typeof readFileSync;
+}
+
+interface WrapperCountReport {
+  readonly sourceLength: number;
+  readonly admitted: boolean;
+}
+
+/**
+ * Runs in the child, from its text, with the schema's path as its name: the minimal fixture whose wrapper pattern is
+ * anchored, captures one group and fits the schema's length bound, yet takes 2 to the 50th steps to fail on the empty
+ * string, since each of its 50 `(?:\B|\B)` alternations is retried before the group that can never match. Counting
+ * that pattern's groups by running it against the empty string never returns, so the child is killed at its timeout.
+ */
+function runWrapperCount(deps: WrapperCountDeps, schemaPath: string): WrapperCountReport {
+  const validator = deps.compileManifestValidator(deps.readFileSync(schemaPath));
+  const manifest = JSON.parse(JSON.stringify(deps.manifest));
+  const source = `^${"(?:\\B|\\B)".repeat(50)}((?!))$`;
+  manifest.engines[0].sqlWriting.export.typeVocabulary.numericWrapper = { source, flags: "" };
+  return { sourceLength: source.length, admitted: validator.validate(manifest).admitted };
+}
+
+const wrapperCountChild = boundedChild({
+  label: "wrapper-count",
+  imports: [
+    {
+      from: path.join(import.meta.dir, "..", "..", "src", "manifest", "index.ts"),
+      names: ["compileManifestValidator"],
+    },
+    { from: path.join(import.meta.dir, "..", "fixtures", "minimal-manifest.json"), defaultAs: "manifest" },
+    { from: "node:fs", names: ["readFileSync"] },
+  ],
+  runCase: runWrapperCount,
+  heapLimitMiB: 256,
+  timeoutMs: 10_000,
+});
+
+beforeAll(() => wrapperCountChild.build(), 60_000);
+
+afterAll(() => {
+  wrapperCountChild.remove();
+});
 
 /**
  * SQL writing facts naming every hook a row may leave out, with a bound edit, every key float64, a standing-alone name,
@@ -1753,6 +1802,11 @@ describe("rules the schema cannot state", () => {
     expect(refusalsFor(wrapped("^(x$"))).toEqual([refusal("pattern-invalid", pointer)]);
     expect(refusalsFor(wrapped("^(x)$", "i"))).toEqual([]);
   });
+
+  test("a wrapper pattern that backtracks without end on the empty string is still counted at once", async () => {
+    const report = await wrapperCountChild.run<WrapperCountReport>(SCHEMA_PATH);
+    expect(report).toEqual({ sourceLength: 458, admitted: true });
+  }, 20_000);
 
   test("a type name under two families, or a bare spelling named twice, is refused as type-name-duplicate at the later", () => {
     const families = manifest((m) => {
