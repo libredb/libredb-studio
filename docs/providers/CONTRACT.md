@@ -1926,10 +1926,14 @@ The turn is the host's and not the SDK pump's, since the pump is also the kit's 
 
 ### C-50 (normative): The legacy bridge serves today's providers as contract sessions
 
-The legacy bridge serves a provider of the legacy interface, `DatabaseProvider`, as one session of console execute and cancel, built per call by the caller's facade, so today's providers run through the host core's console calls, C-48.
+The legacy bridge serves a provider of the legacy interface, `DatabaseProvider`, as one session of console execute, cancel and transaction, built per call by the caller's facade, so today's providers run through the host core's console calls, C-48.
 Its execute honours `params` and `offset` for every engine, so each provider answers both as it always has, its own refusal of an offset included.
 It offers `console.cancel` exactly when the provider can cancel a run, and does not offer `console.endScope`: the run's open transaction is ended inside its execute, as the editor query always ended it, until that moves onto `console.endScope`.
-It does not offer `console.transaction` either, for any provider: the transaction route still calls a provider's transaction methods itself, until they move onto the host core.
+It offers `console.transaction` exactly when the provider holds a transaction session, the duck typing of begin, commit and rollback the transaction route has always read.
+Its transaction call runs the provider's own method for the action, a begin with `requireReportedState` as the transaction route has always passed it, answering `stateReported` exactly when the provider answered a result, and `state` runs nothing.
+Every transaction answer's session state is the provider's `isInTransaction()` read after the call, so through the bridge a state is `in-transaction` or `not-in-transaction`, and the bridge keeps none between calls.
+A statement sent with `transaction` runs the provider's prepare, the probe row past the page and `queryInTransaction` with a new array of the request's params, with no run id, no scope and no transaction ender, since it runs on the transaction's own connection, and answers the session state read after it.
+A provider's error passes by reference.
 Its execute hands the provider a fresh copy of the caller's own page options and a new array of the request's params, so a provider that writes what it receives changes nothing the host froze, and runs the provider's prepare, the probe row past the page, the statement and the transaction's end as the editor query always ran them.
 It answers one source per result set, the main rows first.
 A source reads each row positionally under the result's columns in its value codec form, or, when the codec refuses a cell, in the JSON form the answer writes for that row, sizes it with the pull's measure, C-15, and answers that same array, so each row is measured once, in the form closest to its answer.
@@ -1938,7 +1942,12 @@ A key a row holds outside its columns is answered and not measured.
 The page's row limit is set once execute answered: one past the page when the provider applied the page, otherwise every row the provider returned, at least one.
 
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session honours params and offset, offers cancel only where the provider cancels, and offers no scope"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session offers no transaction facet, since the transaction route still calls the provider's transaction methods itself"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session offers the transaction facet exactly where the provider is a TransactionProvider"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged begin, COMMIT, ROLLBACK and state read call the provider's methods and answer its state after each"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged begin hands the provider requireReportedState as the route always did, true only when asked"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged statement inside the transaction prepares, probes and runs queryInTransaction, with no run id, no scope and no ender, and answers the state after it"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged transaction call whose provider throws passes the error by reference"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session reads the provider's state on every call, and keeps none"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a legacy provider that writes what it receives changes nothing the host froze"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the run prepares, probes, queries and ends its transaction as runEditorQuery did"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "every result set is a source, the main rows first"
@@ -2179,4 +2188,5 @@ Against this contract's earlier text:
 
 - A provider may claim not-sent for a failure of its checkout of a connection or session before it sends, E-5, where only `refused-before-send` could.
 - A provider may claim not-sent for a call on a held transaction whose session it found ended before it sent anything, by raising `transaction-lost` with `beforeSend`, E-5, and a transaction's begin takes its connection through `checkoutPhase` like a statement.
+- The legacy bridge offers `console.transaction` where its provider is a transaction provider, C-50, where it first offered it nowhere.
 - A row is measured once on the host's path: the pump hands each pull its own measure and takes the size it recorded for the row a source answers, C-13 to C-16 and C-50, where a source and the pump each measured every row.

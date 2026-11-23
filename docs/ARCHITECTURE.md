@@ -490,7 +490,7 @@ The library surface never reads the slot, so an embedder of the npm package comp
 `register()` runs once per server process, `next dev` included, and a dev server does not reload instrumentation or the core when either is edited, so a change under `src/lib/provider-host/core/` needs a restart of the dev server.
 
 Beside core, in the calling bundle, sit the two pieces that serve today's providers through it.
-`src/lib/provider-host/legacy-bridge.ts` serves a legacy `DatabaseProvider` as one session of console execute and cancel (clause C-50), and `src/lib/provider-host/access.ts`, the accessor, builds Studio's error classes from the records core answers (clause C-51).
+`src/lib/provider-host/legacy-bridge.ts` serves a legacy `DatabaseProvider` as one session of console execute, cancel and transaction (clause C-50), and `src/lib/provider-host/access.ts`, the accessor, builds Studio's error classes from the records core answers (clause C-51).
 The caller facade is `src/lib/api/editor-query.ts`: `runEditorQuery` and `cancelEditorRun` keep the shape `POST /api/db/query`, `POST /api/db/cancel` and the VS Code backend child's `query/run` and `query/cancel` have always called, and run each call through the bridge, core and the accessor under the call's deadline: the statement timeout plus 10 s for a statement, 10 s for a cancel.
 
 ## 5. Directory Structure

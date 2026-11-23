@@ -4,7 +4,12 @@ import { pageOfProbe, pageOptionError, probePastPage } from "@/lib/api/page-prob
 import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db";
 import { editorCacheKey } from "@/lib/db/factory";
-import type { DatabaseProvider, QueryPrepareOptions, TransactionProvider } from "@/lib/db/types";
+import {
+  type DatabaseProvider,
+  isTransactionProvider,
+  type QueryPrepareOptions,
+  type TransactionProvider,
+} from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
@@ -132,16 +137,6 @@ async function runScriptInTransaction(
     hasError: statements.some((r) => r.status === "error"),
     statements,
   };
-}
-
-function isTransactionProvider(provider: unknown): provider is TransactionProvider {
-  return (
-    typeof provider === "object" &&
-    provider !== null &&
-    "beginTransaction" in provider &&
-    "commitTransaction" in provider &&
-    "rollbackTransaction" in provider
-  );
 }
 
 /**

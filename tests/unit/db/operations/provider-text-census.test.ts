@@ -598,7 +598,7 @@ const NOT_PROVIDER_TEXT: Readonly<Record<string, string>> = {
     "a Vault error, read before any provider",
   [`${mcp("context.ts")}: load: logger.error(redactError(error))`]: "the seed file's own error",
   [`${mcp("tools", "run-statement.ts")}: build: raw.warnings`]: "a result executeOpened scrubbed before resultOf",
-  [`${providerHost("legacy-bridge.ts")}: execute: result.warnings`]:
+  [`${providerHost("legacy-bridge.ts")}: answerOf: result.warnings`]:
     "a legacy result's warnings carried into the execute answer, which runEditorQuery never renders: it answers the legacy result through withScrubbedWarnings",
   [`${providerHost("core", "console.ts")}: runExecute: answer.warnings`]:
     "an execute answer's warnings carried by reference into the page record, which runEditorQuery never renders",
