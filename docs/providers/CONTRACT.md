@@ -1118,6 +1118,29 @@ The kit, `@libredb/provider-kit`, is admitted only in a package's tests and its 
 The order of the entries in the lock carries no meaning, and no provider is required for Studio to start.
 The loader holds this, and it does not exist yet.
 
+### C-44 (normative): The host owns each open
+
+The host keeps one open in flight per session key, and every concurrent caller of that key shares it.
+A caller's wait for an open is ended only by its own signal, with that signal's reason, and the open goes on for the others.
+An open that settles after every caller left is admitted exactly once, by the open itself.
+An open a removal or a close of the caches overtook closes what it opened exactly once, admits nothing, and answers its callers that the connection was closed while it was opening, outcome not-sent.
+An open that fails with no caller left is handled by the host, never left as a detached rejection.
+
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "concurrent callers of one key share one open"
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "a failed open reaches every caller and frees its key"
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "a caller whose signal aborts stops waiting, and the others still get the open"
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "a caller whose signal already aborted starts nothing and joins nothing"
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "an open no caller waits for any more is admitted exactly once by its own start"
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "an open that fails with no caller left reaches the unclaimed hook once, never as a detached rejection"
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "a discard aborts the matching flights' signals and answers them"
+- test `tests/unit/lib/provider-host/core/open-once-bounds.test.ts` "a caller's signal frees it from an open that never settles"
+- test `tests/isolated/factory.test.ts` "two concurrent first calls for one connection build, connect and cache one provider"
+- test `tests/isolated/factory.test.ts` "a connect two concurrent callers share fails once for both, releases the tunnel once and caches nothing"
+- test `tests/isolated/factory.test.ts` "twelve concurrent first acquisitions of one connection and profile construct one provider"
+- test `tests/isolated/factory.test.ts` "a removal of the connection closes an open it overtook and caches nothing"
+- test `tests/isolated/factory.test.ts` "a cache clear closes an open in flight and names one still opening at the cut"
+- test `tests/integration/db/factory-open-once.test.ts` "two concurrent first writes for one DuckDB connection both reach the file"
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:

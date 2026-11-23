@@ -288,6 +288,8 @@ When a reload takes a person's access to a connection away or changes it, Studio
   So a revoked person's uncommitted changes are discarded, typically within a second of the change that revoked them.
 - Then the provider's database sessions are closed, and Studio waits at most 10 seconds for that.
   Sessions that do not close in time are abandoned and logged, so a database that hangs never holds the next reload.
+- A provider of that person still opening when the reload closes their providers is closed as soon as it has connected, and never kept.
+  A request that was waiting for that open is answered 503 `CONNECTION_ERROR`, saying the connection was closed while it was opening and nothing was sent.
 - The person's next request on the connection is answered from the new snapshot: 404 `CONNECTION_NOT_FOUND` without a grant, or 409 `TRANSACTION_CREDENTIAL_CHANGED` when their transaction was open under a level or credential that changed.
 - A provider idle for 30 minutes, and every provider at a shutdown Studio's handler owns ([DISTRIBUTION.md](DISTRIBUTION.md#stopping-the-server)), is closed the same way, its open transaction rolled back first.
 

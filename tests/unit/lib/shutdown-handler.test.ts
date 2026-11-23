@@ -557,7 +557,12 @@ describe("installShutdownHandler", () => {
       );
       expect(logger.error).toHaveBeenCalledWith(
         "Provider cache close failed",
-        expect.objectContaining({ message: "Providers not closed: shutdown-handler" }),
+        // Named by its connection, its author and Studio's version when the environment sets one.
+        expect.objectContaining({
+          message: expect.stringMatching(
+            /^Providers not closed: shutdown-handler \(SQLite provider, bundled with Studio( \S+)?\)$/,
+          ),
+        }),
         { route: "shutdown" },
       );
       expect(logger.warn).toHaveBeenCalledWith(

@@ -468,6 +468,7 @@ const {
   editorCacheKey,
   findCachedProvider,
   readProviderDeclarations,
+  logUnclaimedOpen,
 } = await import("@/lib/db/factory");
 // Existing SQLite cache tests exercise trusted callers. Explicitly grant their file posture;
 // denied callers are tested separately against the unwrapped factory below.
@@ -2220,6 +2221,542 @@ describe("per-user providers", () => {
 
 // ─── The writable cache's key and lookup, for the transaction route (docs/GOVERNANCE.md#per-user-providers) ───
 
+// ─── one open in flight per cache key (docs/providers/CONTRACT.md, clause C-44) ─────────────────────────────────
+
+/**
+ * Holds every `connect()` of the provider class `conn` builds at one gate the test opens or fails, and records each
+ * provider that reached it, so a test can start concurrent opens and see how many built and connected a provider.
+ */
+async function gateConnects(conn: DatabaseConnection) {
+  // Built without its tunnel, which only an entry point that opens one may build with.
+  const prototype = Object.getPrototypeOf(
+    await createDatabaseProvider({ ...conn, sshTunnel: undefined }),
+  ) as DatabaseProvider;
+  const original = prototype.connect;
+  const connected: DatabaseProvider[] = [];
+  const arrivals: { count: number; resolve: () => void }[] = [];
+  let open: () => void = () => {};
+  let fail: (error: unknown) => void = () => {};
+  const gate = new Promise<void>((resolve, reject) => {
+    open = resolve;
+    fail = reject;
+  });
+  // A failed gate is awaited by every connect that reaches it; this keeps one that none reached handled.
+  gate.catch(() => {});
+  const spy = spyOn(prototype, "connect").mockImplementation(async function (this: DatabaseProvider) {
+    connected.push(this);
+    for (const arrival of arrivals.filter((entry) => entry.count <= connected.length)) arrival.resolve();
+    await gate;
+    return original.call(this);
+  });
+  return {
+    connected,
+    open,
+    fail,
+    /** Resolves once `count` connects have reached the gate. */
+    reached(count: number): Promise<void> {
+      if (connected.length >= count) return Promise.resolve();
+      return new Promise((resolve) => arrivals.push({ count, resolve }));
+    },
+    restore: () => spy.mockRestore(),
+  };
+}
+
+/**
+ * Resolves after `count` turns of the event loop, each a setImmediate, never a timer: once every digest the calls
+ * started has settled (`trackDigests`), long enough for a concurrent call that does not wait on an open in flight to
+ * reach the connect gate, so a test does not pass by the order two calls happened to run in.
+ */
+const turns = (count: number): Promise<void> =>
+  count === 0 ? Promise.resolve() : new Promise<void>((resolve) => setImmediate(resolve)).then(() => turns(count - 1));
+
+/**
+ * Every `crypto.subtle.digest` the code under test starts. A call computes its cache key with digests that settle off
+ * the event loop, after however many turns the machine's load makes them take, so a concurrent caller reaches the open
+ * in flight only after its digests settle; `settled` resolves once every digest started so far has settled and a turn
+ * passed without a new one.
+ */
+function trackDigests(): { settled(): Promise<void>; restore(): void } {
+  const started: Promise<ArrayBuffer>[] = [];
+  const digest = crypto.subtle.digest.bind(crypto.subtle);
+  const spy = spyOn(crypto.subtle, "digest").mockImplementation((...args: Parameters<SubtleCrypto["digest"]>) => {
+    const pending = digest(...args);
+    started.push(pending);
+    return pending;
+  });
+  return {
+    async settled() {
+      for (let seen = -1; seen !== started.length; ) {
+        seen = started.length;
+        // oxlint-disable-next-line no-await-in-loop -- a digest that settles may start another, so each round waits for the ones started before it.
+        await Promise.allSettled(started);
+        // oxlint-disable-next-line no-await-in-loop -- one turn lets a call whose digest settled start its next one before the count is read again.
+        await turns(1);
+      }
+    },
+    restore: () => spy.mockRestore(),
+  };
+}
+
+/** Counts every `disconnect()` of `provider`, still running the provider's own. */
+function countDisconnects(provider: DatabaseProvider): { readonly count: number } {
+  const counter = { count: 0 };
+  const original = provider.disconnect.bind(provider);
+  provider.disconnect = async () => {
+    counter.count += 1;
+    await original();
+  };
+  return counter;
+}
+
+const TUNNELLED: Partial<DatabaseConnection> = {
+  sshTunnel: {
+    enabled: true,
+    host: "bastion.example.com",
+    port: 22,
+    username: "admin",
+    authMethod: "password",
+    password: crypto.randomUUID(),
+  },
+} as Partial<DatabaseConnection>;
+
+describe("one open in flight per cache key", () => {
+  const owned = (owner: string): EditorExecutionContext => ({ owner, ownerPoolMax: 3 });
+
+  test("two concurrent first calls for one connection build, connect and cache one provider", async () => {
+    const conn = makeConnection("postgres", { id: "open-once-shared" });
+    const gate = await gateConnects(conn);
+    const digests = trackDigests();
+    try {
+      const first = getOrCreateProvider(conn);
+      const second = getOrCreateProvider(conn);
+      await gate.reached(1);
+      await digests.settled();
+      await turns(20);
+      gate.open();
+      const [one, two] = await Promise.all([first, second]);
+      expect(gate.connected).toHaveLength(1);
+      expect(one).toBe(two);
+      expect(one).toBe(gate.connected[0]);
+      expect(getProviderCacheStats()).toEqual({ size: 1, connections: ["open-once-shared"] });
+    } finally {
+      gate.restore();
+      digests.restore();
+    }
+  });
+
+  test("a connect two concurrent callers share fails once for both, releases the tunnel once and caches nothing", async () => {
+    const conn = makeConnection("postgres", { id: "open-once-fails", ...TUNNELLED });
+    const gate = await gateConnects(conn);
+    const digests = trackDigests();
+    try {
+      const first = getOrCreateProvider(conn).catch((error: unknown) => error);
+      const second = getOrCreateProvider(conn).catch((error: unknown) => error);
+      await gate.reached(1);
+      await digests.settled();
+      await turns(20);
+      const failure = new ConnectionError("The server refused the connection.", "postgres");
+      gate.fail(failure);
+      const [one, two] = await Promise.all([first, second]);
+      expect(one).toBe(failure);
+      expect(two).toBe(failure);
+      expect(errorOutcome(one)).toBe("not-sent");
+      expect(gate.connected).toHaveLength(1);
+      expect(mockCreateSSHTunnel).toHaveBeenCalledTimes(1);
+      const tunnel = (await mockCreateSSHTunnel.mock.results[0]?.value) as { close: ReturnType<typeof mock> };
+      expect(mockReleaseUnopenedTunnel.mock.calls).toEqual([[tunnel]]);
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      gate.restore();
+      digests.restore();
+    }
+
+    // The key is free again: a third call opens a provider of its own.
+    const third = await getOrCreateProvider(conn);
+    expect(third.isConnected()).toBe(true);
+    expect(getProviderCacheStats().size).toBe(1);
+  });
+
+  test("two owners' concurrent first calls still build two providers", async () => {
+    const conn = makeConnection("postgres", { id: "open-once-owners" });
+    const gate = await gateConnects(conn);
+    try {
+      const alice = getOrCreateProvider(conn, {}, owned("alice-subject"));
+      const bob = getOrCreateProvider(conn, {}, owned("bob-subject"));
+      await gate.reached(2);
+      gate.open();
+      const [forAlice, forBob] = await Promise.all([alice, bob]);
+      expect(forAlice).not.toBe(forBob);
+      expect(gate.connected).toHaveLength(2);
+      expect(getProviderCacheStats().size).toBe(2);
+    } finally {
+      gate.restore();
+    }
+  });
+
+  test("a joiner naming another query timeout takes the timeout path after the shared open", async () => {
+    const conn = makeConnection("postgres", { id: "open-once-timeout", queryTimeout: 1_000 });
+    const other = { ...conn, queryTimeout: 2_000 };
+    const gate = await gateConnects(conn);
+    const digests = trackDigests();
+    try {
+      const first = getOrCreateProvider(conn);
+      const joiner = getOrCreateProvider(other);
+      await gate.reached(1);
+      await digests.settled();
+      await turns(20);
+      gate.open();
+      const [shared, own] = await Promise.all([first, joiner]);
+      // As two sequential calls do today: the provider the shared open admitted is disconnected and replaced by one
+      // opened with the joiner's timeout.
+      expect(gate.connected).toHaveLength(2);
+      expect(own).not.toBe(shared);
+      expect(shared.isConnected()).toBe(false);
+      expect(own.config.queryTimeout).toBe(2_000);
+      expect(getProviderCacheStats().size).toBe(1);
+      expect(await getOrCreateProvider(other)).toBe(own);
+    } finally {
+      gate.restore();
+      digests.restore();
+    }
+  });
+
+  test("twelve concurrent first acquisitions of one connection and profile construct one provider", async () => {
+    const conn = makeConnection("postgres", { id: "open-once-profiled" });
+    const gate = await gateConnects(conn);
+    const digests = trackDigests();
+    try {
+      const acquisitions = Array.from({ length: 12 }, () => acquireExecutionProfileProvider(conn, "agent-read-only"));
+      await gate.reached(1);
+      await digests.settled();
+      await turns(20);
+      gate.open();
+      const providers = await Promise.all(acquisitions);
+      expect(gate.connected).toHaveLength(1);
+      expect(new Set(providers).size).toBe(1);
+      expect(getExecutionProfileCacheStats()).toEqual({ size: 1, connections: ["open-once-profiled"] });
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      gate.restore();
+      digests.restore();
+    }
+  });
+
+  test("an open that fails after every caller stopped waiting is logged by its connection, kind and code, never its text", () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      logUnclaimedOpen(new ConnectionError(`refused by ${crypto.randomUUID()}`, "postgres"), {
+        key: "key",
+        meta: { connectionId: "seed:orders", type: "postgres" },
+        signal: new AbortController().signal,
+      });
+      expect(warn.mock.calls).toEqual([
+        [
+          "[DB] An open of seed:orders failed after every caller stopped waiting for it, so nothing was admitted.",
+          { connectionId: "seed:orders", kind: "connection", code: "CONNECTION_ERROR" },
+        ],
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+// ─── an open a removal or a cache close overtakes (docs/providers/CONTRACT.md, clause C-44) ────────────────────
+
+describe("an open a removal or a cache close overtakes", () => {
+  const owned = (owner: string): EditorExecutionContext => ({ owner, ownerPoolMax: 3 });
+  /** Lets every pending promise settle: bun's fake timers leave setImmediate real. */
+  const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+  const OVERTAKEN =
+    "The connection was closed while it was opening: a disconnect, a removal, a change of access or a shutdown closed it before it was ready, so nothing was sent to the database. Try again.";
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  test("a removal of the connection closes an open it overtook and caches nothing", async () => {
+    const conn = makeConnection("postgres", { id: "overtaken", ...TUNNELLED });
+    const gate = await gateConnects(conn);
+    try {
+      const opening = getOrCreateProvider(conn).catch((error: unknown) => error);
+      await gate.reached(1);
+      const disconnects = countDisconnects(gate.connected[0] as DatabaseProvider);
+
+      await removeProvider("overtaken");
+      gate.open();
+      const error = await opening;
+
+      expect(error).toBeInstanceOf(ConnectionError);
+      expect((error as Error).message).toBe(OVERTAKEN);
+      expect(errorOutcome(error)).toBe("not-sent");
+      expect(disconnects.count).toBe(1);
+      expect(gate.connected[0]?.isConnected()).toBe(false);
+      const tunnel = (await mockCreateSSHTunnel.mock.results[0]?.value) as { close: ReturnType<typeof mock> };
+      expect(mockReleaseUnopenedTunnel.mock.calls).toEqual([[tunnel]]);
+      expect(mockTunnelProviderOpened).not.toHaveBeenCalled();
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      gate.restore();
+    }
+  });
+
+  test("an owner-scoped removal overtakes only that owner's open", async () => {
+    const conn = makeConnection("postgres", { id: "overtaken-owner" });
+    const gate = await gateConnects(conn);
+    try {
+      const alice = getOrCreateProvider(conn, {}, owned("alice-subject")).catch((error: unknown) => error);
+      const bob = getOrCreateProvider(conn, {}, owned("bob-subject"));
+      await gate.reached(2);
+
+      await removeProvider("overtaken-owner", { owner: "alice-subject" });
+      gate.open();
+
+      expect((await alice) as Error).toBeInstanceOf(ConnectionError);
+      const forBob = await bob;
+      expect(forBob.isConnected()).toBe(true);
+      expect(await getOrCreateProvider(conn, {}, owned("bob-subject"))).toBe(forBob);
+      expect(getProviderCacheStats().size).toBe(1);
+    } finally {
+      gate.restore();
+    }
+  });
+
+  test("a key-scoped removal overtakes only the open under its key", async () => {
+    const record = makeConnection("postgres", { id: "overtaken-key", user: "alice", password: crypto.randomUUID() });
+    const otherRecord = makeConnection("postgres", { id: "overtaken-key", user: "bob", password: crypto.randomUUID() });
+    const gate = await gateConnects(record);
+    try {
+      const editor = getOrCreateProvider(record).catch((error: unknown) => error);
+      const profiled = acquireExecutionProfileProvider(record, "agent-read-only").catch((error: unknown) => error);
+      const other = getOrCreateProvider(otherRecord);
+      await gate.reached(3);
+
+      await removeProvider("overtaken-key", { key: await editorCacheKey(record) });
+      gate.open();
+
+      expect((await editor) as Error).toBeInstanceOf(ConnectionError);
+      expect((await profiled) as Error).toBeInstanceOf(ConnectionError);
+      expect((await other).isConnected()).toBe(true);
+      expect(getProviderCacheStats()).toEqual({ size: 1, connections: ["overtaken-key"] });
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+    } finally {
+      gate.restore();
+    }
+  });
+
+  test("a cache clear closes an open in flight and names one still opening at the cut", async () => {
+    const conn = makeConnection("postgres", { id: "overtaken-clear" });
+    const gate = await gateConnects(conn);
+    try {
+      const opening = getOrCreateProvider(conn).catch((error: unknown) => error);
+      await gate.reached(1);
+      const disconnects = countDisconnects(gate.connected[0] as DatabaseProvider);
+      let cleared = false;
+      const clear = clearProviderCache().then(() => {
+        cleared = true;
+      });
+      await settle();
+      // The clear waits for the open it overtook.
+      expect(cleared).toBe(false);
+      gate.open();
+      await clear;
+      expect((await opening) as Error).toBeInstanceOf(ConnectionError);
+      expect(disconnects.count).toBe(1);
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      gate.restore();
+    }
+
+    // A connect that never answers is waited for until the close deadline, and named then.
+    const hanging = makeConnection("postgres", { id: "still-opening" });
+    const neverOpens = await gateConnects(hanging);
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    const error = spyOn(logger, "error").mockImplementation(() => {});
+    const savedVersion = process.env.NEXT_PUBLIC_APP_VERSION;
+    delete process.env.NEXT_PUBLIC_APP_VERSION;
+    resetShutdownHooks();
+    try {
+      const opening = getOrCreateProvider(hanging).catch((failure: unknown) => failure);
+      await neverOpens.reached(1);
+      jest.useFakeTimers();
+      let outcome: unknown;
+      const run = closeProviderCaches().then((result) => {
+        outcome = result;
+      });
+      await settle();
+      jest.advanceTimersByTime(9_999);
+      await settle();
+      expect(outcome).toBeUndefined();
+      jest.advanceTimersByTime(1);
+      await run;
+      expect(outcome).toEqual({ cut: 0, failed: 1 });
+      expect(error).toHaveBeenCalledWith(
+        "Provider cache close failed",
+        expect.objectContaining({
+          message: "Providers not closed: still-opening (PostgreSQL provider, bundled with Studio)",
+        }),
+        { route: "shutdown" },
+      );
+      expect(warn.mock.calls.map((call: unknown[]) => String(call[0]))).toContain(
+        "[DB] The open of still-opening was still connecting when the caches closed, after 10000 ms; it closes itself if its connect answers.",
+      );
+
+      // Its connect answers at last: the open closes what it opened and caches nothing.
+      jest.useRealTimers();
+      neverOpens.open();
+      expect((await opening) as Error).toBeInstanceOf(ConnectionError);
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      neverOpens.restore();
+      resetShutdownHooks();
+      warn.mockRestore();
+      error.mockRestore();
+      if (savedVersion !== undefined) process.env.NEXT_PUBLIC_APP_VERSION = savedVersion;
+    }
+  });
+
+  test("an overtaken open whose close fails is logged by its kind and code, and its callers are still answered", async () => {
+    const conn = makeConnection("postgres", { id: "overtaken-close-fails" });
+    const gate = await gateConnects(conn);
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const opening = getOrCreateProvider(conn).catch((error: unknown) => error);
+      await gate.reached(1);
+      (gate.connected[0] as DatabaseProvider).disconnect = async () => {
+        throw new ConnectionError(`pool ended by ${crypto.randomUUID()}`, "postgres");
+      };
+      await removeProvider("overtaken-close-fails");
+      gate.open();
+      expect((await opening) as Error).toBeInstanceOf(ConnectionError);
+      expect(warn.mock.calls).toContainEqual([
+        "[DB] A provider of overtaken-close-fails that was closed while it was opening did not close: its disconnect failed.",
+        { connectionId: "overtaken-close-fails", kind: "connection", code: "CONNECTION_ERROR" },
+      ]);
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      gate.restore();
+      warn.mockRestore();
+    }
+  });
+
+  test("an overtaken open whose close never settles is cut at the close deadline and logged", async () => {
+    const conn = makeConnection("postgres", { id: "overtaken-close-hangs" });
+    const gate = await gateConnects(conn);
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      let answered: unknown;
+      const opening = getOrCreateProvider(conn).then(
+        (provider) => {
+          answered = provider;
+        },
+        (error: unknown) => {
+          answered = error;
+        },
+      );
+      await gate.reached(1);
+      (gate.connected[0] as DatabaseProvider).disconnect = () => new Promise<void>(() => {});
+      await removeProvider("overtaken-close-hangs");
+      jest.useFakeTimers();
+      gate.open();
+      await settle();
+      jest.advanceTimersByTime(9_999);
+      await settle();
+      expect(answered).toBeUndefined();
+      jest.advanceTimersByTime(1);
+      await opening;
+      expect(answered).toBeInstanceOf(ConnectionError);
+      expect(warn.mock.calls).toContainEqual([
+        "[DB] A provider of overtaken-close-hangs that was closed while it was opening did not close: its disconnect did not finish within 10000 ms.",
+        { connectionId: "overtaken-close-hangs" },
+      ]);
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      gate.restore();
+      warn.mockRestore();
+    }
+  });
+
+  test("an overtaken open whose connect fails rejects with its own error and closes nothing", async () => {
+    const conn = makeConnection("postgres", { id: "overtaken-fails" });
+    const gate = await gateConnects(conn);
+    try {
+      const opening = getOrCreateProvider(conn).catch((error: unknown) => error);
+      await gate.reached(1);
+      const disconnects = countDisconnects(gate.connected[0] as DatabaseProvider);
+      await removeProvider("overtaken-fails");
+      const failure = new ConnectionError("The server refused the connection.", "postgres");
+      gate.fail(failure);
+      expect(await opening).toBe(failure);
+      expect(disconnects.count).toBe(0);
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      gate.restore();
+    }
+  });
+
+  /**
+   * Runs a removal of each opened connection `hops` microtasks after its connect answered, for every `hops` from 0 to
+   * 8, so the removal lands before the overtake check, between the check and the admission when they are apart, and
+   * after the admission. Answers, per `hops`, whether the cache still holds the connection after the removal and how
+   * often the provider built was closed.
+   */
+  async function removalAfterConnect(
+    open: (conn: DatabaseConnection) => Promise<DatabaseProvider>,
+    cached: () => string[],
+  ): Promise<{ hops: number; cached: boolean; disconnects: number }[]> {
+    const prototype = Object.getPrototypeOf(
+      await createDatabaseProvider(makeConnection("postgres")),
+    ) as DatabaseProvider;
+    const original = prototype.connect;
+    let afterConnect: (provider: DatabaseProvider) => void = () => {};
+    const spy = spyOn(prototype, "connect").mockImplementation(async function (this: DatabaseProvider) {
+      await original.call(this);
+      afterConnect(this);
+    });
+    const results: { hops: number; cached: boolean; disconnects: number }[] = [];
+    try {
+      for (let hops = 0; hops <= 8; hops += 1) {
+        const id = `overtaken-after-connect-${hops}`;
+        let removal: Promise<void> = Promise.resolve();
+        let disconnects: { readonly count: number } = { count: 0 };
+        afterConnect = (provider) => {
+          disconnects = countDisconnects(provider);
+          let turn = Promise.resolve();
+          for (let hop = 0; hop < hops; hop += 1) turn = turn.then(() => {});
+          removal = turn.then(() => removeProvider(id));
+        };
+        // oxlint-disable-next-line no-await-in-loop -- each removal is timed in microtasks from its own connect, so the opens run one at a time.
+        await open(makeConnection("postgres", { id })).catch(() => null);
+        // oxlint-disable-next-line no-await-in-loop -- as above: the next open starts once this removal ended.
+        await removal;
+        results.push({ hops, cached: cached().includes(id), disconnects: disconnects.count });
+      }
+    } finally {
+      spy.mockRestore();
+    }
+    return results;
+  }
+
+  const NOTHING_ADMITTED = Array.from({ length: 9 }, (_, hops) => ({ hops, cached: false, disconnects: 1 }));
+
+  test("a removal at any microtask after the connect answered leaves no editor provider admitted, and closes it once", async () => {
+    const results = await removalAfterConnect(
+      (conn) => getOrCreateProvider(conn),
+      () => getProviderCacheStats().connections,
+    );
+    expect(results).toEqual(NOTHING_ADMITTED);
+  });
+
+  test("a removal at any microtask after the connect answered leaves no execution-profile provider admitted, and closes it once", async () => {
+    const results = await removalAfterConnect(
+      (conn) => acquireExecutionProfileProvider(conn, "agent-read-only"),
+      () => getExecutionProfileCacheStats().connections,
+    );
+    expect(results).toEqual(NOTHING_ADMITTED);
+  });
+});
+
 describe("editorCacheKey and findCachedProvider", () => {
   const owned = (owner: string): EditorExecutionContext => ({ owner, ownerPoolMax: 3 });
 
@@ -2618,16 +3155,22 @@ describe("teardown of an owned provider", () => {
   const hangs = (): Promise<void> => new Promise<void>(() => {});
   let warn: ReturnType<typeof spyOn>;
   let info: ReturnType<typeof spyOn>;
+  /** Studio's version as the environment held it; each test here runs without one unless it sets its own. */
+  let savedVersion: string | undefined;
 
   beforeEach(() => {
     warn = spyOn(logger, "warn").mockImplementation(() => {});
     info = spyOn(logger, "info").mockImplementation(() => {});
+    savedVersion = process.env.NEXT_PUBLIC_APP_VERSION;
+    delete process.env.NEXT_PUBLIC_APP_VERSION;
   });
 
   afterEach(() => {
     jest.useRealTimers();
     warn.mockRestore();
     info.mockRestore();
+    if (savedVersion === undefined) delete process.env.NEXT_PUBLIC_APP_VERSION;
+    else process.env.NEXT_PUBLIC_APP_VERSION = savedVersion;
   });
 
   /**
@@ -2961,7 +3504,10 @@ describe("teardown of an owned provider", () => {
       expect(await closeProviderCaches()).toEqual({ cut: 0, failed: 1 });
       expect(error).toHaveBeenCalledWith(
         "Provider cache close failed",
-        expect.objectContaining({ message: "Providers not closed: shutdown-shared, seed:orders" }),
+        expect.objectContaining({
+          message:
+            "Providers not closed: shutdown-shared (SQLite provider, bundled with Studio), seed:orders (PostgreSQL provider, bundled with Studio)",
+        }),
         { route: "shutdown" },
       );
       expect(consoleError).toHaveBeenCalledWith(
@@ -3033,7 +3579,7 @@ describe("teardown of an owned provider", () => {
         "Provider cache close failed",
         expect.objectContaining({
           message:
-            "Providers not closed: seed:rollback-hangs, seed:disconnect-hangs, seed:disconnect-fails, seed:profiled-owned, seed:profiled-shared",
+            "Providers not closed: seed:rollback-hangs (PostgreSQL provider, bundled with Studio), seed:disconnect-hangs (PostgreSQL provider, bundled with Studio), seed:disconnect-fails (PostgreSQL provider, bundled with Studio), seed:profiled-owned (PostgreSQL provider, bundled with Studio), seed:profiled-shared (PostgreSQL provider, bundled with Studio)",
         }),
         { route: "shutdown" },
       );

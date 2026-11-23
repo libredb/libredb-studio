@@ -159,7 +159,7 @@ spyOn(PostgresProvider.prototype, "connect").mockImplementation(async function (
     held.enter();
     await held.released;
   }
-  if (this.config.database === FAILS) throw new Error("connection refused");
+  if (this.config.database === FAILS || this.config.database === FAILS_TOO) throw new Error("connection refused");
   (this as unknown as { setConnected(connected: boolean): void }).setConnected(true);
 });
 
@@ -199,11 +199,15 @@ function record(database: string): DatabaseConnection {
 
 const OPENS = "opens";
 const FAILS = "fails";
+/** A second failing record of the connection: another cache key, so its connect is not joined to the first's. */
+const FAILS_TOO = "fails-too";
 
 /** A record whose provider opens. */
 const opens = () => getOrCreateProvider(record(OPENS), {}, { allowExternalFileAccess: true });
 /** A record of the same connection and forward whose provider fails to connect. */
 const fails = () => getOrCreateProvider(record(FAILS), {}, { allowExternalFileAccess: true });
+/** Another record of the same connection and forward whose provider fails to connect. */
+const failsToo = () => getOrCreateProvider(record(FAILS_TOO), {}, { allowExternalFileAccess: true });
 
 type Opened = { config: { port?: number } };
 type Outcome = { status: "fulfilled"; value: Opened } | { status: "rejected"; reason: unknown };
@@ -308,9 +312,11 @@ describe("connects of one connection through one forward", () => {
 
   test("a forward every concurrent connect failed on is closed", async () => {
     connectionId = `tunnel-share-${sequence++}`;
+    // Two records of the connection: two concurrent first calls of one record share one open
+    // (docs/providers/CONTRACT.md, clause C-44), so they would ask the pool once.
     const first = settled(fails());
     await askedFor(1);
-    const second = settled(fails());
+    const second = settled(failsToo());
     await askedFor(2);
     bastionAnswers();
     const results = await Promise.all([first, second]);
