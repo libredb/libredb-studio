@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D504, U17 · 368
+- [Drivers and connections](#drivers-and-connections) — D1-D505, U17 · 369
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -4910,6 +4910,16 @@ A text literal inserted into a `VECTOR(*, *)` column is stored as `FLOAT32`, so 
 Measured on Oracle AI Database 26ai Free 23.26.3 with oracledb 26.0.0 in Thin mode, while fixing D499 on 2026-11-23.
 
 **Done when:** the export of a flexible column writes each row with its own format, for example through `TO_VECTOR` with the row's format, and a replay test inserts every format back equal.
+
+### D505. Redis, Oracle and Db2 have no connect bound of their own, and Trino and Couchbase wait six minutes, on a server that accepts and never answers
+
+Against a TCP listener on 127.0.0.1 that accepts and never answers, each provider's `connect()` built by the real factory with no tunnel, at statement timeouts of 4 s, 10 s and 60 s: Trino and Couchbase settled at 361,760 ms on their HTTP client's own timeout, and Redis, Oracle and Db2 were still pending at 420,000 ms.
+Every other probed engine ended its own connect within 65.4 s at the default statement timeout.
+The code agrees: Trino sends its connect probe with no signal, Couchbase's management request has no timeout, Redis bounds only the TCP connect and sends its first commands with no command timeout, and Oracle sets no connect or call timeout on its pool or connection.
+Since the open's deadline (`docs/providers/CONTRACT.md`, clause C-55) the host answers every caller at the engine's connect budget and the next request opens afresh, but the provider's socket stays open until its connect settles, so each such open on these five engines keeps one socket until the server answers or Studio exits.
+Measured 2026-11-23 while planning the open's deadline.
+
+**Done when:** each of the five providers bounds its connect by the open's deadline (clause C-29), and a test per provider against a listener that accepts and never answers expects the connect to settle within its engine's connect budget.
 
 ## Value interpolation
 

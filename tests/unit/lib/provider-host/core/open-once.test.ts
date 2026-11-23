@@ -274,3 +274,251 @@ describe("openOnce", () => {
     expect(discardFlights(flights, () => true, reason)).toEqual([]);
   });
 });
+
+/** An error the owner's `expired` answers for a flight, naming its key. */
+class Expired extends Error {
+  constructor(readonly flight: Flight<Meta>) {
+    super(`the open of ${flight.key} passed its deadline`);
+  }
+}
+
+/**
+ * A table with a deadline the test aborts itself: each flight's deadline signal is a controller of the test's, read
+ * through `deadline.signal`, which records the meta it was read with; `expired` answers a new `Expired` each time.
+ */
+function tableWithDeadline() {
+  const unclaimed: { error: unknown; flight: Flight<Meta> }[] = [];
+  const deadlines: AbortController[] = [];
+  const reads: Meta[] = [];
+  const expiredErrors: Expired[] = [];
+  let nextDeadline: AbortController | undefined;
+  const flights = createOpenFlights<object, Meta>(
+    (error, flight) => {
+      unclaimed.push({ error, flight });
+    },
+    {
+      signal: (meta) => {
+        reads.push(meta);
+        const controller = nextDeadline ?? new AbortController();
+        nextDeadline = undefined;
+        deadlines.push(controller);
+        return controller.signal;
+      },
+      expired: (flight) => {
+        const error = new Expired(flight);
+        expiredErrors.push(error);
+        return error;
+      },
+    },
+  );
+  const useDeadline = (controller: AbortController) => {
+    nextDeadline = controller;
+  };
+  return { flights, unclaimed, deadlines, reads, expiredErrors, useDeadline };
+}
+
+describe("an open's own deadline", () => {
+  test("an open still pending at its deadline fails every waiting caller with the owner's expired error, and leaves the table", async () => {
+    const { flights, deadlines, expiredErrors } = tableWithDeadline();
+    const open = deferred<object>();
+    let flightSignal: AbortSignal | undefined;
+    const start = (flight: Flight<Meta>) => {
+      flightSignal = flight.signal;
+      return open.promise;
+    };
+    const unbounded = openOnce(flights, "key", { connectionId: "a" }, start).catch((error: unknown) => error);
+    const waiting = openOnce(flights, "key", { connectionId: "a" }, start, {
+      signal: new AbortController().signal,
+    }).catch((error: unknown) => error);
+    expect(flights.entries.has("key")).toBe(true);
+
+    deadlines[0].abort(new Error("deadline"));
+
+    const [first, second] = await Promise.all([unbounded, waiting]);
+    expect(expiredErrors).toHaveLength(1);
+    expect(first).toBe(expiredErrors[0]);
+    expect(second).toBe(expiredErrors[0]);
+    expect(expiredErrors[0].flight.key).toBe("key");
+    expect(flights.entries.has("key")).toBe(false);
+    expect(flightSignal?.aborted).toBe(true);
+    expect(flightSignal?.reason).toBe(expiredErrors[0]);
+    open.resolve({});
+  });
+
+  test("the next caller after an open's deadline starts a new open", async () => {
+    const { flights, deadlines } = tableWithDeadline();
+    const opens: ReturnType<typeof deferred<object>>[] = [];
+    const start = () => {
+      const open = deferred<object>();
+      opens.push(open);
+      return open.promise;
+    };
+    const first = openOnce(flights, "key", { connectionId: "a" }, start).catch((error: unknown) => error);
+    deadlines[0].abort(new Error("deadline"));
+    await first;
+
+    const second = openOnce(flights, "key", { connectionId: "a" }, start);
+    expect(opens).toHaveLength(2);
+    const value = {};
+    opens[1].resolve(value);
+    expect(await second).toBe(value);
+    opens[0].resolve({});
+  });
+
+  test("a late settle of an expired open leaves the open that replaced it in the table", async () => {
+    const { flights, deadlines } = tableWithDeadline();
+    const opens: ReturnType<typeof deferred<object>>[] = [];
+    const start = () => {
+      const open = deferred<object>();
+      opens.push(open);
+      return open.promise;
+    };
+    const first = openOnce(flights, "key", { connectionId: "a" }, start).catch((error: unknown) => error);
+    deadlines[0].abort(new Error("deadline"));
+    await first;
+    const second = openOnce(flights, "key", { connectionId: "a" }, start);
+    const replacing = flights.entries.get("key");
+
+    opens[0].resolve({});
+    await settle();
+    expect(flights.entries.get("key")).toBe(replacing);
+    let joinerStarts = 0;
+    const joiner = openOnce(flights, "key", { connectionId: "a" }, () => {
+      joinerStarts += 1;
+      return deferred<object>().promise;
+    });
+    expect(joinerStarts).toBe(0);
+
+    const value = {};
+    opens[1].resolve(value);
+    expect(await second).toBe(value);
+    expect(await joiner).toBe(value);
+  });
+
+  test("a late failure of an expired open reaches the unclaimed hook once, never as a detached rejection", async () => {
+    const { flights, deadlines, unclaimed, expiredErrors } = tableWithDeadline();
+    const open = deferred<object>();
+    const first = openOnce(flights, "key", { connectionId: "orders" }, () => open.promise).catch(
+      (error: unknown) => error,
+    );
+    deadlines[0].abort(new Error("deadline"));
+    expect(await first).toBe(expiredErrors[0]);
+
+    const failure = new Error("connect failed after its deadline");
+    open.reject(failure);
+    await settle();
+    expect(unclaimed).toHaveLength(1);
+    expect(unclaimed[0].error).toBe(failure);
+    expect(unclaimed[0].flight.key).toBe("key");
+    expect(unclaimed[0].flight.meta).toEqual({ connectionId: "orders" });
+  });
+
+  test("an open that settled before its deadline is not expired by it afterwards", async () => {
+    const { flights, deadlines, expiredErrors, unclaimed } = tableWithDeadline();
+    let flightSignal: AbortSignal | undefined;
+    const value = {};
+    const answer = await openOnce(flights, "key", { connectionId: "a" }, async (flight) => {
+      flightSignal = flight.signal;
+      return value;
+    });
+    expect(answer).toBe(value);
+    await settle();
+
+    deadlines[0].abort(new Error("deadline"));
+    await settle();
+    expect(expiredErrors).toEqual([]);
+    expect(unclaimed).toEqual([]);
+    expect(flightSignal?.aborted).toBe(false);
+    expect(flights.entries.has("key")).toBe(false);
+  });
+
+  test("a deadline already passed when the open starts expires it at once", async () => {
+    const { flights, expiredErrors, useDeadline } = tableWithDeadline();
+    const passed = new AbortController();
+    passed.abort(new Error("deadline"));
+    useDeadline(passed);
+    let starts = 0;
+    const caught = await openOnce(flights, "key", { connectionId: "a" }, () => {
+      starts += 1;
+      return deferred<object>().promise;
+    }).catch((error: unknown) => error);
+
+    expect(expiredErrors).toHaveLength(1);
+    expect(caught).toBe(expiredErrors[0]);
+    expect(expiredErrors[0].flight.signal.aborted).toBe(true);
+    expect(expiredErrors[0].flight.signal.reason).toBe(expiredErrors[0]);
+    expect(starts).toBe(0);
+    expect(flights.entries.has("key")).toBe(false);
+  });
+
+  test("a discard still reaches an open its deadline ended while that open is pending, and no longer once it settled", async () => {
+    const { flights, deadlines, expiredErrors } = tableWithDeadline();
+    const open = deferred<object>();
+    let flightSignal: AbortSignal | undefined;
+    const first = openOnce(flights, "key", { connectionId: "orders" }, (flight) => {
+      flightSignal = flight.signal;
+      return open.promise;
+    }).catch((error: unknown) => error);
+    deadlines[0].abort(new Error("deadline"));
+    expect(await first).toBe(expiredErrors[0]);
+    expect(flights.entries.has("key")).toBe(false);
+
+    const discarded = discardFlights(flights, () => true, new Error("closed"));
+    expect(discarded.map((entry) => entry.flight.key)).toEqual(["key"]);
+    expect(discarded[0].flight.meta).toEqual({ connectionId: "orders" });
+    // Its signal keeps the expired error it was aborted with first.
+    expect(flightSignal?.reason).toBe(expiredErrors[0]);
+    let settled = false;
+    void discarded[0].settled.then(() => {
+      settled = true;
+    });
+    await settle();
+    expect(settled).toBe(false);
+
+    open.resolve({});
+    await discarded[0].settled;
+    expect(discardFlights(flights, () => true, new Error("closed"))).toEqual([]);
+  });
+
+  test("a discard reaches an expired open beside the open that replaced it under its key", async () => {
+    const { flights, deadlines, expiredErrors } = tableWithDeadline();
+    const opens: ReturnType<typeof deferred<object>>[] = [];
+    const signals: AbortSignal[] = [];
+    const start = (flight: Flight<Meta>) => {
+      const open = deferred<object>();
+      opens.push(open);
+      signals.push(flight.signal);
+      return open.promise;
+    };
+    const first = openOnce(flights, "key", { connectionId: "a" }, start).catch((error: unknown) => error);
+    deadlines[0].abort(new Error("deadline"));
+    await first;
+    const second = openOnce(flights, "key", { connectionId: "a" }, start).catch((error: unknown) => error);
+
+    const reason = new Error("closed");
+    const discarded = discardFlights(flights, () => true, reason);
+    expect(discarded).toHaveLength(2);
+    expect(signals.every((signal) => discarded.some((entry) => entry.flight.signal === signal))).toBe(true);
+    expect(signals[0].reason).toBe(expiredErrors[0]);
+    expect(signals[1].reason).toBe(reason);
+    opens[0].resolve({});
+    opens[1].resolve({});
+    await Promise.all(discarded.map((entry) => entry.settled));
+    await second;
+  });
+
+  test("the deadline signal is read once per open, with its meta", async () => {
+    const { flights, reads } = tableWithDeadline();
+    const open = deferred<object>();
+    const start = () => open.promise;
+    const first = openOnce(flights, "key", { connectionId: "a" }, start);
+    const joiner = openOnce(flights, "key", { connectionId: "a" }, start);
+    const other = openOnce(flights, "other", { connectionId: "b" }, async () => ({}));
+    expect(reads).toEqual([{ connectionId: "a" }, { connectionId: "b" }]);
+    const value = {};
+    open.resolve(value);
+    expect(await first).toBe(value);
+    expect(await joiner).toBe(value);
+    await other;
+  });
+});

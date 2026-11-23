@@ -1515,6 +1515,7 @@ Once the host sent the run's cancel, the caller's late handler reads a cancellat
 ### C-29 (informative): What a provider does with the deadline and the signal
 
 A provider derives every driver timeout from `ctx.deadline`, for checkout, connect and execute alike, starts no work on a signal already aborted, and ends its waits when the signal aborts.
+A provider derives its connect's timeouts from the open's deadline, its engine's connect budget, C-55; the bridged providers do not yet, and bound their connect by their own constants and the connection's statement timeout.
 It answers `cancelled: false` for a run it does not know.
 A result source's pulls honour the context of the execute call that answered it.
 A close, and the cancel a stopped wait sends, are called with a context of the host's own, `cleanupContext`, never one that already aborted, C-47.
@@ -1889,6 +1890,34 @@ The run's cancel is sent as for any stop, C-48, and the page's first batch is cl
 - test `tests/unit/lib/provider-host/core/console-pages.test.ts` "a call whose wait for a slot its deadline ends answers a stop marked as waiting for the slot"
 - test `tests/unit/lib/provider-host/core/page-budget-bounds.test.ts` "a large page waiting behind a slot that is never released is stopped at its call's deadline"
 - test `tests/unit/lib/api/editor-query.test.ts` "a large page that waits for the slot past its deadline answers StudioTimeoutRefusal naming that wait, outcome unknown"
+
+### C-55 (normative): An open ends at its engine's connect budget
+
+Each open has a deadline, its engine's connect budget from the open's start, M-51, which the host core reads once when the open starts.
+At that deadline the open is over: every caller still waiting for it, one without a wait of its own included, is answered that the connection did not open within the budget, as Studio's timeout refusal with outcome not-sent.
+The open leaves the open table at its deadline, so the next caller of its key starts a new open instead of joining one that may never settle.
+The open itself goes on until its connect settles, then closes what it opened exactly once and admits nothing, and a failure it settles with is logged as C-44 states.
+A late settle of an expired open never removes the open that replaced it.
+Until it settles, an expired open stays where a cache close still finds it but no caller can join it, so a cache close waits for it as for any open in flight, C-44, and names it when it is still connecting at the close deadline.
+A deadline is the host's, not a removal's: a removal keeps an overtaken open in the table so a caller arriving meanwhile joins it, C-44.
+A provider that bounds nothing of its own on a server that accepts and never answers keeps its socket until its connect settles, since the host closes what an open opened only once it settles.
+
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "an open still pending at its deadline fails every waiting caller with the owner's expired error, and leaves the table"
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "the next caller after an open's deadline starts a new open"
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "a late settle of an expired open leaves the open that replaced it in the table"
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "a late failure of an expired open reaches the unclaimed hook once, never as a detached rejection"
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "an open that settled before its deadline is not expired by it afterwards"
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "a deadline already passed when the open starts expires it at once"
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "a discard still reaches an open its deadline ended while that open is pending, and no longer once it settled"
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "a discard reaches an expired open beside the open that replaced it under its key"
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "the deadline signal is read once per open, with its meta"
+- test `tests/unit/lib/provider-host/core/open-once-bounds.test.ts` "an open that never settles is ended by its own deadline"
+- test `tests/isolated/factory.test.ts` "an open still connecting at its engine's connect budget answers StudioTimeoutRefusal not-sent to every caller, one without a wait included"
+- test `tests/isolated/factory.test.ts` "the next call after an open's deadline builds and connects a new provider"
+- test `tests/isolated/factory.test.ts` "a provider whose connect settles after its open's deadline is closed once and never cached"
+- test `tests/isolated/factory.test.ts` "an execution-profile open ends at the same budget"
+- test `tests/isolated/factory.test.ts` "a cache clear names an open its deadline ended that is still connecting at the cut"
+- test `tests/api/db/query-open-wait.test.ts` "a connection whose open never settles is opened afresh by the next request after its connect budget"
 
 ## Not yet in this contract
 

@@ -538,6 +538,8 @@ Whether a provider applies the statement timeout itself, and whether it can canc
 A request whose deadline has already passed when the statement is to start runs nothing and answers the same 504 with `outcome: "not-sent"`.
 Before the statement, the server waits for the connection to open at most 70 s: the pools' 60 s connect bound (`acquireTimeout`) plus 10 s for the provider's own connect failure to arrive, so a provider that bounds its connect answers in its own words.
 A connection still not open at that point answers `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "not-sent"`, "The connection did not open within 70 seconds, so Studio stopped waiting for it and sent nothing.".
+The open itself ends at its engine's connect budget, 70 s unless its engine's document states another, for every request waiting for it on every route that opens a connection, each answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "not-sent"` ([`docs/providers/CONTRACT.md`](providers/CONTRACT.md), clause C-55).
+The next request after it opens the connection afresh rather than waiting on an open that may never settle.
 The statement's own deadline starts once the connection is open, so it stays the statement timeout plus 10 s.
 
 A page holds at most 32 MiB of rows, each measured as the UTF-8 length of its JSON text.
