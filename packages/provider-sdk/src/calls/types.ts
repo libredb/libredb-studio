@@ -14,6 +14,7 @@ import type {
   ConsoleCalls,
   EngineId,
   ExecuteRequestField,
+  FacetOffer,
   FieldName,
   ProviderManifest,
 } from "../manifest/manifest-types.generated";
@@ -158,10 +159,29 @@ export interface OpenContext extends CallContext {
   readonly timezone?: string;
 }
 
-/** What `open` answers: the session handle, which the host never reads, and the server's version where it reports one. */
+/**
+ * What a session answers narrower than its manifest's `calls`: a closed object at the paths of `calls`, every key
+ * optional, every value a subset of the declared one. A key left out keeps the declared value. A later surface adds its
+ * own top-level key.
+ */
+export interface Refinement {
+  readonly calls?: {
+    readonly console?: {
+      readonly execute?: { readonly honours: readonly ExecuteRequestField[] };
+      readonly cancel?: FacetOffer;
+      readonly endScope?: FacetOffer;
+    };
+  };
+}
+
+/**
+ * What `open` answers: the session handle, which the host never reads, the server's version where it reports one, and
+ * a refinement where the session answers less than the manifest declares.
+ */
 export interface OpenAnswer<Handle> {
   readonly handle: Handle;
   readonly serverVersion?: string;
+  readonly refine?: Refinement;
 }
 
 /** The page the host asks for, its bound resolved by the host: a limit and an offset, or every row. */

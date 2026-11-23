@@ -11,7 +11,7 @@ The SDK package `@libredb/provider-sdk`, under [`packages/provider-sdk`](../../p
 - `compileManifestValidator`, `refusalSentence` and the refusal types, exported from `@libredb/provider-sdk/manifest`.
 - [`codec.ts`](../../packages/provider-sdk/src/values/codec.ts), the value codec, exported from `@libredb/provider-sdk/values`.
 - [`errors/index.ts`](../../packages/provider-sdk/src/errors/index.ts), the error record's shape and vocabularies, the kinds a provider may raise and the driver error row contract, exported from `@libredb/provider-sdk/errors`.
-- [`calls/index.ts`](../../packages/provider-sdk/src/calls/index.ts), the call and context types, `defineProvider`, `checkProviderModule` and `envReader`, exported from `@libredb/provider-sdk/calls`.
+- [`calls/index.ts`](../../packages/provider-sdk/src/calls/index.ts), the call and context types, `defineProvider`, `checkProviderModule` and `envReader`, the host's checks of a call, `checkExecuteRequest`, `checkRefinement` and `sessionCalls`, `freezeContext` and `freezeData`, and the byte budgets `BATCH_MAX_BYTES` and `PAGE_MAX_BYTES` with `encodedRowBytes`, `rowsSource` and `pumpPage`, exported from `@libredb/provider-sdk/calls`.
 - `SqlGrammar` and its member types, the compatibility default `DEFAULT_SQL_GRAMMAR`, and `hashRunIsAmbiguous`, exported from `@libredb/provider-sdk/sql`.
 
 The package root exports every entry's surface.
@@ -638,12 +638,17 @@ A package's entry default-exports the record `defineProvider` returns, `{ contra
 `checkProviderModule` refuses any other value by a rule of `DEFINITION_REFUSAL_RULES`, each refusal naming a JSON Pointer into the record and never a value of the manifest or the implementation.
 The record is frozen, its implementation is frozen in place, and its manifest is a deep-frozen copy, so the package's own manifest object is never changed.
 The record is a plain object with no brand, because several copies of the SDK may share Studio's process.
+Every key the check reads is read as a data property, and an accessor there is refused without its getter being called, so the functions checked are the functions the host calls.
+An `honours` list longer than the request fields is refused by its length, before any item is read, so a sparse array's length bounds no loop of the check.
 
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a provider whose implementation matches its declared calls is defined, and its record is frozen"
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "the manifest in the record is a deep-frozen copy, and the package's own object is left as it was"
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a value that is not a provider module record is refused as module-not-a-record"
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a manifest or record built against another contract is refused as contract-not-served"
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "no refusal and no message carries a value of the manifest or the implementation"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an accessor the check would read is refused as property-not-data, and its getter is never called"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an honours list longer than the request fields is refused as manifest-unreadable at the list, and no item is read"
+- test `packages/provider-sdk/tests/calls/honours-bounds.test.ts` "a manifest honours list of the longest length is refused at the list, in a bounded child"
 
 ### C-2 (informative): The loader checks the record with the host's SDK
 
@@ -674,7 +679,7 @@ An engine facet for which this contract has no call yet, a monitoring panel, a m
 ### C-5 (normative): A package declares the request fields its execute honours
 
 A package lists in `calls.console.execute.honours` the optional request fields, of `EXECUTE_REQUEST_FIELDS`, its execute honours.
-How the host and a provider use that list is C-8, which no test checks yet.
+How the host uses that list is C-9, and how a provider does is C-8.
 
 - schema `/$defs/executeCall/properties/honours`
 - schema `/$defs/executeRequestField`
@@ -702,11 +707,104 @@ A census over Studio's own types holds this, one record over the connection's fi
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's console answer and request has a place in the console calls"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "the context's shared shapes are Studio's own"
 
-### C-8 (informative): The host sends only the request fields a package honours
+### C-8 (informative): A provider never ignores a request field it does not honour
 
-The host sends a package no optional request field outside its `honours` list, and sends `scope` only to a package that offers `console.endScope`.
-A provider that receives a field it does not honour answers a named error and never ignores it.
-The host's refusal of an undeclared field arrives with the test transport, and the check of a provider's answer with the kit; until then this clause is informative.
+A provider that receives a request field it does not honour answers a named error and never ignores it.
+The kit checks it, and no such check exists yet.
+The host's half, which sends no such field, is C-9.
+
+### C-9 (normative): The host sends only the request fields a session honours
+
+The host holds every execute request to the session's calls with `checkExecuteRequest` before the call, and refuses it by a rule of `CALL_REFUSAL_RULES` when it carries an optional request field the session does not honour, or a `scope` to a session that does not offer `console.endScope`.
+A present `params` key is sent whatever its length, and an offset is sent when it is not zero.
+A refusal names the field and a JSON Pointer into the request, never a value of it.
+
+- test `packages/provider-sdk/tests/calls/request.test.ts` "a request field the session does not honour is refused before the call"
+- test `packages/provider-sdk/tests/calls/request.test.ts` "a session that honours every field and offers endScope takes each"
+- test `packages/provider-sdk/tests/calls/request.test.ts` "a request on a refined session is held to the narrowed calls"
+- test `packages/provider-sdk/tests/calls/request.test.ts` "a CallRefusalError carries every refusal and words each"
+
+### C-10 (normative): A refinement only narrows a session's calls
+
+`open` may answer a refinement beside its handle: a closed object at the paths of the manifest's `calls`, every key optional, every value of which is a subset of the declared one.
+`checkRefinement` refuses a widening, an unknown key and an unreadable value by name, reading every value as a data property and never calling a getter, and no refusal carries a value of the refinement.
+An `honours` list longer than the declared one is refused as a widening by its length, before any item is read, so a sparse array's length bounds no loop of the check.
+`sessionCalls` answers the narrowed calls, frozen, and the host keeps them with the session and nowhere else, with no cache and no invalidation event.
+A refinement is a call's answer, not a manifest fact, so the schema has no place for it.
+
+- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement that narrows the declared calls is admitted, and the session's calls are the narrowed ones"
+- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement that widens a declared value is refused as refinement-widens"
+- test `packages/provider-sdk/tests/calls/refinement.test.ts` "an honours list longer than the declared one is refused as refinement-widens at the list, and no item is read"
+- test `packages/provider-sdk/tests/calls/honours-bounds.test.ts` "a refinement honours list of the longest length is refused at the list, in a bounded child"
+- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a key a refinement cannot have is refused as refinement-key-unknown"
+- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement value of the wrong type, an accessor or a repeated field is refused as refinement-unreadable"
+- test `packages/provider-sdk/tests/calls/refinement.test.ts` "no refinement refusal carries a value of the refinement"
+
+### C-11 (normative): The contexts and requests the host passes are frozen
+
+`freezeContext` freezes a context in place at every depth, except its `signal` and `env`, which stay exactly as the host passed them, because a frozen AbortSignal can no longer be aborted or listened to on Node.
+`freezeData` freezes a request in place at every depth, except its typed arrays and dates, since JavaScript cannot freeze a typed array's elements and a date's time is no property.
+Both walk every own key of every object they freeze, symbols included.
+Either refuses, by its JSON Pointer and then freezing nothing, an object outside the value codec's domain, a function, an invalid Date, which `encodeValue` refuses too, and an accessor property, whose getter it never calls, so no object behind a getter is left unfrozen.
+Either refuses a symbol-keyed property by the JSON Pointer of the object that holds it, since a pointer cannot name a symbol, and then freezes nothing.
+
+- test `packages/provider-sdk/tests/calls/freeze.test.ts` "a context is frozen at every depth, and a write to any of it throws"
+- test `packages/provider-sdk/tests/calls/freeze.test.ts` "the signal and the environment reader are left as the host passed them, and the signal still aborts"
+- test `packages/provider-sdk/tests/calls/freeze.test.ts` "a request is frozen at every depth, except its typed arrays and dates"
+- test `packages/provider-sdk/tests/calls/freeze.test.ts` "a value that holds itself is frozen once"
+- test `packages/provider-sdk/tests/calls/freeze.test.ts` "an object outside the value codec's domain is refused by its pointer"
+- test `packages/provider-sdk/tests/calls/freeze.test.ts` "an accessor property is refused by its pointer, its getter never runs, and nothing is frozen"
+- test `packages/provider-sdk/tests/calls/freeze.test.ts` "a symbol-keyed property is refused by the pointer of the object that holds it, and nothing is frozen"
+- test `packages/provider-sdk/tests/calls/freeze.test.ts` "an invalid Date is refused by its pointer, as the value codec refuses it, and nothing is frozen"
+
+### C-12 (informative): The host freezes on every call, in every environment
+
+The host passes every context and request through `freezeContext` and `freezeData` on every call, in every environment, production included, so a provider that writes to what the host passed fails the same way in a test and in production, at the line that writes.
+Both freeze in place, so the host builds a fresh context and request for each call, and a value it shares across calls ends frozen.
+The host core that does so arrives with the first host surface, and its test holds it; until then this clause is informative.
+
+### C-13 (normative): The byte budgets and the row measure
+
+The byte budgets of a result are `BATCH_MAX_BYTES`, for one batch, and `PAGE_MAX_BYTES`, for one page.
+A row's size is the UTF-8 length of its encoded JSON text, `encodedRowBytes`, and a batch's and a page's size is the sum of their rows' sizes.
+Measuring a row encodes every cell, so a cell outside the value codec's domain is refused by the codec's own error.
+
+- test `packages/provider-sdk/tests/calls/results.test.ts` "the batch and page budgets are one MiB and 32 MiB"
+- test `packages/provider-sdk/tests/calls/results.test.ts` "a row's size is the UTF-8 length of its encoded JSON text"
+
+### C-14 (normative): A result source answers within the limit it is asked for
+
+A result source answers each `next` with at most the rows and the bytes it is asked for, and never splits a row, so a batch of exactly one row may be larger than its byte limit and one row always makes progress.
+`rowsSource` does so over rows a driver already holds in memory.
+
+- test `packages/provider-sdk/tests/calls/results.test.ts` "a batch held to batch.maxBytes"
+- test `packages/provider-sdk/tests/calls/results.test.ts` "a row larger than the batch budget comes alone, and is refused only when no page can hold it"
+
+### C-15 (normative): The host pulls a page with pumpPage
+
+The host pulls a page from a result source with `pumpPage`, one batch at a time, the pull being the credit.
+Each pull asks for no more than the page has left, with a frozen limit.
+As it reads each batch, the pump refuses by a rule of `CALL_REFUSAL_RULES` a batch that breaks C-14 or is not a plain record of rows and done, a row that is not positional, a batch that brings nothing and is not done, and a row no page can hold.
+It cuts the page by size, ends it at its row limit or when the source is done, and closes the source exactly once on every path, losing no failure: when the close fails after another failure, both are thrown together.
+A limit that is not a positive safe integer is a host defect, refused before any pull.
+The pump never keeps a source open across pages, so a later page is a new execution with an offset, C-9.
+
+- test `packages/provider-sdk/tests/calls/results.test.ts` "a page cut by size at page.maxBytes"
+- test `packages/provider-sdk/tests/calls/results.test.ts` "a page ends at its row limit or when the source is done"
+- test `packages/provider-sdk/tests/calls/results.test.ts` "a batch a source should not have answered is refused by name, and the source is closed once"
+- test `packages/provider-sdk/tests/calls/results.test.ts` "a failure to pull or to close is thrown, and neither is lost"
+- test `packages/provider-sdk/tests/calls/results.test.ts` "the limits a source is asked for are frozen and within the page"
+- test `packages/provider-sdk/tests/calls/results.test.ts` "a pump limit that is not a positive safe integer is refused before any pull"
+- test `packages/provider-sdk/tests/calls/pump-bounds.test.ts` "a source that never progresses is refused after one pull, in a bounded child"
+- test `packages/provider-sdk/tests/calls/pump-bounds.test.ts` "a source that never ends is cut at the page's byte budget, in a bounded child"
+
+### C-16 (informative): What the byte budgets bound
+
+The pump runs in the host's copy of the SDK, so every package's batches are measured by one rule.
+The budgets bound what crosses from a provider, not what a driver buffers: a driver without a cursor materialises a page before the SDK sees it.
+A page of very small rows is bounded in the heap by the host's row limit, not by its bytes, so the host always passes a finite row limit.
+The pump measures a row once, as it reads the batch, and hands on the provider's own row arrays, so a source whose cells change after that read, through a getter or a later write, answers more than was measured; whether the host measures the frames it sends instead is decided with the first host surface.
+The host core that pumps every result arrives with the first host surface; until then this clause is informative.
 
 ## Not yet in this contract
 
@@ -715,7 +813,7 @@ These chapters are added by the changes that bring their enforcers:
 - Connection string rows: their schemes, their URL TLS and paste readers, and their seed checks.
 - Editor and SQL text: execution UI, the SQL grammar facts as manifest data, SQL writing, migration DDL, generators, editor languages, explain formats and discovery fence tags.
 - Policy and MCP claims, each a request a provider makes that only Studio's review record grants, the agent overlay, and presentation (an icon and a colour).
-- Calls, continued: the memory test transport, refinements and the byte budgets, and the cancel, deadline and failure rules.
+- Calls, continued: the memory test transport, and the cancel, deadline and failure rules.
 - The API report of each SDK entry.
 
 ## Change notes
@@ -738,3 +836,4 @@ Against the manifest sketch the design started from:
   The sketch's dotted facet list is not adopted for calls, which are keyed by the path to their function.
 - A function the manifest names is a name, never code, M-31.
 - A refused field carries the sentence core refuses it with, M-38.
+- The sketch's frame cap is replaced by the byte budgets, since calls are unframed in process; the memory test transport keeps frames for tests only.
