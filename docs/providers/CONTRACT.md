@@ -1042,7 +1042,7 @@ The loader, the kit's fault cases and a measurement under Electron do not exist 
 | A detached rejection | Logged, and the server keeps serving | The child exits with 1 and the extension restarts it, measured by a probe, not a test | Not measured | The server exits with 70 | None on the server, the process otherwise | C-35, with the server's own choice open |
 | An uncaught exception in a callback | The server exits with 70 | The child exits with 1 and the extension restarts it, measured by a probe, not a test | Not measured | The server exits with 70 | The process | C-35 |
 | A native fault in an addon | The process ends on the signal | The same | The same | The same | The process | The kit's fault cases |
-| A close that never settles at shutdown | Cut after 15 s, exit 143, where Studio owns the exit | Not stated | Not stated | As the server | The shutdown | C-36 |
+| A close that never settles at shutdown | Cut after 15 s, exit 143, where Studio owns the exit | Each provider cut by C-45's deadlines when the backend's shutdown clears the caches | Each provider cut by C-45's deadlines when the backend's shutdown clears the caches | As the server | The shutdown | C-36 and C-45 |
 
 ### C-35 (normative): An uncaught exception stops the server with code 70, and a detached rejection does not
 
@@ -1058,6 +1058,7 @@ A promise rejection that nothing handles does not stop it, unless Node.js runs w
 
 Where Studio owns the exit, a provider cache close still pending 15 s into the shutdown is cut, and the exit code is 143.
 Where Next.js owns the exit, Studio closes no provider.
+Inside those 15 s each provider is also cut by C-45's own deadlines.
 
 - test `tests/unit/lib/shutdown-handler.test.ts` "a cache close that never settles is cut after 15 s and the exit code is 143"
 - test `tests/unit/lib/shutdown-handler.test.ts` "where Next.js owns the exit it runs the hooks, closes no provider cache and never exits"
@@ -1118,6 +1119,62 @@ The kit, `@libredb/provider-kit`, is admitted only in a package's tests and its 
 The order of the entries in the lock carries no meaning, and no provider is required for Studio to start.
 The loader holds this, and it does not exist yet.
 
+### C-44 (normative): The host owns each open
+
+The host keeps one open in flight per session key, and every concurrent caller of that key shares it.
+A caller's wait for an open is ended only by its own signal, with that signal's reason, and the open goes on for the others.
+An open that settles after every caller left is admitted exactly once, by the open itself.
+An open a removal or a close of the caches overtook closes what it opened exactly once, admits nothing, and answers its callers that the connection was closed while it was opening, outcome not-sent.
+A close of the caches overtakes every open that settles while it runs, one that started after it began included, so it leaves no provider admitted and drops none without a close.
+An open that fails with no caller left is handled by the host, never left as a detached rejection.
+
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "concurrent callers of one key share one open"
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "a failed open reaches every caller and frees its key"
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "a caller whose signal aborts stops waiting, and the others still get the open"
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "a caller whose signal already aborted starts nothing and joins nothing"
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "an open no caller waits for any more is admitted exactly once by its own start"
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "an open that fails with no caller left reaches the unclaimed hook once, never as a detached rejection"
+- test `tests/unit/lib/provider-host/core/open-once.test.ts` "a discard aborts the matching flights' signals and answers them"
+- test `tests/unit/lib/provider-host/core/open-once-bounds.test.ts` "a caller's signal frees it from an open that never settles"
+- test `tests/isolated/factory.test.ts` "two concurrent first calls for one connection build, connect and cache one provider"
+- test `tests/isolated/factory.test.ts` "a connect two concurrent callers share fails once for both, releases the tunnel once and caches nothing"
+- test `tests/isolated/factory.test.ts` "twelve concurrent first acquisitions of one connection and profile construct one provider"
+- test `tests/isolated/factory.test.ts` "a removal of the connection closes an open it overtook and caches nothing"
+- test `tests/isolated/factory.test.ts` "a cache clear closes an open in flight and names one still opening at the cut"
+- test `tests/isolated/factory.test.ts` "an open that settles while the caches close is closed once, admits nothing and answers not-sent, in either cache"
+- test `tests/integration/db/factory-open-once.test.ts` "two concurrent first writes for one DuckDB connection both reach the file"
+
+### C-45 (normative): Teardown under fixed deadlines
+
+When the host closes its sessions, at a shutdown or when its caches are cleared, it tears each one down under fixed deadlines, shared and owned sessions alike.
+An open transaction is rolled back first, and the host waits at most 5 s for the rollback.
+Then the session is closed, and the host waits at most 10 s for the close.
+A step that fails or is cut is logged, the next step still runs, and the teardown itself never fails.
+Each provider still open at a cut is named, by its connection, its author and Studio's version.
+
+- test `tests/unit/lib/provider-host/core/teardown.test.ts` "a rollback settles before the close starts"
+- test `tests/unit/lib/provider-host/core/teardown.test.ts` "a rollback that never settles is cut at its deadline and the close still runs"
+- test `tests/unit/lib/provider-host/core/teardown.test.ts` "a close that never settles is cut at its deadline"
+- test `tests/unit/lib/provider-host/core/teardown.test.ts` "a step that fails is reported with its error and the next step still runs"
+- test `tests/unit/lib/provider-host/core/teardown.test.ts` "a step that fails after its cut changes nothing and is never a detached rejection"
+- test `tests/unit/lib/provider-host/core/teardown.test.ts` "a teardown leaves no timer pending once it answers"
+- test `tests/unit/lib/provider-host/core/teardown-bounds.test.ts` "a close that never settles is cut by the teardown's own deadline"
+- test `tests/isolated/factory.test.ts` "a shared provider in a transaction is rolled back before it is closed when the caches close"
+- test `tests/isolated/factory.test.ts` "a shared provider whose disconnect never settles is cut at 10 s and named"
+- test `tests/isolated/factory.test.ts` "a shared provider whose rollback never settles is cut at 5 s and still closed"
+- test `tests/isolated/factory.test.ts` "the providers not closed at shutdown are named with their author and Studio's version"
+- test `tests/isolated/factory.test.ts` "the close the factory registers for the shutdown names an owned provider whose rollback or disconnect timed out or failed, and a profiled one whose close failed"
+
+### C-46 (normative): Contract first
+
+The legacy provider interface, `DatabaseProvider` in `src/lib/db/types.ts`, gains no member.
+A new capability lands in the manifest schema or a facet first, then in the bridge that serves today's providers as contract providers, then in the facade today's callers use.
+The lint holds the members `DatabaseProvider` declares, so a capability read by duck typing outside the interface, as the factory's `openTransaction` reads `isInTransaction` and `rollbackTransaction`, is not a member it can see, and such a read is held by review.
+
+- test `tests/unit/lib/db/database-provider-members.test.ts` "DatabaseProvider gains no member, so every SPI change lands contract-first"
+- test `tests/unit/lib/db/database-provider-members.test.ts` "a planted member is refused by name"
+- test `tests/unit/lib/db/database-provider-members.test.ts` "a removed member is refused by name, so the list stays exact"
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:
@@ -1141,6 +1198,7 @@ Against the manifest sketch the design started from:
 - The value tags keep the names of Studio's value codec, V-1.
 - The error kinds keep the names of Studio's error record, E-1.
 - Facet names keep Studio's own vocabulary, the seven monitoring panels, the maintenance operations and the curated agent readings, rather than new dotted names.
+- The host's own rules for opening and closing sessions and for the legacy provider interface are clauses of the calls chapter, C-44 to C-46, since the host serves today's providers through them.
 - The connection dialog's per-field facts, its labels, hints, placeholders, placement, choices, conditions and absent values, are lists of entries that each name their field, rather than maps keyed by field, M-24.
 - A condition is one field equal to one value, with no list of values and no combination of conditions in this contract, M-25.
 - A `calls` segment declares the package's optional console facets and the request fields its execute honours.

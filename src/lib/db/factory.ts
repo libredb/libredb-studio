@@ -14,7 +14,9 @@ import {
   type ProviderOptions,
   type ProviderExecutionContext,
 } from "./types";
-import { buildPhase, connectPhase, DatabaseConfigError, StudioProfileRefusal } from "./errors";
+import { buildPhase, ConnectionError, connectPhase, DatabaseConfigError, StudioProfileRefusal } from "./errors";
+import { errorCode, errorKind } from "./error-record";
+import { providerAuthor } from "./operations/provider-text";
 import { createSSHTunnel, closeSSHTunnel, releaseUnopenedTunnel, tunnelProviderOpened } from "@/lib/ssh/tunnel";
 import type { TunnelInfo } from "@/lib/ssh/tunnel";
 import { isEnvelopeClaim } from "@/lib/storage/envelope-claim";
@@ -45,9 +47,23 @@ import { type ProviderTextScrub, providerTextScrub, withholdProviderError } from
 import { REFUSED_CONNECTION_FIELDS } from "./connection-fields";
 import { assertDatabaseType, typeIdRow } from "./type-id";
 import { enabledProviderTypes } from "./enabled-providers";
-import { TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
+import { type DatabaseType, TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
 import { logger } from "@/lib/logger";
 import { onProviderCacheClose } from "@/lib/shutdown";
+import { getAppVersion } from "@/lib/app-version";
+import {
+  createOpenFlights,
+  type DiscardedFlight,
+  discardFlights,
+  type Flight,
+  openOnce,
+} from "@/lib/provider-host/core/open-once";
+import {
+  settleWithin,
+  TEARDOWN_CLOSE_MS,
+  TEARDOWN_ROLLBACK_MS,
+  teardownWithin,
+} from "@/lib/provider-host/core/teardown";
 import * as path from "path";
 
 // ============================================================================
@@ -990,6 +1006,162 @@ interface CachedProvider {
 const providerCache = new Map<string, CachedProvider>();
 
 // ============================================================================
+// One open in flight per cache key (docs/providers/CONTRACT.md, clause C-44)
+// ============================================================================
+
+/** What an open in flight records about itself, so a removal or a cache close can find it and the log can name it. */
+interface OpenMeta {
+  readonly connectionId: string;
+  /** The owner its key frames, or undefined for a provider every caller shares, as `CachedProvider.owner`. */
+  readonly owner?: string;
+  readonly type: DatabaseType;
+}
+
+/**
+ * Logs an open that failed after every caller stopped waiting for it, by the connection id and the error's kind and
+ * code, never its text, which may carry what the provider said. The open admitted nothing, so nothing else is left to
+ * do. Today every caller of the two caches waits until its open settles, so only a caller with a wait of its own can
+ * leave one; exported for the tests.
+ */
+export function logUnclaimedOpen(error: unknown, flight: Flight<OpenMeta>): void {
+  const id = flight.meta.connectionId;
+  logger.warn(
+    `[DB] An open of ${sanitize(id)} failed after every caller stopped waiting for it, so nothing was admitted.`,
+    {
+      connectionId: id,
+      kind: errorKind(error),
+      code: errorCode(error),
+    },
+  );
+}
+
+/**
+ * The opens in flight of the writable cache and of the execution-profile cache, one table each, by the key the cache
+ * holds what they open under (src/lib/provider-host/core/open-once.ts). Module state of this copy of the factory, as
+ * the caches are: each Next.js bundle that loads the factory keeps its own caches and its own opens.
+ *
+ * Concurrent first calls for one key share one open, so a connection is built, connected and cached once whatever the
+ * number of callers: two handles on one DuckDB file, the second replacing the first in the cache, lost a committed row
+ * when the first closed. Each open admits its own provider into its cache, and checks after its connect whether a
+ * removal or a cache close overtook it (`connectUnlessOvertaken`).
+ */
+const editorFlights = createOpenFlights<DatabaseProvider, OpenMeta>(logUnclaimedOpen);
+const profiledFlights = createOpenFlights<DatabaseProvider, OpenMeta>(logUnclaimedOpen);
+
+/**
+ * How many closes of the caches (`closeCaches`) are running. An open that settles while one runs is overtaken as one in
+ * flight when it began is: a close states that nothing stays open after it, and its teardown takes up to 15 s, during
+ * which a new open would otherwise be admitted and then outlive the close (`connectUnlessOvertaken`).
+ */
+let cacheClosesRunning = 0;
+
+/**
+ * The overtaken opens that connected and are closing what they opened (`connectUnlessOvertaken`), so a cache close that
+ * cuts its wait for one names the state it is in (`overtakenOpenStillOpening`). Weak, so a settled flight leaves it.
+ */
+const flightsClosing = new WeakSet<Flight<OpenMeta>>();
+
+/** What a caller whose open a removal or a cache close overtook is answered, as a `ConnectionError` marked not-sent. */
+const OVERTAKEN_OPEN =
+  "The connection was closed while it was opening: a disconnect, a removal, a change of access or a shutdown closed it before it was ready, so nothing was sent to the database. Try again.";
+
+/**
+ * Connects `provider`, then checks whether a removal or a cache close overtook its open (`flight.signal`, or a close of
+ * the caches still running, `cacheClosesRunning`) and, when none did, runs `admit`, which puts the provider into its
+ * cache. Nothing is awaited between the check and `admit`, so a
+ * removal or a cache close whose synchronous part ran at any point before the admission is seen by the check, and one
+ * that runs after it finds the provider in the cache and closes it there (docs/providers/CONTRACT.md, clause C-44).
+ * An overtaken open closes the provider it built, once and within the teardown's close deadline, and rejects with a
+ * `ConnectionError`, which `connectPhase` marks not-sent and after which the caller releases its tunnel as for a failed
+ * connect, so nothing is admitted. A connect that fails rejects with its own error, and nothing is closed.
+ */
+async function connectUnlessOvertaken(
+  provider: DatabaseProvider,
+  flight: Flight<OpenMeta>,
+  admit: () => void,
+): Promise<void> {
+  await provider.connect();
+  if (!flight.signal.aborted && cacheClosesRunning === 0) {
+    admit();
+    return;
+  }
+  const id = flight.meta.connectionId;
+  flightsClosing.add(flight);
+  const outcome = await teardownWithin({ close: () => provider.disconnect() }, TEARDOWN_DEADLINES);
+  if (outcome.close !== "done") {
+    const how = outcome.close === "timed-out" ? `did not finish within ${TEARDOWN_CLOSE_MS} ms` : "failed";
+    logger.warn(
+      `[DB] A provider of ${sanitize(id)} that was closed while it was opening did not close: its disconnect ${how}.`,
+      {
+        connectionId: id,
+        ...(outcome.close === "failed"
+          ? { kind: errorKind(outcome.closeError), code: errorCode(outcome.closeError) }
+          : {}),
+      },
+    );
+  }
+  throw new ConnectionError(OVERTAKEN_OPEN, provider.type);
+}
+
+/**
+ * The provider `cache` holds under `key` for `connection`, when it may be handed out: connected, and opened with the
+ * connection's query timeout. An entry opened with another query timeout is disconnected and dropped, so a saved
+ * timeout change reaches the next query even while the connection is open, and null is answered, as for no entry.
+ */
+async function reusableEntry(
+  cache: Map<string, CachedProvider>,
+  key: string,
+  connection: DatabaseConnection,
+): Promise<DatabaseProvider | null> {
+  const cached = cache.get(key);
+  if (cached && cached.provider.config.queryTimeout !== connection.queryTimeout) {
+    try {
+      await cached.provider.disconnect();
+    } catch (error) {
+      logger.warn(`[DB] Error disconnecting provider after query timeout change`, {
+        connectionId: connection.id,
+        error: String(withholdProviderError(cached.scrub, error)),
+      });
+    }
+    cache.delete(key);
+    return null;
+  }
+  if (cached?.provider.isConnected()) {
+    cached.lastUsed = Date.now();
+    return cached.provider;
+  }
+  return null;
+}
+
+/**
+ * The open under `key` in `flights`, shared with every concurrent caller (`openOnce`), for `connection`. A caller that
+ * joined an open of a connection with another query timeout is not handed that provider: it re-reads the cache once,
+ * which takes the timeout path of `reusableEntry`, and then opens at most once more, so no caller loops.
+ */
+async function sharedOpen(
+  cache: Map<string, CachedProvider>,
+  flights: typeof editorFlights,
+  key: string,
+  connection: DatabaseConnection,
+  meta: OpenMeta,
+  open: (flight: Flight<OpenMeta>) => Promise<DatabaseProvider>,
+): Promise<DatabaseProvider> {
+  const shared = await openOnce(flights, key, meta, open);
+  if (shared.config.queryTimeout === connection.queryTimeout) return shared;
+  return (await reusableEntry(cache, key, connection)) ?? openOnce(flights, key, meta, open);
+}
+
+/**
+ * The name a not-closed list gives a provider until package identity exists: its connection id, its author as a fence
+ * names it (`providerAuthor`) and Studio's version when the build reports one (`getAppVersion`).
+ */
+function providerName(connectionId: string, type: DatabaseType): string {
+  const version = getAppVersion();
+  const release = version === null ? "" : ` ${version}`;
+  return `${sanitize(connectionId)} (${providerAuthor(type)}${release})`;
+}
+
+// ============================================================================
 // Single-writer file reuse (#498)
 // ============================================================================
 
@@ -1139,8 +1311,8 @@ const profiledProviderCache = new Map<string, ProfiledCachedProvider>();
  * owner (docs/GOVERNANCE.md#per-user-providers), as in the writable key: one user's acquisition is never served
  * another's.
  *
- * Exported for one caller that must join concurrent first acquisitions on exactly this key
- * without deriving a second one: src/lib/mcp/context.ts.
+ * Exported for the tests, which name a profiled entry by it; the factory keys its acquisitions and their opens in
+ * flight with it.
  */
 export async function profiledCacheKey(
   connection: DatabaseConnection,
@@ -1167,40 +1339,12 @@ function connectionStillServed(connectionId: string): boolean {
 }
 
 // ============================================================================
-// Teardown of an owned provider (docs/GOVERNANCE.md#per-user-providers)
+// Teardown of a provider under fixed deadlines (docs/GOVERNANCE.md#per-user-providers;
+// docs/providers/CONTRACT.md, clause C-45)
 // ============================================================================
 
-/**
- * How long a teardown waits for the rollback of an owned provider's open transaction
- * (docs/GOVERNANCE.md#per-user-providers).
- */
-const TEARDOWN_ROLLBACK_MS = 5_000;
-/**
- * How long a teardown waits for an owned provider's disconnect before it abandons the pool
- * (docs/GOVERNANCE.md#per-user-providers).
- */
-const TEARDOWN_DISCONNECT_MS = 10_000;
-
-/** What `within` answers for work that did not settle before its deadline. */
-const TIMED_OUT = Symbol("timed out");
-
-/**
- * Waits for `work` at most `ms`: answers once it resolves, or TIMED_OUT once `ms` pass first, and throws what it
- * rejects with before then. A rejection after the deadline is already handled by the race, and the timer never holds
- * the process open.
- */
-async function within(work: Promise<void>, ms: number): Promise<void | typeof TIMED_OUT> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<typeof TIMED_OUT>((resolve) => {
-    timer = setTimeout(() => resolve(TIMED_OUT), ms);
-    timer.unref?.();
-  });
-  try {
-    return await Promise.race([work, deadline]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
+/** The deadlines every teardown runs under, the host core's (src/lib/provider-host/core/teardown.ts). */
+const TEARDOWN_DEADLINES = { rollbackMs: TEARDOWN_ROLLBACK_MS, closeMs: TEARDOWN_CLOSE_MS } as const;
 
 /** The interactive transaction session that `POST /api/db/transaction` drives, on a provider that implements one. */
 interface TransactionSession {
@@ -1216,65 +1360,90 @@ function openTransaction(provider: DatabaseProvider): TransactionSession | null 
 }
 
 /**
- * Tear down an owned provider (docs/GOVERNANCE.md#per-user-providers): the provider of one user, closed because that
- * user's access changed or the provider went idle. Its entry is deleted from `cache` first, so no request is handed the
- * provider while it closes; an open transaction is rolled back, waited for at most TEARDOWN_ROLLBACK_MS; and the
- * provider is disconnected, waited for at most TEARDOWN_DISCONNECT_MS. The rollback comes first because the disconnect
- * would otherwise wait on the very session the transaction holds: `pg`'s `pool.end()` waits for every checked-out
- * client.
+ * The rollback step of a teardown of `provider`: its open transaction's rollback, none when it holds no transaction,
+ * and a failed step when reading its transaction state throws, so a provider that throws there is still closed.
+ */
+function rollbackStep(provider: DatabaseProvider): (() => Promise<void>) | undefined {
+  try {
+    const session = openTransaction(provider);
+    return session === null ? undefined : () => session.rollbackTransaction();
+  } catch (error) {
+    return () => Promise.reject(error);
+  }
+}
+
+/**
+ * Tear down a cached provider under the host core's deadlines (`teardownWithin`): an owned provider
+ * (docs/GOVERNANCE.md#per-user-providers), closed because its user's access changed, it went idle or the caches close,
+ * and a provider every caller shares, closed because the caches close. Its entry is deleted from `cache` first, so no
+ * request is handed the provider while it closes; an open transaction is rolled back, waited for at most
+ * TEARDOWN_ROLLBACK_MS; and the provider is disconnected, waited for at most TEARDOWN_CLOSE_MS. The rollback comes first
+ * because the disconnect would otherwise wait on the very session the transaction holds: `pg`'s `pool.end()` waits for
+ * every checked-out client.
  *
- * A rollback or a disconnect that fails is logged through the entry's scrub, and a disconnect that does not finish in time is logged and its pool
- * abandoned, because a client stuck in a statement, or in a rollback that never answered, never comes back. So the
- * teardown ends within 15 s whatever the user's database does, and it never rejects. It answers whether the provider
- * closed completely: false after any of those, which the shutdown counts (`closeCaches`).
+ * A rollback or a disconnect that fails is logged with the error rendered through the entry's scrub, and a disconnect
+ * that does not finish in time is logged and its pool abandoned, because a client stuck in a statement, or in a
+ * rollback that never answered, never comes back. Each step is logged when it ends. So the teardown ends within 15 s
+ * whatever the database does, and it never rejects. It answers whether the provider closed completely: false after any
+ * of those, which the shutdown counts (`closeCaches`).
+ *
+ * The lines name an owned provider as before owners shared this path. A shared provider's rollback and cut name it
+ * shared, and its failed disconnect keeps the line `closeCaches` always wrote for it, `[DB] Error disconnecting
+ * <noun>` with the error, its name and message through the entry's scrub, as an argument, where `noun` names the cache.
  */
 async function teardownProvider(
   cache: Map<string, CachedProvider>,
   key: string,
   entry: CachedProvider,
+  noun: "provider" | "profiled provider" = "provider",
 ): Promise<boolean> {
   cache.delete(key);
   const { provider, connectionId: id, scrub } = entry;
-  let closed = true;
-  try {
-    // Inside the try, as `keepsRunInFlight` guards `hasRunsInFlight`: a provider that throws here is not left open.
-    const session = openTransaction(provider);
-    if (session !== null) {
-      const rollback = await within(session.rollbackTransaction(), TEARDOWN_ROLLBACK_MS);
-      if (rollback === TIMED_OUT) {
-        closed = false;
-        logger.warn(
-          `[DB] The open transaction of an owned provider of ${sanitize(id)} did not roll back within ${TEARDOWN_ROLLBACK_MS} ms, so the provider is closed with it open.`,
-          { connectionId: id },
-        );
-      } else {
-        const line = `[DB] Rolled back the open transaction of an owned provider of ${sanitize(id)} before closing it.`;
-        logger.info(line, { connectionId: id });
-      }
-    }
-  } catch (error) {
-    closed = false;
+  const shared = entry.owner === undefined;
+  const whose = shared ? "a shared provider" : "an owned provider";
+  const outcome = await teardownWithin(
+    {
+      rollback: rollbackStep(provider),
+      rollbackEnded: (settled) => {
+        if (settled.state === "done") {
+          const line = `[DB] Rolled back the open transaction of ${whose} of ${sanitize(id)} before closing it.`;
+          logger.info(line, { connectionId: id });
+        } else if (settled.state === "timed-out") {
+          logger.warn(
+            `[DB] The open transaction of ${whose} of ${sanitize(id)} did not roll back within ${TEARDOWN_ROLLBACK_MS} ms, so the provider is closed with it open.`,
+            { connectionId: id },
+          );
+        } else {
+          logger.warn(
+            `[DB] The open transaction of ${whose} of ${sanitize(id)} failed to roll back, so the provider is closed with it open.`,
+            { connectionId: id, error: String(withholdProviderError(scrub, settled.error)) },
+          );
+        }
+      },
+      close: () => provider.disconnect(),
+    },
+    TEARDOWN_DEADLINES,
+  );
+  if (outcome.close === "timed-out") {
     logger.warn(
-      `[DB] The open transaction of an owned provider of ${sanitize(id)} failed to roll back, so the provider is closed with it open.`,
-      { connectionId: id, error: String(withholdProviderError(scrub, error)) },
+      `[DB] Abandoned the pool of ${shared ? "shared" : "owned"} provider ${sanitize(id)}: its disconnect did not finish within ${TEARDOWN_CLOSE_MS} ms.`,
+      { connectionId: id },
     );
-  }
-  try {
-    if ((await within(provider.disconnect(), TEARDOWN_DISCONNECT_MS)) === TIMED_OUT) {
-      closed = false;
-      logger.warn(
-        `[DB] Abandoned the pool of owned provider ${sanitize(id)}: its disconnect did not finish within ${TEARDOWN_DISCONNECT_MS} ms.`,
-        { connectionId: id },
-      );
-    }
-  } catch (error) {
-    closed = false;
+  } else if (outcome.close === "failed" && shared) {
+    // The id is an argument, never part of the first one: `console.error`'s first argument
+    // is a format string, and a constant cannot be a format attack (js/tainted-format-string).
+    console.error(
+      `[DB] Error disconnecting ${noun}`,
+      sanitize(id),
+      String(withholdProviderError(scrub, outcome.closeError)),
+    );
+  } else if (outcome.close === "failed") {
     logger.warn(`[DB] Error disconnecting owned provider ${sanitize(id)}`, {
       connectionId: id,
-      error: String(withholdProviderError(scrub, error)),
+      error: String(withholdProviderError(scrub, outcome.closeError)),
     });
   }
-  return closed;
+  return (outcome.rollback === "none" || outcome.rollback === "done") && outcome.close === "done";
 }
 
 /** Idle timeout: evict providers unused for 30 minutes */
@@ -1491,25 +1660,50 @@ export async function getOrCreateProvider(
   const owner = providerOwner(connection, execution.owner);
   const cacheKey = await editorCacheKey(connection, execution);
 
-  // Check cache
-  const cached = providerCache.get(cacheKey);
+  // A saved timeout change must reach the next query, even when the connection is already open (`reusableEntry`).
+  const cached = await reusableEntry(providerCache, cacheKey, connection);
+  if (cached !== null) return cached;
 
-  // A saved timeout change must reach the next query, even when the connection is already open.
-  if (cached && cached.provider.config.queryTimeout !== connection.queryTimeout) {
-    try {
-      await cached.provider.disconnect();
-    } catch (error) {
-      logger.warn(`[DB] Error disconnecting provider after query timeout change`, {
-        connectionId: connection.id,
-        error: String(withholdProviderError(cached.scrub, error)),
-      });
-    }
-    providerCache.delete(cacheKey);
-  } else if (cached?.provider.isConnected()) {
-    cached.lastUsed = Date.now();
-    return cached.provider;
-  }
+  // One open per key: a concurrent first caller joins the open in flight rather than building a second provider.
+  return sharedOpen(
+    providerCache,
+    editorFlights,
+    cacheKey,
+    connection,
+    { connectionId: connection.id, owner, type: connection.type },
+    (flight) =>
+      openEditorProvider(
+        connection,
+        options,
+        execution,
+        { cacheKey, owner, allowExternalFileAccess, tunnelDecision },
+        flight,
+      ),
+  );
+}
 
+/** What `getOrCreateProvider` decided before its open, which the open builds with exactly. */
+interface EditorOpenPlan {
+  readonly cacheKey: string;
+  readonly owner: string | undefined;
+  readonly allowExternalFileAccess: boolean;
+  readonly tunnelDecision: ReturnType<typeof decideTunnel>;
+}
+
+/**
+ * The open `getOrCreateProvider` shares under `plan.cacheKey`: it closes a stale single-writer handle of the record,
+ * opens the tunnel, builds and connects the provider, and admits it into the writable cache itself, so an open no caller
+ * waits for any more is still admitted once. An open a removal or a cache close overtook admits nothing
+ * (`connectUnlessOvertaken`).
+ */
+async function openEditorProvider(
+  connection: DatabaseConnection,
+  options: ProviderOptions,
+  execution: EditorExecutionContext,
+  plan: EditorOpenPlan,
+  flight: Flight<OpenMeta>,
+): Promise<DatabaseProvider> {
+  const { cacheKey, owner, allowExternalFileAccess, tunnelDecision } = plan;
   // A single-writer engine keeps ONE writable handle per file per process. We are about to open one
   // under `cacheKey`, so a handle of THIS connection record on the SAME file under a DIFFERENT key would
   // be a second handle on one file. That happens whenever one record's key changes while its handle is
@@ -1578,29 +1772,30 @@ export async function getOrCreateProvider(
       allowExternalFileAccess,
       ...ownerContext(owner, execution),
     });
-    await connectPhase(() => provider.connect());
+    // Cache it, remembering the file when this engine admits only one handle on it -
+    // that is what lets the callers that would otherwise open a second one find this.
+    const admit = () => {
+      const singleWriterFile = provider.getCapabilities().singleWriterFile === true ? fileIdentity(connection) : null;
+      if (tunnel) tunnelProviderOpened(tunnel);
+      providerCache.set(cacheKey, {
+        provider,
+        connectionId: connection.id,
+        owner,
+        lastUsed: Date.now(),
+        singleWriterFile,
+        // Recorded so the single-writer borrow lends a DuckDB handle only to a caller of the same
+        // posture (non-admin DuckDB file access); ignored for every engine but DuckDB.
+        allowExternalFileAccess,
+        scrub,
+      });
+    };
+    await connectPhase(() => connectUnlessOvertaken(provider, flight, admit));
   } catch (error) {
     if (tunnel) {
       await releaseTunnelOfUnopenedProvider(tunnel, connection.id, scrub);
     }
     throw error;
   }
-  if (tunnel) tunnelProviderOpened(tunnel);
-
-  // Cache it, remembering the file when this engine admits only one handle on it -
-  // that is what lets the callers that would otherwise open a second one find this.
-  const singleWriterFile = provider.getCapabilities().singleWriterFile === true ? fileIdentity(connection) : null;
-  providerCache.set(cacheKey, {
-    provider,
-    connectionId: connection.id,
-    owner,
-    lastUsed: Date.now(),
-    singleWriterFile,
-    // Recorded so the single-writer borrow lends a DuckDB handle only to a caller of the same
-    // posture (non-admin DuckDB file access); ignored for every engine but DuckDB.
-    allowExternalFileAccess,
-    scrub,
-  });
 
   // Start idle sweep if not already running
   startIdleSweep();
@@ -1938,21 +2133,8 @@ export async function acquireExecutionProfileProvider(
   // `profiledCacheKey` frames the same owner, and the provider and its entry take it from here.
   const owner = providerOwner(connection, requester.owner);
   const cacheKey = await profiledCacheKey(connection, profile, requester);
-  const cached = profiledProviderCache.get(cacheKey);
-  if (cached && cached.provider.config.queryTimeout !== connection.queryTimeout) {
-    try {
-      await cached.provider.disconnect();
-    } catch (error) {
-      logger.warn(`[DB] Error disconnecting provider after query timeout change`, {
-        connectionId: connection.id,
-        error: String(withholdProviderError(cached.scrub, error)),
-      });
-    }
-    profiledProviderCache.delete(cacheKey);
-  } else if (cached?.provider.isConnected()) {
-    cached.lastUsed = Date.now();
-    return cached.provider;
-  }
+  const cached = await reusableEntry(profiledProviderCache, cacheKey, connection);
+  if (cached !== null) return cached;
 
   const credential = resolveAgentCredential(connection);
   const acquisition = PROFILE_ACQUISITION[profile];
@@ -1992,77 +2174,102 @@ export async function acquireExecutionProfileProvider(
     if (open) return open;
   }
 
-  // A partial credential is overlaid as it stands so the provider can be built and asked for its form; one it does
-  // not take is refused below, before any connect. Each half is overlaid only into a field the engine receives
-  // (`providerFields`): an agent user on an engine that takes no user stays out of the record the build reads, so
-  // core's refusal of a field the engine refuses (`assertNoRefusedField`) never speaks for it, and the agent
-  // credential's own refusal below names it.
-  const received: readonly string[] = credential ? providerFields(connection.type) : [];
-  let effectiveConnection: DatabaseConnection = credential
-    ? {
-        ...connection,
-        ...(credential.user === undefined || !received.includes("user") ? {} : { user: credential.user }),
-        ...(credential.password === undefined || !received.includes("password")
-          ? {}
-          : { password: credential.password }),
-      }
-    : connection;
+  /*
+    The open, shared under the profiled key with every concurrent first acquisition (`sharedOpen`). It overlays the
+    agent credential, opens the tunnel, builds the provider, applies the provider's own refusals, connects it and admits
+    it into the profiled cache itself, so an open no caller waits for any more is still admitted once. An open a removal
+    or a cache close overtook admits nothing (`connectUnlessOvertaken`).
+  */
+  const openProfiledProvider = async (flight: Flight<OpenMeta>): Promise<DatabaseProvider> => {
+    // A partial credential is overlaid as it stands so the provider can be built and asked for its form; one it does
+    // not take is refused below, before any connect. Each half is overlaid only into a field the engine receives
+    // (`providerFields`): an agent user on an engine that takes no user stays out of the record the build reads, so
+    // core's refusal of a field the engine refuses (`assertNoRefusedField`) never speaks for it, and the agent
+    // credential's own refusal below names it.
+    const received: readonly string[] = credential ? providerFields(connection.type) : [];
+    let effectiveConnection: DatabaseConnection = credential
+      ? {
+          ...connection,
+          ...(credential.user === undefined || !received.includes("user") ? {} : { user: credential.user }),
+          ...(credential.password === undefined || !received.includes("password")
+            ? {}
+            : { password: credential.password }),
+        }
+      : connection;
 
-  // The SSH tunnel is keyed by connection id, bastion route, tunnel credential, pinned host key and far
-  // end, and shared with the writable provider (createSSHTunnel hands every caller for that forward the one forward). This
-  // acquisition reports how its provider fared, and the pool decides whether a failure closes it.
-  const scrub = providerTextScrub(connection, "profiled");
-  let tunnel: TunnelInfo | null = null;
-  if (tunnelDecision.open) {
-    tunnel = await createSSHTunnel(connection.id, tunnelDecision.tunnel, tunnelDecision.host, tunnelDecision.port);
-    effectiveConnection = tunnelledConnection(effectiveConnection, tunnel);
-  }
+    // The SSH tunnel is keyed by connection id, bastion route, tunnel credential, pinned host key and far
+    // end, and shared with the writable provider (createSSHTunnel hands every caller for that forward the one forward). This
+    // acquisition reports how its provider fared, and the pool decides whether a failure closes it.
+    const scrub = providerTextScrub(connection, "profiled");
+    let tunnel: TunnelInfo | null = null;
+    if (tunnelDecision.open) {
+      tunnel = await createSSHTunnel(connection.id, tunnelDecision.tunnel, tunnelDecision.host, tunnelDecision.port);
+      effectiveConnection = tunnelledConnection(effectiveConnection, tunnel);
+    }
 
-  const releaseTunnel = async () => {
-    if (tunnel) await releaseTunnelOfUnopenedProvider(tunnel, connection.id, scrub);
-  };
+    const releaseTunnel = async () => {
+      if (tunnel) await releaseTunnelOfUnopenedProvider(tunnel, connection.id, scrub);
+    };
 
-  // A provider constructor that refuses the record comes after the tunnel, so the build releases the
-  // tunnel on that refusal as every later step below does on its own.
-  let provider: DatabaseProvider;
-  try {
-    provider = await createDatabaseProvider(effectiveConnection, options, {
-      ...execution,
-      ...ownerContext(owner, requester),
-    });
-  } catch (error) {
-    await releaseTunnel();
-    throw error;
-  }
-  if (credential !== null) {
+    // A provider constructor that refuses the record comes after the tunnel, so the build releases the
+    // tunnel on that refusal as every later step below does on its own.
+    let provider: DatabaseProvider;
     try {
-      assertAgentCredentialForm(connection, provider, credential.password);
-      assertAgentUserTaken(connection, credential);
+      provider = await createDatabaseProvider(effectiveConnection, options, {
+        ...execution,
+        ...ownerContext(owner, requester),
+      });
     } catch (error) {
       await releaseTunnel();
       throw error;
     }
-  }
-  if (acquisition.requiresReadOnlyStatements && typeof provider.queryReadOnly !== "function") {
-    await releaseTunnel();
-    throw new StudioProfileRefusal(
-      `Provider type "${connection.type}" implements no read-only statement path (queryReadOnly)`,
-      "PROFILE_UNSUPPORTED_BY_PROVIDER",
-    );
-  }
+    if (credential !== null) {
+      try {
+        assertAgentCredentialForm(connection, provider, credential.password);
+        assertAgentUserTaken(connection, credential);
+      } catch (error) {
+        await releaseTunnel();
+        throw error;
+      }
+    }
+    if (acquisition.requiresReadOnlyStatements && typeof provider.queryReadOnly !== "function") {
+      await releaseTunnel();
+      throw new StudioProfileRefusal(
+        `Provider type "${connection.type}" implements no read-only statement path (queryReadOnly)`,
+        "PROFILE_UNSUPPORTED_BY_PROVIDER",
+      );
+    }
 
-  try {
-    await connectPhase(() => provider.connect());
-  } catch (error) {
-    await releaseTunnel();
-    throw error;
-  }
-  if (tunnel) tunnelProviderOpened(tunnel);
+    const admit = () => {
+      if (tunnel) tunnelProviderOpened(tunnel);
+      profiledProviderCache.set(cacheKey, {
+        provider,
+        lastUsed: Date.now(),
+        connectionId: connection.id,
+        owner,
+        scrub,
+      });
+    };
+    try {
+      await connectPhase(() => connectUnlessOvertaken(provider, flight, admit));
+    } catch (error) {
+      await releaseTunnel();
+      throw error;
+    }
+    startIdleSweep();
 
-  profiledProviderCache.set(cacheKey, { provider, lastUsed: Date.now(), connectionId: connection.id, owner, scrub });
-  startIdleSweep();
+    return provider;
+  };
 
-  return provider;
+  // One open per key, as in getOrCreateProvider; the borrow above opens nothing, so it never waits on a flight.
+  return sharedOpen(
+    profiledProviderCache,
+    profiledFlights,
+    cacheKey,
+    connection,
+    { connectionId: connection.id, owner, type: connection.type },
+    openProfiledProvider,
+  );
 }
 
 /**
@@ -2092,6 +2299,12 @@ export async function acquireExecutionProfileProvider(
  * back, and a pool that hangs is abandoned, so the removal of a user's providers, which the governance loader asks for
  * when a grant is taken away or changed (`src/lib/db/owner-removal.ts`), ends within 15 s. The owned entries are torn
  * down at once, and before the tunnel goes. An entry every caller shares is disconnected as before.
+ *
+ * An open still in flight that the scope names, by its connection, its owner or its key as the entries are named, is
+ * overtaken (docs/providers/CONTRACT.md, clause C-44): once it has connected it closes the provider it built and admits
+ * nothing, and its callers are answered a not-sent `ConnectionError` saying the connection was closed while it was
+ * opening. A removal states that what it names must not stay open, so an open it overtook is not admitted after it.
+ * The removal does not wait for such an open; it closes itself.
  */
 export async function removeProvider(
   connectionId: string,
@@ -2110,9 +2323,14 @@ export async function removeProvider(
   const profiledKeys: ReadonlySet<string> = new Set(
     byKey ? Array.from(EXECUTION_PROFILES, (profile) => withProfile(profile, scopedKey)) : [],
   );
-  const removes = (entry: CachedProvider, keyed: boolean): boolean =>
+  const removes = (entry: { connectionId: string; owner?: string }, keyed: boolean): boolean =>
     entry.connectionId === connectionId && (scope === undefined || (byKey ? keyed : entry.owner === owner));
   const teardowns: Promise<boolean>[] = [];
+
+  // An open in flight the scope names is overtaken first: it closes what it opens and admits nothing
+  // (`connectUnlessOvertaken`), so a removal is never undone by an open that was still connecting when it ran.
+  discardFlights(editorFlights, (flight) => removes(flight.meta, flight.key === scopedKey), "removeProvider");
+  discardFlights(profiledFlights, (flight) => removes(flight.meta, profiledKeys.has(flight.key)), "removeProvider");
 
   // A connection can hold more than one entry now - one per distinct server-and-credentials
   // it was opened with - so this removes every entry serving it, the way the profiled loop
@@ -2168,74 +2386,79 @@ export async function removeProvider(
 registerOwnerRemoval(removeProvider);
 
 /**
- * Closes every cached provider (shared and execution-profile), all at once, and answers the ids of those that did not
- * close completely: a shared provider whose `disconnect()` rejected, and an owned one whose teardown failed or gave up.
- * An owned provider (docs/GOVERNANCE.md#per-user-providers) is torn down (`teardownProvider`), so an open transaction
- * it holds is rolled back before it closes, and it is waited for at most 15 s; a provider every caller shares is
- * disconnected, and a disconnect that rejects is logged with the error's name and message, through the entry's scrub,
- * the text the scrub reads.
+ * Waits for an open a cache close overtook at most the teardown's close deadline, and answers its name when it was
+ * still opening at the cut, logged with the state it was in, or null once it settled. An overtaken open closes what it
+ * opened itself (`connectUnlessOvertaken`), so one still connecting at the cut closes later, if its connect ever
+ * answers, and one that connected and is still closing at the cut is cut by its own close deadline.
+ */
+async function overtakenOpenStillOpening(overtaken: DiscardedFlight<OpenMeta>): Promise<string | null> {
+  if ((await settleWithin(overtaken.settled, TEARDOWN_CLOSE_MS)).state === "done") return null;
+  const { connectionId: id, type } = overtaken.flight.meta;
+  const opening = `[DB] The open of ${sanitize(id)} was still`;
+  const cut = `when the caches closed, after ${TEARDOWN_CLOSE_MS} ms`;
+  logger.warn(
+    flightsClosing.has(overtaken.flight)
+      ? `${opening} closing the provider it opened ${cut}; its close is cut at its own deadline.`
+      : `${opening} connecting ${cut}; it closes itself if its connect answers.`,
+    { connectionId: id },
+  );
+  return providerName(id, type);
+}
+
+/**
+ * Closes every cached provider (shared and execution-profile), all at once, and answers the names
+ * (`providerName`) of those that did not close completely: one whose rollback or disconnect failed or was cut, and an
+ * open in flight still connecting at the close deadline. Every provider, owned (docs/GOVERNANCE.md#per-user-providers)
+ * or shared alike, is torn down (`teardownProvider`): its entry leaves the cache, an open transaction it holds is rolled
+ * back within 5 s, and it is closed within 10 s, so the close ends within 15 s whatever the databases do
+ * (docs/providers/CONTRACT.md, clause C-45). A rollback or a disconnect that fails is logged with the error's name and
+ * message, through the entry's scrub, the text the scrub reads. Every open in flight is overtaken first, so none is
+ * admitted after the caches closed, and each is waited for at most the teardown's close deadline (clause C-44). An open
+ * that starts while the close runs and settles before it ended is overtaken alike (`cacheClosesRunning`): it closes
+ * what it opened and admits nothing, so no provider is left in a cache, or dropped from one without a close, when the
+ * close answers.
  */
 async function closeCaches(): Promise<string[]> {
+  cacheClosesRunning += 1;
+  try {
+    return await closeEveryProvider();
+  } finally {
+    cacheClosesRunning -= 1;
+  }
+}
+
+/**
+ * The body of `closeCaches`, which runs it with every open that settles meanwhile overtaken. Each entry leaves its cache
+ * when its teardown starts, and no open is admitted until the close ended, so the caches are empty when it answers.
+ */
+async function closeEveryProvider(): Promise<string[]> {
   // Stop idle sweep
   if (sweepTimer) {
     clearInterval(sweepTimer);
     sweepTimer = null;
   }
 
-  const closes: Promise<string | null>[] = [];
-  /** Answers `id` when its close did not complete, so the caller lists it, and null when it did. */
-  const notClosed = (id: string) => (closed: boolean) => (closed ? null : sanitize(id));
+  const closes: Promise<string | null>[] = [
+    ...discardFlights(editorFlights, () => true, "closeCaches"),
+    ...discardFlights(profiledFlights, () => true, "closeCaches"),
+  ].map(overtakenOpenStillOpening);
+  /** Answers the provider's name when its close did not complete, so the caller lists it, and null when it did. */
+  const notClosed = (entry: CachedProvider) => (closed: boolean) =>
+    closed ? null : providerName(entry.connectionId, entry.provider.type);
 
   for (const [key, entry] of providerCache) {
-    if (entry.owner !== undefined) {
-      closes.push(teardownProvider(providerCache, key, entry).then(notClosed(entry.connectionId)));
-      continue;
-    }
-    closes.push(
-      entry.provider.disconnect().then(
-        () => null,
-        (error) => {
-          // The id is an argument, never part of the first one: `console.error`'s first argument
-          // is a format string, and a constant cannot be a format attack (js/tainted-format-string).
-          console.error(
-            "[DB] Error disconnecting provider",
-            sanitize(entry.connectionId),
-            String(withholdProviderError(entry.scrub, error)),
-          );
-          return sanitize(entry.connectionId);
-        },
-      ),
-    );
+    closes.push(teardownProvider(providerCache, key, entry).then(notClosed(entry)));
   }
   for (const [key, entry] of profiledProviderCache) {
-    if (entry.owner !== undefined) {
-      closes.push(teardownProvider(profiledProviderCache, key, entry).then(notClosed(entry.connectionId)));
-      continue;
-    }
-    closes.push(
-      entry.provider.disconnect().then(
-        () => null,
-        (error) => {
-          console.error(
-            "[DB] Error disconnecting profiled provider",
-            sanitize(entry.connectionId),
-            String(withholdProviderError(entry.scrub, error)),
-          );
-          return sanitize(entry.connectionId);
-        },
-      ),
-    );
+    closes.push(teardownProvider(profiledProviderCache, key, entry, "profiled provider").then(notClosed(entry)));
   }
 
-  const unclosed = (await Promise.all(closes)).filter((id): id is string => id !== null);
-  providerCache.clear();
-  profiledProviderCache.clear();
-  return unclosed;
+  return (await Promise.all(closes)).filter((id): id is string => id !== null);
 }
 
 /**
- * Clear all cached providers (shared and execution-profile), all at once (`closeCaches`). A provider whose close fails
- * is logged, and the clear still resolves.
+ * Clear all cached providers (shared and execution-profile), all at once (`closeCaches`), within 15 s. A provider whose
+ * close fails or is cut is logged, and the clear still resolves.
  * At a shutdown Studio's handler owns, the handler (src/lib/shutdown-handler.ts) closes the caches through the shutdown
  * registry, where each copy of this module registers `closeCachesAtShutdown` below; importing this module adds no
  * process listener, so an embedder of the package that wants its pools closed on a signal calls this from its own
@@ -2246,8 +2469,9 @@ export async function clearProviderCache(): Promise<void> {
 }
 
 /**
- * The close each copy of this module registers for the shutdown: `closeCaches`, rejecting with the ids of the providers
- * that did not close completely, so the shutdown counts them as a failed close and does not exit with 0.
+ * The close each copy of this module registers for the shutdown: `closeCaches`, rejecting with the names of the
+ * providers that did not close completely, each as `<connection id> (<author> <Studio version>)`, so the shutdown counts
+ * them as a failed close and does not exit with 0.
  */
 async function closeCachesAtShutdown(): Promise<void> {
   const unclosed = await closeCaches();

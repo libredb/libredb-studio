@@ -27,7 +27,8 @@ export class DatabaseError extends Error {
   /**
    * `not-sent` when the statement this error answers never reached the database. Written in exactly four places: the
    * constructor of `RefusedBeforeSendError`, so every refusal before send carries it; `connectPhase`, on what a
-   * provider's connect raised; `buildPhase`, which `buildProvider` in ./factory runs, on what building a provider
+   * provider's connect raised, the `ConnectionError` of an open a removal or a cache close overtook included (the
+   * factory raises it inside the connect it runs there); `buildPhase`, which `buildProvider` in ./factory runs, on what building a provider
    * raised; and `withheldProviderError` in ./operations/provider-text, which copies `not-sent` onto the error it answers
    * in place of one. Absent otherwise, which `errorOutcome` in ./error-record reads as `unknown`, because the statement
    * may have run. An own field only when set, so every other error keeps the own keys it had. An instance a failed

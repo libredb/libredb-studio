@@ -527,7 +527,7 @@ const FACTORY = join("src", "lib", "db", "factory.ts");
 const KNOWN_PRESENCE_TESTS: readonly string[] = [
   `${join("src", "app", "api", "agent", "runs", "[runId]", "handover", "route.ts")} in POST`,
   `${join("src", "lib", "agent", "tools.ts")} in runStatement`,
-  `${FACTORY} in acquireExecutionProfileProvider`,
+  `${FACTORY} in openProfiledProvider`,
   `${CORE_CALLER} in read`,
   `${join("src", "lib", "mcp", "tools", "run-statement.ts")} in executeOpened`,
 ];

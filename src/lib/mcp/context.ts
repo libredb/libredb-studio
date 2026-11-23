@@ -4,7 +4,7 @@ import { editorExecutionContext } from "@/lib/api/execution-context";
 import { MCP_AGENT_CREDENTIAL_REQUIRED, READ_ROOTS_REQUIRED } from "@/lib/db/compatibility";
 import { StudioProfileRefusal } from "@/lib/db/errors";
 import { assertDatabaseType } from "@/lib/db/type-id";
-import { acquireExecutionProfileProvider, profiledCacheKey, type ExecutionProfile } from "@/lib/db/factory";
+import { acquireExecutionProfileProvider, type ExecutionProfile } from "@/lib/db/factory";
 import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
@@ -27,12 +27,10 @@ export const MCP_CONNECTIONS_UNREADABLE_TEXT =
  * which engines the caller reaches (`reachableTypes`), so initialize and server/discover never
  * depend on it, and within one request it is read once.
  *
- * Acquisition goes through acquireExecutionProfileProvider and nothing else. Concurrent first
- * acquisitions of one connection and profile are joined here, keyed on the factory's own
- * profiledCacheKey, because a second derivation of that key would reopen the divergence
- * GHSA-3wh2-8x78-jfw4 closed (src/lib/db/provider-cache-key.ts). After the key is awaited, the
- * lookup and the insertion happen in one synchronous step, and a settled acquisition leaves the
- * map, so a failed one is retried by the next caller.
+ * Acquisition goes through acquireExecutionProfileProvider and nothing else. The factory joins
+ * concurrent first acquisitions of one connection and profile into one open, on its own key, and a
+ * failed one is retried by the next caller (docs/providers/CONTRACT.md, clause C-44), so this
+ * context keeps no table of its own.
  *
  * A seed file that cannot be loaded answers MCP_CONNECTIONS_UNREADABLE, which every tool turns
  * into its own explicit error.
@@ -74,8 +72,6 @@ export function mcpCaller(authInfo: AuthInfo): McpCaller {
     ...(Array.isArray(claimRoles) ? { claimRoles: claimRoles as string[] } : {}),
   };
 }
-
-const pendingAcquisitions = new Map<string, Promise<DatabaseProvider>>();
 
 /**
  * The connection with its `${vault:...}` references read, or a StudioProfileRefusal naming it, so both tools answer
@@ -193,14 +189,7 @@ export class McpConnectionContext {
     // borrow, and it is part of the key, so it is derived first; every caller that can resolve one seed
     // shares it.
     const requester = editorExecutionContext(this.caller, connection);
-    const key = await profiledCacheKey(connection, profile, requester);
-    const pending = pendingAcquisitions.get(key);
-    if (pending !== undefined) return pending;
-    const acquisition = acquireExecutionProfileProvider(connection, profile, {}, requester).finally(() => {
-      pendingAcquisitions.delete(key);
-    });
-    pendingAcquisitions.set(key, acquisition);
-    return acquisition;
+    return acquireExecutionProfileProvider(connection, profile, {}, requester);
   }
 
   /** The listed connection checked and its Vault references read, once per request (`opened`). */

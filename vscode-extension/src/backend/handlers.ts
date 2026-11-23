@@ -273,9 +273,9 @@ export function createHandlers(
   // the record after the idle sweep closed the old one. Engine-shape checks of a path stay with the provider.
   const providerOf = (record: OpenRecord) => factory.getOrCreateProvider(record.connection, {}, record.posture);
 
-  // The factory keeps no in-flight entry per connection (D386), so two opens of one id at once would each connect a
-  // provider and the cache would keep only the second. Each id's connection/open and connection/close therefore run
-  // one at a time, in the order they arrived: a second open finds the first one's provider and record.
+  // Each id's connection/open and connection/close run one at a time, in the order they arrived: a second open finds
+  // the first one's provider and record, and a close never runs beside an open of the same id. The factory also
+  // shares one open in flight per cache key, which keeps its cache whole; this keeps the child's own records in order.
   const turns = new Map<string, Promise<void>>();
   const inTurn = <T>(connectionId: string, step: () => Promise<T>): Promise<T> => {
     const run = (turns.get(connectionId) ?? Promise.resolve()).then(step);

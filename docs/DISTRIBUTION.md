@@ -292,6 +292,9 @@ On the first signal it logs one line naming the signal and the owner of the exit
 1. Where Studio owns the exit, it first drains the HTTP server: it closes every HTTP server that has received a request since the boot to new connections, answers the last request in flight on each connection with `Connection: close` when its headers have not gone out, and moves that header to each request that starts behind it from then on, ends each kept-alive connection as its last response ends, and waits at most 5 s for the requests in flight, those that start meanwhile on a connection already open included, so the query events they record are queued before the hooks run.
 2. It runs the shutdown hooks, which insert the governance query events still queued and close the governance pool, all at once and for at most 5 s.
 3. Where Studio owns the exit, it then closes every cached database provider, all at once and for at most 15 s, logs one end line and exits with the code below.
+   Each provider, whether every caller shares it or it is one user's own, is torn down alike: an open transaction on it is rolled back within 5 s, then it is closed within 10 s, inside those 15 s ([C-45](providers/CONTRACT.md#c-45-normative-teardown-under-fixed-deadlines)).
+   A provider that did not close is logged at its own cut and named in the close's failure line by its connection, its author and Studio's version, for example `Providers not closed: seed:orders (PostgreSQL provider, bundled with Studio 1.4.0)`.
+   A provider still opening is closed as soon as it has connected and never kept.
 4. Where Next.js owns the exit, it closes no server and no provider and never exits: Next.js closes the HTTP server, waits for the connections open at the signal to end and exits, and the process takes the open connections with it.
 
 So a shutdown Studio owns takes 25 s at most.

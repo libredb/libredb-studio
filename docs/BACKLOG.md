@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D504, U17 · 371
+- [Drivers and connections](#drivers-and-connections) — D1-D504, U17 · 368
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -1819,15 +1819,6 @@ Not fixed there: the change is to the adapter's log-dir read, whose error table 
 
 **Done when:** a broker with one failed log directory answers the overview, health and storage panels with the directories that answered, the failed directory is named, and a test over a captured `KAFKA_STORAGE_ERROR` answer pins it.
 
-### D126. Concurrent first acquisitions of one connection and profile each open a provider
-
-`acquireExecutionProfileProvider` in `src/lib/db/factory.ts` checks the profiled cache (`profiledProviderCache`), and on a miss constructs and connects a provider, then stores it there.
-Two callers that miss at the same time each construct one, and the later store overwrites the earlier entry, so the earlier provider stays connected with nothing left to close it.
-The editor and agent paths reach this function the same way.
-`/api/mcp` avoids it on its own side, with an in-flight map keyed on the exported `profiledCacheKey` (`src/lib/mcp/context.ts`).
-
-**Done when:** the factory deduplicates in-flight acquisitions itself, MCP's own map is removed, and a test pins that N concurrent first acquisitions construct one provider.
-
 ### D127. Two seed-loading paths drop a connection without telling the caller
 
 An undefined variable now drops only that connection, and `src/lib/seed/operator-loader.ts` records the skip with a named reason that an admin reads through `GET /api/admin/seed-sources` and the Seed sources card.
@@ -1996,16 +1987,6 @@ One container was chosen so that a statement can never run against a database th
 Found 2026-10-03 while designing the Neo4j provider.
 
 **Done when:** a connection lists every database the user may read as its containers, each statement runs on the database its tab names and on no other, the database a statement ran on is shown with its result, and a test drives two databases through one connection.
-
-### D144. Two first requests for one connection can orphan a connected provider
-
-`getOrCreateProvider` in `src/lib/db/factory.ts` awaits `providerCacheKey`, `createSSHTunnel` and `provider.connect()` between its cache lookup and its `providerCache.set`, and nothing records a creation in flight.
-Two requests that miss the cache for the same connection at once each build and connect a provider, and the later `providerCache.set` overwrites the earlier entry, whose provider is never disconnected and is out of reach of the idle sweep.
-It predates the Neo4j provider, but a Bolt provider now leaks a driver holding up to four pooled sockets rather than only HTTP handles; `GraphBaseProvider.connect` already makes an overlapping connect on one instance await the attempt in flight, which this race does not reach.
-
-Found 2026-10-03 while reviewing the Neo4j provider (PR #1239, review N6).
-
-**Done when:** concurrent `getOrCreateProvider` calls for one cache key share one creation, or the loser disconnects its provider and leaves the forward it shares with the winner to the pool, and a test drives two overlapping first calls with a provider that counts its connects and disconnects.
 
 ### D145. Db2 Create Table is off until the dialog and the import have Db2 column types
 
@@ -3967,21 +3948,6 @@ On Linux that spawn takes under 10 ms and the connect 19 to 28 ms.
 Why openssl takes that long on that runner was not measured.
 
 **Done when:** the cause is known and the file passes repeated runs on the `windows-latest` job.
-
-### D386. Two first requests for one connection at once each open a provider, and the cache keeps only the second
-
-`getOrCreateProvider` (`src/lib/db/factory.ts`) looks its key up in `providerCache`, then awaits `createDatabaseProvider` and `connectPhase(() => provider.connect())`, and only then calls `providerCache.set`, with no in-flight entry for the key.
-Two requests that miss the cache at once therefore each build and connect a provider, and the later `set` replaces the earlier entry, whose provider no `removeProvider`, idle sweep or `clearProviderCache` can reach any more: its pool and its server sessions stay open until the process exits.
-Measured 2026-10-21 on `postgres:18` (1 CPU, `512m`) through the VS Code extension's backend child as its first review found it: two concurrent `connection/open` requests with the same params logged `[DB] Creating postgres provider` twice and left 2 client sessions in `pg_stat_activity`, and 1 of them stayed after `connection/close` and after `shutdown` had answered `null`.
-The child now runs one `connection/open` or `connection/close` of an id at a time and the extension shares one reopen per connection, generation and profile revision, starting a reopen at a newer revision only once the one under way has settled, so that channel no longer sends two at once: the same probe then counts 1 provider, 1 session, and none after the close.
-Nothing in `getOrCreateProvider` keeps the web routes from doing the same when two requests for one connection both miss the cache, after the idle sweep closed its provider, say.
-On DuckDB the orphaned provider is a second read-write handle on the connection's file (`docs/providers/duckdb.md` section 3.8), and a write it acknowledged can be lost.
-Measured 2026-11-05 on that path through `POST /api/db/query` with the real DuckDB engine, on two seeds: two first requests for one seed at once, each an `INSERT`, right after every handle had closed, then six more `INSERT`s one at a time, then every cached handle closed and the file read back by a fresh one.
-The cache held one entry each time, and in 17 of 18 rounds one of the two first `INSERT`s, though answered 200, was not in the file.
-
-Found by the review of the VS Code extension's backend (PR 5).
-
-**Done when:** `getOrCreateProvider` keeps one in-flight promise per cache key that concurrent callers share and a failed connect removes, a test sends two concurrent first calls for one key and expects one `createDatabaseProvider`, one `connect()` and one cached provider, and a DuckDB test sends two concurrent first writes for one connection and finds both rows in the file once every handle has closed.
 
 ### D387. A wrong password answers `CONNECTION_ERROR`, not `AUTH_ERROR`, on the four v0 engines
 
@@ -10429,7 +10395,7 @@ Found 2026-11-02 while opening `run_kafka_read`, `run_rabbitmq_read` and `run_mt
 
 ### MCP16. A call joins an acquisition that a timed-out or cancelled call started
 
-`McpConnectionContext.acquire` (`src/lib/mcp/context.ts`) keeps one pending acquisition per connection and profile in `pendingAcquisitions` until it settles, so when the call that started it stops waiting on a timeout or a cancel, the next call on the same connection and profile joins that acquisition: it sends nothing of its own and answers with the first acquisition's outcome.
+`acquireExecutionProfileProvider` (`src/lib/db/factory.ts`), which `McpConnectionContext.acquire` (`src/lib/mcp/context.ts`) calls, keeps one open in flight per connection and profile until it settles, so when the call that started it stops waiting on a timeout or a cancel, the next call on the same connection and profile joins that open: it sends nothing of its own and answers with the first open's outcome.
 On SNMP, a call made at once after a 5,000 ms timeout answered "No SNMP agent answered" about 4.5 s later, although the agent had come back by then.
 Engine-neutral; `docs/providers/snmp.md` section 14 and the SNMP cancel row of `docs/MCP.md` record it, and `tests/integration/mcp/run-snmp-read.test.ts` pins it.
 `inspect_schema` has raced its acquisition against its own `timeout_ms` since #2252, so its calls join an acquisition a timed-out `inspect_schema` call left in the same way, as the `inspect_schema` bullet under "Limits" in `docs/MCP.md` says and `tests/integration/mcp/inspect-schema.test.ts` pins.
@@ -10646,16 +10612,14 @@ Alone this rarely loses a row (a connect queued on a full pool when `end()` runs
 
 Both providers arm a five-minute timer when an editor transaction begins (`TX_TIMEOUT_MS` and `expireTransaction` in `src/lib/db/providers/sql/postgres.ts`, the same in `src/lib/db/providers/sql/mysql.ts`), and neither `disconnect()` clears it or releases the transaction's client, where the SQL Server and Oracle providers start `disconnect()` with `clearTxTimeout()`.
 On PostgreSQL `pool.end()` waits for every checked-out client, so a `disconnect()` with a transaction open returns only when the timer releases the client, up to five minutes after `BEGIN`, and the transaction keeps its locks until then.
-A shared provider is disconnected without a rollback first, by `removeProvider`, by the factory's cache close (`closeCaches`, which `closeCachesAtShutdown` runs at shutdown and `clearProviderCache` runs for its other callers), and when a request names another query timeout (D115), so deleting a custom connection that has an open transaction leaves the request waiting.
+A shared provider is disconnected without a rollback first by `removeProvider` and when a request names another query timeout (D115), so deleting a custom connection that has an open transaction leaves the request waiting.
+The factory's cache close (`closeCaches`, which `closeCachesAtShutdown` runs at shutdown and `clearProviderCache` runs for its other callers) rolls every provider back first and cuts its disconnect at 10 s (`teardownProvider`), so there the timer costs at most that wait.
 On MySQL `end()` closes the held connection, so `disconnect()` returns and the server rolls back, but `txActive` stays true, and five minutes later the timer logs a timeout that never happened and sends a `ROLLBACK` to a closed connection.
 An owned provider is rolled back before it is disconnected (`teardownProvider` in `src/lib/db/factory.ts`) on every path but the query timeout change, which disconnects it directly (GOV24), so outside that path this is the shared providers' defect.
 On a server-level PostgreSQL connection the transaction lives on a catalog session, a provider of its own in `catalogSessions`, and the parent's `isInTransaction()` does not report it.
 So a fix inside `PostgresProvider.disconnect()` covers it, because `closeAll()` calls each session's own `disconnect()`, while a fix that checks only the parent's `isInTransaction()` would miss it.
 
-`closeCaches` in `src/lib/db/factory.ts`, the body of both `clearProviderCache` and `closeCachesAtShutdown`, also awaits every shared provider's `disconnect()` in a `Promise.all` with no deadline, beside the owned providers' bounded teardown, so one shared provider whose disconnect never settles, such as a PostgreSQL pool waiting for this timer, holds the whole close.
-At shutdown Studio's handler stops waiting after 15 s and exits with 143 or 130 where it owns the exit, but every other caller, such as the VS Code backend's `shutdown` request or an embedder of the package, waits without a limit.
-
-**Done when:** both providers' `disconnect()` roll back and release a held transaction and clear the timer before they end the pool, `closeCaches` waits for a shared provider's disconnect at most a fixed deadline and names each provider still closing at the cut, and a test per provider shows `disconnect()` resolving without the timer firing, `isInTransaction()` false and no timer left pending.
+**Done when:** both providers' `disconnect()` roll back and release a held transaction and clear the timer before they end the pool, and a test per provider shows `disconnect()` resolving without the timer firing, `isInTransaction()` false and no timer left pending.
 
 ### GOV13. The package exports `removeProvider` with a key scope that no embedder can build a key for
 
