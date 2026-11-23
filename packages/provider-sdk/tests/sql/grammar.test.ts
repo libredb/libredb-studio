@@ -20,6 +20,20 @@ describe("the SQL grammar surface", () => {
     });
   });
 
+  test("DEFAULT_SQL_GRAMMAR is frozen to its leaves, so no importer changes it for another", () => {
+    const mutable = DEFAULT_SQL_GRAMMAR as unknown as { hash: string; trailingLimitClauses: RegExp[] };
+
+    expect(Object.isFrozen(DEFAULT_SQL_GRAMMAR)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_SQL_GRAMMAR.script)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_SQL_GRAMMAR.trailingLimitClauses)).toBe(true);
+    expect(() => {
+      mutable.hash = "code";
+    }).toThrow(TypeError);
+    expect(() => mutable.trailingLimitClauses.push(/\s+X\s*$/i)).toThrow(TypeError);
+    expect(DEFAULT_SQL_GRAMMAR.hash).toBe("comment-unless-operator");
+    expect(DEFAULT_SQL_GRAMMAR.trailingLimitClauses).toEqual([]);
+  });
+
   test("hashRunIsAmbiguous is true only for the compatibility reading of #", () => {
     const reading = (hash: SqlGrammar["hash"]): SqlGrammar => ({ ...DEFAULT_SQL_GRAMMAR, hash });
 

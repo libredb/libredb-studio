@@ -797,8 +797,10 @@ An engine whose query text is SQL states its grammar facts: what a handful of ch
 
 The grammar facts are one type and the compatibility reading is one value, both exported from `@libredb/provider-sdk/sql`.
 Studio's readers and every engine's grammar row import `SqlGrammar` and `DEFAULT_SQL_GRAMMAR` from `@libredb/provider-sdk/sql` by name, a fact a dialect has not established takes the default's value, and the module that resolves a grammar by engine id declares neither.
+The default is frozen to its leaves, so no module that imports it changes it for another.
 
 - test `packages/provider-sdk/tests/sql/grammar.test.ts` "DEFAULT_SQL_GRAMMAR is the compatibility reading"
+- test `packages/provider-sdk/tests/sql/grammar.test.ts` "DEFAULT_SQL_GRAMMAR is frozen to its leaves, so no importer changes it for another"
 - test `tests/unit/sql/grammar.test.ts` "the module that resolves a grammar by engine id exports only its two readers"
 - test `tests/unit/db/sql-grammar/shared.test.ts` "the shared blocks are SQLITE_GRAMMAR, NO_EXTRA_WORDS and REDACTED_VALUE"
 
