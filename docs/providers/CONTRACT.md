@@ -670,6 +670,7 @@ A record holds no message, detail, statement or identifier of the error.
 
 `outcome` is `not-sent` only when the statement cannot have reached the database.
 The host marks every failure of a provider's connect, and a provider claims not-sent only by raising `refused-before-send`, whose class marks it.
+The host also marks not-sent a console call it refuses before making it, a deadline already passed or a caller already gone, C-51.
 No provider writes an error's `outcome` itself, and every other failure is `unknown`.
 
 - test `tests/unit/db/provider-error-kinds.test.ts` "provider code never writes an error's outcome"
@@ -677,6 +678,8 @@ No provider writes an error's `outcome` itself, and every other failure is `unkn
 - test `tests/unit/lib/db/error-record.test.ts` "every other class answers unknown"
 - test `tests/unit/db/errors.test.ts` "a failure the connect raises keeps its identity and answers not-sent"
 - test `tests/unit/db/errors.test.ts` "a connect deadline becomes a ConnectionError that answers not-sent"
+- test `tests/unit/lib/provider-host/access.test.ts` "a call the caller left is answered as QueryCancelledError, not-sent before the call and unknown after it"
+- test `tests/unit/lib/provider-host/access.test.ts` "a call past its deadline is answered as StudioTimeoutRefusal, not-sent before the call and unknown after it"
 
 ### E-6 (informative): No error carries a session state or an engine code yet
 
@@ -908,13 +911,17 @@ The pump takes the context of the execute call that answered the source and star
 - test `packages/provider-sdk/tests/calls/pump-bounds.test.ts` "a source that never ends is cut at the page's byte budget, in a bounded child"
 - test `tests/unit/lib/provider-host/core/console.test.ts` "the first result is pumped within the limits set from the answer, and every other result is closed once"
 
-### C-16 (informative): What the byte budgets bound
+### C-16 (normative): What the byte budgets bound
 
 The pump runs in the host's copy of the SDK, so every package's batches are measured by one rule.
 The budgets bound what crosses from a provider, not what a driver buffers: a driver without a cursor materialises a page before the SDK sees it.
 A page of very small rows is bounded in the heap by the host's row limit, not by its bytes, so the host always passes a finite row limit.
-The pump measures a row once, as it reads the batch, and hands on the provider's own row arrays, so a source whose cells change after that read, through a getter or a later write, answers more than was measured; whether the host measures the frames it sends instead is decided with the first host surface.
-The host core that pumps every result arrives with the first host surface; until then this clause is informative.
+The pump measures a row once, as it reads the batch, and hands on the provider's own row arrays, so a source whose cells change after that read, through a getter or a later write, answers more than was measured.
+In process nothing is framed, so the host measures what a source answers, through the pump's own measure, and a source of the legacy bridge answers each row in the form C-50 states.
+
+- test `tests/unit/lib/provider-host/core/console.test.ts` "the first result is pumped within the limits set from the answer, and every other result is closed once"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a cell outside the value codec is measured in its JSON form and answered unchanged"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the page's row limit is the probe limit for a bound Studio wrote, and every returned row otherwise"
 
 ### C-17 (normative): The host calls a console facet only when the session offers it
 
@@ -1305,6 +1312,47 @@ The turn is the host's and not the SDK pump's, since the pump is also the kit's 
 
 - test `tests/unit/lib/provider-host/core/turns.test.ts` "the host yields one turn of the event loop before every pull"
 - test `tests/unit/lib/provider-host/core/turns.test.ts` "a signal that aborts during the turn stops the pull it precedes"
+
+### C-50 (normative): The legacy bridge serves today's providers as contract sessions
+
+The legacy bridge serves a provider of the legacy interface, `DatabaseProvider`, as one session of console execute and cancel, built per call by the caller's facade, so today's providers run through the host core's console calls, C-48.
+Its execute honours `params` and `offset` for every engine, so each provider answers both as it always has, its own refusal of an offset included.
+It offers `console.cancel` exactly when the provider can cancel a run, and does not offer `console.endScope`: the run's open transaction is ended inside its execute, as the editor query always ended it, until that moves onto `console.endScope`.
+Its execute hands the provider a fresh copy of the caller's own page options and a new array of the request's params, so a provider that writes what it receives changes nothing the host froze, and runs the provider's prepare, the probe row past the page, the statement and the transaction's end as the editor query always ran them.
+It answers one source per result set, the main rows first.
+A source reads each row positionally under the result's columns and answers it in its value codec form, or, when the codec refuses a cell, in the JSON form the answer writes for that row, so the page budget measures every row in the form closest to its answer.
+Which cells the codec refuses is read before encoding, the codec's domain read as the codec reads it, so no codec error is thrown per row, and every error measuring a row throws passes by reference.
+A key a row holds outside its columns is answered and not measured.
+The page's row limit is set once execute answered: one past the page when the provider applied the page, otherwise every row the provider returned, at least one.
+
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session honours params and offset, offers cancel only where the provider cancels, and offers no scope"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a legacy provider that writes what it receives changes nothing the host froze"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the run prepares, probes, queries and ends its transaction as runEditorQuery did"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "every result set is a source, the main rows first"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a cell outside the value codec is measured in its JSON form and answered unchanged"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a measuring error other than the codec's passes as the same object"
+- test `tests/unit/lib/provider-host/legacy-bridge-measure.test.ts` "a row with an undefined cell is measured in its JSON form, and the codec throws nothing"
+- test `tests/unit/lib/provider-host/legacy-bridge-measure.test.ts` "a row with a Map is measured in its JSON form, and the codec throws nothing"
+- test `tests/unit/lib/provider-host/legacy-bridge-measure.test.ts` "a row with a class instance, nested in a cell, is measured in its JSON form, and the codec throws nothing"
+- test `tests/unit/lib/provider-host/legacy-bridge-measure.test.ts` "the bridge reads the codec's domain as the codec does, for every kind it takes and refuses"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the page's row limit is the probe limit for a bound Studio wrote, and every returned row otherwise"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged cancel names the run and answers the provider's boolean"
+
+### C-51 (normative): The host's records become the calling bundle's classes
+
+The accessor, in the calling bundle, builds Studio's error class from each record the host core answers, so a class a caller tests with `instanceof` is always its own bundle's.
+A refusal or a stop whose reason is the caller's own signal's reason is `QueryCancelledError`, with the sentence a cancelled query has always answered.
+A refusal of a passed deadline or of any other aborted signal, and any other stop, is `StudioTimeoutRefusal`, with Studio's sentence naming the wait.
+A row no page can hold is `StudioByteBudgetRefusal`, naming the page's bytes and the row's size, outcome unknown, since the statement ran.
+A refusal before the call was made answers outcome not-sent, E-5; once the provider was called the outcome stays unknown.
+Every other refusal is a defect of Studio's own bridge, which honours every request field and offers no scope: a plain error naming each refusal's sentence.
+A refused offset and refused params of a session that refuses a field arrive with the first such session.
+
+- test `tests/unit/lib/provider-host/access.test.ts` "a call the caller left is answered as QueryCancelledError, not-sent before the call and unknown after it"
+- test `tests/unit/lib/provider-host/access.test.ts` "a call past its deadline is answered as StudioTimeoutRefusal, not-sent before the call and unknown after it"
+- test `tests/unit/lib/provider-host/access.test.ts` "a row no page can hold is answered as StudioByteBudgetRefusal, outcome unknown"
+- test `tests/unit/lib/provider-host/access.test.ts` "any other refusal is a host defect named by its rule"
+- test `tests/unit/lib/provider-host/access.test.ts` "every class the accessor builds is the calling bundle's own"
 
 ## Not yet in this contract
 
