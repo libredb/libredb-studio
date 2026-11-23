@@ -1,7 +1,8 @@
 /**
  * The InfluxDB seam guard (InfluxDB spec 3.5 and E18, contract section 1), in the Qdrant and Prometheus shape: every
- * source of `src/lib/db/providers/timeseries/influxdb/` is parsed, so a file a later task adds is held by the same
- * rules without editing this list.
+ * source of `src/lib/db/providers/timeseries/influxdb/` and of the influxql family module,
+ * `src/lib/languages/influxql/`, is parsed, so a file a later task adds is held by the same rules without editing
+ * this list.
  *
  * 1. No file imports a module under `src/lib/db/providers/` outside this directory, with exactly two exceptions: the
  *    specifier `@/lib/db/providers/sql/sql-base`, imported by `sql-provider.ts` (R15), and
@@ -20,14 +21,18 @@
  *    the value `TUNNEL_FAR_END` from `@/lib/types` (the Qdrant shape, architect amendment from T09), the two execution
  *    UI contract modules may take values from `@/lib/db/execution-ui/shared`, their contract's shared building block,
  *    and a file of no layer fails, so a new file is placed in one on purpose. The browser and InfluxQL server layers
- *    may take values from the influxql family module, which holds the lexer and the policy they read. The two SQL grammar modules (engine
- *    contract spec 5.3) are a layer of their own, which value-imports only the contract's building blocks under
- *    `src/lib/db/sql-grammar/`. Each type-id's migration DDL module (`<type-id>-migration-ddl.ts`) is a contract layer
- *    of its own: it may import values only from `@/lib/db/migration-ddl/*`, its contract's shared building blocks,
- *    and from none of this directory's modules.
+ *    may take values from the influxql family module, which holds the lexer and the policy they read. The two SQL
+ *    grammar modules (engine contract spec 5.3) are a layer of their own, which value-imports only the contract's
+ *    building blocks under `src/lib/db/sql-grammar/`. Each type-id's migration DDL module
+ *    (`<type-id>-migration-ddl.ts`) is a contract layer of its own: it may import values only from
+ *    `@/lib/db/migration-ddl/*`, its contract's shared building blocks, and from none of this directory's modules.
  *    Each type-id's SQL writing module (`<type-id>-sql-writing.ts`) is a layer of its own in the same way: it may
  *    import values only from `@/lib/db/sql-writing/*`, its contract's shared building blocks, and from none of this
  *    directory's modules.
+ *    The influxql family module is a layer of its own: its lexer, policy, confirmation row and agent statement reader
+ *    are shipped to the browser, so each may import values only from another family member and from none of this
+ *    directory's modules, and a family file of no layer fails too. Rules 1, 4 and 5 hold its files as they hold this
+ *    directory's, and rule 2 counts each of them as an `influxql-*` module.
  *
  * Rules 1 to 3 count a type-only import too: they keep modules apart, not values. Module names are resolved as
  * TypeScript resolves them, so an alias counts; a planted module that does not exist yet resolves by its spelling.
@@ -81,15 +86,23 @@ const CONTRACT = [
 ];
 /** Each type-id's SQL writing row, which reads its contract's building blocks and nothing of this directory. */
 const WRITING = ["influxdb-sql-writing", "influxdb3-sql-writing"];
+/**
+ * The influxql family module, `src/lib/languages/influxql/`: the lexer, the policy, the confirmation row and the
+ * agent's statement reader, all shipped to the browser, so it reads only its own members and nothing of this directory.
+ */
+const FAMILY = ["lexer", "policy", "destructive", "agent-statement"];
 
-type Layer = "connection" | "browser" | "influxql-server" | "sql" | "grammar" | "contract" | "writing";
+type Layer = "connection" | "browser" | "influxql-server" | "sql" | "grammar" | "contract" | "writing" | "family";
 
 const canonical = (path: string): string => realpathSync.native(path).split("\\").join("/");
 const relative = (path: string): string => path.slice(canonical(ROOT).length + 1);
 const stem = (file: string): string => posix.basename(file).replace(/\.ts$/, "");
 
+const inFamily = (path: string): boolean => path.startsWith(`${FAMILY_DIR}/`);
+
 function layerOf(file: string): Layer | undefined {
   const name = stem(file);
+  if (inFamily(file)) return FAMILY.includes(name) ? "family" : undefined;
   if (SHARED.includes(name) || name === "index") return "connection";
   if (BROWSER.includes(name)) return "browser";
   if (INFLUXQL_SERVER.includes(name)) return "influxql-server";
@@ -102,7 +115,7 @@ function layerOf(file: string): Layer | undefined {
 
 const inDirectory = (target: string): boolean => target.startsWith(`${DIR}/`);
 const isInfluxql = (target: string): boolean =>
-  (inDirectory(target) && stem(target).startsWith("influxql-")) || target.startsWith(`${FAMILY_DIR}/`);
+  (inDirectory(target) && stem(target).startsWith("influxql-")) || inFamily(target);
 const isSql = (target: string): boolean => inDirectory(target) && stem(target).startsWith("sql-");
 
 /**
@@ -162,6 +175,7 @@ const OUTSIDE_VALUES: Readonly<Record<Layer, readonly string[]>> = {
   grammar: ["src/lib/db/sql-grammar/"],
   contract: ["src/lib/db/migration-ddl/"],
   writing: ["src/lib/db/sql-writing/"],
+  family: [`${FAMILY_DIR}/`],
 };
 
 /** Which of this directory's modules each layer may import a value from. */
@@ -180,6 +194,7 @@ function insideAllowed(file: string, layer: Layer, target: string): boolean {
     case "grammar":
     case "contract":
     case "writing":
+    case "family":
       return false;
   }
 }
@@ -269,10 +284,15 @@ function reachesFetch(file: string, text: string): boolean {
 
 const PATH_LITERALS = new Set(["/query", "/ping", "/health"]);
 
-/** Every finding of the six rules for one file. */
+/**
+ * Every finding of the six rules for one file. The rules that name a module of this directory (`client.ts`,
+ * `routes.ts`, an `influxql-*` or `sql-*` module) name it by its path here, so a family file of the same stem is
+ * not that module; every family file is on the InfluxQL side of rule 2.
+ */
 function seamFindings(file: string, text: string): string[] {
   const findings: string[] = [];
-  const name = stem(file);
+  const name = inDirectory(file) ? stem(file) : "";
+  const influxqlSide = name.startsWith("influxql-") || inFamily(file);
   const layer = layerOf(file);
   if (layer === undefined) findings.push(`layer: ${file} belongs to no layer of contract section 1`);
 
@@ -299,7 +319,7 @@ function seamFindings(file: string, text: string): string[] {
         findings.push(`rule 1: ${file} imports ${specifier}, a module of another provider directory`);
       }
     }
-    if ((name.startsWith("influxql-") && isSql(target)) || (name.startsWith("sql-") && isInfluxql(target))) {
+    if ((influxqlSide && isSql(target)) || (name.startsWith("sql-") && isInfluxql(target))) {
       findings.push(`rule 2: ${file} imports ${specifier} across the InfluxQL and SQL halves`);
     }
     if (SHARED.includes(name) && (isInfluxql(target) || isSql(target))) {
@@ -336,9 +356,11 @@ function seamFindings(file: string, text: string): string[] {
 }
 
 const read = (file: string): string => readFileSync(join(ROOT, file), "utf8");
-const SOURCES = readdirSync(join(ROOT, DIR))
-  .filter((entry) => entry.endsWith(".ts"))
-  .map((entry) => `${DIR}/${entry}`);
+const sourcesOf = (dir: string): string[] =>
+  readdirSync(join(ROOT, dir))
+    .filter((entry) => entry.endsWith(".ts"))
+    .map((entry) => `${dir}/${entry}`);
+const SOURCES = [...sourcesOf(DIR), ...sourcesOf(FAMILY_DIR)];
 
 describe("the InfluxDB directory holds its seams", () => {
   test("every source passes all six rules", () => {
@@ -361,6 +383,87 @@ describe("the InfluxDB directory holds its seams", () => {
 /** A planted file: a real file's text under its own name or a name a later task will add. */
 const plant = (as: string, from: string, line: string): string[] =>
   seamFindings(`${DIR}/${as}`, line + read(`${DIR}/${from}`));
+
+/** A planted file of the influxql family module: a real family file's text under its own name or a new one. */
+const plantFamily = (as: string, from: string, line: string): string[] =>
+  seamFindings(`${FAMILY_DIR}/${as}`, line + read(`${FAMILY_DIR}/${from}`));
+
+describe("the influxql family module is held as a layer of its own", () => {
+  test("the guard reads every family source", () => {
+    for (const name of ["lexer", "policy", "destructive", "agent-statement"]) {
+      expect(SOURCES).toContain(`${FAMILY_DIR}/${name}.ts`);
+    }
+  });
+
+  test.each([
+    [
+      "destructive.ts",
+      "destructive.ts",
+      'import { QueryError } from "@/lib/db/errors";\nvoid QueryError;\n',
+      `layer: ${FAMILY_DIR}/destructive.ts imports a value from @/lib/db/errors, which its layer may not`,
+    ],
+    [
+      "agent-statement.ts",
+      "agent-statement.ts",
+      'import { QueryError } from "@/lib/db/errors";\nvoid QueryError;\n',
+      `layer: ${FAMILY_DIR}/agent-statement.ts imports a value from @/lib/db/errors, which its layer may not`,
+    ],
+    [
+      "policy.ts",
+      "policy.ts",
+      `import { quoteInfluxqlIdentifier } from "@/${DIR.slice("src/".length)}/influxql-quote";\n`,
+      `layer: ${FAMILY_DIR}/policy.ts imports a value from @/${DIR.slice("src/".length)}/influxql-quote, which its layer may not`,
+    ],
+    [
+      "destructive.ts",
+      "destructive.ts",
+      'import { readFileSync } from "node:fs";\n',
+      `layer: ${FAMILY_DIR}/destructive.ts imports node:fs, a runtime built-in`,
+    ],
+    [
+      "agent-statement.ts",
+      "agent-statement.ts",
+      'import http from "node:http";\n',
+      `rule 4: ${FAMILY_DIR}/agent-statement.ts imports node:http`,
+    ],
+    [
+      "client.ts",
+      "lexer.ts",
+      'import { createNodeTransport } from "@/lib/db/http/node-transport";\n',
+      `rule 4: ${FAMILY_DIR}/client.ts imports createNodeTransport, which only client.ts imports`,
+    ],
+    [
+      "destructive.ts",
+      "destructive.ts",
+      'void fetch("http://x");\n',
+      `rule 4: ${FAMILY_DIR}/destructive.ts reaches fetch`,
+    ],
+    [
+      "routes.ts",
+      "lexer.ts",
+      'const path = "/query";\n',
+      `rule 5: ${FAMILY_DIR}/routes.ts holds the path literal "/query", which only routes.ts may hold`,
+    ],
+    [
+      "agent-statement.ts",
+      "agent-statement.ts",
+      `import type { SqlRows } from "@/${DIR.slice("src/".length)}/sql-results";\n`,
+      `rule 2: ${FAMILY_DIR}/agent-statement.ts imports @/${DIR.slice("src/".length)}/sql-results across the InfluxQL and SQL halves`,
+    ],
+    ["stray.ts", "lexer.ts", "", `layer: ${FAMILY_DIR}/stray.ts belongs to no layer of contract section 1`],
+    ["labels.ts", "lexer.ts", "", `layer: ${FAMILY_DIR}/labels.ts belongs to no layer of contract section 1`],
+  ])("%s (from %s) with %p fails", (as, from, line, finding) => {
+    expect(plantFamily(as, from, line)).toContain(finding);
+  });
+
+  test.each([
+    ["destructive.ts", "destructive.ts", 'import { lexInfluxql } from "@/lib/languages/influxql/lexer";\n'],
+    ["agent-statement.ts", "agent-statement.ts", 'import { evaluateInfluxql } from "./policy";\n'],
+    ["policy.ts", "policy.ts", 'import type { QueryResult } from "@/lib/types";\n'],
+  ])("%s (from %s) with %p passes", (as, from, line) => {
+    expect(plantFamily(as, from, line)).toEqual([]);
+  });
+});
 
 describe("planted violations fail by name", () => {
   test.each([

@@ -72,6 +72,7 @@ The lexer, the policy, `influxql-quote.ts` and `influxql-generators.ts` are pure
 The lexer and the policy live in the influxql statement language's core family module, `src/lib/languages/influxql/`, with the confirmation gate's row (`destructive.ts`) and the agent's statement reader (`agent-statement.ts`), because core reads them too ([PROVIDER_IMPORTS.md](../PROVIDER_IMPORTS.md)); the quoter and the generators stay in the provider directory.
 The editor's InfluxQL language and completion live in `src/lib/db/providers/timeseries/influxdb/influxql-editor-syntax.ts` and `influxql-editor-completions.ts`, over the same lexer, and `influxql-editor-language.ts` declares them to the editor.
 Two tests hold the layout: `tests/unit/db/influxdb/seam-guard.test.ts` fails when a file imports from another provider directory, or an `influxql-*` module imports an `sql-*` module or the reverse (a module of the influxql family module counts as an `influxql-*` module), and `tests/unit/db/influxdb/browser-modules.test.ts` fails when a browser module, in either home, imports a Node built-in, `Buffer` or a server module.
+The seam guard also reads every file of the family module as a layer of its own: each may import values only from another family member, never a runtime built-in, `fetch`, `node:http` or a route path, and a family file that is not the lexer, the policy, the confirmation row or the agent's statement reader fails until it is placed on purpose.
 
 ### 2.3 Registration & lifecycle
 
