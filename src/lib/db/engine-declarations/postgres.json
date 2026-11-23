@@ -17,7 +17,17 @@
     "refused": [],
     "connectionString": {
       "accepted": true,
-      "dialogOffersUri": false
+      "dialogOffersUri": false,
+      "scheme": "postgres",
+      "urlTls": "urlTls",
+      "paste": {
+        "reader": "pasteReader",
+        "catchAll": false,
+        "formats": [
+          "postgres://"
+        ]
+      },
+      "seedCheck": null
     },
     "tls": "offered",
     "sshTunnel": {

@@ -363,13 +363,15 @@ An engine declares at most one `no-secret` warning, and each warning reads only 
 The manifest holds no code: where an engine has a function, its declaration names it, and the package exports it.
 A name is a lower-case letter followed by up to 63 letters or digits, `functionName` in the schema, and it is local to its engine, so two engines of one package may each have a function of one name.
 A package names its functions freely.
-Studio's own declarations name each function by the slot it fills: `<field>Check` for a field rule's check, `hostHint`, `hostIdentity`, and `importer` for the connection import.
+Studio's own declarations name each function by the slot it fills: `<field>Check` for a field rule's check, `hostHint`, `hostIdentity`, `importer` for the connection import, and `urlTls`, `pasteReader` and `seedCheck` for the connection string's URL TLS reader, paste reader and seed check.
 Studio's census holds every name its declarations give to the very function Studio runs, by identity and never by the function's own name, and finds no function Studio runs that a declaration does not name.
 
 - schema `/$defs/functionName`
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "an importer named in another form is refused as pattern-mismatch"
 - test `tests/unit/db/engine-declarations.test.ts` "every function a declaration names is, through the census's own resolver, the very function the connection form runs"
 - test `tests/unit/db/engine-declarations.test.ts` "every function the connection form holds is named by its engine's declaration, and the resolver names nothing else"
+- test `tests/unit/db/engine-declarations.test.ts` "every function a connection string row holds is, through the census's own resolver, the very slot its declaration names"
+- test `tests/unit/db/engine-declarations.test.ts` "every function a connection string row holds is named by its engine's declaration"
 
 ### M-32 (informative): How a package's named functions are found and called
 
@@ -459,6 +461,84 @@ A field is set when the connection holds it with a value other than nothing, nul
 - test `tests/unit/db/engine-declarations.test.ts` "connection.refused is the engine's REFUSED_CONNECTION_FIELDS row, each field with its sentence, in the order core checks them"
 - test `tests/unit/db/engine-declarations.test.ts` "core refuses a connection that sets a refused field with the sentence its declaration states"
 - test `tests/unit/lib/db/provider-connection.test.ts` "the first set field in the row's order answers its sentence"
+
+### M-39 (normative): A connection string's scheme
+
+An engine may state, in `connection.connectionString.scheme`, the one URI scheme shown for it, written in lower case as a URI scheme.
+Only an engine whose connection string names a paste reader states a scheme, so every scheme shown is one a paste of it reads.
+Studio's map of engine schemes is the schemes the declarations state.
+
+- schema `/$defs/connectionStringOffer/properties/scheme`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a connection string scheme that is not a lower-case URI scheme is refused as pattern-mismatch"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a scheme on an engine whose connection string names no paste reader is refused as scheme-without-paste"
+- test `tests/unit/db/engine-declarations.test.ts` "connection.connectionString.scheme is the row's scheme"
+- test `tests/unit/db/engine-declarations.test.ts` "ENGINE_URI_SCHEMES is the scheme of each declaration that states one"
+- test `tests/components/ConnectionSignature.test.tsx` "shows only schemes parseConnectionString accepts, one per engine that has one"
+
+### M-40 (normative): The paste reader
+
+An engine may read a connection string pasted into the dialog's Paste URL box, and states how in `connection.connectionString.paste`.
+The paste names one reader, a function name for three operations.
+`claims` answers whether the reader reads a paste, given the paste trimmed with its scheme lower-cased and every character after `://` as typed.
+`names` answers whether the paste, trimmed and lower-cased whole, is a spelling the engine connects with, which can be fewer than it claims.
+`parse` answers the form's fields, or a refusal naming what to paste instead, and it reads only a text `claims` accepted.
+The paste states whether its reader is a catch-all, one that claims generic transport schemes other readers may claim on their own hosts.
+The paste states the formats the Paste URL box names for the engine, at least one and each once, and only forms `parse` connects with.
+The box lists the formats of every engine in the order the engine picker lists the engines.
+
+- schema `/$defs/connectionStringPaste`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a paste reader named in another form is refused as pattern-mismatch"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a paste with no format is refused as too-few, and one naming a format twice as duplicate"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a paste format longer than 128 characters is refused as out-of-range"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a paste without its catch-all flag is refused as missing-key"
+- test `tests/unit/db/engine-declarations.test.ts` "connection.connectionString names a URL TLS reader, a paste reader and a seed check exactly where the row has one, the paste with its catch-all and formats in order"
+- test `tests/unit/db/engine-declarations.test.ts` "every function a connection string row holds is, through the census's own resolver, the very slot its declaration names"
+- test `tests/unit/db/engine-declarations.test.ts` "a parser walking core's paste order over the readers the declarations name parses and detects as the parser does"
+- test `tests/unit/db/engine-declarations.test.ts` "the Paste URL box's formats are the declarations' formats in the engine picker's order"
+- test `tests/unit/db/connection-string/paste.test.ts` "every row that reads a paste names at least one format"
+- test `tests/unit/db/connection-string/paste.test.ts` "the box's list is the rows' formats in the order the engine picker lists them, and nothing else"
+
+### M-41 (normative): The order between paste readers is Studio's
+
+Studio offers a paste to the paste readers in one order it keeps, and the first reader that claims the paste parses it.
+Every catch-all reader comes after every other reader.
+Studio declares each pair of readers that may both claim a text, with a text both claim, and the order decides which of the two reads it.
+A manifest states no order and no pair: one package's claim about another package's spelling is not its to make.
+
+- test `tests/unit/db/connection-string/paste.test.ts` "a catch-all row comes after every row that claims its own spellings"
+- test `tests/unit/db/connection-string/paste.test.ts` "each declared overlap names two rows in the order, the first walked first, and its text is claimed by both"
+- test `tests/unit/db/connection-string/paste.test.ts` "every pasted fixture has one claimant or a declared pair, and the first is the engine it parsed as"
+- test `tests/unit/db/engine-declarations.test.ts` "core's paste order walks exactly the engines whose declaration names a paste reader, every catch-all after the rest"
+
+### M-42 (normative): The URL TLS reader
+
+An engine may name, in `connection.connectionString.urlTls`, a reader of the TLS a URL's query carries.
+It reads the query into a TLS mode the connection form can hold, or keeps the parameter as written where no mode expresses it.
+It never answers a weaker mode than the engine's own driver applies to the same URL, and never falls to `disable` on a value it does not recognise.
+Only an engine whose connection string names a paste reader names one, and that paste reader is what calls it.
+
+- schema `/$defs/connectionStringOffer/properties/urlTls`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a URL TLS reader or a seed check named in another form is one no-variant refusal"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a URL TLS reader on an engine whose connection string names no paste reader is refused as url-tls-without-paste"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's connection string is held to the rules the schema cannot state, at pointers into it"
+- test `tests/unit/db/engine-declarations.test.ts` "every function a connection string row holds is, through the census's own resolver, the very slot its declaration names"
+- test `tests/unit/lib/connection-string-parser.test.ts` "an unrecognised sslmode does not become disable"
+- test `tests/unit/lib/connection-string-parser.test.ts` "maps the JDBC/Heroku ssl=true form to verify-system, not to require"
+- test `tests/unit/lib/connection-string-parser.test.ts` "refuses to map ssl-mode=PREFERRED"
+- test `tests/unit/lib/connection-string-parser.test.ts` "an unrecognised Encrypt does not become disable"
+
+### M-43 (normative): The seed check
+
+An engine may name, in `connection.connectionString.seedCheck`, a check Studio runs when it loads a seed file.
+Studio runs it on the fields the file writes for a connection of the engine, before any socket.
+The check leaves a field written as a reference unjudged.
+Each refusal it answers names a field and a sentence that never quotes the field's value, and Studio refuses the file naming the connection and the field.
+
+- schema `/$defs/connectionStringOffer/properties/seedCheck`
+- test `tests/unit/db/engine-declarations.test.ts` "every function a connection string row holds is, through the census's own resolver, the very slot its declaration names"
+- test `tests/unit/seed/types.test.ts` "refuses an account connect() refuses, naming the entry and the field and never the value"
+- test `tests/unit/seed/types.test.ts` "leaves root, and a user written as a reference, to the editor and to the check at open"
+- test `tests/unit/seed/types.test.ts` "refuses anything but a list of strings in the table's words, not zod's"
 
 ## Values
 
@@ -1179,7 +1259,6 @@ The lint holds the members `DatabaseProvider` declares, so a capability read by 
 
 These chapters are added by the changes that bring their enforcers:
 
-- Connection string rows: their schemes, their URL TLS and paste readers, and their seed checks.
 - Editor and SQL text: execution UI, the SQL grammar facts as manifest data, SQL writing, migration DDL, generators, editor languages, explain formats and discovery fence tags.
 - Policy and MCP claims, each a request a provider makes that only Studio's review record grants, the agent overlay, and presentation (an icon and a colour).
 - The API report of each SDK entry.
@@ -1205,4 +1284,6 @@ Against the manifest sketch the design started from:
   The sketch's dotted facet list is not adopted for calls, which are keyed by the path to their function.
 - A function the manifest names is a name, never code, M-31.
 - A refused field carries the sentence core refuses it with, M-38.
+- A paste reader is one name for its three operations, claims, names and parse, M-40.
+- The order between paste readers stays Studio's, and a manifest states none, M-41.
 - The sketch's frame cap is replaced by the byte budgets, since calls are unframed in process; the memory test transport keeps frames for tests only.

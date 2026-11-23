@@ -18,7 +18,18 @@
     "refused": [],
     "connectionString": {
       "accepted": true,
-      "dialogOffersUri": true
+      "dialogOffersUri": true,
+      "scheme": "clickhouse",
+      "urlTls": null,
+      "paste": {
+        "reader": "pasteReader",
+        "catchAll": true,
+        "formats": [
+          "clickhouse://",
+          "http(s)://"
+        ]
+      },
+      "seedCheck": null
     },
     "tls": "offered",
     "sshTunnel": {

@@ -19,7 +19,17 @@
     "refused": [],
     "connectionString": {
       "accepted": true,
-      "dialogOffersUri": true
+      "dialogOffersUri": true,
+      "scheme": "mongodb",
+      "urlTls": null,
+      "paste": {
+        "reader": "pasteReader",
+        "catchAll": false,
+        "formats": [
+          "mongodb://"
+        ]
+      },
+      "seedCheck": null
     },
     "tls": "offered",
     "sshTunnel": {

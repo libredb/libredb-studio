@@ -59,6 +59,14 @@ const NATIVE = {
 /** The connection of the fixture's one engine. */
 const connectionOf = (m: Json): Json => m.engines[0].connection;
 
+/** The connection string of the fixture's one engine. */
+const connectionStringOf = (m: Json): Json => m.engines[0].connection.connectionString;
+
+/** A paste reader named `pasteReader`, not a catch-all, naming `formats`. */
+function paste(formats: unknown[] = ["exampledb://"]): Json {
+  return { reader: "pasteReader", catchAll: false, formats };
+}
+
 /** A field rule for `field` that states only what `members` gives, every other member null. */
 function fieldRule(field: string, members: Json = {}): Json {
   return { field, required: null, format: null, charRange: null, check: null, ...members };
@@ -121,6 +129,30 @@ describe("schema refusals", () => {
       "hostIdentity",
     ],
     ["connection.import", (m: Json) => delete m.engines[0].connection.import, "/engines/0/connection", "import"],
+    [
+      "connection.connectionString.scheme",
+      (m: Json) => delete m.engines[0].connection.connectionString.scheme,
+      "/engines/0/connection/connectionString",
+      "scheme",
+    ],
+    [
+      "connection.connectionString.urlTls",
+      (m: Json) => delete m.engines[0].connection.connectionString.urlTls,
+      "/engines/0/connection/connectionString",
+      "urlTls",
+    ],
+    [
+      "connection.connectionString.paste",
+      (m: Json) => delete m.engines[0].connection.connectionString.paste,
+      "/engines/0/connection/connectionString",
+      "paste",
+    ],
+    [
+      "connection.connectionString.seedCheck",
+      (m: Json) => delete m.engines[0].connection.connectionString.seedCheck,
+      "/engines/0/connection/connectionString",
+      "seedCheck",
+    ],
     [
       "connection.dialog.absentValues",
       (m: Json) => delete m.engines[0].connection.dialog.absentValues,
@@ -486,6 +518,93 @@ describe("schema refusals", () => {
 
     expect(refusalsFor(noImporter)).toEqual([refusal("missing-key", "/engines/0/connection/import", "importer")]);
     expect(refusalsFor(longLabel)).toEqual([refusal("out-of-range", "/engines/0/connection/import/label")]);
+  });
+
+  test("a connection string with a scheme, a URL TLS reader, a paste reader and a seed check is admitted", () => {
+    const full = manifest((m) => {
+      Object.assign(connectionStringOf(m), {
+        scheme: "exampledb",
+        urlTls: "urlTls",
+        paste: paste(["exampledb://", "Server=\u2026 (ADO.NET)", "x".repeat(128)]),
+        seedCheck: "seedCheck",
+      });
+    });
+    const catchAll = manifest((m) => {
+      Object.assign(connectionStringOf(m), { scheme: "exampledb+srv", paste: { ...paste(), catchAll: true } });
+    });
+
+    expect(refusalsFor(manifest())).toEqual([]);
+    expect(refusalsFor(full)).toEqual([]);
+    expect(refusalsFor(catchAll)).toEqual([]);
+  });
+
+  test("a connection string scheme that is not a lower-case URI scheme is refused as pattern-mismatch", () => {
+    for (const scheme of ["Postgres", "pg sql", "1db", "", "a".repeat(33), "postgres://"]) {
+      const changed = manifest((m) => Object.assign(connectionStringOf(m), { scheme, paste: paste() }));
+
+      expect(refusalsFor(changed)).toEqual([
+        refusal("pattern-mismatch", "/engines/0/connection/connectionString/scheme"),
+      ]);
+    }
+    const longest = manifest((m) => Object.assign(connectionStringOf(m), { scheme: "a".repeat(32), paste: paste() }));
+
+    expect(refusalsFor(longest)).toEqual([]);
+  });
+
+  test("a URL TLS reader or a seed check named in another form is one no-variant refusal", () => {
+    const urlTls = manifest((m) => Object.assign(connectionStringOf(m), { urlTls: "url-tls", paste: paste() }));
+    const seedCheck = manifest((m) => (connectionStringOf(m).seedCheck = "Seed"));
+
+    expect(refusalsFor(urlTls)).toEqual([refusal("no-variant", "/engines/0/connection/connectionString/urlTls")]);
+    expect(refusalsFor(seedCheck)).toEqual([refusal("no-variant", "/engines/0/connection/connectionString/seedCheck")]);
+  });
+
+  test("a paste reader named in another form is refused as pattern-mismatch", () => {
+    const changed = manifest((m) => (connectionStringOf(m).paste = { ...paste(), reader: "paste-reader" }));
+
+    expect(refusalsFor(changed)).toEqual([
+      refusal("pattern-mismatch", "/engines/0/connection/connectionString/paste/reader"),
+    ]);
+  });
+
+  test("a paste with no format is refused as too-few, and one naming a format twice as duplicate", () => {
+    const none = manifest((m) => (connectionStringOf(m).paste = paste([])));
+    const twice = manifest((m) => (connectionStringOf(m).paste = paste(["exampledb://", "exampledb://"])));
+    const many = manifest(
+      (m) => (connectionStringOf(m).paste = paste(Array.from({ length: 17 }, (_, index) => `f${index}://`))),
+    );
+
+    expect(refusalsFor(none)).toEqual([refusal("too-few", "/engines/0/connection/connectionString/paste/formats")]);
+    expect(refusalsFor(twice)).toEqual([
+      refusal("duplicate", "/engines/0/connection/connectionString/paste/formats/1"),
+    ]);
+    expect(refusalsFor(many)).toEqual([refusal("too-many", "/engines/0/connection/connectionString/paste/formats")]);
+  });
+
+  test("a paste format longer than 128 characters is refused as out-of-range", () => {
+    for (const format of ["x".repeat(129), ""]) {
+      const changed = manifest((m) => (connectionStringOf(m).paste = paste([format])));
+
+      expect(refusalsFor(changed)).toEqual([
+        refusal("out-of-range", "/engines/0/connection/connectionString/paste/formats/0"),
+      ]);
+    }
+  });
+
+  test("a paste without its catch-all flag is refused as missing-key", () => {
+    const noFlag = manifest((m) => {
+      const reader = paste();
+      delete reader.catchAll;
+      connectionStringOf(m).paste = reader;
+    });
+    const fourth = manifest((m) => (connectionStringOf(m).paste = { ...paste(), order: 1 }));
+
+    expect(refusalsFor(noFlag)).toEqual([
+      refusal("missing-key", "/engines/0/connection/connectionString/paste", "catchAll"),
+    ]);
+    expect(refusalsFor(fourth)).toEqual([
+      refusal("unknown-key", "/engines/0/connection/connectionString/paste", "order"),
+    ]);
   });
 
   test("several failures are each refused, ordered by pointer", () => {
@@ -892,6 +1011,26 @@ describe("rules the schema cannot state", () => {
     expect(refusalsFor(withHost)).toEqual([]);
   });
 
+  test("a scheme on an engine whose connection string names no paste reader is refused as scheme-without-paste", () => {
+    const changed = manifest((m) => (connectionStringOf(m).scheme = "kafka"));
+    const withPaste = manifest((m) => Object.assign(connectionStringOf(m), { scheme: "kafka", paste: paste() }));
+
+    expect(refusalsFor(changed)).toEqual([
+      refusal("scheme-without-paste", "/engines/0/connection/connectionString/scheme"),
+    ]);
+    expect(refusalsFor(withPaste)).toEqual([]);
+  });
+
+  test("a URL TLS reader on an engine whose connection string names no paste reader is refused as url-tls-without-paste", () => {
+    const changed = manifest((m) => (connectionStringOf(m).urlTls = "urlTls"));
+    const withPaste = manifest((m) => Object.assign(connectionStringOf(m), { urlTls: "urlTls", paste: paste() }));
+
+    expect(refusalsFor(changed)).toEqual([
+      refusal("url-tls-without-paste", "/engines/0/connection/connectionString/urlTls"),
+    ]);
+    expect(refusalsFor(withPaste)).toEqual([]);
+  });
+
   test("a sign-in shaped like Snowflake's is admitted", () => {
     expect(refusalsFor(manifest(signInShaped))).toEqual([]);
   });
@@ -1039,6 +1178,19 @@ describe("one engine declaration", () => {
     });
   });
 
+  test("an engine declaration's connection string is held to the rules the schema cannot state, at pointers into it", () => {
+    const declaration = engine();
+    Object.assign(declaration.connection.connectionString, { scheme: "exampledb", urlTls: "urlTls" });
+
+    expect(validator.validateEngine(declaration)).toEqual({
+      admitted: false,
+      refusals: [
+        refusal("scheme-without-paste", "/connection/connectionString/scheme"),
+        refusal("url-tls-without-paste", "/connection/connectionString/urlTls"),
+      ],
+    });
+  });
+
   test("an engine declaration's dialog is held to the rules the schema cannot state, at pointers into it", () => {
     const declaration = engine();
     declaration.connection.fields.push("serviceName");
@@ -1086,6 +1238,12 @@ describe("refusals carry no value", () => {
         connectionOf(m).hostIdentity = "hostIdentity";
         connectionOf(m).import = { label: "Import kubeconfig", importer: "importer" };
         connectionOf(m).refused = [{ field: "region", refusal: "Region is refused." }];
+        Object.assign(connectionStringOf(m), {
+          scheme: "exampledb",
+          urlTls: "urlTls",
+          paste: { reader: "pasteReader", catchAll: true, formats: ["exampledb://"] },
+          seedCheck: "seedCheck",
+        });
       }),
       planted,
     ) as Json;
@@ -1170,5 +1328,10 @@ describe("how ajv's errors become refusals", () => {
     ]);
 
     expect(refusals).toEqual([refusal("no-variant", "/a"), refusal("wrong-type", "/ab")]);
+  });
+
+  test("a repeated item is refused at the later of the two indices ajv names, in either order", () => {
+    expect(refusalsOf([error("uniqueItems", "/a", { i: 0, j: 2 })])).toEqual([refusal("duplicate", "/a/2")]);
+    expect(refusalsOf([error("uniqueItems", "/b", { i: 3, j: 1 })])).toEqual([refusal("duplicate", "/b/3")]);
   });
 });

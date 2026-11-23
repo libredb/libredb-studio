@@ -878,7 +878,7 @@
       "additionalProperties": false
     },
     "connectionStringOffer": {
-      "description": "accepted: whether the provider opens what a connection string names. dialogOffersUri: whether the connection dialog offers a connection string box.",
+      "description": "What an engine's connection string is. accepted: whether the provider opens what a connection string names. dialogOffersUri: whether the connection dialog offers a connection string box. scheme: the one URI scheme shown for the engine. urlTls: the function that reads the TLS a URL's query carries. paste: how the engine reads a connection string pasted into the dialog's Paste URL box. seedCheck: the function Studio runs on a seed file's connection before any socket.",
       "type": "object",
       "properties": {
         "accepted": {
@@ -886,9 +886,64 @@
         },
         "dialogOffersUri": {
           "type": "boolean"
+        },
+        "scheme": {
+          "description": "The one URI scheme shown for the engine, lower-case as the parser reads a pasted scheme, of a form the engine's paste reader reads; null where the engine has none. It names no alias the reader also accepts.",
+          "type": ["string", "null"],
+          "pattern": "^[a-z][a-z0-9+.-]{0,31}$"
+        },
+        "urlTls": {
+          "description": "The function that reads the TLS a URL's query carries into a mode the connection form can hold, or keeps the parameter as written where no mode expresses it, never a weaker mode than the engine's driver applies; only the engine's paste reader calls it. Null where the engine's URL carries no TLS in its query.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "paste": {
+          "$ref": "#/$defs/connectionStringPaste"
+        },
+        "seedCheck": {
+          "description": "The function Studio runs when it loads a seed file, on the fields the file writes for a connection of the engine, before any socket: it leaves a field written as a reference unjudged and answers each refusal as a field and a sentence that never quotes the value. Null where the engine is not checked at load.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
-      "required": ["accepted", "dialogOffersUri"],
+      "required": ["accepted", "dialogOffersUri", "scheme", "urlTls", "paste", "seedCheck"],
+      "additionalProperties": false
+    },
+    "connectionStringPaste": {
+      "description": "How an engine reads a pasted connection string; null where the Paste URL box never names the engine. reader: the one function name for the reader's three operations, claims (whether it reads the paste trimmed with its scheme lower-cased), names (whether the paste trimmed and lower-cased whole is a spelling the engine connects with) and parse (the form's fields, or a refusal, for a text claims accepted, and only for such a text). catchAll: whether it claims generic transport schemes other readers may claim on their own hosts, so Studio offers it a paste after every other reader. formats: the forms the Paste URL box names for the engine, each one that parse connects with.",
+      "type": ["object", "null"],
+      "properties": {
+        "reader": {
+          "$ref": "#/$defs/functionName"
+        },
+        "catchAll": {
+          "type": "boolean"
+        },
+        "formats": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true
+        }
+      },
+      "required": ["reader", "catchAll", "formats"],
       "additionalProperties": false
     },
     "facetOffer": {

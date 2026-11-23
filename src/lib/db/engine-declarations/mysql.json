@@ -17,7 +17,17 @@
     "refused": [],
     "connectionString": {
       "accepted": true,
-      "dialogOffersUri": false
+      "dialogOffersUri": false,
+      "scheme": "mysql",
+      "urlTls": "urlTls",
+      "paste": {
+        "reader": "pasteReader",
+        "catchAll": false,
+        "formats": [
+          "mysql://"
+        ]
+      },
+      "seedCheck": null
     },
     "tls": "offered",
     "sshTunnel": {

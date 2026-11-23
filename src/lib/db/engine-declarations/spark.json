@@ -22,7 +22,17 @@
     ],
     "connectionString": {
       "accepted": false,
-      "dialogOffersUri": false
+      "dialogOffersUri": false,
+      "scheme": null,
+      "urlTls": null,
+      "paste": {
+        "reader": "pasteReader",
+        "catchAll": false,
+        "formats": [
+          "sc://"
+        ]
+      },
+      "seedCheck": null
     },
     "tls": "offered",
     "sshTunnel": {

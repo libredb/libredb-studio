@@ -18,7 +18,17 @@
     "refused": [],
     "connectionString": {
       "accepted": true,
-      "dialogOffersUri": false
+      "dialogOffersUri": false,
+      "scheme": "db2",
+      "urlTls": "urlTls",
+      "paste": {
+        "reader": "pasteReader",
+        "catchAll": false,
+        "formats": [
+          "db2://"
+        ]
+      },
+      "seedCheck": null
     },
     "tls": "offered",
     "sshTunnel": {
