@@ -1605,6 +1605,66 @@ describe("PostgresProvider", () => {
       }
     });
 
+    test("a begin whose pool checkout fails answers its mapped class with outcome not-sent, sends nothing and holds no transaction", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const checkout = spyOn(lastPool!, "connect").mockRejectedValueOnce(
+        Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:5432"), { code: "ECONNREFUSED" }),
+      );
+      mockWire = [];
+      try {
+        const refused = await provider.beginTransaction().catch((error: unknown) => error);
+
+        expect(refused).toBeInstanceOf(ConnectionError);
+        expect((refused as ConnectionError).outcome).toBe("not-sent");
+        expect(mockWire).toEqual([]);
+        expect(provider.isInTransaction()).toBe(false);
+        const response = createErrorResponse(refused, { route: "api/db/transaction" });
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({
+          code: ApiErrorCode.CONNECTION_ERROR,
+          statusCode: 503,
+          kind: "connection",
+          outcome: "not-sent",
+        });
+      } finally {
+        checkout.mockRestore();
+      }
+      // Nothing was left claimed, so a begin on a pool that answers opens a transaction.
+      await provider.beginTransaction();
+      expect(provider.isInTransaction()).toBe(true);
+      await provider.rollbackTransaction();
+    });
+
+    test("a begin whose pool checkout waits out the pool's bound answers a ConnectionError naming the wait, not-sent", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const checkout = spyOn(lastPool!, "connect").mockRejectedValueOnce(
+        new Error("timeout exceeded when trying to connect"),
+      );
+      try {
+        const refused = await provider.beginTransaction().catch((error: unknown) => error);
+
+        expect(refused).toBeInstanceOf(ConnectionError);
+        expect(refused).not.toBeInstanceOf(TimeoutError);
+        expect((refused as ConnectionError).message).toMatch(
+          /^No connection of the pool came free or opened within \d+(?:\.\d)? seconds?, so the statement was not sent: every connection may be in use, or the server may not be answering\.$/,
+        );
+        expect((refused as ConnectionError).cause).toBeInstanceOf(TimeoutError);
+        expect(provider.isInTransaction()).toBe(false);
+        const response = createErrorResponse(refused, { route: "api/db/transaction" });
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({
+          code: ApiErrorCode.CONNECTION_ERROR,
+          statusCode: 503,
+          kind: "connection",
+          outcome: "not-sent",
+        });
+      } finally {
+        checkout.mockRestore();
+      }
+    });
+
     test("a BEGIN that fails releases the client it borrowed", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();

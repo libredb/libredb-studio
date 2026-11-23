@@ -4075,7 +4075,11 @@ export class MySQLProvider extends SQLBaseProvider {
   public async beginTransaction(options: BeginTransactionOptions = {}): Promise<BeginTransactionResult> {
     this.ensureConnected();
     if (this.txActive) throw new QueryError("Transaction already active", "mysql");
-    const conn = await this.pool!.getConnection();
+    // A failure to take the connection precedes the BEGIN, so it answers not-sent (CONTRACT E-5).
+    const conn = await checkoutPhase(
+      () => this.pool!.getConnection(),
+      (error) => mapDatabaseError(error, "mysql", "BEGIN"),
+    );
     this.txConn = conn;
     // Sent directly rather than through the driver's own `beginTransaction()`, because that
     // method resolves to nothing and the OK packet is the evidence: a server of the MySQL wire

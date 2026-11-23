@@ -2773,6 +2773,74 @@ describe("OracleProvider", () => {
       await expect(provider.queryInTransaction("SELECT 1 FROM DUAL")).rejects.toThrow(QueryError);
     });
 
+    /** A pool that hands out connections until `refuseNext` is set, then refuses one checkout with it. */
+    function poolRefusingOnce() {
+      const state: { refuseNext: Error | undefined } = { refuseNext: undefined };
+      mockCreatePoolFn = async () => ({
+        ...createMockPool(),
+        getConnection: async () => {
+          const refusal = state.refuseNext;
+          state.refuseNext = undefined;
+          if (refusal !== undefined) throw refusal;
+          connectionLog.push({ event: "acquire" });
+          return createMockConnection();
+        },
+      });
+      return state;
+    }
+
+    test("a begin whose pool checkout fails answers its mapped class with outcome not-sent and holds no transaction", async () => {
+      const pool = poolRefusingOnce();
+      await provider.connect();
+      connectionLog = [];
+      pool.refuseNext = new Error(
+        "NJS-503: connection to host 127.0.0.1 port 1521 could not be established. (CONNECTION_ID=x)\nconnect ECONNREFUSED 127.0.0.1:1521",
+      );
+
+      const refused = await provider.beginTransaction().catch((error: unknown) => error);
+
+      expect(refused).toBeInstanceOf(ConnectionError);
+      expect((refused as ConnectionError).outcome).toBe("not-sent");
+      expect(connectionLog).toEqual([]);
+      expect(provider.isInTransaction()).toBe(false);
+      const response = createErrorResponse(refused, { route: "api/db/transaction" });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({
+        code: ApiErrorCode.CONNECTION_ERROR,
+        statusCode: 503,
+        kind: "connection",
+        outcome: "not-sent",
+      });
+      // Nothing was left claimed, so a begin on a pool that answers opens a transaction.
+      await provider.beginTransaction();
+      expect(provider.isInTransaction()).toBe(true);
+      await provider.rollbackTransaction();
+    });
+
+    test("a begin whose pool checkout waits out the queue timeout answers a ConnectionError naming the wait, not-sent", async () => {
+      const pool = poolRefusingOnce();
+      await provider.connect();
+      pool.refuseNext = new Error("NJS-040: connection request timeout. Request exceeded queueTimeout of 60000");
+
+      const refused = await provider.beginTransaction().catch((error: unknown) => error);
+
+      expect(refused).toBeInstanceOf(ConnectionError);
+      expect(refused).not.toBeInstanceOf(TimeoutError);
+      expect((refused as ConnectionError).message).toMatch(
+        /^No connection of the pool came free or opened within \d+(?:\.\d)? seconds?, so the statement was not sent: every connection may be in use, or the server may not be answering\.$/,
+      );
+      expect((refused as ConnectionError).cause).toBeInstanceOf(TimeoutError);
+      expect(provider.isInTransaction()).toBe(false);
+      const response = createErrorResponse(refused, { route: "api/db/transaction" });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({
+        code: ApiErrorCode.CONNECTION_ERROR,
+        statusCode: 503,
+        kind: "connection",
+        outcome: "not-sent",
+      });
+    });
+
     test("queryInTransaction maps driver errors", async () => {
       await provider.connect();
       await provider.beginTransaction();

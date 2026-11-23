@@ -2245,6 +2245,62 @@ describe("MySQLProvider", () => {
       });
     }
 
+    test("a begin whose pool checkout fails answers its mapped class with outcome not-sent, not an internal error", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const refusal = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:3306"), { code: "ECONNREFUSED" });
+      const getConnection = spyOn(mockPool, "getConnection").mockRejectedValueOnce(refusal);
+      const executed = spyOn(mockConnection, "execute");
+      const queried = spyOn(mockConnection, "query");
+      try {
+        const refused = await provider.beginTransaction().catch((error: unknown) => error);
+
+        expect(refused).toBeInstanceOf(ConnectionError);
+        expect((refused as ConnectionError).outcome).toBe("not-sent");
+        expect(executed).not.toHaveBeenCalled();
+        expect(queried).not.toHaveBeenCalled();
+        expect(provider.isInTransaction()).toBe(false);
+        const response = createErrorResponse(refused, { route: "api/db/transaction" });
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({
+          code: ApiErrorCode.CONNECTION_ERROR,
+          statusCode: 503,
+          kind: "connection",
+          outcome: "not-sent",
+        });
+      } finally {
+        getConnection.mockRestore();
+        executed.mockRestore();
+        queried.mockRestore();
+      }
+      // Nothing was left claimed, so a begin on a pool that answers opens a transaction.
+      await provider.beginTransaction();
+      expect(provider.isInTransaction()).toBe(true);
+      await provider.rollbackTransaction();
+    });
+
+    test("a begin on a closed pool answers PoolExhaustedError, not-sent", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const getConnection = spyOn(mockPool, "getConnection").mockRejectedValueOnce(new Error("Pool is closed."));
+      try {
+        const refused = await provider.beginTransaction().catch((error: unknown) => error);
+
+        expect(refused).toBeInstanceOf(PoolExhaustedError);
+        expect((refused as PoolExhaustedError).outcome).toBe("not-sent");
+        expect(provider.isInTransaction()).toBe(false);
+        const response = createErrorResponse(refused, { route: "api/db/transaction" });
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({
+          code: ApiErrorCode.POOL_EXHAUSTED,
+          statusCode: 503,
+          outcome: "not-sent",
+        });
+      } finally {
+        getConnection.mockRestore();
+      }
+    });
+
     test("a statement MySQL commits implicitly ends the session, so no rollback is pretended", async () => {
       mockExecuteFn = answering({ BEGIN: 16387, INSERT: 3, CREATE: 16386 });
       provider = new MySQLProvider(makeMySQLConfig());

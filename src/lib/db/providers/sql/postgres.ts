@@ -3740,7 +3740,11 @@ export class PostgresProvider extends SQLBaseProvider {
     this.ensureConnected();
     this.refuseWithoutCatalog();
     if (this.txActive) throw new QueryError("Transaction already active", "postgres");
-    this.txClient = await this.pool!.connect();
+    // A failure to take the client precedes the BEGIN, so it answers not-sent (CONTRACT E-5).
+    this.txClient = await checkoutPhase(
+      () => this.pool!.connect(),
+      (error) => mapDatabaseError(error, "postgres", "BEGIN"),
+    );
     try {
       await this.txClient.query("BEGIN");
     } catch (error) {

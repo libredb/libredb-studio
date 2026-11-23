@@ -23,7 +23,7 @@
 | **Base** | [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts) |
 | **Tests** | [`tests/integration/db/postgres-provider.test.ts`](../../tests/integration/db/postgres-provider.test.ts) |
 | **Write reach** | open: the editor, inline row edit, Import, Generate Test Data, Create Table, the function and procedure object edit, maintenance (`vacuum`, `analyze`, `reindex`, `kill`) and the transaction route all send writes, and the database role is the boundary |
-| **Failed statement outcome** | checkout-not-sent: a failure to take a connection from the pool (`pool.connect()`), which comes before anything is sent, answers outcome `not-sent`, and every failure after it `unknown` |
+| **Failed statement outcome** | checkout-not-sent: a failure to take a connection from the pool (`pool.connect()`) for a statement or for a transaction's `BEGIN`, which comes before anything is sent, answers outcome `not-sent`, and every failure after it `unknown` |
 
 ---
 
@@ -2096,7 +2096,7 @@ the client is not returned to the pool until commit/rollback. Surfaced via `POST
 
 | Method | Behaviour |
 |--------|-----------|
-| `beginTransaction()` | Acquires a client, runs `BEGIN`, arms a **5-minute auto-rollback** timer ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts), duration set by `TX_TIMEOUT_MS`). Throws if one is already active, and refuses a `BEGIN` that opened nothing ([§8.0](#80-a-begin-that-opens-nothing-and-a-statement-that-ends-the-transaction)). |
+| `beginTransaction()` | Acquires a client through `checkoutPhase`, so a failed checkout answers `not-sent` ([§11](#11-error-handling)), runs `BEGIN`, arms a **5-minute auto-rollback** timer ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts), duration set by `TX_TIMEOUT_MS`). Throws if one is already active, and refuses a `BEGIN` that opened nothing ([§8.0](#80-a-begin-that-opens-nothing-and-a-statement-that-ends-the-transaction)). |
 | `queryInTransaction(sql, params?)` | Runs on the transaction's client. Throws if none active. Ends the session when the statement ended the transaction itself ([§8.0](#80-a-begin-that-opens-nothing-and-a-statement-that-ends-the-transaction)), and reports the transaction lost when its database session has ended ([§8.0.2](#802-a-session-that-ends-while-a-statement-or-the-transaction-holds-it)). |
 | `commitTransaction()` / `rollbackTransaction()` | Ends the transaction, clears the timer, releases the client. Throws if none active, and reports the transaction lost when its database session has ended ([§8.0.2](#802-a-session-that-ends-while-a-statement-or-the-transaction-holds-it)). |
 | `expireTransaction()` | The timeout callback — auto-`ROLLBACK` to prevent leaked locks if a transaction is abandoned. |
@@ -2562,7 +2562,8 @@ A connect that fails answers `outcome` `not-sent`, and so does a statement Studi
 The editor's statement (`query`) takes its client from the pool through `checkoutPhase` before it sends anything, so a failure of that checkout answers `not-sent` and keeps the class its `pg` error maps to: a refused connection `ConnectionError`, a refused credential `AuthenticationError`, an ended pool `PoolExhaustedError` ([CONTRACT](./CONTRACT.md), E-5).
 A checkout that waits out the pool's bound (`connectionTimeoutMillis`, which is `acquireTimeout`), on a busy pool or a new client that does not open, is no statement timeout: it answers `503 CONNECTION_ERROR`, `not-sent`, with `No connection of the pool came free or opened within <n> seconds, so the statement was not sent: every connection may be in use, or the server may not be answering.`
 A connection lost after the client was taken, `Connection terminated unexpectedly` included, answers `unknown`, since the statement may have reached the server.
-The other paths that take a client (the agent's read-only profile, a held transaction, the catalog and monitoring reads) still answer `unknown` for a failed checkout.
+A transaction's `beginTransaction()` takes its client the same way before it sends the `BEGIN`, so a failed checkout there answers `not-sent` in the same class, and a pool wait that ran out the same `503 CONNECTION_ERROR` and sentence.
+The other paths that take a client (the agent's read-only profile, the catalog and monitoring reads) still answer `unknown` for a failed checkout.
 
 ---
 

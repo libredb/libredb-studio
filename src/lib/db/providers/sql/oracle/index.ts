@@ -2327,7 +2327,11 @@ export class OracleProvider extends SQLBaseProvider {
   public async beginTransaction(): Promise<void> {
     this.ensureConnected();
     if (this.txActive) throw new QueryError("Transaction already active", "oracle");
-    this.txConn = await this.pool!.getConnection();
+    // Taking the connection is the whole of a begin here, and a failure of it sends nothing (CONTRACT E-5).
+    this.txConn = await checkoutPhase(
+      () => this.pool!.getConnection(),
+      (error) => mapDatabaseError(error, "oracle"),
+    );
     // Oracle auto-starts a transaction; we just hold the connection
     this.txActive = true;
 
