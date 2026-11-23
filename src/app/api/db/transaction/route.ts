@@ -4,13 +4,7 @@ import { pageOfProbe, pageOptionError, probePastPage } from "@/lib/api/page-prob
 import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db";
 import { editorCacheKey } from "@/lib/db/factory";
-import type {
-  BeginTransactionOptions,
-  BeginTransactionResult,
-  DatabaseProvider,
-  QueryPrepareOptions,
-  QueryResult,
-} from "@/lib/db/types";
+import type { DatabaseProvider, QueryPrepareOptions, TransactionProvider } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
@@ -57,15 +51,6 @@ import {
   transactionOwner,
   watchTransactionTimeout,
 } from "@/lib/api/transaction-ownership";
-
-interface TransactionProvider {
-  // `void` from the providers that read no transaction state when they open one.
-  beginTransaction(options?: BeginTransactionOptions): Promise<BeginTransactionResult | void>;
-  commitTransaction(): Promise<void>;
-  rollbackTransaction(): Promise<void>;
-  isInTransaction(): boolean;
-  queryInTransaction(sql: string, params?: unknown[]): Promise<QueryResult>;
-}
 
 /**
  * Run a script's statements in order on the transaction's connection, stopping at the first one
