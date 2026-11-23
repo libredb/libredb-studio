@@ -10,7 +10,7 @@ import { describe, expect, test } from "bun:test";
 import { ConnectionError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { KafkaProvider } from "@/lib/db/providers/stream/kafka";
 import { KAFKA_AGENT_SHAPE, KAFKA_AGENT_WITHHELD } from "@/lib/db/providers/stream/kafka/agent-surface";
-import { KAFKA_AGENT_SENTENCES } from "@/lib/db/providers/stream/kafka/agent-statement";
+import { KAFKA_AGENT_SENTENCES } from "@/lib/languages/kafkaread/agent-statement";
 import {
   type KafkaAgentReadClient,
   type KafkaClusterMetadata,

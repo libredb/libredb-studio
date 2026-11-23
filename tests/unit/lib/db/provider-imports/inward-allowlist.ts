@@ -31,10 +31,6 @@ export const INWARD_IMPORTS: readonly AllowlistEntry[] = [
     modules: ["document/firestore/agent-statement.ts"],
   },
   {
-    file: "src/lib/agent/languages/kafkaread/adapter.ts",
-    modules: ["stream/kafka/agent-statement.ts"],
-  },
-  {
     file: "src/lib/agent/languages/libredbkv/adapter.ts",
     modules: ["embedded/libredb-command.ts"],
   },
@@ -475,10 +471,6 @@ export const INWARD_IMPORTS: readonly AllowlistEntry[] = [
   {
     file: "src/lib/db/operations/fsquery-admission.ts",
     modules: ["document/firestore/agent-statement.ts"],
-  },
-  {
-    file: "src/lib/db/operations/kafkaread-admission.ts",
-    modules: ["stream/kafka/agent-statement.ts"],
   },
   {
     file: "src/lib/db/operations/libredbkv-admission.ts",

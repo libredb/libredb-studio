@@ -133,6 +133,7 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/languages/influxql/agent-statement.ts` | SDK /influxql | The agent's reader of one InfluxQL statement, pure; the influxdb provider's agent profile runs it and the admission reads it. |
 | `src/lib/languages/influxql/lexer.ts` | SDK /influxql | InfluxQL read as tokens as the server's scanner reads it, pure; the provider, the editor language and the policy read it. |
 | `src/lib/languages/influxql/policy.ts` | SDK /influxql | The InfluxQL read policy, pure; the provider and the confirmation gate ask the same function. |
+| `src/lib/languages/kafkaread/agent-statement.ts` | SDK /kafkaread | The agent's reader of one Kafka read request, pure; the kafka provider's agent profile runs it, its metadata reads take its plans, and the admission reads it. |
 | `src/lib/languages/kubectl/commands.ts` | SDK /kubectl | The kubectl subset as data, its commands, flags, refused commands and flags and every refusal sentence, pure; the parser, the console's context, the provider's labels and the query dialect's history mask read it. |
 | `src/lib/languages/kubectl/constants.ts` | SDK /kubectl | The five caps a kubectl statement is read against, the page size, the rows one statement reads, the objects of a document statement and the `--tail` and `--limit-bytes` maxima; the parser and the paging clause read them, and the provider's list walks and readers apply them. |
 | `src/lib/languages/kubectl/lexer.ts` | SDK /kubectl | The kubectl command line read as shell words and token roles, pure; the editor syntax and the parser read it. |
@@ -200,7 +201,6 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 | `src/lib/agent/languages/cypher/adapter.ts` | 1 statement reader module | PR 8 cypher | the Cypher family, `src/lib/db/graph/cypher/` |
 | `src/lib/agent/languages/etcdctl/adapter.ts` | 1 statement reader module | PR 8 etcdctl | the etcdctl family, `src/lib/languages/etcdctl/` |
 | `src/lib/agent/languages/fsquery/adapter.ts` | 1 statement reader module | PR 8 fsquery | the fsquery family, `src/lib/languages/fsquery/` |
-| `src/lib/agent/languages/kafkaread/adapter.ts` | 1 statement reader module | PR 8 kafkaread | the kafkaread family, `src/lib/languages/kafkaread/` |
 | `src/lib/agent/languages/libredbkv/adapter.ts` | 1 statement reader module | PR 8 libredbkv | the libredbkv family, `src/lib/languages/libredbkv/` |
 | `src/lib/agent/languages/milvusrpc/adapter.ts` | 1 statement reader module | PR 8 milvusrpc | the milvusrpc family, `src/lib/languages/milvusrpc/` |
 | `src/lib/agent/languages/modbusread/adapter.ts` | 1 statement reader module | PR 8 modbusread | the modbusread family, `src/lib/languages/modbusread/` |
@@ -248,7 +248,6 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 | `src/lib/db/operations/descriptors.ts` | 1 mongodb envelope reader | PR 8 mongo | the mongo family, `src/lib/languages/mongo/` |
 | `src/lib/db/operations/etcdctl-admission.ts` | 1 statement reader module | PR 8 etcdctl | the etcdctl family, `src/lib/languages/etcdctl/` |
 | `src/lib/db/operations/fsquery-admission.ts` | 1 statement reader module | PR 8 fsquery | the fsquery family, `src/lib/languages/fsquery/` |
-| `src/lib/db/operations/kafkaread-admission.ts` | 1 statement reader module | PR 8 kafkaread | the kafkaread family, `src/lib/languages/kafkaread/` |
 | `src/lib/db/operations/libredbkv-admission.ts` | 1 statement reader module | PR 8 libredbkv | the libredbkv family, `src/lib/languages/libredbkv/` |
 | `src/lib/db/operations/milvusrpc-admission.ts` | 1 statement reader module | PR 8 milvusrpc | the milvusrpc family, `src/lib/languages/milvusrpc/` |
 | `src/lib/db/operations/modbusread-admission.ts` | 1 statement reader module | PR 8 modbusread | the modbusread family, `src/lib/languages/modbusread/` |
