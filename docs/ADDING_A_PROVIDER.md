@@ -518,6 +518,9 @@ export async function createDatabaseProvider(
 
 > **Important:** Use dynamic `import()` to keep the initial bundle small.
 
+This import and the new type-id's row modules in the registry indexes are the one growth the provider import allowlist takes before PR 11 and PR 12 of the provider plugin program: add each pair to `tests/unit/lib/db/provider-imports/inward-allowlist.ts` and update the module counts of those files in [`PROVIDER_IMPORTS.md`](./PROVIDER_IMPORTS.md#the-rule), whose test fails until both match the source.
+A provider module that imports a core module the record's outward table does not list fails the same test until the module gets a row there with its destination.
+
 The `connection` your constructor receives is the one `providerConnection` (`src/lib/db/provider-connection.ts`) builds: it carries no `sshTunnel`, because Studio opens the tunnel itself ([what a provider receives of the tunnel](providers/README.md#ssh-tunnels-bastion-host-key-verification)).
 It carries the tunnel's far end under `TUNNEL_FAR_END` when Studio opened one, and the tunnel's route under `TUNNEL_ROUTE`; a provider that needs the route, for a key that tells two bastions apart, reads it through `requireTunnelRoute` in `src/lib/db/utils/require-tunnel-route.ts` and never frames one itself.
 The connection holds only the fields your engine declares, and nothing else of the record: the type's rows of `CONNECTION_FIELDS`, `SEED_ONLY_FIELDS` and `REFUSED_CONNECTION_FIELDS` in `src/lib/db/connection-fields.ts`, `connectionString` where `CONNECTION_STRING_ACCEPTED` is true, `ssl` where the form offers the TLS panel, `host` and `port` where the engine takes an SSH tunnel, and Studio's own `PROVIDER_CORE_FIELDS` (`providerFields` in `src/lib/db/provider-connection.ts` composes them).

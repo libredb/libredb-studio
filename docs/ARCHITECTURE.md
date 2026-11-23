@@ -187,6 +187,9 @@ The graph core under `src/lib/db/graph/` is pure and shipped to the browser, whe
 
 Adding a new database type takes several steps, from registering the type to verifying it; [`ADDING_A_PROVIDER.md`](./ADDING_A_PROVIDER.md) walks through each one.
 
+Core code does not gain imports into a provider directory: the ones it holds today are listed by file, each with the change that removes it, in [`PROVIDER_IMPORTS.md`](./PROVIDER_IMPORTS.md), and `tests/unit/lib/db/provider-imports.test.ts` refuses any other.
+The same record gives every core module provider code imports a destination in the provider plugin program.
+
 `CouchbaseProvider` extends `BaseDatabaseProvider` even though SQL++ is a SQL dialect: SQL++ quotes identifiers with doubled backticks, which `escapeIdentifier()` produces for no existing type, so it owns its quoting and declares its SQL-ness through `queryLanguage: 'sql'` instead. Being reached over HTTP is **not** the reason — `ClickHouseProvider`, `DruidProvider` and `TrinoProvider` add no driver either, and all three extend `SQLBaseProvider`, because double-quoted identifiers are correct in each dialect. Each driver-free provider is a directory rather than a single file, with its wire format behind a transport seam that provider logic never bypasses. Trino inherits everything except the limiter: its grammar is `[ OFFSET count ] [ LIMIT count ]` and only that way round, so `prepareQuery()` transposes the clause the shared limiter emits. See [`docs/providers/couchbase.md`](providers/couchbase.md), [`clickhouse.md`](providers/clickhouse.md), [`druid.md`](providers/druid.md) and [`trino.md`](providers/trino.md).
 
 ## 4. Key Architectural Patterns
