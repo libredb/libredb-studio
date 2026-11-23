@@ -2010,6 +2010,38 @@ describe("POST /api/db/transaction under governance", () => {
     expect((await send({ action: "rollback" })).status).toBe(200);
   });
 
+  test("governance: a failed COMMIT's and ROLLBACK's events record the SQLSTATE the driver reported", async () => {
+    const providers = providerPerOwner();
+    as("alice@example.com", "alice-subject");
+    expect((await send({ action: "begin" })).status).toBe(200);
+    const provider = providers.of("alice-subject");
+    // A deferred unique constraint fails the COMMIT, which PostgreSQL answers by ending the transaction.
+    provider?.commitTransaction.mockImplementationOnce(async () => {
+      await provider.rollbackTransaction();
+      throw mapDatabaseError(
+        Object.assign(new Error("duplicate key value violates unique constraint"), { code: "23505" }),
+        "postgres",
+        "COMMIT",
+      );
+    });
+    expect((await send({ action: "commit" })).status).toBe(400);
+
+    expect((await send({ action: "begin" })).status).toBe(200);
+    // A ROLLBACK that fails with a SQLSTATE on an error that carries no API code of its own.
+    provider?.rollbackTransaction.mockImplementationOnce(async () => {
+      const error = new DatabaseError("could not serialize access", "postgres");
+      error.sqlstate = "40001";
+      throw error;
+    });
+    expect((await send({ action: "rollback" })).status).toBe(500);
+
+    expect(recordedEvents.map((event) => [event.statement, event.status, event.errorCode])).toEqual([
+      ["COMMIT", "error", "23505"],
+      ["ROLLBACK", "error", "40001"],
+    ]);
+    expect((await send({ action: "rollback" })).status).toBe(200);
+  });
+
   /** `send` with the connection's password set, so a provider's text can hold it. */
   function sendHolding(password: string, body: Record<string, unknown>, user?: string) {
     return POST(
