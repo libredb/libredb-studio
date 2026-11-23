@@ -19,6 +19,7 @@ import {
   readTransactionState,
   rollBackAfterCredentialChange,
   runInTransaction,
+  type UnansweredCall,
 } from "@/lib/api/editor-transaction";
 import { errorOutcome } from "@/lib/db/error-record";
 import {
@@ -74,6 +75,8 @@ const scrub = providerTextScrub(connectionWith(), "any");
 
 /** The mock behind a fake's method, read back for its recorded calls. */
 const callsOf = (fn: unknown) => (fn as ReturnType<typeof mock>).mock.calls;
+/** One turn of the event loop: what a promise already settled has run its reactions by. */
+const turn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
 /**
  * A transaction provider over a session whose state the test sets through `open`: a begin opens it, a COMMIT or
@@ -221,7 +224,16 @@ describe("the transaction facade's calls", () => {
     expect(error).toBeInstanceOf(QueryCancelledError);
     expect(errorOutcome(error)).toBe("unknown");
     expect(callsOf(fx.provider.isInTransaction)).toHaveLength(0);
+    // The COMMIT Studio stopped waiting for still runs: its outcome settles only once the COMMIT itself does.
+    let settled = false;
+    const watched = (outcome as UnansweredCall).settled.then(() => {
+      settled = true;
+    });
+    await turn();
+    expect(settled).toBe(false);
     commit.answer.resolve();
+    await watched;
+    expect(settled).toBe(true);
   });
 
   test("a BEGIN, COMMIT or ROLLBACK past its deadline answers StudioTimeoutRefusal naming it, outcome unknown, state unknown", async () => {
@@ -230,7 +242,10 @@ describe("the transaction facade's calls", () => {
     const waited = `${waitedSeconds(queryTimeout)} and ${waitedSeconds(EXECUTE_SLACK_MS)} more for the engine's own answer`;
 
     const outcomes = await withCore(
-      (real) => ({ ...real, transactionCall: async () => ({ kind: "stopped", reason: TIMEOUT_REASON() }) }),
+      (real) => ({
+        ...real,
+        transactionCall: async () => ({ kind: "stopped", reason: TIMEOUT_REASON(), settled: Promise.resolve() }),
+      }),
       async () => [
         await beginInTransaction(fx.provider, false, callerOf()),
         await endTransaction(fx.provider, "commit", callerOf()),
@@ -309,7 +324,7 @@ describe("the transaction facade's calls", () => {
           ...real,
           transactionCall: async (session, request, ctx, ports) =>
             request.action === "state"
-              ? { kind: "stopped", reason: TIMEOUT_REASON() }
+              ? { kind: "stopped", reason: TIMEOUT_REASON(), settled: Promise.resolve() }
               : real.transactionCall(session, request, ctx, ports),
         }),
         () => endTransaction(stoppedRead.provider, "commit", callerOf()),
@@ -438,6 +453,9 @@ describe("the transaction facade's calls", () => {
     expect(callsOf(late.provider.queryInTransaction)).toHaveLength(0);
     expect(refused.kind).toBe("unanswered");
     expect((refused as { error: unknown }).error).toBeInstanceOf(StudioByteBudgetRefusal);
+    // The host could not read what the statement answered, so the statement has settled already.
+    expect((refused as UnansweredCall).settled).toBeInstanceOf(Promise);
+    expect(await (refused as UnansweredCall).settled).toBeUndefined();
   });
 
   test("a state read answers the session's state, and a stopped read answers unknown", async () => {
@@ -457,7 +475,10 @@ describe("the transaction facade's calls", () => {
       closed = await readTransactionState(fx.provider, callerOf());
       refused = await readTransactionState(fx.provider, callerOf(left.signal));
       stopped = await withCore(
-        (real) => ({ ...real, transactionCall: async () => ({ kind: "stopped", reason: TIMEOUT_REASON() }) }),
+        (real) => ({
+          ...real,
+          transactionCall: async () => ({ kind: "stopped", reason: TIMEOUT_REASON(), settled: Promise.resolve() }),
+        }),
         () => readTransactionState(fx.provider, callerOf()),
       );
     } finally {
@@ -552,7 +573,7 @@ describe("the rollback after a credential change", () => {
         transactionCall: async (session, request, ctx, ports) =>
           request.action === "state"
             ? real.transactionCall(session, request, ctx, ports)
-            : { kind: "stopped", reason: TIMEOUT_REASON() },
+            : { kind: "stopped", reason: TIMEOUT_REASON(), settled: Promise.resolve() },
       }),
       () => rollBackAfterCredentialChange(stopped.provider, ROUTE),
     );

@@ -40,9 +40,9 @@ import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
  * Outcomes. A call is `answered` with its session state; `failed` with the provider's error by reference and the state
  * read at once after it, except a begin's failure, after which nothing is read since the route claims nothing for it;
  * `unanswered` when the host stopped waiting for it, its caller gone or its deadline passed, or could not read what it
- * answered, so its state is unknown and nothing is read after it; and `not-sent` when the host refused it before the
- * call. Each error is this bundle's class, built by the accessor: a stop is outcome unknown, since the call may have
- * reached the database, and a refusal before the call not-sent.
+ * answered, so its state is unknown and nothing is read after it, with `settled` for when the call itself has settled;
+ * and `not-sent` when the host refused it before the call. Each error is this bundle's class, built by the accessor: a
+ * stop is outcome unknown, since the call may have reached the database, and a refusal before the call not-sent.
  *
  * A state read after a failure that is itself stopped answers `unknown` and is logged in Studio's own sentence, and
  * one that fails answers `unknown` and is logged by kind and code, never its text, since the call's own error is the
@@ -68,10 +68,15 @@ export interface FailedCall {
   readonly sessionState: SessionState;
 }
 
-/** A call the host stopped waiting for, or whose answer it could not read: its session state is unknown. */
+/**
+ * A call the host stopped waiting for, or whose answer it could not read: its session state is unknown. `settled`
+ * resolves once the call itself has settled, and never rejects: until then it may still change the session (clause
+ * C-58). A call whose answer the host could not read has settled already.
+ */
 export interface UnansweredCall {
   readonly kind: "unanswered";
   readonly error: Error;
+  readonly settled: Promise<void>;
 }
 
 /** A call the host refused before it was made: the session was not called, and its state is what it was. */
@@ -157,7 +162,7 @@ const CREDENTIAL_VIEW_SENTENCE = `The rollback after a credential change did not
 /** A refused record's outcome: not-sent before the call, unanswered once the provider was called. */
 function refusedOutcome(record: RefusedRecord, view: CallerView): UnansweredCall | NotSentCall {
   const error = refusalError(record, view);
-  return record.called ? { kind: "unanswered", error } : { kind: "not-sent", error };
+  return record.called ? { kind: "unanswered", error, settled: Promise.resolve() } : { kind: "not-sent", error };
 }
 
 /** One transaction call on `provider` through the installed core, with a fresh request and context. */
@@ -267,7 +272,9 @@ export async function beginInTransaction(
     return { kind: "failed", error };
   }
   if (record.kind === "refused") return refusedOutcome(record, view);
-  if (record.kind === "stopped") return { kind: "unanswered", error: stopError(record.reason, view) };
+  if (record.kind === "stopped") {
+    return { kind: "unanswered", error: stopError(record.reason, view), settled: record.settled };
+  }
   return record;
 }
 
@@ -286,7 +293,9 @@ export async function endTransaction(
     return { kind: "failed", error, sessionState: await readTransactionStateOrUnknown(provider, caller) };
   }
   if (record.kind === "refused") return refusedOutcome(record, view);
-  if (record.kind === "stopped") return { kind: "unanswered", error: stopError(record.reason, view) };
+  if (record.kind === "stopped") {
+    return { kind: "unanswered", error: stopError(record.reason, view), settled: record.settled };
+  }
   return { kind: "answered", sessionState: record.sessionState };
 }
 
@@ -323,7 +332,9 @@ export async function runInTransaction(
     return { kind: "failed", error, sessionState: await readTransactionStateOrUnknown(provider, caller) };
   }
   if (record.kind === "refused") return refusedOutcome(record, views.view);
-  if (record.kind === "stopped") return { kind: "unanswered", error: stopError(record.reason, views.stopView(record)) };
+  if (record.kind === "stopped") {
+    return { kind: "unanswered", error: stopError(record.reason, views.stopView(record)), settled: record.settled };
+  }
   // Present on every page of a statement sent with `transaction` (clause C-48).
   const sessionState = record.sessionState as SessionState;
   const { body } = editorPageBody(record, bridged.answered, run.scrub);

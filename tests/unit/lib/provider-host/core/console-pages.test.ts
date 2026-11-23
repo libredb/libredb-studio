@@ -336,7 +336,7 @@ describe("the console execute under the page budget", () => {
 
     const { record, state, waiting, late } = await stoppedWhileWaiting(reason);
 
-    expect(record).toEqual({ kind: "stopped", reason, waitingFor: "large-page-slot" });
+    expect(record).toEqual({ kind: "stopped", reason, waitingFor: "large-page-slot", settled: expect.any(Promise) });
     expect((record as { readonly reason: unknown }).reason).toBe(reason);
     expect(state).toEqual({ slots: 1, held: 1, waiting: 0 });
     expect(waiting.seen.pulls).toBe(1);
@@ -349,7 +349,7 @@ describe("the console execute under the page budget", () => {
 
     const { record, state, late } = await stoppedWhileWaiting(reason);
 
-    expect(record).toEqual({ kind: "stopped", reason, waitingFor: "large-page-slot" });
+    expect(record).toEqual({ kind: "stopped", reason, waitingFor: "large-page-slot", settled: expect.any(Promise) });
     expect(state).toEqual({ slots: 1, held: 1, waiting: 0 });
     expect(late).toEqual([]);
   });
@@ -397,7 +397,7 @@ describe("the console execute under the page budget", () => {
       controller.abort(reason),
     );
 
-    expect(record).toEqual({ kind: "stopped", reason, waitingFor: "page" });
+    expect(record).toEqual({ kind: "stopped", reason, waitingFor: "page", settled: expect.any(Promise) });
     expect((record as { readonly reason: unknown }).reason).toBe(reason);
     expect(cancelled).toEqual([runId]);
     expect(late).toEqual([]);
@@ -415,7 +415,7 @@ describe("the console execute under the page budget", () => {
 
     const { record, cancelled, runId, late } = await stoppedWhileRead(ctx, () => passed.abort(reason));
 
-    expect(record).toEqual({ kind: "stopped", reason, waitingFor: "page" });
+    expect(record).toEqual({ kind: "stopped", reason, waitingFor: "page", settled: expect.any(Promise) });
     expect((record as { readonly reason: unknown }).reason).toBe(signal.reason);
     expect(cancelled).toEqual([runId]);
     expect(late).toEqual([]);
@@ -444,7 +444,7 @@ describe("the console execute under the page budget", () => {
     closeHeld.resolve();
 
     expect(read.seen).toEqual({ pulls: 1, closes: 1, heldAtPull: [0] });
-    expect(record).toEqual({ kind: "stopped", reason, waitingFor: "other-results" });
+    expect(record).toEqual({ kind: "stopped", reason, waitingFor: "other-results", settled: expect.any(Promise) });
     await until("the late page giving its slot back", () => budget.state().held === 0);
   });
 

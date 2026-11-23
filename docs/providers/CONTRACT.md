@@ -2132,9 +2132,24 @@ A provider answers `unknown` when it cannot tell whether the session holds a tra
 An aborted transaction block, one a failed statement left that accepts only a rollback, is `in-transaction`.
 The host keeps no copy of a session state between calls and asks the session on every call: every record carries the state its own call answered.
 A stopped transaction call or statement answers no state, and its caller reads it as `unknown`.
+Its record carries the settle of the call the host stopped waiting for, which resolves once that call has settled, answered or failed, since until then it may still change the session.
 After a provider's failure of a COMMIT, a ROLLBACK or a statement, the caller reads the state at once; a read that is stopped or fails answers `unknown`.
-The transaction route keeps its record of a transaction and its owner while the state is unknown, records no terminal event for it, and resolves it by the next answer or by the state read every request makes.
-An end the route sees after an unknown state is recorded `unknown`, never `timed-out` or `rolled-back`, unless Studio's own rollback answered.
+The transaction route keeps its record of a transaction and its owner while the state is unknown, records no terminal event for it, and resolves it by the next answer or by the state read every request makes, but only once every call Studio stopped waiting for has settled.
+Until then no read resolves or releases the record, whatever state it finds: a provider may report the transaction open only because that call still runs, or closed only because a BEGIN it still runs has not opened it yet.
+The route's status answer says the state is unknown until then, whatever the read found.
+The route's five-minute watch for the provider's own timeout records no end while such a call still runs: it looks again a second later.
+Every state read of the route is awaited, so a read that began before another request of the same owner claimed, changed or ended the record is not about it, and neither releases nor settles it: the record carries a generation every change bumps, and a read acts only when the record and its generation are the ones it began with.
+The route counts each call of the owner's that may change the session, a BEGIN on an existing record, a statement, a script for its whole run, a COMMIT or a ROLLBACK, on the record from before it is sent until it answers, and a call Studio stops waiting for moves to the calls that have not settled; each change bumps the generation, and a call's own answer is read against the mark taken after its own count.
+While any such call is in flight, or stopped and still running, no read acts on the record: the reconcile keeps it and records nothing, the watch records nothing and looks again, and the status answer says the state is unknown.
+The status answer also says the state is unknown when the record changed while its read ran.
+The watch takes a mark before its own read, and when the record changed while that read ran it records nothing and looks again.
+The watch's repeated looks stop once the record's lease has lapsed, which leaves the record to the next request's lease check.
+While such a call still runs, the route refuses a BEGIN, a statement, a COMMIT or a ROLLBACK of the owner's with 409 `TRANSACTION_CALL_RUNNING` before it is sent, never queued: on a connection that runs one call at a time it would queue behind that call, which may end the transaction first; the state read is still answered.
+An end the route sees after an unknown state is recorded `unknown`, never `timed-out` or `rolled-back`, unless Studio's own rollback answered while no call of the owner's was in flight or stopped and still running.
+When the owner's credential changes while such a call is in flight or still running, or a record whose state is unknown finds no transaction left to roll back, Studio's rollback is still sent where a transaction is open, the end is recorded `unknown` and the answer says `rolledBack: false`, since that call may have ended the transaction first.
+An answered statement or script after which the session holds no transaction records the terminal `unknown`, since Studio cannot tell whether the statement or the provider's own timer ended it.
+A teardown of the owner's providers by a governance reload records `unknown`, never `rolled-back`, while a call of the owner's is in flight or stopped and still running on the record, since that call may end the transaction before the teardown's rollback.
+A BEGIN that replaces a record whose end no path recorded records that end `unknown`, since the provider opened a new transaction and how the old one ended is not known.
 A COMMIT that fails after it may have reached the database, its outcome not `not-sent`, E-5, and leaves no transaction is recorded `unknown`, never rolled back.
 
 - test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "the core asks the session on every call and keeps no state between calls"
@@ -2153,11 +2168,38 @@ A COMMIT that fails after it may have reached the database, its outcome not `not
 - test `tests/api/db/transaction.test.ts` "a COMMIT whose caller leaves answers 499 with outcome unknown, and keeps the transaction and its owner"
 - test `tests/api/db/transaction.test.ts` "an unknown state answers inTransaction null, and the next read that finds the transaction resolves it"
 - test `tests/api/db/transaction.test.ts` "a script whose state read after its statements fails answers the statements' results with inTransaction null, and keeps the transaction and its owner unresolved"
+- test `tests/api/db/transaction.test.ts` "while a BEGIN whose caller left still runs, the status read answers inTransaction null, and who holds the record"
 - test `tests/api/db/transaction.test.ts` "governance: an unknown state records no terminal event, and a later read that finds no transaction records unknown, never timed-out or rolled-back"
 - test `tests/api/db/transaction.test.ts` "governance: an unknown state the next read finds still open is resolved, and a later provider timeout records timed-out"
 - test `tests/api/db/transaction.test.ts` "governance: a COMMIT that fails after it may have reached the database and leaves no transaction records unknown, never rolled-back"
 - test `tests/api/db/transaction.test.ts` "governance: a COMMIT refused before it was sent that leaves no transaction records rolled-back"
 - test `tests/api/db/transaction.test.ts` "governance: a COMMIT whose caller leaves records an open event, and the end a later read finds is recorded unknown"
+- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "a stopped transaction call's record settles once the call it stopped waiting for settles, answered or failed"
+- test `tests/unit/lib/provider-host/core/console.test.ts` "a stopped execute's record settles once the run it stopped waiting for settles, answered or failed"
+- test `tests/unit/lib/api/transaction-ownership.test.ts` "a call Studio stopped waiting for keeps the record unresolved until it settles, whatever a read or answer finds open"
+- test `tests/api/db/transaction.test.ts` "governance: a read that finds the transaction open while a COMMIT whose caller left still runs keeps the state unknown, and the end found after it is recorded unknown"
+- test `tests/api/db/transaction.test.ts` "governance: a ROLLBACK sent while a COMMIT whose caller left still runs is refused and sends nothing, and the end the read after the COMMIT settled finds is recorded unknown"
+- test `tests/api/db/transaction.test.ts` "governance: a COMMIT sent while a ROLLBACK whose caller left still runs is refused and sends nothing, and the end the read after the ROLLBACK settled finds is recorded unknown"
+- test `tests/api/db/transaction.test.ts` "a BEGIN, statement, COMMIT or ROLLBACK sent while a COMMIT whose caller left still runs is refused 409 by name and sends nothing, and once it settled the ROLLBACK is sent and answers by its own outcome"
+- test `tests/unit/lib/api/transaction-ownership.test.ts` "a read that finds no transaction while a call Studio stopped waiting for still runs keeps the record unresolved, and one after it settled releases it"
+- test `tests/unit/lib/api/transaction-ownership.test.ts` "the watch records nothing while a call Studio stopped waiting for still runs, and looks again until it has settled"
+- test `tests/unit/lib/api/transaction-ownership.test.ts` "the watch records nothing for a read a call Studio stopped waiting for began during, and looks again"
+- test `tests/unit/lib/api/transaction-ownership.test.ts` "a state read taken before the record was claimed, changed or ended neither settles nor resolves it"
+- test `tests/api/db/transaction.test.ts` "a state read that began before the owner's newer BEGIN claimed the record neither releases nor settles it when it answers"
+- test `tests/unit/lib/api/transaction-ownership.test.ts` "a call of the owner's in flight keeps every read from acting on the record, and its own answer settles it"
+- test `tests/unit/lib/api/transaction-ownership.test.ts` "the watch looks again and records nothing while a call of the owner's is in flight, and once it answered a read that finds no transaction records timed-out once"
+- test `tests/unit/lib/api/transaction-ownership.test.ts` "the watch records nothing for a read the record changed during, and looks again"
+- test `tests/unit/lib/api/transaction-ownership.test.ts` "the watch's repeated looks stop once the record's lease has lapsed"
+- test `tests/api/db/transaction.test.ts` "governance: a read that answers while the owner's COMMIT has committed but not yet answered keeps the record and records nothing, and the COMMIT records committed"
+- test `tests/api/db/transaction.test.ts` "a BEGIN the owner sends on their own record that Studio stops waiting for holds the record's calls until it settles"
+- test `tests/api/db/transaction.test.ts` "governance: a credential change while the owner's stopped COMMIT still runs records unknown, never rolled-back, and answers rolledBack false"
+- test `tests/api/db/transaction.test.ts` "governance: a provider timeout that ends the transaction while a statement runs is recorded unknown once the statement answers"
+- test `tests/api/db/transaction.test.ts` "governance: a typed COMMIT statement, alone or ending a script, records exactly one terminal event, unknown"
+- test `tests/unit/lib/api/transaction-ownership.test.ts` "a reload that takes the grant away records unknown while a call of the owner's is in flight or stopped"
+- test `tests/api/db/transaction.test.ts` "governance: a reload that tears down the owner's providers while their COMMIT still runs records unknown, never rolled-back"
+- test `tests/unit/lib/api/transaction-ownership.test.ts` "a claim over a record whose end was not recorded records that end unknown, once"
+- test `tests/api/db/transaction.test.ts` "governance: a BEGIN that opens a new transaction while the owner's statement still runs on the old record records the old one's end unknown"
+- test `tests/api/db/transaction.test.ts` "governance: a read that finds no transaction while a BEGIN whose caller left still runs keeps the record, so the transaction it opens stays its caller's and its end is recorded unknown"
 - test `tests/api/db/transaction.test.ts` "governance: a lease that lapses on an unknown state records unknown, never timed-out"
 - test `tests/api/db/transaction.test.ts` "governance: a credential change on a transaction whose state is unknown records unknown unless a rollback answered"
 

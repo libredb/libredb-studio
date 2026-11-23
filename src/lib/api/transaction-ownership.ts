@@ -80,9 +80,20 @@
  * session state through the provider host on every request and after every call, and keeps no copy of it here. A call
  * of the owner's that answered `unknown`, because Studio stopped waiting for it or could not read its answer, keeps the
  * record and marks it `unresolved`, the route's note of what its own answer said, never read as a state: the next
- * answer or read that finds the transaction open clears it (`settleTransaction`, `resolveTransaction`). An end any path
- * sees on an unresolved record is recorded `unknown`, never `timed-out` or `rolled-back`, since a COMMIT Studio stopped
- * waiting for may have committed (`endAsSeen`).
+ * answer or read that finds the transaction open clears it (`settleTransaction`, `resolveTransaction`), but only once
+ * every call Studio stopped waiting for has settled (`awaitStoppedCall`). Until then no read resolves or releases the
+ * record, whatever state it finds: the provider may report the transaction open only because that call still runs, as
+ * a COMMIT Studio stopped waiting for leaves the provider's transaction flag set until it commits, or closed only
+ * because a BEGIN Studio stopped waiting for has not opened it yet. Every state read is awaited, so a read that began
+ * before another request of the owner's claimed, changed or ended the record is not about it, and neither releases nor
+ * settles it: each record carries a generation every change bumps, and a read acts only on the record and generation
+ * `markTransaction` saw before it began. The route counts each state-changing call of the owner's on the record before
+ * it sends it (`startOwnerCall`), and while any is in flight no read acts on the record either: a COMMIT the provider
+ * has committed may not have answered its request yet. An end any path sees on an unresolved record is recorded `unknown`, never
+ * `timed-out` or `rolled-back`, since a COMMIT Studio stopped waiting for may have committed (`endAsSeen`). For the same
+ * reason the route refuses a BEGIN, a statement, a COMMIT or a ROLLBACK of the owner's while such a call still runs
+ * (`stoppedCallRunning`), before it is sent: on a connection that runs one call at a time it would queue behind the
+ * stopped call, which may end the transaction first.
  */
 import { randomUUID } from "node:crypto";
 import type { SessionState } from "@libredb/provider-sdk/errors";
@@ -145,6 +156,31 @@ export interface TransactionOwner {
    * seen while it is set is recorded `unknown`. Never read as a state.
    */
   unresolved: boolean;
+  /**
+   * How many calls of the owner's Studio stopped waiting for have not settled yet (`awaitStoppedCall`): while any runs,
+   * no answer or read clears `unresolved`.
+   */
+  unsettled: number;
+  /**
+   * How many calls of the owner's the route has sent on this record that have not answered yet (`startOwnerCall`): while
+   * any is in flight, or a stopped one still runs (`unsettled`), no read acts on the record (`callsRunning`).
+   */
+  inFlight: number;
+  /**
+   * Bumped by every change of the record after its claim: a call sent on it and its answer, an answered state that
+   * settles it, a stopped call and that call's settle, a resolve, and its end. A state read acts on the record only when the record and its generation are
+   * the ones `markTransaction` saw before the read began (`settleTransaction`, `resolveTransaction`).
+   */
+  generation: number;
+}
+
+/**
+ * The record under a key, and its generation, as they were before a state read began: the read is about them, and
+ * about nothing claimed or changed after it.
+ */
+export interface TransactionMark {
+  readonly owner: TransactionOwner | undefined;
+  readonly generation: number;
 }
 
 /** See the "owner never comes back" note above: this is `TX_TIMEOUT_MS`, measured. */
@@ -205,6 +241,7 @@ export function endTransactionEvent(
 ): void {
   if (owner.ended) return;
   owner.ended = true;
+  owner.generation += 1;
   recordEvent(owner, end, detail);
 }
 
@@ -239,7 +276,7 @@ export function recordEndSeen(owner: TransactionOwner): void {
 export function transactionOwner(connectionId: string): TransactionOwner | null {
   const owner = owners().get(connectionId);
   if (!owner) return null;
-  if (Date.now() - owner.lastActiveAt >= OWNERSHIP_IDLE_MS) {
+  if (leaseLapsed(owner)) {
     owners().delete(connectionId);
     recordEndSeen(owner);
     return null;
@@ -247,10 +284,19 @@ export function transactionOwner(connectionId: string): TransactionOwner | null 
   return owner;
 }
 
+/** Whether `owner`'s lease has lapsed: `OWNERSHIP_IDLE_MS` since the owner last acted. */
+function leaseLapsed(owner: TransactionOwner): boolean {
+  return Date.now() - owner.lastActiveAt >= OWNERSHIP_IDLE_MS;
+}
+
 /**
  * Record `username`, and under governance its identity provider `subject`, the `providerKey` of the provider the
  * transaction runs on, the scope of its query `events` and the `providerScrub` of that provider's credential, as the
  * owner, with a new `transactionId`. Called only after `beginTransaction()` has actually succeeded. Returns the record.
+ *
+ * A record it replaces whose end was not recorded names a transaction the session no longer holds, since the provider
+ * opened a new one: no read released it, because a call of the owner's was in flight or stopped, or its read answered
+ * after the record changed. How it ended is not known, so its end is recorded `unknown`, once (`endTransactionEvent`).
  */
 export function claimTransaction(
   connectionId: string,
@@ -260,6 +306,10 @@ export function claimTransaction(
   events?: TransactionEventScope,
   providerScrub?: ProviderTextScrub,
 ): TransactionOwner {
+  const replaced = owners().get(connectionId);
+  if (replaced !== undefined) {
+    endTransactionEvent(replaced, "unknown", { statement: null, status: "cancelled", started: queryEventStart() });
+  }
   const now = Date.now();
   const owner: TransactionOwner = {
     username,
@@ -272,18 +322,32 @@ export function claimTransaction(
     events,
     ended: false,
     unresolved: false,
+    unsettled: 0,
+    inFlight: 0,
+    generation: 0,
   };
   owners().set(connectionId, owner);
   return owner;
 }
 
 /**
+ * How long the watch of `watchTransactionTimeout` waits before it looks again, when a call of the owner's that Studio
+ * stopped waiting for still ran at its tick or during its read: a second, the margin `TRANSACTION_TIMEOUT_CHECK_MS`
+ * gives the provider's own timer.
+ */
+export const TRANSACTION_TIMEOUT_RECHECK_MS = 1000;
+
+/**
  * Under governance, arms an unreferenced timer that, once `TRANSACTION_TIMEOUT_CHECK_MS` have passed, reads the session
  * state through `readState` and records `owner`'s transaction as ended (`recordEndSeen`) when `owner` is still the
  * record under `connectionId` and the read answers `not-in-transaction`: the provider rolled it back on its own timer.
- * A read that answers `in-transaction` or `unknown` records nothing. `readState` never rejects: the caller's read logs
- * a failure and answers `unknown`. The record stays for the route's reconcile to release. Without governance it arms
- * nothing.
+ * A read that answers `in-transaction` or `unknown` records nothing. While a call of the owner's is in flight or a
+ * stopped one still runs (`callsRunning`), at the tick or when the read answers, and when the record changed while the
+ * read ran (its mark, `markTransaction`), the read says nothing of the record as it is, so the tick records nothing and
+ * the watch looks again after `TRANSACTION_TIMEOUT_RECHECK_MS`. Those repeated looks stop once the record's lease has
+ * lapsed, which leaves the record to `transactionOwner` on the next request, so a call that never settles keeps no timer
+ * looking. `readState` never rejects: the caller's read logs a failure and answers `unknown`. The record stays for the
+ * route's reconcile to release. Without governance it arms nothing.
  */
 export function watchTransactionTimeout(
   connectionId: string,
@@ -291,12 +355,32 @@ export function watchTransactionTimeout(
   readState: () => Promise<SessionState>,
 ): void {
   if (owner.events === undefined) return;
+  armWatch(connectionId, owner, readState, TRANSACTION_TIMEOUT_CHECK_MS, false);
+}
+
+/** One look of the watch of `watchTransactionTimeout`, `delay` from now; a `repeat` look stops on a lapsed lease. */
+function armWatch(
+  connectionId: string,
+  owner: TransactionOwner,
+  readState: () => Promise<SessionState>,
+  delay: number,
+  repeat: boolean,
+): void {
+  const lookAgain = () => armWatch(connectionId, owner, readState, TRANSACTION_TIMEOUT_RECHECK_MS, true);
   const timer = setTimeout(() => {
     if (owners().get(connectionId) !== owner) return;
+    if (repeat && leaseLapsed(owner)) return;
+    if (callsRunning(owner)) {
+      lookAgain();
+      return;
+    }
+    const mark = markTransaction(connectionId);
     void readState().then((state) => {
-      if (state === "not-in-transaction" && owners().get(connectionId) === owner) recordEndSeen(owner);
+      if (owners().get(connectionId) !== owner) return;
+      if (callsRunning(owner) || !unchangedSince(connectionId, mark)) lookAgain();
+      else if (state === "not-in-transaction") recordEndSeen(owner);
     });
-  }, TRANSACTION_TIMEOUT_CHECK_MS);
+  }, delay);
   // The check must never hold the process open on its own.
   timer.unref?.();
 }
@@ -304,13 +388,15 @@ export function watchTransactionTimeout(
 /**
  * Records `rolled-back` for every open transaction `subject` holds on the connection Studio names `connectionId`, in any
  * of its databases, or `unknown` for an unresolved record: the governance loader calls it for each pair whose providers
- * it tears down, because the teardown rolls those transactions back (docs/GOVERNANCE.md#per-user-providers). The
- * records stay, so the owner's next request still learns what happened.
+ * it tears down, because the teardown rolls those transactions back (docs/GOVERNANCE.md#per-user-providers). It is
+ * `unknown` too while a call of the owner's is in flight or stopped and still running on the record (`callsRunning`):
+ * that call may end the transaction before the teardown's rollback, a COMMIT committing it, and the rollback then finds
+ * nothing to undo. The records stay, so the owner's next request still learns what happened.
  */
 export function endOwnerTransactions(connectionId: string, subject: string): void {
   for (const owner of owners().values()) {
     if (owner.subject !== subject || owner.events?.connection.id !== connectionId) continue;
-    endTransactionEvent(owner, endAsSeen(owner, "rolled-back"), {
+    endTransactionEvent(owner, callsRunning(owner) ? "unknown" : endAsSeen(owner, "rolled-back"), {
       statement: "ROLLBACK",
       status: "success",
       started: queryEventStart(),
@@ -342,40 +428,154 @@ export function releaseIfProviderChanged(
   return owner as TransactionOwner & { readonly providerKey: string; readonly providerScrub: ProviderTextScrub };
 }
 
-/**
- * Settles the record under `connectionId` by the session state the owner's own call answered: `in-transaction` extends
- * the lease and clears `unresolved`, `not-in-transaction` releases the record, and `unknown` keeps it and marks it
- * `unresolved`. It records no event: the call that ended a transaction records its own end. A no-op without a record.
- */
-export function settleTransaction(connectionId: string, state: SessionState): void {
+/** The record under `connectionId` and its generation now, taken before a state read begins (`TransactionMark`). */
+export function markTransaction(connectionId: string): TransactionMark {
   const owner = owners().get(connectionId);
-  if (!owner) return;
-  if (state === "not-in-transaction") {
-    owners().delete(connectionId);
-    return;
-  }
-  if (state === "unknown") {
-    owner.unresolved = true;
-    return;
-  }
-  owner.unresolved = false;
-  owner.lastActiveAt = Date.now();
+  return { owner, generation: owner?.generation ?? 0 };
+}
+
+/** Whether the record under `connectionId` is still the one `mark` saw, with the same generation. */
+function unchangedSince(connectionId: string, mark: TransactionMark): boolean {
+  const owner = owners().get(connectionId);
+  return owner === mark.owner && (owner?.generation ?? 0) === mark.generation;
+}
+
+/** Whether the record under `connectionId` was claimed, changed, ended or released since `mark` was taken. */
+export function recordChangedSince(connectionId: string, mark: TransactionMark): boolean {
+  return !unchangedSince(connectionId, mark);
 }
 
 /**
- * Resolves `owner`, the record under `connectionId`, by the session state the route's reconcile read for any caller:
- * `not-in-transaction` releases it and records the end Studio found (`recordEndSeen`), `in-transaction` clears
- * `unresolved` without extending the lease, since another session's read is not the owner's action, and `unknown`
- * changes nothing.
+ * A call of the owner's the route sends on the record under a key: `counted` is the record it is counted on until it
+ * answers or Studio stops waiting for it, none when no record held the key, and `mark` the record as it was right after
+ * the call's own count, so the call's own count never makes its own answer stale.
  */
-export function resolveTransaction(connectionId: string, owner: TransactionOwner, state: SessionState): void {
-  if (state === "unknown") return;
+export interface OwnerCall {
+  readonly mark: TransactionMark;
+  counted: TransactionOwner | undefined;
+}
+
+/**
+ * Counts a state-changing call of the owner's on the record under `connectionId` before the route sends it, and bumps
+ * the record's generation: until it answers, no read acts on the record (`callsRunning`), since the call may change the
+ * session at any moment. Without a record nothing is counted.
+ */
+export function startOwnerCall(connectionId: string): OwnerCall {
+  const owner = owners().get(connectionId);
+  if (owner !== undefined) {
+    owner.inFlight += 1;
+    owner.generation += 1;
+  }
+  return { mark: markTransaction(connectionId), counted: owner };
+}
+
+/** Drops `call`'s count once it answered, and bumps the generation; a call no longer counted changes nothing. */
+export function finishOwnerCall(call: OwnerCall): void {
+  const owner = call.counted;
+  if (owner === undefined) return;
+  call.counted = undefined;
+  owner.inFlight -= 1;
+  owner.generation += 1;
+}
+
+/**
+ * Moves `call`, which Studio stopped waiting for, from in flight to the calls that have not settled
+ * (`awaitStoppedCall`), until `settled` resolves.
+ */
+export function stopOwnerCall(connectionId: string, call: OwnerCall, settled: Promise<void>): void {
+  if (call.counted !== undefined) {
+    call.counted.inFlight -= 1;
+    call.counted = undefined;
+  }
+  awaitStoppedCall(connectionId, settled);
+}
+
+/**
+ * Settles the record under `connectionId` by the session state the owner's own call answered: `in-transaction` extends
+ * the lease and clears `unresolved` once no call Studio stopped waiting for still runs, `not-in-transaction` releases
+ * the record, and `unknown` keeps it and marks it `unresolved`. A state read the call took acts only when the record is
+ * unchanged since `mark`, taken before the call: one taken before another request of the owner's claimed, changed or
+ * ended the record is not about it. `unknown` is no read and always marks the record. It records no event: the call
+ * that ended a transaction records its own end. Answers the record it released, if it released one. A no-op without a
+ * record.
+ */
+export function settleTransaction(
+  connectionId: string,
+  state: SessionState,
+  mark: TransactionMark,
+): TransactionOwner | undefined {
+  const owner = owners().get(connectionId);
+  if (!owner) return undefined;
+  if (state === "unknown") {
+    owner.unresolved = true;
+    owner.generation += 1;
+    return undefined;
+  }
+  if (!unchangedSince(connectionId, mark)) return undefined;
+  if (state === "not-in-transaction") {
+    owners().delete(connectionId);
+    return owner;
+  }
+  if (!stoppedCallRunning(owner)) owner.unresolved = false;
+  owner.lastActiveAt = Date.now();
+  owner.generation += 1;
+  return undefined;
+}
+
+/**
+ * Holds the record under `connectionId` unresolved until `settled`, the settle of a call of the owner's Studio stopped
+ * waiting for, resolves: until then the call may still end the transaction, so an answer or read that finds it open
+ * does not resolve the record. `settled` never rejects (`UnansweredCall`). A no-op without a record.
+ */
+export function awaitStoppedCall(connectionId: string, settled: Promise<void>): void {
+  const owner = owners().get(connectionId);
+  if (!owner) return;
+  owner.unsettled += 1;
+  owner.generation += 1;
+  void settled.then(() => {
+    owner.unsettled -= 1;
+    owner.generation += 1;
+  });
+}
+
+/** Whether a call of `owner`'s that Studio stopped waiting for still runs (`awaitStoppedCall`). */
+export function stoppedCallRunning(owner: TransactionOwner): boolean {
+  return owner.unsettled > 0;
+}
+
+/** Whether any call of `owner`'s is in flight (`startOwnerCall`) or, stopped, still runs: no read acts on the record. */
+export function callsRunning(owner: TransactionOwner): boolean {
+  return owner.inFlight > 0 || stoppedCallRunning(owner);
+}
+
+/**
+ * Resolves `owner`, the record under `connectionId`, by the session state the route's reconcile read for any caller,
+ * and answers the record still held, or null once it is released. While a call of the owner's is in flight, or one
+ * Studio stopped waiting for still runs (`callsRunning`), no read resolves or releases it: the provider may report the
+ * transaction open only because that call still runs, or closed because a COMMIT the route has not seen answer ended
+ * it, or only because a BEGIN it still runs has not opened it yet. Once every such call has
+ * settled, `not-in-transaction` releases it and records the end Studio found (`recordEndSeen`), `in-transaction` clears
+ * `unresolved` without extending the lease, since another session's read is not the owner's action, and `unknown`
+ * changes nothing. A read that began before the record was claimed, changed or ended (`mark`, taken before the read) is
+ * not about it and changes nothing.
+ */
+export function resolveTransaction(
+  connectionId: string,
+  owner: TransactionOwner,
+  state: SessionState,
+  mark: TransactionMark,
+): TransactionOwner | null {
+  if (state === "unknown" || callsRunning(owner) || !unchangedSince(connectionId, mark)) return owner;
   if (state === "in-transaction") {
-    owner.unresolved = false;
-    return;
+    if (owner.unresolved) {
+      owner.unresolved = false;
+      owner.generation += 1;
+    }
+    return owner;
   }
   if (owners().get(connectionId) === owner) owners().delete(connectionId);
   recordEndSeen(owner);
+  return null;
 }
 
 /** Forget the owner: the transaction ended, or the provider ended it without a session. */

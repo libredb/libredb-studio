@@ -34,7 +34,9 @@
  * A stopped execute sends the run's cancel, when the session offers `console.cancel` and the request names a run, under
  * a cleanup context of its own (`cleanupContext`), and a cancel that fails or is cut reaches `ports.cancelFailed`. The
  * run it stopped waiting for keeps its handler: a later failure reaches `ports.late` once, and a later answer has
- * already closed what it held and given back its slot.
+ * already closed what it held and given back its slot. Every stop's record carries `settled`, which resolves once the
+ * call it stopped waiting for has settled either way, so a caller can tell when that call can no longer change the
+ * session.
  *
  * Core answers plain records and passes a provider's errors by reference; it constructs no class a caller in another
  * bundle would test with `instanceof`, so the caller's accessor builds its own classes from the records. It imports only
@@ -95,12 +97,15 @@ export interface RefusedRecord {
  * A call whose wait the context's signal ended, with the signal's reason by reference. `waitingFor` names a wait inside
  * the run the stop ended, after its execute answered, so the statement ran: `large-page-slot` when its page was waiting
  * for a large-page slot (clause C-54), `page` when its page was being read otherwise, and `other-results` when its page
- * had been read and the run was closing its other results (clause C-48).
+ * had been read and the run was closing its other results (clause C-48). `settled` resolves once the call the host
+ * stopped waiting for has settled, answered or failed, and never rejects: until then that call may still change the
+ * session (clause C-58).
  */
 export interface StoppedRecord {
   readonly kind: "stopped";
   readonly reason: unknown;
   readonly waitingFor?: "large-page-slot" | "page" | "other-results";
+  readonly settled: Promise<void>;
 }
 
 /** An execute that answered a page of its first result. */
@@ -227,6 +232,14 @@ function recordRelease(hold: PageHold): () => void {
   };
 }
 
+/** Resolves once `call` has settled, answered or failed, and never rejects: a stopped record's `settled`. */
+function settledOf(call: Promise<unknown>): Promise<void> {
+  return call.then(
+    () => undefined,
+    () => undefined,
+  );
+}
+
 /** Runs `call`, with a throw before it answers a promise read as its rejection. */
 function startCall<T>(call: () => Promise<T>): Promise<T> {
   return new Promise<T>((resolve) => {
@@ -303,7 +316,8 @@ async function runExecute(
   if (ctx.signal.aborted) {
     const closeErrors = await closeEach(sources);
     if (closeErrors.length > 0) throw new AggregateError(closeErrors, "Closing a stopped run's result sources failed.");
-    return { kind: "stopped", reason: ctx.signal.reason };
+    // The run answers this record as it settles, so the call it names has settled.
+    return { kind: "stopped", reason: ctx.signal.reason, settled: Promise.resolve() };
   }
   let limits: PumpLimits;
   try {
@@ -395,18 +409,15 @@ async function executeCall(
   freezeData(request);
   const hold: PageHold = { waiting: false };
   const progress: RunProgress = { phase: "execute" };
+  const run = startCall(() => runExecute(budget, hold, progress, session, request, ctx, pumpLimits));
   try {
-    return await awaitWithin(
-      startCall(() => runExecute(budget, hold, progress, session, request, ctx, pumpLimits)),
-      ctx.signal,
-      lateExecute(ctx, ports.late),
-    );
+    return await awaitWithin(run, ctx.signal, lateExecute(ctx, ports.late));
   } catch (error) {
     if (!stoppedBy(ctx, error)) throw error;
     cancelStoppedRun(session, request, ctx, ports);
     // `waiting` is cleared only when a slot is granted and the phase moves only before the signal aborted, so both are
     // read the same whatever order the abort's reactions run.
-    return { kind: "stopped", reason: error, ...stopMarker(hold, progress) };
+    return { kind: "stopped", reason: error, ...stopMarker(hold, progress), settled: settledOf(run) };
   }
 }
 
@@ -428,16 +439,13 @@ export async function cancelCall(
   if (facet.length > 0) return refusedBefore(facet, ctx);
   freezeContext(ctx);
   freezeData(request);
+  const call = startCall(() => sessionCancel(session, request, ctx));
   try {
-    const answer = await awaitWithin(
-      startCall(() => sessionCancel(session, request, ctx)),
-      ctx.signal,
-      lateFailure(ctx, ports.late),
-    );
+    const answer = await awaitWithin(call, ctx.signal, lateFailure(ctx, ports.late));
     return { kind: "answered", cancelled: answer.cancelled };
   } catch (error) {
     if (!stoppedBy(ctx, error)) throw error;
-    return { kind: "stopped", reason: error };
+    return { kind: "stopped", reason: error, settled: settledOf(call) };
   }
 }
 
@@ -462,15 +470,12 @@ export async function transactionCall(
   freezeContext(ctx);
   freezeData(request);
   let answer: unknown;
+  const call = startCall(() => sessionTransaction(session, request, ctx));
   try {
-    answer = await awaitWithin(
-      startCall(() => sessionTransaction(session, request, ctx)),
-      ctx.signal,
-      lateFailure(ctx, ports.late),
-    );
+    answer = await awaitWithin(call, ctx.signal, lateFailure(ctx, ports.late));
   } catch (error) {
     if (!stoppedBy(ctx, error)) throw error;
-    return { kind: "stopped", reason: error };
+    return { kind: "stopped", reason: error, settled: settledOf(call) };
   }
   const refusals = checkTransactionAnswer(request, answer);
   if (refusals.length > 0) return { kind: "refused", called: true, refusals };

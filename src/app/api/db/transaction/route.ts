@@ -54,14 +54,23 @@ import { gateRun } from "@/lib/api/run-confirmation";
 import { runConfirmationIssuerForSession } from "@/lib/api/run-confirmation-token";
 import { queryEventStart } from "@/lib/query-events/build";
 import {
+  awaitStoppedCall,
+  callsRunning,
   claimTransaction,
   endAsSeen,
   endTransactionEvent,
+  finishOwnerCall,
+  markTransaction,
   OWNERSHIP_IDLE_MS,
+  type OwnerCall,
+  recordChangedSince,
   recordTransactionStatement,
   releaseIfProviderChanged,
   resolveTransaction,
   settleTransaction,
+  startOwnerCall,
+  stopOwnerCall,
+  stoppedCallRunning,
   type TransactionEnd,
   type TransactionEventDetail,
   type TransactionEventScope,
@@ -162,6 +171,8 @@ const CREDENTIAL_CHANGED_ROLLED_BACK =
   "Your access to this connection changed while your transaction was open, so the transaction was rolled back and none of its changes were saved. Begin a new transaction to continue with your current access.";
 const CREDENTIAL_CHANGED_UNCONFIRMED =
   "Your access to this connection changed while your transaction was open, so the transaction cannot continue. Studio asked the database to roll it back and could not confirm that it did; none of its changes were committed. Begin a new transaction to continue with your current access.";
+const CREDENTIAL_CHANGED_OUTCOME_UNKNOWN =
+  "Your access to this connection changed while your transaction was open, so the transaction cannot continue. A call of yours whose outcome Studio does not know may have ended it before Studio's rollback, so Studio cannot tell whether its changes were committed or rolled back; check the data before you run its work again. Begin a new transaction to continue with your current access.";
 
 /**
  * Roll back the transaction a governed owner opened on the provider cached under `providerKey`, the key its `begin`
@@ -207,6 +218,14 @@ const STATEMENT_ACTIONS: ReadonlySet<unknown> = new Set(["begin", "query", "comm
 
 /** Of those, the ones that run inside the caller's transaction. */
 const IN_TRANSACTION_ACTIONS: ReadonlySet<unknown> = new Set(["query", "commit", "rollback"]);
+
+/** How the refusal of a call sent while a call Studio stopped waiting for still runs names each action. */
+const ACTION_NAMES: Readonly<Record<string, string>> = {
+  begin: "BEGIN",
+  query: "statement",
+  commit: "COMMIT",
+  rollback: "ROLLBACK",
+};
 
 /**
  * Under governance, what every query event of a transaction the caller opens says about who and where
@@ -254,12 +273,16 @@ function eventError(scrub: ProviderTextScrub, error: unknown): { errorCode?: str
  * Records a statement, COMMIT or ROLLBACK of the owner's that did not answer, and settles the record by the session
  * state it left (src/lib/api/transaction-ownership.ts; docs/providers/CONTRACT.md, clause C-58). One the host refused
  * before the call left everything as it was: an `open` event, the record untouched. One the host stopped waiting for
- * left an unknown state: an `open` event, the record kept and marked unresolved. One the provider failed is settled by
+ * left an unknown state: an `open` event, the record kept and marked unresolved until that call settles
+ * (`awaitStoppedCall`). One the provider failed is settled by
  * the state read at once after it: still in a transaction, or unknown, an `open` event and the record kept; no
- * transaction left, the record released and the terminal event `closedEnd`, or `unknown` on an unresolved record.
+ * transaction left, the record released and the terminal event `closedEnd`, or `unknown` on an unresolved record. The
+ * read settles the record only when it is unchanged since `call`'s mark, taken right after its own count
+ * (`settleTransaction`); a call Studio stopped waiting for moves from in flight to unsettled (`stopOwnerCall`).
  */
 function settleFailure(
   owned: string,
+  call: OwnerCall,
   owner: TransactionOwner | null,
   failure: FailedCall | UnansweredCall | NotSentCall,
   detail: TransactionEventDetail,
@@ -270,10 +293,22 @@ function settleFailure(
     return;
   }
   const state = failure.kind === "failed" ? failure.sessionState : "unknown";
-  settleTransaction(owned, state);
+  settleTransaction(owned, state, call.mark);
+  if (failure.kind === "unanswered") stopOwnerCall(owned, call, failure.settled);
   if (owner === null) return;
   if (state === "not-in-transaction") endTransactionEvent(owner, endAsSeen(owner, closedEnd), detail);
   else recordTransactionStatement(owner, detail);
+}
+
+/**
+ * Records the end of `released`, the record an answered statement or script of the owner's released because the session
+ * it answered on holds no transaction: `unknown`, since Studio cannot tell whether the statement ended it (a typed COMMIT
+ * or ROLLBACK, or an implicit commit) or the provider's own timer did while it ran. One terminal event, as every end
+ * (`endTransactionEvent`); nothing when the settle released no record.
+ */
+function recordEndFound(released: TransactionOwner | undefined): void {
+  if (released === undefined) return;
+  endTransactionEvent(released, "unknown", { statement: null, status: "success", started: queryEventStart() });
 }
 
 /**
@@ -291,6 +326,9 @@ export async function POST(req: NextRequest) {
   // Core's scrub of the providers the resolved connection builds, held out here for the `catch` below: before the
   // connection resolves no provider ran.
   let scrub: ProviderTextScrub | undefined;
+  // The caller's call on its transaction's record, counted from before it is sent until it answers (`startOwnerCall`);
+  // held out here so the `finally` below drops its count on every path, after the answer settled the record.
+  let counted: OwnerCall | undefined;
   try {
     // A body that is not a JSON object is a malformed request, refused before any connection resolves.
     const body = await readJsonObject(req);
@@ -374,22 +412,29 @@ export async function POST(req: NextRequest) {
     const released = providerKey === undefined ? null : releaseIfProviderChanged(owned, providerKey);
     if (released !== null) {
       const started = queryEventStart();
+      // A call of the owner's still in flight, or stopped and still running, on the released record may end the
+      // transaction before Studio's rollback, which on a connection that runs one call at a time queues behind it: the
+      // rollback is still sent, to end whatever transaction that call leaves, but its answer says nothing of how the
+      // transaction ended. Taken before the rollback, from the record's own count.
+      const callRan = callsRunning(released);
       const rollback = await rollBackOnProvider(released.providerKey, released.providerScrub, catalog, connection);
-      const rolledBack = rollback !== "unconfirmed";
+      // So is a rollback that found no transaction on a record whose state was unknown: a call of the owner's whose
+      // outcome Studio does not know may have committed it.
+      const outcomeUnknown = callRan || (released.unresolved && rollback === "none-open");
+      const rolledBack = !outcomeUnknown && rollback !== "unconfirmed";
       // Studio's own rollback ends the transaction: its terminal event, unless the reload that took the grant away
       // already recorded it (src/lib/governance/grant-diff.ts). On a record whose state was unknown only a rollback
-      // that answered says how it ended; a session that held none may have committed, so that end is unknown.
-      endTransactionEvent(released, rollback === "rolled-back" ? "rolled-back" : endAsSeen(released, "rolled-back"), {
+      // that answered, with no call of the owner's running, says how it ended.
+      const end = rollback === "rolled-back" ? "rolled-back" : endAsSeen(released, "rolled-back");
+      endTransactionEvent(released, outcomeUnknown ? "unknown" : end, {
         statement: "ROLLBACK",
-        status: rolledBack ? "success" : "error",
+        status: rollback === "unconfirmed" ? "error" : "success",
         started,
       });
+      let answered = rolledBack ? CREDENTIAL_CHANGED_ROLLED_BACK : CREDENTIAL_CHANGED_UNCONFIRMED;
+      if (outcomeUnknown) answered = CREDENTIAL_CHANGED_OUTCOME_UNKNOWN;
       return NextResponse.json(
-        {
-          error: rolledBack ? CREDENTIAL_CHANGED_ROLLED_BACK : CREDENTIAL_CHANGED_UNCONFIRMED,
-          code: ApiErrorCode.TRANSACTION_CREDENTIAL_CHANGED,
-          rolledBack,
-        },
+        { error: answered, code: ApiErrorCode.TRANSACTION_CREDENTIAL_CHANGED, rolledBack },
         { status: 409 },
       );
     }
@@ -413,16 +458,21 @@ export async function POST(req: NextRequest) {
     // included, runs through the provider host under a deadline the host owns and the request's signal
     // (src/lib/api/editor-transaction.ts; docs/providers/CONTRACT.md, clause C-59).
     const caller: TransactionCaller = { signal: req.signal, route: ROUTE };
+    // The record as it was before the read: a read that answers after another request of the owner's claimed, changed or
+    // ended it is not about it, so it neither releases nor settles it (`resolveTransaction`).
+    const readMark = markTransaction(owned);
     const sessionState = await readTransactionState(provider, caller);
+    // Whether the record changed while the read ran, taken before this request's own resolve changes it.
+    const readChanged = recordChangedSince(owned, readMark);
     let owner = transactionOwner(owned);
     if (owner !== null) {
       // A session that holds no transaction ended it without a call of Studio's - PostgresProvider and MySQLProvider
       // auto-roll back after TX_TIMEOUT_MS - so the record names a transaction that no longer exists. Dropping it here
       // is what stops that record from refusing the next user; under governance its end is recorded once, whichever
       // path sees it first. A state the host could not tell keeps the record: an unknown state is never read as
-      // closed (docs/providers/CONTRACT.md, clause C-58).
-      resolveTransaction(owned, owner, sessionState);
-      if (sessionState === "not-in-transaction") owner = null;
+      // closed (docs/providers/CONTRACT.md, clause C-58), and while a call of the owner's is in flight or a stopped one
+      // still runs no read releases it, whatever state it finds.
+      owner = resolveTransaction(owned, owner, sessionState, readMark);
     }
     // Under governance the owner is the subject, and the username a display label that can change
     // (docs/GOVERNANCE.md#row-semantics).
@@ -447,6 +497,21 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // While a call of the owner's that Studio stopped waiting for still runs on the transaction, nothing about the
+    // session's state is known: on a connection that runs one call at a time a call sent now would queue behind it,
+    // and it may end the transaction first, so a COMMIT or ROLLBACK would answer an end Studio cannot name and a
+    // statement could run outside the transaction. Every action that sends a statement is refused by name before it is
+    // sent; the state read above is still answered (docs/providers/CONTRACT.md, clause C-58).
+    if (owner !== null && stoppedCallRunning(owner) && STATEMENT_ACTIONS.has(action)) {
+      return NextResponse.json(
+        {
+          error: `The ${ACTION_NAMES[action as string]} was not sent: a call Studio stopped waiting for is still running on this connection's transaction. Send it again once that call has finished; the status action reads the transaction's state.`,
+          code: ApiErrorCode.TRANSACTION_CALL_RUNNING,
+        },
+        { status: 409 },
+      );
+    }
+
     // Every action that sends a statement, a script of several included, passes the admission gate first, so
     // while the query event sink cannot record a statement's event the statement is refused rather than run
     // (docs/GOVERNANCE.md#query-events).
@@ -461,6 +526,13 @@ export async function POST(req: NextRequest) {
       throw new QueryError(NO_ACTIVE_TRANSACTION, connection.type);
     }
 
+    // A call that changes the session is counted on the record before it is sent, and its mark taken after its own
+    // count: its answer and failure carry a state read taken during the call, which settles the record only when
+    // nothing else changed it meanwhile.
+    const ownCall: OwnerCall = STATEMENT_ACTIONS.has(action)
+      ? startOwnerCall(owned)
+      : { mark: markTransaction(owned), counted: undefined };
+    counted = ownCall;
     switch (action) {
       case "begin": {
         // After the provider, never before: a begin that throws must leave no owner behind. Under governance the record
@@ -492,14 +564,15 @@ export async function POST(req: NextRequest) {
           // transaction before it (docs/providers/CONTRACT.md, clause C-59).
           if (owner === null && sessionState !== "in-transaction") {
             claim();
-            settleTransaction(owned, "unknown");
-          }
+            settleTransaction(owned, "unknown", markTransaction(owned));
+            awaitStoppedCall(owned, opened.settled);
+          } else stopOwnerCall(owned, ownCall, opened.settled);
           throw opened.error;
         }
         // A server that accepted BEGIN and opened nothing holds no transaction to claim.
         if (opened.sessionState === "not-in-transaction") throw new QueryError(NO_TRANSACTION_OPENED, connection.type);
         claim();
-        settleTransaction(owned, opened.sessionState);
+        settleTransaction(owned, opened.sessionState, markTransaction(owned));
         // `stateReported: false` lets the UI say Studio cannot verify this transaction; `null`
         // is a provider that does not say, which is not a claim either way.
         return NextResponse.json({
@@ -515,6 +588,7 @@ export async function POST(req: NextRequest) {
         if (ended.kind !== "answered") {
           settleFailure(
             owned,
+            ownCall,
             owner,
             ended,
             { statement: "COMMIT", status: "error", started, ...eventError(connectionScrub, ended.error) },
@@ -527,7 +601,7 @@ export async function POST(req: NextRequest) {
         // here so the record's lifetime matches the transaction's, rather than lasting until
         // somebody happens to touch this connection again - which for an idle connection is the
         // life of the process.
-        settleTransaction(owned, ended.sessionState);
+        settleTransaction(owned, ended.sessionState, ownCall.mark);
         if (owner !== null)
           endTransactionEvent(owner, "committed", { statement: "COMMIT", status: "success", started });
         return NextResponse.json({ status: "committed", message: "Transaction committed" });
@@ -539,6 +613,7 @@ export async function POST(req: NextRequest) {
         if (ended.kind !== "answered") {
           settleFailure(
             owned,
+            ownCall,
             owner,
             ended,
             { statement: "ROLLBACK", status: "error", started, ...eventError(connectionScrub, ended.error) },
@@ -546,7 +621,7 @@ export async function POST(req: NextRequest) {
           );
           throw ended.error;
         }
-        settleTransaction(owned, ended.sessionState);
+        settleTransaction(owned, ended.sessionState, ownCall.mark);
         if (owner !== null) {
           endTransactionEvent(owner, "rolled-back", { statement: "ROLLBACK", status: "success", started });
         }
@@ -591,7 +666,7 @@ export async function POST(req: NextRequest) {
             // so a read that fails answers `unknown`, logged, as after a failure: the record stays, unresolved, and the
             // answer still reports their results (clause C-58).
             const stillOpen = await readTransactionStateOrUnknown(provider, caller);
-            settleTransaction(owned, stillOpen);
+            recordEndFound(settleTransaction(owned, stillOpen, ownCall.mark));
             return NextResponse.json({ ...script, inTransaction: inTransactionAnswer(stillOpen), ...confirmation });
           }
           if (units.length === 1) statementSql = units[0].sql;
@@ -610,6 +685,7 @@ export async function POST(req: NextRequest) {
           // the transaction's terminal event, so the next request's reconcile does not record it as timed out.
           settleFailure(
             owned,
+            ownCall,
             owner,
             ran,
             { statement: sql, status: "error", started, ...eventError(connectionScrub, ran.error) },
@@ -624,7 +700,7 @@ export async function POST(req: NextRequest) {
         // DDL). Reported rather than hidden, because the caller is about to ask for a
         // ROLLBACK that would answer success and undo nothing (SANDBOX said "Changes
         // auto-rolled back" over a committed CREATE TABLE). The record goes with it.
-        settleTransaction(owned, ran.sessionState);
+        recordEndFound(settleTransaction(owned, ran.sessionState, ownCall.mark));
 
         // THE SAME CONJUNCT AS `/api/db/query` (#816), for the same reason and on purpose: the page body is the one
         // `runEditorQuery` answers (`editorPageBody`, src/lib/api/editor-query.ts).
@@ -655,8 +731,12 @@ export async function POST(req: NextRequest) {
         // (a restarted process, or a lapsed lease) reports `inTransaction` true with both of the
         // others false, and that state is the one any session is allowed to end.
         // `inTransaction` is null while the session state is unknown, which is neither, and the next read resolves it.
+        // While a call of the owner's is in flight or a stopped one still runs it is null whatever the read found: the
+        // provider may report the transaction open or closed only because that call has not answered or settled. So it
+        // is when the record changed while the read ran, which is then not about it (docs/providers/CONTRACT.md, C-58).
+        const stateKnown = !readChanged && (owner === null || !callsRunning(owner));
         return NextResponse.json({
-          inTransaction: inTransactionAnswer(sessionState),
+          inTransaction: inTransactionAnswer(stateKnown ? sessionState : "unknown"),
           ownedByYou,
           heldByAnotherSession: heldByAnother,
           startedAt: owner ? new Date(owner.startedAt).toISOString() : null,
@@ -671,5 +751,7 @@ export async function POST(req: NextRequest) {
     }
   } catch (error) {
     return createErrorResponse(error, { route: "api/db/transaction", scrub });
+  } finally {
+    if (counted !== undefined) finishOwnerCall(counted);
   }
 }

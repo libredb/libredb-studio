@@ -291,7 +291,7 @@ describe("transactionCall", () => {
     const thrown = new Error(marker());
     pending.reject(thrown);
 
-    expect(record).toEqual({ kind: "stopped", reason });
+    expect(record).toEqual({ kind: "stopped", reason, settled: expect.any(Promise) });
     expect(await firstLate).toBe(thrown);
     await turn();
     expect(late).toEqual([thrown]);
@@ -303,10 +303,40 @@ describe("transactionCall", () => {
     const stopped = transactionCall(other.session, { action: "begin" }, contextOf(otherController), ports);
     await other.called;
     otherController.abort(reason);
-    expect(await stopped).toEqual({ kind: "stopped", reason });
+    expect(await stopped).toEqual({ kind: "stopped", reason, settled: expect.any(Promise) });
     answered.resolve({ sessionState: "in-transaction" });
     await turn();
     expect(late).toEqual([thrown]);
+  });
+
+  test("a stopped transaction call's record settles once the call it stopped waiting for settles, answered or failed", async () => {
+    /** Stops the call while it runs, then settles it as `settle` says. */
+    async function stopThenSettle(settle: "answered" | "failed"): Promise<void> {
+      const pending = Promise.withResolvers<TransactionAnswer>();
+      const fx = sessionOf(() => pending.promise);
+      const { ports } = portsOf();
+      const controller = new AbortController();
+
+      const running = transactionCall(fx.session, { action: "commit" }, contextOf(controller), ports);
+      await fx.called;
+      controller.abort(new Error(marker()));
+      const record = await running;
+      if (record.kind !== "stopped") throw new Error(`A stop was expected, not ${record.kind}.`);
+      let settled = false;
+      const watched = record.settled.then(() => {
+        settled = true;
+      });
+      await turn();
+      expect(settled).toBe(false);
+
+      if (settle === "answered") pending.resolve({ sessionState: "not-in-transaction" });
+      else pending.reject(new Error(marker()));
+      await watched;
+      expect(settled).toBe(true);
+    }
+
+    await stopThenSettle("answered");
+    await stopThenSettle("failed");
   });
 
   test("the core asks the session on every call and keeps no state between calls", async () => {
@@ -463,7 +493,7 @@ describe("a statement sent inside a transaction", () => {
     });
     await turn();
 
-    expect(record).toEqual({ kind: "stopped", reason });
+    expect(record).toEqual({ kind: "stopped", reason, settled: expect.any(Promise) });
     expect(Object.hasOwn(record, "sessionState")).toBe(false);
   });
 });

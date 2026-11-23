@@ -674,16 +674,21 @@ Exactly one terminal row ends a transaction, with `statement_type` `OTHER`:
 
 - `committed`, statement `COMMIT`, for the person's commit.
 - `rolled-back`, statement `ROLLBACK`, for the person's rollback and for the rollbacks Studio makes itself: when the grant level or credential under the transaction changed (409 `TRANSACTION_CREDENTIAL_CHANGED`, with `status` `error` when Studio could not confirm the rollback), and when a reload takes the grant away and closes the person's providers.
+  A reload that closes them while a call of the person's is still running on the transaction records `unknown` instead, since that call, a `COMMIT` among them, may end the transaction before the close's rollback.
   A close that fails records nothing and keeps the transaction's record, because the transaction may still be open, and is logged as `Governance teardown failed` with `transactionOutcome` `unknown`; the path that later sees the transaction end records its row.
 - `timed-out`, with no statement and `status` `cancelled`, when the database driver rolled the transaction back at its five-minute limit, which Studio notices at most 1 second after the limit or at the person's next request.
 - `unknown`, when Studio cannot tell how the transaction ended (docs/providers/CONTRACT.md, C-58).
   With no statement and `status` `cancelled` when Studio found the transaction ended after a call it had stopped waiting for: a `COMMIT` it stopped waiting for may have committed, so neither `timed-out` nor `rolled-back` is claimed, and the same holds for any other end Studio sees in that state, its own rollbacks included.
+  The same row ends a transaction a new `BEGIN` of the person's replaced before any other path recorded its end, which happens when it ended while one of their calls was still running on it.
   With statement `COMMIT` and `status` `error` when a `COMMIT` failed after it may have reached the database and left no transaction: the database may have committed it or rolled it back, so check the data before the work runs again.
+  With statement `ROLLBACK` when the grant level or credential under the transaction changed while a call of the person's was still running on it, or after a call whose outcome Studio does not know when no transaction was left to roll back: that call may have ended the transaction before Studio's rollback, which the 409 `TRANSACTION_CREDENTIAL_CHANGED` then answers with `rolledBack` `false`.
+  With no statement and `status` `success` when a statement or script the person ran answered and left no transaction open: it may have ended the transaction itself, a typed `COMMIT` or `ROLLBACK` or an implicit commit, or the database driver's five-minute limit may have ended it while the statement ran.
 
 A `COMMIT` that fails records `status` `error`: `open` when the transaction is still open or its state unknown, `rolled-back` when it ended and the `COMMIT` cannot have reached the database, and `unknown` when it ended otherwise, as above.
 A `ROLLBACK` that fails records `status` `error`: `rolled-back` when the transaction ended with it, else `open`.
 A statement, `COMMIT` or `ROLLBACK` whose caller left or whose deadline passed records an `open` row with `status` `error` and code `QUERY_CANCELLED` or `TIMEOUT_ERROR`, keeps the transaction, and may still have run.
-A statement that itself ends the transaction, such as a typed `COMMIT`, records only its `open` row.
+Until that call has settled, nothing about the transaction's state is known: a `BEGIN`, statement, `COMMIT` or `ROLLBACK` the person sends meanwhile is refused with 409 `TRANSACTION_CALL_RUNNING` before it reaches the database and records nothing, since it would queue behind that call, which may end the transaction first.
+A statement that itself ends the transaction, such as a typed `COMMIT`, records its `open` row and then the terminal `unknown` row above.
 A statement that fails and leaves no transaction open records the terminal `rolled-back` row with its own text and `status` `error` instead: a typed `COMMIT` the server ended in failure, or a statement answered 503 `TRANSACTION_LOST` because the transaction's database session ended.
 A statement, `COMMIT` or `ROLLBACK` request from a person who holds no open transaction on the connection, such as one sent right after the five-minute limit, is refused with 400 `QUERY_ERROR` and the sentence `No active transaction` before anything reaches the database, so no statement runs in a transaction without its row.
 It is the sentence the database providers answer for a statement outside a transaction, so the editor leaves transaction mode on either.
@@ -868,5 +873,5 @@ Under governance Studio's API answers these codes in the `code` field of an erro
 | `CONNECTION_NOT_FOUND` | 404 | The connection does not exist or is not granted to the caller; the two are indistinguishable. |
 | `GOVERNANCE_UNAVAILABLE` | 503 | The snapshot is loading, too old, misconfigured or incompatible. |
 | `AUDIT_UNAVAILABLE` | 503 | `queryLog.onSinkFailure` is `refuse` and Studio cannot record query events: it is backing off after a failed insert, its queue is at least 90% full, or the shutdown has closed its query event sink, so the request was refused before any statement ran. |
-| `TRANSACTION_CREDENTIAL_CHANGED` | 409 | The grant level or credential under the caller's open transaction changed, and Studio rolled the transaction back; `rolledBack` is `false` when it could not confirm the rollback. |
+| `TRANSACTION_CREDENTIAL_CHANGED` | 409 | The grant level or credential under the caller's open transaction changed, and Studio rolled the transaction back; `rolledBack` is `false` when it could not confirm the rollback, or when a call of the caller's whose outcome is not known may have ended the transaction first. |
 | `AI_DISABLED` | 403 | `ai.enabled` is `false`, and a route of the AI bucket refused a signed-in caller before any LLM provider was built. |
