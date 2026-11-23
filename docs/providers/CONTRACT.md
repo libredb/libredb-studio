@@ -1640,6 +1640,8 @@ Before the call it checks the context with `checkCallStart`, C-27, and the reque
 It then freezes the context and the request in place, C-12, and waits for the call with `awaitWithin` until the context's signal, C-28.
 An execute's run pumps the first result with `pumpPage` within the limits the caller sets from the execute answer, C-15, under the core's page budget, C-53, closes every other result once, and answers a refusal the pump throws as a record.
 A call is stopped exactly when its signal aborted and the wait rejected with that signal's reason, so a provider that throws its own signal's reason is stopped too, and the stop is answered as a record with that reason.
+A stop that ends an execute after its execute answered is marked by the part of the run it ended, since the statement ran: the slot while the page waits for one, C-54, the page from its first pull until the pump answered it, and the other results while the run closes them after that.
+The caller answers a stop marked as waiting for the page or for the other results as C-54 answers one waiting for the slot, `QueryCancelledError` when its own signal ended the wait and otherwise `StudioTimeoutRefusal` with Studio's sentence saying the statement answered and, for the other results, that its page was read, both outcome unknown.
 A stopped execute sends the run's cancel when the session offers `console.cancel` and the request names a run, under a cleanup context of its own, C-47, and a cancel that fails or is cut is handed to the caller, never left as a detached rejection.
 Core constructs no error class a caller tests with `instanceof`: the caller builds its own classes from the records, C-51.
 
@@ -1651,6 +1653,11 @@ Core constructs no error class a caller tests with `instanceof`: the caller buil
 - test `tests/unit/lib/provider-host/core/console.test.ts` "no cancel is sent to a session without console.cancel or for a request without a run id"
 - test `tests/unit/lib/provider-host/core/console.test.ts` "a cancel that fails after a stop reaches its handler once"
 - test `tests/unit/lib/provider-host/core/console.test.ts` "a provider that throws its own signal's reason is answered as a stop"
+- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "a call whose page its caller stops while it is read answers a stop marked as waiting for the page"
+- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "a call whose page its deadline stops while it is read answers a stop marked as waiting for the page"
+- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "a call stopped after its page was read, while its other results close, answers a stop marked as closing them"
+- test `tests/unit/lib/api/editor-query.test.ts` "a page whose reading its deadline ends answers StudioTimeoutRefusal saying the statement answered, outcome unknown"
+- test `tests/unit/lib/api/editor-query.test.ts` "a run whose closing of its other results its deadline ends answers StudioTimeoutRefusal saying the page was read, outcome unknown"
 - test `tests/unit/lib/provider-host/core/console.test.ts` "a cancel to a session without console.cancel is refused as a record, and the provider is never called"
 - test `tests/unit/lib/provider-host/core/console.test.ts` "a cancel whose signal already aborted is refused as a record"
 - test `tests/unit/lib/provider-host/core/console.test.ts` "a cancel the caller stops waiting for answers a stop, and its later failure reaches the late handler once"
