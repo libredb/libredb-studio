@@ -53,7 +53,8 @@ import type { DatabaseConnection, EgressDecision } from "@/lib/db/types";
 // it server-side instead (`output_format_json_quote_64bit_integers`, #264).
 import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
 import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
-import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { type SqlGrammar } from "@libredb/provider-sdk/sql";
 import { readStatementEnd } from "@/lib/sql/statement-end";
 import {
   type TrinoDialect,

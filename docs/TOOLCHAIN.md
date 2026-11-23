@@ -231,6 +231,7 @@ attw resolves the declared types and `lib:closure` reads the built text, and bot
 2. It applies the two workspace rules below to the packed `package.json`.
 3. It reads every module specifier of every `.js`, `.mjs`, `.d.ts` and `.d.mts` file of the packed `dist/` with the TypeScript parser, so SQL or fixture text inside a string is never taken for an import, and fails naming the file and the specifier unless the specifier is relative, a `dependencies` or `peerDependencies` name of the packed manifest (subpath dropped), a Node builtin (`module.isBuiltin`, so `node:sqlite` passes and a stripped `sqlite` fails), or a Bun runtime module (`bun:`, today only `bun:sqlite`).
    A computed `import()` or `require()` fails too, naming the file, because what it loads cannot be checked; there is none today.
+   A relative specifier of a JavaScript file is left to the load in step 4, but nothing loads a declaration file, so a relative specifier of a `.d.ts` or `.d.mts` file must be one of the two forms the build writes, `./<name>.js` naming `<name>.d.ts` from a `.d.ts` or `./<name>.mjs` naming `<name>.d.mts` from a `.d.mts`, with that file in the dist; any other fails naming the file and the specifier.
 4. It links only the declared names into the temporary `node_modules`, each to the repository's install, and a child `node` (`scripts/load-lib-closure.mjs`) loads every module of the `index` and `providers` closures once, ESM by `import()` and CJS by `require`, dynamic imports included, reporting each failing module with its error code and the first line of its message.
 
 The load is isolated so that only a declared package can resolve.
@@ -658,9 +659,9 @@ The builder asserts that `.next/standalone/packages` does not exist, and `script
 - SonarCloud: `sonar.sources` and `sonar.tests` both name `packages`, kept apart by patterns: package tests are `sonar.test.inclusions` and `sonar.exclusions`, and out of duplication detection.
 - The VS Code extension: the host bundle refuses any `packages/` input, and the webview bundles a package file only when a sql-grammar row reaches it, as it does a file under `src/lib/db/providers/`.
 - The standalone payload: pruned, as above.
-- The library: `tsup.config.ts` bundles every package, its code through `noExternal` and its declarations through `dts.resolve`, both read from `workspacePackageNames` in `scripts/workspace-packages.mjs`, because `@libredb/studio` on npm cannot depend on an unpublished package.
-  tsup's declaration resolver reads a package's `types` field, not its `exports`, so a package points `types` under its `src/`; without it the declarations keep a bare import of the package.
-  `bun run lib:load` fails by name on that bare import, on a packed manifest that names a package, and on a package dependency the root does not declare ("The packed library loads (`lib:load`)").
+- The library: `tsup.config.ts` bundles every package, because `@libredb/studio` on npm cannot depend on an unpublished package: its code through `noExternal`, read from `workspacePackageNames` in `scripts/workspace-packages.mjs`, and its declarations through `dts.compilerOptions.paths`, the root tsconfig's `paths` plus `workspacePackageSourcePaths`, which maps each `exports` entry of each package (root and subpaths) to its file under `packages/<name>/`.
+  rollup-plugin-dts keeps a module TypeScript found through `node_modules` as an external import and inlines any other, so a package resolved through these paths is inlined with its own relative imports; tsup's `dts.resolve` matched a name exactly and resolved to the `node_modules` link, which left a subpath import, or a root package's relative import, in the declarations.
+  `bun run lib:load` fails by name on a bare import of a package, on a declaration's relative import of a file the dist does not have, on a packed manifest that names a package, and on a package dependency the root does not declare ("The packed library loads (`lib:load`)").
 
 ### The package import rule
 

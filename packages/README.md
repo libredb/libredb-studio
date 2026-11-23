@@ -2,7 +2,7 @@
 
 This directory holds Studio's bun workspace packages: code staged as separate packages inside this repository before it moves to a repository of its own.
 The root `package.json` declares them with `"workspaces": ["packages/*"]`.
-The first package is `packages/provider-sdk/`, `@libredb/provider-sdk`: the provider contract's schema, its generated types and its validator, the value codec, the error record's contract, and the call surface a provider package implements (`docs/providers/CONTRACT.md`).
+The first package is `packages/provider-sdk/`, `@libredb/provider-sdk`: the provider contract's schema, its generated types and its validator under `/manifest`, the value codec under `/values`, the error record's contract under `/errors`, the call surface a provider package implements under `/calls`, and the SQL grammar facts under `/sql` (`docs/providers/CONTRACT.md`).
 
 ## Layout
 
@@ -54,7 +54,8 @@ The builder stage asserts that `.next/standalone/packages` does not exist, and `
 ## Library
 
 `@libredb/studio` on npm cannot depend on an unpublished package, so the library build (`tsup.config.ts`) bundles every workspace package, its code and its declarations, by the names `scripts/workspace-packages.mjs` lists.
-A package sets `"types"` to a path under its `src/`, such as `"./src/index.ts"`, because tsup's declaration resolver reads that field and not `exports`.
+The declaration build resolves a package through TypeScript `paths` that map each of its `exports` entries, the root and every subpath, to the entry's file under `packages/<name>/` (`workspacePackageSourcePaths`), so rollup-plugin-dts inlines the package's declarations, its own relative imports included, instead of leaving an import of the unpublished package.
+Every `exports` entry is therefore one path string; a conditional-exports object is refused by name, because no single source file stands for it.
 A package is never a root `dependencies`, `peerDependencies` or `optionalDependencies` entry, since a consumer's install would look for it on the registry; the root may list it under `devDependencies`.
 Every `dependencies` and `peerDependencies` name of a package is also a root `dependencies` or `peerDependencies` name, because the bundled package's drivers are the library's own.
 `bun run lib:load` enforces all of this on the packed package (`docs/TOOLCHAIN.md`, "The packed library loads (`lib:load`)").

@@ -12,6 +12,7 @@ The SDK package `@libredb/provider-sdk`, under [`packages/provider-sdk`](../../p
 - [`codec.ts`](../../packages/provider-sdk/src/values/codec.ts), the value codec, exported from `@libredb/provider-sdk/values`.
 - [`errors/index.ts`](../../packages/provider-sdk/src/errors/index.ts), the error record's shape and vocabularies, the kinds a provider may raise and the driver error row contract, exported from `@libredb/provider-sdk/errors`.
 - [`calls/index.ts`](../../packages/provider-sdk/src/calls/index.ts), the call and context types, `defineProvider`, `checkProviderModule` and `envReader`, exported from `@libredb/provider-sdk/calls`.
+- `SqlGrammar` and its member types, the compatibility default `DEFAULT_SQL_GRAMMAR`, and `hashRunIsAmbiguous`, exported from `@libredb/provider-sdk/sql`.
 
 The package root exports every entry's surface.
 The schema, the generated types and the constants the SDK exports are the source for every vocabulary named here, and this document lists none of them by hand.
@@ -501,6 +502,23 @@ No host, client, agent or MCP component resends a request because of it, for a w
 Every read of the flag in Studio's source is a recorded copy that carries it to the next hop.
 
 - test `tests/unit/lib/api/retryable-readers.test.ts` "every read of an answer's retryable is a recorded copy, so nothing resends on it"
+## SQL grammar
+
+An engine whose query text is SQL states its grammar facts: what a handful of characters and forms mean in its SQL, which Studio's readers read a statement's structure with.
+
+### S-1 (normative): One grammar type and one compatibility default, both the SDK's
+
+The grammar facts are one type and the compatibility reading is one value, both exported from `@libredb/provider-sdk/sql`.
+Studio's readers and every engine's grammar row import `SqlGrammar` and `DEFAULT_SQL_GRAMMAR` from `@libredb/provider-sdk/sql` by name, a fact a dialect has not established takes the default's value, and the module that resolves a grammar by engine id declares neither.
+
+- test `packages/provider-sdk/tests/sql/grammar.test.ts` "DEFAULT_SQL_GRAMMAR is the compatibility reading"
+- test `tests/unit/sql/grammar.test.ts` "the module that resolves a grammar by engine id exports only its two readers"
+- test `tests/unit/db/sql-grammar/shared.test.ts` "the shared blocks are SQLITE_GRAMMAR, NO_EXTRA_WORDS and REDACTED_VALUE"
+
+### S-2 (informative): The grammar facts are not yet manifest data
+
+A grammar row is still code beside its provider, read by Studio's registry.
+The manifest segment that declares the facts, each pattern as a bounded pattern string, is a later part of this chapter.
 
 ## Calls
 
@@ -593,7 +611,7 @@ The host's refusal of an undeclared field arrives with the test transport, and t
 These chapters are added by the changes that bring their enforcers:
 
 - Connection rules and connection string rows: field rules as bounded patterns and named server checks, the host hint and identity readers, the connection import, the refusal sentence of each refused field, and the connection string rows with their schemes, URL TLS and paste readers and seed checks.
-- Editor and SQL text: execution UI, SQL grammar, SQL writing, migration DDL, generators, editor languages, explain formats and discovery fence tags.
+- Editor and SQL text: execution UI, the SQL grammar facts as manifest data, SQL writing, migration DDL, generators, editor languages, explain formats and discovery fence tags.
 - Policy and MCP claims, each a request a provider makes that only Studio's review record grants, the agent overlay, and presentation (an icon and a colour).
 - Calls, continued: the memory test transport, refinements and the byte budgets, and the cancel, deadline and failure rules.
 - The API report of each SDK entry.

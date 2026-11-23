@@ -1,20 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_SQL_GRAMMAR, NO_EXTRA_WORDS, REDACTED_VALUE, SQLITE_GRAMMAR } from "@/lib/db/sql-grammar/shared";
-import { DEFAULT_SQL_GRAMMAR as GRAMMAR_DEFAULT, resolveSqlGrammar } from "@/lib/sql/grammar";
+import { NO_EXTRA_WORDS, REDACTED_VALUE, SQLITE_GRAMMAR } from "@/lib/db/sql-grammar/shared";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
 
 describe("sql grammar shared building blocks", () => {
-  test("DEFAULT_SQL_GRAMMAR is the one @/lib/sql/grammar exports, with today's facts", () => {
-    expect(DEFAULT_SQL_GRAMMAR).toBe(GRAMMAR_DEFAULT);
-    expect(DEFAULT_SQL_GRAMMAR).toEqual({
-      hash: "comment-unless-operator",
-      bracket: "quoted-identifier",
-      blockComment: "flat",
-      alternateQuoting: false,
-      doubleSlashComment: false,
-      backslashAlwaysEscapes: false,
-      script: { blocks: "none", separatorLine: null, unit: "statement" },
-      trailingLimitClauses: [],
-    });
+  test("the shared blocks are SQLITE_GRAMMAR, NO_EXTRA_WORDS and REDACTED_VALUE", async () => {
+    expect(Object.keys(await import("@/lib/db/sql-grammar/shared")).sort()).toEqual([
+      "NO_EXTRA_WORDS",
+      "REDACTED_VALUE",
+      "SQLITE_GRAMMAR",
+    ]);
   });
 
   test("SQLITE_GRAMMAR is the one grammar sqlite and libsql share", () => {

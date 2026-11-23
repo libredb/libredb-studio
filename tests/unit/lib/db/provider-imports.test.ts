@@ -29,9 +29,12 @@ import {
   moduleSpecifiers,
   outwardImports,
   PROVIDER_DIRECTORY,
+  providerReach,
   resolveSpecifier,
   SCANNED_ROOTS,
   type SourceText,
+  valueImportPaths,
+  valueSpecifiers,
 } from "./provider-imports/scan";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
@@ -431,4 +434,104 @@ describe("the decision record", () => {
       `${RECORD_FILE} has no table with the header ${INWARD_HEADER}`,
     );
   });
+});
+
+const SDK_SQL = "SDK /sql";
+
+/** One sentence per reader that reaches a provider module: how many, and the path to the first. */
+function reachFindings(
+  readers: readonly string[],
+  tree: { files: SourceText[]; listed: ReadonlySet<string> },
+): string[] {
+  return readers.flatMap((reader) => {
+    const reach = providerReach(reader, tree.files, tree.listed);
+    if (reach.length === 0) return [];
+    return [
+      `${reader} reaches ${reach.length} provider modules through its value imports, first ${reach[0].join(" -> ")}`,
+    ];
+  });
+}
+
+describe("the SDK /sql readers", () => {
+  test("valueSpecifiers reads what loads a module and leaves out what the compiler erases", () => {
+    const text = [
+      'import { a } from "./value";',
+      'import type { B } from "./type-only";',
+      'import { type C, type D } from "./inline-types";',
+      'import { type E, f } from "./mixed";',
+      'import g, { type H } from "./default";',
+      'import * as i from "./namespace";',
+      'import "./side-effect";',
+      'export type { J } from "./export-type";',
+      'export { type K } from "./export-inline-type";',
+      'export { l } from "./export-value";',
+      'export * from "./export-star";',
+      'import m = require("./import-equals");',
+      'export type N = typeof import("./typeof-import");',
+      'export const o = () => import("./dynamic");',
+      'export const p = require("./require");',
+      "export const q = (name: string) => import(name);",
+    ].join("\n");
+
+    expect(valueSpecifiers(text)).toEqual([
+      "./value",
+      "./mixed",
+      "./default",
+      "./namespace",
+      "./side-effect",
+      "./export-value",
+      "./export-star",
+      "./import-equals",
+      "./dynamic",
+      "./require",
+    ]);
+  });
+
+  test("a reader that value-imports the grammar module is reported with the path it took", () => {
+    const tree = plant({
+      "src/lib/sql/reader.ts":
+        'import { resolveSqlGrammar } from "./grammar";\nimport { x } from "@libredb/provider-sdk/sql";',
+      "src/lib/sql/grammar.ts": 'import { sqlGrammarFor } from "@/lib/db/sql-grammar";',
+      "src/lib/db/sql-grammar/index.ts": `import { POSTGRES_GRAMMAR } from "${POSTGRES_SPECIFIER}";\nimport data from "./data.json";`,
+      "src/lib/db/sql-grammar/data.json": "{}",
+      [POSTGRES]: "export const POSTGRES_GRAMMAR = {};",
+    });
+
+    expect(reachFindings(["src/lib/sql/reader.ts"], tree)).toEqual([
+      `src/lib/sql/reader.ts reaches 1 provider modules through its value imports, first src/lib/sql/reader.ts -> src/lib/sql/grammar.ts -> src/lib/db/sql-grammar/index.ts -> ${POSTGRES}`,
+    ]);
+  });
+
+  test("a type-only import of the grammar module reaches no provider module", () => {
+    const tree = plant({
+      "src/lib/sql/reader.ts": 'import type { G } from "./grammar";\nimport { type H } from "./grammar";',
+      "src/lib/sql/grammar.ts": `import { P } from "${POSTGRES_SPECIFIER}";`,
+      [POSTGRES]: "export const P = 1;",
+    });
+
+    expect(reachFindings(["src/lib/sql/reader.ts"], tree)).toEqual([]);
+  });
+
+  test("an unresolved specifier or an unread source file in the closure throws, naming it", () => {
+    expect(() =>
+      valueImportPaths("src/a.ts", plant({ "src/a.ts": 'import "./missing";' }).files, new Set(["src/a.ts"])),
+    ).toThrow('src/a.ts: "./missing" resolves to no listed file');
+    expect(() =>
+      valueImportPaths("src/a.ts", plant({ "src/a.ts": 'import "./b";' }).files, new Set(["src/a.ts", "src/b.ts"])),
+    ).toThrow("src/b.ts is reached but its text was not read");
+  });
+
+  test(
+    "every core module the outward table sends to SDK /sql reaches no provider module",
+    () => {
+      const tree = readRealTree();
+      const readers = tableRows(readFileSync(join(ROOT, RECORD_FILE), "utf8"), OUTWARD_HEADER)
+        .filter((row) => row[1] === SDK_SQL)
+        .map((row) => row[0]);
+
+      expect(readers.length).toBeGreaterThan(0);
+      expect(reachFindings(readers, tree)).toEqual([]);
+    },
+    REAL_TREE_TIMEOUT,
+  );
 });

@@ -20,7 +20,7 @@
  * the vocabulary to the caller.
  */
 
-import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "./grammar";
+import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "@libredb/provider-sdk/sql";
 import { readSqlSpan, type SqlSpanKind } from "./spans";
 
 /** Where a statement's leading keyword is, and what it is. */

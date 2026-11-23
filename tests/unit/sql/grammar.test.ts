@@ -1,12 +1,11 @@
 import { describe, test, expect } from "bun:test";
+import { readsSqlText, resolveSqlGrammar } from "@/lib/sql/grammar";
 import {
   type BlockCommentGrammar,
   type BracketGrammar,
   DEFAULT_SQL_GRAMMAR,
   hashRunIsAmbiguous,
-  readsSqlText,
-  resolveSqlGrammar,
-} from "@/lib/sql/grammar";
+} from "@libredb/provider-sdk/sql";
 import type { DatabaseType } from "@/lib/types";
 import { refusalOf, refusalThrownBy } from "../../helpers/outside-the-union";
 
@@ -338,6 +337,12 @@ describe("resolveSqlGrammar", () => {
     // this fact existed, so keeping it out is what leaves every dialect-less
     // fixture answering what it answered.
     expect(DEFAULT_SQL_GRAMMAR.doubleSlashComment).toBe(false);
+  });
+});
+
+describe("the grammar module", () => {
+  test("the module that resolves a grammar by engine id exports only its two readers", async () => {
+    expect(Object.keys(await import("@/lib/sql/grammar")).sort()).toEqual(["readsSqlText", "resolveSqlGrammar"]);
   });
 });
 

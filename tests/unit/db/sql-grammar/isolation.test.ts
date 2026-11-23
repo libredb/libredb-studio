@@ -22,7 +22,7 @@ const CONCURRENCY = 8;
 function script(engine: EngineModule): string {
   return `
 import { mock } from "bun:test";
-import { DEFAULT_SQL_GRAMMAR } from "@/lib/db/sql-grammar/shared";
+import { DEFAULT_SQL_GRAMMAR } from "@libredb/provider-sdk/sql";
 const SENTINEL = {
   grammar: { ...DEFAULT_SQL_GRAMMAR, hash: "comment", bracket: "subscript", blockComment: "nesting", doubleSlashComment: true },
   readsSqlText: false,

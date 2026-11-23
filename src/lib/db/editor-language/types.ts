@@ -2,7 +2,7 @@ import type * as Monaco from "monaco-editor";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import type { ConsoleLanguage } from "@/lib/editor/console-language";
 import type { SchemaCompletionCache } from "@/lib/editor/sql-completions";
-import type { SqlGrammar } from "@/lib/sql/grammar";
+import type { SqlGrammar } from "@libredb/provider-sdk/sql";
 import type { DatabaseType } from "@/lib/types";
 
 /** One object of the editor's schema context, as the schema tree hands it to `QueryEditor` in JSON. */

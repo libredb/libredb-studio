@@ -1,16 +1,35 @@
 import { defineConfig } from "tsup";
 import path from "path";
-import { workspacePackageNames } from "./scripts/workspace-packages.mjs";
+import ts from "typescript";
+import { workspacePackageNames, workspacePackageSourcePaths } from "./scripts/workspace-packages.mjs";
 
 /**
  * Every bun workspace package under packages/, by manifest name. `@libredb/studio` on npm cannot depend on an
  * unpublished package, so until a package is published on its own the library build bundles it: its code through
- * `noExternal` and its declarations through `dts.resolve`. tsup's declaration resolver reads a package's `types`
- * field, not its `exports`, so a workspace package points `types` under its `src/` (packages/README.md, "Library").
+ * `noExternal` and its declarations through `DECLARATION_PATHS`.
  * The packages' own dependencies stay external because they are the root's dependencies too, and
  * scripts/check-lib-load.mjs fails by name on a dist or a packed manifest that names a workspace package.
  */
 const WORKSPACE_PACKAGES = workspacePackageNames(__dirname);
+
+/**
+ * The TypeScript `paths` the declaration build resolves with: the root tsconfig's own (`@/*`, read from the file so it
+ * is stated once) and one per `exports` entry of each workspace package, to its source under `packages/`
+ * (packages/README.md, "Library"). rollup-plugin-dts keeps a module TypeScript found through `node_modules` as an
+ * external import and inlines any other, so a package resolved through these paths, to a file outside `node_modules`,
+ * is inlined with its own relative imports, at its root and at every subpath. tsup's `dts.compilerOptions` replace the
+ * tsconfig's `paths` rather than merge into them, which is why the root's are spread in.
+ */
+const ROOT_TSCONFIG = ts.readConfigFile(path.join(__dirname, "tsconfig.json"), ts.sys.readFile);
+if (ROOT_TSCONFIG.error !== undefined) {
+  throw new Error(
+    `tsconfig.json cannot be read: ${ts.flattenDiagnosticMessageText(ROOT_TSCONFIG.error.messageText, "\n")}`,
+  );
+}
+const DECLARATION_PATHS = {
+  ...ROOT_TSCONFIG.config.compilerOptions.paths,
+  ...workspacePackageSourcePaths(__dirname),
+};
 
 export default defineConfig({
   entry: {
@@ -22,7 +41,7 @@ export default defineConfig({
     security: "src/exports/security.ts",
   },
   format: ["esm", "cjs"],
-  dts: { resolve: WORKSPACE_PACKAGES },
+  dts: { compilerOptions: { paths: DECLARATION_PATHS } },
   splitting: true,
   sourcemap: true,
   clean: true,

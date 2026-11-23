@@ -10,7 +10,8 @@ import {
   hasConfirmCodeForm,
   operatingForms,
 } from "@/lib/sql/confirm-forms";
-import { readsSqlText, resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
+import { readsSqlText, resolveSqlGrammar } from "@/lib/sql/grammar";
+import { type SqlGrammar } from "@libredb/provider-sdk/sql";
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 import {
   type CteListRuns,

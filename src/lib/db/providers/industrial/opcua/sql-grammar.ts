@@ -1,4 +1,5 @@
-import { DEFAULT_SQL_GRAMMAR, NO_EXTRA_WORDS } from "@/lib/db/sql-grammar/shared";
+import { NO_EXTRA_WORDS } from "@/lib/db/sql-grammar/shared";
+import { DEFAULT_SQL_GRAMMAR } from "@libredb/provider-sdk/sql";
 import type { SqlGrammarSpec } from "@/lib/db/sql-grammar/types";
 
 /** How OPC UA statement text is read: grammar, SQL text, redaction, update target and completion. */

@@ -8,7 +8,8 @@
 import type * as Monaco from "monaco-editor";
 import { sqlGrammarFor } from "@/lib/db/sql-grammar";
 import { extractAliases, resolveAlias } from "@/lib/sql";
-import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { type SqlGrammar } from "@libredb/provider-sdk/sql";
 import { readSqlSpan, type SqlSpanKind } from "@/lib/sql/spans";
 import { statementScope, type DerivedSource, type ScopeSource } from "./sql-scope";
 import type { ContainerSpelling } from "@/lib/query-generators";

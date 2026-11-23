@@ -6,8 +6,7 @@
  * the move and still has optional facts (`dollarTags`, `rawStrings`, `confirmForms` and others),
  * which its readers default when a grammar leaves them out.
  */
-export type { SqlGrammar } from "@/lib/sql/grammar";
-import type { SqlGrammar } from "@/lib/sql/grammar";
+import type { SqlGrammar } from "@libredb/provider-sdk/sql";
 
 /** How a statement is redacted before it reaches the query event log. */
 export type SqlRedaction =

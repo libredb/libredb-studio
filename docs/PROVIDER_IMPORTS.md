@@ -146,16 +146,16 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/languages/weaviateapi/routes.ts` | SDK /weaviateapi | The Weaviate console as data, its dialect, seventeen read routes, closed keys, enumerations, bounds and refusal sentences, and every operation's method and path the client is built with; pure. |
 | `src/lib/logger.ts` | host service: logging | The process logger, with its level filtering and the logged-text scrub. |
 | `src/lib/monitoring-cache-ratio.ts` | SDK /monitoring | Pure display text for a cache hit ratio. |
-| `src/lib/sql/grammar.ts` | core only | `resolveSqlGrammar` reads core's SQL grammar registry, so a provider reads its own grammar row instead; the `SqlGrammar` type and the default grammar go to SDK /sql when PR 9 splits the module. |
+| `src/lib/sql/grammar.ts` | core only | `resolveSqlGrammar` and `readsSqlText` read core's SQL grammar registry, so a provider reads its own grammar row instead; the `SqlGrammar` type and the default grammar are SDK /sql's since the split. |
 | `src/lib/sql/identifier.ts` | core only | `quoteIdentifier` reads core's SQL writing registry by type-id; a provider quotes through its own SQL writing row. |
-| `src/lib/sql/leading-keyword.ts` | SDK /sql | A pure reader that takes the grammar as an argument; its module graph reaches the grammar registry only through `grammar.ts`, which PR 9 splits. |
-| `src/lib/sql/operative-keyword.ts` | SDK /sql | A pure reader that takes the grammar as an argument; its module graph reaches the grammar registry only through `grammar.ts`, which PR 9 splits. |
+| `src/lib/sql/leading-keyword.ts` | SDK /sql | A pure reader that takes the grammar as an argument; it reaches no provider module, which the guard holds. |
+| `src/lib/sql/operative-keyword.ts` | SDK /sql | A pure reader that takes the grammar as an argument; it reaches no provider module, which the guard holds. |
 | `src/lib/sql/result-order.ts` | core only | `hasResultOrder` resolves the grammar by type-id through core's registry; the SDK reader takes the grammar as an argument once PR 9 splits it. |
-| `src/lib/sql/spans.ts` | SDK /sql | A pure reader that takes the grammar as an argument; its module graph reaches the grammar registry only through `grammar.ts`, which PR 9 splits. |
-| `src/lib/sql/statement-end.ts` | SDK /sql | A pure reader that takes the grammar as an argument; its module graph reaches the grammar registry only through `grammar.ts`, which PR 9 splits. |
-| `src/lib/sql/statement-splitter.ts` | SDK /sql | A pure reader that takes the grammar as an argument; its module graph reaches the grammar registry only through `grammar.ts`, which PR 9 splits. |
+| `src/lib/sql/spans.ts` | SDK /sql | A pure reader that takes the grammar as an argument; it reaches no provider module, which the guard holds. |
+| `src/lib/sql/statement-end.ts` | SDK /sql | A pure reader that takes the grammar as an argument; it reaches no provider module, which the guard holds. |
+| `src/lib/sql/statement-splitter.ts` | SDK /sql | A pure reader that takes the grammar as an argument; it reaches no provider module, which the guard holds. |
 | `src/lib/sql/values.ts` | core only | `quoteLiteral` and `unquoteLiteral` read core's SQL writing registry by type-id; a provider spells literals through its own SQL writing row. |
-| `src/lib/sql/words.ts` | SDK /sql | A pure reader that takes the grammar as an argument; its module graph reaches the grammar registry only through `grammar.ts`, which PR 9 splits. |
+| `src/lib/sql/words.ts` | SDK /sql | A pure reader that takes the grammar as an argument; it reaches no provider module, which the guard holds. |
 | `src/lib/types.ts` | SDK /types | The connection record and result types a provider reads and returns; the core-only types it also declares stay behind when PR 9 splits it. |
 
 ## Imports between provider directories
@@ -181,6 +181,7 @@ These are a snapshot as well.
 - `node:` builtins are part of the runtime every provider runs in: `node:crypto` in 17 units, `node:net` in 9 and `node:tls` in 5 are the most used.
 - `monaco-editor` is imported by the 11 editor language rows, and goes with the browser catalog of phase 3.
 - `@libredb/provider-sdk` is the contract every provider builds on, imported by name: `/values` holds the value codec that was `src/lib/db/value-codec.ts`, and `/errors` the error record's vocabulary and the driver error row contract that was `src/lib/db/driver-errors/types.ts`.
+- `@libredb/provider-sdk/sql` is imported by 47 provider files, the 41 grammar rows among them, for the grammar facts' type and compatibility default.
 
 ## Imports from core into provider directories
 
@@ -291,6 +292,7 @@ Each slice deletes its pairs from the allowlist and its rows from the inward tab
 The one growth allowed before PR 11 and PR 12 land is a new type-id's row modules in the ten collector entries, the nine registry indexes and `src/lib/db/factory.ts`, added to the allowlist and counted here in the PR that adds the type-id.
 
 A provider that imports a core module the outward table does not list fails the same test until the module gets a row and a destination here.
+The same test holds the outward rows whose destination is SDK /sql: the value imports of each such module reach no provider module, so the readers it names can move into the SDK without bringing a provider row with them.
 
 ## Limits
 

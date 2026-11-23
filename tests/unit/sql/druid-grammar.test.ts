@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { isDangerousQuery } from "@/components/QuerySafetyDialog";
 import { analyzeQuery, applyQueryLimit } from "@/lib/db/utils/query-limiter";
-import { DEFAULT_SQL_GRAMMAR, hashRunIsAmbiguous, readsSqlText, resolveSqlGrammar } from "@/lib/sql/grammar";
+import { readsSqlText, resolveSqlGrammar } from "@/lib/sql/grammar";
+import { DEFAULT_SQL_GRAMMAR, hashRunIsAmbiguous } from "@libredb/provider-sdk/sql";
 import { hasUnterminatedSpan, readSqlSpan } from "@/lib/sql/spans";
 import { splitStatements } from "@/lib/sql/statement-splitter";
 

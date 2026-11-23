@@ -60,7 +60,7 @@
  */
 
 import { z } from "zod";
-import { DEFAULT_SQL_GRAMMAR } from "@/lib/sql/grammar";
+import { DEFAULT_SQL_GRAMMAR } from "@libredb/provider-sdk/sql";
 import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
 import {
   hasLoneCarriageReturnInLineComment,

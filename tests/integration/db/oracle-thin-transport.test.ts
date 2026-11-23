@@ -31,6 +31,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { workspacePackageNames } from "../../../scripts/workspace-packages.mjs";
 import { ConnectionError } from "@/lib/db/errors";
 import { OracleProvider } from "@/lib/db/providers/sql/oracle";
 import type { DatabaseConnection } from "@/lib/types";
@@ -197,6 +198,11 @@ const NODE_MODULES = join(import.meta.dir, "..", "..", "..", "node_modules");
 /** Kills a child that neither finishes nor reaches its heap limit; a case that passes ends in about a second. */
 const CHILD_TIMEOUT_MS = 20_000;
 const CHILD_HEAP_MB = 256;
+/**
+ * The workspace packages, which the bundle carries rather than leaves external, as Studio's own builds do: a package
+ * is published nowhere, so the child could only load its TypeScript source, which Node does not resolve.
+ */
+const WORKSPACE_PACKAGES = workspacePackageNames(join(import.meta.dir, "..", "..", ".."));
 
 let bundleDir = "";
 
@@ -209,6 +215,17 @@ beforeAll(async () => {
     packages: "external",
     outdir: bundleDir,
     naming: "[name].cjs",
+    plugins: [
+      {
+        name: "bundle-workspace-packages",
+        setup(builder) {
+          builder.onResolve({ filter: /^@/ }, (args) => {
+            const name = args.path.split("/").slice(0, 2).join("/");
+            return WORKSPACE_PACKAGES.includes(name) ? { path: Bun.resolveSync(args.path, args.importer) } : undefined;
+          });
+        },
+      },
+    ],
   });
   if (!build.success) {
     throw new Error(`Bun.build could not bundle the harness: ${build.logs.join("\n")}`);

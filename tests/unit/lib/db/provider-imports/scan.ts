@@ -33,6 +33,12 @@
  * Outward, every provider file is parsed, and every listed file outside the provider directory it imports is a core
  * module. A relative or `@/` specifier in a provider file that resolves to no listed file throws, naming it, because a
  * census that skipped it would be short by a module nobody could see.
+ *
+ * The value-import closure of a module is what loading it loads: its value specifiers, read from the syntax tree, and
+ * theirs in turn. An `import type` or `export type` declaration, and one whose every named binding is a `type` binding,
+ * is erased by the compiler and loads nothing, so it is not followed; a `typeof import()` type is not either. A package
+ * specifier is a leaf, since the package import rule already keeps a package out of core, and so is a listed file that
+ * is not source, such as a JSON module. A specifier that resolves to no listed file throws, naming the importer.
  */
 import { posix } from "node:path";
 import ts from "typescript";
@@ -159,4 +165,97 @@ export function compareToAllowlist(
     added: found.filter((pair) => !listedKeys.has(key(pair))).sort(byFileThenModule),
     stale: listed.filter((pair) => !foundKeys.has(key(pair))).sort(byFileThenModule),
   };
+}
+
+/** Whether an import or export clause's named bindings are all `type` bindings, so the compiler erases it. */
+function onlyTypeBindings(elements: readonly (ts.ImportSpecifier | ts.ExportSpecifier)[]): boolean {
+  return elements.length > 0 && elements.every((element) => element.isTypeOnly);
+}
+
+/**
+ * The specifiers of `text` that load a module at run time: static imports and re-exports that are not type-only,
+ * side-effect imports, `import x = require()`, and `import()` and `require()` calls with a literal argument.
+ */
+export function valueSpecifiers(text: string): string[] {
+  const source = ts.createSourceFile("module.ts", text, ts.ScriptTarget.Latest, true);
+  const specifiers: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+      const clause = node.importClause;
+      const bindings = clause?.namedBindings;
+      const erased =
+        clause !== undefined &&
+        (clause.isTypeOnly ||
+          (clause.name === undefined &&
+            bindings !== undefined &&
+            ts.isNamedImports(bindings) &&
+            onlyTypeBindings(bindings.elements)));
+      if (!erased) specifiers.push(node.moduleSpecifier.text);
+    } else if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+      const clause = node.exportClause;
+      const erased =
+        node.isTypeOnly || (clause !== undefined && ts.isNamedExports(clause) && onlyTypeBindings(clause.elements));
+      if (!erased) specifiers.push(node.moduleSpecifier.text);
+    } else if (
+      ts.isImportEqualsDeclaration(node) &&
+      !node.isTypeOnly &&
+      ts.isExternalModuleReference(node.moduleReference) &&
+      ts.isStringLiteral(node.moduleReference.expression)
+    ) {
+      specifiers.push(node.moduleReference.expression.text);
+    } else if (
+      ts.isCallExpression(node) &&
+      (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+        (ts.isIdentifier(node.expression) && node.expression.text === "require")) &&
+      node.arguments.length > 0 &&
+      ts.isStringLiteral(node.arguments[0])
+    ) {
+      specifiers.push(node.arguments[0].text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return specifiers;
+}
+
+/**
+ * Every module the value-import closure of `start` reaches, `start` included, each with the import path that first
+ * reached it (a breadth-first walk, so the path is a shortest one), from `start` to the module.
+ */
+export function valueImportPaths(
+  start: string,
+  files: readonly SourceText[],
+  listed: ReadonlySet<string>,
+): ReadonlyMap<string, readonly string[]> {
+  const texts = new Map(files.map((file) => [file.path, file.text]));
+  const paths = new Map<string, readonly string[]>([[start, [start]]]);
+  const queue = [start];
+  for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+    const importer = next;
+    if (!isSourcePath(importer)) continue;
+    const text = texts.get(importer);
+    if (text === undefined) throw new Error(`${importer} is reached but its text was not read`);
+    for (const specifier of valueSpecifiers(text)) {
+      const resolution = resolveSpecifier(importer, specifier, listed);
+      if (resolution.kind === "package") continue;
+      if (resolution.kind === "unresolved") throw new Error(`${importer}: "${specifier}" resolves to no listed file`);
+      if (paths.has(resolution.path)) continue;
+      paths.set(resolution.path, [...(paths.get(importer) ?? []), resolution.path]);
+      queue.push(resolution.path);
+    }
+  }
+  return paths;
+}
+
+/** The import path to each provider module the value-import closure of `start` reaches, sorted by module. */
+export function providerReach(
+  start: string,
+  files: readonly SourceText[],
+  listed: ReadonlySet<string>,
+): (readonly string[])[] {
+  const paths = valueImportPaths(start, files, listed);
+  return [...paths.keys()]
+    .filter(isProviderPath)
+    .sort(compareText)
+    .map((module) => paths.get(module) ?? []);
 }

@@ -8,7 +8,7 @@ import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { SQL_GRAMMAR, sqlGrammarFor } from "@/lib/db/sql-grammar";
 import { NO_CONNECTION_SQL_GRAMMAR } from "@/lib/db/sql-grammar/no-connection";
 import type { SqlGrammarSpec } from "@/lib/db/sql-grammar/types";
-import { DEFAULT_SQL_GRAMMAR } from "@/lib/sql/grammar";
+import { DEFAULT_SQL_GRAMMAR } from "@libredb/provider-sdk/sql";
 import type { DatabaseType } from "@/lib/types";
 import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../../../helpers/outside-the-union";
 

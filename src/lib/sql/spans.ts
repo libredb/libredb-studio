@@ -46,7 +46,7 @@
  * before the record existed.
  */
 
-import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "./grammar";
+import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "@libredb/provider-sdk/sql";
 
 /**
  * What kind of non-code run a span is.

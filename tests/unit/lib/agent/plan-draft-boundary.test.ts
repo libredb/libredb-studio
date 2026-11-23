@@ -30,6 +30,14 @@ const ROOT = path.resolve(import.meta.dir, "../../../..");
 
 const SOURCE = fs.readFileSync(path.join(ROOT, "src/lib/agent/plan-draft.ts"), "utf8");
 
+/** The SDK's SQL grammar facts, by package name, and the directory its `exports` entry resolves into. */
+const SDK_SQL = "@libredb/provider-sdk/sql";
+const SDK_DIRECTORY = "packages/provider-sdk";
+const SDK_MANIFEST = JSON.parse(fs.readFileSync(path.join(ROOT, SDK_DIRECTORY, "package.json"), "utf8")) as {
+  exports: Record<string, string>;
+};
+const SDK_SQL_SOURCE = "packages/provider-sdk/src/sql/";
+
 /** Every module specifier the file imports, type-only imports included. */
 const specifiers = (source: string): readonly string[] =>
   [...source.matchAll(/^import\s[^;]*?from\s+"([^"]+)"/gm)].map((match) => match[1]);
@@ -68,7 +76,9 @@ const ALLOWED: ReadonlySet<string> = new Set([
     than argued: the closure test below walks `./statement-splitter` and finds `./grammar` in it
     with `@/lib/types` as its only reach, then asserts that reach is type-only. So this specifier
     adds nothing to the browser bundle that the previous entry had not already brought — the
-    module was one hop away and is now zero.
+    module was one hop away and is now zero. Since the SQL grammar facts moved to
+    `@libredb/provider-sdk/sql`, the splitter no longer reaches `./grammar` at all; this entry's own
+    reach is the registry, whose closure the same test walks.
   */
   "@/lib/sql/grammar",
 ]);
@@ -98,6 +108,8 @@ describe("the plan-draft reader stays reachable from a browser", () => {
       statement is a MERGE by its operative keyword; both reach only the readers above.
       `./parenthesised` joined it when the confirmation gate went linear: the CTE list reader remembers where
       each parenthesised run closes, and that memory reaches only `./spans` and `./words`.
+      `./grammar` left it when the grammar facts' type and default moved to `@libredb/provider-sdk/sql`: the
+      readers now take both from the SDK, so the splitter reaches neither the registry nor `@/lib/types`.
     */
     const read = (specifier: string) =>
       fs.readFileSync(path.join(ROOT, "src/lib/sql", `${specifier.replace("./", "")}.ts`), "utf8");
@@ -114,32 +126,32 @@ describe("the plan-draft reader stays reachable from a browser", () => {
     }
 
     expect([...closure].sort()).toEqual([
-      "./grammar",
       "./leading-keyword",
       "./operative-keyword",
       "./parenthesised",
       "./spans",
       "./words",
-      "@/lib/db/sql-grammar",
-      "@/lib/types",
+      "@libredb/provider-sdk/sql",
     ]);
-    // The non-relative members. The type module is erased at build time: a VALUE import of it
-    // would pull the whole type barrel into the browser bundle. The shared grammar constants are
-    // a leaf whose only import is that same kind of erased, type-only one.
-    expect(read("./grammar")).toContain('import type { DatabaseType } from "@/lib/types"');
+    // The one non-relative member is the SDK's SQL grammar facts, walked with the registry below. The shared grammar
+    // constants take from it only the compatibility default, as a value, and the grammar type.
     const shared = fs.readFileSync(path.join(ROOT, "src/lib/db/sql-grammar/shared.ts"), "utf8");
-    expect(specifiers(shared)).toEqual(["./types"]);
-    expect(shared).toContain('import type { SqlGrammar } from "./types"');
+    expect(specifiers(shared)).toEqual([SDK_SQL]);
+    expect(shared).toContain(`import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "${SDK_SQL}"`);
 
     // The SQL grammar registry joined the closure when `grammar.ts` started reading each engine's row from it
     // (engine contract spec 5.3). Its own closure is walked here, re-exports included and type-only lines left out:
     // every module it reaches is the registry, an engine's `sql-grammar` module, or one of the two leaves an engine
     // module may import, and those leaves import nothing at all. The type-id check joined it with FND-1: the registry
     // refuses a value outside the type-id union through `typeIdRow`, and the check reaches only the compatibility
-    // table, the error classes and the error codes, each named below with its exact value imports.
+    // table, the error classes and the error codes, each named below with its exact value imports. The SDK's SQL
+    // grammar facts joined it when the engine rows started importing the compatibility default from
+    // `@libredb/provider-sdk/sql`: the specifier resolves through the package's `exports`, and each file it reaches
+    // value-imports only files of its own directory.
     const valueSpecifiers = (source: string): readonly string[] =>
       [...source.matchAll(/^(?:import|export)\s(?!type\s)[^;]*?from\s+"([^"]+)"/gm)].map((match) => match[1]);
     const resolve = (specifier: string, from: string): string => {
+      if (specifier === SDK_SQL) return path.posix.join(SDK_DIRECTORY, SDK_MANIFEST.exports["./sql"]);
       const base = specifier.startsWith("@/")
         ? `src/${specifier.slice(2)}`
         : path.posix.join(path.posix.dirname(from), specifier);
@@ -166,9 +178,17 @@ describe("the plan-draft reader stays reachable from a browser", () => {
         !file.startsWith("src/lib/db/sql-grammar/") &&
         !(file.startsWith("src/lib/db/providers/") && /(?:^|[/-])sql-grammar\.ts$/.test(file)) &&
         !LEAVES.has(file) &&
-        !Object.hasOwn(TYPE_ID_CHECK, file),
+        !Object.hasOwn(TYPE_ID_CHECK, file) &&
+        !file.startsWith(SDK_SQL_SOURCE),
     );
     expect(outside).toEqual([]);
+    const sdkFiles = [...registry].filter((file) => file.startsWith(SDK_SQL_SOURCE));
+    expect(sdkFiles.sort()).toEqual([`${SDK_SQL_SOURCE}grammar.ts`, `${SDK_SQL_SOURCE}index.ts`]);
+    for (const file of sdkFiles) {
+      for (const specifier of valueSpecifiers(fs.readFileSync(path.join(ROOT, file), "utf8"))) {
+        expect(resolve(specifier, file).startsWith(SDK_SQL_SOURCE)).toBe(true);
+      }
+    }
     for (const [file, imports] of Object.entries(TYPE_ID_CHECK)) {
       expect(registry.has(file)).toBe(true);
       expect(valueSpecifiers(fs.readFileSync(path.join(ROOT, file), "utf8"))).toEqual(imports);

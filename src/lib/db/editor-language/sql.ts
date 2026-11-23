@@ -1,6 +1,6 @@
 import { format } from "sql-formatter";
 import { registerSQLCompletionProvider } from "@/lib/editor/sql-completions";
-import type { SqlGrammar } from "@/lib/sql/grammar";
+import type { SqlGrammar } from "@libredb/provider-sdk/sql";
 import type { EditorLanguageContribution } from "./types";
 
 /**
