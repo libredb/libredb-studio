@@ -117,7 +117,9 @@ function wellFormed(): readonly (readonly [ServedCall, FramePart, unknown])[] {
       },
     ],
     ["console.execute", "request", { statement: marker(), page: { unlimited: true } }],
+    ["console.execute", "request", { statement: marker(), page: { unlimited: true }, transaction: true }],
     ["console.execute", "answer", executeAnswer()],
+    ["console.execute", "answer", executeAnswer((a) => (a.sessionState = "in-transaction"))],
     [
       "console.execute",
       "answer",
@@ -134,6 +136,15 @@ function wellFormed(): readonly (readonly [ServedCall, FramePart, unknown])[] {
     ["console.endScope", "context", { deadline: 1 }],
     ["console.endScope", "request", { scope: marker() }],
     ["console.endScope", "answer", { openTransaction: "rolled-back" }],
+    ["console.transaction", "context", { deadline: 1 }],
+    ["console.transaction", "request", { action: "begin", requireReportedState: true }],
+    ["console.transaction", "request", { action: "begin" }],
+    ["console.transaction", "request", { action: "commit" }],
+    ["console.transaction", "request", { action: "rollback" }],
+    ["console.transaction", "request", { action: "state" }],
+    ["console.transaction", "answer", { sessionState: "in-transaction", stateReported: false }],
+    ["console.transaction", "answer", { sessionState: "not-in-transaction" }],
+    ["console.transaction", "answer", { sessionState: "unknown" }],
     ["result.next", "request", { maxRows: 100, maxBytes: 1_048_576 }],
     [
       "result.next",
@@ -187,6 +198,9 @@ describe("readFrame", () => {
       "console.endScope context",
       "console.endScope request",
       "console.endScope answer",
+      "console.transaction context",
+      "console.transaction request",
+      "console.transaction answer",
       "result.next request",
       "result.next answer",
     ]);
@@ -342,6 +356,20 @@ describe("readFrame", () => {
     expect(readFrame("console.endScope", "answer", { openTransaction: "open" })).toEqual([
       unreadable("console.endScope", "answer", "/openTransaction"),
     ]);
+    expect(readFrame("console.transaction", "answer", { sessionState: "open", stateReported: "yes" })).toEqual([
+      unreadable("console.transaction", "answer", "/sessionState"),
+      unreadable("console.transaction", "answer", "/stateReported"),
+    ]);
+    expect(
+      readFrame("console.execute", "request", { statement: "s", page: { unlimited: true }, transaction: false }),
+    ).toEqual([unreadable("console.execute", "request", "/transaction")]);
+    expect(
+      readFrame(
+        "console.execute",
+        "answer",
+        executeAnswer((a) => (a.sessionState = "aborted")),
+      ),
+    ).toEqual([unreadable("console.execute", "answer", "/sessionState")]);
     expect(readFrame("result.next", "answer", { rows: [[1], 2], done: true })).toEqual([
       unreadable("result.next", "answer", "/rows/1"),
     ]);
@@ -366,6 +394,40 @@ describe("readFrame", () => {
     expect(page({ limit: 1 })).toEqual([
       refusal("frame-key-missing", "console.execute", "request", "/page/offset", "offset"),
     ]);
+  });
+
+  test("a transaction request is one of its actions, and only begin carries requireReportedState", () => {
+    const transaction = (request: unknown) => readFrame("console.transaction", "request", request);
+    const unreadable = (pointer: string) =>
+      refusal("frame-value-unreadable", "console.transaction", "request", pointer);
+    let reads = 0;
+    const accessor = Object.defineProperty({}, "action", {
+      enumerable: true,
+      get() {
+        reads += 1;
+        return "begin";
+      },
+    });
+
+    for (const action of ["begin", "commit", "rollback", "state"]) expect(transaction({ action })).toEqual([]);
+    expect(transaction({ action: "begin", requireReportedState: true })).toEqual([]);
+    expect(transaction({ action: "begin", requireReportedState: false })).toEqual([
+      unreadable("/requireReportedState"),
+    ]);
+    for (const action of ["commit", "rollback", "state"]) {
+      expect(transaction({ action, requireReportedState: true })).toEqual([
+        refusal("frame-key-unknown", "console.transaction", "request", "/requireReportedState", "requireReportedState"),
+      ]);
+    }
+    expect(transaction({ action: "savepoint" })).toEqual([unreadable("/action")]);
+    expect(transaction({ action: 1 })).toEqual([unreadable("/action")]);
+    expect(transaction({})).toEqual([
+      refusal("frame-key-missing", "console.transaction", "request", "/action", "action"),
+    ]);
+    expect(transaction(accessor)).toEqual([unreadable("/action")]);
+    expect(transaction(null)).toEqual([unreadable("")]);
+    expect(transaction([])).toEqual([unreadable("")]);
+    expect(reads).toBe(0);
   });
 
   test("a connection's keys are the contract's field names and each value a connection field value", () => {
@@ -408,10 +470,12 @@ describe("readFrame", () => {
         }),
       ),
       ...readFrame("console.endScope", "answer", { openTransaction: planted[0] }),
+      ...readFrame("console.transaction", "request", { action: planted[1] }),
+      ...readFrame("console.transaction", "answer", { sessionState: planted[2], stateReported: planted[3] }),
     ];
     const text = JSON.stringify(refusals) + new FrameRefusalError(refusals).message;
 
-    expect(refusals.length).toBe(5);
+    expect(refusals.length).toBe(8);
     for (const value of planted) expect(text).not.toContain(value);
   });
 });

@@ -1,5 +1,5 @@
 /**
- * A session's calls and the requests the host sends it (docs/providers/CONTRACT.md, clauses C-9, C-10 and C-17).
+ * A session's calls and the requests the host sends it (docs/providers/CONTRACT.md, clauses C-9, C-10, C-17 and C-57).
  *
  * The manifest's `calls` declares what a package answers; `open` may answer a refinement that narrows it for one
  * session, which `checkRefinement` reads and `sessionCalls` applies. The host keeps the session's calls with the
@@ -10,12 +10,20 @@
 import type { Calls, ExecuteRequestField, FacetOffer } from "../manifest/manifest-types.generated";
 import { isPlainRecord, pointerTo, readOwn } from "./records";
 import { type CallRefusal, CallRefusalError } from "./refusals";
-import { type ConsoleFacet, EXECUTE_REQUEST_FIELDS, type ExecuteRequest, type Refinement } from "./types";
+import {
+  CONSOLE_FACETS,
+  type ConsoleFacet,
+  EXECUTE_REQUEST_FIELDS,
+  type ExecuteRequest,
+  type Refinement,
+} from "./types";
 
 /**
  * Every way `request` sends what `calls` does not take, in request order: a `params` key, of any length, to a session
  * that does not honour `params`; a non-zero offset to one that does not honour `offset`; a `scope` key to one that does
- * not offer `console.endScope`. A refusal names the field and a pointer into the request, never a value of it.
+ * not offer `console.endScope`, and one on a statement sent inside a transaction, which runs on the transaction's own
+ * session and never in a scope; a `transaction` key to one that does not offer `console.transaction`. A refusal names
+ * the field and a pointer into the request, never a value of it.
  */
 export function checkExecuteRequest(calls: Calls, request: ExecuteRequest): readonly CallRefusal[] {
   const honours: readonly ExecuteRequestField[] = calls.console.execute.honours;
@@ -28,6 +36,13 @@ export function checkExecuteRequest(calls: Calls, request: ExecuteRequest): read
   }
   if (Object.hasOwn(request, "scope") && calls.console.endScope !== "offered") {
     refusals.push({ rule: "request-scope-not-offered", pointer: "/scope" });
+  }
+  const inTransaction = Object.hasOwn(request, "transaction");
+  if (inTransaction && Object.hasOwn(request, "scope")) {
+    refusals.push({ rule: "request-scope-in-transaction", pointer: "/scope" });
+  }
+  if (inTransaction && calls.console.transaction !== "offered") {
+    refusals.push({ rule: "request-transaction-not-offered", pointer: "/transaction" });
   }
   return refusals;
 }
@@ -44,6 +59,13 @@ export function checkConsoleFacet(calls: Calls, facet: ConsoleFacet): readonly C
 
 const OFFERS: readonly unknown[] = Object.freeze(["offered", "not-offered"] satisfies FacetOffer[]);
 const REQUEST_FIELDS: readonly unknown[] = EXECUTE_REQUEST_FIELDS;
+/** The keys a refinement's `calls.console` may have: execute, then every console facet, in schema order. */
+const CONSOLE_KEYS: readonly string[] = Object.freeze(["execute", ...CONSOLE_FACETS]);
+
+/** Whether `key` names a console facet. */
+function isConsoleFacet(key: string): key is ConsoleFacet {
+  return (CONSOLE_FACETS as readonly string[]).includes(key);
+}
 
 /**
  * The own string keys of `value`, a plain record, enumerable or not, so the object is read as closed; `null` with a
@@ -133,14 +155,14 @@ function readConsole(value: unknown, declared: Calls, pointer: string, refusals:
   if (keys === null) return;
   for (const key of keys) {
     const at = pointerTo(pointer, key);
-    if (key !== "execute" && key !== "cancel" && key !== "endScope") {
+    if (!CONSOLE_KEYS.includes(key)) {
       refusals.push({ rule: "refinement-key-unknown", pointer: at, name: key });
       continue;
     }
     const read = dataAt(value, key, at, refusals);
     if (read === undefined) continue;
-    if (key === "execute") readExecute(read.value, declared, at, refusals);
-    else readOffer(read.value, key === "cancel" ? declared.console.cancel : declared.console.endScope, at, refusals);
+    if (isConsoleFacet(key)) readOffer(read.value, declared.console[key], at, refusals);
+    else readExecute(read.value, declared, at, refusals);
   }
 }
 
@@ -210,6 +232,7 @@ export function sessionCalls(declared: Calls, refine: Refinement | undefined): C
       execute: Object.freeze({ honours: indexedHonours(honours) }),
       cancel: narrowed?.cancel ?? declared.console.cancel,
       endScope: narrowed?.endScope ?? declared.console.endScope,
+      transaction: narrowed?.transaction ?? declared.console.transaction,
     }),
   });
 }

@@ -22,6 +22,7 @@ const DECLARED: Calls = Object.freeze({
     execute: Object.freeze({ honours: Object.freeze(["params", "offset"] as const) }),
     cancel: "offered",
     endScope: "not-offered",
+    transaction: "not-offered",
   }),
 });
 
@@ -53,13 +54,18 @@ describe("checkRefinement and sessionCalls", () => {
     expect(checkRefinement(DECLARED, narrowing)).toEqual([]);
     const calls = sessionCalls(DECLARED, narrowing);
     expect(calls).toEqual({
-      console: { execute: { honours: ["params"] }, cancel: "not-offered", endScope: "not-offered" },
+      console: {
+        execute: { honours: ["params"] },
+        cancel: "not-offered",
+        endScope: "not-offered",
+        transaction: "not-offered",
+      },
     });
     expect(deepFrozen(calls)).toBe(true);
     expect(DECLARED.console.cancel).toBe("offered");
     expect(DECLARED.console.execute.honours).toEqual(["params", "offset"]);
     const unfrozen: Calls = {
-      console: { execute: { honours: ["params"] }, cancel: "offered", endScope: "offered" },
+      console: { execute: { honours: ["params"] }, cancel: "offered", endScope: "offered", transaction: "offered" },
     };
     expect(deepFrozen(sessionCalls(unfrozen, { calls: { console: { endScope: "not-offered" } } }))).toBe(true);
     expect(Object.isFrozen(unfrozen.console.execute.honours)).toBe(false);
@@ -81,6 +87,36 @@ describe("checkRefinement and sessionCalls", () => {
     }
     expect(thrown).toBeInstanceOf(CallRefusalError);
     expect((thrown as CallRefusalError).refusals).toEqual([refused("refinement-widens", "/calls/console/endScope")]);
+  });
+
+  test("a refinement may withdraw console.transaction, and never offer it where the manifest does not", () => {
+    const offering: Calls = { console: { ...DECLARED.console, transaction: "offered" } };
+    const withdraw = { calls: { console: { transaction: "not-offered" } } };
+    const offer = { calls: { console: { transaction: "offered" } } };
+    let reads = 0;
+    const accessor = Object.defineProperty({}, "transaction", {
+      enumerable: true,
+      get() {
+        reads += 1;
+        return "not-offered";
+      },
+    });
+
+    expect(checkRefinement(offering, withdraw)).toEqual([]);
+    expect(sessionCalls(offering, withdraw as Refinement).console.transaction).toBe("not-offered");
+    expect(sessionCalls(offering, undefined).console.transaction).toBe("offered");
+    expect(checkRefinement(offering, offer)).toEqual([]);
+    expect(checkRefinement(DECLARED, withdraw)).toEqual([]);
+    expect(checkRefinement(DECLARED, offer)).toEqual([refused("refinement-widens", "/calls/console/transaction")]);
+    for (const value of ["maybe", true, null]) {
+      expect(checkRefinement(offering, { calls: { console: { transaction: value } } })).toEqual([
+        refused("refinement-unreadable", "/calls/console/transaction"),
+      ]);
+    }
+    expect(checkRefinement(offering, { calls: { console: accessor } })).toEqual([
+      refused("refinement-unreadable", "/calls/console/transaction"),
+    ]);
+    expect(reads).toBe(0);
   });
 
   test("an honours list longer than the declared one is refused as refinement-widens at the list, and no item is read", () => {

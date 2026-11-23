@@ -58,6 +58,8 @@ import type {
   ProviderModule,
   ResultSource,
   RowBatch,
+  TransactionAnswer,
+  TransactionRequest,
 } from "../calls/types";
 import { decodeValue, encodeValue } from "../values/codec";
 import { type FramePart, type FrameRefusal, FrameRefusalError, type ServedCall } from "./frames";
@@ -146,6 +148,7 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
     execute: consoleImpl.execute,
     cancel: consoleImpl.cancel,
     endScope: consoleImpl.endScope,
+    transaction: consoleImpl.transaction,
   });
   const observe = options.observe;
 
@@ -216,10 +219,10 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
    * decoded copies, and the answer frame, read and compared, decoded for the host.
    */
   async function consoleCall<Answer>(
-    call: "console.cancel" | "console.endScope",
+    call: "console.cancel" | "console.endScope" | "console.transaction",
     facet: ConsoleFacet,
     handle: unknown,
-    request: CancelRequest | EndScopeRequest,
+    request: CancelRequest | EndScopeRequest | TransactionRequest,
     ctx: CallContext,
   ): Promise<Answer> {
     refuseCallStart(ctx);
@@ -437,6 +440,12 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
       : {
           endScope: (handle: ServedHandle, request: EndScopeRequest, ctx: CallContext) =>
             consoleCall<EndScopeAnswer>("console.endScope", "endScope", handle, request, ctx),
+        }),
+    ...(provider.transaction === undefined
+      ? {}
+      : {
+          transaction: (handle: ServedHandle, request: TransactionRequest, ctx: CallContext) =>
+            consoleCall<TransactionAnswer>("console.transaction", "transaction", handle, request, ctx),
         }),
   };
   return Object.freeze({ open, close, console: Object.freeze(served) });

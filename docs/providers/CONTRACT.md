@@ -1225,6 +1225,7 @@ The host calls a provider's implementation in its own process, as async function
 Every request and answer is data in the value codec's domain, except the session handle `open` answers, so the calls need no framing.
 The handle holds the session's state and is the package's own: the host never reads it, which the memory test transport checks, C-22.
 The manifest's `calls` segment declares what the package's code answers beyond the mandatory calls: the optional console facets and the optional request fields its execute honours.
+The optional console facets are `cancel`, which cancels a run, `endScope`, which ends a session scope, and `transaction`, which opens, commits and rolls back a transaction on the session and reads its state, C-57.
 One implementation serves every engine the package declares, so `calls` is a fact of the package, a sibling of `runtime`, and never a fact of an engine.
 The shapes of each call, its request, its answer and the contexts the host passes are the types `@libredb/provider-sdk/calls` exports.
 Every other surface of today's provider interface, health among them, joins this chapter with the change that carries it.
@@ -1281,6 +1282,7 @@ An engine facet for which this contract has no call yet, a monitoring panel, a m
 - schema `/$defs/consoleCalls`
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an offered facet the implementation lacks is refused as facet-unimplemented"
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an implemented facet the manifest does not offer is refused as facet-undeclared"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "the transaction facet is declared and implemented both ways, like every console facet"
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an engine facet this contract has no call for is refused as engine-facet-without-call"
 - test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the console facets and execute's request fields are the schema's"
 
@@ -1310,9 +1312,11 @@ Every input a provider is built with today, and every member of today's console 
 So a provider moves onto the contract without a behaviour change.
 A provider is built from the connection's fields and from the marks core sets beside them under symbol keys: the tunnel's far end and route, the literal seed-file mark, the file core admitted and the host paths core admitted.
 A census over Studio's own types holds this, one record over the connection's fields and one over its marks, and the shapes the open context shares with Studio, the TLS settings, the egress decision, the trust material, the pool settings, the tunnel's far end and the admitted host paths, are each mutually assignable with Studio's own.
+The census covers today's transaction surface too, the transaction methods the transaction route calls, begin's options and result and the arguments of a statement inside the transaction, each placed on the transaction facet's actions, its request and answer, or console execute, C-57.
 
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every input a provider is built with has a place in the open context or a reason it stays with the host"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's console answer and request has a place in the console calls"
+- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's transaction surface has a place in the console calls"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "the context's shared shapes are Studio's own"
 
 ### C-8 (informative): A provider never ignores a request field it does not honour
@@ -1324,12 +1328,17 @@ The host's half, which sends no such field, is C-9.
 ### C-9 (normative): The host sends only the request fields a session honours
 
 The host holds every execute request to the session's calls with `checkExecuteRequest` before the call, and refuses it by a rule of `CALL_REFUSAL_RULES` when it carries an optional request field the session does not honour, or a `scope` to a session that does not offer `console.endScope`.
+A statement sent inside a transaction, with `transaction`, goes only to a session that offers `console.transaction`, and never with a `scope`: it runs on the transaction's own session, which no scope names.
+Such a statement is held to the same `honours` as any other, since it is the same execute.
 A present `params` key is sent whatever its length, and an offset is sent when it is not zero.
 A refusal names the field and a JSON Pointer into the request, never a value of it.
 
 - test `packages/provider-sdk/tests/calls/request.test.ts` "a request field the session does not honour is refused before the call"
 - test `packages/provider-sdk/tests/calls/request.test.ts` "a session that honours every field and offers endScope takes each"
 - test `packages/provider-sdk/tests/calls/request.test.ts` "a request on a refined session is held to the narrowed calls"
+- test `packages/provider-sdk/tests/calls/request.test.ts` "a statement sent inside a transaction to a session without console.transaction is refused before the call"
+- test `packages/provider-sdk/tests/calls/request.test.ts` "a statement sent inside a transaction never carries a scope"
+- test `packages/provider-sdk/tests/calls/request.test.ts` "a session that offers console.transaction takes a statement inside its transaction with its params and offset"
 - test `packages/provider-sdk/tests/calls/request.test.ts` "a CallRefusalError carries every refusal and words each"
 
 ### C-10 (normative): A refinement only narrows a session's calls
@@ -1338,10 +1347,12 @@ A refusal names the field and a JSON Pointer into the request, never a value of 
 `checkRefinement` refuses a widening, an unknown key and an unreadable value by name, reading every value as a data property and never calling a getter, and no refusal carries a value of the refinement.
 An `honours` list longer than the declared one is refused as a widening by its length, before any item is read, so a sparse array's length bounds no loop of the check.
 `sessionCalls` answers the narrowed calls, frozen, and the host keeps them with the session and nowhere else, with no cache and no invalidation event.
+A refinement may withdraw any console facet the manifest offers, `console.transaction` among them, and never offers one the manifest does not.
 A refinement is a call's answer, not a manifest fact, so the schema has no place for it.
 
 - test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement that narrows the declared calls is admitted, and the session's calls are the narrowed ones"
 - test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement that widens a declared value is refused as refinement-widens"
+- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement may withdraw console.transaction, and never offer it where the manifest does not"
 - test `packages/provider-sdk/tests/calls/refinement.test.ts` "an honours list longer than the declared one is refused as refinement-widens at the list, and no item is read"
 - test `packages/provider-sdk/tests/calls/honours-bounds.test.ts` "a refinement honours list of the longest length is refused at the list, in a bounded child"
 - test `packages/provider-sdk/tests/calls/refinement.test.ts` "a key a refinement cannot have is refused as refinement-key-unknown"
@@ -1443,6 +1454,7 @@ The refusal names the facet by its call name and a JSON Pointer into the session
 
 - test `packages/provider-sdk/tests/calls/request.test.ts` "a console facet the session does not offer is refused before the call"
 - test `packages/provider-sdk/tests/calls/request.test.ts` "a console facet the session offers is called"
+- test `packages/provider-sdk/tests/calls/request.test.ts` "the transaction facet is refused by name to a session that does not offer it"
 
 ### C-18 (normative): The testing entry is for tests
 
@@ -1471,6 +1483,7 @@ An error either side throws crosses by reference.
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a value the codec cannot carry, or a frame key the call does not define, fails the call before the provider is called"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "an error a call or a source throws reaches the host as the same object"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a served source's provider receives the limit's numbers decoded and frozen with the host's measure by reference, and the frame carries the numbers only"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served transaction call crosses its request and answer as frames, and a statement inside the transaction carries its session state back"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a value that is not a provider module record is refused with every refusal before anything is served"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "the served implementation is an implementation of the module's manifest, with the module's facets"
 
@@ -1478,7 +1491,7 @@ An error either side throws crosses by reference.
 
 `readFrame` reads each part of each call's frame, its context, its request and its answer, as the closed shape of the call type it carries.
 A key the shape does not define, a required key the part lacks, and a value of the wrong type, outside its vocabulary, behind an accessor or in a list with a hole are each refused by a rule of `FRAME_REFUSAL_RULES`, at a JSON Pointer into the part, and never with a value of it.
-A page bound is exactly one of its two forms, and a connection's keys are the contract's field names.
+A page bound is exactly one of its two forms, a transaction request is read as the closed shape of the action it names, so only a begin carries `requireReportedState`, and a connection's keys are the contract's field names.
 Each reader is declared as the shape of its call type, so a member added to a call type, or to a union it reads, fails typecheck until its reader names it.
 
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "a well-formed frame of every call and part is admitted"
@@ -1486,6 +1499,7 @@ Each reader is declared as the shape of its call type, so a member added to a ca
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "a required key a frame lacks is refused as frame-key-missing"
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "a value of the wrong type or outside its vocabulary is refused as frame-value-unreadable"
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "a page bound is exactly one of its two forms"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a transaction request is one of its actions, and only begin carries requireReportedState"
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "a connection's keys are the contract's field names and each value a connection field value"
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "no frame refusal and no sentence carries a value of the frame"
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "every frame refusal rule is worded in one sentence"
@@ -1526,6 +1540,7 @@ An item of an execute answer's `results` that is not an object is refused at its
 Every close runs, and when one fails the host receives an `AggregateError` with the refusal first and each close's error after it.
 
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a request field or a console facet the session does not offer is refused before any frame"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a transaction call or a statement inside a transaction on a session without console.transaction is refused before any frame"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a refinement open answers narrows the served session's calls"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "an open answer the host refuses closes its session, and an execute answer the host refuses closes its sources"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a close that fails beside a refused answer is thrown with the refusal first"
@@ -1864,6 +1879,7 @@ The turn is the host's and not the SDK pump's, since the pump is also the kit's 
 The legacy bridge serves a provider of the legacy interface, `DatabaseProvider`, as one session of console execute and cancel, built per call by the caller's facade, so today's providers run through the host core's console calls, C-48.
 Its execute honours `params` and `offset` for every engine, so each provider answers both as it always has, its own refusal of an offset included.
 It offers `console.cancel` exactly when the provider can cancel a run, and does not offer `console.endScope`: the run's open transaction is ended inside its execute, as the editor query always ended it, until that moves onto `console.endScope`.
+It does not offer `console.transaction` either, for any provider: the transaction route still calls a provider's transaction methods itself, until they move onto the host core.
 Its execute hands the provider a fresh copy of the caller's own page options and a new array of the request's params, so a provider that writes what it receives changes nothing the host froze, and runs the provider's prepare, the probe row past the page, the statement and the transaction's end as the editor query always ran them.
 It answers one source per result set, the main rows first.
 A source reads each row positionally under the result's columns in its value codec form, or, when the codec refuses a cell, in the JSON form the answer writes for that row, sizes it with the pull's measure, C-15, and answers that same array, so each row is measured once, in the form closest to its answer.
@@ -1872,6 +1888,7 @@ A key a row holds outside its columns is answered and not measured.
 The page's row limit is set once execute answered: one past the page when the provider applied the page, otherwise every row the provider returned, at least one.
 
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session honours params and offset, offers cancel only where the provider cancels, and offers no scope"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session offers no transaction facet, since the transaction route still calls the provider's transaction methods itself"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a legacy provider that writes what it receives changes nothing the host froze"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the run prepares, probes, queries and ends its transaction as runEditorQuery did"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "every result set is a source, the main rows first"
@@ -2026,6 +2043,36 @@ The same deadline holds on the Test connection route and in the VS Code backend'
 - test `vscode-extension/test/unit/backend-handlers.test.ts` "hands the core the connection, posture and route only, so the core's deadline bounds the test"
 - test `vscode-extension/test/unit/backend-handlers.test.ts` "answers the core's deadline error as CONNECTION_ERROR with its sentence, its own status and code"
 
+### C-57 (normative): The transaction facet
+
+`console.transaction` is one console facet, offered or not in `calls.console.transaction` like every other, and implemented as one function whose request names its action, one of `TRANSACTION_ACTIONS`.
+`begin` opens a transaction on the session, and may set `requireReportedState`, so a provider that cannot read the transaction state from the server refuses the begin rather than answer a state it guessed.
+`commit` and `rollback` end the transaction, and `state` reads the session state and changes nothing.
+Every answer carries `sessionState`, one of `SESSION_STATES`, the state of the session after the call, and only a begin may carry `stateReported`, whether the server reported the transaction state.
+A statement inside the transaction is console execute sent with `transaction`: the provider runs it on the transaction's own connection, and its answer carries `sessionState` too.
+A statement sent without `transaction` runs outside any transaction the facet opened, on another of the session's connections.
+The host reads a transaction answer with `checkTransactionAnswer` and a statement's answer with `checkTransactionStatement`, which refuse by name, as `transaction-answer-unreadable`, a session state that is missing, outside its vocabulary or an accessor, a `stateReported` on another action than begin or of another type, any other key, and an answer that is no plain record.
+Each reads the answer by its own property descriptors, never calls a getter, and names no value of the answer, so a state the host cannot read is refused, never read as any state.
+
+- schema `/$defs/consoleCalls/properties/transaction`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "console calls that leave out transaction are refused as missing-key"
+- test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the transaction actions are begin, commit, rollback and state"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "the transaction facet is declared and implemented both ways, like every console facet"
+- test `packages/provider-sdk/tests/calls/transaction.test.ts` "a transaction answer is a session state, and stateReported only for begin"
+- test `packages/provider-sdk/tests/calls/transaction.test.ts` "a missing or unknown session state is refused by name, and no getter is called"
+- test `packages/provider-sdk/tests/calls/transaction.test.ts` "stateReported on another action, a key a transaction answer cannot have, or no record at all is refused by name"
+- test `packages/provider-sdk/tests/calls/transaction.test.ts` "a statement answered inside a transaction carries its session state, and one without is refused by name"
+- test `packages/provider-sdk/tests/calls/transaction.test.ts` "no transaction answer refusal carries a value of the answer"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served transaction call crosses its request and answer as frames, and a statement inside the transaction carries its session state back"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a transaction request is one of its actions, and only begin carries requireReportedState"
+
+### C-58 (informative): A provider that cannot tell answers unknown
+
+A provider answers `unknown` when it cannot tell whether the session holds a transaction, such as after its connection was lost mid-statement.
+An aborted transaction block, one a failed statement left that accepts only a rollback, is `in-transaction`.
+The host's half arrives with the host's transaction calls: the host never reads `unknown` as `not-in-transaction`, the transaction route keeps its record of a transaction while the state is unknown, and the host keeps no copy of a session state between calls, so every reader asks the session.
+No host call reads the state yet, which is why this clause is informative until those calls bring its enforcers.
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:
@@ -2075,6 +2122,7 @@ Against the manifest sketch the design started from:
 - Read-only enforcement is not declared: Studio derives it from the write reach, M-52.
 - The trust material a provider is handed is a connection fact, not a claim, M-56.
 - The sketch's frame cap is replaced by the byte budgets, since calls are unframed in process; the memory test transport keeps frames for tests only.
+- Transactions are one console facet, `transaction`, whose request names its action, and a statement inside a transaction is console execute sent with `transaction`; the sketch named four wire methods and a separate `session/state` read, C-57.
 
 Against this contract's earlier text:
 

@@ -540,7 +540,14 @@ describe("runEditorQuery on the host core", () => {
     };
     const holder = hostCore().executeCall(
       {
-        calls: { console: { execute: { honours: [] }, cancel: "not-offered", endScope: "not-offered" } },
+        calls: {
+          console: {
+            execute: { honours: [] },
+            cancel: "not-offered",
+            endScope: "not-offered",
+            transaction: "not-offered",
+          },
+        },
         execute: async () => ({ results: [holderSource], warnings: [], executionTimeMs: 1, pageApplied: true }),
       },
       { statement: "SELECT 1", page: { limit: 10, offset: 0 } },

@@ -18,6 +18,7 @@ import type {
   FieldName,
   ProviderManifest,
 } from "../manifest/manifest-types.generated";
+import type { SessionState } from "../errors";
 import type { EnvReader } from "./env";
 
 /** The provider contract this SDK's calls serve, the one the manifest schema names. */
@@ -28,12 +29,20 @@ export const PROVIDER_CONTRACT = "0.1" satisfies ProviderManifest["contract"];
  * to its function under the implementation's `console`, and the manifest's `calls.console` declares each as offered or
  * not.
  */
-export const CONSOLE_FACETS = Object.freeze(["cancel", "endScope"] as const) satisfies readonly Exclude<
+export const CONSOLE_FACETS = Object.freeze(["cancel", "endScope", "transaction"] as const) satisfies readonly Exclude<
   keyof ConsoleCalls,
   "execute"
 >[];
 
 export type ConsoleFacet = (typeof CONSOLE_FACETS)[number];
+
+/**
+ * The actions a `console.transaction` request names: open a transaction on the session, commit it, roll it back, or
+ * read the session state, which changes nothing.
+ */
+export const TRANSACTION_ACTIONS = Object.freeze(["begin", "commit", "rollback", "state"] as const);
+
+export type TransactionAction = (typeof TRANSACTION_ACTIONS)[number];
 
 /** The optional request fields of console execute, `$defs/executeRequestField`, in schema order. */
 export const EXECUTE_REQUEST_FIELDS = Object.freeze([
@@ -170,6 +179,7 @@ export interface Refinement {
       readonly execute?: { readonly honours: readonly ExecuteRequestField[] };
       readonly cancel?: FacetOffer;
       readonly endScope?: FacetOffer;
+      readonly transaction?: FacetOffer;
     };
   };
 }
@@ -198,6 +208,12 @@ export interface ExecuteRequest {
   readonly page: PageBound;
   /** The session scope the statement runs in; sent only to a package that offers `console.endScope`. */
   readonly scope?: string;
+  /**
+   * The statement runs inside the transaction `console.transaction` opened on the session, on the transaction's own
+   * connection; sent only to a package that offers `console.transaction`, and never with a `scope`. A statement sent
+   * without it runs outside any transaction the facet opened.
+   */
+  readonly transaction?: true;
 }
 
 /** A notice the engine attached to a statement it completed. */
@@ -262,6 +278,8 @@ export interface ExecuteAnswer {
   /** Set when the provider applied a bound of its own. */
   readonly boundApplied?: true;
   readonly explainPlan?: unknown;
+  /** The session state after the statement; answered to every statement sent with `transaction`. */
+  readonly sessionState?: SessionState;
 }
 
 export interface CancelRequest {
@@ -283,6 +301,24 @@ export interface EndScopeAnswer {
 }
 
 /**
+ * What `console.transaction` is asked to do. `begin` may require the server to report the transaction state, so a
+ * provider that cannot read it refuses the begin rather than answer a state it guessed.
+ */
+export type TransactionRequest =
+  | { readonly action: "begin"; readonly requireReportedState?: true }
+  | { readonly action: Exclude<TransactionAction, "begin"> };
+
+/**
+ * The session state after a `console.transaction` call: `in-transaction`, an aborted transaction included,
+ * `not-in-transaction`, or `unknown` when the provider cannot tell. Only `begin` may answer `stateReported`, whether the
+ * server reported the transaction state.
+ */
+export interface TransactionAnswer {
+  readonly sessionState: SessionState;
+  readonly stateReported?: boolean;
+}
+
+/**
  * The console's calls. `execute` is mandatory; each optional facet is implemented exactly when the manifest's
  * `calls.console` offers it. Written as methods so an implementation over its own handle type is a
  * `ProviderImpl<unknown>` too: the handle is opaque to the host.
@@ -291,6 +327,7 @@ export interface ConsoleImpl<Handle> {
   execute(handle: Handle, request: ExecuteRequest, ctx: CallContext): Promise<ExecuteAnswer>;
   cancel?(handle: Handle, request: CancelRequest, ctx: CallContext): Promise<CancelAnswer>;
   endScope?(handle: Handle, request: EndScopeRequest, ctx: CallContext): Promise<EndScopeAnswer>;
+  transaction?(handle: Handle, request: TransactionRequest, ctx: CallContext): Promise<TransactionAnswer>;
 }
 
 /** A package's implementation: the functions the host calls, keyed by the path of each call's name. */

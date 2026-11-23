@@ -2149,6 +2149,20 @@ export interface BeginTransactionResult {
 }
 
 /**
+ * The transaction methods `POST /api/db/transaction` calls on a provider: the five a provider that supports
+ * transactions has, beside its `DatabaseProvider` members, found by the route's duck typing rather than declared on
+ * `DatabaseProvider`. The provider contract's census places each of them (docs/providers/CONTRACT.md, clause C-7).
+ */
+export interface TransactionProvider {
+  // `void` from the providers that read no transaction state when they open one.
+  beginTransaction(options?: BeginTransactionOptions): Promise<BeginTransactionResult | void>;
+  commitTransaction(): Promise<void>;
+  rollbackTransaction(): Promise<void>;
+  isInTransaction(): boolean;
+  queryInTransaction(sql: string, params?: unknown[]): Promise<QueryResult>;
+}
+
+/**
  * A fresh name for one caller's call scope (D87). One per request, minted by the route
  * that will also end it, so that the token cannot collide with another request's and
  * cannot be supplied by the client: a caller-chosen scope would let one request end

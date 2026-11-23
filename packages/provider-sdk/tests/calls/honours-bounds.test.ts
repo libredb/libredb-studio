@@ -43,7 +43,12 @@ function runCase(deps: ChildDeps, name: string): ChildReport {
   longest.length = 2 ** 32 - 1;
   if (name === "refinement") {
     const declared = {
-      console: { execute: { honours: ["params", "offset"] }, cancel: "offered", endScope: "offered" },
+      console: {
+        execute: { honours: ["params", "offset"] },
+        cancel: "offered",
+        endScope: "offered",
+        transaction: "offered",
+      },
     };
     const refine = { calls: { console: { execute: { honours: longest } } } };
     return { name, refusals: deps.checkRefinement(declared as never, refine) };

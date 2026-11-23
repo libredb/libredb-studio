@@ -1,7 +1,7 @@
 /**
- * Every input a provider is built with today, and every member of today's console request and answer, has a place in
- * the provider contract's calls, or a stated reason it stays with the host (docs/providers/CONTRACT.md, clause C-7).
- * So a provider moves onto the contract without a behaviour change.
+ * Every input a provider is built with today, and every member of today's console request and answer and of today's
+ * transaction surface, has a place in the provider contract's calls, or a stated reason it stays with the host
+ * (docs/providers/CONTRACT.md, clause C-7). So a provider moves onto the contract without a behaviour change.
  *
  * A provider is built from the connection's fields and from the marks core sets beside them under symbol keys: the
  * tunnel's far end and route, the literal seed-file mark (`ProviderConnection` in src/lib/db/provider-connection.ts),
@@ -29,6 +29,9 @@ import type {
   PoolSettings,
   ResultSource,
   TlsSettings,
+  TransactionAction,
+  TransactionAnswer,
+  TransactionRequest,
   TrustMaterial as SdkTrustMaterial,
   TunnelFarEnd as SdkTunnelFarEnd,
   VectorColumnShape,
@@ -38,6 +41,8 @@ import type { FieldName } from "@libredb/provider-sdk/manifest";
 import type { ProviderConnection } from "@/lib/db/provider-connection";
 import type { QueryCancelProvider } from "@/lib/db/query-cancel";
 import type {
+  BeginTransactionOptions,
+  BeginTransactionResult,
   DatabaseProvider,
   EgressDecision,
   OpenQueryTransactionOutcome,
@@ -46,6 +51,7 @@ import type {
   ProviderBuildContext,
   ProviderOptions,
   QueryPrepareOptions,
+  TransactionProvider,
   TrustMaterial,
 } from "@/lib/db/types";
 import type { VectorColumn } from "@/lib/db/vector/types";
@@ -89,8 +95,18 @@ type ConsolePlacement =
   | { readonly where: "execute-answer"; readonly member: keyof ExecuteAnswer; readonly note?: string }
   | { readonly where: "result-source"; readonly member: keyof ResultSource; readonly note?: string }
   | { readonly where: "column"; readonly member: keyof Column }
-  | { readonly where: "console-call"; readonly call: "execute" | ConsoleFacet; readonly note?: string }
+  | {
+      readonly where: "console-call";
+      readonly call: "execute" | ConsoleFacet;
+      readonly action?: TransactionAction;
+      readonly note?: string;
+    }
+  | { readonly where: "transaction-request"; readonly member: keyof BeginRequest; readonly note?: string }
+  | { readonly where: "transaction-answer"; readonly member: keyof TransactionAnswer; readonly note?: string }
   | HostOnly;
+
+/** The transaction request that opens a transaction, the one that carries begin's options. */
+type BeginRequest = Extract<TransactionRequest, { action: "begin" }>;
 
 /** The placement of a key the open context carries as a connection field. */
 function connectionField(): ConnectionField {
@@ -287,6 +303,41 @@ const QUERY_ARGUMENT_CENSUS = {
 
 const QUERY_ARGUMENT_COUNT: Required<Parameters<DatabaseProvider["query"]>>["length"] = 4;
 
+/** The transaction route's provider members today, each placed on the transaction facet or on execute. */
+const TRANSACTION_MEMBER_CENSUS = {
+  beginTransaction: { where: "console-call", call: "transaction", action: "begin" },
+  commitTransaction: { where: "console-call", call: "transaction", action: "commit" },
+  rollbackTransaction: { where: "console-call", call: "transaction", action: "rollback" },
+  isInTransaction: {
+    where: "console-call",
+    call: "transaction",
+    action: "state",
+    note: "every transaction answer, and every answer to a statement inside the transaction, also carries the state",
+  },
+  queryInTransaction: {
+    where: "execute-request",
+    member: "transaction",
+    note: "a statement inside the transaction is console execute sent with transaction",
+  },
+} as const satisfies { readonly [K in keyof TransactionProvider]: ConsolePlacement };
+
+const BEGIN_OPTIONS_CENSUS = {
+  requireReportedState: { where: "transaction-request", member: "requireReportedState" },
+} as const satisfies { readonly [K in keyof Required<BeginTransactionOptions>]: ConsolePlacement };
+
+const BEGIN_RESULT_CENSUS = {
+  stateReported: { where: "transaction-answer", member: "stateReported", note: "answered by a begin only" },
+} as const satisfies { readonly [K in keyof Required<BeginTransactionResult>]: ConsolePlacement };
+
+/** `TransactionProvider.queryInTransaction`'s two arguments, in order, each placed. */
+const QUERY_IN_TRANSACTION_ARGUMENT_CENSUS = {
+  sql: { where: "execute-request", member: "statement" },
+  params: { where: "execute-request", member: "params" },
+} as const satisfies Record<string, ConsolePlacement>;
+
+const QUERY_IN_TRANSACTION_ARGUMENT_COUNT: Required<Parameters<TransactionProvider["queryInTransaction"]>>["length"] =
+  2;
+
 type Mutual<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 
 /** Every placement of every census, by census name and key. */
@@ -302,6 +353,10 @@ function placements(): [string, string, InputPlacement | ConsolePlacement | Conn
     QueryPrepareOptions: PREPARE_OPTIONS_CENSUS,
     console: CONSOLE_MEMBER_CENSUS,
     "query arguments": QUERY_ARGUMENT_CENSUS,
+    transaction: TRANSACTION_MEMBER_CENSUS,
+    BeginTransactionOptions: BEGIN_OPTIONS_CENSUS,
+    BeginTransactionResult: BEGIN_RESULT_CENSUS,
+    "queryInTransaction arguments": QUERY_IN_TRANSACTION_ARGUMENT_CENSUS,
   };
   return Object.entries(censuses).flatMap(([census, entries]) =>
     Reflect.ownKeys(entries).map((key): [string, string, (typeof entries)[PropertyKey]] => [
@@ -350,6 +405,41 @@ describe("the call surface census", () => {
     expect(unreasoned.map(([census, key]) => `${census}.${key}`)).toEqual([]);
   });
 
+  test("every member of today's transaction surface has a place in the console calls", () => {
+    const transaction = placements().filter(([census]) =>
+      ["transaction", "BeginTransactionOptions", "BeginTransactionResult", "queryInTransaction arguments"].includes(
+        census,
+      ),
+    );
+
+    expect(QUERY_IN_TRANSACTION_ARGUMENT_COUNT).toBe(2);
+    expect(Object.keys(QUERY_IN_TRANSACTION_ARGUMENT_CENSUS)).toHaveLength(QUERY_IN_TRANSACTION_ARGUMENT_COUNT);
+    expect(Object.keys(TRANSACTION_MEMBER_CENSUS).sort()).toEqual([
+      "beginTransaction",
+      "commitTransaction",
+      "isInTransaction",
+      "queryInTransaction",
+      "rollbackTransaction",
+    ]);
+    expect(
+      Object.values(TRANSACTION_MEMBER_CENSUS).flatMap((placement) =>
+        "action" in placement ? [placement.action] : [],
+      ),
+    ).toEqual(["begin", "commit", "rollback", "state"]);
+    expect(transaction.map(([census, key]) => `${census}.${key}`)).toEqual([
+      "transaction.beginTransaction",
+      "transaction.commitTransaction",
+      "transaction.rollbackTransaction",
+      "transaction.isInTransaction",
+      "transaction.queryInTransaction",
+      "BeginTransactionOptions.requireReportedState",
+      "BeginTransactionResult.stateReported",
+      "queryInTransaction arguments.sql",
+      "queryInTransaction arguments.params",
+    ]);
+    expect(transaction.filter(([, , placement]) => placement.where === "host")).toEqual([]);
+  });
+
   test("the context's shared shapes are Studio's own", () => {
     const parity: [
       Mutual<TlsSettings, SSLConfig>,
@@ -365,7 +455,8 @@ describe("the call surface census", () => {
       Mutual<VectorColumnShape, VectorColumn>,
       Mutual<EndScopeAnswer["openTransaction"], OpenQueryTransactionOutcome>,
       Mutual<CancelAnswer["cancelled"], Awaited<ReturnType<QueryCancelProvider["cancelQuery"]>>>,
-    ] = [true, true, true, true, true, true, true, true, true, true];
+      Mutual<NonNullable<TransactionAnswer["stateReported"]>, BeginTransactionResult["stateReported"]>,
+    ] = [true, true, true, true, true, true, true, true, true, true, true];
 
     // A sample of each shape crosses both ways, so the types above are not only declared but used.
     const tls: SSLConfig = { mode: "verify-full", caCert: "ca", rejectUnauthorized: true };
@@ -382,7 +473,7 @@ describe("the call surface census", () => {
     const sdkFarEnd: SdkTunnelFarEnd = farEnd;
     const farEndBack: TunnelFarEnd = sdkFarEnd;
 
-    expect(parity).toEqual([true, true, true, true, true, true, true, true, true, true]);
+    expect(parity).toEqual([true, true, true, true, true, true, true, true, true, true, true]);
     expect(back).toEqual([tls, egress, trust, pool]);
     expect(farEndBack).toEqual(farEnd);
   });
