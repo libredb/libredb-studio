@@ -8,7 +8,7 @@
  * - **Metadata only.** An object list, a read by id and every search answer stored property values and, on request,
  *   vectors (`objects-viewer`, `object-viewer`, `search-*-viewer`), so none of them is an agent read: an agent reads the
  *   meta, schema, shard, tenant, alias and node reads and an aggregate count, and every answer is projected to names,
- *   counts and flags (`metadata-read.ts`).
+ *   counts and flags (the provider's `metadata-read.ts`).
  * - **A bare count.** An aggregate's `where` and `groupBy` count by stored values, so a series of counts would read a
  *   value out one comparison at a time; the agent's aggregate takes a `tenant` and `returnMetrics` only.
  * - **No GraphQL, no module.** The grammar already refuses `/v1/graphql`, every write, near-text, near-image and
@@ -16,11 +16,11 @@
  *   model provider (`egress-*`); no agent read reaches a search at all.
  *
  * Not the boundary. The boundary is the provider's closed operation table, which can name no write, and the viewer
- * the server proves before every agent request (`metadata-read.ts`); this is what lets the model read why it was refused,
- * before anything is sent.
+ * the server proves before every agent request (the provider's `metadata-read.ts`); this is what lets the model read
+ * why it was refused, before anything is sent.
  */
 import { RequestRefusal } from "@/lib/db/console/dialect";
-import type { WeaviateConsoleOp } from "./client";
+import type { WeaviateConsoleOp } from "./ops";
 import { parseWeaviateRequest, type WeaviatePlan, weaviatePhase0 } from "./request";
 
 export type WeaviateAgentRefusalCode = "request" | "metadata-only" | "aggregate-shape";

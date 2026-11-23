@@ -15,7 +15,7 @@ import {
   WEAVIATE_AGENT_UNREADABLE,
   WEAVIATE_PROOF_SENTENCES,
 } from "@/lib/db/providers/vector/weaviate/metadata-read";
-import { WEAVIATE_AGENT_SENTENCES } from "@/lib/db/providers/vector/weaviate/metadata-request";
+import { WEAVIATE_AGENT_SENTENCES } from "@/lib/languages/weaviateapi/metadata-request";
 import type { WeaviateAnswer } from "@/lib/db/providers/vector/weaviate/client";
 import { WeaviateProvider } from "@/lib/db/providers/vector/weaviate/index";
 import { createRestWeaviateClient } from "@/lib/db/providers/vector/weaviate/rest-client";

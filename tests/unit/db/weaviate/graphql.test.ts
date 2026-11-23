@@ -16,8 +16,8 @@ import {
   graphqlWhere,
   selectedProperties,
 } from "@/lib/db/providers/vector/weaviate/graphql";
-import { type WeaviateSearchModel, weaviatePhase1 } from "@/lib/db/providers/vector/weaviate/request";
-import type { WeaviateCollectionFacts } from "@/lib/db/providers/vector/weaviate/schema";
+import { type WeaviateSearchModel, weaviatePhase1 } from "@/lib/languages/weaviateapi/request";
+import type { WeaviateCollectionFacts } from "@/lib/languages/weaviateapi/collection-facts";
 import { handFacts, plan, recordedFacts, recordedGraphqlBodies } from "../../../helpers/weaviate-request-fixtures";
 
 const FACTS: Readonly<Record<string, WeaviateCollectionFacts>> = Object.fromEntries(

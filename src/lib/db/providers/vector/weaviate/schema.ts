@@ -11,9 +11,17 @@
  *
  * Weaviate stores an `int` property as a float64 (spec A.3), so a column typed `int` is a number and the grid shows
  * it as one; on the GraphQL path a value outside int32 answers null, which `results.ts` marks.
+ *
+ * The facts a console request reads are declared in `src/lib/languages/weaviateapi/collection-facts.ts`, beside the
+ * request reader that takes them, and this module builds them.
  */
 import { QueryError } from "@/lib/db/errors";
 import type { VectorFieldInfo, VectorIndexKind, VectorMetric } from "@/lib/db/vector/types";
+import type {
+  SelectionField,
+  WeaviateCollectionFacts,
+  WeaviateVector,
+} from "@/lib/languages/weaviateapi/collection-facts";
 import type { ColumnSchema, DatabaseType, IndexSchema } from "@/lib/types";
 
 const PROVIDER: DatabaseType = "weaviate";
@@ -51,16 +59,6 @@ export interface WeaviateProperty {
   readonly nested: readonly WeaviateProperty[];
 }
 
-/**
- * One field of a GraphQL selection: a name, and the fields it needs selected under it. GraphQL refuses an object,
- * a geo coordinate or a phone number with no sub-selection (measured on 1.37.4), so the selection is built from
- * the schema and the two paths answer the same properties.
- */
-export interface SelectionField {
-  readonly name: string;
-  readonly fields?: readonly SelectionField[];
-}
-
 const GEO_FIELDS: readonly SelectionField[] = Object.freeze([{ name: "latitude" }, { name: "longitude" }]);
 const PHONE_FIELDS: readonly SelectionField[] = Object.freeze(
   ["input", "internationalFormatted", "countryCode", "national", "nationalFormatted", "valid", "defaultCountry"].map(
@@ -82,19 +80,6 @@ export function selectionOf(property: WeaviateProperty): SelectionField | undefi
     return fields.length === 0 ? undefined : { name: property.name, fields };
   }
   return { name: property.name };
-}
-
-export interface WeaviateVector {
-  /** "" for the unnamed vector. */
-  readonly name: string;
-  /** The vectorizer module's name, `none` where vectors are supplied by the writer. */
-  readonly vectorizer: string;
-  /** `hnsw`, `flat`, `dynamic`, `hfresh`, or what the server declares. */
-  readonly indexType: string;
-  /** `cosine`, `dot`, `l2-squared`, `hamming`, `manhattan`; null where the server declares none. */
-  readonly distance: string | null;
-  /** The compression the index declares enabled, or null. */
-  readonly quantization: string | null;
 }
 
 export interface WeaviateClass {
@@ -285,22 +270,6 @@ export function weaviateIndexes(definition: WeaviateClass): readonly IndexSchema
       unique: false,
     }),
   );
-}
-
-/** What a console request reads from the collection it names (spec 5.3, W3, W6, W11). */
-export interface WeaviateCollectionFacts {
-  readonly name: string;
-  readonly multiTenant: boolean;
-  readonly autoTenantActivation: boolean;
-  readonly vectors: readonly WeaviateVector[];
-  /** Every top-level property's GraphQL selection, by name; a cross-reference has none. */
-  readonly selections: ReadonlyMap<string, SelectionField>;
-  /** The non-reference properties, in schema order: what REST answers when a request names no property. */
-  readonly plainProperties: readonly string[];
-  /** The properties typed `int` or `int[]`, whose GraphQL nulls outside int32 are marked (spec 5.2). */
-  readonly intProperties: ReadonlySet<string>;
-  /** The reference properties, which a request may not select in this version. */
-  readonly referenceProperties: ReadonlySet<string>;
 }
 
 export function weaviateCollectionFacts(definition: WeaviateClass): WeaviateCollectionFacts {

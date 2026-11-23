@@ -52,7 +52,7 @@ import type { QueryResult } from "@/lib/types";
 import { type WeaviateAnswer, WeaviateError, type WeaviateErrorCategory, type WeaviateRequest } from "./client";
 import { answerFailure } from "./errors";
 import type { WeaviateAnswered } from "./execute";
-import type { WeaviatePlan } from "./request";
+import type { WeaviatePlan } from "@/lib/languages/weaviateapi/request";
 
 type Json = Readonly<Record<string, unknown>>;
 

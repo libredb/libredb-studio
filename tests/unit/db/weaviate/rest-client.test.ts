@@ -7,15 +7,11 @@
 import { describe, expect, test } from "bun:test";
 import { QueryError } from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
-import {
-  WEAVIATE_OPS,
-  type WeaviateOp,
-  type WeaviateRequest,
-  type WeaviateRouteTemplates,
-} from "@/lib/db/providers/vector/weaviate/client";
+import { WEAVIATE_OPS, type WeaviateOp } from "@/lib/languages/weaviateapi/ops";
+import type { WeaviateRequest, WeaviateRouteTemplates } from "@/lib/db/providers/vector/weaviate/client";
 import { buildWeaviateConnectionOptions } from "@/lib/db/providers/vector/weaviate/connection-options";
 import { createRestWeaviateClient } from "@/lib/db/providers/vector/weaviate/rest-client";
-import { WEAVIATE_CLIENT_ROUTES } from "@/lib/db/providers/vector/weaviate/routes";
+import { WEAVIATE_CLIENT_ROUTES } from "@/lib/languages/weaviateapi/routes";
 import type { DatabaseConnection } from "@/lib/types";
 import { expectCalls } from "../../../helpers/call-log";
 import { okAnswer, type RecordedAnswer, recordingWeaviateTransport } from "../../../helpers/weaviate-wire";

@@ -58,8 +58,10 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/db/console/format.ts` | SDK /console | Pure code of the shared console layer, the same for every console provider. |
 | `src/lib/db/console/guard.ts` | SDK /console | Pure code of the shared console layer, the same for every console provider. |
 | `src/lib/db/console/parser.ts` | SDK /console | Pure code of the shared console layer, the same for every console provider. |
+| `src/lib/db/console/route-pattern.ts` | SDK /console | Pure route pattern matching and the refused-route sentence every request console writes its table for, shipped to the browser as well. |
 | `src/lib/db/console/shell-words.ts` | SDK /console | Pure POSIX shell word reading, shipped to the browser as well. |
 | `src/lib/db/console/tagged-json.ts` | SDK /console | The pure JSON value form a console body is read into. |
+| `src/lib/db/console/tagged-readers.ts` | SDK /console | Pure readers of a tagged JSON body, raising through the language's own refusal function, shipped to the browser as well. |
 | `src/lib/db/credential-warnings.ts` | core only | The seed credential refusal is a core check over a core table keyed by type-id; core runs it before it builds the provider, as FND-2 did for the other connection checks. |
 | `src/lib/db/destructive-vocabulary.ts` | core only | The shape of the confirmation gate's rows, which move into core statement-language family modules in PR 8b and the language slices, so no provider declares one. |
 | `src/lib/db/editor-language/types.ts` | SDK /manifest | The editor language row contract; its Monaco types go with the browser catalog of phase 3. |
@@ -137,6 +139,11 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/languages/oxiacli/constants.ts` | SDK /oxiacli | The numbers and fixed names the oxia command language reads: the CLI's default port, the internal key prefix, the list and scan limits, the text bound and the echo width. |
 | `src/lib/languages/oxiacli/lexer.ts` | SDK /oxiacli | The oxia command line's tokens and shell words, read by the editor syntax and the parser. |
 | `src/lib/languages/rediscli/command-text.ts` | SDK /rediscli | The Redis command line reader of the rediscli statement language family, pure code the redis provider runs and the confirmation gate reads; the SDK republishes a family's readers under the language's subpath. |
+| `src/lib/languages/weaviateapi/collection-facts.ts` | SDK /weaviateapi | What a Weaviate console request reads from the collection it names (its tenancy, vectors, properties and GraphQL selections), pure types; the provider's schema reader builds them and phase 1 of the request reader reads them. |
+| `src/lib/languages/weaviateapi/metadata-request.ts` | SDK /weaviateapi | The agent's reader of one Weaviate metadata request, pure; the provider runs it before it sends anything and the admission reads it. |
+| `src/lib/languages/weaviateapi/ops.ts` | SDK /weaviateapi | The operation names of the Weaviate REST API Studio sends, the console's seventeen and the three the provider writes itself, pure; the client seam and the route table read them. |
+| `src/lib/languages/weaviateapi/request.ts` | SDK /weaviateapi | The Weaviate console request reader, pure: phase 0 over the text alone and phase 1 over the collection's facts; the provider, the confirmation row and the agent reader run it. |
+| `src/lib/languages/weaviateapi/routes.ts` | SDK /weaviateapi | The Weaviate console as data, its dialect, seventeen read routes, closed keys, enumerations, bounds and refusal sentences, and every operation's method and path the client is built with; pure. |
 | `src/lib/logger.ts` | host service: logging | The process logger, with its level filtering and the logged-text scrub. |
 | `src/lib/monitoring-cache-ratio.ts` | SDK /monitoring | Pure display text for a cache hit ratio. |
 | `src/lib/sql/grammar.ts` | core only | `resolveSqlGrammar` reads core's SQL grammar registry, so a provider reads its own grammar row instead; the `SqlGrammar` type and the default grammar go to SDK /sql when PR 9 splits the module. |
@@ -222,11 +229,10 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 | `src/lib/agent/languages/sparkplugread/definitions.ts` | 4 agent fact and reader modules | PR 8 sparkplugread | the sparkplugread family, `src/lib/languages/sparkplugread/` |
 | `src/lib/agent/languages/sparkplugread/mcp.ts` | 1 agent fact and reader module | PR 8 sparkplugread | the sparkplugread family, `src/lib/languages/sparkplugread/` |
 | `src/lib/agent/languages/sparkplugread/server.ts` | 2 agent fact and reader modules | PR 8 sparkplugread | the sparkplugread family, `src/lib/languages/sparkplugread/` |
-| `src/lib/agent/languages/weaviateapi/adapter.ts` | 1 statement reader module | PR 8 weaviateapi | the weaviateapi family, `src/lib/languages/weaviateapi/` |
 | `src/lib/connection-string-parser.ts` | 2 paste readers, re-exported (databend, snowflake) | PR 11 connection | the manifest's connection section |
 | `src/lib/db/connection-form.ts` | 1 snowflake account host reader | PR 11 connection | the manifest's connection section |
 | `src/lib/db/connection-string/index.ts` | 43 connection string rows | PR 11 connection | manifest rows: the PR 9 schema, collected by the PR 11 projection |
-| `src/lib/db/destructive-commands.ts` | 7 confirmation vocabulary rows | PR 8 etcdctl, PR 8 fsquery, PR 8 kubectl, PR 8 milvusrpc, PR 8 qdrantapi, PR 8 s3api, PR 8 weaviateapi | each row into its statement language's core family module |
+| `src/lib/db/destructive-commands.ts` | 6 confirmation vocabulary rows | PR 8 etcdctl, PR 8 fsquery, PR 8 kubectl, PR 8 milvusrpc, PR 8 qdrantapi, PR 8 s3api | each row into its statement language's core family module |
 | `src/lib/db/driver-errors/index.ts` | 7 driver error rows | PR 11 policy | manifest rows: the PR 9 schema, collected by the PR 11 projection |
 | `src/lib/db/editor-language/index.ts` | 15 editor language rows | PR 11 editor and SQL text | manifest rows: the PR 9 schema, collected by the PR 11 projection |
 | `src/lib/db/engine-facets/index.ts` | 43 engine facets rows | PR 11 policy | manifest rows: the PR 9 schema, collected by the PR 11 projection |
@@ -256,7 +262,6 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 | `src/lib/db/operations/s3api-admission.ts` | 1 statement reader module | PR 8 s3api | the s3api family, `src/lib/languages/s3api/` |
 | `src/lib/db/operations/snmpget-admission.ts` | 1 statement reader module | PR 8 snmpget | the snmpget family, `src/lib/languages/snmpget/` |
 | `src/lib/db/operations/sparkplugread-admission.ts` | 1 statement reader module | PR 8 sparkplugread | the sparkplugread family, `src/lib/languages/sparkplugread/` |
-| `src/lib/db/operations/weaviateapi-admission.ts` | 1 statement reader module | PR 8 weaviateapi | the weaviateapi family, `src/lib/languages/weaviateapi/` |
 | `src/lib/db/query-dialects.ts` | 1 kubernetes query dialect row | PR 11 editor and SQL text | a manifest row |
 | `src/lib/db/query-generators/index.ts` | 27 query generator rows | PR 11 editor and SQL text | manifest rows: the PR 9 schema, collected by the PR 11 projection |
 | `src/lib/db/sql-grammar/index.ts` | 43 SQL grammar rows | PR 11 editor and SQL text | manifest rows: the PR 9 schema, collected by the PR 11 projection |

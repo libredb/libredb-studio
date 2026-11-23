@@ -24,7 +24,8 @@ import {
 import { TransportError } from "@/lib/db/http/node-transport";
 import { serverText } from "@/lib/db/utils/server-text";
 import type { DatabaseType } from "@/lib/types";
-import { type WeaviateAnswer, WeaviateError, type WeaviateErrorCategory, type WeaviateOp } from "./client";
+import { type WeaviateAnswer, WeaviateError, type WeaviateErrorCategory } from "./client";
+import type { WeaviateOp } from "@/lib/languages/weaviateapi/ops";
 
 const PROVIDER: DatabaseType = "weaviate";
 

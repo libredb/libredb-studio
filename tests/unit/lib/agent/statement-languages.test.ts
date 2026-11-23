@@ -39,7 +39,7 @@ import {
   WEAVIATEAPI_AGENT_MAX_STATEMENT_CHARS,
   weaviateapiAgentReadInput,
 } from "@/lib/db/operations/weaviateapi-admission";
-import { WEAVIATE_AGENT_SENTENCES } from "@/lib/db/providers/vector/weaviate/metadata-request";
+import { WEAVIATE_AGENT_SENTENCES } from "@/lib/languages/weaviateapi/metadata-request";
 import {
   admitQdrantapiStatement,
   QDRANTAPI_AGENT_MAX_STATEMENT_CHARS,

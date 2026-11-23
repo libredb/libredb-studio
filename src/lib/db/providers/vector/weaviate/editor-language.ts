@@ -1,6 +1,6 @@
 import { formatConsole } from "@/lib/db/console/format";
 import type { EditorLanguageContribution } from "@/lib/db/editor-language/types";
-import { WEAVIATE_CONSOLE, WEAVIATE_ROUTES } from "./routes";
+import { WEAVIATE_CONSOLE, WEAVIATE_ROUTES } from "@/lib/languages/weaviateapi/routes";
 
 /**
  * The Weaviate console request (#1566), registered and formatted as Qdrant's is.

@@ -1,50 +1,14 @@
 /**
- * The Weaviate provider's client seam (#1566 spec 3.1): the operations the provider sends, the request and the
- * answer that cross the seam, the client every consumer is handed a slice of, and the error an answer is classified
- * into. No I/O: `rest-client.ts` is the one implementation, and the only file that builds a path.
+ * The Weaviate provider's client seam (#1566 spec 3.1): the request and the answer that cross the seam for each
+ * operation the weaviateapi family names (`src/lib/languages/weaviateapi/ops.ts`), the client every consumer is
+ * handed a slice of, and the error an answer is classified into. No I/O: `rest-client.ts` is the one implementation,
+ * and the only file that builds a path.
  *
  * A consumer never holds the whole client. It receives a `WeaviateSend` typed to exactly the operations it calls,
  * so a module that reads the schema cannot send a search, and a call-site test over a recording client holds the
  * slices at run time.
  */
-
-/**
- * Every operation the client sends: the console's routes (`routes.ts`) first, in their table order, then the three
- * the console never names, the readiness probe of the health surface, the GraphQL read the encoder writes for a
- * server that serves no REST search (spec 3.3), and the key's own record the agent read-only profile proves a viewer
- * from (`metadata-read.ts`).
- */
-export const WEAVIATE_OPS = [
-  "meta",
-  "schema",
-  "collection",
-  "shards",
-  "tenants",
-  "tenant",
-  "aliases",
-  "alias",
-  "nodes",
-  "collection_nodes",
-  "objects",
-  "object",
-  "search_bm25",
-  "search_hybrid",
-  "search_near_vector",
-  "search_near_object",
-  "aggregate",
-  "ready",
-  "graphql",
-  "own_info",
-] as const;
-
-export type WeaviateOp = (typeof WEAVIATE_OPS)[number];
-
-/** The operations a console request may name: every operation but the three the provider writes itself. */
-export type WeaviateConsoleOp = Exclude<WeaviateOp, "ready" | "graphql" | "own_info">;
-
-/** The four search routes and the aggregate route: the operations that run over REST or GraphQL (spec 3.3). */
-export type WeaviateSearchOp = "search_bm25" | "search_hybrid" | "search_near_vector" | "search_near_object";
-export type WeaviateEncodedOp = WeaviateSearchOp | "aggregate";
+import type { WeaviateOp } from "@/lib/languages/weaviateapi/ops";
 
 export interface WeaviateRequest {
   readonly op: WeaviateOp;

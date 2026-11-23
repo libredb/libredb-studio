@@ -5,7 +5,7 @@
  * with, naming what the route is and what the console runs.
  */
 import { describe, expect, test } from "bun:test";
-import { WEAVIATE_OPS } from "@/lib/db/providers/vector/weaviate/client";
+import { WEAVIATE_OPS } from "@/lib/languages/weaviateapi/ops";
 import {
   refusedRouteSentence,
   WEAVIATE_BOUNDS,
@@ -17,7 +17,7 @@ import {
   WEAVIATE_REFUSED_KEYS,
   WEAVIATE_ROUTES,
   WEAVIATE_RUNS,
-} from "@/lib/db/providers/vector/weaviate/routes";
+} from "@/lib/languages/weaviateapi/routes";
 
 describe("the dialect and the route table", () => {
   test("a GET or POST line under /v1/, with // and # comments", () => {

@@ -22,10 +22,10 @@ import {
 } from "@/lib/db/console/tagged-json";
 import { QueryError } from "@/lib/db/errors";
 import type { DatabaseType } from "@/lib/types";
-import type { WeaviateSearchOp } from "./client";
-import type { WeaviateSearchModel } from "./request";
-import { WEAVIATE_ENUMS } from "./routes";
-import type { SelectionField, WeaviateCollectionFacts } from "./schema";
+import type { WeaviateSearchOp } from "@/lib/languages/weaviateapi/ops";
+import type { WeaviateSearchModel } from "@/lib/languages/weaviateapi/request";
+import { WEAVIATE_ENUMS } from "@/lib/languages/weaviateapi/routes";
+import type { SelectionField, WeaviateCollectionFacts } from "@/lib/languages/weaviateapi/collection-facts";
 
 const PROVIDER: DatabaseType = "weaviate";
 const NAME = /^[_A-Za-z][_0-9A-Za-z]*$/;

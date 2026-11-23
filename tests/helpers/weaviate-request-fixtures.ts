@@ -12,13 +12,9 @@ import {
   type WeaviatePlan,
   type WeaviateSearchModel,
   weaviatePhase0,
-} from "@/lib/db/providers/vector/weaviate/request";
-import {
-  readWeaviateSchema,
-  type WeaviateCollectionFacts,
-  type WeaviateVector,
-  weaviateCollectionFacts,
-} from "@/lib/db/providers/vector/weaviate/schema";
+} from "@/lib/languages/weaviateapi/request";
+import { readWeaviateSchema, weaviateCollectionFacts } from "@/lib/db/providers/vector/weaviate/schema";
+import type { WeaviateCollectionFacts, WeaviateVector } from "@/lib/languages/weaviateapi/collection-facts";
 
 export const plan = (text: string): WeaviatePlan => weaviatePhase0(parseWeaviateRequest(text));
 

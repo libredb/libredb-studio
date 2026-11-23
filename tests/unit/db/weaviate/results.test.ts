@@ -8,8 +8,8 @@
 import { describe, expect, test } from "bun:test";
 import { taggedNumber } from "@/lib/db/console/tagged-json";
 import { QueryError } from "@/lib/db/errors";
-import type { WeaviateConsoleOp } from "@/lib/db/providers/vector/weaviate/client";
-import type { WeaviateSearchModel } from "@/lib/db/providers/vector/weaviate/request";
+import type { WeaviateConsoleOp } from "@/lib/languages/weaviateapi/ops";
+import type { WeaviateSearchModel } from "@/lib/languages/weaviateapi/request";
 import { type WeaviateResultShape, weaviateResult } from "@/lib/db/providers/vector/weaviate/results";
 import { readWeaviateClass, weaviateCollectionFacts } from "@/lib/db/providers/vector/weaviate/schema";
 import { capturedText } from "../../../helpers/weaviate-surface";
