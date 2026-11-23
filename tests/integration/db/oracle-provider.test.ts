@@ -141,6 +141,42 @@ const DB_TYPE_TIMESTAMP_LTZ: oracledb.DbType = { num: 2014, name: "DB_TYPE_TIMES
 const DB_TYPE_BFILE: oracledb.DbType = { num: 2020, name: "DB_TYPE_BFILE" };
 const DB_TYPE_CURSOR: oracledb.DbType = { num: 2021, name: "DB_TYPE_CURSOR" };
 const DB_TYPE_OBJECT: oracledb.DbType = { num: 2023, name: "DB_TYPE_OBJECT" };
+// A VECTOR column: dense, sparse and flexible ones share this one type; the value tells them apart.
+const DB_TYPE_VECTOR: oracledb.DbType = { num: 2033, name: "DB_TYPE_VECTOR" };
+
+/**
+ * The driver's `SparseVector`, as node-oracledb 26.0.0 decodes a sparse VECTOR value: the dimension
+ * count, a `Uint32Array` of positions and a typed array of values. The mocked module exports this class
+ * under the driver's name, so the provider's `instanceof oracledb.SparseVector` meets it as it meets the real one.
+ */
+class SparseVector {
+  constructor(
+    readonly numDimensions: number,
+    readonly indices: Uint32Array,
+    readonly values: Float32Array | Float64Array | Int8Array,
+  ) {}
+}
+
+/**
+ * Rows as the driver hands them under a per-call `fetchTypeHandler`: it asks the handler about every
+ * column and puts each value through the converter the handler answers, on `execute()` and on a result
+ * set's `getRows()` alike (node-oracledb `lib/impl/resultset.js`). A row's column with no converter is
+ * handed on as it came.
+ */
+function driverRows(rows: readonly unknown[], metaData: readonly unknown[], opts: unknown): unknown[] {
+  const handler = (opts as { fetchTypeHandler?: oracledb.FetchTypeHandler } | undefined)?.fetchTypeHandler;
+  const converters = (metaData as oracledb.Metadata[]).map((column) => {
+    const answer = handler?.(column);
+    return answer !== undefined && "converter" in answer ? ([column.name, answer.converter] as const) : undefined;
+  });
+  return rows.map((row) => {
+    const converted = { ...(row as Record<string, unknown>) };
+    for (const entry of converters) {
+      if (entry !== undefined) converted[entry[0]] = entry[1](converted[entry[0]]);
+    }
+    return converted;
+  });
+}
 const STRING = 2001;
 const BUFFER = 2005;
 
@@ -161,6 +197,8 @@ mock.module("oracledb", () => {
     DB_TYPE_BFILE,
     DB_TYPE_CURSOR,
     DB_TYPE_OBJECT,
+    DB_TYPE_VECTOR,
+    SparseVector,
     STRING,
     BUFFER,
     initOracleClient: mockInitOracleClientFn,
@@ -1514,6 +1552,137 @@ describe("OracleProvider", () => {
           expect([row.D, row.TS]).toEqual(["2026-09-01 00:00:00", "2026-09-01 10:30:00"]);
         });
         await provider.rollbackTransaction();
+      });
+    });
+
+    // VECTOR columns. Measured 2026-11-23 against Oracle 23.26.3 Free with node-oracledb 26.0.0 Thin
+    // (tests/live/oracle-vector-values.ts): the driver hands a FLOAT32, FLOAT64 or INT8 vector as a
+    // Float32Array, Float64Array or Int8Array, a flexible VECTOR(*, *) per row by its stored format, a
+    // sparse one as its SparseVector class and a binary one as a Uint8Array. A typed array of numbers is
+    // outside the value codec MCP answers every cell through, so the whole answer was refused, and the
+    // editor route wrote each one as an index-keyed object Oracle cannot read back.
+    describe("VECTOR columns", () => {
+      const VECTOR = (name: string) => ({ name, dbType: DB_TYPE_VECTOR, dbTypeName: "VECTOR" });
+
+      /** An execute() that answers `rows` under `meta`, through the per-call handler's converters, as the driver does. */
+      function vectorExecute(meta: readonly oracledb.Metadata[], rows: Record<string, unknown>[]) {
+        return async (_sql: string, _params?: unknown[], opts?: unknown) => ({
+          rows: driverRows(rows, meta, opts),
+          metaData: meta,
+        });
+      }
+
+      beforeEach(async () => {
+        await provider.connect();
+      });
+
+      test("a VECTOR column is given a converter, and every other column keeps the driver's default", async () => {
+        await provider.query("SELECT v FROM vec_probe");
+        const handler = lastExecuteOpts.fetchTypeHandler as oracledb.FetchTypeHandler;
+        const answer = handler(VECTOR("V"));
+        expect(answer !== undefined && "converter" in answer && typeof answer.converter).toBe("function");
+        expect(handler({ dbType: DB_TYPE_VARCHAR, name: "NAME" })).toBeUndefined();
+        expect(handler({ dbType: DB_TYPE_RAW, name: "R" })).toBeUndefined();
+      });
+
+      test("a FLOAT32, FLOAT64 and INT8 vector, and a flexible column's rows, reach the row as arrays of numbers", async () => {
+        const meta = [VECTOR("F32"), VECTOR("F64"), VECTOR("I8"), VECTOR("FLEX")];
+        mockExecuteFn = vectorExecute(meta, [
+          {
+            F32: Float32Array.of(0.1, 1.5, -2.25),
+            F64: Float64Array.of(0.1, 1e300, -2),
+            I8: Int8Array.of(1, -128, 127),
+            FLEX: Float32Array.of(0.5, 2),
+          },
+          { F32: null, F64: null, I8: null, FLEX: Int8Array.of(3, -4) },
+        ]);
+        const result = await provider.query("SELECT f32, f64, i8, flex FROM vec_probe");
+        const [first, second] = result.rows as Record<string, unknown>[];
+        for (const cell of [first.F32, first.F64, first.I8, first.FLEX, second.FLEX]) {
+          expect(Array.isArray(cell)).toBe(true);
+        }
+        expect(first).toEqual({
+          F32: [Math.fround(0.1), 1.5, -2.25],
+          F64: [0.1, 1e300, -2],
+          I8: [1, -128, 127],
+          FLEX: [0.5, 2],
+        });
+        expect(second).toEqual({ F32: null, F64: null, I8: null, FLEX: [3, -4] });
+        expect(JSON.stringify(result.rows)).not.toContain('{"0":');
+        expect(result.columnTypes).toEqual({ F32: "VECTOR", F64: "VECTOR", I8: "VECTOR", FLEX: "VECTOR" });
+      });
+
+      test("a sparse vector reaches the row as its dimension count and two arrays of numbers", async () => {
+        const meta = [VECTOR("SP"), VECTOR("SP8")];
+        mockExecuteFn = vectorExecute(meta, [
+          {
+            SP: new SparseVector(5, Uint32Array.of(0, 3), Float32Array.of(1.5, 2.5)),
+            SP8: new SparseVector(4, Uint32Array.of(1), Int8Array.of(-7)),
+          },
+        ]);
+        const result = await provider.query("SELECT sp, sp8 FROM vec_probe");
+        const row = result.rows[0] as Record<string, { numDimensions: unknown; indices: unknown; values: unknown }>;
+        expect(row).toEqual({
+          SP: { numDimensions: 5, indices: [0, 3], values: [1.5, 2.5] },
+          SP8: { numDimensions: 4, indices: [1], values: [-7] },
+        });
+        expect(Array.isArray(row.SP.indices) && Array.isArray(row.SP.values)).toBe(true);
+        expect(Array.isArray(row.SP8.indices) && Array.isArray(row.SP8.values)).toBe(true);
+      });
+
+      // A binary vector's bits are bytes, and the value codec already answers bytes with its own tag,
+      // so the driver's Uint8Array is handed on untouched. This guard fails if it is turned into numbers.
+      test("a binary vector stays the driver's bytes, and a NULL stays null", async () => {
+        const bytes = Uint8Array.of(255, 1);
+        mockExecuteFn = vectorExecute([VECTOR("BIN"), VECTOR("F32")], [{ BIN: bytes, F32: null }]);
+        const result = await provider.query("SELECT bin, f32 FROM vec_probe");
+        const row = result.rows[0] as Record<string, unknown>;
+        expect(row.BIN).toBe(bytes);
+        expect(row.F32).toBeNull();
+      });
+
+      test.each([
+        ["a Uint16Array", Uint16Array.of(1, 2)],
+        ["an instance of the class Object", { numDimensions: 5 }],
+        ["an object with no class", Object.create(null) as object],
+        ["a string", "[1,2]"],
+      ])("a VECTOR value of a form the driver does not hand is refused by name: %s", async (form, value) => {
+        mockExecuteFn = vectorExecute([VECTOR("V")], [{ V: value }]);
+        const refused = await provider.query("SELECT v FROM vec_probe").catch((caught: unknown) => caught);
+        expect(refused).toBeInstanceOf(QueryError);
+        expect((refused as Error).message).toBe(
+          `Oracle handed a VECTOR value as ${form}, which this provider does not read`,
+        );
+      });
+
+      test("queryInTransaction() converts the same way", async () => {
+        await provider.beginTransaction();
+        mockExecuteFn = vectorExecute([VECTOR("F32")], [{ F32: Float32Array.of(0.5, 1.5) }]);
+        const result = await provider.queryInTransaction("SELECT f32 FROM vec_probe");
+        expect(result.rows).toEqual([{ F32: [0.5, 1.5] }]);
+        await provider.rollbackTransaction();
+      });
+
+      // The export writes an object cell as its quoted JSON, and Oracle reads a dense vector back from
+      // exactly that text: measured accepted into a FLOAT32 and an INT8 column. The index-keyed form the
+      // typed array gave before was refused (ORA-51804).
+      test("a SQL INSERT export of the read writes vector literals Oracle reads back", async () => {
+        mockExecuteFn = vectorExecute(
+          [VECTOR("F32"), VECTOR("I8")],
+          [{ F32: Float32Array.of(0.1, 1.5, -2.25), I8: Int8Array.of(1, -128, 127) }],
+        );
+        const result = await provider.query("SELECT f32, i8 FROM vec_probe");
+        const rows = JSON.parse(JSON.stringify(result.rows)) as Record<string, unknown>[];
+        const file = buildResultExport("sql-insert", {
+          rows,
+          fields: result.fields,
+          tabName: "vec_probe",
+          dialect: "oracle",
+          columnTypes: result.columnTypes,
+        });
+        expect(file.content).toBe(
+          `INSERT INTO vec_probe ("F32", "I8") VALUES ('[0.10000000149011612,1.5,-2.25]', '[1,-128,127]');`,
+        );
       });
     });
   });
@@ -6517,14 +6686,15 @@ describe("OracleProvider.queryReadOnly", () => {
       if ((opts as { resultSet?: boolean } | undefined)?.resultSet !== true || !("rows" in (answered as object))) {
         return answered;
       }
-      // A result set, as the driver hands one back: the metadata at once, the rows only when fetched.
+      // A result set, as the driver hands one back: the metadata at once, the rows only when fetched, each value
+      // through the per-call handler's converter.
       const { rows, metaData } = answered as { rows: unknown[]; metaData: unknown[] };
       return {
         metaData,
         resultSet: {
           getRows: async (count: number) => {
             connectionLog.push({ event: `getRows ${count}` });
-            return rows.slice(0, count);
+            return driverRows(rows.slice(0, count), metaData, opts);
           },
           close: async () => {
             connectionLog.push({ event: "closeResultSet" });
@@ -6653,6 +6823,30 @@ describe("OracleProvider.queryReadOnly", () => {
       .catch((caught: unknown) => caught);
     expect((refused as Error).message).toContain("Read-only execution exceeded the row budget: 3 rows > 2 allowed");
     expect(errorKind(refused)).toBe("row-budget-refusal");
+  });
+
+  test("a VECTOR column is converted on the result set's rows", async () => {
+    answer = (sql) =>
+      CHECKS.has(sql) || sql === "SET TRANSACTION READ ONLY"
+        ? undefined
+        : {
+            rows: [
+              {
+                F32: Float32Array.of(0.5, -2.25),
+                SP: new SparseVector(3, Uint32Array.of(2), Float64Array.of(4.5)),
+              },
+            ],
+            metaData: [
+              { name: "F32", dbType: DB_TYPE_VECTOR, dbTypeName: "VECTOR" },
+              { name: "SP", dbType: DB_TYPE_VECTOR, dbTypeName: "VECTOR" },
+            ],
+          };
+    const result = await provider.queryReadOnly("SELECT f32, sp FROM app_owner.vec", {
+      ...BUDGET,
+      maxResultBytes: 4_096,
+    });
+    expect(result.rows).toEqual([{ F32: [0.5, -2.25], SP: { numDimensions: 3, indices: [2], values: [4.5] } }]);
+    expect(Array.isArray((result.rows[0] as Record<string, unknown>).F32)).toBe(true);
   });
 
   test.each([
@@ -6923,10 +7117,14 @@ describe("MCP run_read_query on an Oracle connection", () => {
       if ((opts as { resultSet?: boolean } | undefined)?.resultSet !== true || !("rows" in (answered as object))) {
         return answered;
       }
+      // The rows only when fetched, each value through the per-call handler's converter, as the driver does.
       const { rows, metaData } = answered as { rows: unknown[]; metaData: unknown[] };
       return {
         metaData,
-        resultSet: { getRows: async (count: number) => rows.slice(0, count), close: async () => {} },
+        resultSet: {
+          getRows: async (count: number) => driverRows(rows.slice(0, count), metaData, opts),
+          close: async () => {},
+        },
       };
     };
     mockConnCloseFn = async () => {};
@@ -6988,6 +7186,45 @@ describe("MCP run_read_query on an Oracle connection", () => {
       "SET TRANSACTION READ ONLY",
       ...CHECKS,
       "SELECT id FROM app_owner.orders FETCH FIRST 101 ROWS ONLY",
+    ]);
+  });
+
+  // MCP answers every cell through the value codec, which refuses a typed array of numbers and the driver's
+  // SparseVector by name, and that refusal took the whole answer: "The value codec cannot encode a
+  // Float32Array, at "/0/F32"." The binary vector was already answered, as the codec's bytes tag.
+  test("a statement that selects numeric, sparse and binary vectors answers its rows", async () => {
+    const vector = (name: string) => ({ name, dbType: DB_TYPE_VECTOR, dbTypeName: "VECTOR" });
+    statement = () => ({
+      rows: [
+        {
+          ID: 1,
+          F32: Float32Array.of(0.5, 1.5, -2.25),
+          I8: Int8Array.of(1, -128, 127),
+          SP: new SparseVector(5, Uint32Array.of(0, 3), Float32Array.of(1.5, 2.5)),
+          BIN: Uint8Array.of(255, 1),
+        },
+      ],
+      metaData: [ID, vector("F32"), vector("I8"), vector("SP"), vector("BIN")],
+    });
+
+    const result = await call({ sql: "SELECT id, f32, i8, sp, bin FROM app_owner.vec" });
+
+    expect(result.isError).toBeUndefined();
+    const answer = result.structuredContent as { rows: unknown[]; columns: { name: string; type?: string }[] };
+    expect(answer.rows).toEqual([
+      {
+        ID: 1,
+        F32: [0.5, 1.5, -2.25],
+        I8: [1, -128, 127],
+        SP: { numDimensions: 5, indices: [0, 3], values: [1.5, 2.5] },
+        BIN: { $: "bytes", v: "/wE=" },
+      },
+    ]);
+    expect(answer.columns.filter((column) => column.name !== "ID").map((column) => column.type)).toEqual([
+      "VECTOR",
+      "VECTOR",
+      "VECTOR",
+      "VECTOR",
     ]);
   });
 
