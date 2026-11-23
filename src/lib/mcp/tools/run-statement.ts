@@ -42,6 +42,7 @@ import {
   MCP_READ_ONLY_ANNOTATIONS,
   MCP_RESULT_CAP_BYTES,
   ownWordsError,
+  ownWordsFailure,
   providerTextError,
   recordOrRefuse,
   untrustedResult,
@@ -145,9 +146,10 @@ interface StatementCall {
 }
 
 /**
- * The answer to a step that failed. A failure answered as the timeout can be a real engine or connection error that
- * settled after the deadline, so the provider's own message, redacted, goes to the server log with the call's
- * correlation id, and never to the client.
+ * The answer to a step that failed, with the failure's error record. A failure that settled at or after the deadline is
+ * answered as the deadline itself is, Studio's own answer with no record; it can be a real engine or connection error,
+ * so the provider's own message, redacted, goes to the server log with the call's correlation id, and never to the
+ * client. A time budget refusal before the deadline is answered with the same text and its record.
  */
 function failureAnswer(
   call: StatementCall,
@@ -158,18 +160,19 @@ function failureAnswer(
   scrub: ProviderTextScrub,
 ): Answer {
   const failure = classifyReadQueryFailure(error, settledAt, deadline, call.arm.tooLarge(call.statement, call.type));
-  if (failure.kind === "timeout") {
+  if (failure.kind === "deadline" || failure.kind === "timeout") {
     logger.warn(`MCP ${call.arm.tool} answered a provider failure as the timeout`, {
       route: "/api/mcp",
       error: redactErrorMessage(scrubProviderText(scrub, error instanceof Error ? error.message : String(error))),
       connection: record.connectionName,
       correlationId: record.correlationId,
     });
-    return [ownWordsError(timeoutText(call.args.timeout_ms)), "mcp_timeout"];
+    const text = timeoutText(call.args.timeout_ms);
+    return [failure.kind === "deadline" ? ownWordsError(text) : ownWordsFailure(text, error, scrub), "mcp_timeout"];
   }
   // Studio's words, scrubbed: the read allowance's sentence splices the provider's charge label.
   if (failure.kind === "too-large")
-    return [ownWordsError(scrubProviderText(scrub, failure.text)), "mcp_result_too_large"];
+    return [ownWordsFailure(scrubProviderText(scrub, failure.text), error, scrub), "mcp_result_too_large"];
   if (failure.kind === "not-sent") {
     return [providerTextError(NOT_SENT_LEAD, failure.error, scrub, providerAuthor(call.type)), "mcp_statement_refused"];
   }
@@ -191,7 +194,7 @@ function profileRefusal(call: StatementCall, error: ExecutionProfileError, scrub
   const { arm } = call;
   if (isStudioRefusal(error)) {
     return [
-      ownWordsError(profileRefusalText(scrubProviderText(scrub, error.message), arm.engines, arm.tool)),
+      ownWordsFailure(profileRefusalText(scrubProviderText(scrub, error.message), arm.engines, arm.tool), error, scrub),
       "mcp_execution_failed",
     ];
   }

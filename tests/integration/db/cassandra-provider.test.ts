@@ -4432,6 +4432,7 @@ describe("the agent read-only profile", () => {
             text: `The statement was refused before it reached the database: ${cassandraAgentStatementRefusal(sql, KEYSPACE)}`,
           },
         ],
+        structuredContent: { error: { kind: "refused-before-send", code: "QUERY_ERROR", outcome: "not-sent" } },
         isError: true,
       });
       expect(textOf(answer)[1]).toContain("this statement does not begin with SELECT, so it was not sent.");
@@ -4456,6 +4457,7 @@ describe("the agent read-only profile", () => {
             text: `The statement was refused before it reached the database: The agent read-only execution profile reads the tables of the connection's keyspace and of system_schema, and nothing else; this SELECT reads ${table}, so it was not sent. Name a table of the keyspace probe, or of system_schema for the schema.`,
           },
         ],
+        structuredContent: { error: { kind: "refused-before-send", code: "QUERY_ERROR", outcome: "not-sent" } },
         isError: true,
       });
       expect(sessions).toHaveLength(0);
@@ -4495,6 +4497,9 @@ describe("the agent read-only profile", () => {
             text: `run_read_query cannot run on this connection: The agent read-only execution profile refuses the Cassandra role agent_ro: it is a superuser (agent_ro), whom no grant restricts. Connect as a role that is no superuser, holds no superuser role, and holds only SELECT on the keyspace probe or on its tables. It runs on ${RUN_READ_QUERY_ENGINES}.`,
           },
         ],
+        structuredContent: {
+          error: { kind: "execution-profile", code: "PROFILE_PRIVILEGES_TOO_BROAD", outcome: "unknown" },
+        },
         isError: true,
       });
     });
@@ -4527,6 +4532,7 @@ describe("the agent read-only profile", () => {
             text: `The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, and page it in SQL: ${PAGING}.`,
           },
         ],
+        structuredContent: { error: { kind: "row-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
         isError: true,
       });
     });
@@ -4547,6 +4553,7 @@ describe("the agent read-only profile", () => {
             text: "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add a smaller LIMIT.",
           },
         ],
+        structuredContent: { error: { kind: "byte-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
         isError: true,
       });
     });
@@ -4565,6 +4572,7 @@ describe("the agent read-only profile", () => {
             text: "The statement did not finish within timeout_ms (1000 ms). Narrow it, or raise timeout_ms up to 30000.",
           },
         ],
+        structuredContent: { error: { kind: "time-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
         isError: true,
       });
       expect(timeouts).toHaveLength(1);

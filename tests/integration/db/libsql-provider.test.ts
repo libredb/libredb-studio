@@ -3825,6 +3825,7 @@ describe("MCP run_read_query on a libSQL connection", () => {
         { type: "text", text: DATABASE_CONTENT_NOTICE },
         { type: "text", text: `${MCP_ENGINE_ERROR_PREFIX}libSQL request failed: ${FORBIDDEN}` },
       ],
+      structuredContent: { error: { kind: "query", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
     });
   });
@@ -3837,11 +3838,14 @@ describe("MCP run_read_query on a libSQL connection", () => {
         text: `run_read_query cannot run on this connection: ${sentence}. It runs on ${ENGINES}.`,
       },
     ],
+    structuredContent: {
+      error: { kind: "studio-profile-refusal", code: "AGENT_CREDENTIAL_WITH_CONNECTION_STRING", outcome: "unknown" },
+    },
     isError: true as const,
   });
 
-  // The provider's refusal at the open, behind a notice naming it.
-  const refusedAtOpen = (sentence: string) => ({
+  // The provider's refusal at the open, behind a notice naming it, and its record: a refusal at the open is not sent.
+  const refusedAtOpen = (sentence: string, code: string) => ({
     content: [
       { type: "text" as const, text: providerTextNotice(providerAuthor("libsql")) },
       {
@@ -3849,6 +3853,7 @@ describe("MCP run_read_query on a libSQL connection", () => {
         text: `run_read_query cannot run on this connection: ${sentence}. It runs on ${ENGINES}.`,
       },
     ],
+    structuredContent: { error: { kind: "execution-profile", code, outcome: "not-sent" } },
     isError: true as const,
   });
 
@@ -3856,21 +3861,24 @@ describe("MCP run_read_query on a libSQL connection", () => {
     'The libSQL token is not a read-only token (a JWT whose claims carry "a": "ro"), so it can write, and the agent read-only profile is refused: use a read-only token';
 
   test.each([
-    ["a writable token", { password: fakeToken({ a: "rw" }) }, CAN_WRITE],
+    ["a writable token", { password: fakeToken({ a: "rw" }) }, CAN_WRITE, "PROFILE_PRIVILEGES_TOO_BROAD"],
     [
       "a read-only token whose permission claim widens it",
       { password: fakeToken({ a: "ro", p: { rw: { ns: ["default"] } } }) },
       'The libSQL token carries claims beyond the read-only marker and the standard ones ("p"), which the server may read to grant writes, so it can write, and the agent read-only profile is refused: use a read-only token that carries no other claim',
+      "PROFILE_PRIVILEGES_TOO_BROAD",
     ],
     [
       "a user name and password (HTTP Basic)",
       { user: "admin", password: "not-a-real-password" },
       "A libSQL connection that signs in with a user name and password (HTTP Basic) has no read-only form, so the agent read-only profile is refused: use a read-only token instead",
+      "PROFILE_PRIVILEGES_TOO_BROAD",
     ],
     [
       "no token",
       { password: undefined },
       "A libSQL connection with no token reaches only a server that checks no credential, so the agent read-only profile is refused: use a read-only token",
+      "PROFILE_SERVER_UNENFORCED",
     ],
     [
       "a connection string carrying a writable token",
@@ -3881,16 +3889,17 @@ describe("MCP run_read_query on a libSQL connection", () => {
         connectionString: `libsql://db.example.invalid?authToken=${fakeToken({ a: "rw" })}`,
       },
       CAN_WRITE,
+      "PROFILE_PRIVILEGES_TOO_BROAD",
     ],
   ] as const)(
     "%s is refused at open, in the tool's sentence, before anything is sent",
-    async (_label, overrides, sentence) => {
+    async (_label, overrides, sentence, code) => {
       readOnlyServer();
 
       const result = await call({ sql: "SELECT id FROM probe_orders" }, seed(overrides as Partial<ManagedConnection>));
 
       expect(acquired).toEqual(["agent-read-only"]);
-      expect(result).toEqual(refusedAtOpen(sentence));
+      expect(result).toEqual(refusedAtOpen(sentence, code));
       expect(calls).toEqual([]);
     },
   );
@@ -3942,6 +3951,7 @@ describe("MCP run_read_query on a libSQL connection", () => {
           text: "The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, or remove your own LIMIT and page with offset.",
         },
       ],
+      structuredContent: { error: { kind: "row-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
     });
   });
@@ -3960,6 +3970,7 @@ describe("MCP run_read_query on a libSQL connection", () => {
           text: "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add a smaller LIMIT.",
         },
       ],
+      structuredContent: { error: { kind: "byte-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
     });
   });

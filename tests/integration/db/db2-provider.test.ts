@@ -2917,6 +2917,7 @@ describe("MCP run_read_query on a Db2 connection", () => {
         { type: "text", text: DATABASE_CONTENT_NOTICE },
         { type: "text", text: `${MCP_ENGINE_ERROR_PREFIX}${refusal}` },
       ],
+      structuredContent: { error: { kind: "database", code: "DATABASE_ERROR", outcome: "unknown" } },
       isError: true,
     });
   });
@@ -2979,6 +2980,9 @@ describe("MCP run_read_query on a Db2 connection", () => {
             `REVOKE SELECT ON TABLE "SYSCAT"."COLDIST" FROM PUBLIC. It runs on ${RUN_READ_QUERY_ENGINES}.`,
         },
       ],
+      structuredContent: {
+        error: { kind: "execution-profile", code: "PROFILE_PRIVILEGES_TOO_BROAD", outcome: "unknown" },
+      },
       isError: true,
     });
     expect(bounded).toEqual([]);
@@ -2997,6 +3001,7 @@ describe("MCP run_read_query on a Db2 connection", () => {
           text: "The result has more than 1000 rows, the most this server reads for one call. Add FETCH FIRST n ROWS ONLY with n of 1000 or less, or remove your own FETCH FIRST, OFFSET ... FETCH or LIMIT and page with offset.",
         },
       ],
+      structuredContent: { error: { kind: "row-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
     });
   });
@@ -3013,6 +3018,7 @@ describe("MCP run_read_query on a Db2 connection", () => {
           text: "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add FETCH FIRST n ROWS ONLY with a smaller n.",
         },
       ],
+      structuredContent: { error: { kind: "byte-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
     });
   });

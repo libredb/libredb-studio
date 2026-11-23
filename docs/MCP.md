@@ -258,6 +258,11 @@ In the rest of this guide, `agent-read-only` is Studio's least-privilege read pr
   A tool's description carries the same notice without a provider, since it serves every engine its tool serves.
 - A refusal a provider wrote comes after a notice naming the provider that wrote it, for example "PostgreSQL provider, bundled with Studio", and is untrusted text too: a profile refusal the provider raises at the open or by the statement call (where the provider checks its principal before every statement, as Oracle's does, and may name objects and roles any user of the database chose), a statement it refused before sending, and an offset or a database it would not open.
   Studio's own refusals carry no notice and read in Studio's words.
+- An error answer built from a failure (an engine error, a provider's refusal, a too large, timeout or not sent answer, a profile refusal) carries `structuredContent` `{ "error": { ... } }`, the failure's error record: `kind`, `code`, `outcome` and, when the driver reported one and its text was not withheld, `sqlState` ([API reference](API_DOCS.md#error-kind-and-outcome)).
+  A refusal Studio makes with no failure behind it, and the answer to the call's own deadline, carry none.
+  The record holds closed vocabularies and the SQLSTATE only, never the failure's text.
+  This `structuredContent` is not the tool's output schema: the MCP TypeScript SDK's client and server check `structuredContent` against that schema only on a result that is not an error.
+  A client that checks an error result's `structuredContent` against the tool's output schema too would not accept the record.
 - Every provider text in an answer and in the server log, an engine error, a note, a refusal, is withheld whole when it holds a credential the seed's provider receives, or any form of one (its base64 at any byte offset, its URL-encoded form, or any of those JSON-escaped or with control characters between its characters), before it is redacted and cut.
   That is the seed's read credential of its own, `agentPassword`, in place of its password where the seed sets one, a Vault-resolved one included, and never the SSH tunnel's secrets, which no provider receives.
 

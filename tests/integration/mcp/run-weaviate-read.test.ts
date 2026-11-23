@@ -313,14 +313,30 @@ describe("a refusal", () => {
   });
 
   test.each([
-    ["the root key", "own-info-root", WEAVIATE_PROOF_SENTENCES.widened("create_roles")],
-    ["an administrator's key", "own-info-admin", WEAVIATE_PROOF_SENTENCES.widened("create_roles")],
-    ["a role that also writes", "own-info-widened", WEAVIATE_PROOF_SENTENCES.widened("update_data")],
-    ["a key on a server with RBAC off", "own-info-keyonly", WEAVIATE_PROOF_SENTENCES.rbacOff],
-  ])("%s is refused at the open, and nothing is read", async (_who, capture, sentence) => {
+    ["the root key", "own-info-root", WEAVIATE_PROOF_SENTENCES.widened("create_roles"), "PROFILE_PRIVILEGES_TOO_BROAD"],
+    [
+      "an administrator's key",
+      "own-info-admin",
+      WEAVIATE_PROOF_SENTENCES.widened("create_roles"),
+      "PROFILE_PRIVILEGES_TOO_BROAD",
+    ],
+    [
+      "a role that also writes",
+      "own-info-widened",
+      WEAVIATE_PROOF_SENTENCES.widened("update_data"),
+      "PROFILE_PRIVILEGES_TOO_BROAD",
+    ],
+    [
+      "a key on a server with RBAC off",
+      "own-info-keyonly",
+      WEAVIATE_PROOF_SENTENCES.rbacOff,
+      "PROFILE_SERVER_UNENFORCED",
+    ],
+  ])("%s is refused at the open, and nothing is read", async (_who, capture, sentence, code) => {
     answer = viewerServer({ "GET /v1/users/own-info": agentAnswer(capture) });
     const result = await weaviate("GET /v1/schema");
     expect(result).toEqual({
+      structuredContent: { error: { kind: "execution-profile", code, outcome: "unknown" } },
       isError: true,
       content: [
         { type: "text", text: providerTextNotice("Weaviate provider, bundled with Studio") },
@@ -379,6 +395,7 @@ describe("a refusal", () => {
     const statement = "GET /v1/schema/Tenanted/tenants";
     const result = await weaviate(statement);
     expect(result).toEqual({
+      structuredContent: { error: { kind: "row-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
       content: [
         {
@@ -399,6 +416,7 @@ describe("a refusal", () => {
     };
     const result = await weaviate("GET /v1/schema", { timeout_ms: 1_000 });
     expect(result).toEqual({
+      structuredContent: { error: { kind: "time-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
       content: [
         {

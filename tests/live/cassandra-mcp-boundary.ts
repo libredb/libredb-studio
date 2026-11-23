@@ -487,8 +487,8 @@ async function main(): Promise<void> {
         acquired.join() === "agent-read-only" &&
         text.startsWith("run_read_query cannot run on this connection: ") &&
         text.includes("this connection names system_auth, one of the keyspaces Apache Cassandra keeps for itself") &&
-        !BCRYPT.test(text) &&
-        result.structuredContent === undefined,
+        !BCRYPT.test(JSON.stringify(result)) &&
+        (result.structuredContent?.error as { readonly kind?: string } | undefined)?.kind === "execution-profile",
       `open: ${arm === UNFENCED ? "bypassed, " : ""}the role table read on a connection bound to system_auth is refused at open, and no hash is answered -> ${textOf(result)}`,
     );
   }

@@ -340,6 +340,7 @@ describe("a refusal", () => {
   test("a read whose answer passes the provider's row budget is refused with the language's own advice", async () => {
     const result = await mtconnect("/sample?count=1000");
     expect(result).toEqual({
+      structuredContent: { error: { kind: "row-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
       content: [
         {

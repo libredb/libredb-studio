@@ -23,6 +23,7 @@ import {
   MCP_TABLE_COMMENT_CAP_BYTES,
   MCP_UNTRUSTED_NOTICE,
   ownWordsError,
+  ownWordsFailure,
   plainResult,
   providerTextError,
   providerTextNotice,
@@ -32,6 +33,7 @@ import {
   utf8Length,
   withByteSize,
 } from "@/lib/mcp/output";
+import { QueryError, RefusedBeforeSendError, StudioProfileRefusal } from "@/lib/db/errors";
 import { PROVIDER_TEXT_WITHHELD, type ProviderTextScrub } from "@/lib/db/operations/provider-text";
 import { secretForms } from "@/lib/db/utils/server-text";
 
@@ -159,7 +161,7 @@ describe("the four result shapes", () => {
     });
   });
 
-  test("engineError quotes the redacted engine message after the notice naming the relaying provider, with no structuredContent", () => {
+  test("engineError quotes the redacted engine message after the notice naming the relaying provider, and the failure's error record", () => {
     expect(
       engineError(
         MCP_ENGINE_ERROR_PREFIX,
@@ -172,6 +174,7 @@ describe("the four result shapes", () => {
         { type: "text", text: databaseContentNotice(POSTGRES_AUTHOR) },
         { type: "text", text: `${MCP_ENGINE_ERROR_PREFIX}password=[REDACTED] rejected` },
       ],
+      structuredContent: { error: { kind: "internal", code: "INTERNAL_ERROR", outcome: "unknown" } },
       isError: true,
     });
   });
@@ -189,6 +192,7 @@ describe("the four result shapes", () => {
         { type: "text", text: providerTextNotice(author) },
         { type: "text", text: "Studio's lead: refused: password=[REDACTED]." },
       ],
+      structuredContent: { error: { kind: "internal", code: "INTERNAL_ERROR", outcome: "unknown" } },
       isError: true,
     });
     expect(
@@ -203,6 +207,52 @@ describe("the four result shapes", () => {
     expect(
       providerTextError("Lead: ", new Error("refused the user"), scrub, author, "It runs on PostgreSQL.").content[1],
     ).toEqual({ type: "text", text: "Lead: refused the user. It runs on PostgreSQL." });
+  });
+
+  test("engineError carries the failure's error record as structuredContent", () => {
+    const failure = new QueryError('relation "missing" does not exist', "postgres");
+    failure.sqlstate = "42P01";
+    expect(engineError(MCP_ENGINE_ERROR_PREFIX, failure, NO_FORMS, POSTGRES_AUTHOR).structuredContent).toEqual({
+      error: { kind: "query", code: "QUERY_ERROR", sqlState: "42P01", outcome: "unknown" },
+    });
+  });
+
+  test("providerTextError carries the failure's error record as structuredContent", () => {
+    const failure = new RefusedBeforeSendError("the statement writes", "postgres");
+    expect(providerTextError("Lead: ", failure, NO_FORMS, POSTGRES_AUTHOR).structuredContent).toEqual({
+      error: { kind: "refused-before-send", code: "QUERY_ERROR", outcome: "not-sent" },
+    });
+  });
+
+  test("ownWordsFailure answers Studio's words and the failure's error record", () => {
+    const failure = new StudioProfileRefusal("the role is a superuser", "PROFILE_PRIVILEGES_TOO_BROAD");
+    expect(ownWordsFailure("Studio's own sentence.", failure, NO_FORMS)).toEqual({
+      content: [{ type: "text", text: "Studio's own sentence." }],
+      structuredContent: {
+        error: { kind: "studio-profile-refusal", code: "PROFILE_PRIVILEGES_TOO_BROAD", outcome: "unknown" },
+      },
+      isError: true,
+    });
+  });
+
+  test("a record of a failure whose text holds the connection's credential carries no SQLSTATE, and the answer holds no form", () => {
+    const password = crypto.randomUUID();
+    const scrub: ProviderTextScrub = { type: "postgres", forms: secretForms([password]) };
+    const failure = new QueryError(`login for ${password} failed`, "postgres");
+    failure.sqlstate = "42P01";
+    const record = { kind: "query", code: "QUERY_ERROR", outcome: "unknown" };
+    for (const result of [
+      engineError(MCP_ENGINE_ERROR_PREFIX, failure, scrub, POSTGRES_AUTHOR),
+      providerTextError("Lead: ", failure, scrub, POSTGRES_AUTHOR),
+      ownWordsFailure("Studio's own sentence.", failure, scrub),
+    ]) {
+      expect(result.structuredContent).toEqual({ error: record });
+      for (const form of secretForms([password])) expect(JSON.stringify(result)).not.toContain(form);
+    }
+  });
+
+  test("ownWordsError carries no structuredContent", () => {
+    expect("structuredContent" in ownWordsError("words of this server")).toBe(false);
   });
 
   test("an engine error quoting a message over 4 KiB stays within the result cap", () => {

@@ -263,6 +263,7 @@ describe("a refusal", () => {
     const find = { collection: "many", operation: "find" };
     const result = await command({ connection_id: "seed:mongo", command: find });
     expect(result).toEqual({
+      structuredContent: { error: { kind: "row-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
       content: [
         {
@@ -343,6 +344,7 @@ describe("the result cap", () => {
     const provider = { getCapabilities: () => ({}), queryReadOnly };
     const result = await direct({ connection_id: "seed:fake", command: JSON.parse(find) }, fakeContext(provider));
     expect(result).toEqual({
+      structuredContent: { error: { kind: "byte-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
       content: [{ type: "text", text: RUN_MONGO_COMMAND_ARM.tooLarge(find, "mongodb").bytes as string }],
     });

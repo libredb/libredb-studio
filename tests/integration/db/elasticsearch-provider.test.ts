@@ -5366,6 +5366,7 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
       { type: "text" as const, text: providerTextNotice(providerAuthor("elasticsearch")) },
       { type: "text" as const, text: `The statement was refused before it reached the database: ${sentence}.` },
     ],
+    structuredContent: { error: { kind: "refused-before-send", code: "QUERY_ERROR", outcome: "not-sent" } },
     isError: true as const,
   });
 
@@ -5552,7 +5553,7 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
     },
   );
 
-  const refusedAtOpen = (sentence: string) => ({
+  const refusedAtOpen = (sentence: string, code: string) => ({
     content: [
       { type: "text" as const, text: providerTextNotice(providerAuthor("elasticsearch")) },
       {
@@ -5560,6 +5561,7 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
         text: `run_read_query cannot run on this connection: ${sentence}. It runs on ${RUN_READ_QUERY_ENGINES}.`,
       },
     ],
+    structuredContent: { error: { kind: "execution-profile", code, outcome: "unknown" } },
     isError: true as const,
   });
 
@@ -5585,7 +5587,7 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
       const result = await call({ sql: "SELECT k FROM probe_buckets" });
 
       expect(acquired).toEqual(["agent-read-only"]);
-      expect(result).toEqual(refusedAtOpen(sentence));
+      expect(result).toEqual(refusedAtOpen(sentence, "PROFILE_UNSUPPORTED_TARGET"));
       expect(statementsAfterOpen()).toEqual([]);
     },
   );
@@ -5599,6 +5601,7 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
     expect(result).toEqual(
       refusedAtOpen(
         "The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; the user elastic holds the cluster privilege all and read on every index, the restricted system indices included, so the connection is refused. Give the agent a user whose role holds the cluster action cluster:monitor/main and read and view_index_metadata on the indices it reads, without allow_restricted_indices, such as the libredb_agent_read role, or libredb_seed_read for a seed that MCP reads",
+        "PROFILE_PRIVILEGES_TOO_BROAD",
       ),
     );
     expect(pathsSent()).toEqual([SQL_PATH, "/", HAS_PRIVILEGES_PATH, LIST_PRIVILEGES_PATH]);
@@ -5635,6 +5638,7 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
           text: `The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, and page it in SQL: ORDER BY a unique field, and for the next page add WHERE that field > the last value read.`,
         },
       ],
+      structuredContent: { error: { kind: "row-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
     });
     expect(sent.at(-1)?.path).toBe("/_sql/close");
@@ -5656,6 +5660,7 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
           text: "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add a smaller LIMIT.",
         },
       ],
+      structuredContent: { error: { kind: "byte-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
     });
   });

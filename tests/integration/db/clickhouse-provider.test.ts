@@ -4736,6 +4736,7 @@ describe("MCP run_read_query on a ClickHouse connection", () => {
           text: `The statement was refused before it reached the database: Read-only execution refused the table function ${name}(), which reaches another server.`,
         },
       ],
+      structuredContent: { error: { kind: "refused-before-send", code: "QUERY_ERROR", outcome: "not-sent" } },
       isError: true,
     });
     expect(acquired).toEqual(["agent-read-only"]);
@@ -4777,6 +4778,9 @@ describe("MCP run_read_query on a ClickHouse connection", () => {
           text: `run_read_query cannot run on this connection: ClickHouse user "agent_ro" holds BACKUP ON demo.*, a grant whose statements readonly does not refuse; the agent read-only profile takes a user holding only SELECT and SHOW on named databases or tables, so it is refused. It runs on ${RUN_READ_QUERY_ENGINES}.`,
         },
       ],
+      structuredContent: {
+        error: { kind: "execution-profile", code: "PROFILE_PRIVILEGES_TOO_BROAD", outcome: "unknown" },
+      },
       isError: true,
     });
   });
@@ -4800,6 +4804,7 @@ describe("MCP run_read_query on a ClickHouse connection", () => {
           text: "The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, or remove your own LIMIT and page with offset.",
         },
       ],
+      structuredContent: { error: { kind: "row-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
     });
   });
@@ -4816,6 +4821,7 @@ describe("MCP run_read_query on a ClickHouse connection", () => {
           text: "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add a smaller LIMIT.",
         },
       ],
+      structuredContent: { error: { kind: "byte-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
     });
   });

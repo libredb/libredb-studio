@@ -3351,6 +3351,7 @@ describe("MCP run_read_query on an OpenSearch connection", () => {
       { type: "text" as const, text: providerTextNotice(providerAuthor("opensearch")) },
       { type: "text" as const, text: `The statement was refused before it reached the database: ${sentence}.` },
     ],
+    structuredContent: { error: { kind: "refused-before-send", code: "QUERY_ERROR", outcome: "not-sent" } },
     isError: true as const,
   });
 
@@ -3497,6 +3498,9 @@ describe("MCP run_read_query on an OpenSearch connection", () => {
           text: `run_read_query cannot run on this connection: The agent read-only profile refuses an OpenSearch login that the security plugin lets call its REST API, or whose delete by query or index close on a fresh index name passes the plugin's permission check; these probes narrow the login and do not show that it cannot write, since the statement check and the SQL plugin refuse every write whatever the login. The user admin may call the security plugin's REST API, and passed the delete by query on a fresh index name, and passed the index close on a fresh index name, so the connection is refused. Give the agent a user whose role holds the cluster actions cluster:monitor/main and cluster:monitor/state and only reads on the indices it reads, such as the libredb_agent_read role, or libredb_seed_read for a seed that MCP reads. It runs on ${RUN_READ_QUERY_ENGINES}.`,
         },
       ],
+      structuredContent: {
+        error: { kind: "execution-profile", code: "PROFILE_PRIVILEGES_TOO_BROAD", outcome: "unknown" },
+      },
       isError: true,
     });
     expect(acquired).toEqual(["agent-read-only"]);

@@ -3248,6 +3248,7 @@ describe("CouchbaseProvider agent read-only profile", () => {
               text: "The statement was refused before it reached the database: The agent read-only execution profile sends one SQL++ statement, a SELECT (a WITH before it is fine), and nothing else; this statement does not begin with SELECT or WITH, so it was not sent. A user holding only query_select may still run UPDATE STATISTICS, BEGIN WORK, PREPARE and EXECUTE, so only a SELECT reaches the server.",
             },
           ],
+          structuredContent: { error: { kind: "refused-before-send", code: "QUERY_ERROR", outcome: "not-sent" } },
           isError: true,
         });
         expect(acquired).toEqual(["agent-read-only"]);
@@ -3288,6 +3289,9 @@ describe("CouchbaseProvider agent read-only profile", () => {
             text: `run_read_query cannot run on this connection: The agent read-only execution profile needs a Couchbase user whose only roles are query_select on named scopes of the bucket travel; the user agent_ro also holds query_system_catalog, which reach past them, so the connection is refused. A role on every scope of the bucket reaches its _system scope too, which holds Sync Gateway's and the query optimizer's own documents. Give the agent a user whose only roles are query_select[travel:<scope>], one for each scope it reads. ${ENGINES}`,
           },
         ],
+        structuredContent: {
+          error: { kind: "execution-profile", code: "PROFILE_PRIVILEGES_TOO_BROAD", outcome: "unknown" },
+        },
         isError: true,
       });
     });
@@ -3305,6 +3309,9 @@ describe("CouchbaseProvider agent read-only profile", () => {
             text: `run_read_query cannot run on this connection: The agent read-only execution profile needs a server that enforces its users' roles; this server ran a DELETE in the bucket travel for the user agent_ro, whose only roles are query_select, so its enforcement is unproven and the connection is refused. ${ENGINES}`,
           },
         ],
+        structuredContent: {
+          error: { kind: "execution-profile", code: "PROFILE_SERVER_UNENFORCED", outcome: "unknown" },
+        },
         isError: true,
       });
     });
@@ -3336,6 +3343,7 @@ describe("CouchbaseProvider agent read-only profile", () => {
             text: "The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, or remove your own LIMIT and page with offset.",
           },
         ],
+        structuredContent: { error: { kind: "row-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
         isError: true,
       });
     });
@@ -3352,6 +3360,7 @@ describe("CouchbaseProvider agent read-only profile", () => {
             text: "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add a smaller LIMIT.",
           },
         ],
+        structuredContent: { error: { kind: "byte-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
         isError: true,
       });
     });
@@ -3368,6 +3377,7 @@ describe("CouchbaseProvider agent read-only profile", () => {
             text: "The statement did not finish within timeout_ms (1000 ms). Narrow it, or raise timeout_ms up to 30000.",
           },
         ],
+        structuredContent: { error: { kind: "time-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
         isError: true,
       });
       const timeout = String(cluster.sent.at(-1)?.body?.timeout);
