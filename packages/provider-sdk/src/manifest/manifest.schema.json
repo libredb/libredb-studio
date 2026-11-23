@@ -247,9 +247,12 @@
         },
         "sqlText": {
           "$ref": "#/$defs/sqlText"
+        },
+        "sqlWriting": {
+          "$ref": "#/$defs/sqlWriting"
         }
       },
-      "required": ["id", "displayName", "location", "connection", "facets", "agent", "editor", "sqlText"],
+      "required": ["id", "displayName", "location", "connection", "facets", "agent", "editor", "sqlText", "sqlWriting"],
       "additionalProperties": false
     },
     "engineLocation": {
@@ -1226,7 +1229,7 @@
       ]
     },
     "editor": {
-      "description": "The editor facts of the engine that are data: the keyword its open transaction is committed with, the consent card's deadline, the fence tags naming it, the explain format of its plans and its query dialect. The SQL text facts are sqlText, and SQL writing, migration DDL, generators and editor languages are later parts of the contract.",
+      "description": "The editor facts of the engine that are data: the keyword its open transaction is committed with, the consent card's deadline, the fence tags naming it, the explain format of its plans and its query dialect. The SQL text facts are sqlText and the SQL writing facts sqlWriting, and migration DDL, generators and editor languages are later parts of the contract.",
       "type": "object",
       "properties": {
         "commitKeyword": {
@@ -1917,6 +1920,397 @@
       },
       "required": ["formatSegment", "readQuotedQualifier"],
       "additionalProperties": false
+    },
+    "sqlWriting": {
+      "description": "The engine's SQL writing facts: how a generated statement spells a literal, a name, a bind and a temporal literal for the engine, what its inline edit and its result export read, and how a document insert is written where its console text is a request. One member per member of Studio's SQL writing row, each function named by the slot it fills. escapeLiteral: the pure function that writes a text as the engine's whole quoted literal. unescapeLiteral: the pure function that reads a whole literal back to its text. quoteIdentifier: the pure function that quotes a name so its closing quote cannot end it. binaryLiteral, under export, writes bytes as a literal the engine accepts.",
+      "type": "object",
+      "properties": {
+        "escapeLiteral": {
+          "$ref": "#/$defs/functionName"
+        },
+        "unescapeLiteral": {
+          "$ref": "#/$defs/functionName"
+        },
+        "quoteIdentifier": {
+          "$ref": "#/$defs/functionName"
+        },
+        "placeholder": {
+          "description": "The pure function that writes the bind placeholder for a 1-based position; null where the engine quotes each value instead of binding it.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "temporalLiteral": {
+          "description": "The pure function that writes a date or timestamp text as the engine's literal of that kind, or answers none to quote it; null where every such text is quoted.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "inlineEdit": {
+          "$ref": "#/$defs/inlineEditFacts"
+        },
+        "export": {
+          "$ref": "#/$defs/exportFacts"
+        },
+        "insertDocuments": {
+          "description": "The pure function that writes the request inserting documents at an address, for an engine whose console text is a request rather than a statement; null where the test data generator writes an INSERT.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "escapeLiteral",
+        "unescapeLiteral",
+        "quoteIdentifier",
+        "placeholder",
+        "temporalLiteral",
+        "inlineEdit",
+        "export",
+        "insertDocuments"
+      ],
+      "additionalProperties": false
+    },
+    "inlineEditFacts": {
+      "description": "What the inline edit reads for the engine: the type names that make a key column date-time, exact decimal and float64, each read against the first word of the column's declared type, lower-cased and with its wrappers off.",
+      "type": "object",
+      "properties": {
+        "instantTypeNames": {
+          "$ref": "#/$defs/keyTypeNames"
+        },
+        "exactDecimalTypeNames": {
+          "$ref": "#/$defs/keyTypeNames"
+        },
+        "float64TypeNames": {
+          "$ref": "#/$defs/float64TypeNames"
+        },
+        "boundEdit": {
+          "description": "The pure function that writes the SET right-hand side of one edit that is not NULL, or answers none to bind the text unchanged; null where every edit binds its text unchanged.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": ["instantTypeNames", "exactDecimalTypeNames", "float64TypeNames", "boundEdit"],
+      "additionalProperties": false
+    },
+    "keyTypeNames": {
+      "description": "Type names a key column's declared type is compared with, each once; an empty list where no name makes a key column of that kind.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/keyTypeName"
+      },
+      "maxItems": 256,
+      "uniqueItems": true
+    },
+    "keyTypeName": {
+      "description": "One type name as the inline edit compares it: a lower-case letter, then up to 63 lower-case letters, digits or underscores, since the inline edit reads only the lower-cased first word of a declared type.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "float64TypeNames": {
+      "description": "The type names that make a key column float64, or all where every key column of the engine is float64.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/keyTypeNames"
+        },
+        {
+          "const": "all"
+        }
+      ]
+    },
+    "exportFacts": {
+      "description": "What the result export writes for the engine: the CREATE TABLE type of each inferred kind, the declared type names kept as they are, the bare names written with a spelling of their own, the patterns a declared type is read with, the literal NaN and the infinities are written as, and whether an INSERT takes VALUES or SELECT. A hook the engine lacks is null.",
+      "type": "object",
+      "properties": {
+        "ddlTypes": {
+          "$ref": "#/$defs/ddlTypeSpellings"
+        },
+        "standsAlone": {
+          "description": "The bare declared type names the engine stands behind, written through as they are; empty where every bare name is re-spelled from its family.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/declaredTypeName"
+          },
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "bareSpelling": {
+          "description": "The bare declared type names the engine narrows below the value its driver hands back, each with the spelling written instead, each name once; empty where the engine narrows none.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/bareSpellingEntry"
+          },
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "typeVocabulary": {
+          "$ref": "#/$defs/typeVocabulary"
+        },
+        "binaryLiteral": {
+          "$ref": "#/$defs/functionName"
+        },
+        "nonFinite": {
+          "$ref": "#/$defs/nonFiniteLiterals"
+        },
+        "insertForm": {
+          "$ref": "#/$defs/insertForm"
+        },
+        "rewriteDeclared": {
+          "description": "The pure function that rewrites a declared type before a CREATE TABLE takes it; null where no type is rewritten.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "declareFromSample": {
+          "description": "The pure function that answers a column's type from its declared type and its first value, or none to leave it; null where no type is read from a value.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "typedLiteral": {
+          "description": "The pure function that writes a cell from its column's declared type, or none to leave it to the generic writer; null where the generic writer writes every cell.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "columnWriters": {
+          "description": "The pure function that prepares one literal writer per column from the declared types; null where no column has a writer of its own.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "createTableKey": {
+          "$ref": "#/$defs/createTableKey"
+        }
+      },
+      "required": [
+        "ddlTypes",
+        "standsAlone",
+        "bareSpelling",
+        "typeVocabulary",
+        "binaryLiteral",
+        "nonFinite",
+        "insertForm",
+        "rewriteDeclared",
+        "declareFromSample",
+        "typedLiteral",
+        "columnWriters",
+        "createTableKey"
+      ],
+      "additionalProperties": false
+    },
+    "ddlTypeSpellings": {
+      "description": "How the engine spells each inferred kind of column in a CREATE TABLE.",
+      "type": "object",
+      "properties": {
+        "text": {
+          "$ref": "#/$defs/sqlTypeSpelling"
+        },
+        "integer": {
+          "$ref": "#/$defs/sqlTypeSpelling"
+        },
+        "numeric": {
+          "$ref": "#/$defs/sqlTypeSpelling"
+        },
+        "boolean": {
+          "$ref": "#/$defs/sqlTypeSpelling"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/sqlTypeSpelling"
+        },
+        "binary": {
+          "$ref": "#/$defs/sqlTypeSpelling"
+        }
+      },
+      "required": ["text", "integer", "numeric", "boolean", "timestamp", "binary"],
+      "additionalProperties": false
+    },
+    "sqlTypeSpelling": {
+      "description": "An SQL type as a CREATE TABLE writes it, verbatim: a letter, then up to 63 letters, digits, underscores, spaces, parentheses or commas, so it never ends its line or its statement.",
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_ (),]{0,63}$"
+    },
+    "declaredTypeName": {
+      "description": "A bare declared type name as the export compares it: lower-case words separated by one space, each a lower-case letter, then lower-case letters, digits or underscores, since the export reads a declared type trimmed, lower-cased and with each run of whitespace one space.",
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9_]*(?: [a-z][a-z0-9_]*)*$"
+    },
+    "bareSpellingEntry": {
+      "description": "A bare declared type name and the spelling the export writes in its place.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/declaredTypeName"
+        },
+        "spelling": {
+          "$ref": "#/$defs/sqlTypeSpelling"
+        }
+      },
+      "required": ["name", "spelling"],
+      "additionalProperties": false
+    },
+    "typeVocabulary": {
+      "description": "The patterns the export reads a declared type with for the engine. bareTypeFamily: the bare names whose parameters the result does not carry, grouped by the inferred kind each is re-spelled from. floatType: a declared type that holds a binary float, tested against the trimmed type. exactNumericType: an exact numeric type that can hold an infinity, tested against the trimmed type. numericWrapper: a wrapper that changes nothing about whether a column holds numbers, whose one capturing group is the wrapped type.",
+      "type": "object",
+      "properties": {
+        "bareTypeFamily": {
+          "$ref": "#/$defs/typeFamilies"
+        },
+        "floatType": {
+          "$ref": "#/$defs/typePattern"
+        },
+        "exactNumericType": {
+          "$ref": "#/$defs/typePattern"
+        },
+        "numericWrapper": {
+          "$ref": "#/$defs/typePattern"
+        }
+      },
+      "required": ["bareTypeFamily", "floatType", "exactNumericType", "numericWrapper"],
+      "additionalProperties": false
+    },
+    "typeFamilies": {
+      "description": "The bare declared type names of each inferred kind, each name under one kind only; an empty list where no name is of that kind.",
+      "type": "object",
+      "properties": {
+        "text": {
+          "$ref": "#/$defs/declaredTypeNames"
+        },
+        "integer": {
+          "$ref": "#/$defs/declaredTypeNames"
+        },
+        "numeric": {
+          "$ref": "#/$defs/declaredTypeNames"
+        },
+        "boolean": {
+          "$ref": "#/$defs/declaredTypeNames"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/declaredTypeNames"
+        },
+        "binary": {
+          "$ref": "#/$defs/declaredTypeNames"
+        }
+      },
+      "required": ["text", "integer", "numeric", "boolean", "timestamp", "binary"],
+      "additionalProperties": false
+    },
+    "declaredTypeNames": {
+      "description": "Bare declared type names, each once.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/declaredTypeName"
+      },
+      "maxItems": 256,
+      "uniqueItems": true
+    },
+    "typePattern": {
+      "description": "A pattern a declared type is read with: its source and flags as JavaScript's RegExp reads them, which must compile. The source opens with ^ and closes with $, since it is tested against a whole type.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 512,
+          "pattern": "^\\^[\\s\\S]*\\$$"
+        },
+        "flags": {
+          "description": "No flag, i, u or iu: a flag that remembers where a match stopped, or that changes where $ matches, is not one a type pattern takes.",
+          "type": "string",
+          "enum": ["", "i", "u", "iu"]
+        }
+      },
+      "required": ["source", "flags"],
+      "additionalProperties": false
+    },
+    "nonFiniteLiterals": {
+      "description": "How the export writes NaN and the infinities into a float column, each as a literal the engine reads back; NULL where the engine cannot store the value.",
+      "type": "object",
+      "properties": {
+        "NaN": {
+          "$ref": "#/$defs/nonFiniteLiteral"
+        },
+        "Infinity": {
+          "$ref": "#/$defs/nonFiniteLiteral"
+        },
+        "-Infinity": {
+          "$ref": "#/$defs/nonFiniteLiteral"
+        }
+      },
+      "required": ["NaN", "Infinity", "-Infinity"],
+      "additionalProperties": false
+    },
+    "nonFiniteLiteral": {
+      "description": "A literal an INSERT writes verbatim: printable ASCII, 1 to 64 characters, with no space at either end and no line break.",
+      "type": "string",
+      "pattern": "^[!-~](?:[ -~]{0,62}[!-~])?$"
+    },
+    "insertForm": {
+      "description": "How an INSERT is written. values: INSERT INTO t (...) VALUES (...). select: INSERT INTO t (...) SELECT ....",
+      "type": "string",
+      "enum": ["values", "select"]
+    },
+    "createTableKey": {
+      "description": "A key a CREATE TABLE needs that a result cannot supply: the note written above the statement, and the pure function, clause, that writes the key's definition from the quoted column names; null where the engine takes a table without one.",
+      "type": ["object", "null"],
+      "properties": {
+        "note": {
+          "$ref": "#/$defs/commentLines"
+        },
+        "clause": {
+          "$ref": "#/$defs/functionName"
+        }
+      },
+      "required": ["note", "clause"],
+      "additionalProperties": false
+    },
+    "commentLines": {
+      "description": "Whole SQL comment lines, each -- and a space, then text with no line break, then a line feed, up to 1024 characters in all, so the text written above a statement never becomes one.",
+      "type": "string",
+      "maxLength": 1024,
+      "pattern": "^(?:-- [^\\r\\n\\u2028\\u2029]*\\n)+$"
     },
     "compatibilityEntry": {
       "description": "One product the package was measured against: the engine that serves it, the versions claimed and the versions tested.",

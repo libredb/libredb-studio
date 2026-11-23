@@ -15,7 +15,12 @@
  */
 import { createHash } from "node:crypto";
 import Ajv2020, { type ErrorObject, type ValidateFunction } from "ajv/dist/2020";
-import { type EngineDeclaration, MANIFEST_SCHEMA_SHA256, type ProviderManifest } from "./manifest-types.generated";
+import {
+  type EngineDeclaration,
+  MANIFEST_SCHEMA_SHA256,
+  type ProviderManifest,
+  type TypeFamilies,
+} from "./manifest-types.generated";
 
 /** Every rule a schema refusal can name: the schema's own first, then the code rules. */
 export const SCHEMA_REFUSAL_RULES = Object.freeze([
@@ -61,6 +66,8 @@ export const SCHEMA_REFUSAL_RULES = Object.freeze([
   "fence-alias-engine-id",
   "fence-alias-duplicate",
   "fence-alias-generic",
+  "wrapper-group-count",
+  "type-name-duplicate",
 ] as const);
 
 export type SchemaRefusalRule = (typeof SCHEMA_REFUSAL_RULES)[number];
@@ -195,12 +202,17 @@ export function refusalsOf(errors: readonly AjvError[]): SchemaRefusal[] {
   return ordered(refusals);
 }
 
-/** The vocabularies of the schema the rules read: the seed-only, placeable and select field names, and the generic fence tags. */
+/**
+ * The vocabularies of the schema the rules read: the seed-only, placeable and select field names, the generic fence
+ * tags, and the kinds of a bare type family in the schema's order.
+ */
 interface FieldVocabularies {
   readonly seedOnly: ReadonlySet<string>;
   readonly placeable: ReadonlySet<string>;
   readonly select: ReadonlySet<string>;
   readonly genericFenceTags: ReadonlySet<string>;
+  /** The inferred kinds of a bare type family, in the order of the schema's `typeFamilies`. */
+  readonly typeFamilyKinds: readonly (keyof TypeFamilies)[];
 }
 
 /**
@@ -372,6 +384,58 @@ function clausePatternRefusals(engine: EngineDeclaration, at: string): SchemaRef
 }
 
 /**
+ * How many capturing groups the compiled `pattern` has. `exec` answers one slot per capturing group plus one for the
+ * match (ECMAScript's RegExpBuiltinExec), and an empty alternative put before the source matches the empty string at
+ * once, so the count is exact without reading the source: a group the matching alternative never enters is still a
+ * slot, undefined. The empty alternative goes first because alternatives are tried left to right: the declared pattern
+ * is never entered, so a pattern that backtracks without end on the empty string is counted as quickly as any other.
+ */
+function capturingGroups(pattern: RegExp): number {
+  const answer = new RegExp(`|${pattern.source}`, pattern.flags).exec("");
+  return (answer?.length ?? 0) - 1;
+}
+
+/**
+ * The rules of an engine's SQL writing facts the schema cannot state, at pointers under `at`: each type pattern compiles
+ * with its flags, the wrapper pattern captures exactly one group, the type it wraps, and no type name is named twice in
+ * one table, either under two bare type families, the later kind in the schema's order refused, or by two bare
+ * spellings, the later refused. The kinds are read in the schema's order, whatever order the declaration writes them in.
+ */
+function sqlWritingRuleRefusals(
+  engine: EngineDeclaration,
+  at: string,
+  vocabularies: FieldVocabularies,
+): SchemaRefusal[] {
+  const refusals: SchemaRefusal[] = [];
+  const base = `${at}/sqlWriting/export`;
+  const { bareSpelling, typeVocabulary } = engine.sqlWriting.export;
+  for (const member of ["floatType", "exactNumericType", "numericWrapper"] as const) {
+    const { source, flags } = typeVocabulary[member];
+    const pattern = compiled(source, flags);
+    const pointer = `${base}/typeVocabulary/${member}/source`;
+    if (pattern === null) refusals.push(schemaRefusal("pattern-invalid", pointer));
+    else if (member === "numericWrapper" && capturingGroups(pattern) !== 1) {
+      refusals.push(schemaRefusal("wrapper-group-count", pointer));
+    }
+  }
+  const families = new Set<string>();
+  for (const kind of vocabularies.typeFamilyKinds) {
+    typeVocabulary.bareTypeFamily[kind].forEach((name, index) => {
+      if (families.has(name)) {
+        refusals.push(schemaRefusal("type-name-duplicate", `${base}/typeVocabulary/bareTypeFamily/${kind}/${index}`));
+      }
+      families.add(name);
+    });
+  }
+  const spelled = new Set<string>();
+  bareSpelling.forEach(({ name }, index) => {
+    if (spelled.has(name)) refusals.push(schemaRefusal("type-name-duplicate", `${base}/bareSpelling/${index}/name`));
+    spelled.add(name);
+  });
+  return refusals;
+}
+
+/**
  * The rules of an engine's connection string the schema cannot state, at pointers under `at`: a scheme and a URL TLS
  * reader only on an engine whose connection string names a paste reader, since Studio shows a scheme as one a paste of
  * it reads, and only the paste reader reads a URL's query.
@@ -400,7 +464,10 @@ function editorRuleRefusals(engine: EngineDeclaration, at: string, vocabularies:
   return refusals;
 }
 
-/** The rules of one engine's connection, editor and SQL text facts the schema cannot state, at pointers under `at`. */
+/**
+ * The rules of one engine's connection, editor, SQL text and SQL writing facts the schema cannot state, at pointers
+ * under `at`.
+ */
 function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies: FieldVocabularies): SchemaRefusal[] {
   const seedOnlyNames = vocabularies.seedOnly;
   const refusals: SchemaRefusal[] = [];
@@ -430,6 +497,7 @@ function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies:
   refusals.push(...connectionStringRuleRefusals(connection, at));
   refusals.push(...editorRuleRefusals(engine, at, vocabularies));
   refusals.push(...clausePatternRefusals(engine, at));
+  refusals.push(...sqlWritingRuleRefusals(engine, at, vocabularies));
   return refusals;
 }
 
@@ -506,6 +574,7 @@ interface ServedSchema {
     readonly placeableFieldName: { readonly enum: readonly string[] };
     readonly selectFieldName: { readonly enum: readonly string[] };
     readonly genericFenceTag: { readonly enum: readonly string[] };
+    readonly typeFamilies: { readonly properties: Readonly<Record<keyof TypeFamilies, unknown>> };
   };
 }
 
@@ -534,6 +603,7 @@ export function compileManifestValidator(schemaBytes: Uint8Array): ManifestValid
     placeable: new Set(schema.$defs.placeableFieldName.enum),
     select: new Set(schema.$defs.selectFieldName.enum),
     genericFenceTags: new Set(schema.$defs.genericFenceTag.enum),
+    typeFamilyKinds: Object.keys(schema.$defs.typeFamilies.properties) as (keyof TypeFamilies)[],
   };
 
   return {
@@ -652,5 +722,9 @@ export function refusalSentence(refusal: ManifestRefusal): string {
       return `The fence alias at ${at} is already declared by an earlier engine of the manifest.`;
     case "fence-alias-generic":
       return `The fence alias at ${at} is a generic fence tag, which names a language several engines speak and no engine.`;
+    case "wrapper-group-count":
+      return `The wrapper pattern at ${at} does not capture exactly one group, the wrapped type.`;
+    case "type-name-duplicate":
+      return `The type name at ${at} is already named earlier in the same table.`;
   }
 }

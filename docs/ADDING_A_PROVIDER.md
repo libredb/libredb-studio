@@ -491,6 +491,7 @@ Besides those two and the contract's `types.ts`, it imports only its own `typed-
 Add its row to `SQL_WRITING`, which the compiler holds complete, then run `UPDATE_GOLDEN=1 bun tests/run-tests.ts tests/unit/db/sql-writing/golden.test.ts` to write the engine's golden file, read it, and run the test again without the variable.
 The module also states `inlineEdit`: the three key-column type name sets, `instantTypeNames`, `float64TypeNames` and `exactDecimalTypeNames`, each the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` or `EXACT_DECIMAL_TYPE_NAMES` by name, or the module's own where the engine's type words mean something else (SQLite's, for one), and `boundEdit` only where an edit needs a wrapper around its bind (SQL Server, Oracle).
 The provider doc gets a `SQL writing` subsection naming the module's literal, identifier and placeholder building blocks and its `inlineEdit` sets and `boundEdit`, and an `export` paragraph naming its binary literal form, each export fact by the shared constant it holds or by its field name, every export hook it defines and its `typed-literals` sibling, which `tests/unit/db/sql-writing/docs.test.ts` holds to the module.
+The row is also the source of the engine declaration's `sqlWriting` segment, so run `bun run engines:generate` after writing or changing it and commit the regenerated declaration (`docs/providers/CONTRACT.md`, S-11).
 
 ## Step 3: Register in the Factory
 

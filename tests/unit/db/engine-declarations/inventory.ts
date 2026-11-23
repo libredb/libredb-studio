@@ -146,7 +146,12 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     destination:
       "engine declaration: sqlText, its grammar with each trailing limit clause by its source and flags, redaction, updateTarget and completion, each function named by the slot it fills",
   },
-  { module: "src/lib/db/sql-writing/index.ts", name: "SQL_WRITING", destination: EDITOR_AND_SQL },
+  {
+    module: "src/lib/db/sql-writing/index.ts",
+    name: "SQL_WRITING",
+    destination:
+      "engine declaration: sqlWriting, its inline edit type names, its export facts and type vocabulary with each pattern by its source and flags, each function named by the slot it fills",
+  },
   {
     module: "src/lib/seed/samples.ts",
     name: "SAMPLES",
