@@ -3,7 +3,7 @@
  * Custom error types for database operations
  */
 
-import type { ExecuteOutcome } from "./error-record";
+import type { ExecuteOutcome } from "@libredb/provider-sdk/errors";
 import type { DatabaseType } from "./types";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 

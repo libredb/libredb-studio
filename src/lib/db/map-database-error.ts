@@ -6,8 +6,12 @@
 
 import type { DatabaseType } from "./types";
 import { DRIVER_ERROR_CLASSIFIERS } from "@/lib/db/driver-errors";
-import { SQLSTATE_PATTERN } from "@/lib/db/error-record";
-import type { AccessRefusal, DriverErrorClassifier, DriverErrorFields } from "@/lib/db/driver-errors/types";
+import {
+  type AccessRefusal,
+  type DriverErrorClassifier,
+  type DriverErrorFields,
+  SQLSTATE_PATTERN,
+} from "@libredb/provider-sdk/errors";
 import {
   AuthenticationError,
   ConnectionError,

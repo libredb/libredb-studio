@@ -437,6 +437,7 @@ The SQLite worker's line is the hop that carries it: the parent encodes paramete
 ### 4.14. Error records (`src/lib/db/error-record.ts`)
 
 A failed call answers, beside its words, a closed record a reader can branch on.
+The record's shape, its vocabularies and patterns, and the kinds a provider may raise are the provider contract's, `@libredb/provider-sdk/errors` ([`docs/providers/CONTRACT.md`](providers/CONTRACT.md#errors)); `src/lib/db/error-record.ts` is core's reading of Studio's error classes into it, with Studio's own code vocabulary.
 `kind` names the class of failure: one kind per error class of `src/lib/db/errors.ts`, and `internal` for any other thrown value.
 A class declared elsewhere, such as a provider's own `QueryError` subclass, takes the kind of its nearest class there, found by walking the prototype chain, so a kind decides exactly what `instanceof` decides.
 `code` is the error's API code, or for the two execution profile kinds the refusal's deny code.

@@ -7,7 +7,7 @@ import type { RunConfirmationOffer } from "@/lib/api/run-confirmation";
 import type { TestConnectionAnswer } from "@/lib/api/test-connection";
 import type { ParsedConnection } from "@/lib/connection-string-parser";
 import type { ConnectionField, FieldPlacement } from "@/lib/db/connection-fields";
-import type { ErrorKind, ExecuteOutcome } from "@/lib/db/error-record";
+import type { ErrorKind, ExecuteOutcome } from "@libredb/provider-sdk/errors";
 import type {
   Container,
   DatabaseObject,

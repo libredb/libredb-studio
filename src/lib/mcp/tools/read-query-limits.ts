@@ -1,4 +1,5 @@
-import { type ErrorKind, errorKind } from "@/lib/db/error-record";
+import type { ErrorKind } from "@libredb/provider-sdk/errors";
+import { errorKind } from "@/lib/db/error-record";
 import type { ReadAllowanceExceededError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { ENGINE_TOO_LARGE_TEXTS } from "@/lib/db/providers/sql/read-only-refusals";
 import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";

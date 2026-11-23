@@ -1,4 +1,4 @@
-import type { AccessRefusal, DriverErrorClassifier } from "@/lib/db/driver-errors/types";
+import type { AccessRefusal, DriverErrorClassifier } from "@libredb/provider-sdk/errors";
 
 /**
  * SQL Server error numbers for a statement the server parsed or ran and refused (#1427).

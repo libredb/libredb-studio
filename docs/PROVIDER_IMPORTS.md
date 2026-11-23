@@ -62,7 +62,6 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/db/console/tagged-json.ts` | SDK /console | The pure JSON value form a console body is read into. |
 | `src/lib/db/credential-warnings.ts` | core only | The seed credential refusal is a core check over a core table keyed by type-id; core runs it before it builds the provider, as FND-2 did for the other connection checks. |
 | `src/lib/db/destructive-vocabulary.ts` | core only | The shape of the confirmation gate's rows, which move into core statement-language family modules in PR 8b and the language slices, so no provider declares one. |
-| `src/lib/db/driver-errors/types.ts` | SDK /manifest | The driver error row contract. |
 | `src/lib/db/editor-language/types.ts` | SDK /manifest | The editor language row contract; its Monaco types go with the browser catalog of phase 3. |
 | `src/lib/db/engine-facets/types.ts` | SDK /manifest | The engine facets row contract. |
 | `src/lib/db/errors.ts` | SDK /errors | The error classes a provider raises and core classifies by kind, the same for every provider. |
@@ -174,7 +173,7 @@ These are a snapshot as well.
 - Helper packages travel the same way: `yaml`, `jose` and `@grpc/proto-loader`.
 - `node:` builtins are part of the runtime every provider runs in: `node:crypto` in 17 units, `node:net` in 9 and `node:tls` in 5 are the most used.
 - `monaco-editor` is imported by the 11 editor language rows, and goes with the browser catalog of phase 3.
-- `@libredb/provider-sdk` is the contract every provider builds on, imported by name: `/values` holds the value codec that was `src/lib/db/value-codec.ts`.
+- `@libredb/provider-sdk` is the contract every provider builds on, imported by name: `/values` holds the value codec that was `src/lib/db/value-codec.ts`, and `/errors` the error record's vocabulary and the driver error row contract that was `src/lib/db/driver-errors/types.ts`.
 
 ## Imports from core into provider directories
 

@@ -76,7 +76,7 @@ import {
   RefusedBeforeSendError,
   StudioTimeoutRefusal,
 } from "@/lib/db/errors";
-import type { ErrorKind } from "@/lib/db/error-record";
+import type { ErrorKind } from "@libredb/provider-sdk/errors";
 import type { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import {
   errorRecord,

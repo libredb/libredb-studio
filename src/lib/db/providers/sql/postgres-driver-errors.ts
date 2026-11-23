@@ -1,4 +1,4 @@
-import type { DriverErrorClassifier } from "@/lib/db/driver-errors/types";
+import type { DriverErrorClassifier } from "@libredb/provider-sdk/errors";
 
 /**
  * `pg`'s row. The driver puts the SQLSTATE in `code` (`42601`), which the shared mapping reads; this row holds the

@@ -97,7 +97,7 @@ import type {
 } from "./types";
 import { fenceUntrustedContent, quoteIdentifierForPrompt } from "./untrusted-content";
 import { DatabaseError, ExecutionProfileError, type ExecutionProfileDenyCode } from "@/lib/db/errors";
-import type { ErrorKind } from "@/lib/db/error-record";
+import type { ErrorKind } from "@libredb/provider-sdk/errors";
 import { declaredKinds, isIndexesUnavailable } from "@/lib/db/object-kinds";
 import { type ProviderTextScrub, scrubProviderText } from "@/lib/db/operations/provider-text";
 import type { ProviderCapabilities } from "@/lib/db/types";

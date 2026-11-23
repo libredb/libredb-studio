@@ -1,4 +1,4 @@
-import type { AccessRefusal, DriverErrorClassifier } from "@/lib/db/driver-errors/types";
+import type { AccessRefusal, DriverErrorClassifier } from "@libredb/provider-sdk/errors";
 
 /**
  * What `oracledb` errors say, for `mapDatabaseError` (`src/lib/db/map-database-error.ts`) to classify them: Thin-mode

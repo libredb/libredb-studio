@@ -10,6 +10,7 @@ The SDK package `@libredb/provider-sdk`, under [`packages/provider-sdk`](../../p
 - [`manifest-types.generated.ts`](../../packages/provider-sdk/src/manifest/manifest-types.generated.ts), the manifest's TypeScript types, generated from the schema.
 - `compileManifestValidator`, `refusalSentence` and the refusal types, exported from `@libredb/provider-sdk/manifest`.
 - [`codec.ts`](../../packages/provider-sdk/src/values/codec.ts), the value codec, exported from `@libredb/provider-sdk/values`.
+- [`errors/index.ts`](../../packages/provider-sdk/src/errors/index.ts), the error record's shape and vocabularies, the kinds a provider may raise and the driver error row contract, exported from `@libredb/provider-sdk/errors`.
 
 The package root exports every entry's surface.
 The schema, the generated types and the constants the SDK exports are the source for every vocabulary named here, and this document lists none of them by hand.
@@ -414,6 +415,74 @@ Nothing checks this yet.
 A value nested deeper than the stack allows throws a `RangeError`, not a `ValueCodecError`.
 A reader that takes documents from outside bounds their depth before it decodes them.
 
+## Errors
+
+A failed call answers, beside its words, an error record: closed fields a reader can branch on.
+Studio's core reads each error a provider raises into a record, so a provider raises an error class and never writes a record itself.
+The record's shape and vocabularies are the constants `@libredb/provider-sdk/errors` exports.
+
+### E-1 (normative): A provider raises only the kinds a provider may raise
+
+A provider raises only errors whose kind is in `PROVIDER_ERROR_KINDS`.
+The other kinds, `CORE_ERROR_KINDS`, are core's own: refusals before any provider is built, refusals of a facet member an engine does not declare, Studio's own refusals marked by a class only core constructs, the scrub's replacement of an error whose text held a credential, and `internal`.
+The reason each is core's stands beside the constant.
+The two lists partition `ERROR_KINDS`.
+
+- test `packages/provider-sdk/tests/errors/kinds.test.ts` "the kinds a provider raises and the kinds only core raises partition the record's kinds"
+- test `tests/unit/db/provider-error-kinds.test.ts` "every error class Studio declares has a kind the contract places"
+- test `tests/unit/db/provider-error-kinds.test.ts` "provider code constructs and extends only classes of the kinds a provider may raise"
+- test `tests/unit/lib/db/error-record.test.ts` "every class errors.ts exports has exactly one kind, and no two share one"
+
+### E-2 (normative): A provider's own class takes its nearest contract class's kind
+
+An error class a provider declares takes the kind of the nearest contract class it extends, whatever its own fields say.
+Any thrown value that is no contract error is `internal`.
+
+- test `tests/unit/lib/db/error-record.test.ts` "a TransportError answers connection, whatever its own kind field says"
+- test `tests/unit/lib/db/error-record.test.ts` "a value that is no error class answers internal"
+
+### E-3 (normative): The record is closed
+
+A record holds `kind` and `code`, and may hold `sqlState`, `engineCode`, `outcome` and `sessionState`, each in its vocabulary or pattern: `ERROR_KINDS`, `SQLSTATE_PATTERN`, `ENGINE_CODE_PATTERN`, `EXECUTE_OUTCOMES` and `SESSION_STATES`.
+A reader refuses any other record, naming the field and never its value.
+
+- test `tests/unit/lib/db/error-record.test.ts` "a missing or unknown kind or code is refused, naming the field"
+- test `tests/unit/lib/db/error-record.test.ts` "a malformed sqlState or engineCode is refused, naming the field and not the value"
+- test `tests/unit/lib/db/error-record.test.ts` "an unknown outcome or session state is refused"
+- test `tests/unit/lib/db/error-record.test.ts` "an extra key is refused"
+- test `tests/unit/lib/db/error-record.test.ts` "every generated record over the whole shape crosses JSON and the reader unchanged"
+
+### E-4 (normative): The record holds no text of the error
+
+A record holds no message, detail, statement or identifier of the error.
+
+- test `tests/unit/lib/db/error-record.test.ts` "no record holds any text the error carries"
+
+### E-5 (normative): Only a statement that cannot have reached the database is not-sent
+
+`outcome` is `not-sent` only when the statement cannot have reached the database.
+The host marks every failure of a provider's connect, and a provider claims not-sent only by raising `refused-before-send`, whose class marks it.
+No provider writes an error's `outcome` itself, and every other failure is `unknown`.
+
+- test `tests/unit/db/provider-error-kinds.test.ts` "provider code never writes an error's outcome"
+- test `tests/unit/lib/db/error-record.test.ts` "a refusal before send answers not-sent wherever it is raised"
+- test `tests/unit/lib/db/error-record.test.ts` "every other class answers unknown"
+- test `tests/unit/db/errors.test.ts` "a failure the connect raises keeps its identity and answers not-sent"
+- test `tests/unit/db/errors.test.ts` "a connect deadline becomes a ConnectionError that answers not-sent"
+
+### E-6 (informative): No error carries a session state or an engine code yet
+
+`sessionState` and `engineCode` are defined and read, and no error carries either yet.
+
+### E-7 (normative): A driver error row maps into the record
+
+A driver's error row, `DriverErrorClassifier`, answers what the driver's own fields and words say of an error, and each answer maps to one kind.
+A configuration refusal is `config`; a database the login cannot open is `connection`; an access refusal is `permission` for a missing privilege and `authentication` for a refused credential, and the credential words count only on an error that carries no code; a statement fault is `query`; the engine's own time budget is `timeout`; a cancelled statement is `cancelled`; a late classification is `connection` or `query`, as it says.
+The record keeps the SQLSTATE the driver reported.
+
+- test `tests/unit/db/driver-row-kinds.test.ts` "each answer a driver row gives maps to one error kind, keeping the driver's SQLSTATE"
+- test `tests/unit/db/driver-errors.test.ts` "answers every corpus input exactly as the shared mapping answered it before the move"
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:
@@ -421,7 +490,6 @@ These chapters are added by the changes that bring their enforcers:
 - Connection rules and connection string rows: field rules as bounded patterns and named server checks, the host hint and identity readers, the connection import, the refusal sentence of each refused field, and the connection string rows with their schemes, URL TLS and paste readers and seed checks.
 - Editor and SQL text: execution UI, SQL grammar, SQL writing, migration DDL, generators, editor languages, explain formats and discovery fence tags.
 - Policy and MCP claims, each a request a provider makes that only Studio's review record grants, the agent overlay, and presentation (an icon and a colour).
-- Errors: the error kinds a provider raises.
 - Calls: how the host calls a provider in its own process, with its deadlines, cancellation and byte budgets.
 - The API report of each SDK entry.
 
@@ -437,6 +505,7 @@ Against the manifest sketch the design started from:
 - A required `compatibility` list replaces the `upstream` segment, M-14.
 - Field names and their classes are the contract's, not a manifest's, M-9.
 - The value tags keep the names of Studio's value codec, V-1.
+- The error kinds keep the names of Studio's error record, E-1.
 - Facet names keep Studio's own vocabulary, the seven monitoring panels, the maintenance operations and the curated agent readings, rather than new dotted names.
 - The connection dialog's per-field facts, its labels, hints, placeholders, placement, choices, conditions and absent values, are lists of entries that each name their field, rather than maps keyed by field, M-24.
 - A condition is one field equal to one value, with no list of values and no combination of conditions in this contract, M-25.

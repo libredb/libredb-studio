@@ -25,7 +25,7 @@ import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END } from "@/lib/agent/untr
 import { getDBConfig } from "@/lib/db-ui-config";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { ConnectionError, ExecutionProfileError, QueryError, RowBudgetRefusal } from "@/lib/db/errors";
-import { ERROR_KINDS, type ErrorKind } from "@/lib/db/error-record";
+import { ERROR_KINDS, type ErrorKind } from "@libredb/provider-sdk/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { measureResultBytes, rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";

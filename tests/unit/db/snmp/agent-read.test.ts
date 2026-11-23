@@ -4,7 +4,8 @@
  * worded by its category with nothing the agent sent back quoted.
  */
 import { describe, expect, test } from "bun:test";
-import { type ErrorKind, errorKind } from "@/lib/db/error-record";
+import type { ErrorKind } from "@libredb/provider-sdk/errors";
+import { errorKind } from "@/lib/db/error-record";
 import type { SnmpAgentClient } from "@/lib/db/providers/network/snmp/agent-client";
 import {
   runSnmpAgentRead,

@@ -5,7 +5,7 @@
  * tests/unit/db/operations/budget-refusal-census.test.ts.
  */
 import { describe, expect, test } from "bun:test";
-import { ERROR_KINDS } from "@/lib/db/error-record";
+import { ERROR_KINDS } from "@libredb/provider-sdk/errors";
 import {
   ByteBudgetRefusal,
   ConnectionError,
