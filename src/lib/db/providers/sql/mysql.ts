@@ -4092,7 +4092,7 @@ export class MySQLProvider extends SQLBaseProvider {
     } catch (error) {
       conn.release();
       this.txConn = null;
-      throw error;
+      throw mapDatabaseError(error, "mysql", "BEGIN");
     }
     // Neither bit set (or no header) is a server that reports no transaction state at all,
     // which is a different answer from bit 1 alone, "autocommit, and no transaction open".
@@ -4124,6 +4124,8 @@ export class MySQLProvider extends SQLBaseProvider {
     const conn = this.txConn;
     try {
       await conn.commit();
+    } catch (error) {
+      throw mapDatabaseError(error, "mysql", "COMMIT");
     } finally {
       this.releaseHeldConnection(conn);
     }
@@ -4135,6 +4137,8 @@ export class MySQLProvider extends SQLBaseProvider {
     const conn = this.txConn;
     try {
       await conn.rollback();
+    } catch (error) {
+      throw mapDatabaseError(error, "mysql", "ROLLBACK");
     } finally {
       this.releaseHeldConnection(conn);
     }

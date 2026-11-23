@@ -3750,7 +3750,7 @@ export class PostgresProvider extends SQLBaseProvider {
     } catch (error) {
       this.txClient.release();
       this.txClient = null;
-      throw error;
+      throw mapDatabaseError(error, "postgres", "BEGIN");
     }
     // The ReadyForQuery byte after BEGIN is the server saying whether a transaction is open.
     // A PostgreSQL-wire relative can accept the statement and open none: RisingWave answers
@@ -3775,6 +3775,8 @@ export class PostgresProvider extends SQLBaseProvider {
     const client = this.txClient;
     try {
       await client.query("COMMIT");
+    } catch (error) {
+      throw mapDatabaseError(error, "postgres", "COMMIT");
     } finally {
       this.releaseHeldClient(client);
     }
@@ -3787,6 +3789,8 @@ export class PostgresProvider extends SQLBaseProvider {
     const client = this.txClient;
     try {
       await client.query("ROLLBACK");
+    } catch (error) {
+      throw mapDatabaseError(error, "postgres", "ROLLBACK");
     } finally {
       this.releaseHeldClient(client);
     }

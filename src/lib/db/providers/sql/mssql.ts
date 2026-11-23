@@ -2901,7 +2901,11 @@ export class MSSQLProvider extends SQLBaseProvider {
     this.ensureConnected();
     if (this.txActive) throw new QueryError("Transaction already active", "mssql");
     this.txTransaction = new mssql.Transaction(this.pool!);
-    await this.txTransaction.begin();
+    try {
+      await this.txTransaction.begin();
+    } catch (error) {
+      throw mapDatabaseError(error, "mssql", "BEGIN");
+    }
     this.txActive = true;
 
     // Auto-rollback after timeout to prevent leaked locks, on an owned provider only
@@ -2915,6 +2919,8 @@ export class MSSQLProvider extends SQLBaseProvider {
     this.clearTxTimeout();
     try {
       await this.txTransaction.commit();
+    } catch (error) {
+      throw mapDatabaseError(error, "mssql", "COMMIT");
     } finally {
       this.txTransaction = null;
       this.txActive = false;
@@ -2926,6 +2932,8 @@ export class MSSQLProvider extends SQLBaseProvider {
     this.clearTxTimeout();
     try {
       await this.txTransaction.rollback();
+    } catch (error) {
+      throw mapDatabaseError(error, "mssql", "ROLLBACK");
     } finally {
       this.txTransaction = null;
       this.txActive = false;

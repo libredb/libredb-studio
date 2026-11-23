@@ -287,7 +287,7 @@ import type { DatabaseConnection } from "@/lib/types";
 import type { DatabaseProvider, ReadOnlyStatementBudget } from "@/lib/db/types";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { errorKind } from "@/lib/db/error-record";
+import { errorKind, errorOutcome } from "@/lib/db/error-record";
 
 // ---------------------------------------------------------------------------
 // Default mock query implementation
@@ -1943,6 +1943,75 @@ describe("MSSQLProvider", () => {
       expect(provider.isInTransaction()).toBe(true);
       await provider.rollbackTransaction();
     });
+
+    /** A driver error of tedious's socket kind, as `mssql` wraps it on a transaction call. */
+    const socketLost = () =>
+      Object.assign(new Error("Connection lost - read ECONNRESET"), { name: "ConnectionError", code: "ESOCKET" });
+
+    test("a begin the driver refuses answers its mapped class with outcome unknown and holds no transaction", async () => {
+      await provider.connect();
+      mockTransactionHooks = {
+        begin() {
+          throw socketLost();
+        },
+        commit() {},
+        rollback() {},
+      };
+      try {
+        const failed = await provider.beginTransaction().catch((error: unknown) => error);
+
+        expect(failed).toBeInstanceOf(DatabaseError);
+        expect((failed as DatabaseError).message).toContain("Connection lost - read ECONNRESET");
+        expect(errorOutcome(failed)).toBe("unknown");
+        expect(provider.isInTransaction()).toBe(false);
+        const response = createErrorResponse(failed, { route: "api/db/transaction" });
+        expect(response.status).toBe(500);
+        expect(await response.json()).toMatchObject({
+          code: ApiErrorCode.DATABASE_ERROR,
+          statusCode: 500,
+          kind: "database",
+          outcome: "unknown",
+        });
+      } finally {
+        mockTransactionHooks = { begin() {}, commit() {}, rollback() {} };
+      }
+    });
+
+    test.each([
+      ["commitTransaction", "commit"],
+      ["rollbackTransaction", "rollback"],
+    ] as const)(
+      "%s the driver refuses answers its mapped class with outcome unknown, not an internal error",
+      async (end, hook) => {
+        await provider.connect();
+        await provider.beginTransaction();
+        mockTransactionHooks = {
+          begin() {},
+          commit() {},
+          rollback() {},
+          [hook]() {
+            throw socketLost();
+          },
+        };
+        try {
+          const failed = await provider[end]().catch((error: unknown) => error);
+
+          expect(failed).toBeInstanceOf(DatabaseError);
+          expect((failed as DatabaseError).message).toContain("Connection lost - read ECONNRESET");
+          expect(errorOutcome(failed)).toBe("unknown");
+          const response = createErrorResponse(failed, { route: "api/db/transaction" });
+          expect(response.status).toBe(500);
+          expect(await response.json()).toMatchObject({
+            code: ApiErrorCode.DATABASE_ERROR,
+            statusCode: 500,
+            kind: "database",
+            outcome: "unknown",
+          });
+        } finally {
+          mockTransactionHooks = { begin() {}, commit() {}, rollback() {} };
+        }
+      },
+    );
 
     test("queryInTransaction binds positional parameters as p1..pN inputs", async () => {
       await provider.connect();

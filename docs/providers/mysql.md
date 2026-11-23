@@ -1000,7 +1000,7 @@ to the pool until commit/rollback). Surfaced via `POST /api/db/transaction`.
 |--------|-----------|
 | `beginTransaction(options?)` | `pool.getConnection()` through `checkoutPhase`, so a failed checkout answers `not-sent` ([§11](#11-error-handling)), + `BEGIN` (`START TRANSACTION` if `BEGIN` is refused as a parse error), arms a **5-minute auto-rollback** timer (`TX_TIMEOUT_MS`, [`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)). Throws if one is active, refuses a `BEGIN` the server reports as having opened nothing, and answers `{ stateReported }`; with `requireReportedState` (SANDBOX) it also refuses a server that reports no state at all ([§6.0](#60-what-the-server-says-about-the-transaction)). |
 | `queryInTransaction(sql, params?)` | Runs on the transaction's connection (with the same non-SELECT envelope as §5.1). Throws if none active. Ends the session when the server says the statement ended the transaction ([§6.0](#60-what-the-server-says-about-the-transaction)). One statement per call: the route splits a selection of several and calls this once per statement, in order, stopping at the first failure (#1390). Measured on MySQL 26.7.0 before that: two `UPDATE` lines run inside BEGIN or SANDBOX answered "You have an error in your SQL syntax ... at line 2". |
-| `commitTransaction()` / `rollbackTransaction()` | Ends it, clears the timer, releases the connection. Throws if none active. |
+| `commitTransaction()` / `rollbackTransaction()` | Ends it, clears the timer, releases the connection. A `COMMIT` or `ROLLBACK` that fails answers its mapped class with `outcome` `unknown` ([§11](#11-error-handling)), and the provider holds no transaction after it. Throws if none active. |
 | `expireTransaction()` | Timeout callback — auto-`rollback()` to prevent leaked locks. |
 | `isInTransaction()` | Current state. |
 
@@ -2517,6 +2517,7 @@ Before this, the checkout sat outside the mapping, so its failure reached the ro
 The pool queues a checkout without bound (`waitForConnections: true`, `queueLimit: 0`, and `mysql2` has no acquire timeout), so a full pool waits until Studio's deadline on the statement, which answers `504` with `outcome` `unknown`.
 A connection lost after it was taken (`PROTOCOL_CONNECTION_LOST`) answers `unknown`, since the statement may have reached the server.
 A transaction's `beginTransaction()` takes its connection the same way before it sends the `BEGIN`, so a failed checkout there answers `not-sent` in the same class; its checkout waits without bound too, like the statement's.
+The `BEGIN` itself, a `COMMIT` and a `ROLLBACK` that fail answer the class their `mysql2` error maps to, with `outcome` `unknown`, as a statement does: a lost connection (`PROTOCOL_CONNECTION_LOST`) or a deadlock (`1213`, its SQLSTATE `40001` kept) `500 DATABASE_ERROR`, a `BEGIN` refused as a parse error in both forms `400 QUERY_ERROR`.
 The other paths that take a connection (the agent's read-only profile, the catalog and monitoring reads) still answer `unknown` for a failed checkout.
 
 ---
