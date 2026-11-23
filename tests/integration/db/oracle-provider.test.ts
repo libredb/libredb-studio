@@ -40,7 +40,7 @@ import type { ManagedConnection } from "@/lib/seed";
 import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 import { fakeTextScrub } from "../../helpers/mcp-fixtures";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
-import { errorKind } from "@/lib/db/error-record";
+import { errorKind, errorOutcome } from "@/lib/db/error-record";
 
 /** The notice an answer carrying database content opens with on this file's oracle connections. */
 const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("oracle"));
@@ -75,6 +75,7 @@ let connectionLog: {
   attrs?: Record<string, unknown>;
 }[] = [];
 let mockRollbackFn: () => Promise<void> = async () => {};
+let mockCommitFn: () => Promise<void> = async () => {};
 
 const createMockConnection = () => {
   const conn = {
@@ -89,7 +90,10 @@ const createMockConnection = () => {
       return mockConnCloseFn();
     },
     break: () => mockBreakFn(),
-    commit: async () => {},
+    commit: () => {
+      connectionLog.push({ event: "commit" });
+      return mockCommitFn();
+    },
     rollback: () => {
       connectionLog.push({ event: "rollback" });
       return mockRollbackFn();
@@ -711,6 +715,8 @@ describe("OracleProvider", () => {
   beforeEach(() => {
     mockExecuteFn = async (sql: string) => defaultExecute(sql);
     mockConnCloseFn = async () => {};
+    mockCommitFn = async () => {};
+    mockRollbackFn = async () => {};
     mockBreakFn = async () => {};
     mockPoolCloseFn = async () => {};
     mockCreatePoolFn = async () => createMockPool();
@@ -2854,6 +2860,135 @@ describe("OracleProvider", () => {
 
       mockExecuteFn = async (sql: string) => defaultExecute(sql);
       await provider.rollbackTransaction();
+    });
+
+    /** The driver's end of a transaction a test makes fail, per provider method. */
+    const driverEnd = {
+      commitTransaction: (fn: () => Promise<void>) => {
+        mockCommitFn = fn;
+      },
+      rollbackTransaction: (fn: () => Promise<void>) => {
+        mockRollbackFn = fn;
+      },
+    } as const;
+
+    /** A Thick-mode close that fails with the native error, as node-oracledb can raise it on a pooled close. */
+    const closeFails = async () => {
+      throw new Error("DPI-1010: not connected");
+    };
+
+    test.each(["commitTransaction", "rollbackTransaction"] as const)(
+      "%s whose connection close fails answers its own success, says why, and holds no transaction",
+      async (end) => {
+        await provider.connect();
+        await provider.beginTransaction();
+        mockConnCloseFn = closeFails;
+        const warn = spyOn(console, "warn").mockImplementation(() => {});
+        try {
+          const answered = await provider[end]().catch((error: unknown) => error);
+
+          expect(answered).toBeUndefined();
+          expect(provider.isInTransaction()).toBe(false);
+          const warnings = warn.mock.calls.map((call) => String(call[0]));
+          expect(warnings).toHaveLength(1);
+          expect(warnings[0]).toContain("connection of an ended transaction");
+          expect(warnings[0]).toContain("DPI-1010");
+        } finally {
+          warn.mockRestore();
+        }
+        mockConnCloseFn = async () => {};
+        await provider.beginTransaction();
+        expect(provider.isInTransaction()).toBe(true);
+        await provider.rollbackTransaction();
+      },
+    );
+
+    test.each([
+      ["commitTransaction", "ORA-02091: transaction rolled back\nORA-00001: unique constraint (APP.ORDERS_N) violated"],
+      ["rollbackTransaction", "ORA-03113: end-of-file on communication channel"],
+    ] as const)(
+      "%s that fails answers its own mapped error rather than the close's, and holds no transaction",
+      async (end, message) => {
+        await provider.connect();
+        await provider.beginTransaction();
+        driverEnd[end](async () => {
+          throw new Error(message);
+        });
+        mockConnCloseFn = closeFails;
+        const warn = spyOn(console, "warn").mockImplementation(() => {});
+        try {
+          const failed = await provider[end]().catch((error: unknown) => error);
+
+          expect(failed).toBeInstanceOf(DatabaseError);
+          expect((failed as DatabaseError).message).toContain(message.slice(0, 9));
+          expect((failed as DatabaseError).message).not.toContain("DPI-1010");
+          expect(errorOutcome(failed)).toBe("unknown");
+          expect(provider.isInTransaction()).toBe(false);
+          expect(warn.mock.calls.map((call) => String(call[0])).join("\n")).toContain("DPI-1010");
+          const response = createErrorResponse(failed, { route: "api/db/transaction" });
+          expect(response.status).toBe(500);
+          expect(await response.json()).toMatchObject({
+            code: ApiErrorCode.DATABASE_ERROR,
+            statusCode: 500,
+            kind: "database",
+            outcome: "unknown",
+          });
+        } finally {
+          warn.mockRestore();
+        }
+      },
+    );
+
+    test.each(["commitTransaction", "rollbackTransaction"] as const)(
+      "%s whose connection is lost answers a DatabaseError with outcome unknown, not an internal error",
+      async (end) => {
+        await provider.connect();
+        await provider.beginTransaction();
+        connectionLog = [];
+        driverEnd[end](async () => {
+          throw new Error("NJS-500: connection to the Oracle Database was broken");
+        });
+
+        const failed = await provider[end]().catch((error: unknown) => error);
+
+        expect(failed).toBeInstanceOf(DatabaseError);
+        expect(errorOutcome(failed)).toBe("unknown");
+        expect(provider.isInTransaction()).toBe(false);
+        expect(connectionLog.map((entry) => entry.event).at(-1)).toBe("close");
+        const response = createErrorResponse(failed, { route: "api/db/transaction" });
+        expect(response.status).toBe(500);
+        expect(await response.json()).toMatchObject({
+          code: ApiErrorCode.DATABASE_ERROR,
+          kind: "database",
+          outcome: "unknown",
+        });
+      },
+    );
+
+    test("a ROLLBACK sent while the COMMIT of the same transaction closes its connection answers its own outcome and closes the connection once", async () => {
+      await provider.connect();
+      await provider.beginTransaction();
+      // The first close waits until the test opens the gate; a later close of the same connection
+      // answers what node-oracledb answers a close of a connection already closing.
+      const closeReached = Promise.withResolvers<void>();
+      const gate = Promise.withResolvers<void>();
+      let closes = 0;
+      mockConnCloseFn = async () => {
+        closes += 1;
+        if (closes > 1) throw new Error("NJS-003: invalid or closed connection");
+        closeReached.resolve();
+        await gate.promise;
+      };
+
+      const committed = provider.commitTransaction().catch((error: unknown) => error);
+      const rolledBack = provider.rollbackTransaction().catch((error: unknown) => error);
+      await closeReached.promise;
+      gate.resolve();
+
+      expect(await committed).toBeUndefined();
+      expect(await rolledBack).toBeUndefined();
+      expect(closes).toBe(1);
+      expect(provider.isInTransaction()).toBe(false);
     });
 
     // The five-minute timeout of PostgreSQL and MySQL, armed only on a provider created with an owner

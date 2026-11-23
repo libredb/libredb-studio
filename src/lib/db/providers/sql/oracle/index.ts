@@ -2341,27 +2341,57 @@ export class OracleProvider extends SQLBaseProvider {
     if (this.owned) this.txTimeout = setTimeout(() => void this.expireTransaction(), OracleProvider.TX_TIMEOUT_MS);
   }
 
+  /**
+   * The provider keeps claiming the transaction while its COMMIT runs, so a concurrent request never reads it as gone
+   * before the server answered. A failed COMMIT answers its mapped class, and the connection is released either way
+   * (`releaseHeldConnection`).
+   */
   public async commitTransaction(): Promise<void> {
     if (!this.txConn || !this.txActive) throw new QueryError(NO_ACTIVE_TRANSACTION, "oracle");
     this.clearTxTimeout();
+    const conn = this.txConn;
     try {
-      await this.txConn.commit();
+      await conn.commit();
+    } catch (error) {
+      throw mapDatabaseError(error, "oracle", "COMMIT");
     } finally {
-      await this.txConn.close();
-      this.txConn = null;
-      this.txActive = false;
+      await this.releaseHeldConnection(conn);
     }
   }
 
+  /** As `commitTransaction`, for a ROLLBACK. */
   public async rollbackTransaction(): Promise<void> {
     if (!this.txConn || !this.txActive) throw new QueryError(NO_ACTIVE_TRANSACTION, "oracle");
     this.clearTxTimeout();
+    const conn = this.txConn;
     try {
-      await this.txConn.rollback();
+      await conn.rollback();
+    } catch (error) {
+      throw mapDatabaseError(error, "oracle", "ROLLBACK");
     } finally {
-      await this.txConn.close();
-      this.txConn = null;
-      this.txActive = false;
+      await this.releaseHeldConnection(conn);
+    }
+  }
+
+  /**
+   * Forget the transaction held on `conn` and close the connection, which hands it back to the pool. Nothing happens
+   * when `conn` is no longer the held connection: a COMMIT and a ROLLBACK of one transaction sent at once both reach
+   * here, and the first to arrive already released it, so the second never closes the connection twice. The
+   * transaction is forgotten before the close is awaited, so the provider holds none whatever the close answers. A
+   * close that fails is logged with the driver's message and not thrown: the COMMIT's or ROLLBACK's own outcome is
+   * the answer the caller acts on, and throwing the close's failure would answer a committed transaction as failed,
+   * or replace the error that says why a COMMIT failed.
+   */
+  private async releaseHeldConnection(conn: oracledb.Connection): Promise<void> {
+    if (this.txConn !== conn) return;
+    this.txConn = null;
+    this.txActive = false;
+    try {
+      await conn.close();
+    } catch (error) {
+      console.warn(
+        `[Oracle] Closing the connection of an ended transaction failed: ${error instanceof Error ? error.message : error}`,
+      );
     }
   }
 
