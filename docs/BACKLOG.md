@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D495, U17 · 363
+- [Drivers and connections](#drivers-and-connections) — D1-D496, U17 · 364
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -4875,6 +4875,17 @@ A refusal from one of those checks, and a failed bastion dial, carries no outcom
 Found 2026-11-23 while planning FND-2 slice 6c.
 
 **Done when:** each such refusal answers `outcome` `not-sent`, with a test per entry point.
+
+### D496. An API caller's offset reaches Kafka, which ignores it, and the answer still names that offset
+
+`POST /api/db/query` takes `options.offset` for any engine (`pageOptionError` in `src/lib/api/page-probe.ts`), and Kafka's provider passes it through the base `prepareQuery` while its `query` takes no offset, so the read starts where an offset of 0 would.
+The answer's `pagination.offset` is `prepared.offset` (`src/lib/api/editor-query.ts`), so a call with an offset of N answers the first page's rows under offset N.
+Kafka declares `supportsResultPagination: false`, which only the results grid reads, so the editor never asks Kafka for a next page and no server code refuses an offset an engine does not page by.
+The contract's host refusal of a request field a session does not honour (`checkExecuteRequest`, clause C-9 in `docs/providers/CONTRACT.md`) refuses it once Kafka runs on the contract.
+
+Found 2026-11-23 while planning PR 9 slice 9f2, by reading the code.
+
+**Done when:** a query with a non-zero offset to an engine that does not page by offset is refused before the provider runs, with a test.
 
 ## Value interpolation
 
