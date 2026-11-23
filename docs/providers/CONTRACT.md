@@ -1479,6 +1479,7 @@ The core holds plain functions, the console calls, and constructs no class, so a
 The classes a caller tests with `instanceof` and the ports that read them stay the caller's, built per call, C-51.
 A call made before the core is installed fails by name, as a defect of how the process was composed, and nothing reaches the provider; a second install is refused the same way, so no second core is ever created.
 The library surface never reads the installed core, so an embedder composes nothing.
+The live check `tests/live/host-core-live.ts` holds the same rule against the built standalone server, in CI's "Host Core Live Check".
 
 - test `tests/unit/lib/provider-host/core/host-core.test.ts` "the host core holds the core's console calls, frozen, and nothing else"
 - test `tests/unit/lib/provider-host/instance.test.ts` "the host core is installed once per process, under a registered symbol"
