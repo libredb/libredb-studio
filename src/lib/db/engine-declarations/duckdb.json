@@ -73,7 +73,13 @@
     "consentDeadline": null,
     "fenceAliases": [],
     "explainFormat": "duckdb-json",
-    "dialect": null
+    "dialect": null,
+    "language": {
+      "queryLanguage": "sql",
+      "monacoId": "sql",
+      "accent": "border-hue-blue/40",
+      "console": false
+    }
   },
   "sqlText": {
     "readsSqlText": true,

@@ -151,7 +151,13 @@
     "consentDeadline": null,
     "fenceAliases": [],
     "explainFormat": "databend-text",
-    "dialect": null
+    "dialect": null,
+    "language": {
+      "queryLanguage": "sql",
+      "monacoId": "sql",
+      "accent": "border-hue-blue/40",
+      "console": false
+    }
   },
   "sqlText": {
     "readsSqlText": true,

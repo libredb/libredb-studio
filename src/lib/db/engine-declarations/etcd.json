@@ -100,6 +100,12 @@
       "offersCountQuery": false,
       "offersSqlExport": true,
       "historyMask": null
+    },
+    "language": {
+      "queryLanguage": "json",
+      "monacoId": "etcd",
+      "accent": "border-hue-sky/40",
+      "console": false
     }
   },
   "sqlText": {

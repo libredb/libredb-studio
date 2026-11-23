@@ -94,6 +94,12 @@
       "offersCountQuery": false,
       "offersSqlExport": true,
       "historyMask": null
+    },
+    "language": {
+      "queryLanguage": "json",
+      "monacoId": "redis",
+      "accent": "border-hue-fuchsia/40",
+      "console": false
     }
   },
   "sqlText": {

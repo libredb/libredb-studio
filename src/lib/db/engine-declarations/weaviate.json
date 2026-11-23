@@ -110,6 +110,12 @@
       "offersCountQuery": false,
       "offersSqlExport": false,
       "historyMask": null
+    },
+    "language": {
+      "queryLanguage": "json",
+      "monacoId": "weaviate",
+      "accent": "border-hue-lime-alt/40",
+      "console": true
     }
   },
   "sqlText": {

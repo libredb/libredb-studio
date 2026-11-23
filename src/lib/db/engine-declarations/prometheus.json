@@ -91,7 +91,13 @@
       "promql"
     ],
     "explainFormat": null,
-    "dialect": null
+    "dialect": null,
+    "language": {
+      "queryLanguage": "promql",
+      "monacoId": "promql",
+      "accent": "border-hue-indigo/40",
+      "console": false
+    }
   },
   "sqlText": {
     "readsSqlText": false,

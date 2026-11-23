@@ -124,6 +124,12 @@
       "offersCountQuery": false,
       "offersSqlExport": false,
       "historyMask": null
+    },
+    "language": {
+      "queryLanguage": "json",
+      "monacoId": "milvus",
+      "accent": "border-hue-teal/40",
+      "console": true
     }
   },
   "sqlText": {

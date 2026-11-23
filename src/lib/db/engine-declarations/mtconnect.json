@@ -88,6 +88,12 @@
       "offersCountQuery": false,
       "offersSqlExport": true,
       "historyMask": null
+    },
+    "language": {
+      "queryLanguage": "json",
+      "monacoId": "mtconnect",
+      "accent": "border-hue-slate-alt/40",
+      "console": true
     }
   },
   "sqlText": {

@@ -84,7 +84,13 @@
       "cypher"
     ],
     "explainFormat": null,
-    "dialect": null
+    "dialect": null,
+    "language": {
+      "queryLanguage": "cypher",
+      "monacoId": "graph-cypher",
+      "accent": "border-hue-purple/40",
+      "console": false
+    }
   },
   "sqlText": {
     "readsSqlText": false,

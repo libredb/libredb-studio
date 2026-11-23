@@ -191,6 +191,12 @@
           "--docker-password"
         ]
       }
+    },
+    "language": {
+      "queryLanguage": "json",
+      "monacoId": "kubectl",
+      "accent": "border-hue-teal-alt/40",
+      "console": false
     }
   },
   "sqlText": {

@@ -204,6 +204,12 @@
       "offersCountQuery": false,
       "offersSqlExport": false,
       "historyMask": null
+    },
+    "language": {
+      "queryLanguage": "json",
+      "monacoId": "s3",
+      "accent": "border-hue-indigo-alt/40",
+      "console": false
     }
   },
   "sqlText": {

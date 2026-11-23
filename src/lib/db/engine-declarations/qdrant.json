@@ -119,6 +119,12 @@
       "offersCountQuery": false,
       "offersSqlExport": false,
       "historyMask": null
+    },
+    "language": {
+      "queryLanguage": "json",
+      "monacoId": "qdrant",
+      "accent": "border-hue-pink/40",
+      "console": true
     }
   },
   "sqlText": {

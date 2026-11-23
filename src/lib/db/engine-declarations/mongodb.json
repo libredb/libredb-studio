@@ -109,7 +109,13 @@
       "mongo"
     ],
     "explainFormat": null,
-    "dialect": null
+    "dialect": null,
+    "language": {
+      "queryLanguage": "json",
+      "monacoId": "json",
+      "accent": "border-hue-cyan/40",
+      "console": false
+    }
   },
   "sqlText": {
     "readsSqlText": false,

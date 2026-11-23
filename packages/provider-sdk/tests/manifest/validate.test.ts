@@ -269,6 +269,12 @@ function refusedMigrationDdl(): Json {
   };
 }
 
+/** The editor language of the fixture's one engine. */
+const languageOf = (m: Json): Json => m.engines[0].editor.language;
+
+/** The pointer of the fixture's one engine's editor language. */
+const LANGUAGE = "/engines/0/editor/language";
+
 /** The SQL generator forms of the fixture's one engine. */
 const sqlGeneratorsOf = (m: Json): Json => m.engines[0].sqlGenerators;
 
@@ -370,6 +376,7 @@ describe("schema refusals", () => {
       "/engines/0/editor/dialect/historyMask",
     ],
     ["in an SQL generator segment", (m: Json) => (sqlGeneratorsOf(m).bogus = "generatorBogus"), SQL_GENERATORS],
+    ["in an editor language", (m: Json) => (languageOf(m).bogus = "sql"), LANGUAGE],
   ])("an unknown key %s is refused as unknown-key at its pointer", (_where, change, pointer) => {
     expect(refusalsFor(manifest(change))).toEqual([refusal("unknown-key", pointer, "bogus")]);
   });
@@ -622,6 +629,8 @@ describe("schema refusals", () => {
     ),
     ["migrationDdl", (m: Json) => delete m.engines[0].migrationDdl, "/engines/0", "migrationDdl"],
     ["sqlGenerators", (m: Json) => delete m.engines[0].sqlGenerators, "/engines/0", "sqlGenerators"],
+    ["editor.language", (m: Json) => delete editorOf(m).language, "/engines/0/editor", "language"],
+    ...missingRows("editor.language", languageOf, LANGUAGE, ["queryLanguage", "monacoId", "accent", "console"]),
     ...missingRows("sqlGenerators", sqlGeneratorsOf, SQL_GENERATORS, [
       "quote",
       "table",
@@ -1079,6 +1088,7 @@ describe("schema refusals", () => {
         fenceAliases: ["exampleql", `q${"a".repeat(31)}`],
         explainFormat: "postgres-json",
         dialect: dialect(["--token", "--client-key", `--${"a".repeat(63)}`]),
+        language: { queryLanguage: "json", monacoId: "kubectl", accent: "border-hue-sky/40", console: false },
       };
     });
 
@@ -1687,6 +1697,80 @@ describe("schema refusals", () => {
       refusal("out-of-range", `${SQL_GENERATORS}/countExpression`),
     ]);
     expect(refusalsFor(counting(null))).toEqual([refusal("wrong-type", `${SQL_GENERATORS}/countExpression`)]);
+  });
+
+  test("an editor language with Studio's query language, Monaco language and accent is admitted, and a console language too", () => {
+    const consoleLanguage = manifest((m) =>
+      Object.assign(languageOf(m), {
+        queryLanguage: "json",
+        monacoId: "milvus",
+        accent: "border-hue-teal/40",
+        console: true,
+      }),
+    );
+    const alt = manifest((m) => (languageOf(m).accent = "border-hue-teal-alt/40"));
+    const cypher = manifest((m) =>
+      Object.assign(languageOf(m), {
+        queryLanguage: "cypher",
+        monacoId: "graph-cypher",
+        accent: "border-hue-violet/40",
+      }),
+    );
+
+    expect(languageOf(manifest())).toEqual({
+      queryLanguage: "sql",
+      monacoId: "sql",
+      accent: "border-hue-blue/40",
+      console: false,
+    });
+    expect(refusalsFor(manifest())).toEqual([]);
+    expect(languageOf(kafkaManifest()).monacoId).toBe("json");
+    expect(refusalsFor(kafkaManifest())).toEqual([]);
+    expect(refusalsFor(consoleLanguage)).toEqual([]);
+    expect(refusalsFor(alt)).toEqual([]);
+    expect(refusalsFor(cypher)).toEqual([]);
+  });
+
+  test("a query language or a Monaco language outside Studio's is refused as value-not-allowed", () => {
+    const graphql = manifest((m) => (languageOf(m).queryLanguage = "graphql"));
+    const cypher = manifest((m) => (languageOf(m).monacoId = "cypher"));
+
+    expect(refusalsFor(graphql)).toEqual([refusal("value-not-allowed", `${LANGUAGE}/queryLanguage`)]);
+    expect(refusalsFor(cypher)).toEqual([refusal("value-not-allowed", `${LANGUAGE}/monacoId`)]);
+  });
+
+  test("an accent that is not one border hue class of Studio's palette, or is a status hue, is refused as pattern-mismatch", () => {
+    const accenting = (accent: string) => manifest((m) => (languageOf(m).accent = accent));
+    for (const accent of [
+      "border-hue-amber/40",
+      "border-hue-rose-alt/40",
+      "border-hue-emerald/40",
+      "border-hue-blue/40 bg-red-500",
+      "border-hue-blue/50",
+      "border-hue-blue-tint/40",
+      "text-hue-blue/40",
+      "border-hue-Blue/40",
+      "border-hue-blue/40\n",
+      "border-hue-/40",
+      "border-hue-blue-alt-alt/40",
+    ]) {
+      expect(refusalsFor(accenting(accent))).toEqual([refusal("pattern-mismatch", `${LANGUAGE}/accent`)]);
+    }
+    expect(refusalsFor(accenting("border-hue-teal-alt/40"))).toEqual([]);
+    expect(refusalsFor(accenting(`border-hue-${"a".repeat(18)}/40`))).toEqual([]);
+    expect(refusalsFor(accenting(`border-hue-${"a".repeat(19)}/40`))).toEqual([
+      refusal("out-of-range", `${LANGUAGE}/accent`),
+    ]);
+  });
+
+  test("an editor language that states a tab type or a console dialect id is refused as unknown-key", () => {
+    const tabType = manifest((m) => (languageOf(m).tabType = "sql"));
+    const consoleDialect = manifest((m) => (languageOf(m).consoleDialect = "sql"));
+    const flag = manifest((m) => (languageOf(m).console = "yes"));
+
+    expect(refusalsFor(tabType)).toEqual([refusal("unknown-key", LANGUAGE, "tabType")]);
+    expect(refusalsFor(consoleDialect)).toEqual([refusal("unknown-key", LANGUAGE, "consoleDialect")]);
+    expect(refusalsFor(flag)).toEqual([refusal("wrong-type", `${LANGUAGE}/console`)]);
   });
 
   test("several failures are each refused, ordered by pointer", () => {
@@ -2499,6 +2583,16 @@ describe("one engine declaration", () => {
     expect(validator.validateEngine(declaration)).toEqual({
       admitted: false,
       refusals: [refusal("no-variant", "/migrationDdl")],
+    });
+  });
+
+  test("an engine declaration's editor language is refused at its own pointer under validateEngine", () => {
+    const declaration = kafkaManifest().engines[0] as Json;
+    declaration.editor.language.accent = "border-hue-amber/40";
+
+    expect(validator.validateEngine(declaration)).toEqual({
+      admitted: false,
+      refusals: [refusal("pattern-mismatch", "/editor/language/accent")],
     });
   });
 

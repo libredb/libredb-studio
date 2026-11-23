@@ -32,10 +32,12 @@ import {
   type JwtAccessClaim,
   type MaintenanceOperation as ManifestMaintenanceOperation,
   type MigrationDdl,
+  type MonacoLanguageId,
   type NonFiniteLiterals,
   type PlaceableFieldName,
   type ProcedureBodies,
   type QueryDialect as ManifestQueryDialect,
+  type QueryLanguage,
   type ScriptFacts,
   type ScriptUnit,
   type SelectFieldName,
@@ -125,6 +127,8 @@ import { CURATED_OPERATION_KINDS } from "@/lib/db/operations/descriptors";
 import { refusedFieldRefusal } from "@/lib/db/provider-connection";
 import { SQL_GRAMMAR } from "@/lib/db/sql-grammar";
 import type { CompletionQuoting, SqlGrammarSpec, SqlRedaction, UpdateTargetGrammar } from "@/lib/db/sql-grammar/types";
+import { EDITOR_LANGUAGES, type EditorLanguage } from "@/lib/db/editor-language";
+import type { EditorLanguageContribution } from "@/lib/db/editor-language/types";
 import { SQL_ENGINE_GENERATORS } from "@/lib/db/query-generators";
 import type { SqlEngineGenerators } from "@/lib/db/query-generators/types";
 import { SQL_WRITING } from "@/lib/db/sql-writing";
@@ -161,6 +165,8 @@ import { SNOWFLAKE_CONNECTION_STRING } from "@/lib/db/providers/sql/snowflake/co
 import { SPARK_CONNECTION_STRING } from "@/lib/db/providers/sql/spark/connection-string";
 import type { ExplainFormat, MaintenanceOperation, ProviderCapabilities } from "@/lib/db/types";
 import { getExplainStrategy } from "@/lib/explain";
+import { DIALECT_EDITORS, type DialectEditor } from "@/lib/editor/dialect-editors";
+import { editorLanguageOf, resolveTabType } from "@/lib/editor/tab-language";
 import { historyMaskOf } from "@/lib/history-mask";
 import type { NonFiniteWord } from "@/lib/non-finite";
 import { importKubeconfig } from "@/lib/kubernetes/kubeconfig-import";
@@ -170,7 +176,7 @@ import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
 import { hasUnterminatedSpan, readSqlSpan } from "@/lib/sql/spans";
 import { splitExecutionUnits } from "@/lib/sql/statement-splitter";
 import { CONNECTION_FIELDS as FIELD_CLASSES } from "@/lib/storage/secret-fields";
-import type { DatabaseConnection, DatabaseType, HostPathField } from "@/lib/types";
+import type { DatabaseConnection, DatabaseType, HostPathField, QueryTab } from "@/lib/types";
 import { readCensusCapabilities } from "../../helpers/census-capabilities";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 import { SPAN_STATEMENTS } from "./sql-grammar/fixtures";
@@ -713,6 +719,53 @@ function derivedDialects(): Readonly<Record<QueryDialect, DialectSpec>> {
   return table as Record<QueryDialect, DialectSpec>;
 }
 
+/**
+ * The tab type a dialect-less engine's tabs open under, keyed by its query language (docs/providers/CONTRACT.md,
+ * clause S-23), written here from the contract rather than read from `resolveTabType`, so the census holds that ladder
+ * to it.
+ */
+const LANGUAGE_TAB_TYPES: Readonly<Record<QueryLanguage, QueryTab["type"]>> = {
+  sql: "sql",
+  json: "mongodb",
+  promql: "promql",
+  cypher: "cypher",
+  influxql: "influxql",
+};
+
+/** The tab type a declaration's engine opens its tabs under: its dialect's name, or its query language's tab type. */
+function declaredTabType(d: EngineDeclaration): QueryTab["type"] {
+  return d.editor.dialect === null ? LANGUAGE_TAB_TYPES[d.editor.language.queryLanguage] : d.editor.dialect.name;
+}
+
+/**
+ * The editor language facts the declarations state, one entry per Monaco language and one per tab type: two
+ * declarations stating one language with a different accent or console, or one tab type in a different language, are a
+ * thrown error naming both engines.
+ */
+function derivedEditorLanguages(): {
+  languages: Record<string, { accent: string; console: boolean; engine: DatabaseType }>;
+  tabTypes: Record<string, { monacoId: string; engine: DatabaseType }>;
+} {
+  const languages: Record<string, { accent: string; console: boolean; engine: DatabaseType }> = {};
+  const tabTypes: Record<string, { monacoId: string; engine: DatabaseType }> = {};
+  for (const type of SHIPPED_DATABASE_TYPES) {
+    const d = declared(type);
+    const { monacoId, accent, console } = d.editor.language;
+    const language = languages[monacoId];
+    if (language !== undefined && (language.accent !== accent || language.console !== console)) {
+      throw new Error(`${type} states the ${monacoId} editor language unlike ${language.engine}`);
+    }
+    languages[monacoId] ??= { accent, console, engine: type };
+    const tabType = declaredTabType(d);
+    const editor = tabTypes[tabType];
+    if (editor !== undefined && editor.monacoId !== monacoId) {
+      throw new Error(`${type} states the ${tabType} tab type's language unlike ${editor.engine}`);
+    }
+    tabTypes[tabType] ??= { monacoId, engine: type };
+  }
+  return { languages, tabTypes };
+}
+
 describe("the committed declarations", () => {
   test("the directory holds exactly one declaration per shipped type-id", () => {
     expect(declarationDirectoryProblems(readdirSync(DIRECTORY), SHIPPED_DATABASE_TYPES)).toEqual([]);
@@ -1006,6 +1059,50 @@ describe("the committed declarations", () => {
     expect(buildSqlGenerators("postgres")).toBeNull();
     expect(() => buildSqlGenerators("mssql", planted)).toThrow(
       `mssql: the SQL generator member "${key}" has no place in the engine declaration`,
+    );
+  });
+
+  test("the generator refuses, by name, an editor language or tab type member it has no place for", () => {
+    const key = `k${crypto.randomUUID().replaceAll("-", "")}`;
+    const language = {
+      ...EDITOR_TABLES,
+      languages: { ...EDITOR_LANGUAGES, sql: { ...EDITOR_LANGUAGES.sql, [key]: null } },
+    };
+    const tabEditor = {
+      ...EDITOR_TABLES,
+      tabEditors: { ...DIALECT_EDITORS, sql: { ...DIALECT_EDITORS.sql, [key]: null } },
+    };
+
+    expect(() => buildEditor("postgres", CAPABILITIES.postgres)).not.toThrow();
+    expect(() => buildEditor("postgres", CAPABILITIES.postgres, language)).toThrow(
+      `postgres: the sql editor language member "${key}" has no place in the engine declaration`,
+    );
+    expect(() => buildEditor("postgres", CAPABILITIES.postgres, tabEditor)).toThrow(
+      `postgres: the sql tab type's editor member "${key}" has no place in the engine declaration`,
+    );
+  });
+
+  test("the generator refuses, by name, an editor language row or a console whose id is not its Monaco id", () => {
+    const milvus = EDITOR_LANGUAGES.milvus;
+    if (milvus.console === undefined) throw new Error("the milvus editor language is no console dialect");
+    const renamed = {
+      ...EDITOR_TABLES,
+      languages: { ...EDITOR_LANGUAGES, sql: { ...EDITOR_LANGUAGES.sql, monacoId: "json" } },
+    };
+    const consoleId = {
+      ...EDITOR_TABLES,
+      languages: {
+        ...EDITOR_LANGUAGES,
+        milvus: { ...milvus, console: { ...milvus.console, spec: { ...milvus.console.spec, id: "milvus-console" } } },
+      },
+    };
+
+    expect(() => buildEditor("milvus", CAPABILITIES.milvus)).not.toThrow();
+    expect(() => buildEditor("postgres", CAPABILITIES.postgres, renamed)).toThrow(
+      'postgres: the sql editor language\'s monacoId is "json", not its Monaco id',
+    );
+    expect(() => buildEditor("milvus", CAPABILITIES.milvus, consoleId)).toThrow(
+      'milvus: the milvus editor language\'s console dialect id is "milvus-console", not its Monaco id',
     );
   });
 
@@ -2766,6 +2863,89 @@ describe("the census", () => {
     ).toEqual([]);
   });
 
+  test("editor.language.queryLanguage is the query language the engine's unconnected provider declares", () => {
+    expect(differing((type, d) => d.editor.language.queryLanguage === CAPABILITIES[type].queryLanguage)).toEqual([]);
+    // Vacuity: every query language is some engine's.
+    const languages = SHIPPED_DATABASE_TYPES.map((type) => declared(type).editor.language.queryLanguage);
+    expect(sorted([...new Set(languages)])).toEqual(sorted(Object.keys(LANGUAGE_TAB_TYPES)));
+  });
+
+  test("a dialect-less engine's tabs take its query language's tab type, and a dialect engine's its dialect's name", () => {
+    expect(differing((type, d) => resolveTabType(CAPABILITIES[type]) === declaredTabType(d))).toEqual([]);
+    // Vacuity: some engine has a dialect and every query language opens some dialect-less engine's tabs.
+    const dialectLess = SHIPPED_DATABASE_TYPES.map(declared).filter((d) => d.editor.dialect === null);
+    expect(dialectLess.length).toBeLessThan(SHIPPED_DATABASE_TYPES.length);
+    expect(sorted([...new Set(dialectLess.map(declaredTabType))])).toEqual(sorted(Object.values(LANGUAGE_TAB_TYPES)));
+  });
+
+  test("editor.language.monacoId is the Monaco language Studio's editor renders the engine's tabs in", () => {
+    expect(
+      differing(
+        (type, d) =>
+          d.editor.language.monacoId === DIALECT_EDITORS[declaredTabType(d)].monacoId &&
+          editorLanguageOf(CAPABILITIES[type]) === d.editor.language.monacoId,
+      ),
+    ).toEqual([]);
+  });
+
+  test("editor.language.accent and console are the EDITOR_LANGUAGES row's, a console registered under its own Monaco id", () => {
+    const rows: Readonly<Record<string, EditorLanguageContribution>> = EDITOR_LANGUAGES;
+    expect(
+      differing((_type, d) => {
+        const { monacoId, accent, console } = d.editor.language;
+        const row = Object.hasOwn(rows, monacoId) ? rows[monacoId] : undefined;
+        if (row === undefined || row.accent !== accent || console !== (row.console !== undefined)) return false;
+        return row.console === undefined || row.console.spec.id === monacoId;
+      }),
+    ).toEqual([]);
+    // Vacuity: some language is a console dialect and some is not, and the accents differ.
+    const languages = SHIPPED_DATABASE_TYPES.map((type) => declared(type).editor.language);
+    expect(sorted([...new Set(languages.map((language) => language.console))])).toEqual(["false", "true"]);
+    expect(new Set(languages.map((language) => language.accent)).size).toBeGreaterThan(1);
+  });
+
+  test("EDITOR_LANGUAGES and DIALECT_EDITORS are the editor language facts the declarations state, one per language and one per tab type", () => {
+    const { languages, tabTypes } = derivedEditorLanguages();
+    const rows: Readonly<Record<string, EditorLanguageContribution>> = EDITOR_LANGUAGES;
+
+    expect(sorted(Object.keys(languages))).toEqual(sorted(Object.keys(EDITOR_LANGUAGES)));
+    expect(
+      Object.keys(languages).filter(
+        (monacoId) =>
+          languages[monacoId].accent !== rows[monacoId]?.accent ||
+          languages[monacoId].console !== (rows[monacoId]?.console !== undefined),
+      ),
+    ).toEqual([]);
+    expect(Object.fromEntries(Object.entries(tabTypes).map(([tabType, { monacoId }]) => [tabType, monacoId]))).toEqual(
+      Object.fromEntries(Object.entries(DIALECT_EDITORS).map(([tabType, { monacoId }]) => [tabType, monacoId])),
+    );
+    expect(Object.keys(languages).length).toBe(16);
+    expect(Object.keys(tabTypes).length).toBe(24);
+  });
+
+  test("every member of an editor language row and of a tab type's editor row has its member in the declaration, or stays browser code", () => {
+    const languageDeclaredAt: Readonly<Record<keyof EditorLanguageContribution, string | null>> = {
+      monacoId: "monacoId",
+      accent: "accent",
+      console: "console",
+      register: null,
+      completions: null,
+      format: null,
+    };
+    const tabEditorDeclaredAt: Readonly<Record<keyof DialectEditor, string>> = { monacoId: "monacoId" };
+    const unplaced = (rows: Readonly<Record<string, object>>, declaredAt: object) =>
+      Object.entries(rows).flatMap(([key, row]) =>
+        Object.keys(row)
+          .filter((member) => !Object.hasOwn(declaredAt, member))
+          .map((member) => `${key}.${member}`),
+      );
+    const stated = Object.values(languageDeclaredAt).filter((member) => member !== null);
+
+    expect(unplaced(EDITOR_LANGUAGES, languageDeclaredAt)).toEqual([]);
+    expect(unplaced(DIALECT_EDITORS, tabEditorDeclaredAt)).toEqual([]);
+    expect(differing((_type, d) => stated.every((member) => Object.hasOwn(d.editor.language, member)))).toEqual([]);
+  });
+
   test("id is the file's type-id", () => {
     expect(differing((type, d) => d.id === type)).toEqual([]);
   });
@@ -2840,7 +3020,11 @@ describe("the vocabularies", () => {
       Equal<InsertForm, ExportSpec["insertForm"]>,
       Equal<MigrationDdl["tableDdl"], MigrationDdlSpec["tableDdl"]>,
       Equal<CreateTable["kind"], CreateTableDdl["kind"]>,
+      Equal<QueryLanguage, ProviderCapabilities["queryLanguage"]>,
+      Equal<MonacoLanguageId, EditorLanguage>,
     ] = [
+      true,
+      true,
       true,
       true,
       true,
@@ -2870,7 +3054,7 @@ describe("the vocabularies", () => {
       true,
     ];
 
-    expect<readonly boolean[]>(parity).toEqual(Array.from({ length: 27 }, () => true));
+    expect<readonly boolean[]>(parity).toEqual(Array.from({ length: 29 }, () => true));
   });
 
   test("the explain formats, the query dialects and the generic fence tags are Studio's", () => {
@@ -2882,5 +3066,18 @@ describe("the vocabularies", () => {
     expect(sorted(enumOf("genericFenceTag"))).toEqual(
       sorted([...QUERY_FENCE_ALIASES].filter((tag) => !Object.hasOwn(ALIAS_ENGINES, tag))),
     );
+  });
+
+  test("the query languages and the editor languages are Studio's", () => {
+    const queryLanguages: Readonly<Record<ProviderCapabilities["queryLanguage"], true>> = {
+      sql: true,
+      json: true,
+      promql: true,
+      cypher: true,
+      influxql: true,
+    };
+
+    expect(sorted(enumOf("queryLanguage"))).toEqual(sorted(Object.keys(queryLanguages)));
+    expect(sorted(enumOf("monacoLanguageId"))).toEqual(sorted(Object.keys(EDITOR_LANGUAGES)));
   });
 });

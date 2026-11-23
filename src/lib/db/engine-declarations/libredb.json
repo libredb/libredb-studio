@@ -77,6 +77,12 @@
       "offersCountQuery": false,
       "offersSqlExport": true,
       "historyMask": null
+    },
+    "language": {
+      "queryLanguage": "json",
+      "monacoId": "libredb",
+      "accent": "border-hue-violet/40",
+      "console": false
     }
   },
   "sqlText": {

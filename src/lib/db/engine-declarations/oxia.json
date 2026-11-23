@@ -132,6 +132,12 @@
       "offersCountQuery": false,
       "offersSqlExport": false,
       "historyMask": null
+    },
+    "language": {
+      "queryLanguage": "json",
+      "monacoId": "oxia",
+      "accent": "border-hue-purple-alt/40",
+      "console": false
     }
   },
   "sqlText": {

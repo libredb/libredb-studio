@@ -108,6 +108,12 @@
       "offersCountQuery": true,
       "offersSqlExport": false,
       "historyMask": null
+    },
+    "language": {
+      "queryLanguage": "json",
+      "monacoId": "firestore",
+      "accent": "border-hue-pink-alt/40",
+      "console": false
     }
   },
   "sqlText": {
