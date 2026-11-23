@@ -100,15 +100,60 @@ function selectField(field: ConnectionField, type: DatabaseType): SelectFieldNam
   return field as SelectFieldName;
 }
 
+/** A per-field record of an engine's form, which the generator walks in the engine's `fields` order. */
+type FieldRecordName =
+  | "fieldLabels"
+  | "fieldHints"
+  | "fieldPlaceholders"
+  | "fieldPlacement"
+  | "fieldOptions"
+  | "fieldShownWhen"
+  | "fieldDefaults"
+  | "fieldRules";
+
+/**
+ * Throws an error naming the engine, the record and the field where one of `records` has an entry for a field the
+ * engine does not list, since walking `fields` would otherwise drop that entry from the declaration.
+ */
+function refuseUnlistedFields(
+  form: ConnectionFormSpec,
+  records: readonly FieldRecordName[],
+  fields: readonly ConnectionField[],
+  type: DatabaseType,
+): void {
+  for (const record of records) {
+    for (const field of Object.keys(form[record] ?? {})) {
+      if (!(fields as readonly string[]).includes(field)) {
+        throw new Error(`${type}: the ${record} entry for "${field}" names a field the engine does not list`);
+      }
+    }
+  }
+}
+
 /**
  * How the dialog presents one engine's fields: each per-field record of its form as a list of entries naming their
- * field, in `fields` order, empty where the form declares none.
+ * field, in `fields` order, empty where the form declares none. An entry for a field the engine does not list is a
+ * thrown error naming the engine, the record and the field.
  */
-function buildDialog(
+export function buildDialog(
   form: ConnectionFormSpec,
   fields: readonly ConnectionField[],
   type: DatabaseType,
 ): ConnectionDialog {
+  refuseUnlistedFields(
+    form,
+    [
+      "fieldLabels",
+      "fieldHints",
+      "fieldPlaceholders",
+      "fieldPlacement",
+      "fieldOptions",
+      "fieldShownWhen",
+      "fieldDefaults",
+    ],
+    fields,
+    type,
+  );
   const textEntries = (record: Partial<Record<ConnectionField, string>> | undefined) =>
     fields.flatMap((field) => {
       const text = record?.[field];
@@ -152,13 +197,15 @@ function patternFlags(flags: string, field: ConnectionField, type: DatabaseType)
 
 /**
  * One engine's field rules, one entry per field its form declares a rule for, in `fields` order: each pattern as its
- * source and flags, and each check named by its slot, `<field>Check`.
+ * source and flags, and each check named by its slot, `<field>Check`. A rule for a field the engine does not list is
+ * a thrown error naming the engine and the field, since walking `fields` would otherwise drop it from the declaration.
  */
-function buildFieldRules(
+export function buildFieldRules(
   form: ConnectionFormSpec,
   fields: readonly ConnectionField[],
   type: DatabaseType,
 ): FieldRule[] {
+  refuseUnlistedFields(form, ["fieldRules"], fields, type);
   return fields.flatMap((field) => {
     const rule = form.fieldRules?.[field];
     if (rule === undefined) return [];

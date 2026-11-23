@@ -27,7 +27,9 @@ import {
   type StatementLanguage,
 } from "@libredb/provider-sdk/manifest";
 import {
+  buildDialog,
   buildEngineDeclaration,
+  buildFieldRules,
   declarationDirectoryProblems,
   ENGINE_DECLARATIONS_DIRECTORY,
   renderEngineDeclaration,
@@ -204,6 +206,36 @@ describe("the committed declarations", () => {
     const refused = SHIPPED_DATABASE_TYPES.filter((type) => !validator.validateEngine(declared(type)).admitted);
 
     expect(refused).toEqual([]);
+  });
+
+  test("the generator refuses, by name, a field rule for a field the engine does not list", () => {
+    const form: ConnectionFormSpec = {
+      ...CONNECTION_FORM.postgres,
+      fieldRules: { warehouse: { required: crypto.randomUUID() } },
+    };
+
+    expect(() => buildFieldRules(form, CONNECTION_FIELDS.postgres, "postgres")).toThrow(
+      'postgres: the fieldRules entry for "warehouse" names a field the engine does not list',
+    );
+  });
+
+  test("the generator refuses, by name, a dialog entry for a field the engine does not list", () => {
+    const entries: Partial<ConnectionFormSpec>[] = [
+      { fieldLabels: { warehouse: "Warehouse" } },
+      { fieldHints: { warehouse: "The warehouse a session uses." } },
+      { fieldPlaceholders: { warehouse: "COMPUTE_WH" } },
+      { fieldOptions: { warehouse: [{ value: "small", label: "Small" }] } },
+      { fieldShownWhen: { warehouse: { field: "host", equals: "localhost" } } },
+      { fieldDefaults: { warehouse: "COMPUTE_WH" } },
+    ];
+
+    for (const entry of entries) {
+      const form: ConnectionFormSpec = { ...CONNECTION_FORM.postgres, ...entry };
+      const [record] = Object.keys(entry);
+      expect(() => buildDialog(form, CONNECTION_FIELDS.postgres, "postgres")).toThrow(
+        `postgres: the ${record} entry for "warehouse" names a field the engine does not list`,
+      );
+    }
   });
 
   test("--check names a differing, missing or extra file, and --write writes every declaration and removes a stray one", () => {
