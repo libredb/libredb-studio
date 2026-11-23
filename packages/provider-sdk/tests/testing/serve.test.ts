@@ -343,8 +343,11 @@ describe("serve", () => {
       impl.close(opened.handle, { ...callContext(), extra: 1 } as unknown as CallContext),
     );
 
-    expect(optionalUndefined).toBeInstanceOf(ValueCodecError);
-    expect((optionalUndefined as ValueCodecError).path).toBe("/runId");
+    // The codec leaves an undefined member out (V-9), so the round trip refuses the member it dropped.
+    expect(optionalUndefined).toBeInstanceOf(FrameRefusalError);
+    expect((optionalUndefined as FrameRefusalError).refusals).toEqual([
+      { rule: "round-trip-changed", call: "console.execute", part: "request", pointer: "/runId" },
+    ]);
     expect(map).toBeInstanceOf(ValueCodecError);
     expect((map as ValueCodecError).path).toBe("/params/0");
     expect(extra).toBeInstanceOf(FrameRefusalError);

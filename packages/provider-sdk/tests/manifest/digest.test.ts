@@ -16,7 +16,7 @@ import {
 } from "@libredb/provider-sdk/manifest";
 import * as packageRoot from "@libredb/provider-sdk";
 import * as testing from "@libredb/provider-sdk/testing";
-import { decodeValue, encodeValue, ValueCodecError } from "@libredb/provider-sdk/values";
+import { decodeValue, encodeValue, MAX_VALUE_DEPTH, ValueCodecError } from "@libredb/provider-sdk/values";
 import { ERROR_KINDS, PROVIDER_ERROR_KINDS, SQLSTATE_PATTERN } from "@libredb/provider-sdk/errors";
 import {
   awaitWithin,
@@ -88,6 +88,7 @@ describe("the manifest schema digest", () => {
     expect(packageRoot.encodeValue).toBe(encodeValue);
     expect(packageRoot.decodeValue).toBe(decodeValue);
     expect(packageRoot.ValueCodecError).toBe(ValueCodecError);
+    expect(packageRoot.MAX_VALUE_DEPTH).toBe(MAX_VALUE_DEPTH);
   });
 
   test("the package root exports the errors surface", () => {

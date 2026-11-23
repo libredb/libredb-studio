@@ -431,6 +431,8 @@ A value JSON cannot carry is written as a tagged value, an object whose own keys
 The `obj` tag escapes a data object whose own keys are exactly `$` and `v`, so nothing a database hands back is ever read as a tag.
 The tags are stated once, as `$defs/valueTag` in the manifest schema, and `ValueTag` is their generated type.
 Every other value, and every malformed or unknown tag on decode, is refused with a `ValueCodecError` that names the kind and the JSON Pointer of the place, never the value.
+An object member whose value is `undefined` is left out, as JSON leaves it out, and `undefined` anywhere else is refused.
+Nesting is bounded at `MAX_VALUE_DEPTH` arrays and objects on encode and decode, so a deep or cyclic value is refused by name instead of overflowing the stack.
 The module uses no Node-only global, so it loads in the browser as well as on the server.
 The SQLite worker's line is the hop that carries it: the parent encodes parameters and decodes answers with the module, and the child's bootstrap carries a restricted copy ([`docs/providers/sqlite.md`](providers/sqlite.md#34-no-transactions-api-no-pool-cancellation-via-the-child-process-worker)).
 

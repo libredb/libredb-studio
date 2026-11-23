@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { decodeValue, encodeValue, ValueCodecError } from "@libredb/provider-sdk/values";
+import { decodeValue, encodeValue, MAX_VALUE_DEPTH, ValueCodecError } from "@libredb/provider-sdk/values";
 
 /**
  * Studio's value codec, held by seeded property tests per tag.
@@ -427,8 +427,11 @@ describe("refusals", () => {
       const atRoot = refusal(() => encodeValue(make()));
       expect(atRoot.path, name).toBe(name === "an array with a hole" ? "/1" : "");
       expect(atRoot.message, name).toContain(kind);
-      const nested = refusal(() => encodeValue([{ "k/~": make() }]));
-      expect(nested.path, name).toBe(name === "an array with a hole" ? "/0/k~1~0/1" : "/0/k~1~0");
+      // An object member whose value is undefined is left out (V-9), so undefined is nested as an array element.
+      const nested =
+        name === "undefined" ? refusal(() => encodeValue([[make()]])) : refusal(() => encodeValue([{ "k/~": make() }]));
+      const nestedPath = name === "undefined" ? "/0/0" : name === "an array with a hole" ? "/0/k~1~0/1" : "/0/k~1~0";
+      expect(nested.path, name).toBe(nestedPath);
       for (const message of [atRoot.message, nested.message]) {
         expect(message, name).not.toContain("secret-value");
         expect(message, name).not.toContain("12345");
@@ -477,5 +480,98 @@ describe("refusals", () => {
     const error = refusal(() => encodeValue(undefined));
     expect(error).toBeInstanceOf(Error);
     expect(error.name).toBe("ValueCodecError");
+  });
+});
+
+/** `leaf` inside `depth` containers: arrays, or data objects under the key `a`. */
+function nest(depth: number, leaf: unknown, container: "array" | "object"): unknown {
+  let value = leaf;
+  for (let level = 0; level < depth; level++) value = container === "array" ? [value] : { a: value };
+  return value;
+}
+
+/** The JSON Pointer of the container `nest` puts inside `depth` others. */
+function nestedPath(depth: number, container: "array" | "object"): string {
+  return (container === "array" ? "/0" : "/a").repeat(depth);
+}
+
+const DEPTH_KIND = `a value nested deeper than ${MAX_VALUE_DEPTH} arrays and objects`;
+
+describe("depth", () => {
+  test("a value inside MAX_VALUE_DEPTH arrays and objects round-trips, and one level more is refused on encode and decode, naming its path", () => {
+    expect(MAX_VALUE_DEPTH).toBe(256);
+    for (const container of ["array", "object"] as const) {
+      expectRoundTrip(nest(MAX_VALUE_DEPTH, "deep-leaf", container), `${container}, at the bound`);
+      const deeper = nest(MAX_VALUE_DEPTH + 1, "deep-leaf", container);
+      const path = nestedPath(MAX_VALUE_DEPTH, container);
+      for (const [verb, run] of [
+        ["encode", () => encodeValue(deeper)],
+        ["decode", () => decodeValue(deeper)],
+      ] as const) {
+        const error = refusal(run);
+        expect(error.path, `${container}, ${verb}`).toBe(path);
+        expect(error.path.split("/").length - 1, `${container}, ${verb}`).toBe(MAX_VALUE_DEPTH);
+        expect(error.message, `${container}, ${verb}`).toBe(
+          `The value codec cannot ${verb} ${DEPTH_KIND}, at "${path}".`,
+        );
+        expect(error.message, `${container}, ${verb}`).not.toContain("deep-leaf");
+      }
+    }
+  });
+
+  test("a tagged value adds no level, so the bound counts the value's own arrays and objects", () => {
+    const leaves: [string, unknown][] = [
+      ["ts", new Date(0)],
+      ["bytes", new Uint8Array([1, 2, 3])],
+      ["i64", BigInt(9)],
+      ["nf", Number.NaN],
+    ];
+    for (const [tag, leaf] of leaves) {
+      const value = nest(MAX_VALUE_DEPTH, leaf, "object");
+      expectRoundTrip(value, `a ${tag} leaf at the bound`);
+    }
+    // The obj escape is a data object: inside MAX_VALUE_DEPTH - 1 others it is the last level the bound allows.
+    expectRoundTrip(nest(MAX_VALUE_DEPTH - 1, { $: "i64", v: "9" }, "array"), "an obj escape at the bound");
+    const escaped = nest(MAX_VALUE_DEPTH, { $: "i64", v: "9" }, "array");
+    const path = nestedPath(MAX_VALUE_DEPTH, "array");
+    expect(refusal(() => encodeValue(escaped)).path).toBe(path);
+    // On decode the wire's tag wrapper adds no level, so the payload is the container the bound refuses.
+    const wire = nest(MAX_VALUE_DEPTH, { $: "obj", v: { $: "i64", v: "9" } }, "array");
+    const decoded = refusal(() => decodeValue(wire));
+    expect(decoded.path).toBe(path);
+    expect(decoded.message).toBe(`The value codec cannot decode ${DEPTH_KIND}, at "${path}".`);
+  });
+
+  test("a cyclic object is refused by the depth rule, never a RangeError", () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    for (const run of [() => encodeValue(cyclic), () => decodeValue(cyclic)]) {
+      const error = refusal(run);
+      expect(error.path).toBe("/self".repeat(MAX_VALUE_DEPTH));
+      expect(error.message).toContain(DEPTH_KIND);
+    }
+  });
+});
+
+describe("undefined", () => {
+  test("an object member whose value is undefined is left out, and undefined anywhere else is refused", () => {
+    expect(encodeValue({ a: 1, b: undefined })).toEqual({ a: 1 });
+    expect(Object.keys(encodeValue({ a: 1, b: undefined }) as object)).toEqual(["a"]);
+    expect(encodeValue([{ a: { b: undefined, c: [{ d: undefined }] } }])).toEqual([{ a: { c: [{}] } }]);
+    expect(encodeValue({ only: undefined })).toEqual({});
+    expect(refusal(() => encodeValue([undefined])).path).toBe("/0");
+    expect(refusal(() => encodeValue([1, undefined])).path).toBe("/1");
+    expect(refusal(() => encodeValue({ a: [undefined] })).path).toBe("/a/0");
+    const atRoot = refusal(() => encodeValue(undefined));
+    expect(atRoot.path).toBe("");
+    expect(atRoot.message).toBe("The value codec cannot encode undefined, at the root.");
+  });
+
+  test("the obj escape is decided on the members written", () => {
+    expect(encodeValue({ $: "i64", v: undefined })).toEqual({ $: "i64" });
+    expect(decodeValue(encodeValue({ $: "i64", v: undefined }))).toEqual({ $: "i64" });
+    expect(encodeValue({ $: 1, v: 2, w: undefined })).toEqual({ $: "obj", v: { $: 1, v: 2 } });
+    expect(decodeValue(encodeValue({ $: 1, v: 2, w: undefined }))).toEqual({ $: 1, v: 2 });
+    expect(encodeValue({ $: undefined, v: undefined })).toEqual({});
   });
 });
