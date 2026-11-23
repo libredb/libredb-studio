@@ -2893,6 +2893,7 @@ interface ActiveSession {
 ```
 
 On every route under `/api/db` that answers a provider's error (the object routes under `/api/db/objects` among them; `POST /api/db/disconnect` answers none, since the factory logs a provider's failure to disconnect), on `POST /api/admin/fleet-health` and on `POST /api/agent/runs`, `POST /api/agent/runs/{runId}/handover` and `POST /api/agent/drive`, an error of any class whose text holds a credential of the request's connection, in any form Studio derives from it, answers Studio's own sentence in `error`, naming the error's class and saying its text was withheld, and the server log line written for it carries that sentence in place of the error.
+The provider factory's log lines about a provider or an SSH tunnel that failed to roll back, disconnect or close, `POST /api/db/disconnect`'s among them, carry Studio's sentence naming the error's class in place of an error whose text holds a credential of the connection that provider was built for.
 The HTTP status, `code`, `kind`, `outcome` and `retryable` are the error's own, and an answer that is already a fixed sentence of Studio's keeps it.
 A database error's `details` then keeps only `position`, and `fixStatement` is left out.
 A script statement's `error` and every warning's `message`, string `code` and `severity` follow the same rule, and a warning field that holds such a form answers `(Studio withheld this text because it contained a credential of this connection)`.

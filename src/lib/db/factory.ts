@@ -41,6 +41,7 @@ import {
 } from "./compatibility";
 import { assertStatementsReviewed } from "./statement-review";
 import { requiredSecretRefusal } from "./connection-form";
+import { type ProviderTextScrub, providerTextScrub, withholdProviderError } from "./operations/provider-text";
 import { REFUSED_CONNECTION_FIELDS } from "./connection-fields";
 import { assertDatabaseType, typeIdRow } from "./type-id";
 import { enabledProviderTypes } from "./enabled-providers";
@@ -853,16 +854,20 @@ function tunnelledConnection(base: DatabaseConnection, tunnel: TunnelInfo): Data
  * here, because nothing else closes it soon. No cache entry holds the provider, so the idle sweep never reaches it; only
  * a disconnect of the connection (`removeProvider`, which closes every forward of an id nothing serves) or the eviction
  * of another entry of the same id would, and a `seed:` connection's disconnect removes nothing without governance. A
- * failure to close is logged and does not replace the caller's error, which is the one that says why the provider did
- * not open.
+ * failure to close is logged through `scrub`, the scrub of the connection the provider was being built for, and does
+ * not replace the caller's error, which is the one that says why the provider did not open.
  */
-async function releaseTunnelOfUnopenedProvider(tunnel: TunnelInfo, connectionId: string): Promise<void> {
+async function releaseTunnelOfUnopenedProvider(
+  tunnel: TunnelInfo,
+  connectionId: string,
+  scrub: ProviderTextScrub,
+): Promise<void> {
   try {
     await releaseUnopenedTunnel(tunnel);
   } catch (error) {
     logger.warn(`[DB] Error closing the SSH tunnel of a provider that did not open`, {
       connectionId,
-      error: String(error),
+      error: String(withholdProviderError(scrub, error)),
     });
   }
 }
@@ -926,10 +931,15 @@ export async function withOneShotTunnel<T>(
   try {
     return await run(tunnelledConnection(connection, tunnel));
   } finally {
-    // Logged, not rethrown: a failing teardown must not replace the caller's error,
-    // which is the one that says why the database connection did not work.
+    // Logged through the connection's scrub, not rethrown: a failing teardown must not replace the caller's error,
+    // which is the one that says why the database connection did not work. The scrub reaches every provider of the
+    // connection (`"any"`), as the callers build theirs with the connection's own credentials.
     await tunnel.close().catch((error: unknown) => {
-      logger.warn(`[DB] Error closing a one-shot SSH tunnel`, { connectionId: connection.id, error: String(error) });
+      const scrub = providerTextScrub(connection, "any");
+      logger.warn(`[DB] Error closing a one-shot SSH tunnel`, {
+        connectionId: connection.id,
+        error: String(withholdProviderError(scrub, error)),
+      });
     });
   }
 }
@@ -969,6 +979,12 @@ interface CachedProvider {
    * only there).
    */
   allowExternalFileAccess?: boolean;
+  /**
+   * The scrub of the connection this entry's provider was built for, of the reach its cache serves (`"any"` for the
+   * writable cache, `"profiled"` for the execution-profile cache): every log line about this provider's failure renders
+   * the error through it.
+   */
+  readonly scrub: ProviderTextScrub;
 }
 
 const providerCache = new Map<string, CachedProvider>();
@@ -1207,7 +1223,7 @@ function openTransaction(provider: DatabaseProvider): TransactionSession | null 
  * would otherwise wait on the very session the transaction holds: `pg`'s `pool.end()` waits for every checked-out
  * client.
  *
- * A rollback or a disconnect that fails is logged, and a disconnect that does not finish in time is logged and its pool
+ * A rollback or a disconnect that fails is logged through the entry's scrub, and a disconnect that does not finish in time is logged and its pool
  * abandoned, because a client stuck in a statement, or in a rollback that never answered, never comes back. So the
  * teardown ends within 15 s whatever the user's database does, and it never rejects. It answers whether the provider
  * closed completely: false after any of those, which the shutdown counts (`closeCaches`).
@@ -1218,7 +1234,7 @@ async function teardownProvider(
   entry: CachedProvider,
 ): Promise<boolean> {
   cache.delete(key);
-  const { provider, connectionId: id } = entry;
+  const { provider, connectionId: id, scrub } = entry;
   let closed = true;
   try {
     // Inside the try, as `keepsRunInFlight` guards `hasRunsInFlight`: a provider that throws here is not left open.
@@ -1240,7 +1256,7 @@ async function teardownProvider(
     closed = false;
     logger.warn(
       `[DB] The open transaction of an owned provider of ${sanitize(id)} failed to roll back, so the provider is closed with it open.`,
-      { connectionId: id, error: String(error) },
+      { connectionId: id, error: String(withholdProviderError(scrub, error)) },
     );
   }
   try {
@@ -1253,7 +1269,10 @@ async function teardownProvider(
     }
   } catch (error) {
     closed = false;
-    logger.warn(`[DB] Error disconnecting owned provider ${sanitize(id)}`, { connectionId: id, error: String(error) });
+    logger.warn(`[DB] Error disconnecting owned provider ${sanitize(id)}`, {
+      connectionId: id,
+      error: String(withholdProviderError(scrub, error)),
+    });
   }
   return closed;
 }
@@ -1267,11 +1286,12 @@ let sweepTimer: ReturnType<typeof setInterval> | null = null;
 
 /**
  * Whether an idle entry's provider reports a run in flight, so the sweep keeps it for the next sweep.
- * A throw is the provider's defect: logged at error, and the entry is evicted as one without the method, because
+ * A throw is the provider's defect: logged at error through `scrub`, and the entry is evicted as one without the method, because
  * rethrowing would abandon the rest of the sweep and reading it as busy would let such a provider pin its entry.
  */
 function keepsRunInFlight(
   provider: DatabaseProvider,
+  scrub: ProviderTextScrub,
   id: string,
   noun: "idle provider" | "idle profiled provider",
 ): boolean {
@@ -1279,9 +1299,11 @@ function keepsRunInFlight(
   try {
     return provider.hasRunsInFlight() === true;
   } catch (error) {
-    logger.error(`[DB] hasRunsInFlight() threw for ${noun} ${sanitize(id)}, so it is evicted as idle.`, error, {
-      connectionId: id,
-    });
+    logger.error(
+      `[DB] hasRunsInFlight() threw for ${noun} ${sanitize(id)}, so it is evicted as idle.`,
+      withholdProviderError(scrub, error),
+      { connectionId: id },
+    );
     return false;
   }
 }
@@ -1303,7 +1325,7 @@ export async function evictIdleProviders(maxIdleMs: number = IDLE_TIMEOUT_MS): P
     if (now - entry.lastUsed >= maxIdleMs) {
       const id = entry.connectionId;
       const idleMinutes = Math.round((now - entry.lastUsed) / 60000);
-      if (keepsRunInFlight(entry.provider, id, "idle provider")) {
+      if (keepsRunInFlight(entry.provider, entry.scrub, id, "idle provider")) {
         logger.info(
           `[DB] Keeping idle provider ${sanitize(id)} (idle ${idleMinutes}min): it reports a run in flight, so the next sweep checks it again.`,
         );
@@ -1319,7 +1341,7 @@ export async function evictIdleProviders(maxIdleMs: number = IDLE_TIMEOUT_MS): P
         } catch (error) {
           logger.warn(`[DB] Error disconnecting idle provider ${sanitize(id)}`, {
             connectionId: id,
-            error: String(error),
+            error: String(withholdProviderError(entry.scrub, error)),
           });
         }
         providerCache.delete(key);
@@ -1342,7 +1364,7 @@ export async function evictIdleProviders(maxIdleMs: number = IDLE_TIMEOUT_MS): P
   // connection id, so it is closed only once nothing serves that connection.
   for (const [key, entry] of profiledProviderCache) {
     if (now - entry.lastUsed >= maxIdleMs) {
-      if (keepsRunInFlight(entry.provider, entry.connectionId, "idle profiled provider")) {
+      if (keepsRunInFlight(entry.provider, entry.scrub, entry.connectionId, "idle profiled provider")) {
         logger.info(
           `[DB] Keeping idle profiled provider ${sanitize(entry.connectionId)}: it reports a run in flight, so the next sweep checks it again.`,
         );
@@ -1358,7 +1380,7 @@ export async function evictIdleProviders(maxIdleMs: number = IDLE_TIMEOUT_MS): P
         } catch (error) {
           logger.warn(`[DB] Error disconnecting idle profiled provider ${sanitize(entry.connectionId)}`, {
             connectionId: entry.connectionId,
-            error: String(error),
+            error: String(withholdProviderError(entry.scrub, error)),
           });
         }
         profiledProviderCache.delete(key);
@@ -1479,7 +1501,7 @@ export async function getOrCreateProvider(
     } catch (error) {
       logger.warn(`[DB] Error disconnecting provider after query timeout change`, {
         connectionId: connection.id,
-        error: String(error),
+        error: String(withholdProviderError(cached.scrub, error)),
       });
     }
     providerCache.delete(cacheKey);
@@ -1516,12 +1538,13 @@ export async function getOrCreateProvider(
     // All of them are closed before the open below. A close that fails is logged and its entry dropped
     // all the same, as the query-timeout change above does.
     const closes = await Promise.allSettled(stale.map(([, entry]) => entry.provider.disconnect()));
-    stale.forEach(([key], index) => {
+    stale.forEach(([key, entry], index) => {
       const close = closes[index];
       if (close.status === "rejected") {
+        // Through the stale entry's own scrub: it was built from the record its own key frames.
         logger.warn(`[DB] Error disconnecting a stale single-writer handle before reopening`, {
           connectionId: connection.id,
-          error: String(close.reason),
+          error: String(withholdProviderError(entry.scrub, close.reason)),
         });
       }
       providerCache.delete(key);
@@ -1533,6 +1556,7 @@ export async function getOrCreateProvider(
   // pinned host key AND far end the one forward, pooled or still being dialled, so this call reports how its provider fared
   // and the pool decides whether a failure closes the forward (another caller may connect or serve
   // through it).
+  const scrub = providerTextScrub(connection, "any");
   let effectiveConnection = connection;
   let tunnel: TunnelInfo | null = null;
   if (tunnelDecision.open) {
@@ -1557,7 +1581,7 @@ export async function getOrCreateProvider(
     await connectPhase(() => provider.connect());
   } catch (error) {
     if (tunnel) {
-      await releaseTunnelOfUnopenedProvider(tunnel, connection.id);
+      await releaseTunnelOfUnopenedProvider(tunnel, connection.id, scrub);
     }
     throw error;
   }
@@ -1575,6 +1599,7 @@ export async function getOrCreateProvider(
     // Recorded so the single-writer borrow lends a DuckDB handle only to a caller of the same
     // posture (non-admin DuckDB file access); ignored for every engine but DuckDB.
     allowExternalFileAccess,
+    scrub,
   });
 
   // Start idle sweep if not already running
@@ -1920,7 +1945,7 @@ export async function acquireExecutionProfileProvider(
     } catch (error) {
       logger.warn(`[DB] Error disconnecting provider after query timeout change`, {
         connectionId: connection.id,
-        error: String(error),
+        error: String(withholdProviderError(cached.scrub, error)),
       });
     }
     profiledProviderCache.delete(cacheKey);
@@ -1986,6 +2011,7 @@ export async function acquireExecutionProfileProvider(
   // The SSH tunnel is keyed by connection id, bastion route, tunnel credential, pinned host key and far
   // end, and shared with the writable provider (createSSHTunnel hands every caller for that forward the one forward). This
   // acquisition reports how its provider fared, and the pool decides whether a failure closes it.
+  const scrub = providerTextScrub(connection, "profiled");
   let tunnel: TunnelInfo | null = null;
   if (tunnelDecision.open) {
     tunnel = await createSSHTunnel(connection.id, tunnelDecision.tunnel, tunnelDecision.host, tunnelDecision.port);
@@ -1993,7 +2019,7 @@ export async function acquireExecutionProfileProvider(
   }
 
   const releaseTunnel = async () => {
-    if (tunnel) await releaseTunnelOfUnopenedProvider(tunnel, connection.id);
+    if (tunnel) await releaseTunnelOfUnopenedProvider(tunnel, connection.id, scrub);
   };
 
   // A provider constructor that refuses the record comes after the tunnel, so the build releases the
@@ -2033,7 +2059,7 @@ export async function acquireExecutionProfileProvider(
   }
   if (tunnel) tunnelProviderOpened(tunnel);
 
-  profiledProviderCache.set(cacheKey, { provider, lastUsed: Date.now(), connectionId: connection.id, owner });
+  profiledProviderCache.set(cacheKey, { provider, lastUsed: Date.now(), connectionId: connection.id, owner, scrub });
   startIdleSweep();
 
   return provider;
@@ -2100,7 +2126,10 @@ export async function removeProvider(
     try {
       await entry.provider.disconnect();
     } catch (error) {
-      logger.warn(`Error disconnecting provider ${sanitize(connectionId)}`, { connectionId, error: String(error) });
+      logger.warn(`Error disconnecting provider ${sanitize(connectionId)}`, {
+        connectionId,
+        error: String(withholdProviderError(entry.scrub, error)),
+      });
     }
     providerCache.delete(key);
   }
@@ -2116,7 +2145,7 @@ export async function removeProvider(
     } catch (error) {
       logger.warn(`Error disconnecting profiled provider ${sanitize(connectionId)}`, {
         connectionId,
-        error: String(error),
+        error: String(withholdProviderError(entry.scrub, error)),
       });
     }
     profiledProviderCache.delete(key);
@@ -2143,7 +2172,8 @@ registerOwnerRemoval(removeProvider);
  * close completely: a shared provider whose `disconnect()` rejected, and an owned one whose teardown failed or gave up.
  * An owned provider (docs/GOVERNANCE.md#per-user-providers) is torn down (`teardownProvider`), so an open transaction
  * it holds is rolled back before it closes, and it is waited for at most 15 s; a provider every caller shares is
- * disconnected, and a disconnect that rejects is logged.
+ * disconnected, and a disconnect that rejects is logged with the error's name and message, through the entry's scrub,
+ * the text the scrub reads.
  */
 async function closeCaches(): Promise<string[]> {
   // Stop idle sweep
@@ -2167,7 +2197,11 @@ async function closeCaches(): Promise<string[]> {
         (error) => {
           // The id is an argument, never part of the first one: `console.error`'s first argument
           // is a format string, and a constant cannot be a format attack (js/tainted-format-string).
-          console.error("[DB] Error disconnecting provider", sanitize(entry.connectionId), error);
+          console.error(
+            "[DB] Error disconnecting provider",
+            sanitize(entry.connectionId),
+            String(withholdProviderError(entry.scrub, error)),
+          );
           return sanitize(entry.connectionId);
         },
       ),
@@ -2182,7 +2216,11 @@ async function closeCaches(): Promise<string[]> {
       entry.provider.disconnect().then(
         () => null,
         (error) => {
-          console.error("[DB] Error disconnecting profiled provider", sanitize(entry.connectionId), error);
+          console.error(
+            "[DB] Error disconnecting profiled provider",
+            sanitize(entry.connectionId),
+            String(withholdProviderError(entry.scrub, error)),
+          );
           return sanitize(entry.connectionId);
         },
       ),

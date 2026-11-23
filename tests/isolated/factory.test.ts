@@ -37,7 +37,7 @@
  * registration, and `bun test tests/unit` is clean again.
  */
 import { describe, test, expect, mock, beforeEach, beforeAll, afterAll, afterEach, jest, spyOn } from "bun:test";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { open as libreOpen, kv as libreKv } from "@libredb/libredb";
 import { captureContextSnapshot } from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
@@ -46,6 +46,7 @@ import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import type { AgentToolContext } from "@/lib/agent/tools";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
+import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import { createCanonicalOperationRegistry, sqlExplainAnalyzeDescriptor } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
 import type { DatabaseProvider, QueryResult } from "@/lib/db/types";
@@ -69,6 +70,7 @@ import {
 import { ABSENT_TYPE_SENTENCE, unknownTypeSentence } from "@/lib/db/type-id";
 import { READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { summarizeWriteReach } from "@/lib/db/write-reach";
+import { secretForms } from "@/lib/db/utils/server-text";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import { supportsQueryCancel } from "@/lib/db/query-cancel";
 import { MACHINE_PROFILE_SENTENCE } from "@/lib/db/providers/platform/kubernetes/machine-read";
@@ -93,6 +95,12 @@ import { sealVersionOne } from "../helpers/storage-envelope-v1";
 
 const STAND_IN_AGENT_PASSWORD = ["not", "a", "real", "agent", "password"].join("-");
 const STAND_IN_OWNER_PASSWORD = ["not", "a", "real", "owner", "password"].join("-");
+
+/** The error a factory log line renders when the scrub withheld a failure of class `className`. */
+const withheldLine = (className: string) => `ProviderTextWithheldError: ${withheldErrorMessage(className)}`;
+
+/** A failure whose text holds `secret`, as a driver's authentication failure echoes the credential it was given. */
+const echoing = (secret: string) => new Error(`password authentication failed for "${secret}"`);
 
 /**
  * Runs `run` with a generated STORAGE_ENCRYPTION_KEY in the environment, the key a store would seal under, and puts the
@@ -2285,6 +2293,98 @@ describe("removeProvider", () => {
     await removeProvider("no-such-connection");
     expect(mockCloseSSHTunnel).toHaveBeenCalledWith("no-such-connection");
   });
+
+  /** Makes `provider`'s disconnect reject with `failure`. */
+  const failsToDisconnect = (provider: DatabaseProvider, failure: Error) => {
+    provider.disconnect = async () => {
+      throw failure;
+    };
+  };
+
+  test("a shared and a profiled provider's failed disconnect are logged withheld when their text holds the connection's credential, and as their own text when it holds none", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const password = randomUUID();
+      const secret = makeConnection("postgres", { id: "remove-secret", password });
+      const clean = makeConnection("postgres", { id: "remove-clean" });
+      failsToDisconnect(await getOrCreateProvider(secret), echoing(password));
+      failsToDisconnect(await acquireExecutionProfileProvider(secret, "agent-read-only"), echoing(password));
+      failsToDisconnect(await getOrCreateProvider(clean), new Error("disconnect failed"));
+      failsToDisconnect(
+        await acquireExecutionProfileProvider(clean, "agent-read-only"),
+        new Error("disconnect failed"),
+      );
+
+      await removeProvider("remove-secret");
+      await removeProvider("remove-clean");
+
+      expect(warn.mock.calls).toEqual([
+        ["Error disconnecting provider remove-secret", { connectionId: "remove-secret", error: withheldLine("Error") }],
+        [
+          "Error disconnecting profiled provider remove-secret",
+          { connectionId: "remove-secret", error: withheldLine("Error") },
+        ],
+        [
+          "Error disconnecting provider remove-clean",
+          { connectionId: "remove-clean", error: "Error: disconnect failed" },
+        ],
+        [
+          "Error disconnecting profiled provider remove-clean",
+          { connectionId: "remove-clean", error: "Error: disconnect failed" },
+        ],
+      ]);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(password);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a profiled provider's failed disconnect that holds the agent credential is logged withheld", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const agentPassword = randomUUID();
+      const conn = makeConnection("postgres", { id: "remove-agent", agentUser: "agent_ro", agentPassword });
+      failsToDisconnect(await acquireExecutionProfileProvider(conn, "agent-read-only"), echoing(agentPassword));
+
+      await removeProvider("remove-agent");
+
+      expect(warn.mock.calls).toEqual([
+        [
+          "Error disconnecting profiled provider remove-agent",
+          { connectionId: "remove-agent", error: withheldLine("Error") },
+        ],
+      ]);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(agentPassword);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a failed disconnect is logged withheld for every form of the connection's credential", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const password = randomUUID();
+      const forms = secretForms([password]);
+      const ids = forms.map((_form, index) => `forms-${index}`);
+      const providers = await Promise.all(
+        ids.map((id) => getOrCreateProvider(makeConnection("postgres", { id, password }))),
+      );
+      providers.forEach((provider, index) => failsToDisconnect(provider, new Error(`server said ${forms[index]}`)));
+
+      await Promise.all(ids.map((id) => removeProvider(id)));
+
+      expect(forms.length).toBeGreaterThan(1);
+      expect(
+        (warn.mock.calls as [string, { connectionId: string; error: string }][])
+          .map(([line, context]) => [line, context.connectionId, context.error])
+          .sort(),
+      ).toEqual(ids.map((id) => [`Error disconnecting provider ${id}`, id, withheldLine("Error")]).sort());
+      const logged = JSON.stringify(warn.mock.calls);
+      expect(forms.filter((form) => logged.includes(form))).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });
 
 // ─── removeProvider with an owner scope (docs/GOVERNANCE.md#per-user-providers) ───
@@ -2710,6 +2810,37 @@ describe("teardown of an owned provider", () => {
     expect(lines(info).some((line) => line.includes("Rolled back"))).toBe(false);
   });
 
+  test("an owned provider's failed rollback and failed disconnect are logged withheld when their text holds the connection's credential", async () => {
+    const password = randomUUID();
+    const provider = await getOrCreateProvider(
+      makeConnection("postgres", { id: "seed:orders", password }),
+      {},
+      owned("alice-subject"),
+    );
+    const events: string[] = [];
+    openTransaction(provider, events, async () => {
+      throw echoing(password);
+    });
+    recordDisconnect(provider, events, async () => {
+      throw echoing(password);
+    });
+
+    await removeProvider("seed:orders", { owner: "alice-subject" });
+
+    expect(events).toEqual(["rollback, 0 cached", "disconnect, 0 cached"]);
+    expect(warn.mock.calls).toEqual([
+      [
+        "[DB] The open transaction of an owned provider of seed:orders failed to roll back, so the provider is closed with it open.",
+        { connectionId: "seed:orders", error: withheldLine("Error") },
+      ],
+      [
+        "[DB] Error disconnecting owned provider seed:orders",
+        { connectionId: "seed:orders", error: withheldLine("Error") },
+      ],
+    ]);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(password);
+  });
+
   test("an owner's profiled provider is torn down with its editor provider, and the shared provider keeps today's path", async () => {
     const conn = makeConnection("postgres", { id: "seed:orders" });
     const editor = await getOrCreateProvider(conn, {}, owned("alice-subject"));
@@ -2833,7 +2964,11 @@ describe("teardown of an owned provider", () => {
         expect.objectContaining({ message: "Providers not closed: shutdown-shared, seed:orders" }),
         { route: "shutdown" },
       );
-      expect(consoleError).toHaveBeenCalledWith("[DB] Error disconnecting provider", "shutdown-shared", failure);
+      expect(consoleError).toHaveBeenCalledWith(
+        "[DB] Error disconnecting provider",
+        "shutdown-shared",
+        String(failure),
+      );
       expect(getProviderCacheStats().size).toBe(0);
 
       // Outside the shutdown the same failures are logged and the clear resolves, as an embedder's call expects.
@@ -2905,7 +3040,7 @@ describe("teardown of an owned provider", () => {
       expect(consoleError).toHaveBeenCalledWith(
         "[DB] Error disconnecting profiled provider",
         "seed:profiled-shared",
-        failure,
+        String(failure),
       );
       expect(getProviderCacheStats().size).toBe(0);
       expect(getExecutionProfileCacheStats().size).toBe(0);
@@ -2981,6 +3116,27 @@ describe("clearProviderCache", () => {
      * address. A constant first argument cannot be a format attack at all.
      */
     expect(String(mine[0]![0])).not.toContain("evil");
+  });
+
+  test("a shared and a profiled provider's failed disconnect are logged with Studio's withheld sentence when their text holds the connection's credential", async () => {
+    const password = randomUUID();
+    const conn = makeConnection("postgres", { id: "clear-secret", password });
+    const editor = await getOrCreateProvider(conn);
+    const agent = await acquireExecutionProfileProvider(conn, "agent-read-only");
+    editor.disconnect = () => Promise.reject(echoing(password));
+    agent.disconnect = () => Promise.reject(echoing(password));
+    const consoleError = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await clearProviderCache();
+
+      expect(consoleError.mock.calls).toEqual([
+        ["[DB] Error disconnecting provider", "clear-secret", withheldLine("Error")],
+        ["[DB] Error disconnecting profiled provider", "clear-secret", withheldLine("Error")],
+      ]);
+      expect(consoleError.mock.calls.flat().some((arg) => String(arg).includes(password))).toBe(false);
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   test("logs and continues when a provider disconnect rejects during clear", async () => {
@@ -3132,6 +3288,75 @@ describe("evictIdleProviders", () => {
       expect(lines[0]).toContain("registry exploded");
     } finally {
       error.mockRestore();
+    }
+  });
+
+  test("a hasRunsInFlight that throws a text holding the connection's credential is logged withheld", async () => {
+    const error = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const password = randomUUID();
+      const provider = await getOrCreateProvider(makeConnection("postgres", { id: "throws-secret", password }));
+      Object.assign(provider, {
+        hasRunsInFlight: () => {
+          throw echoing(password);
+        },
+      });
+
+      expect(await evictIdleProviders(0)).toBe(1);
+      expect(getProviderCacheStats().size).toBe(0);
+      const lines = error.mock.calls
+        .map((call) => call.join(" "))
+        .filter((line) => line.includes("hasRunsInFlight() threw"));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain("throws-secret");
+      expect(lines[0]).toContain(withheldErrorMessage("Error"));
+      expect(error.mock.calls.flat().some((arg) => String(arg).includes(password))).toBe(false);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  test("an idle provider's and an idle profiled provider's failed disconnect are logged withheld when their text holds the connection's credential, and as their own text when it holds none", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    const info = spyOn(logger, "info").mockImplementation(() => {});
+    try {
+      const password = randomUUID();
+      const secret = makeConnection("postgres", { id: "idle-secret", password });
+      const clean = makeConnection("postgres", { id: "idle-clean" });
+      const fails = (provider: DatabaseProvider, failure: Error) => {
+        provider.disconnect = async () => {
+          throw failure;
+        };
+      };
+      fails(await getOrCreateProvider(secret), echoing(password));
+      fails(await getOrCreateProvider(clean), new Error("socket already gone"));
+      fails(await acquireExecutionProfileProvider(secret, "agent-read-only"), echoing(password));
+      fails(await acquireExecutionProfileProvider(clean, "agent-read-only"), new Error("socket already gone"));
+
+      expect(await evictIdleProviders(0)).toBe(4);
+
+      expect(warn.mock.calls).toEqual([
+        [
+          "[DB] Error disconnecting idle provider idle-secret",
+          { connectionId: "idle-secret", error: withheldLine("Error") },
+        ],
+        [
+          "[DB] Error disconnecting idle provider idle-clean",
+          { connectionId: "idle-clean", error: "Error: socket already gone" },
+        ],
+        [
+          "[DB] Error disconnecting idle profiled provider idle-secret",
+          { connectionId: "idle-secret", error: withheldLine("Error") },
+        ],
+        [
+          "[DB] Error disconnecting idle profiled provider idle-clean",
+          { connectionId: "idle-clean", error: "Error: socket already gone" },
+        ],
+      ]);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(password);
+    } finally {
+      warn.mockRestore();
+      info.mockRestore();
     }
   });
 });
@@ -4685,6 +4910,49 @@ describe("single-writer file reuse", () => {
     await removeProvider(conn.id);
   });
 
+  test("a stale handle's failed disconnect is logged as its own text, and withheld when it holds the record's credential", async () => {
+    // DuckDB receives no password; the record carries one all the same, and the stale handle's line reads the scrub of
+    // the record that handle was built from.
+    const password = randomUUID();
+    const conn = makeConnection("duckdb", {
+      id: "duck-flip-log",
+      database: join(dir, "posture-flip-log.duckdb"),
+      password,
+    });
+    /** Closes the real handle, so the file is released for the reopen, then rejects with `failure`. */
+    const closesThenFails = (provider: DatabaseProvider, failure: Error) => {
+      const realDisconnect = provider.disconnect.bind(provider);
+      provider.disconnect = async () => {
+        await realDisconnect();
+        throw failure;
+      };
+    };
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      closesThenFails(
+        await getOrCreateProvider(conn, {}, { allowExternalFileAccess: true }),
+        new Error("disconnect failed"),
+      );
+      closesThenFails(await getOrCreateProvider(conn, {}, { allowExternalFileAccess: false }), echoing(password));
+      await getOrCreateProvider(conn, {}, { allowExternalFileAccess: true });
+
+      expect(warn.mock.calls).toEqual([
+        [
+          "[DB] Error disconnecting a stale single-writer handle before reopening",
+          { connectionId: "duck-flip-log", error: "Error: disconnect failed" },
+        ],
+        [
+          "[DB] Error disconnecting a stale single-writer handle before reopening",
+          { connectionId: "duck-flip-log", error: withheldLine("Error") },
+        ],
+      ]);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(password);
+    } finally {
+      warn.mockRestore();
+      await removeProvider(conn.id);
+    }
+  });
+
   test("a reopen under a new key closes only the stale handle of its own record, not another record on the file", async () => {
     // The stale close is bounded to one connection id. A different record naming the same file is
     // the separate, pre-existing D240 case, and opening it must not tear down the first record's
@@ -5031,6 +5299,36 @@ describe("withOneShotTunnel", () => {
       expect(warn.mock.calls).toEqual([
         ["[DB] Error closing a one-shot SSH tunnel", { connectionId: "one-shot-conn", error: "Error: close failed" }],
       ]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a tunnel close failure that holds the connection's credential is logged withheld, and the callback's failure is what the caller gets", async () => {
+    const password = randomUUID();
+    mockCreateSSHTunnel.mockImplementationOnce(async (_id, _sshConfig, remoteHost, remotePort) => ({
+      localHost: "127.0.0.1",
+      localPort: 54321,
+      remoteHost,
+      remotePort,
+      close: mock(async () => {
+        throw echoing(password);
+      }),
+    }));
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const error = await withOneShotTunnel({ ...tunnelled(), password }, async () => {
+        throw new Error("connect refused");
+      }).then(
+        () => null,
+        (e: unknown) => e,
+      );
+
+      expect((error as Error).message).toBe("connect refused");
+      expect(warn.mock.calls).toEqual([
+        ["[DB] Error closing a one-shot SSH tunnel", { connectionId: "one-shot-conn", error: withheldLine("Error") }],
+      ]);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(password);
     } finally {
       warn.mockRestore();
     }
@@ -5753,6 +6051,38 @@ describe("a tunnelled connection its provider refuses to build", () => {
       warn.mockRestore();
     }
   });
+
+  test("a tunnel close failure that holds the connection's credential is logged withheld on both entry points", async () => {
+    const [{ connection, sentence }] = refusedRecords;
+    const password = randomUUID();
+    const secret = { ...connection, password };
+    const failingTunnel = async (_id: string, _ssh: unknown, remoteHost: string, remotePort: number) => ({
+      localHost: "127.0.0.1",
+      localPort: 54321,
+      remoteHost,
+      remotePort,
+      close: mock(async () => {
+        throw echoing(password);
+      }),
+    });
+    mockCreateSSHTunnel.mockImplementationOnce(failingTunnel).mockImplementationOnce(failingTunnel);
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const editor = await rejection(() => getOrCreateProvider(secret));
+      const profiled = await rejection(() => acquireExecutionProfileProvider(secret, "agent-operations"));
+
+      expect((editor as Error).message).toBe(sentence);
+      expect((profiled as Error).message).toBe(sentence);
+      const line: [string, { connectionId: string; error: string }] = [
+        "[DB] Error closing the SSH tunnel of a provider that did not open",
+        { connectionId: "refused-mysql", error: withheldLine("Error") },
+      ];
+      expect(warn.mock.calls).toEqual([line, line]);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(password);
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });
 
 /**
@@ -5896,6 +6226,41 @@ describe("cached connection query timeout", () => {
       expect(cleared).not.toBe(updated);
       expect(updated.isConnected()).toBe(false);
       expect((cleared as unknown as { queryTimeout: number }).queryTimeout).toBe(60000);
+    },
+  );
+  test.each([false, true])(
+    "a failed disconnect after a timeout change is logged withheld when its text holds the connection's credential, and as its own text when it holds none (profiled: %s)",
+    async (profiled) => {
+      const acquire = (connection: DatabaseConnection) =>
+        profiled ? acquireExecutionProfileProvider(connection, "agent-read-only") : getOrCreateProvider(connection);
+      const password = randomUUID();
+      const connection = makeConnection("postgres", { id: "timeout-change-log", password });
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      try {
+        const initial = await acquire(connection);
+        initial.disconnect = async () => {
+          throw echoing(password);
+        };
+        const changed = await acquire({ ...connection, queryTimeout: 120000 });
+        changed.disconnect = async () => {
+          throw new Error("socket already gone");
+        };
+        await acquire(connection);
+
+        expect(warn.mock.calls).toEqual([
+          [
+            "[DB] Error disconnecting provider after query timeout change",
+            { connectionId: "timeout-change-log", error: withheldLine("Error") },
+          ],
+          [
+            "[DB] Error disconnecting provider after query timeout change",
+            { connectionId: "timeout-change-log", error: "Error: socket already gone" },
+          ],
+        ]);
+        expect(JSON.stringify(warn.mock.calls)).not.toContain(password);
+      } finally {
+        warn.mockRestore();
+      }
     },
   );
 });

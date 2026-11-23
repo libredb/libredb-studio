@@ -1,7 +1,8 @@
 /**
  * The one core scrub of a provider's text on the agent, hand-over and MCP paths, every database route that resolves the
  * calling connection and reaches its provider, the object routes, the fleet health check, the query events those
- * routes record and the VS Code extension's backend child.
+ * routes record, the provider factory's log lines about a provider's or a tunnel's failure and the VS Code extension's
+ * backend child.
  *
  * A provider scrubs the server's text at its own entry with `serverText` (src/lib/db/utils/server-text.ts); this is
  * the pass core runs after it, over every error, warning and notice text a provider hands core on those paths, and over
