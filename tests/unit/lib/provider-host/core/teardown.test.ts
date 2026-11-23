@@ -8,6 +8,9 @@
  * and then asserts `.rejects` or `.resolves` on a promise a later timer settles.
  */
 import { afterEach, describe, expect, jest, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { CLEANUP_DEADLINE_MS } from "@libredb/provider-sdk/calls";
 import {
   settleWithin,
   TEARDOWN_CLOSE_MS,
@@ -27,6 +30,16 @@ afterEach(() => {
 describe("teardownWithin", () => {
   test("the deadlines Studio tears a provider down under are 5 s for the rollback and 10 s for the close", () => {
     expect([TEARDOWN_ROLLBACK_MS, TEARDOWN_CLOSE_MS]).toEqual([5_000, 10_000]);
+  });
+
+  test("the close deadline is the SDK's cleanup deadline", () => {
+    const source = readFileSync(
+      path.join(import.meta.dir, "..", "..", "..", "..", "..", "src", "lib", "provider-host", "core", "teardown.ts"),
+      "utf8",
+    );
+    expect(TEARDOWN_CLOSE_MS).toBe(CLEANUP_DEADLINE_MS);
+    expect(source).toContain('import { CLEANUP_DEADLINE_MS } from "@libredb/provider-sdk/calls";');
+    expect(source).toContain("export const TEARDOWN_CLOSE_MS = CLEANUP_DEADLINE_MS;");
   });
 
   test("a teardown without a rollback closes once", async () => {

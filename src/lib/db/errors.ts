@@ -25,12 +25,13 @@ export class DatabaseError extends Error {
   declare sqlstate?: string;
 
   /**
-   * `not-sent` when the statement this error answers never reached the database. Written in exactly four places: the
+   * `not-sent` when the statement this error answers never reached the database. Written in exactly five places: the
    * constructor of `RefusedBeforeSendError`, so every refusal before send carries it; `connectPhase`, on what a
    * provider's connect raised, the `ConnectionError` of an open a removal or a cache close overtook included (the
    * factory raises it inside the connect it runs there); `buildPhase`, which `buildProvider` in ./factory runs, on what building a provider
-   * raised; and `withheldProviderError` in ./operations/provider-text, which copies `not-sent` onto the error it answers
-   * in place of one. Absent otherwise, which `errorOutcome` in ./error-record reads as `unknown`, because the statement
+   * raised; `withheldProviderError` in ./operations/provider-text, which copies `not-sent` onto the error it answers
+   * in place of one; and the provider host's accessor (src/lib/provider-host/access.ts), through `markNotSent`, on the
+   * class it builds for a console call the host refused before making it. Absent otherwise, which `errorOutcome` in ./error-record reads as `unknown`, because the statement
    * may have run. An own field only when set, so every other error keeps the own keys it had. An instance a failed
    * build or connect raised is never raised by a later statement: the factory keeps no provider whose build or connect
    * failed.
@@ -434,8 +435,9 @@ export class TimeoutError extends DatabaseError {
 }
 
 /**
- * A time limit Studio's own read set and the read outlasted: the agent's statistics read. It exists only to mark
- * Studio's sentence apart from a provider's timeout, so the agent says this one in Studio's voice. Its `name` stays
+ * A time limit Studio set and the work outlasted: the agent's statistics read, and the host's deadline on a provider
+ * call (src/lib/provider-host/access.ts). It exists only to mark Studio's sentence apart from a provider's timeout, so
+ * the agent says this one in Studio's voice and an answer names its kind, `studio-timeout-refusal`. Its `name` stays
  * `TimeoutError`, so a log line, an error body and a reader of the name see no difference. No provider constructs it;
  * tests/unit/db/operations/provider-text-census.test.ts holds that.
  */
@@ -669,7 +671,7 @@ export async function buildPhase<T>(build: () => Promise<T>): Promise<T> {
 }
 
 /** Marks a database error or an execution profile refusal `not-sent` on the instance; any other value is left as is. */
-function markNotSent(error: unknown): void {
+export function markNotSent(error: unknown): void {
   if (error instanceof DatabaseError || error instanceof ExecutionProfileError) error.outcome = "not-sent";
 }
 

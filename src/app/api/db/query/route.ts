@@ -107,8 +107,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "queryId must be a string" }, { status: 400 });
     }
 
-    // The page bounds and the console text bound, before any provider resolves (`src/lib/api/editor-query.ts`).
-    const refusal = checkEditorQuery({ statement: sql, type: connection.type, options });
+    // The page bounds, the connection's statement timeout and the console text bound, before any provider resolves
+    // (`src/lib/api/editor-query.ts`).
+    const refusal = checkEditorQuery({
+      statement: sql,
+      type: connection.type,
+      options,
+      queryTimeout: connection.queryTimeout,
+    });
     if (refusal !== null) {
       return NextResponse.json({ error: refusal.error }, { status: refusal.status });
     }

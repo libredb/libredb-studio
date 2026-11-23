@@ -168,6 +168,7 @@
     "coverage:check": "node scripts/check-coverage.mjs --packages-from=. coverage/lcov.info",
     "test:coverage-html": "bun run test:coverage && genhtml coverage/lcov.info --output-directory coverage/html && echo '\n Open coverage/html/index.html in your browser'",
     "knip": "knip",
+    "bench:host-page": "bun scripts/host-page-benchmark.ts",
     "chart:check": "node scripts/sync-chart-version.mjs --check",
     "chart:bump": "node scripts/sync-chart-version.mjs --write",
     "distribution:check": "node scripts/distribution-check.mjs",

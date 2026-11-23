@@ -14,8 +14,11 @@ import {
   awaitWithin,
   CallRefusalError,
   callRefusalSentence,
+  CLEANUP_DEADLINE_MS,
   checkCallStart,
+  cleanupContext,
   deadlineSignal,
+  envReader,
   type LateOutcome,
 } from "@libredb/provider-sdk/calls";
 
@@ -267,5 +270,22 @@ describe("awaitWithin", () => {
     expect((outcome as { readonly error: unknown }).error).toBe(error);
     expect(answeredHandler.calls.length + failedHandler.calls.length).toBe(2);
     expect(getEventListeners(signal, "abort").length).toBe(0);
+  });
+});
+
+describe("cleanupContext", () => {
+  test("a cleanup call gets a context of its own, ten seconds ahead and never aborted", () => {
+    const env = envReader([], () => undefined);
+    const before = Date.now();
+    const ctx = cleanupContext(env);
+    const after = Date.now();
+
+    expect(CLEANUP_DEADLINE_MS).toBe(10_000);
+    expect(ctx.deadline).toBeGreaterThanOrEqual(before + CLEANUP_DEADLINE_MS);
+    expect(ctx.deadline).toBeLessThanOrEqual(after + CLEANUP_DEADLINE_MS);
+    expect(ctx.signal.aborted).toBe(false);
+    expect(ctx.env).toBe(env);
+    expect(checkCallStart(ctx)).toEqual([]);
+    expect(cleanupContext(env).signal).not.toBe(ctx.signal);
   });
 });

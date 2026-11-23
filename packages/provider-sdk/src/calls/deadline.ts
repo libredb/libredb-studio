@@ -11,12 +11,20 @@
  * `awaitWithin` is the host's wait: it ends when the signal aborts, and the answer the host stopped waiting for keeps
  * a handler for its value and for its error, which hands either to the host's `late` handler, so no abandoned
  * rejection goes unhandled and no late session or source goes unclosed.
+ *
+ * A cleanup call, a close or the cancel a stopped wait sends, ends work the call it follows started, so it never runs
+ * under that call's context, which may have aborted: `cleanupContext` gives it one of its own, `CLEANUP_DEADLINE_MS`
+ * ahead (docs/providers/CONTRACT.md, clause C-47).
  */
+import type { EnvReader } from "./env";
 import { type CallRefusal, CallRefusalError } from "./refusals";
 import type { CallContext } from "./types";
 
 /** The longest delay a timer waits on Node.js, which runs a longer one after one millisecond. */
 const TIMER_MAX_MS = 2147483647;
+
+/** How long a cleanup call may take: a close, or the cancel a stopped wait sends. */
+export const CLEANUP_DEADLINE_MS = 10_000;
 
 /**
  * @throws {RangeError} When `deadline` is not a finite number, a host defect.
@@ -48,6 +56,15 @@ export function deadlineSignal(deadline: number, caller?: AbortSignal): AbortSig
       ? AbortSignal.abort(new DOMException("The call's deadline has passed.", "TimeoutError"))
       : AbortSignal.timeout(remaining);
   return caller === undefined ? timeout : AbortSignal.any([caller, timeout]);
+}
+
+/**
+ * A cleanup call's own context: a deadline `CLEANUP_DEADLINE_MS` after now, a signal that aborts only at it, never one
+ * that already aborted, and `env`, the reader of the call it cleans up after, by reference.
+ */
+export function cleanupContext(env: EnvReader): CallContext {
+  const deadline = Date.now() + CLEANUP_DEADLINE_MS;
+  return { deadline, signal: deadlineSignal(deadline), env };
 }
 
 /**

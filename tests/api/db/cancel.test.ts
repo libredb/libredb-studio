@@ -234,6 +234,25 @@ describe("POST /api/db/cancel", () => {
     expect(data.error).toContain("not supported");
   });
 
+  test("a cancel whose caller already left calls nothing and answers 499", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const res = await POST(
+      new Request("http://localhost:3000/api/db/cancel", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ queryId: "query-123", connection: validConnection }),
+        signal: controller.signal,
+      }) as never,
+    );
+    const body = await parseResponseJSON<Record<string, unknown>>(res);
+
+    expect(res.status).toBe(499);
+    expect(body.code).toBe("QUERY_CANCELLED");
+    expect(body.outcome).toBe("not-sent");
+    expect(mockCancelProvider.cancelQuery).not.toHaveBeenCalled();
+  });
+
   test("cancelQuery returning false returns cancelled:false", async () => {
     mockCancelProvider.cancelQuery.mockImplementation(async () => false);
 

@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { PassThrough } from "node:stream";
 import { type Clock, install } from "@sinonjs/fake-timers";
 import { type CancellationToken, CancellationTokenSource, ResponseError } from "vscode-jsonrpc";
@@ -846,6 +848,17 @@ describe("query/run", () => {
     );
   });
 
+  it("refuses a connection whose statement timeout is not a whole number of milliseconds before resolving a provider", async () => {
+    const { handlers, calls } = backend();
+    await handlers.openConnection({ connection: { ...WIRE, id: "c2", queryTimeout: "60000" }, posture: POSTURE });
+    await refused(
+      handlers.runQuery({ ...RUN, connectionId: "c2" }, idle),
+      -32602,
+      "The connection's queryTimeout must be a whole number of milliseconds from 1 to 2147483647.",
+    );
+    assert.deepEqual(calls.filter(([method]) => method === "getOrCreateProvider").length, 1);
+  });
+
   it("refuses a text over its type's console bound before resolving a provider (TEXT_TOO_LARGE)", async () => {
     const { handlers, calls } = backend();
     await handlers.openConnection({ connection: { ...WIRE, id: "c2", type: "influxdb" }, posture: POSTURE });
@@ -873,13 +886,13 @@ describe("query/run", () => {
     assert.deepEqual(methodsOf(provider), ["prepareQuery", "prepareQuery", "query"]);
     source.cancel();
     source.cancel();
+    // The host answers the run at the cancellation, outcome unknown, and has sent the engine's cancel once by then.
+    await answeredAs(run, new QueryCancelledError("The query was cancelled."));
     assert.deepEqual(
       provider.calls.filter(([method]) => method === "cancelQuery"),
       [["cancelQuery", "q-1"]],
     );
-    const cancelled = new QueryCancelledError("The query was cancelled.", "postgres");
-    fail(cancelled);
-    await answeredAs(run, cancelled);
+    fail(new QueryCancelledError("The query was cancelled.", "postgres"));
   });
 
   it("answers a provider error's SQLSTATE in data", async () => {
@@ -903,10 +916,11 @@ describe("query/run", () => {
     const { handlers, provider } = await openedOn();
     const source = new CancellationTokenSource();
     source.cancel();
-    await answeredAs(
-      handlers.runQuery(RUN, source.token),
-      new QueryCancelledError("The query was cancelled.", "postgres"),
-    );
+    // Refused before any call, so nothing reached the database.
+    const notSent = Object.assign(new QueryCancelledError("The query was cancelled.", "postgres"), {
+      outcome: "not-sent" as const,
+    });
+    await answeredAs(handlers.runQuery(RUN, source.token), notSent);
     assert.equal(methodsOf(provider).includes("query"), false);
   });
 
@@ -928,15 +942,19 @@ describe("query/run", () => {
       const run = handlers.runQuery(RUN, source.token);
       await settled();
       source.cancel();
+      await answeredAs(run, new QueryCancelledError("The query was cancelled."));
       await settled();
       finish(resultOf(rowsOf(1)));
-      await run;
+      await settled();
     } finally {
       console.warn = warn;
     }
     assert.equal(RUN_ROUTE, "vscode/query/run");
     assert.equal(lines.length, 1);
-    assert.match(lines[0], /\{route=vscode\/query\/run\} The cancel sent after the request was aborted failed$/);
+    assert.match(
+      lines[0],
+      /\{route=vscode\/query\/run, kind=internal, code=INTERNAL_ERROR\} The cancel sent after the request was aborted failed$/,
+    );
   });
 });
 
@@ -1536,6 +1554,24 @@ describe("query/cancel", () => {
     assert.deepEqual(provider.calls.at(-1), ["cancelQuery", "q-7"]);
     stopped = false;
     assert.deepEqual(await handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" }), { cancelled: false });
+  });
+
+  it("cancelQuery reaches the provider through the host's cancel call", async () => {
+    const provider = fakeProvider({ cancelQuery: async (id: string) => id === "q-7" });
+    const { handlers } = await openedOn(provider);
+    const source = readFileSync(path.join(__dirname, "..", "..", "src", "backend", "handlers.ts"), "utf8");
+
+    assert.deepEqual(await handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" }), { cancelled: true });
+    assert.deepEqual(await handlers.cancelQuery({ connectionId: "c1", queryId: "q-8" }), { cancelled: false });
+    assert.deepEqual(
+      provider.calls.filter(([method]) => method === "cancelQuery"),
+      [
+        ["cancelQuery", "q-7"],
+        ["cancelQuery", "q-8"],
+      ],
+    );
+    assert.match(source, /await cancelEditorRun\(provider, queryId, /);
+    assert.doesNotMatch(source, /provider\.cancelQuery\(/);
   });
 
   it("refuses a provider that cannot cancel (CANCEL_UNSUPPORTED)", async () => {

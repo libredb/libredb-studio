@@ -462,11 +462,18 @@ The module uses no Node-only global.
 ### 4.15. The provider host core (`src/lib/provider-host/core/`)
 
 The host core is the part of Studio that will own every provider session: its open, its calls and its teardown ([`docs/providers/CONTRACT.md`](providers/CONTRACT.md)).
-Today it holds two primitives, and the provider factory (`src/lib/db/factory.ts`) runs both of its caches on them.
+Today it holds two primitives the provider factory (`src/lib/db/factory.ts`) runs both of its caches on, and the console calls the editor query and its cancel run through.
 `open-once.ts` keeps one open in flight per cache key: concurrent callers share one open, a caller's own signal ends only its own wait, the open admits its own result into its cache, a failure no caller waits for goes to the table's `unclaimed` hook, and a discard aborts the signal of every matching open in flight (clause C-44).
-`teardown.ts` tears a provider down under fixed deadlines: the rollback of an open transaction waited for at most `TEARDOWN_ROLLBACK_MS` (5 s), then the close at most `TEARDOWN_CLOSE_MS` (10 s), with an outcome per step and never a rejection (clause C-45).
+`teardown.ts` tears a provider down under fixed deadlines: the rollback of an open transaction waited for at most `TEARDOWN_ROLLBACK_MS` (5 s), then the close at most `TEARDOWN_CLOSE_MS` (10 s), the SDK's cleanup deadline, with an outcome per step and never a rejection (clause C-45).
+`console.ts` makes a console execute or cancel call: it checks the call before it is made, freezes its context and request, waits for it until the call's signal, pumps the first result within the page's 32 MiB, and answers a record of how the call ended; a stop sends the run's cancel under a cleanup context of its own (clauses C-47 and C-48).
+`turns.ts` awaits one turn of the event loop before every pull of a result, so a page of rows already in memory never holds the event loop for more than one batch (clause C-49).
+
 Core imports only the public subpaths of `@libredb/provider-sdk` other than `testing`, Node built-ins and its own files, and declares no module state: every table it uses is created by its owner and handed in (`tests/unit/lib/provider-host/core-boundary.test.ts`).
 It answers plain data and passes errors through by reference, so it never constructs a class that code in another Next.js bundle would test with `instanceof`.
+
+Beside core, in the calling bundle, sit the two pieces that serve today's providers through it.
+`src/lib/provider-host/legacy-bridge.ts` serves a legacy `DatabaseProvider` as one session of console execute and cancel (clause C-50), and `src/lib/provider-host/access.ts`, the accessor, builds Studio's error classes from the records core answers (clause C-51).
+The caller facade is `src/lib/api/editor-query.ts`: `runEditorQuery` and `cancelEditorRun` keep the shape `POST /api/db/query`, `POST /api/db/cancel` and the VS Code backend child's `query/run` and `query/cancel` have always called, and run each call through the bridge, core and the accessor under the call's deadline: the statement timeout plus 10 s for a statement, 10 s for a cancel.
 
 ## 5. Directory Structure
 
@@ -550,7 +557,7 @@ src/
     │   └── languages/       # Statement language packs, their engine overlays and resolvers (docs/AGENT.md, Language packs)
     ├── mcp/                 # MCP server: SDK handler, token, pre-processing, tools (docs/MCP.md)
     ├── provider-host/
-    │   └── core/            # The provider host core (§4.15): one open in flight per key, teardown under fixed deadlines
+    │   └── core/            # The provider host core (§4.15): one open in flight per key, teardown under fixed deadlines, console calls
     ├── governance/          # Governance (docs/GOVERNANCE.md): contract v1, the settings registry and the runtime that
     │                        #   reads the source: keyring, admission, pool, snapshot, freshness, refresher, listener
     ├── kubernetes-access/   # Kubernetes access review (docs/SEED_CONNECTIONS.md): settings, the SubjectAccessReview

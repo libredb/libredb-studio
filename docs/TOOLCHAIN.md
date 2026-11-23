@@ -626,6 +626,30 @@ Holding 100% honestly requires knowing how bun measures:
 `src/exports/index.js` (one-line CJS shim) is the single `sonar.coverage.exclusions` entry — it is
 smoke-tested functionally in `tests/isolated/exports-shim.test.ts`.
 
+## The host page benchmark
+
+`bun run bench:host-page` (`scripts/host-page-benchmark.ts`) measures what the provider host adds to an editor query's answer, and checks it against the thresholds the owner signed for it, T1 to T5.
+Each case answers a generated page twice: on today's path, composed from the production helpers without the host, and on the host's in-process path, through `runEditorQuery`, the legacy bridge, the host core's execute call and the SDK's pump.
+The rows are generated, never real data: a narrow shape of 5 columns and a wide shape of 20, at 50, 500, 10,000 and 100,000 rows and at the most rows a 32 MiB page holds.
+Both paths must answer the same text on every row the host answers in every case before anything is timed, compared row by row outside every timed section; where the host cut the page by bytes, its rows are today's first rows and the rest of its body is today's with the cut's row count and pagination.
+
+The thresholds read the median time the host adds over 25 repetitions at 10,000 rows and 9 at the largest pages:
+- T1, at most 150 ms per 10,000 wide rows.
+- T2, at most 250 ms at the largest page the editor asks for, 100,000 narrow rows and the 32 MiB wide page.
+- T3, at most 600 ms at a 32 MiB page of either shape.
+- T4, at most 50 ms for the longest event-loop slice while the host's execute call runs, in every case, read by a `setImmediate` ticker.
+- T5, at most 160 MiB of live heap the host path adds at a 32 MiB page, read after a forced gc at every turn the host yields and at the answer.
+
+The whole-page `rowsWithNonFiniteWords` and the route's `JSON.stringify` are today's cost on both paths, so T4 leaves them out.
+A 100,000-row wide page is larger than 32 MiB, so the host answers its first 32 MiB and today's path all of it; that case is printed and read by no threshold.
+
+The runner bundles its case module with `Bun.build` into a temporary directory under `node_modules/.cache`, so the bundle's external packages resolve from the repository's own `node_modules`, then runs one fresh Node child per case and path, one at a time, under `--expose-gc --max-old-space-size=3000` with a 300 s timeout.
+It prints the machine, the runtime, every case and a pass or fail per threshold, and exits 1 when a threshold fails or a case failed.
+The lead runs it on the reference machine before a change to the host's query path, through `heavy` with the production Node: `HEAVY_RUN_MEMORY_MAX=4G heavy bun run bench:host-page -- --node <path to node 26.13.1>`.
+A failed threshold is the owner's decision, never a silent change of the threshold or of the path.
+It never runs in `bun run test`: its timings hold only on an idle machine, not on a shared runner.
+`tests/unit/host-page-benchmark.test.ts`, which does run there, holds that the case module imports the production facade, bridge and core and declares no pump of its own, that both paths answer the same text on a small page of each shape, that the comparison reads every answered row, a page cut by bytes included, and that the runner's thresholds are T1 to T5.
+
 ## Workspace packages (`packages/`)
 
 The root `package.json` declares `"workspaces": ["packages/*"]`, and [`packages/README.md`](../packages/README.md) states the layout: a package is `packages/<name>/` with a `package.json`, its source under `src/` and its tests under `tests/`.

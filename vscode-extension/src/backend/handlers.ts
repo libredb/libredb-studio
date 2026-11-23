@@ -5,7 +5,7 @@
 // The factory functions arrive as one parameter object, which main.ts fills with the real ones and the unit leg with
 // fakes, so this module value-imports neither src/lib/db/factory.ts nor src/lib/api/test-connection.ts.
 import { type CancellationToken, ErrorCodes, type MessageConnection, ResponseError } from "vscode-jsonrpc";
-import { checkEditorQuery, runEditorQuery } from "@/lib/api/editor-query";
+import { cancelEditorRun, checkEditorQuery, runEditorQuery } from "@/lib/api/editor-query";
 import { databaseErrorBody, internalErrorBody, withWithheldText } from "@/lib/api/error-body";
 import { pageOptionError } from "@/lib/api/page-probe";
 import { gateRun, type RunGateAnswerBody, type RunGateRequest } from "@/lib/api/run-confirmation";
@@ -76,6 +76,8 @@ export interface BackendRuntime {
 export const TEST_ROUTE = "vscode/connection/test";
 /** The route label a failed cancel of a run is logged under. */
 export const RUN_ROUTE = "vscode/query/run";
+/** The label a failure after a cancel stopped waiting is logged under. */
+const CANCEL_ROUTE = "vscode/query/cancel";
 
 /**
  * How long connection/test waits for the test connection core: the 10 s queryTimeout the core gives the provider, plus
@@ -446,9 +448,14 @@ export function createHandlers(
       const options = bounds as QueryPrepareOptions;
 
       const record = openRecord(connectionId);
-      // The bounds and the statement were read above, so what refuses here is a console text bound, which the route
-      // answers 413 with no code.
-      const refused = checkEditorQuery({ statement, type: record.connection.type, options });
+      // The bounds and the statement were read above, so what refuses here is the connection's statement timeout,
+      // invalid params, or a console text bound, which the route answers 413 with no code.
+      const refused = checkEditorQuery({
+        statement,
+        type: record.connection.type,
+        options,
+        queryTimeout: record.connection.queryTimeout,
+      });
       if (refused !== null) {
         throw refused.status === 413 ? refusal(413, "TEXT_TOO_LARGE", refused.error) : invalidParams(refused.error);
       }
@@ -490,10 +497,13 @@ export function createHandlers(
       const record = openRecord(connectionId);
       return await answeringFor(record.connection, async () => {
         const provider = await providerOf(record);
-        if (!supportsQueryCancel(provider)) {
+        // Through the provider host core's cancel call, bounded by its cleanup deadline. query/cancel reads no
+        // cancellation token, as it never did, so the caller's signal is one nothing aborts.
+        const answer = await cancelEditorRun(provider, queryId, new AbortController().signal, CANCEL_ROUTE);
+        if (!answer.offered) {
           throw refusal(400, "CANCEL_UNSUPPORTED", "Query cancellation is not supported for this database type");
         }
-        return { cancelled: await provider.cancelQuery(queryId) };
+        return { cancelled: answer.cancelled };
       });
     },
 

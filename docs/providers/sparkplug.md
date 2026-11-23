@@ -350,6 +350,10 @@ reporting every mutation caught looks identical to a run that measured nothing.
 
 ## 12. Known limitations
 
+- A console read ends at the window it names, not at the connection's statement timeout.
+  Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+  A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`.
+  This provider cannot cancel a run, so Studio sends no cancel, and the read's session runs on until its window ends, and its answer is dropped.
 - A Sparkplug 2.2 host's STATE is not read. 2.2 published it at `STATE/<scada_host_id>`, outside the
   `spBv1.0` namespace, and every filter this read sends is inside it.
 - No credential fields, as section 4.2 states; TLS comes from the SSL / TLS panel, not from a field of this engine's own.

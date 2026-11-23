@@ -520,12 +520,34 @@ Under that cap, a result of exactly `limit` rows has `wasLimited: false` and `ha
 `POST /api/db/transaction` answers a query inside a transaction by the same rule. Because the statement that runs asks for one row more, a `SELECT ... FOR UPDATE` without its own `LIMIT` in a held transaction now locks `limit + 1` rows.
 `options.limit` and `options.offset` must be non-negative integers below `Number.MAX_SAFE_INTEGER` (9007199254740991) when sent, which keeps the `limit + 1` above a safe integer too; anything else is answered `400` before a provider is reached.
 `POST /api/db/multi-query` holds a script's `options` to the same rule, with the same `400` and sentence, before it splits anything.
+On this route the connection's `queryTimeout`, when it is set, must be a whole number of milliseconds from 1 to 2147483647, the connection dialog's bounds; anything else is answered `400` with `{ "error": "The connection's queryTimeout must be a whole number of milliseconds from 1 to 2147483647." }` before a provider is reached.
 
 `hasMore` is `wasLimited && rows.length > limit` over the probed statement, with `wasLimited` read from the server's own limiter alone, and both halves matter.
 A bound the provider reported sets `wasLimited` and never `hasMore`, because no `offset` can advance a bound the server did not write.
 A statement the server returned **untouched** — one carrying its own `LIMIT n`, or one whose end the limiter declined to cut into — runs identically at every `offset`, because the requested offset is discarded along with the rewrite. `hasMore` is `false` for those however many rows come back, and re-requesting with a higher `offset` would return the same rows again. Where `hasMore` is `true`, re-request with `offset` advanced by the number of rows you received. See [`docs/editor/query-optimization.md`](editor/query-optimization.md).
 
 Not every engine can serve a positive `offset`. Cassandra and Elasticsearch answer one with HTTP 400 rather than silently returning page one; MongoDB, Redis, LibreDB, Prometheus, InfluxDB (InfluxQL), Kafka, etcd, Neo4j, Milvus, Qdrant, Weaviate, Oxia, S3-compatible object storage and Firestore ignore it. `POST /api/db/provider-meta` reports each one's `capabilities.supportsResultPagination`, which is the same flag the app reads before offering its Load More control.
+
+**How long the server waits, how large a page may be, and a caller that leaves:**
+
+The statement runs through the provider host core ([`docs/providers/CONTRACT.md`](providers/CONTRACT.md), clauses C-48 to C-51), which waits for it at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s.
+A provider that applies the statement timeout itself answers its engine's timeout within those 10 s, `504 TIMEOUT_ERROR` with `kind: "timeout"`.
+A statement still unanswered at the server's deadline, on any engine, is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`, and the server sends the run's cancel when the request named a `queryId` and the provider can cancel.
+That deadline is how a statement ends on an engine whose provider applies no statement timeout of its own.
+Whether a provider applies the statement timeout itself, and whether it can cancel a run, is in its engine's document under [`docs/providers/`](providers/); each document whose provider applies none states this deadline and whether the run is cancelled.
+A request whose deadline has already passed when the statement is to start runs nothing and answers the same 504 with `outcome: "not-sent"`.
+
+A page holds at most 32 MiB of rows, each measured as the UTF-8 length of its JSON text.
+A result larger than that is answered with the rows that fit, `rowCount` and `pagination.totalReturned` naming how many, and `pagination.wasLimited` true.
+When the server's own limiter bounded the statement, `pagination.hasMore` is true too, and the next page is requested as any other, with `offset` advanced by the rows received, so it continues after the last row answered; a statement the limiter did not bound answers `hasMore: false`.
+A single row larger than 32 MiB answers `400 QUERY_ERROR` with `kind: "studio-byte-budget-refusal"` and `outcome: "unknown"`, naming the row's size and the page's budget.
+
+A caller that goes away while the statement runs, a browser that drops the request, is answered at once with `499 QUERY_CANCELLED` and `outcome: "unknown"`, and the server sends the run's cancel under the `queryId` the request named, when the provider can cancel.
+The statement's own end arrives after that answer; a failure there is logged by its kind and code, never its text, except the engine's cancellation answer to the cancel the server sent, which is the run's expected end.
+A request already aborted when the statement is to start runs nothing and answers `499 QUERY_CANCELLED` with `outcome: "not-sent"`.
+`POST /api/db/cancel` runs through the same host core: a cancel request already aborted calls nothing and answers `499 QUERY_CANCELLED`, and the server waits for the engine's cancel at most 10 s.
+When several of its checks fail, a cancel request gets the answer of the first, in this order: the session and rate limit guard; a body that is not a JSON object, `400`; the connection's resolution, with its own refusals; a missing `queryId`, `400`; a `queryId` that is not a string, `400`; the provider's build, with its own errors; a request already aborted, `499 QUERY_CANCELLED`; a provider that cannot cancel, `400` "Query cancellation is not supported for this database type".
+So a request already aborted for an engine that cannot cancel answers `499`.
 
 **The database a run reads (optional):**
 ```json

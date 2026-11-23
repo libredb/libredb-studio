@@ -628,6 +628,10 @@ request is at most 200 nodes or 500 values, and a history read stops at its cap,
 server's continuation point back at that point — every earlier page's point is consumed by the
 request that follows it, which is the other way a slot is not left held.
 
+Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`.
+This provider cannot cancel a run, so Studio sends no cancel, and the read runs on until its last request ends.
+
 ### 5.7 SQL grammar
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/industrial/opcua/sql-grammar.ts`](../../src/lib/db/providers/industrial/opcua/sql-grammar.ts), the `opcua` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.

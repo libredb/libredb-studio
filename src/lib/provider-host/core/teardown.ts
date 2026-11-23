@@ -11,16 +11,18 @@
  * past it.
  *
  * The deadlines are parameters, so a bounded child can run the same function with short ones; Studio tears its
- * providers down under `TEARDOWN_ROLLBACK_MS` and `TEARDOWN_CLOSE_MS`, defined here as the one source.
+ * providers down under `TEARDOWN_ROLLBACK_MS`, defined here, and `TEARDOWN_CLOSE_MS`, the SDK's `CLEANUP_DEADLINE_MS`,
+ * the one source of every cleanup call's deadline.
  *
  * Core imports only the SDK's public subpaths other than `testing`, Node built-ins and its own files, and keeps no
  * module state (tests/unit/lib/provider-host/core-boundary.test.ts).
  */
+import { CLEANUP_DEADLINE_MS } from "@libredb/provider-sdk/calls";
 
 /** How long a teardown waits for the rollback of a provider's open transaction. */
 export const TEARDOWN_ROLLBACK_MS = 5_000;
-/** How long a teardown waits for a provider's close before it gives the provider up. */
-export const TEARDOWN_CLOSE_MS = 10_000;
+/** How long a teardown waits for a provider's close before it gives the provider up: the SDK's cleanup deadline. */
+export const TEARDOWN_CLOSE_MS = CLEANUP_DEADLINE_MS;
 
 /** How a piece of work ended within a wait: settled, cut at the wait's end, or failed with its error by reference. */
 export type Settled =
