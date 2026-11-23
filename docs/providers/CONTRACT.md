@@ -1165,6 +1165,16 @@ Each provider still open at a cut is named, by its connection, its author and St
 - test `tests/isolated/factory.test.ts` "the providers not closed at shutdown are named with their author and Studio's version"
 - test `tests/isolated/factory.test.ts` "the close the factory registers for the shutdown names an owned provider whose rollback or disconnect timed out or failed, and a profiled one whose close failed"
 
+### C-46 (normative): Contract first
+
+The legacy provider interface, `DatabaseProvider` in `src/lib/db/types.ts`, gains no member.
+A new capability lands in the manifest schema or a facet first, then in the bridge that serves today's providers as contract providers, then in the facade today's callers use.
+The lint holds the members `DatabaseProvider` declares, so a capability read by duck typing outside the interface, as the factory's `openTransaction` reads `isInTransaction` and `rollbackTransaction`, is not a member it can see, and such a read is held by review.
+
+- test `tests/unit/lib/db/database-provider-members.test.ts` "DatabaseProvider gains no member, so every SPI change lands contract-first"
+- test `tests/unit/lib/db/database-provider-members.test.ts` "a planted member is refused by name"
+- test `tests/unit/lib/db/database-provider-members.test.ts` "a removed member is refused by name, so the list stays exact"
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:
@@ -1188,6 +1198,7 @@ Against the manifest sketch the design started from:
 - The value tags keep the names of Studio's value codec, V-1.
 - The error kinds keep the names of Studio's error record, E-1.
 - Facet names keep Studio's own vocabulary, the seven monitoring panels, the maintenance operations and the curated agent readings, rather than new dotted names.
+- The host's own rules for opening and closing sessions and for the legacy provider interface are clauses of the calls chapter, C-44 to C-46, since the host serves today's providers through them.
 - The connection dialog's per-field facts, its labels, hints, placeholders, placement, choices, conditions and absent values, are lists of entries that each name their field, rather than maps keyed by field, M-24.
 - A condition is one field equal to one value, with no list of values and no combination of conditions in this contract, M-25.
 - A `calls` segment declares the package's optional console facets and the request fields its execute honours.
