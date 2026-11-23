@@ -58,6 +58,9 @@ export const SCHEMA_REFUSAL_RULES = Object.freeze([
   "host-reader-without-host",
   "scheme-without-paste",
   "url-tls-without-paste",
+  "fence-alias-engine-id",
+  "fence-alias-duplicate",
+  "fence-alias-generic",
 ] as const);
 
 export type SchemaRefusalRule = (typeof SCHEMA_REFUSAL_RULES)[number];
@@ -192,11 +195,12 @@ export function refusalsOf(errors: readonly AjvError[]): SchemaRefusal[] {
   return ordered(refusals);
 }
 
-/** The field-name vocabularies of the schema the rules read: seed-only, placeable and select. */
+/** The vocabularies of the schema the rules read: the seed-only, placeable and select field names, and the generic fence tags. */
 interface FieldVocabularies {
   readonly seedOnly: ReadonlySet<string>;
   readonly placeable: ReadonlySet<string>;
   readonly select: ReadonlySet<string>;
+  readonly genericFenceTags: ReadonlySet<string>;
 }
 
 /**
@@ -370,7 +374,21 @@ function connectionStringRuleRefusals(connection: EngineDeclaration["connection"
   return refusals;
 }
 
-/** The rules of one engine's connection the schema cannot state, at pointers under `at`. */
+/**
+ * The rules of one engine's fence aliases the schema cannot state, at pointers under `at`: an alias is never the
+ * engine's own id, which is always a fence tag naming it, and never a generic fence tag, which names no engine.
+ */
+function editorRuleRefusals(engine: EngineDeclaration, at: string, vocabularies: FieldVocabularies): SchemaRefusal[] {
+  const refusals: SchemaRefusal[] = [];
+  engine.editor.fenceAliases.forEach((alias, index) => {
+    const pointer = `${at}/editor/fenceAliases/${index}`;
+    if (alias === engine.id) refusals.push(schemaRefusal("fence-alias-engine-id", pointer));
+    if (vocabularies.genericFenceTags.has(alias)) refusals.push(schemaRefusal("fence-alias-generic", pointer));
+  });
+  return refusals;
+}
+
+/** The rules of one engine's connection and editor facts the schema cannot state, at pointers under `at`. */
 function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies: FieldVocabularies): SchemaRefusal[] {
   const seedOnlyNames = vocabularies.seedOnly;
   const refusals: SchemaRefusal[] = [];
@@ -398,6 +416,29 @@ function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies:
   refusals.push(...hostAndWarningRuleRefusals(connection, at));
   refusals.push(...fieldRuleRefusals(connection, at));
   refusals.push(...connectionStringRuleRefusals(connection, at));
+  refusals.push(...editorRuleRefusals(engine, at, vocabularies));
+  return refusals;
+}
+
+/**
+ * The rules of the manifest's fence aliases across its engines, which one engine's rules cannot see: an alias is never
+ * the id of another engine of the manifest, and never an alias an earlier engine declares, so a tag names at most one
+ * engine. The repeat is refused at the later engine.
+ */
+function fenceAliasRuleRefusals(engines: readonly EngineDeclaration[]): SchemaRefusal[] {
+  const refusals: SchemaRefusal[] = [];
+  const ids = engines.map((engine) => engine.id);
+  const declared = new Set<string>();
+  engines.forEach((engine, position) => {
+    engine.editor.fenceAliases.forEach((alias, index) => {
+      const pointer = `/engines/${position}/editor/fenceAliases/${index}`;
+      if (ids.some((id, other) => other !== position && id === alias)) {
+        refusals.push(schemaRefusal("fence-alias-engine-id", pointer));
+      }
+      if (declared.has(alias)) refusals.push(schemaRefusal("fence-alias-duplicate", pointer));
+    });
+    for (const alias of engine.editor.fenceAliases) declared.add(alias);
+  });
   return refusals;
 }
 
@@ -408,8 +449,8 @@ function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies:
 const PROXY_VARIABLES: readonly string[] = Object.freeze(["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"]);
 
 /**
- * The rules of a whole manifest the schema cannot state: no proxy variable in the environment, unique engine ids, and
- * compatibility entries that match.
+ * The rules of a whole manifest the schema cannot state: no proxy variable in the environment, unique engine ids,
+ * compatibility entries that match, and fence aliases that name one engine each.
  */
 function manifestRuleRefusals(manifest: ProviderManifest, vocabularies: FieldVocabularies): SchemaRefusal[] {
   const refusals: SchemaRefusal[] = [];
@@ -426,6 +467,7 @@ function manifestRuleRefusals(manifest: ProviderManifest, vocabularies: FieldVoc
     if (!covered.has(engine.id)) refusals.push(schemaRefusal("compatibility-engine-missing", `/engines/${index}/id`));
     refusals.push(...engineRuleRefusals(engine, `/engines/${index}`, vocabularies));
   });
+  refusals.push(...fenceAliasRuleRefusals(manifest.engines));
   manifest.compatibility.forEach((entry, index) => {
     if (!declared.has(entry.engine)) {
       refusals.push(schemaRefusal("compatibility-engine-undeclared", `/compatibility/${index}/engine`));
@@ -450,6 +492,7 @@ interface ServedSchema {
     readonly seedOnlyFieldName: { readonly enum: readonly string[] };
     readonly placeableFieldName: { readonly enum: readonly string[] };
     readonly selectFieldName: { readonly enum: readonly string[] };
+    readonly genericFenceTag: { readonly enum: readonly string[] };
   };
 }
 
@@ -477,6 +520,7 @@ export function compileManifestValidator(schemaBytes: Uint8Array): ManifestValid
     seedOnly: new Set(schema.$defs.seedOnlyFieldName.enum),
     placeable: new Set(schema.$defs.placeableFieldName.enum),
     select: new Set(schema.$defs.selectFieldName.enum),
+    genericFenceTags: new Set(schema.$defs.genericFenceTag.enum),
   };
 
   return {
@@ -589,5 +633,11 @@ export function refusalSentence(refusal: ManifestRefusal): string {
       return `The scheme at ${at} is declared for an engine whose connection string names no paste reader.`;
     case "url-tls-without-paste":
       return `The URL TLS reader at ${at} is named for an engine whose connection string names no paste reader.`;
+    case "fence-alias-engine-id":
+      return `The fence alias at ${at} is the id of an engine of the manifest, which is already a fence tag naming that engine.`;
+    case "fence-alias-duplicate":
+      return `The fence alias at ${at} is already declared by an earlier engine of the manifest.`;
+    case "fence-alias-generic":
+      return `The fence alias at ${at} is a generic fence tag, which names a language several engines speak and no engine.`;
   }
 }

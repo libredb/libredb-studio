@@ -80,5 +80,21 @@
   },
   "agent": {
     "statementLanguage": "sparkplugread"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "sparkplugread"
+    ],
+    "explainFormat": null,
+    "dialect": {
+      "name": "sparkplug",
+      "offersColumnProfiling": false,
+      "offersCodeGeneration": false,
+      "offersCountQuery": false,
+      "offersSqlExport": true,
+      "historyMask": null
+    }
   }
 }

@@ -96,5 +96,21 @@
   },
   "agent": {
     "statementLanguage": "snmpget"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "snmpget"
+    ],
+    "explainFormat": null,
+    "dialect": {
+      "name": "snmp",
+      "offersColumnProfiling": false,
+      "offersCodeGeneration": false,
+      "offersCountQuery": false,
+      "offersSqlExport": true,
+      "historyMask": null
+    }
   }
 }

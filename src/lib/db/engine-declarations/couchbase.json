@@ -95,5 +95,14 @@
   },
   "agent": {
     "statementLanguage": "sql"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "n1ql"
+    ],
+    "explainFormat": "couchbase-json",
+    "dialect": null
   }
 }

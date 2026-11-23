@@ -132,5 +132,21 @@
   },
   "agent": {
     "statementLanguage": "opcuaread"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "opcuaread"
+    ],
+    "explainFormat": null,
+    "dialect": {
+      "name": "opcua",
+      "offersColumnProfiling": false,
+      "offersCodeGeneration": false,
+      "offersCountQuery": false,
+      "offersSqlExport": true,
+      "historyMask": null
+    }
   }
 }

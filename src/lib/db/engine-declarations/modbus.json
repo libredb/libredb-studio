@@ -89,5 +89,21 @@
   },
   "agent": {
     "statementLanguage": "modbusread"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "modbusread"
+    ],
+    "explainFormat": null,
+    "dialect": {
+      "name": "modbus",
+      "offersColumnProfiling": false,
+      "offersCodeGeneration": false,
+      "offersCountQuery": false,
+      "offersSqlExport": true,
+      "historyMask": null
+    }
   }
 }

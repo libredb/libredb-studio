@@ -117,5 +117,21 @@
   },
   "agent": {
     "statementLanguage": "oxiacli"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "oxiacli"
+    ],
+    "explainFormat": null,
+    "dialect": {
+      "name": "oxia",
+      "offersColumnProfiling": false,
+      "offersCodeGeneration": false,
+      "offersCountQuery": false,
+      "offersSqlExport": false,
+      "historyMask": null
+    }
   }
 }

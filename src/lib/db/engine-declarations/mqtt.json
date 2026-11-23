@@ -98,5 +98,21 @@
   },
   "agent": {
     "statementLanguage": "mqttread"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "mqttread"
+    ],
+    "explainFormat": null,
+    "dialect": {
+      "name": "mqtt",
+      "offersColumnProfiling": false,
+      "offersCodeGeneration": false,
+      "offersCountQuery": false,
+      "offersSqlExport": true,
+      "historyMask": null
+    }
   }
 }

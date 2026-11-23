@@ -109,5 +109,21 @@
   },
   "agent": {
     "statementLanguage": "milvusrpc"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "milvusrpc"
+    ],
+    "explainFormat": null,
+    "dialect": {
+      "name": "milvus",
+      "offersColumnProfiling": false,
+      "offersCodeGeneration": false,
+      "offersCountQuery": false,
+      "offersSqlExport": false,
+      "historyMask": null
+    }
   }
 }

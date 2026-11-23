@@ -99,5 +99,14 @@
   },
   "agent": {
     "statementLanguage": "influxql"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "influxql"
+    ],
+    "explainFormat": null,
+    "dialect": null
   }
 }

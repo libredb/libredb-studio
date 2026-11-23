@@ -85,5 +85,21 @@
   },
   "agent": {
     "statementLanguage": "etcdctl"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "etcdctl"
+    ],
+    "explainFormat": null,
+    "dialect": {
+      "name": "etcd",
+      "offersColumnProfiling": false,
+      "offersCodeGeneration": false,
+      "offersCountQuery": false,
+      "offersSqlExport": true,
+      "historyMask": null
+    }
   }
 }

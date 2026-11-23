@@ -96,5 +96,15 @@
   },
   "agent": {
     "statementLanguage": "sql"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "tsql",
+      "sqlserver"
+    ],
+    "explainFormat": null,
+    "dialect": null
   }
 }

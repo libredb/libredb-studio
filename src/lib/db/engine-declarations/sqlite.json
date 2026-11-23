@@ -68,5 +68,17 @@
   },
   "agent": {
     "statementLanguage": "sql"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": {
+      "chip": "SQLite: killed at its timeout",
+      "sentence": "On SQLite a read that runs past its timeout is now killed mid-flight; the in-memory database is the exception and still blocks this application until the read finishes."
+    },
+    "fenceAliases": [
+      "sqlite3"
+    ],
+    "explainFormat": "sqlite-queryplan",
+    "dialect": null
   }
 }

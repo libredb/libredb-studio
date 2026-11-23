@@ -83,5 +83,14 @@
   },
   "agent": {
     "statementLanguage": "promql"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "promql"
+    ],
+    "explainFormat": null,
+    "dialect": null
   }
 }

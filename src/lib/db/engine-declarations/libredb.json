@@ -62,5 +62,21 @@
   },
   "agent": {
     "statementLanguage": "libredbkv"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "libredbkv"
+    ],
+    "explainFormat": null,
+    "dialect": {
+      "name": "libredb",
+      "offersColumnProfiling": false,
+      "offersCodeGeneration": true,
+      "offersCountQuery": false,
+      "offersSqlExport": true,
+      "historyMask": null
+    }
   }
 }

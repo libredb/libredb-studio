@@ -167,5 +167,30 @@
   },
   "agent": {
     "statementLanguage": "kubectl"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "kubectl"
+    ],
+    "explainFormat": null,
+    "dialect": {
+      "name": "kubectl",
+      "offersColumnProfiling": false,
+      "offersCodeGeneration": false,
+      "offersCountQuery": false,
+      "offersSqlExport": false,
+      "historyMask": {
+        "credentialFlags": [
+          "--token",
+          "--password",
+          "--client-key",
+          "--client-certificate",
+          "--from-literal",
+          "--docker-password"
+        ]
+      }
+    }
   }
 }

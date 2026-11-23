@@ -95,5 +95,21 @@
   },
   "agent": {
     "statementLanguage": "weaviateapi"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "weaviateapi"
+    ],
+    "explainFormat": null,
+    "dialect": {
+      "name": "weaviate",
+      "offersColumnProfiling": false,
+      "offersCodeGeneration": false,
+      "offersCountQuery": false,
+      "offersSqlExport": false,
+      "historyMask": null
+    }
   }
 }

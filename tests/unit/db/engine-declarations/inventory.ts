@@ -132,7 +132,11 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     destination: STATEMENT_FAMILY,
   },
   { module: "src/lib/db/engine-facets/index.ts", name: "ENGINE_FACETS", destination: "engine declaration: facets" },
-  { module: "src/lib/db/execution-ui/index.ts", name: "EXECUTION_UI", destination: EDITOR_AND_SQL },
+  {
+    module: "src/lib/db/execution-ui/index.ts",
+    name: "EXECUTION_UI",
+    destination: "engine declaration: editor.commitKeyword and editor.consentDeadline",
+  },
   { module: "src/lib/db/graph-policy-profiles.ts", name: "GRAPH_POLICY_PROFILES", destination: STATEMENT_FAMILY },
   { module: "src/lib/db/migration-ddl/index.ts", name: "MIGRATION_DDL", destination: EDITOR_AND_SQL },
   { module: "src/lib/db/query-generators/index.ts", name: "SQL_ENGINE_GENERATORS", destination: EDITOR_AND_SQL },
@@ -146,6 +150,7 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
   {
     module: "src/lib/sql/fence-tags.ts",
     name: "ENGINE_FENCE_TAGS",
-    destination: "planned segment: editor and SQL text, the discovery fence tags",
+    destination:
+      "engine declaration: id, every engine's id a fence tag naming it, with editor.fenceAliases naming its other tags",
   },
 ];

@@ -16,6 +16,7 @@ import {
   compileManifestValidator,
   type CredentialWarning as ManifestCredentialWarning,
   type EngineDeclaration,
+  type ExplainFormat as ManifestExplainFormat,
   type FieldName,
   type FieldPlacement as ManifestFieldPlacement,
   type HostPathField as ManifestHostPathField,
@@ -23,17 +24,24 @@ import {
   type JwtAccessClaim,
   type MaintenanceOperation as ManifestMaintenanceOperation,
   type PlaceableFieldName,
+  type QueryDialect as ManifestQueryDialect,
   type SelectFieldName,
   type StatementLanguage,
 } from "@libredb/provider-sdk/manifest";
 import {
   buildDialog,
+  buildEditor,
   buildEngineDeclaration,
   buildFieldRules,
+  CAPABILITY_READ_ENVIRONMENT,
   declarationDirectoryProblems,
+  EDITOR_TABLES,
   ENGINE_DECLARATIONS_DIRECTORY,
+  readEngineCapabilities,
+  refuseUndeclaredDialects,
   renderEngineDeclaration,
 } from "../../../scripts/generate-engine-declarations";
+import { refuseInexactJson } from "../../../scripts/read-engine-capabilities";
 import { AGENT_STATEMENT_LANGUAGE, type AgentStatementLanguageId } from "@/lib/agent/agent-manifest";
 import type { HostUriScheme } from "@/lib/connection-host-uri";
 import { PASTE_FORMATS_TEXT } from "@/lib/connection-paste-formats";
@@ -80,9 +88,13 @@ import {
 import type { ConnectionStringPaste, ConnectionStringSpec } from "@/lib/db/connection-string/types";
 import { CREDENTIAL_WARNINGS, type CredentialWarning } from "@/lib/db/credential-warnings";
 import { ENGINE_FACETS } from "@/lib/db/engine-facets";
+import { EXECUTION_UI, executionUiFor } from "@/lib/db/execution-ui";
+import type { ConsentDeadline, ExecutionUiSpec } from "@/lib/db/execution-ui/types";
+import { createDatabaseProvider } from "@/lib/db/factory";
 import { MONITORING_PANELS } from "@/lib/db/engine-facets/types";
 import { CURATED_OPERATION_KINDS } from "@/lib/db/operations/descriptors";
 import { refusedFieldRefusal } from "@/lib/db/provider-connection";
+import { type DialectSpec, QUERY_DIALECTS, type QueryDialect } from "@/lib/db/query-dialects";
 import { COUCHBASE_CONNECTION_STRING } from "@/lib/db/providers/document/couchbase/connection-string";
 import { MONGODB_CONNECTION_STRING } from "@/lib/db/providers/document/mongodb/connection-string";
 import { OPCUA_CONNECTION_STRING } from "@/lib/db/providers/industrial/opcua/connection-string";
@@ -103,10 +115,15 @@ import {
 } from "@/lib/db/providers/sql/snowflake/account-host";
 import { SNOWFLAKE_CONNECTION_STRING } from "@/lib/db/providers/sql/snowflake/connection-string";
 import { SPARK_CONNECTION_STRING } from "@/lib/db/providers/sql/spark/connection-string";
-import type { MaintenanceOperation } from "@/lib/db/types";
+import type { ExplainFormat, MaintenanceOperation, ProviderCapabilities } from "@/lib/db/types";
+import { getExplainStrategy } from "@/lib/explain";
+import { historyMaskOf } from "@/lib/history-mask";
 import { importKubeconfig } from "@/lib/kubernetes/kubeconfig-import";
+import { ALIAS_ENGINES, fenceTagEngine, isQueryFenceTag, QUERY_FENCE_ALIASES } from "@/lib/sql/fence-tags";
 import { CONNECTION_FIELDS as FIELD_CLASSES } from "@/lib/storage/secret-fields";
 import type { DatabaseConnection, DatabaseType, HostPathField } from "@/lib/types";
+import { readCensusCapabilities } from "../../helpers/census-capabilities";
+import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 const SCRIPT = path.join(ROOT, "scripts/generate-engine-declarations.ts");
@@ -115,6 +132,17 @@ const SCHEMA_FILE = path.join(ROOT, "packages/provider-sdk/src/manifest/manifest
 const SCHEMA = JSON.parse(readFileSync(SCHEMA_FILE, "utf8")) as {
   $defs: Record<string, { enum?: unknown[]; properties?: Record<string, unknown>; required?: string[] }>;
 };
+
+/**
+ * Each engine's capabilities as its provider declares them before it connects, read once through
+ * `createDatabaseProvider` with the engine's census connection, the read the other provider censuses take, in a child
+ * process with the generator's stated environment (tests/helpers/census-capabilities.ts); the generator reads them
+ * through `readProviderDeclarations` instead, so the two reads share the connection record and the environment.
+ */
+const CAPABILITIES = await readCensusCapabilities();
+
+/** A variable the Firestore provider reads when it is built, which turns its explain support off. */
+const FIRESTORE_EMULATOR_VARIABLE = "FIRESTORE_EMULATOR_HOST";
 
 /** The committed declaration of one type-id, parsed. */
 function declared(type: DatabaseType): EngineDeclaration {
@@ -244,6 +272,36 @@ function connectionStringNames(d: EngineDeclaration): string[] {
   ];
 }
 
+/** The schema's generic fence tags: the tags of a language several engines speak, which name no engine. */
+const GENERIC_FENCE_TAGS: readonly string[] = (SCHEMA.$defs.genericFenceTag?.enum ?? []).map(String);
+
+/**
+ * The dialect table the declarations state, built here from them: each dialect's row read from the first declaration
+ * that names it, its tab named by the dialect, `offersSqlExport` as written and a null history mask as none. A second
+ * declaration of one dialect must state the same row, or the table is refused by name.
+ */
+function derivedDialects(): Readonly<Record<QueryDialect, DialectSpec>> {
+  const table: Partial<Record<QueryDialect, DialectSpec>> = {};
+  for (const type of SHIPPED_DATABASE_TYPES) {
+    const row = declared(type).editor.dialect;
+    if (row === null) continue;
+    const spec: DialectSpec = {
+      tabType: row.name,
+      offersColumnProfiling: row.offersColumnProfiling,
+      offersCodeGeneration: row.offersCodeGeneration,
+      offersCountQuery: row.offersCountQuery,
+      offersSqlExport: row.offersSqlExport,
+      ...(row.historyMask === null ? {} : { historyMask: { credentialFlags: [...row.historyMask.credentialFlags] } }),
+    };
+    const earlier = table[row.name];
+    if (earlier !== undefined && !sameValue(earlier, spec)) {
+      throw new Error(`${type}: the ${row.name} dialect's row differs from an earlier declaration's`);
+    }
+    table[row.name] = spec;
+  }
+  return table as Record<QueryDialect, DialectSpec>;
+}
+
 describe("the committed declarations", () => {
   test("the directory holds exactly one declaration per shipped type-id", () => {
     expect(declarationDirectoryProblems(readdirSync(DIRECTORY), SHIPPED_DATABASE_TYPES)).toEqual([]);
@@ -260,11 +318,12 @@ describe("the committed declarations", () => {
     ]);
   });
 
-  test("each declaration is what the generator builds from the tables", () => {
+  test("each declaration is what the generator builds from the tables", async () => {
+    const capabilities = await readEngineCapabilities();
     const stale = SHIPPED_DATABASE_TYPES.filter(
       (type) =>
         readFileSync(path.join(DIRECTORY, `${type}.json`), "utf8") !==
-        renderEngineDeclaration(buildEngineDeclaration(type)),
+        renderEngineDeclaration(buildEngineDeclaration(type, capabilities[type])),
     ).map((type) => `${ENGINE_DECLARATIONS_DIRECTORY}/${type}.json differs: run bun run engines:generate`);
 
     expect(stale).toEqual([]);
@@ -305,6 +364,56 @@ describe("the committed declarations", () => {
         `postgres: the ${record} entry for "warehouse" names a field the engine does not list`,
       );
     }
+  });
+
+  test("the generator refuses, by name, an explain format the provider's explain support contradicts", () => {
+    const unformatted: ProviderCapabilities = { ...CAPABILITIES.postgres, explainFormat: undefined };
+    const unsupported: ProviderCapabilities = {
+      ...CAPABILITIES.kafka,
+      supportsExplain: false,
+      explainFormat: "postgres-json",
+    };
+
+    expect(() => buildEditor("postgres", unformatted)).toThrow(
+      "postgres: the provider supports explain but declares no explain format",
+    );
+    expect(() => buildEditor("kafka", unsupported)).toThrow(
+      "kafka: the provider declares an explain format but supports no explain",
+    );
+  });
+
+  test("the generator refuses, by name, a dialect QUERY_DIALECTS has no row for", () => {
+    const dialects = Object.fromEntries(Object.entries(QUERY_DIALECTS).filter(([dialect]) => dialect !== "kafka"));
+
+    expect(() => buildEditor("kafka", CAPABILITIES.kafka, { ...EDITOR_TABLES, dialects })).toThrow(
+      "kafka: the provider declares the kafka dialect, which QUERY_DIALECTS has no row for",
+    );
+  });
+
+  test("the generator refuses, by name, a dialect row whose tab type is not its name", () => {
+    const dialects = { ...QUERY_DIALECTS, kafka: { ...QUERY_DIALECTS.kafka, tabType: "redis" as const } };
+
+    expect(() => buildEditor("kafka", CAPABILITIES.kafka, { ...EDITOR_TABLES, dialects })).toThrow(
+      "kafka: the kafka dialect's tab type \"redis\" is not the dialect's name",
+    );
+  });
+
+  test("the generator refuses, by name, a dialect row no engine declares", () => {
+    const capabilities = { ...CAPABILITIES, kafka: { ...CAPABILITIES.kafka, queryDialect: undefined } };
+
+    expect(() => refuseUndeclaredDialects(CAPABILITIES)).not.toThrow();
+    expect(() => refuseUndeclaredDialects(capabilities)).toThrow(
+      "the kafka dialect's row in QUERY_DIALECTS is declared by no engine",
+    );
+  });
+
+  test("the generator refuses, by name, a fence alias that is no query fence tag", () => {
+    const alias = `q${crypto.randomUUID().replaceAll("-", "")}`;
+    const aliasEngines = { ...ALIAS_ENGINES, [alias]: "kafka" as const };
+
+    expect(() => buildEditor("kafka", CAPABILITIES.kafka, { ...EDITOR_TABLES, aliasEngines })).toThrow(
+      `kafka: the fence alias "${alias}" names the engine but is not a query fence tag`,
+    );
   });
 
   test("--check names a differing, missing or extra file, and --write writes every declaration and removes a stray one", () => {
@@ -349,6 +458,43 @@ describe("the committed declarations", () => {
       }
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+    // Four of the runs build every provider to read its capabilities, about 2 s with coverage on; ten times that.
+  }, 20000);
+
+  test("a variable a provider reads before it connects, set where the generator runs, changes no declaration", () => {
+    const planted = Bun.spawnSync([process.execPath, SCRIPT, "--check"], {
+      cwd: ROOT,
+      env: { ...process.env, [FIRESTORE_EMULATOR_VARIABLE]: "127.0.0.1:1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(planted.stderr.toString()).toBe("");
+    expect(planted.exitCode).toBe(0);
+    // One run builds every provider to read its capabilities, about 2 s with coverage on; ten times that.
+  }, 20000);
+
+  test("the capability read runs in the environment it is given, and a child that fails rejects it with its exit code", async () => {
+    expect(CAPABILITY_READ_ENVIRONMENT).toEqual({});
+    // Vacuity: a variable handed to the read reaches the providers it builds, so the stated environment is the one read.
+    await expect(readEngineCapabilities({ LIBREDB_ENABLED_PROVIDERS: "postgres" })).rejects.toThrow(
+      "the capability read (scripts/read-engine-capabilities.ts) exited with code 1",
+    );
+  });
+
+  test("the capability read refuses, by name, a capability JSON cannot carry exactly", () => {
+    const undefinedMember: ProviderCapabilities = { ...CAPABILITIES.postgres, explainFormat: undefined };
+    const functionMember = {
+      ...CAPABILITIES.postgres,
+      createTable: () => undefined,
+    } as unknown as ProviderCapabilities;
+
+    expect(() => refuseInexactJson("postgres", CAPABILITIES.postgres)).not.toThrow();
+    for (const capabilities of [undefinedMember, functionMember]) {
+      expect(() => refuseInexactJson("postgres", capabilities)).toThrow(
+        "postgres: the provider's capabilities hold a value JSON cannot carry exactly",
+      );
     }
   });
 });
@@ -1083,6 +1229,241 @@ describe("the census", () => {
     ).toEqual([]);
   });
 
+  test("editor.commitKeyword and editor.consentDeadline are the engine's EXECUTION_UI row", () => {
+    expect(
+      differing((type, d) => {
+        const row = EXECUTION_UI[type];
+        return d.editor.commitKeyword === row.commitKeyword && sameValue(d.editor.consentDeadline, row.consentDeadline);
+      }),
+    ).toEqual([]);
+    // Vacuity: the rows hold a keyword other than COMMIT and a deadline, so neither member is read back as a constant.
+    expect(new Set(SHIPPED_DATABASE_TYPES.map((type) => declared(type).editor.commitKeyword)).size).toBeGreaterThan(1);
+    expect(SHIPPED_DATABASE_TYPES.some((type) => declared(type).editor.consentDeadline !== null)).toBe(true);
+  });
+
+  test("executionUiFor answers, for every engine, the spec its declaration states", () => {
+    expect(
+      differing((type, d) => {
+        const spec: ExecutionUiSpec = {
+          commitKeyword: d.editor.commitKeyword,
+          consentDeadline:
+            d.editor.consentDeadline === null
+              ? null
+              : { chip: d.editor.consentDeadline.chip, sentence: d.editor.consentDeadline.sentence },
+        };
+        return sameValue(executionUiFor(type), spec);
+      }),
+    ).toEqual([]);
+  });
+
+  test("every member of an execution UI row has its member in the declaration", () => {
+    const declaredAt: Readonly<Record<keyof ExecutionUiSpec, string>> = {
+      commitKeyword: "commitKeyword",
+      consentDeadline: "consentDeadline",
+    };
+    const deadlineDeclaredAt: Readonly<Record<keyof ConsentDeadline, string>> = { chip: "chip", sentence: "sentence" };
+
+    expect(
+      SHIPPED_DATABASE_TYPES.flatMap((type) => {
+        const row = EXECUTION_UI[type];
+        return [
+          ...Object.keys(row).filter((member) => !Object.hasOwn(declaredAt, member)),
+          ...Object.keys(row.consentDeadline ?? {}).filter((member) => !Object.hasOwn(deadlineDeclaredAt, member)),
+        ].map((member) => `${type}.${member}`);
+      }),
+    ).toEqual([]);
+    expect(
+      differing((_type, d) => {
+        const deadline = d.editor.consentDeadline;
+        return (
+          Object.values(declaredAt).every((member) => Object.hasOwn(d.editor, member)) &&
+          (deadline === null || Object.values(deadlineDeclaredAt).every((member) => Object.hasOwn(deadline, member)))
+        );
+      }),
+    ).toEqual([]);
+  });
+
+  test("editor.fenceAliases are the aliases ALIAS_ENGINES maps to the engine", () => {
+    expect(
+      differing((type, d) => {
+        const aliases = Object.keys(ALIAS_ENGINES).filter((alias) => ALIAS_ENGINES[alias] === type);
+        return sameList(sorted(d.editor.fenceAliases), sorted(aliases));
+      }),
+    ).toEqual([]);
+  });
+
+  test("ALIAS_ENGINES and QUERY_FENCE_ALIASES are the declarations' aliases and the schema's generic fence tags", () => {
+    const derived = Object.fromEntries(
+      SHIPPED_DATABASE_TYPES.flatMap((type) => declared(type).editor.fenceAliases.map((alias) => [alias, type])),
+    );
+    const aliases = SHIPPED_DATABASE_TYPES.flatMap((type) => declared(type).editor.fenceAliases);
+
+    expect(derived).toEqual({ ...ALIAS_ENGINES });
+    expect(aliases.length).toBe(Object.keys(ALIAS_ENGINES).length);
+    expect(sorted([...QUERY_FENCE_ALIASES])).toEqual(sorted([...aliases, ...GENERIC_FENCE_TAGS]));
+  });
+
+  test("a reader built from the declarations names and admits every fence tag as fenceTagEngine and isQueryFenceTag do", () => {
+    const ids = new Set<string>(SHIPPED_DATABASE_TYPES);
+    const aliasEngine = new Map<string, DatabaseType>(
+      SHIPPED_DATABASE_TYPES.flatMap((type) => declared(type).editor.fenceAliases.map((alias) => [alias, type])),
+    );
+    const generic = new Set(GENERIC_FENCE_TAGS);
+    const engineOf = (tag: string | undefined): DatabaseType | null => {
+      if (tag === undefined) return null;
+      if (ids.has(tag)) return tag as DatabaseType;
+      return aliasEngine.get(tag) ?? null;
+    };
+    const holdsQuery = (tag: string | undefined): boolean =>
+      tag === undefined || ids.has(tag) || aliasEngine.has(tag) || generic.has(tag);
+    const corpus: (string | undefined)[] = [
+      ...SHIPPED_DATABASE_TYPES,
+      ...aliasEngine.keys(),
+      "sql",
+      "cql",
+      "sh",
+      "json",
+      "presto",
+      "es",
+      "flux",
+      "Postgres",
+      "constructor",
+      "__proto__",
+      "toString",
+      "",
+      undefined,
+      crypto.randomUUID(),
+    ];
+
+    expect(
+      corpus.filter((tag) => engineOf(tag) !== fenceTagEngine(tag) || holdsQuery(tag) !== isQueryFenceTag(tag)),
+    ).toEqual([]);
+    // Vacuity: the corpus holds tags that name an engine, tags that hold a query and name none, and tags that hold none.
+    expect(corpus.filter((tag) => engineOf(tag) !== null).length).toBe(ids.size + aliasEngine.size);
+    expect(corpus.filter((tag) => holdsQuery(tag) && engineOf(tag) === null)).toEqual(["sql", "cql", undefined]);
+    expect(corpus.filter((tag) => !holdsQuery(tag)).length).toBe(11);
+  });
+
+  test("editor.explainFormat is the format the engine's unconnected provider declares, null exactly where it supports no explain", () => {
+    expect(
+      differing((type, d) => {
+        const capabilities = CAPABILITIES[type];
+        return (
+          d.editor.explainFormat === (capabilities.explainFormat ?? null) &&
+          (d.editor.explainFormat === null) === !capabilities.supportsExplain
+        );
+      }),
+    ).toEqual([]);
+  });
+
+  test("the census reads each provider's capabilities in its stated environment, so a variable set where it runs changes none", async () => {
+    const ambient = process.env[FIRESTORE_EMULATOR_VARIABLE];
+    process.env[FIRESTORE_EMULATOR_VARIABLE] = "127.0.0.1:1";
+    try {
+      const inProcess = (await createDatabaseProvider(CENSUS_CONNECTION.firestore)).getCapabilities();
+      const census = await readCensusCapabilities();
+
+      // Vacuity: the variable changes what the provider declares when it is read in this process.
+      expect(inProcess.explainFormat).toBeUndefined();
+      expect(census.firestore.explainFormat).toBeDefined();
+      expect(census.firestore.explainFormat).toBe(declared("firestore").editor.explainFormat ?? undefined);
+      expect(census).toEqual(CAPABILITIES);
+    } finally {
+      if (ambient === undefined) delete process.env[FIRESTORE_EMULATOR_VARIABLE];
+      else process.env[FIRESTORE_EMULATOR_VARIABLE] = ambient;
+    }
+  });
+
+  test("every declared explain format has Studio's strategy for it", () => {
+    const formats = SHIPPED_DATABASE_TYPES.map((type) => declared(type).editor.explainFormat).filter(
+      (format) => format !== null,
+    );
+
+    expect(formats.length).toBeGreaterThan(0);
+    expect(formats.filter((format) => getExplainStrategy(format)?.format !== format)).toEqual([]);
+  });
+
+  test("editor.dialect is the provider's query dialect with its QUERY_DIALECTS row", () => {
+    expect(
+      differing((type, d) => {
+        const dialect = CAPABILITIES[type].queryDialect;
+        if (dialect === undefined) return d.editor.dialect === null;
+        const row = QUERY_DIALECTS[dialect];
+        return sameValue(d.editor.dialect, {
+          name: dialect,
+          offersColumnProfiling: row.offersColumnProfiling,
+          offersCodeGeneration: row.offersCodeGeneration,
+          offersCountQuery: row.offersCountQuery,
+          offersSqlExport: row.offersSqlExport !== false,
+          historyMask: row.historyMask ?? null,
+        });
+      }),
+    ).toEqual([]);
+  });
+
+  test("QUERY_DIALECTS is the dialect rows the declarations state, one per dialect, each opening tabs of its own name", () => {
+    const derived = derivedDialects();
+    const resolved = (spec: DialectSpec) => ({ ...spec, offersSqlExport: spec.offersSqlExport !== false });
+
+    expect(sorted(Object.keys(derived))).toEqual(sorted(Object.keys(QUERY_DIALECTS)));
+    expect(
+      Object.entries(QUERY_DIALECTS)
+        .filter(([dialect, spec]) => spec.tabType !== dialect)
+        .map(([dialect]) => dialect),
+    ).toEqual([]);
+    expect(
+      (Object.keys(QUERY_DIALECTS) as QueryDialect[]).filter(
+        (dialect) => !sameValue(resolved(derived[dialect]), resolved(QUERY_DIALECTS[dialect])),
+      ),
+    ).toEqual([]);
+  });
+
+  test("history keeps no value of a flag the declarations name, as it keeps none of the registry's", () => {
+    const derived = derivedDialects();
+
+    expect(historyMaskOf(undefined, derived)).toEqual(historyMaskOf(undefined));
+    expect(historyMaskOf(undefined)).toBeDefined();
+    expect(
+      SHIPPED_DATABASE_TYPES.filter(
+        (type) => !sameValue(historyMaskOf(CAPABILITIES[type], derived), historyMaskOf(CAPABILITIES[type])),
+      ),
+    ).toEqual([]);
+  });
+
+  test("every member of a dialect row has its member in the declaration", () => {
+    const declaredAt: Readonly<Record<keyof DialectSpec, string>> = {
+      tabType: "name",
+      offersColumnProfiling: "offersColumnProfiling",
+      offersCodeGeneration: "offersCodeGeneration",
+      offersCountQuery: "offersCountQuery",
+      offersSqlExport: "offersSqlExport",
+      historyMask: "historyMask",
+    };
+    const maskDeclaredAt: Readonly<Record<keyof NonNullable<DialectSpec["historyMask"]>, string>> = {
+      credentialFlags: "credentialFlags",
+    };
+
+    expect(
+      Object.entries(QUERY_DIALECTS).flatMap(([dialect, row]) =>
+        [
+          ...Object.keys(row).filter((member) => !Object.hasOwn(declaredAt, member)),
+          ...Object.keys(row.historyMask ?? {}).filter((member) => !Object.hasOwn(maskDeclaredAt, member)),
+        ].map((member) => `${dialect}.${member}`),
+      ),
+    ).toEqual([]);
+    expect(
+      differing((_type, d) => {
+        const row = d.editor.dialect;
+        if (row === null) return true;
+        const mask = row.historyMask;
+        return (
+          Object.values(declaredAt).every((member) => Object.hasOwn(row, member)) &&
+          (mask === null || Object.values(maskDeclaredAt).every((member) => Object.hasOwn(mask, member)))
+        );
+      }),
+    ).toEqual([]);
+  });
+
   test("id is the file's type-id", () => {
     expect(differing((type, d) => d.id === type)).toEqual([]);
   });
@@ -1141,8 +1522,21 @@ describe("the vocabularies", () => {
       Equal<JwtAccessClaim, Extract<CredentialWarning, { kind: "jwt" }>["access"][number]>,
       Equal<PlaceableFieldName, PlaceableField>,
       Equal<SelectFieldName, "saslMechanism" | "authMethod">,
-    ] = [true, true, true, true, true, true, true, true, true, true, true];
+      Equal<Exclude<ManifestExplainFormat, null>, ExplainFormat>,
+      Equal<ManifestQueryDialect, QueryDialect>,
+    ] = [true, true, true, true, true, true, true, true, true, true, true, true, true];
 
-    expect(parity).toEqual([true, true, true, true, true, true, true, true, true, true, true]);
+    expect(parity).toEqual([true, true, true, true, true, true, true, true, true, true, true, true, true]);
+  });
+
+  test("the explain formats, the query dialects and the generic fence tags are Studio's", () => {
+    const formats = enumOf("explainFormat").filter((format) => format !== null) as ExplainFormat[];
+
+    expect(enumOf("explainFormat")).toContain(null);
+    expect(formats.filter((format) => getExplainStrategy(format)?.format !== format)).toEqual([]);
+    expect(sorted(enumOf("queryDialect"))).toEqual(sorted(Object.keys(QUERY_DIALECTS)));
+    expect(sorted(enumOf("genericFenceTag"))).toEqual(
+      sorted([...QUERY_FENCE_ALIASES].filter((tag) => !Object.hasOwn(ALIAS_ENGINES, tag))),
+    );
   });
 });

@@ -77,5 +77,21 @@
   },
   "agent": {
     "statementLanguage": "netconfrpc"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "netconfrpc"
+    ],
+    "explainFormat": null,
+    "dialect": {
+      "name": "netconf",
+      "offersColumnProfiling": false,
+      "offersCodeGeneration": false,
+      "offersCountQuery": false,
+      "offersSqlExport": true,
+      "historyMask": null
+    }
   }
 }

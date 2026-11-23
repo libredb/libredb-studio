@@ -76,5 +76,14 @@
   },
   "agent": {
     "statementLanguage": "cypher"
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "cypher"
+    ],
+    "explainFormat": null,
+    "dialect": null
   }
 }

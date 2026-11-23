@@ -260,5 +260,12 @@
   },
   "agent": {
     "statementLanguage": null
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [],
+    "explainFormat": "snowflake-json",
+    "dialect": null
   }
 }

@@ -699,7 +699,7 @@ A root file that imports a package by name needs the package in the root `devDep
 Two generators keep the SDK's contract and Studio's tables in step, each committed output held byte for byte by a test that renders it in memory, as the governance manifest is:
 
 - `bun run manifest:types` (`scripts/generate-manifest-types.ts`) renders the manifest's TypeScript types and the schema's digest from `packages/provider-sdk/src/manifest/manifest.schema.json`; `tests/unit/provider-sdk/manifest-types.test.ts` fails on drift.
-- `bun run engines:generate` (`scripts/generate-engine-declarations.ts`) writes `src/lib/db/engine-declarations/<type-id>.json` from the per-engine tables; `tests/unit/db/engine-declarations.test.ts` fails on drift.
+- `bun run engines:generate` (`scripts/generate-engine-declarations.ts`) writes `src/lib/db/engine-declarations/<type-id>.json` from the per-engine tables and each provider's unconnected declarations; `tests/unit/db/engine-declarations.test.ts` fails on drift.
 
 Both run inside `bun run test`, so neither needs a CI step of its own.
 The generators live in `scripts/`, which the coverage merge does not measure, so their tests are what holds them.
