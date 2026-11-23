@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D497, U17 · 365
+- [Drivers and connections](#drivers-and-connections) — D1-D498, U17 · 366
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -4897,6 +4897,15 @@ A manifest read from a JSON file has no holes and is bounded by the file's size,
 Found 2026-11-23 while planning PR 9 slice 9f2b.
 
 **Done when:** the validator refuses a list longer than its `maxItems` before ajv walks it, with a test in a bounded child.
+
+### D498. A connection secret that holds a lone surrogate makes its scrub throw
+
+`secretForms` (`src/lib/db/utils/server-text.ts`) adds each secret's `encodeURIComponent` form, which throws `URIError` for a string that holds a lone surrogate, a value a JSON escape can carry.
+So a connection whose secret-class value holds one fails wherever its scrub is computed, before its provider is reached: on the routes, and in the provider factory when a library embedder builds a provider.
+
+Found 2026-11-23 in the review of FND-6 slice 5c3, probed under Bun.
+
+**Done when:** such a secret is refused with a sentence that names its field, or its scrub states why the form that cannot be URI-encoded is absent, with a test either way.
 
 ## Value interpolation
 
