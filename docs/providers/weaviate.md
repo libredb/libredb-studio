@@ -116,6 +116,7 @@ On the 1.37 line (1.37.4 and 1.37.17), `GET /v1/schema/{collection}/shards?tenan
 
 The `writeReach` is `none`: every console request is a read and the provider has no maintenance operation.
 A read-only seed connection with no key is refused, because a server with anonymous access on, its default, grants a request with no key every write, so the mode would promise a boundary the server does not keep.
+An API key is opaque, and an OIDC access token is short-lived by design, so the dialog warns about neither.
 
 ### 3.6 Integers
 

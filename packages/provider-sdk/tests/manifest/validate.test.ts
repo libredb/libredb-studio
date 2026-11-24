@@ -3247,6 +3247,55 @@ describe("rules the schema cannot state", () => {
     expect(refusalsFor(changed)).toEqual([refusal("agent-credential-form-missing", `${MCP}/agentCredentialRequired`)]);
   });
 
+  test("a seed agent credential whose form is not the one the agent credential form request names is refused as agent-credential-seed-form-differs, a request of none excepted", () => {
+    const pairing = (seedForm: string | null, request: string): Json => {
+      const changed = kafkaManifest();
+      connectionOf(changed).agentCredential = seedForm === null ? null : { form: seedForm, supersededBy: [] };
+      policyOf(changed).agentCredentialForm = request;
+      return changed;
+    };
+    const differing: readonly [string, string][] = [
+      ["pair", "token"],
+      ["pair", "service-account-key"],
+      ["pair", "dedicated-user"],
+      ["secret", "pair"],
+      ["secret", "dedicated-user"],
+      ["dedicated-pair", "pair"],
+      ["dedicated-pair", "token"],
+    ];
+    const matching: readonly (readonly [string | null, string])[] = [
+      ["pair", "pair"],
+      ["dedicated-pair", "dedicated-user"],
+      ["secret", "token"],
+      ["secret", "service-account-key"],
+      ["pair", "none"],
+      ["secret", "none"],
+      ["dedicated-pair", "none"],
+      ...["pair", "token", "service-account-key", "dedicated-user", "none"].map((request) => [null, request] as const),
+    ];
+
+    for (const [seedForm, request] of differing) {
+      const changed = pairing(seedForm, request);
+      expect(refusalsFor(changed)).toEqual([
+        refusal("agent-credential-seed-form-differs", "/engines/0/connection/agentCredential/form"),
+      ]);
+      expect(validator.validateEngine(changed.engines[0])).toEqual({
+        admitted: false,
+        refusals: [refusal("agent-credential-seed-form-differs", "/connection/agentCredential/form")],
+      });
+    }
+    for (const [seedForm, request] of matching) {
+      expect({ seedForm, request, refusals: refusalsFor(pairing(seedForm, request)) }).toEqual({
+        seedForm,
+        request,
+        refusals: [],
+      });
+    }
+    const sentence = refusalSentence(refusalsFor(pairing("pair", "token"))[0] as ManifestRefusal);
+    expect(sentence).toContain("/engines/0/connection/agentCredential/form");
+    for (const value of ["pair", "token"]) expect(sentence).not.toContain(` ${value}`);
+  });
+
   test("read roots required of an engine whose seeds cannot declare them are refused as read-roots-field-undeclared", () => {
     const unseeded = manifest((m) => (policyOf(m).readRootsRequired = true));
     const otherField = kafkaManifest();
@@ -3841,6 +3890,13 @@ describe("one engine declaration", () => {
         refusal("read-roots-field-undeclared", "/policy/readRootsRequired"),
       ],
     });
+
+    const seeded = kafkaManifest().engines[0] as Json;
+    seeded.policy.agentCredentialForm = "token";
+    expect(validator.validateEngine(seeded)).toEqual({
+      admitted: false,
+      refusals: [refusal("agent-credential-seed-form-differs", "/connection/agentCredential/form")],
+    });
   });
 
   test("an engine declaration's safeguards and its new claims are held to their rules, at pointers into it", () => {
@@ -4035,6 +4091,17 @@ describe("refusals carry no value", () => {
     expect(ruledRefusals).toEqual([refusal("denied-file-access-unread", `${POLICY}/deniedFileAccessRefusal`)]);
     expect(JSON.stringify(ruledRefusals)).not.toContain(sentence);
     for (const item of ruledRefusals) expect(refusalSentence(item)).not.toContain(sentence);
+
+    const formed = kafkaManifest();
+    policyOf(formed).agentCredentialForm = "service-account-key";
+    const formRefusals = refusalsFor(formed);
+
+    expect(formRefusals).toEqual([
+      refusal("agent-credential-seed-form-differs", "/engines/0/connection/agentCredential/form"),
+    ]);
+    for (const item of formRefusals) {
+      for (const value of ["service-account-key", " pair"]) expect(refusalSentence(item)).not.toContain(value);
+    }
 
     const name = randomUUID()
       .replaceAll("-", "")

@@ -179,7 +179,7 @@ the connection under Node, and under Bun it never reaches the application.
 ### Connection string
 
 `modbus` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/industrial/modbus/connection-string.ts)).
-Its one seed-only field is `registerMap` (`SEED_ONLY_FIELDS.modbus` in [`connection-fields.ts`](../../src/lib/db/connection-fields.ts)): a seed carries the map to the connection, and since only the Modbus provider reads it, a seed of any other type that carries it is refused at load, naming the field.
+Its one seed-only field is `registerMap` (its declaration's `connection.seedOnly`, read as `SEED_ONLY_FIELDS.modbus` in [`connection-fields.ts`](../../src/lib/db/connection-fields.ts)): a seed carries the map to the connection, and since only the Modbus provider reads it, a seed of any other type that carries it is refused at load, naming the field.
 
 ### Execution UI
 

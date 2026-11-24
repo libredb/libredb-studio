@@ -144,10 +144,11 @@ describe("the plan-draft reader stays reachable from a browser", () => {
     // every module it reaches is the registry, an engine's `sql-grammar` module, or one of the two leaves an engine
     // module may import, and those leaves import nothing at all. The type-id check joined it with FND-1: the registry
     // refuses a value outside the type-id union through `typeIdRow`, and the check reaches only the compatibility
-    // table, the engine catalog it reads the shipped engines from, the error classes and the error codes, each named
-    // below with its exact value imports. The SDK's SQL grammar facts joined it when the engine rows started importing
-    // the compatibility default from `@libredb/provider-sdk/sql`: the specifier resolves through the package's
-    // `exports`, and each file it reaches value-imports only files of its own directory.
+    // table, the engine catalog it reads the shipped engines from, the connection flags module it reads three records
+    // from, the error classes and the error codes, each named below with its exact value imports. The SDK's SQL
+    // grammar facts joined it when the engine rows started importing the compatibility default from
+    // `@libredb/provider-sdk/sql`: the specifier resolves through the package's `exports`, and each file it reaches
+    // value-imports only files of its own directory.
     const valueSpecifiers = (source: string): readonly string[] =>
       [...source.matchAll(/^(?:import|export)\s(?!type\s)[^;]*?from\s+"([^"]+)"/gm)].map((match) => match[1]);
     const resolve = (specifier: string, from: string): string => {
@@ -161,8 +162,12 @@ describe("the plan-draft reader stays reachable from a browser", () => {
     const TYPE_ID_CHECK: Readonly<Record<string, readonly string[]>> = {
       "src/lib/db/type-id.ts": ["./compatibility", "./errors"],
       "src/lib/db/errors.ts": ["@/lib/api/error-codes"],
-      "src/lib/db/compatibility.ts": ["./engine-catalog/catalog.generated"],
+      "src/lib/db/compatibility.ts": [
+        "./engine-catalog/catalog.generated",
+        "./engine-catalog/connection-flags.generated",
+      ],
       "src/lib/db/engine-catalog/catalog.generated.ts": [],
+      "src/lib/db/engine-catalog/connection-flags.generated.ts": [],
       "src/lib/api/error-codes.ts": [],
     };
     const registry = new Set<string>();

@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
+import { SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
 import { filterByRoles } from "@/lib/seed/connection-filter";
 import type { SeedConnection } from "@/lib/seed/types";
+import type { DatabaseType } from "@/lib/types";
 import { seedBase, seedIssues } from "../db/connection-string/fixtures";
 
 /**
@@ -48,6 +50,29 @@ describe("seed-only fields at load", () => {
     expect(issues.map((i) => i.path)).toEqual([["securityMode"], ["apiKeyId"]]);
     expect(issues[0].message).toBe(OPCUA_SENTENCE("securityMode"));
     expect(issues[1].message.startsWith(API_KEY_PREFIX)).toBe(true);
+  });
+
+  test("a seed carrying several engines' seed-only fields is refused in the catalog's id order, whatever order it lists them in", () => {
+    // Listed against the id order of their engines, opcua, netconf, then modbus, and elasticsearch's set row first.
+    const issues = seedIssues({
+      ...seedBase("postgres"),
+      apiKeyId: "k",
+      securityMode: "None",
+      hostKeyFingerprint: "SHA256:abc",
+      registerMap: "[]",
+    });
+    expect(issues.map((i) => i.path)).toEqual([
+      ["registerMap"],
+      ["hostKeyFingerprint"],
+      ["securityMode"],
+      ["apiKeyId"],
+    ]);
+    expect(Object.keys(SEED_ONLY_FIELDS).filter((type) => SEED_ONLY_FIELDS[type as DatabaseType] !== null)).toEqual([
+      "elasticsearch",
+      "modbus",
+      "netconf",
+      "opcua",
+    ]);
   });
 });
 

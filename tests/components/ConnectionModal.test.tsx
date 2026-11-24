@@ -302,7 +302,7 @@ import { PASTE_FORMATS_TEXT } from "@/lib/connection-paste-formats";
 
 // The account module is pure and not mocked: the Snowflake entry's derived-host hint is the real one.
 import { snowflakeHostHint } from "@/lib/db/providers/sql/snowflake/account-host";
-import { CONNECTION_FIELD_DESCRIPTORS } from "@/lib/db/connection-fields";
+import { CONNECTION_FIELD_DESCRIPTORS, CONNECTION_FIELDS } from "@/lib/db/connection-fields";
 import { SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
 import type { DatabaseType } from "@/lib/types";
 
@@ -1922,27 +1922,18 @@ describe("ConnectionModal", () => {
      * provider refused every connection with "this connection needs the device's host key
      * fingerprint" while the box to type it in did not exist.
      *
-     * Read from the source rather than imported, because this file MOCKS `@/lib/db-ui-config`:
-     * importing it here would return the mock, and the mock is a second hand-written list with the
-     * same failure mode. The real file is the authority and the regular expression is held to it
-     * by the first case below, which fails if it stops matching.
+     * Read from `CONNECTION_FIELDS` in src/lib/db/connection-fields.ts, the table the dialog's
+     * config takes each row from by reference, rather than from `@/lib/db-ui-config`, because this
+     * file MOCKS that module: importing it here would return the mock, and the mock is a second
+     * hand-written list with the same failure mode. connection-fields.ts is not mocked, so the real
+     * rows, projected from each engine's declaration, are the authority, and the first case below
+     * holds the derivation to a count and to the names it must contain.
      */
-    const EVERY_FIELD: readonly string[] = (() => {
-      const source = readFileSync(join(import.meta.dir, "../../src/lib/db/connection-fields.ts"), "utf8");
-      const start = source.indexOf("const CONNECTION_FIELD_ROWS");
-      const table = source.slice(start, source.indexOf("\n} as const", start));
-      const seen: string[] = [];
-      for (const declaration of table.matchAll(/^\s+\w+: \[([^\]]*)\]/gm)) {
-        for (const [, field] of (declaration[1] ?? "").matchAll(/"(\w+)"/g)) {
-          if (field !== undefined && !seen.includes(field)) seen.push(field);
-        }
-      }
-      return seen;
-    })();
+    const EVERY_FIELD: readonly string[] = [...new Set(Object.values(CONNECTION_FIELDS).flat())];
 
     test("the derivation found the real table, so every case below walks a full list", () => {
-      // The pattern reads one file; if that file changes shape the list goes short or empty and
-      // every case that walks it certifies nothing. So the derivation is held to a count and to
+      // If the table the list is read from went short or empty, every case that walks it would
+      // certify nothing. So the derivation is held to a count and to
       // three names it must contain, one of them the field this derivation exists for.
       expect(EVERY_FIELD.length).toBeGreaterThanOrEqual(28);
       expect(EVERY_FIELD).toContain("host");

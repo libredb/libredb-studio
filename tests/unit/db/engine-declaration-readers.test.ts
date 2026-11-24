@@ -1,6 +1,7 @@
 /**
- * Only the modules `DECLARATION_READERS` lists read an engine declaration or a projection of the declarations, and none
- * of them reads a claim (docs/providers/CONTRACT.md, clauses M-52, M-54 and M-70).
+ * Only the modules `DECLARATION_READERS` lists read an engine declaration or a projection of the declarations, none of
+ * them reads a claim, no member a declaration authors is a claim, and every claim record Studio keeps in core is
+ * written by hand (docs/providers/CONTRACT.md, clauses M-52, M-54, M-70 and M-71).
  *
  * A declaration's `policy` and `mcp` members, and the members of its other segments M-53 names, are claims: requests
  * Studio grants only through its review record of each claim, the table of Studio's source every gate reads. A module
@@ -23,7 +24,9 @@ import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
+import { AUTHORED_MEMBERS } from "../../../scripts/generate-engine-declarations";
 import { SEGMENT_CLAIMS } from "./engine-declarations/claims";
+import { ENGINE_TABLE_INVENTORY } from "./engine-declarations/inventory";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 const SCHEMA_FILE = path.join(ROOT, "packages/provider-sdk/src/manifest/manifest.schema.json");
@@ -40,15 +43,37 @@ interface DeclarationReader {
   readonly reason: string;
 }
 
-/** The catalog's members, M-70: the members every declaration authors, M-15. */
+/** The catalog's members, M-70: members every declaration authors, M-15. */
 const CATALOG_MEMBERS = ["id", "location", "connection.connectBudgetMs"] as const;
+
+/** The members of the data-only connection tables the connection module holds, M-71: authored members, M-15. */
+const CONNECTION_TABLE_MEMBERS = [
+  "connection.fields",
+  "connection.seedOnly",
+  "connection.refused",
+  "connection.credentialWarnings",
+] as const;
+
+/** The members of the connection tables the connection flags module holds, the three compatibility.ts reads, M-71. */
+const CONNECTION_FLAG_MEMBERS = [
+  "connection.readsTrustMaterial",
+  "connection.connectionString.accepted",
+  "connection.connectionString.dialogOffersUri",
+] as const;
 
 /** Every module of Studio's source that reads a declaration or a projection of the declarations. */
 const DECLARATION_READERS: readonly DeclarationReader[] = [
   {
     path: "src/lib/db/compatibility.ts",
-    members: ["id", "location"],
-    reason: "the shipped engines and each engine's location, read from the engine catalog",
+    members: [
+      "id",
+      "location",
+      "connection.readsTrustMaterial",
+      "connection.connectionString.accepted",
+      "connection.connectionString.dialogOffersUri",
+    ],
+    reason:
+      "the shipped engines and each engine's location, read from the engine catalog, and three connection records, read from the connection flags",
   },
   {
     path: "src/lib/db/connect-budget.ts",
@@ -56,14 +81,34 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
     reason: "each engine's connect budget, read from the engine catalog",
   },
   {
+    path: "src/lib/db/connection-fields.ts",
+    members: ["connection.fields", "connection.seedOnly", "connection.refused"],
+    reason: "each engine's connection fields, seed-only fields and refused fields, read from the connection tables",
+  },
+  {
+    path: "src/lib/db/credential-warnings.ts",
+    members: ["connection.credentialWarnings"],
+    reason: "each engine's credential warnings, read from the connection tables",
+  },
+  {
     path: "src/lib/db/engine-catalog/catalog.generated.ts",
     members: CATALOG_MEMBERS,
     reason: "the engine catalog, generated from the admitted declarations",
   },
   {
+    path: "src/lib/db/engine-catalog/connection-flags.generated.ts",
+    members: CONNECTION_FLAG_MEMBERS,
+    reason: "the connection tables compatibility.ts reads, generated from the admitted declarations",
+  },
+  {
+    path: "src/lib/db/engine-catalog/connection.generated.ts",
+    members: CONNECTION_TABLE_MEMBERS,
+    reason: "the other data-only connection tables, generated from the admitted declarations",
+  },
+  {
     path: "src/lib/db/engine-catalog/projection.ts",
-    members: CATALOG_MEMBERS,
-    reason: "projects the admitted declarations into the engine catalog",
+    members: [...CATALOG_MEMBERS, ...CONNECTION_TABLE_MEMBERS, ...CONNECTION_FLAG_MEMBERS],
+    reason: "projects the admitted declarations into the engine catalog and the connection tables",
   },
 ];
 
@@ -248,6 +293,126 @@ function claimReaders(readers: readonly DeclarationReader[], claims: readonly st
   );
 }
 
+/** Each member of `authored` that is, holds or lies inside a claim, with what that breaks. */
+function authoredClaims(authored: readonly string[], claims: readonly string[]): string[] {
+  return authored.flatMap((member) =>
+    claims
+      .filter((claim) => overlaps(member, claim))
+      .map(
+        (claim) =>
+          `${member} is authored, and it holds the claim ${claim}, but an authored member feeds a projection Studio reads, and a claim reaches a gate only through Studio's review record of it (docs/providers/CONTRACT.md, clause M-54)`,
+      ),
+  );
+}
+
+/** A per-engine record Studio keeps in core: its module and its module-level name. */
+interface CoreRecord {
+  readonly module: string;
+  readonly name: string;
+}
+
+/** An inventory destination in the claim form: the member the engine requests, which the table grants. */
+const CLAIM_DESTINATION =
+  /^engine declaration: [\w.]+, the engine's request, which this table grants as Studio's review record of the claim$/;
+
+/**
+ * The registries whose claims sit in rows beside each provider, M-54's case: each row is written in its provider's
+ * directory and its index collects them, so the record is no single literal and this guard does not hold it.
+ */
+const ROW_REGISTRIES: readonly CoreRecord[] = [
+  { module: "src/lib/db/engine-facets/index.ts", name: "ENGINE_FACETS" },
+  { module: "src/lib/db/sql-grammar/index.ts", name: "SQL_GRAMMAR" },
+];
+
+/**
+ * Why each of `records` is not written by hand, read from the module text `files` holds for it: its initializer, seen
+ * through parentheses, `as`, `satisfies` and `Object.freeze`, must be a literal, a list or a record of them, or the
+ * name of a module-level `const` of its own module written the same way. A call, an imported binding, a function, a
+ * spread and a computed member are each named, so no projection, generated or computed, can feed a claim record.
+ */
+function computedClaimRecords(files: readonly SourceText[], records: readonly CoreRecord[]): string[] {
+  return records.flatMap(({ module, name }) => {
+    const file = files.find((candidate) => candidate.path === module);
+    if (file === undefined) return [`${module} ${name} is not in the source read`];
+    const source = ts.createSourceFile(module, file.text, ts.ScriptTarget.Latest, true);
+    const constants = new Map<string, ts.Expression>();
+    for (const statement of source.statements) {
+      if (!ts.isVariableStatement(statement)) continue;
+      if ((statement.declarationList.flags & ts.NodeFlags.Const) === 0) continue;
+      for (const declaration of statement.declarationList.declarations) {
+        if (ts.isIdentifier(declaration.name) && declaration.initializer !== undefined) {
+          constants.set(declaration.name.text, declaration.initializer);
+        }
+      }
+    }
+    const unwrapped = (expression: ts.Expression): ts.Expression => {
+      let current = expression;
+      for (;;) {
+        if (ts.isParenthesizedExpression(current) || ts.isAsExpression(current) || ts.isSatisfiesExpression(current)) {
+          current = current.expression;
+        } else if (
+          ts.isCallExpression(current) &&
+          current.expression.getText(source) === "Object.freeze" &&
+          current.arguments.length === 1
+        ) {
+          current = current.arguments[0] as ts.Expression;
+        } else {
+          return current;
+        }
+      }
+    };
+    const visited = new Set<string>();
+    const why = (expression: ts.Expression): string | null => {
+      const node = unwrapped(expression);
+      if (
+        ts.isStringLiteral(node) ||
+        ts.isNoSubstitutionTemplateLiteral(node) ||
+        ts.isNumericLiteral(node) ||
+        node.kind === ts.SyntaxKind.TrueKeyword ||
+        node.kind === ts.SyntaxKind.FalseKeyword ||
+        node.kind === ts.SyntaxKind.NullKeyword ||
+        (ts.isPrefixUnaryExpression(node) && ts.isNumericLiteral(node.operand))
+      ) {
+        return null;
+      }
+      if (ts.isArrayLiteralExpression(node)) {
+        for (const element of node.elements) {
+          const problem = ts.isSpreadElement(element)
+            ? `it spreads ${element.expression.getText(source)}`
+            : why(element);
+          if (problem !== null) return problem;
+        }
+        return null;
+      }
+      if (ts.isObjectLiteralExpression(node)) {
+        for (const member of node.properties) {
+          let problem: string | null;
+          if (ts.isSpreadAssignment(member)) problem = `it spreads ${member.expression.getText(source)}`;
+          else if (ts.isShorthandPropertyAssignment(member)) problem = why(member.name);
+          else if (ts.isPropertyAssignment(member) && !ts.isComputedPropertyName(member.name)) {
+            problem = why(member.initializer);
+          } else problem = `it computes the member ${member.getText(source)}`;
+          if (problem !== null) return problem;
+        }
+        return null;
+      }
+      if (ts.isIdentifier(node)) {
+        const initializer = constants.get(node.text);
+        if (initializer === undefined) {
+          return `it reads ${node.text}, which is no module-level const of ${module}`;
+        }
+        if (visited.has(node.text)) return null;
+        visited.add(node.text);
+        return why(initializer);
+      }
+      return `it is computed by ${node.getText(source).split("\n")[0]}`;
+    };
+    const initializer = constants.get(name);
+    const problem = initializer === undefined ? "it is no module-level const of its module" : why(initializer);
+    return problem === null ? [] : [`${module} ${name} is not written by hand: ${problem}`];
+  });
+}
+
 describe("engine declaration readers", () => {
   // Parsing every file under src/ takes seconds on a CI runner under coverage, past bun's 5 s default, so this test
   // takes the 60 s bound the other whole-tree scans take (tests/unit/lib/agent/language-boundary.test.ts).
@@ -273,6 +438,18 @@ describe("engine declaration readers", () => {
     ];
 
     expect(claimReaders(DECLARATION_READERS, claims)).toEqual([]);
+    expect(authoredClaims(AUTHORED_MEMBERS, claims)).toEqual([]);
+    expect(authoredClaims([...AUTHORED_MEMBERS, "connection.opensLocalFile"], claims)).toEqual([
+      "connection.opensLocalFile is authored, and it holds the claim connection.opensLocalFile, but an authored member feeds a projection Studio reads, and a claim reaches a gate only through Studio's review record of it (docs/providers/CONTRACT.md, clause M-54)",
+    ]);
+    expect(authoredClaims(["id", "policy"], claims)).toEqual(
+      claims
+        .filter((claim) => claim.startsWith("policy."))
+        .map(
+          (claim) =>
+            `policy is authored, and it holds the claim ${claim}, but an authored member feeds a projection Studio reads, and a claim reaches a gate only through Studio's review record of it (docs/providers/CONTRACT.md, clause M-54)`,
+        ),
+    );
     expect(claims).toContain("policy.writeReach");
     expect(claims).toContain("mcp.exposable");
     expect(claims).toContain("connection.opensLocalFile");
@@ -285,6 +462,71 @@ describe("engine declaration readers", () => {
           (claim) =>
             `src/lib/planted-segment.ts reads mcp, which holds the claim ${claim}, but a claim reaches a gate only through Studio's review record of it (docs/providers/CONTRACT.md, clause M-54)`,
         ),
+    ]);
+  });
+
+  test("every claim record Studio keeps in core is written by hand, so no projection of the declarations can feed one", () => {
+    const records = ENGINE_TABLE_INVENTORY.filter((entry) => CLAIM_DESTINATION.test(entry.destination));
+    const modules = [...new Set(records.map((record) => record.module))];
+    const files = modules.map((module) => ({ path: module, text: readFileSync(path.join(ROOT, module), "utf8") }));
+
+    expect(records.length).toBe(17);
+    expect(computedClaimRecords(files, records)).toEqual([]);
+    // The two registries whose claims sit in rows beside providers are named in the claim's words, but not in its form.
+    for (const registry of ROW_REGISTRIES) {
+      const entry = ENGINE_TABLE_INVENTORY.find(
+        (candidate) => candidate.module === registry.module && candidate.name === registry.name,
+      );
+      expect(entry?.destination).toContain("which this table grants as Studio's review record of the claim");
+      expect(records).not.toContainEqual(entry);
+    }
+
+    const planted: SourceText = {
+      path: "src/lib/db/planted-claims.ts",
+      text: [
+        'import { BUNDLED_CATALOG } from "./engine-catalog/catalog.generated";',
+        'import { IMPORTED_ROW } from "./elsewhere";',
+        'const ROW = Object.freeze({ reach: "none", sentence: null });',
+        "const NESTED = [ROW, -1, `text`] as const;",
+        "function helper(): boolean {",
+        "  return true;",
+        "}",
+        "let REASSIGNED = true;",
+        "export const LITERAL: Readonly<Record<string, unknown>> = Object.freeze({",
+        "  postgres: ROW,",
+        "  mysql: (NESTED satisfies readonly unknown[]) as readonly unknown[],",
+        '  sqlite: { open: true, roots: Object.freeze(["a", 2, false]) },',
+        "  NESTED,",
+        "});",
+        "export const COMPUTED = Object.fromEntries(Object.keys(BUNDLED_CATALOG).map((id) => [id, false]));",
+        "export const IMPORTED = Object.freeze({ postgres: IMPORTED_ROW });",
+        "export const HELPED = Object.freeze({ postgres: helper });",
+        "export const SPREAD = Object.freeze({ ...LITERAL, mysql: true });",
+        "export const LISTED = Object.freeze([...NESTED]);",
+        'export const KEYED = Object.freeze({ ["postgres"]: true });',
+        "export const MUTABLE = Object.freeze({ postgres: REASSIGNED });",
+      ].join("\n"),
+    };
+    const name = (record: string) => ({ module: planted.path, name: record });
+
+    expect(computedClaimRecords([planted], [name("LITERAL")])).toEqual([]);
+    expect(
+      computedClaimRecords(
+        [planted],
+        ["COMPUTED", "IMPORTED", "HELPED", "SPREAD", "LISTED", "KEYED", "MUTABLE", "ABSENT"].map(name),
+      ),
+    ).toEqual([
+      "src/lib/db/planted-claims.ts COMPUTED is not written by hand: it is computed by Object.fromEntries(Object.keys(BUNDLED_CATALOG).map((id) => [id, false]))",
+      "src/lib/db/planted-claims.ts IMPORTED is not written by hand: it reads IMPORTED_ROW, which is no module-level const of src/lib/db/planted-claims.ts",
+      "src/lib/db/planted-claims.ts HELPED is not written by hand: it reads helper, which is no module-level const of src/lib/db/planted-claims.ts",
+      "src/lib/db/planted-claims.ts SPREAD is not written by hand: it spreads LITERAL",
+      "src/lib/db/planted-claims.ts LISTED is not written by hand: it spreads NESTED",
+      'src/lib/db/planted-claims.ts KEYED is not written by hand: it computes the member ["postgres"]: true',
+      "src/lib/db/planted-claims.ts MUTABLE is not written by hand: it reads REASSIGNED, which is no module-level const of src/lib/db/planted-claims.ts",
+      "src/lib/db/planted-claims.ts ABSENT is not written by hand: it is no module-level const of its module",
+    ]);
+    expect(computedClaimRecords([], [name("LITERAL")])).toEqual([
+      "src/lib/db/planted-claims.ts LITERAL is not in the source read",
     ]);
   });
 

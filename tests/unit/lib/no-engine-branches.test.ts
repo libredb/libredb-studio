@@ -98,7 +98,6 @@ export const REGISTRIES: readonly Listed[] = [
     "SSH_TUNNEL_REFUSAL",
   ].map((declaration) => ({ path: "src/lib/db/compatibility.ts", declaration, count: 1, reason: COMPATIBILITY })),
   ...[
-    "CONNECTION_FIELD_ROWS",
     "CONNECTION_FIELDS",
     "SEED_ONLY_FIELDS",
     "REFUSED_CONNECTION_FIELDS",
@@ -116,6 +115,24 @@ export const REGISTRIES: readonly Listed[] = [
     count: 1,
     reason: "the engine catalog, generated from the declarations and compile-enforced over the type-id union",
   },
+  ...["BUNDLED_CONNECTION_FIELDS", "BUNDLED_SEED_ONLY", "BUNDLED_REFUSED_FIELDS", "BUNDLED_CREDENTIAL_WARNINGS"].map(
+    (declaration) => ({
+      path: "src/lib/db/engine-catalog/connection.generated.ts",
+      declaration,
+      count: 1,
+      reason:
+        "a data-only connection table, generated from the declarations and compile-enforced over the type-id union",
+    }),
+  ),
+  ...["BUNDLED_READS_TRUST_MATERIAL", "BUNDLED_CONNECTION_STRING_ACCEPTED", "BUNDLED_DIALOG_OFFERS_URI"].map(
+    (declaration) => ({
+      path: "src/lib/db/engine-catalog/connection-flags.generated.ts",
+      declaration,
+      count: 1,
+      reason:
+        "a data-only connection table, generated from the declarations and compile-enforced over the type-id union",
+    }),
+  ),
   ...[
     ["src/lib/db/connection-string/index.ts", "CONNECTION_STRING"],
     ["src/lib/db/engine-facets/index.ts", "ENGINE_FACETS"],

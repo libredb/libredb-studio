@@ -582,7 +582,8 @@ redirect would take the Basic or `ApiKey` credential and the statement to wherev
 ### Connection string
 
 `elasticsearch` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`elasticsearch-connection-string.ts`](../../src/lib/db/providers/sql/search/elasticsearch-connection-string.ts)).
-`apiKeyId` and `apiKeySecret` are its seed-only fields, declared in `SEED_ONLY_FIELDS` in `src/lib/db/connection-fields.ts`: a seed of any other engine that carries the pair is refused.
+`apiKeyId` and `apiKeySecret` are its seed-only fields, its declaration's `connection.seedOnly` (`src/lib/db/engine-declarations/elasticsearch.json`), which Studio reads as its row of `SEED_ONLY_FIELDS`: a seed of any other engine that carries the pair is refused.
+The seed schema refuses it at load, and the managed connection mapper refuses it again, with its own sentence, for a seed built in memory past the schema, so no such seed is ever listed as an OpenSearch connection whose transport would drop the pair with no error.
 OpenSearch refuses the pair too: nothing here has measured whether OpenSearch's security plugin accepts `Authorization: ApiKey`, so a seed that carries it is rejected rather than listed as a connection that silently falls back to user/password.
 
 ### Execution UI

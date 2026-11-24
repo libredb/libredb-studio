@@ -21,10 +21,16 @@ export interface InventoryEntry {
 
 const COMPATIBILITY = "src/lib/db/compatibility.ts";
 const CONNECTION_FIELDS_MODULE = "src/lib/db/connection-fields.ts";
+const CONNECTION_MODULE = "src/lib/db/engine-catalog/connection.generated.ts";
+const CONNECTION_FLAGS_MODULE = "src/lib/db/engine-catalog/connection-flags.generated.ts";
 
 /** The destination of a claim table: the member that requests the claim, which the table grants as Studio's record. */
 function claim(member: string): string {
   return `engine declaration: ${member}, the engine's request, which this table grants as Studio's review record of the claim`;
+}
+/** The destination of a generated connection table: the member it projects, authored in each declaration. */
+function projected(member: string): string {
+  return `engine declaration: ${member}, authored in each declaration and projected into this generated record, which tests/unit/db/engine-catalog.test.ts holds to them`;
 }
 const STATEMENT_FAMILY =
   "core-owned: the vocabulary of a statement language family, which core keeps once for every engine that speaks it";
@@ -98,11 +104,6 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     name: "OPENS_SERVER_LEVEL_WITHOUT_DATABASE",
     destination: claim("connection.serverLevelWithoutDatabase"),
   },
-  {
-    module: CONNECTION_FIELDS_MODULE,
-    name: "CONNECTION_FIELD_ROWS",
-    destination: "engine declaration: connection.fields, the rows CONNECTION_FIELDS freezes",
-  },
   { module: CONNECTION_FIELDS_MODULE, name: "CONNECTION_FIELDS", destination: "engine declaration: connection.fields" },
   {
     module: CONNECTION_FIELDS_MODULE,
@@ -152,6 +153,41 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     name: "BUNDLED_CATALOG",
     destination:
       "engine declaration: id, location and connection.connectBudgetMs, authored in each declaration and projected into this generated record, which tests/unit/db/engine-catalog.test.ts holds to them",
+  },
+  {
+    module: CONNECTION_FLAGS_MODULE,
+    name: "BUNDLED_CONNECTION_STRING_ACCEPTED",
+    destination: projected("connection.connectionString.accepted"),
+  },
+  {
+    module: CONNECTION_FLAGS_MODULE,
+    name: "BUNDLED_DIALOG_OFFERS_URI",
+    destination: projected("connection.connectionString.dialogOffersUri"),
+  },
+  {
+    module: CONNECTION_FLAGS_MODULE,
+    name: "BUNDLED_READS_TRUST_MATERIAL",
+    destination: projected("connection.readsTrustMaterial"),
+  },
+  {
+    module: CONNECTION_MODULE,
+    name: "BUNDLED_CONNECTION_FIELDS",
+    destination: projected("connection.fields"),
+  },
+  {
+    module: CONNECTION_MODULE,
+    name: "BUNDLED_CREDENTIAL_WARNINGS",
+    destination: projected("connection.credentialWarnings"),
+  },
+  {
+    module: CONNECTION_MODULE,
+    name: "BUNDLED_REFUSED_FIELDS",
+    destination: projected("connection.refused"),
+  },
+  {
+    module: CONNECTION_MODULE,
+    name: "BUNDLED_SEED_ONLY",
+    destination: projected("connection.seedOnly"),
   },
   {
     module: "src/lib/db/engine-facets/index.ts",

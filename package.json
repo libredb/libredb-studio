@@ -177,7 +177,7 @@
     "channels:showcase:check": "node scripts/generate-channel-showcase.mjs --check",
     "readme:check": "node scripts/readme-check.mjs",
     "manifest:types": "bun scripts/generate-manifest-types.ts --write",
-    "engines:generate": "bun scripts/generate-engine-catalog.ts --write && bun scripts/generate-engine-declarations.ts --write",
+    "engines:generate": "bun scripts/generate-engine-catalog.ts --write && bun scripts/generate-engine-declarations.ts --write && bun scripts/generate-engine-catalog.ts --check",
     "security:check": "node scripts/security-check.mjs",
     "test:e2e:base-path": "playwright test --config=playwright.base-path.config.ts"
   },

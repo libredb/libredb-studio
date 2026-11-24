@@ -35,15 +35,15 @@ type Credential = { user?: string; password?: string };
 describe("CREDENTIAL_WARNINGS", () => {
   test("milvus, qdrant, weaviate, influxdb, influxdb3, oxia, databend, s3 and rabbitmq are the shipped types that declare credential warnings (vector-family spec 3.12, InfluxDB spec E12, SB3-1.5, Databend design 7.2)", () => {
     expect(Object.keys(CREDENTIAL_WARNINGS)).toEqual([
-      "milvus",
-      "qdrant",
-      "weaviate",
+      "databend",
       "influxdb",
       "influxdb3",
+      "milvus",
       "oxia",
-      "databend",
-      "s3",
+      "qdrant",
       "rabbitmq",
+      "s3",
+      "weaviate",
     ]);
     expect(CREDENTIAL_WARNINGS.milvus?.map((entry) => entry.kind)).toEqual(["pair", "no-secret"]);
     expect(CREDENTIAL_WARNINGS.qdrant?.map((entry) => entry.kind)).toEqual(["jwt", "no-secret"]);

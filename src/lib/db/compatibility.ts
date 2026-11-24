@@ -22,6 +22,11 @@
  */
 import type { DatabaseType, HostPathField } from "@/lib/types";
 import { BUNDLED_CATALOG } from "./engine-catalog/catalog.generated";
+import {
+  BUNDLED_CONNECTION_STRING_ACCEPTED,
+  BUNDLED_DIALOG_OFFERS_URI,
+  BUNDLED_READS_TRUST_MATERIAL,
+} from "./engine-catalog/connection-flags.generated";
 import type { ProviderCapabilities } from "./types";
 import type { WriteReach } from "./write-reach";
 
@@ -293,61 +298,19 @@ export const READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> 
  * in the runner image and Bun 1.4.4;
  * Snowflake, BigQuery and Firestore, whose hosts are fixed on port 443, only on Node.js 26.13.1 in the runner image.
  * Not measured:
- * Oracle in Thick mode, whose TLS is the Oracle Client's own (docs/BACKLOG.md). A new provider sets its row to true
- * only when its TLS library is not Node's, such as a native addon with a TLS stack of its own, and then hands
- * `requireTrustMaterial(context.trust)` from `./utils/require-trust-material` to its TLS wherever a connection
- * verifies against the system trust store (docs/ADDING_A_PROVIDER.md, "Step 3: Register in the Factory").
+ * Oracle in Thick mode, whose TLS is the Oracle Client's own (docs/BACKLOG.md). A new provider sets its declaration's
+ * `connection.readsTrustMaterial` to true only when its TLS library is not Node's, such as a native addon with a TLS
+ * stack of its own, and then hands `requireTrustMaterial(context.trust)` from `./utils/require-trust-material` to its
+ * TLS wherever a connection verifies against the system trust store (docs/ADDING_A_PROVIDER.md, "Step 3: Register in
+ * the Factory").
  *
- * An exhaustive Record over the union, so a new type-id cannot join without someone answering, and
+ * Each row is the engine's `connection.readsTrustMaterial`, authored in its declaration and projected into
+ * `./engine-catalog/connection-flags.generated.ts` (docs/providers/CONTRACT.md, clause M-71): an exhaustive frozen
+ * Record over the union, so a new type-id cannot join without someone answering, and
  * `tests/security/provider-trust-material.test.ts` holds every entry against the material that engine's provider
- * holds when the factory builds it. Frozen like the records above it.
+ * holds when the factory builds it.
  */
-export const READS_TRUST_MATERIAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
-  postgres: false,
-  bigquery: false,
-  snowflake: false,
-  spark: false,
-  mysql: false,
-  sqlite: false,
-  libsql: false,
-  duckdb: false,
-  oracle: false,
-  // db2-node verifies with rustls against the operating system's store, so NODE_EXTRA_CA_CERTS never reaches it.
-  db2: true,
-  mssql: false,
-  clickhouse: false,
-  druid: false,
-  trino: false,
-  cassandra: false,
-  elasticsearch: false,
-  opensearch: false,
-  mongodb: false,
-  couchbase: false,
-  redis: false,
-  prometheus: false,
-  kafka: false,
-  etcd: false,
-  neo4j: false,
-  milvus: false,
-  qdrant: false,
-  weaviate: false,
-  influxdb: false,
-  influxdb3: false,
-  oxia: false,
-  databend: false,
-  s3: false,
-  kubernetes: false,
-  mqtt: false,
-  firestore: false,
-  rabbitmq: false,
-  opcua: false,
-  mtconnect: false,
-  modbus: false,
-  netconf: false,
-  snmp: false,
-  sparkplug: false,
-  libredb: false,
-});
+export const READS_TRUST_MATERIAL: Readonly<Record<DatabaseType, boolean>> = BUNDLED_READS_TRUST_MATERIAL;
 
 /**
  * Which shipped engines refuse to open a handle at all when its file-access posture is denied, rather than confining
@@ -751,9 +714,9 @@ export const MASKING_EXEMPT_COLUMNS: Readonly<
  * `PROFILE_ENGINE_NOT_REVIEWED` and plan mode and the operations workflow run ungrounded; it is not
  * routed to `agent-operations` instead, because a composed statement is a statement.
  *
- * Held in this module, which imports nothing but types on purpose: it is read by the unauthenticated login hero,
- * and a provider module here would drag `oracledb`/`mssql` toward that bundle. Frozen like the records beside it, so
- * no code widens it at run time.
+ * Held in this module, which imports nothing but types, the generated engine catalog and the generated connection
+ * flags on purpose: it is read by the unauthenticated login hero, and a provider module here would drag
+ * `oracledb`/`mssql` toward that bundle. Frozen like the records beside it, so no code widens it at run time.
  */
 export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = Object.freeze([
   "postgres",
@@ -1280,59 +1243,12 @@ export const READ_ROOTS_REQUIRED_SENTENCE =
  * `src/lib/db/credential-warnings.ts` exists. No seed module reads it yet; the environment-URL source of PR A2
  * will, to keep a pasted URI verbatim only where this answers true, as the form's paste keeps it.
  *
- * An exhaustive Record over the union, so a new type-id cannot join without someone answering,
- * frozen like the records above it, and held equal to the form's own answer for every type by
- * `tests/unit/db/connection-string-records.test.ts`.
+ * Each row is the engine's `connection.connectionString.dialogOffersUri`, authored in its declaration and projected
+ * into `./engine-catalog/connection-flags.generated.ts` (docs/providers/CONTRACT.md, clause M-71): an exhaustive
+ * frozen Record over the union, so a new type-id cannot join without someone answering, held equal to the form's own
+ * answer for every type by `tests/unit/db/connection-string-records.test.ts`.
  */
-export const CONNECTION_FORM_URI_MODE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
-  postgres: false,
-  bigquery: false,
-  snowflake: false,
-  spark: false,
-  mysql: false,
-  sqlite: false,
-  libsql: true,
-  duckdb: false,
-  oracle: false,
-  db2: false,
-  mssql: false,
-  clickhouse: true,
-  druid: false,
-  trino: false,
-  cassandra: false,
-  elasticsearch: false,
-  opensearch: false,
-  mongodb: true,
-  couchbase: true,
-  redis: false,
-  prometheus: false,
-  kafka: false,
-  etcd: false,
-  neo4j: false,
-  milvus: false,
-  qdrant: false,
-  weaviate: false,
-  influxdb: false,
-  influxdb3: false,
-  oxia: false,
-  databend: false,
-  s3: false,
-  kubernetes: false,
-  mqtt: false,
-  firestore: false,
-  rabbitmq: false,
-  opcua: false,
-  mtconnect: false,
-  modbus: false,
-  // No URI mode: the form names a host, a port, an account and the device's host key fingerprint,
-  // and `netconf://` is a scheme nothing in this product parses. Held equal to
-  // `DB_UI_CONFIG[type].showConnectionStringToggle` by `connection-string-records.test.ts`.
-  netconf: false,
-  snmp: false,
-  // Host and port are the address, as MQTT's are, so there is no string form to parse.
-  sparkplug: false,
-  libredb: false,
-});
+export const CONNECTION_FORM_URI_MODE: Readonly<Record<DatabaseType, boolean>> = BUNDLED_DIALOG_OFFERS_URI;
 
 /**
  * The types whose provider reads `connectionString` (Spec A section 7):
@@ -1342,64 +1258,14 @@ export const CONNECTION_FORM_URI_MODE: Readonly<Record<DatabaseType, boolean>> =
  * `connectionString` where this answers false, naming the connection and the type, because a provider that
  * ignores the string would list a connection that opens somewhere else than the file says.
  *
- * An exhaustive Record over the union, frozen like the records above it, held equal to every
- * other shipped provider's declaration by the census in `tests/unit/db/connection-string-records.test.ts`, and
- * pinned there for the two exceptions by behavioural tests: sqlite opens the file a `file:` string names, and
- * mssql builds a string-only config against localhost.
+ * Each row is the engine's `connection.connectionString.accepted`, authored in its declaration and projected into
+ * `./engine-catalog/connection-flags.generated.ts` (docs/providers/CONTRACT.md, clause M-71): an exhaustive frozen
+ * Record over the union, held equal to every other shipped provider's declaration by the census in
+ * `tests/unit/db/connection-string-records.test.ts`, and pinned there for the two exceptions by behavioural tests:
+ * sqlite opens the file a `file:` string names (docs/providers/sqlite.md), and mssql builds a string-only config
+ * against localhost (docs/providers/mssql.md).
  */
-export const CONNECTION_STRING_ACCEPTED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
-  postgres: true,
-  bigquery: false,
-  snowflake: false,
-  spark: false,
-  mysql: true,
-  // The provider's supportsConnectionString flag is false, yet this field names the database file it opens: the
-  // provider factory reads it, a leading `file:` removed, as the file it admits (`admittedFileConnection` in
-  // provider-files.ts), docs/providers/sqlite.md.
-  sqlite: true,
-  libsql: true,
-  duckdb: false,
-  oracle: true,
-  db2: true,
-  // Declared true for the form's paste, documented UI-only, while buildConfig builds from the fields only, so a
-  // seed carrying only connectionString would open localhost: mssql.ts buildConfig, docs/providers/mssql.md.
-  mssql: false,
-  clickhouse: true,
-  druid: false,
-  trino: false,
-  cassandra: false,
-  elasticsearch: false,
-  opensearch: false,
-  mongodb: true,
-  couchbase: true,
-  redis: false,
-  prometheus: false,
-  kafka: false,
-  etcd: false,
-  neo4j: false,
-  milvus: false,
-  qdrant: false,
-  weaviate: false,
-  influxdb: false,
-  influxdb3: false,
-  oxia: false,
-  databend: false,
-  s3: false,
-  kubernetes: false,
-  mqtt: false,
-  firestore: false,
-  rabbitmq: false,
-  // The endpoint URL is the whole address: host and port are read from it, so there is no second string to parse.
-  opcua: false,
-  // Host and port are the address and `apiPath` is a field of its own, so there is no string form to parse.
-  mtconnect: false,
-  modbus: false,
-  // in one box.
-  netconf: false,
-  snmp: false,
-  sparkplug: false,
-  libredb: false,
-});
+export const CONNECTION_STRING_ACCEPTED: Readonly<Record<DatabaseType, boolean>> = BUNDLED_CONNECTION_STRING_ACCEPTED;
 
 /**
  * Which shipped engines open a file on Studio's own host rather than reach a server: the connection is a path, and

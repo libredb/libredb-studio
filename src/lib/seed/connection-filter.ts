@@ -1,4 +1,4 @@
-import { SEED_AGENT_CREDENTIAL, SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
+import { SEED_AGENT_CREDENTIAL, SEED_ONLY_FIELDS, seedOnlyProjectionRefusal } from "@/lib/db/connection-fields";
 import type { DatabaseConnection, DatabaseType, SSLConfig } from "@/lib/types";
 import { KUBERNETES_REVIEWED_ROLE } from "./roles";
 import type { SeedConnection, SeedDefaults, ManagedConnection, UnavailableSeedEntry } from "./types";
@@ -30,7 +30,7 @@ function assertSeedOnlyFieldsBelong(conn: SeedConnection): void {
   for (const [owner, row] of Object.entries(SEED_ONLY_FIELDS)) {
     if (!row?.projectionRefusal || owner === conn.type) continue;
     if (!row.fields.some((field) => fields[field])) continue;
-    throw new Error(row.projectionRefusal(conn.id, conn.type));
+    throw new Error(seedOnlyProjectionRefusal(row, conn.id, conn.type));
   }
 }
 
