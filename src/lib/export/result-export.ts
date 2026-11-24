@@ -293,11 +293,26 @@ function isFloatColumn(declared: unknown, vocabulary: ExportTypeVocabulary): boo
  */
 function isNumericColumn(declared: unknown, vocabulary: ExportTypeVocabulary): boolean {
   if (typeof declared !== "string") return false;
-  let type = declared;
-  for (let match = vocabulary.numericWrapper.exec(type); match !== null; match = vocabulary.numericWrapper.exec(type)) {
-    type = match[1];
-  }
+  const type = unwrappedNumericType(declared, vocabulary.numericWrapper);
   return isFloatColumn(type, vocabulary) || vocabulary.exactNumericType.test(type.trim());
+}
+
+/**
+ * `declared` with the engine's numeric wrapper taken off for as long as the wrapper matches and its capture is a
+ * strictly shorter type (docs/providers/CONTRACT.md, clause S-15).
+ *
+ * A declaration may state any one-group pattern as its wrapper, so matching alone cannot end the loop: a capture as long
+ * as the type (`^(.*)$`) would match its own capture forever, and an absent capture is no type at all. Either ends the
+ * unwrapping with the type as it stands.
+ */
+function unwrappedNumericType(declared: string, wrapper: RegExp): string {
+  let type = declared;
+  for (let match = wrapper.exec(type); match !== null; match = wrapper.exec(type)) {
+    const inner = match[1];
+    if (inner === undefined || inner.length >= type.length) break;
+    type = inner;
+  }
+  return type;
 }
 
 /**

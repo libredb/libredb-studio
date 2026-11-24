@@ -1659,6 +1659,7 @@ The validator counts that group without running the declared pattern, so a wrapp
 
 A host compiles each type pattern once, when it reads the declaration.
 It strips wrappers while the wrapper pattern matches and its capture is shorter than the type, and stops otherwise, since a capture as long as the type would never end the loop.
+Studio takes a wrapper off only while the pattern matches and its capture is a strictly shorter type, so a capture as long as the type, or none, ends the unwrapping; `tests/unit/lib/export/numeric-wrapper-bounds.test.ts` holds both in a bounded child.
 Backtracking is not checked yet, as M-35 says of a field rule's pattern.
 Every type pattern Studio declares is the source and flags of one its export runs today, each measured to run in time linear in the type's length.
 
