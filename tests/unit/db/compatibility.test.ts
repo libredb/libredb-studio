@@ -27,6 +27,7 @@ import {
   READ_ONLY_ENFORCED,
   READ_ROOTS_REQUIRED,
   READS_FILE_ACCESS_POSTURE,
+  SERVES_ONE_SESSION,
   SHIPPED_DATABASE_TYPES,
   SINGLE_WRITER_FILE,
 } from "@/lib/db/compatibility";
@@ -888,5 +889,30 @@ describe("SINGLE_WRITER_FILE", () => {
     expect(SHIPPED_DATABASE_TYPES.filter((type) => SINGLE_WRITER_FILE[type])).toEqual(measured);
     // Vacuity, by name: a record and a census that both found nothing would agree above.
     expect(measured).toEqual(["duckdb", "libredb"]);
+  });
+});
+
+/**
+ * `SERVES_ONE_SESSION` (docs/providers/CONTRACT.md, clause C-66): the engines whose connections serve their object tree
+ * from one session, the editor's, each with the reason Studio's census found. The host's own record, read only by
+ * `sessionCapacity` in src/lib/db/session-capacity.ts, and never a claim an engine declaration requests.
+ */
+describe("SERVES_ONE_SESSION", () => {
+  test("is exhaustive over the shipped engines and frozen, each reason a sentence", () => {
+    expect(Object.keys(SERVES_ONE_SESSION).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
+    expect(Object.isFrozen(SERVES_ONE_SESSION)).toBe(true);
+    for (const type of SHIPPED_DATABASE_TYPES) {
+      const reason = SERVES_ONE_SESSION[type];
+      if (reason === null) continue;
+      // A sentence: a capital first, a full stop last, and nothing but one line between.
+      expect([type, /^[A-Z][^\n]*\.$/.test(reason)]).toEqual([type, true]);
+    }
+  });
+
+  test("names a reason for every engine SINGLE_WRITER_FILE names", () => {
+    const singleWriter = SHIPPED_DATABASE_TYPES.filter((type) => SINGLE_WRITER_FILE[type]);
+    expect(singleWriter.filter((type) => SERVES_ONE_SESSION[type] === null)).toEqual([]);
+    // Vacuity, by name: an empty single-writer record would pass above.
+    expect(singleWriter).toEqual(["duckdb", "libredb"]);
   });
 });

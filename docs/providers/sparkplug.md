@@ -75,6 +75,8 @@ The cost is stated rather than hidden: two directories carry a similar dial, and
 the evidence for extracting a shared transport later, which is separate work because extracting it
 has to widen the shipped result shape.
 
+The object tree reads on the editor's session, never on a metadata session of its own: the tree is the session's own connect read, so a second session would answer another read's snapshot after a broker read of its own ((docs/providers/CONTRACT.md, clause C-66)).
+
 ### 2.4 Why the decoder is this repository's own
 
 Measured against four published Sparkplug codecs on npm: given an Int32Array one refuses the whole

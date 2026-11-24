@@ -550,12 +550,12 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   [factory, "withOneShotTunnel", "withholdProviderError"],
   [factory, "teardownProvider", "withholdProviderError"],
   [factory, "keepsRunInFlight", "withholdProviderError"],
-  [factory, "evictIdleProviders", "withholdProviderError"],
+  [factory, "evictIdleEntries", "withholdProviderError"],
   [factory, "reusableEntry", "withholdProviderError"],
   [factory, "openEditorProvider", "providerTextScrub"],
   [factory, "openEditorProvider", "withholdProviderError"],
   [factory, "openProfiledProvider", "providerTextScrub"],
-  [factory, "removeProvider", "withholdProviderError"],
+  [factory, "disconnectShared", "withholdProviderError"],
 ];
 
 /** The reason a read of an inventory snapshot's provider sentence is no crossing of its own. */

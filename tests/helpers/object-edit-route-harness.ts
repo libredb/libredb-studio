@@ -234,6 +234,7 @@ mock.module("@/lib/seed/resolve-connection", () => {
 
 mock.module("@/lib/db", () => ({
   getOrCreateProvider: mockGetOrCreateProvider,
+  getOrCreateMetadataProvider: mockGetOrCreateProvider,
   createDatabaseProvider: mock(),
   removeProvider: mock(),
   clearProviderCache: mock(),

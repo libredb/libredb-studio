@@ -65,6 +65,12 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
   },
   { module: COMPATIBILITY, name: "REFUSES_DENIED_FILE_ACCESS", destination: claim("policy.deniedFileAccessRefusal") },
   { module: COMPATIBILITY, name: "SINGLE_WRITER_FILE", destination: claim("policy.singleWriterFile") },
+  {
+    module: COMPATIBILITY,
+    name: "SERVES_ONE_SESSION",
+    destination:
+      "core-owned: which engines serve their tree from one session is the host's own measurement, and no manifest declares it",
+  },
   { module: COMPATIBILITY, name: "MASKING_EXEMPT_COLUMNS", destination: claim("policy.maskingExemptColumns") },
   { module: COMPATIBILITY, name: "MCP_EXPOSABLE", destination: claim("mcp.exposable") },
   { module: COMPATIBILITY, name: "MCP_STATEMENT_READ", destination: claim("mcp.statementRead") },

@@ -187,6 +187,8 @@ server began sending notifications: it reported 17 replies to 12 requests. Repli
 On an end-of-message session a request that holds the `]]>]]>` separator is refused and nothing is written, because RFC 6242 section 4.3 keeps the separator out of the data and a peer would read the first one as the end of the message.
 Chunked framing counts bytes, so the same text is ordinary data there and is framed as before.
 
+The object tree reads on the editor's session, never on a metadata session of its own, because a device may admit few sessions and none has been measured against Studio's session limits ((docs/providers/CONTRACT.md, clause C-66)); so a tree read sent while an editor request is in flight on that session is refused as above.
+
 ### 3.5 Only implemented modules are listed
 
 A YANG library lists modules the device implements and modules it merely imports. The tree lists

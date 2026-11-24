@@ -274,6 +274,7 @@ Studio opens a governed connection for each person separately, even when two peo
   A `SET` value, a temporary table or any other session state one person leaves behind never reaches another person's statements.
 - A person's pool opens a database session only when that person runs something, and holds at most `provider.poolMaxPerUser` sessions, 3 by default.
   So each person who uses a connection can hold that many of its database sessions per Studio instance, and the database's connection limit needs room for that.
+- A person's object tree reads on a metadata session of their own beside it, which holds at most 2 more sessions and none while idle, so the database's connection limit needs room for `provider.poolMaxPerUser` plus 2 per person per connection, except on the engines and connections that serve one session (docs/providers/CONTRACT.md, C-66).
 - An interactive transaction belongs to the person who began it: another person neither sees it in the transaction status nor runs a statement inside it, and can begin their own beside it.
 - A cancel reaches only the statements of the person who sends it, so naming another person's query id stops nothing.
 - A disconnect request (`POST /api/db/disconnect`) closes only the providers of the person who sends it, never another person's sessions or transactions on the same connection.
@@ -615,7 +616,7 @@ A control plane may set these keys through `bridge.settings_v1`, and no others:
 | `agent.enabled` | boolean | | `LIBREDB_AGENT_ENABLED` | the query agent switch |
 | `mcp.enabled` | boolean | | `LIBREDB_MCP_ENABLED` | the MCP endpoint switch, checked again on every request |
 | `query.timeoutMs` | integer | 1000 to 3600000 | 60000 | the statement timeout of every governed connection |
-| `provider.poolMaxPerUser` | integer | 1 to 10 | 3 | the pool size of each user's database sessions, for sessions opened after the change |
+| `provider.poolMaxPerUser` | integer | 1 to 10 | 3 | the pool size of each user's database sessions, for sessions opened after the change; the tree's metadata session is apart from it |
 | `queryLog.statementCapture` | string | `none`, `redacted`, `full` | `none` | the query event builder, and a notice in the editor when it is `full` |
 | `queryLog.maxStatementBytes` | integer | 256 to 65536 | 4096 | the query event builder, which cuts a captured statement to this many UTF-8 bytes |
 | `queryLog.onSinkFailure` | string | `continue`, `refuse` | `continue` | the check that runs before every recorded execution |

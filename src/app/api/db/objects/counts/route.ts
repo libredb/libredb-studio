@@ -20,14 +20,23 @@ export const dynamic = "force-dynamic";
  *
  * The count is a host core tree call (`objectTree`, src/lib/api/object-tree.ts), under its own deadline and the
  * request's signal.
+ *
+ * The count runs on the connection's metadata session (`{ session: "metadata" }`), beside the editor's, so it never
+ * waits for the editor's statements, except on a connection that serves one session (docs/providers/CONTRACT.md,
+ * clause C-66).
  */
 export async function POST(req: NextRequest) {
-  return handleObjectRequest(req, "api/db/objects/counts", async (provider, body, context) => {
-    const container = requireStringArray(body, "container");
-    assertContainerAddress(provider, "container", container);
-    return scrubKindCounts(
-      context.scrub,
-      await objectTree(provider, req.signal, context.route).countObjects(container),
-    );
-  });
+  return handleObjectRequest(
+    req,
+    "api/db/objects/counts",
+    async (provider, body, context) => {
+      const container = requireStringArray(body, "container");
+      assertContainerAddress(provider, "container", container);
+      return scrubKindCounts(
+        context.scrub,
+        await objectTree(provider, req.signal, context.route).countObjects(container),
+      );
+    },
+    { session: "metadata" },
+  );
 }

@@ -469,6 +469,7 @@ const nodeEnvBefore = process.env.NODE_ENV;
 const {
   createDatabaseProvider,
   getOrCreateProvider: rawGetOrCreateProvider,
+  getOrCreateMetadataProvider,
   removeProvider,
   clearProviderCache,
   getProviderCacheStats,
@@ -3259,6 +3260,57 @@ describe("removeProvider", () => {
     expect(getProviderCacheStats().size).toBe(0);
   });
 
+  test("the shared entries of a connection are disconnected beside each other, each leaving the cache once its own disconnect answers", async () => {
+    // One connection id opened with two credentials holds two shared entries in the writable cache.
+    const first = makeConnection("postgres", { id: "remove-beside", password: "first" });
+    const second = makeConnection("postgres", { id: "remove-beside", password: "second" });
+    const providers = [await getOrCreateProvider(first), await getOrCreateProvider(second)];
+    expect(providers[0]).not.toBe(providers[1]);
+    expect(getProviderCacheStats().size).toBe(2);
+
+    const started: number[] = [];
+    const releases: (() => void)[] = [];
+    let releasingAll = false;
+    providers.forEach((provider, index) => {
+      provider.disconnect = () =>
+        new Promise<void>((resolve) => {
+          started.push(index);
+          if (releasingAll) resolve();
+          else releases.push(resolve);
+        });
+    });
+
+    let removed = false;
+    const removal = removeProvider("remove-beside").then(() => {
+      removed = true;
+    });
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+    try {
+      await tick();
+
+      // Both disconnects have started while neither has answered, and the removal waits for both.
+      expect(started.toSorted()).toEqual([0, 1]);
+      expect(removed).toBe(false);
+      expect(getProviderCacheStats().size).toBe(2);
+
+      releases[0]();
+      await tick();
+      expect(removed).toBe(false);
+      expect(getProviderCacheStats().size).toBe(1);
+
+      releases[1]();
+      await removal;
+      expect(getProviderCacheStats().size).toBe(0);
+      expect(mockCloseSSHTunnel).toHaveBeenCalledWith("remove-beside");
+    } finally {
+      // Every held disconnect is released, and one started after an earlier one answered answers at once, so the
+      // removal ends whatever the assertions above found.
+      releasingAll = true;
+      for (const release of releases) release();
+      await removal;
+    }
+  });
+
   test("logs and continues when SSH tunnel close fails", async () => {
     mockCloseSSHTunnel.mockImplementationOnce(async () => {
       throw new Error("tunnel close failed");
@@ -5773,6 +5825,23 @@ describe("acquireExecutionProfileProvider", () => {
       // The editor is still served a writable provider.
       const shared = await getOrCreateProvider(conn);
       expect((await shared.query("INSERT INTO t (id, v) VALUES (2, 'editor')")).rowCount).toBe(1);
+    });
+
+    test("the readOnly refusal names the entry point the caller used", async () => {
+      const conn = await seedFileConnection();
+
+      const editor: unknown = await getOrCreateProvider(conn, {}, { readOnly: true } as never).catch((e: unknown) => e);
+      expect(editor).toBeInstanceOf(DatabaseConfigError);
+      expect((editor as Error).message).toStartWith("getOrCreateProvider takes no readOnly in its execution context:");
+
+      const tree: unknown = await getOrCreateMetadataProvider(conn, {}, { readOnly: true } as never).catch(
+        (e: unknown) => e,
+      );
+      expect(tree).toBeInstanceOf(DatabaseConfigError);
+      expect((tree as Error).message).toStartWith(
+        "getOrCreateMetadataProvider takes no readOnly in its execution context:",
+      );
+      expect(getProviderCacheStats().size).toBe(0);
     });
 
     test("refuses an in-memory sqlite target for the agent profile (fail closed)", async () => {
@@ -8650,4 +8719,404 @@ describe("a field its engine refuses is refused by core on every connect path (F
       expect(declarations).toEqual(expected);
     },
   );
+});
+
+// ─── The metadata session (docs/providers/CONTRACT.md, clause C-66) ─────────────────────────────────────────────────
+//
+// A tree read runs on a metadata session of the connection's own, beside the editor's, so a listing never waits for the
+// editor's statements, except where the host's session capacity class says the connection serves one session
+// (`sessionCapacity`, src/lib/db/session-capacity.ts): there it reads on the editor's provider itself. The metadata
+// session passes every check the editor's passes, is keyed by the editor's key with a metadata frame, and lives and
+// leaves with the editor's: one open per key (C-44), the teardown's deadlines (C-45), the idle sweep, every removal, and
+// the SSH tunnel it reaches the connection through.
+
+describe("the metadata session", () => {
+  const owned = (owner: string, ownerPoolMax = 3): EditorExecutionContext => ({ owner, ownerPoolMax });
+  /** Lets every pending promise settle: bun's fake timers leave setImmediate real. */
+  const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+  const hangs = (): Promise<void> => new Promise<void>(() => {});
+  const OVERTAKEN =
+    "The connection was closed while it was opening: a disconnect, a removal, a change of access or a shutdown closed it before it was ready, so nothing was sent to the database. Try again.";
+  /** The first argument of every call `spy` saw, which is the line each log call writes. */
+  const lines = (spy: ReturnType<typeof spyOn>): string[] => spy.mock.calls.map((call: unknown[]) => String(call[0]));
+  /** The pool size of every pg Pool built since the last reset. */
+  const pools = () => pgPoolConfigs.map(({ min, max, idleTimeoutMillis }) => ({ min, max, idleTimeoutMillis }));
+  /** The provider builds `log` saw, by the line `createDatabaseProvider` writes for each. */
+  const builds = (log: ReturnType<typeof spyOn>): string[] =>
+    lines(log).filter((line) => line.startsWith("[DB] Creating"));
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  test("a tree read's provider is a session of its own beside the editor's, from the same connection and posture, with a pool of at most two that opens none until asked", async () => {
+    const conn = makeConnection("postgres", { id: "metadata-pg", password: randomUUID() });
+    pgPoolConfigs.length = 0;
+
+    const editor = await getOrCreateProvider(conn);
+    const tree = await getOrCreateMetadataProvider(conn);
+
+    expect(tree).not.toBe(editor);
+    expect(tree.isConnected()).toBe(true);
+    expect(tree.config).toEqual(editor.config);
+    // The editor's pool is Studio's default; the metadata session's opens none until a read asks, and at most two.
+    expect(pools()).toEqual([
+      { min: 2, max: 10, idleTimeoutMillis: 30_000 },
+      { min: 0, max: 2, idleTimeoutMillis: 30_000 },
+    ]);
+    // Each is cached under its own key: a second call of either answers its own provider, and builds nothing.
+    expect(await getOrCreateMetadataProvider(conn)).toBe(tree);
+    expect(await getOrCreateProvider(conn)).toBe(editor);
+    expect(pgPoolConfigs).toHaveLength(2);
+    // The package's cache statistics count editor providers only.
+    expect(getProviderCacheStats()).toEqual({ size: 1, connections: ["metadata-pg"] });
+
+    // The posture reaches the metadata session as it reaches the editor's: a SQLite file opens under a granted one, and
+    // a denied one is refused by the same sentence on both.
+    const dir = mkdtempSync(join(tmpdir(), "libredb-factory-metadata-"));
+    try {
+      const file = makeConnection("sqlite", { id: "metadata-sqlite", database: join(dir, "orders.db") });
+      const granted = { allowExternalFileAccess: true };
+      const fileEditor = await rawGetOrCreateProvider(file, {}, granted);
+      const fileTree = await getOrCreateMetadataProvider(file, {}, granted);
+      expect(fileTree).not.toBe(fileEditor);
+      expect(fileTree.isConnected()).toBe(true);
+      const denied = await Promise.all([
+        rawGetOrCreateProvider({ ...file, id: "metadata-denied" }, {}, {}).catch((error: unknown) => error),
+        getOrCreateMetadataProvider({ ...file, id: "metadata-denied" }, {}, {}).catch((error: unknown) => error),
+      ]);
+      expect(denied[1]).toBeInstanceOf(DatabaseConfigError);
+      expect((denied[1] as Error).message).toBe((denied[0] as Error).message);
+    } finally {
+      await clearProviderCache();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("under governance each owner's metadata session is their own, with a pool of at most two beside a pool of poolMaxPerUser", async () => {
+    const conn = makeConnection("postgres", { id: "seed:metadata-owned" });
+    pgPoolConfigs.length = 0;
+
+    const aliceEditor = await getOrCreateProvider(conn, {}, owned("alice-subject"));
+    const bobEditor = await getOrCreateProvider(conn, {}, owned("bob-subject"));
+    const aliceTree = await getOrCreateMetadataProvider(conn, {}, owned("alice-subject"));
+    const bobTree = await getOrCreateMetadataProvider(conn, {}, owned("bob-subject"));
+
+    expect(new Set([aliceEditor, bobEditor, aliceTree, bobTree]).size).toBe(4);
+    expect(await getOrCreateMetadataProvider(conn, {}, owned("alice-subject"))).toBe(aliceTree);
+    // A caller's own pool options never widen it: the owned metadata session is two whatever poolMaxPerUser says.
+    const wideTree = await getOrCreateMetadataProvider(
+      makeConnection("postgres", { id: "seed:metadata-wide" }),
+      { pool: { min: 4, max: 50, idleTimeout: 5_000 } },
+      owned("alice-subject", 7),
+    );
+    expect(wideTree.isConnected()).toBe(true);
+    expect(pools()).toEqual([
+      { min: 0, max: 3, idleTimeoutMillis: 30_000 },
+      { min: 0, max: 3, idleTimeoutMillis: 30_000 },
+      { min: 0, max: 2, idleTimeoutMillis: 30_000 },
+      { min: 0, max: 2, idleTimeoutMillis: 30_000 },
+      { min: 0, max: 2, idleTimeoutMillis: 5_000 },
+    ]);
+  });
+
+  test("a connection that serves one session answers the editor's own provider and builds no other", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "libredb-factory-metadata-one-"));
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const cases: [string, DatabaseConnection, EditorExecutionContext][] = [
+        ["a DuckDB file", makeConnection("duckdb", { id: "one-duckdb", database: join(dir, "one.duckdb") }), {}],
+        ["DuckDB in memory", makeConnection("duckdb", { id: "one-duckdb-memory", database: ":memory:" }), {}],
+        [
+          "SQLite in memory",
+          makeConnection("sqlite", { id: "one-sqlite-memory", database: ":memory:" }),
+          { allowExternalFileAccess: true },
+        ],
+      ];
+      for (const [label, conn, execution] of cases) {
+        log.mockClear();
+        // The tree asks first: it opens the editor's provider, and the editor is then handed that same provider.
+        // oxlint-disable-next-line no-await-in-loop -- one connection at a time, so each build count is its own.
+        const tree = await getOrCreateMetadataProvider(conn, {}, execution);
+        // oxlint-disable-next-line no-await-in-loop -- the editor's call after the tree's, on the same connection.
+        const editor = await rawGetOrCreateProvider(conn, {}, execution);
+        expect([label, tree === editor]).toEqual([label, true]);
+        expect([label, builds(log)]).toEqual([label, [expect.stringContaining(`"Test ${conn.type}"`)]]);
+      }
+    } finally {
+      log.mockRestore();
+      await clearProviderCache();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("every refusal of the editor's open refuses a metadata open alike, before anything is built", async () => {
+    const conn = makeConnection("postgres", { id: "metadata-refusals", ...TUNNELLED });
+    const notPlain = Object.assign(new (class ConnectionRecord {})(), conn) as DatabaseConnection;
+    const cases: [string, DatabaseConnection, EditorExecutionContext][] = [
+      ["a type that names no provider", { ...conn, type: "nonesuch" as DatabaseType }, {}],
+      ["a missing id", { ...conn, id: undefined as unknown as string }, {}],
+      ["a readOnly in the execution context", conn, { readOnly: true } as EditorExecutionContext],
+      ["a record that is not plain data", notPlain, {}],
+      ["an owner without a whole ownerPoolMax", conn, { owner: "alice-subject", ownerPoolMax: 2.5 }],
+    ];
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      for (const [label, record, execution] of cases) {
+        // oxlint-disable-next-line no-await-in-loop -- one case at a time, so each refusal pair is its own.
+        const [editor, tree] = await Promise.all([
+          rawGetOrCreateProvider(record, {}, execution).catch((error: unknown) => error),
+          getOrCreateMetadataProvider(record, {}, execution).catch((error: unknown) => error),
+        ]);
+        // The same refusal, its sentence naming the entry point the caller used where it names one.
+        expect([label, (tree as Error).constructor.name, (tree as Error).message]).toEqual([
+          label,
+          (editor as Error).constructor.name,
+          (editor as Error).message.replace(/^getOrCreateProvider /, "getOrCreateMetadataProvider "),
+        ]);
+        expect([label, tree instanceof Error]).toEqual([label, true]);
+      }
+      expect(builds(log)).toEqual([]);
+      expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  test("two concurrent first tree reads of one connection open one metadata session, and a removal overtakes one in flight", async () => {
+    const conn = makeConnection("postgres", { id: "metadata-open-once" });
+    const gate = await gateConnects(conn);
+    const digests = trackDigests();
+    try {
+      const first = getOrCreateMetadataProvider(conn);
+      const second = getOrCreateMetadataProvider(conn);
+      await gate.reached(1);
+      await digests.settled();
+      await turns(20);
+      gate.open();
+      const [one, two] = await Promise.all([first, second]);
+      expect(gate.connected).toHaveLength(1);
+      expect(one).toBe(two);
+      expect(one).toBe(gate.connected[0]);
+    } finally {
+      gate.restore();
+      digests.restore();
+    }
+
+    const overtaken = makeConnection("postgres", { id: "metadata-overtaken" });
+    const held = await gateConnects(overtaken);
+    try {
+      const opening = getOrCreateMetadataProvider(overtaken).catch((error: unknown) => error);
+      await held.reached(1);
+      const disconnects = countDisconnects(held.connected[0] as DatabaseProvider);
+
+      await removeProvider("metadata-overtaken");
+      held.open();
+      const error = await opening;
+
+      expect(error).toBeInstanceOf(ConnectionError);
+      expect((error as Error).message).toBe(OVERTAKEN);
+      expect(disconnects.count).toBe(1);
+      // Nothing was admitted: the next tree read opens a session of its own.
+      const next = await getOrCreateMetadataProvider(overtaken);
+      expect(next).not.toBe(held.connected[0]);
+      expect(next.isConnected()).toBe(true);
+    } finally {
+      held.restore();
+    }
+  });
+
+  test("a removal closes the metadata session with the editor's, by connection, by owner and by record key", async () => {
+    // Without a scope: every entry of the connection.
+    const conn = makeConnection("postgres", { id: "metadata-remove" });
+    const editor = await getOrCreateProvider(conn);
+    const tree = await getOrCreateMetadataProvider(conn);
+    await removeProvider("metadata-remove");
+    expect([editor.isConnected(), tree.isConnected()]).toEqual([false, false]);
+    expect(await getOrCreateMetadataProvider(conn)).not.toBe(tree);
+
+    // With an owner scope: that owner's metadata session, and no other owner's.
+    const governed = makeConnection("postgres", { id: "seed:metadata-remove" });
+    const aliceTree = await getOrCreateMetadataProvider(governed, {}, owned("alice-subject"));
+    const bobTree = await getOrCreateMetadataProvider(governed, {}, owned("bob-subject"));
+    await removeProvider("seed:metadata-remove", { owner: "alice-subject" });
+    expect([aliceTree.isConnected(), bobTree.isConnected()]).toEqual([false, true]);
+    expect(await getOrCreateMetadataProvider(governed, {}, owned("bob-subject"))).toBe(bobTree);
+
+    // With a key scope: the record's own metadata session, and not another record's of the same id.
+    const alice = makeConnection("postgres", { id: "metadata-keyed", user: "alice", password: randomUUID() });
+    const bob = makeConnection("postgres", { id: "metadata-keyed", user: "bob", password: randomUUID() });
+    const alicesTree = await getOrCreateMetadataProvider(alice);
+    const bobsTree = await getOrCreateMetadataProvider(bob);
+    await removeProvider("metadata-keyed", { key: await editorCacheKey(alice) });
+    expect([alicesTree.isConnected(), bobsTree.isConnected()]).toEqual([false, true]);
+    expect(await getOrCreateMetadataProvider(bob)).toBe(bobsTree);
+
+    // A failed disconnect is logged by the metadata noun, through the entry's scrub.
+    const password = randomUUID();
+    const secret = makeConnection("postgres", { id: "metadata-remove-secret", password });
+    const failing = await getOrCreateMetadataProvider(secret);
+    failing.disconnect = () => Promise.reject(echoing(password));
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      await removeProvider("metadata-remove-secret");
+      expect(warn.mock.calls).toEqual([
+        [
+          "Error disconnecting metadata provider metadata-remove-secret",
+          { connectionId: "metadata-remove-secret", error: withheldLine("Error") },
+        ],
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("the idle sweep evicts an idle metadata session and keeps one with a run in flight", async () => {
+    const info = spyOn(logger, "info").mockImplementation(() => {});
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const tree = await getOrCreateMetadataProvider(makeConnection("postgres", { id: "metadata-idle" }));
+      const busy = await getOrCreateMetadataProvider(makeConnection("postgres", { id: "metadata-busy" }));
+      Object.assign(busy, { hasRunsInFlight: () => true });
+      const password = randomUUID();
+      const failing = await getOrCreateMetadataProvider(
+        makeConnection("postgres", { id: "metadata-idle-fails", password }),
+      );
+      failing.disconnect = () => Promise.reject(echoing(password));
+
+      expect(await evictIdleProviders(0)).toBe(2);
+
+      expect([tree.isConnected(), busy.isConnected()]).toEqual([false, true]);
+      expect(lines(info)).toEqual([
+        "[DB] Evicting idle metadata provider: metadata-idle (idle 0min)",
+        "[DB] Keeping idle metadata provider metadata-busy (idle 0min): it reports a run in flight, so the next sweep checks it again.",
+        "[DB] Evicting idle metadata provider: metadata-idle-fails (idle 0min)",
+      ]);
+      expect(warn.mock.calls).toEqual([
+        [
+          "[DB] Error disconnecting idle metadata provider metadata-idle-fails",
+          { connectionId: "metadata-idle-fails", error: withheldLine("Error") },
+        ],
+      ]);
+      expect(mockCloseSSHTunnel).toHaveBeenCalledWith("metadata-idle");
+      expect(mockCloseSSHTunnel).not.toHaveBeenCalledWith("metadata-busy");
+      // The kept session is still served, not reopened.
+      expect(await getOrCreateMetadataProvider(makeConnection("postgres", { id: "metadata-busy" }))).toBe(busy);
+
+      // An owned metadata session is torn down, as an owned editor provider is.
+      const ownedTree = await getOrCreateMetadataProvider(
+        makeConnection("postgres", { id: "seed:metadata-idle" }),
+        {},
+        owned("alice-subject"),
+      );
+      Object.assign(busy, { hasRunsInFlight: () => false });
+      expect(await evictIdleProviders(0)).toBe(2);
+      expect([ownedTree.isConnected(), busy.isConnected()]).toEqual([false, false]);
+    } finally {
+      info.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  test("the caches' close tears the metadata sessions down under the teardown's deadlines and names one not closed", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    const error = spyOn(logger, "error").mockImplementation(() => {});
+    const consoleError = spyOn(console, "error").mockImplementation(() => {});
+    const savedVersion = process.env.NEXT_PUBLIC_APP_VERSION;
+    delete process.env.NEXT_PUBLIC_APP_VERSION;
+    resetShutdownHooks();
+    try {
+      const closes = await getOrCreateMetadataProvider(makeConnection("postgres", { id: "metadata-closes" }));
+      const hanging = await getOrCreateMetadataProvider(makeConnection("postgres", { id: "metadata-hangs" }));
+      hanging.disconnect = hangs;
+      const password = randomUUID();
+      const failing = await getOrCreateMetadataProvider(
+        makeConnection("postgres", { id: "metadata-close-fails", password }),
+      );
+      failing.disconnect = () => Promise.reject(echoing(password));
+      jest.useFakeTimers();
+
+      let outcome: unknown;
+      const run = closeProviderCaches().then((result) => {
+        outcome = result;
+      });
+      await settle();
+      jest.advanceTimersByTime(9_999);
+      await settle();
+      expect(outcome).toBeUndefined();
+      jest.advanceTimersByTime(1);
+      await run;
+
+      expect(outcome).toEqual({ cut: 0, failed: 1 });
+      expect(closes.isConnected()).toBe(false);
+      expect(error).toHaveBeenCalledWith(
+        "Provider cache close failed",
+        expect.objectContaining({
+          message:
+            "Providers not closed: metadata-hangs (PostgreSQL provider, bundled with Studio), metadata-close-fails (PostgreSQL provider, bundled with Studio)",
+        }),
+        { route: "shutdown" },
+      );
+      expect(lines(warn)).toEqual([
+        "[DB] Abandoned the pool of shared provider metadata-hangs: its disconnect did not finish within 10000 ms.",
+      ]);
+      expect(consoleError.mock.calls).toEqual([
+        ["[DB] Error disconnecting metadata provider", "metadata-close-fails", withheldLine("Error")],
+      ]);
+      // The caches are empty: the next tree read opens a session of its own.
+      jest.useRealTimers();
+      expect(await getOrCreateMetadataProvider(makeConnection("postgres", { id: "metadata-closes" }))).not.toBe(closes);
+    } finally {
+      resetShutdownHooks();
+      warn.mockRestore();
+      error.mockRestore();
+      consoleError.mockRestore();
+      if (savedVersion === undefined) delete process.env.NEXT_PUBLIC_APP_VERSION;
+      else process.env.NEXT_PUBLIC_APP_VERSION = savedVersion;
+    }
+  });
+
+  test("the SSH tunnel stays open while a metadata session still serves the connection", async () => {
+    const conn = makeConnection("postgres", { id: "metadata-tunnel", ...TUNNELLED });
+    await getOrCreateProvider(conn);
+    const tree = await getOrCreateMetadataProvider(conn);
+    const start = Date.now();
+    const now = spyOn(Date, "now").mockImplementation(() => start + 60_000);
+    try {
+      // The tree is read a minute later: its session is fresh, the editor's has been idle for a minute.
+      expect(await getOrCreateMetadataProvider(conn)).toBe(tree);
+      expect(await evictIdleProviders(30_000)).toBe(1);
+    } finally {
+      now.mockRestore();
+    }
+    expect(tree.isConnected()).toBe(true);
+    expect(mockCloseSSHTunnel).not.toHaveBeenCalled();
+
+    // An owner-scoped removal of the editor's entry leaves the tunnel to another owner's metadata session.
+    const governed = makeConnection("postgres", { id: "seed:metadata-tunnel", ...TUNNELLED });
+    await getOrCreateProvider(governed, {}, owned("alice-subject"));
+    await getOrCreateMetadataProvider(governed, {}, owned("bob-subject"));
+    await removeProvider("seed:metadata-tunnel", { owner: "alice-subject" });
+    expect(mockCloseSSHTunnel).not.toHaveBeenCalled();
+
+    // Once nothing serves the connection, the tunnel goes.
+    await removeProvider("seed:metadata-tunnel", { owner: "bob-subject" });
+    expect(mockCloseSSHTunnel.mock.calls as unknown[][]).toEqual([["seed:metadata-tunnel"]]);
+    // The first connection's metadata session was read a minute ahead of the clock, so a removal takes it, and the
+    // tunnel goes with the last entry serving the connection.
+    await removeProvider("metadata-tunnel");
+    expect(tree.isConnected()).toBe(false);
+    expect(mockCloseSSHTunnel.mock.calls as unknown[][]).toEqual([["seed:metadata-tunnel"], ["metadata-tunnel"]]);
+  });
+
+  test("a saved query timeout change reopens the metadata session", async () => {
+    const conn = makeConnection("postgres", { id: "metadata-timeout" });
+    const initial = await getOrCreateMetadataProvider(conn);
+    const changed = await getOrCreateMetadataProvider({ ...conn, queryTimeout: 120_000 });
+    expect(changed).not.toBe(initial);
+    expect(initial.isConnected()).toBe(false);
+    expect(changed.config.queryTimeout).toBe(120_000);
+    expect(await getOrCreateMetadataProvider({ ...conn, queryTimeout: 120_000 })).toBe(changed);
+  });
 });

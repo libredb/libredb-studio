@@ -649,6 +649,8 @@ One kind, `node`, `role: "relation"`, `hasColumns: false`, `hasSource: true`,
 `sourceLanguage: "json"`, `enumeratedBy: "key-browser"`. A node has attributes defined by its type
 in the server's model, not columns, so a column list would promise a grid the node does not have.
 
+The object tree reads on the editor's session, never on a metadata session of its own: the tree lists no node, so a second session would only take one more of the server's sessions at its open ((docs/providers/CONTRACT.md, clause C-66)).
+
 `enumeratedBy` is the member that makes the panel work, and it was missing. `keyBrowserKind` reads
 it, and `Studio.tsx`'s `onOpenKey` falls through to the generated-read branch without it: the
 generated read for this engine is a `//` comment, so a reader who clicked a node to see its value

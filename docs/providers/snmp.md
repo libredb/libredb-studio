@@ -162,6 +162,7 @@ Two kinds, `table` and `scalars`.
 A kind's count is the number of objects its folder lists from the bundled catalog: 36 tables and 16 scalar groups.
 It counts definitions, never instances on the agent, which this provider does not count: a read outside an agent's view is indistinguishable from absence on the wire, so a number of instances would be a claim nothing measured.
 The count was `{ unavailable }` before the catalog was wired, and the object tree draws a refused folder as a leaf, so the two folders could not be opened; found on 28 October 2026 by opening them in a browser against the fixture.
+The object tree reads on the editor's session, never on a metadata session of its own: the tree is the bundled catalog, so a second session would only probe the agent once more at its open ((docs/providers/CONTRACT.md, clause C-66)).
 
 ### 6.1 The catalog comes from the bundled modules
 

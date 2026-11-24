@@ -46,40 +46,50 @@ export const dynamic = "force-dynamic";
  * Every read of the walk, each container listing and each object listing, is a host core tree call
  * (`objectTree`, src/lib/api/object-tree.ts) under a deadline of its own, and the request's signal
  * ends the walk at its next read.
+ *
+ * Every read of the walk runs on the connection's metadata session (`{ session: "metadata" }`), beside the editor's, so
+ * it never waits for the editor's statements, except on a connection that serves one session
+ * (docs/providers/CONTRACT.md, clause C-66).
  */
 export async function POST(req: NextRequest) {
-  return handleObjectRequest(req, "api/db/objects/search", async (provider, body, context) => {
-    const term = requireString(body, "term").toLowerCase();
-    const kinds = resolveKinds(provider, optionalStringArray(body, "kinds"));
+  return handleObjectRequest(
+    req,
+    "api/db/objects/search",
+    async (provider, body, context) => {
+      const term = requireString(body, "term").toLowerCase();
+      const kinds = resolveKinds(provider, optionalStringArray(body, "kinds"));
 
-    assertNotWholeServer(provider);
-    const tree = objectTree(provider, req.signal, context.route);
-    const enumerated = await enumerateContainers(tree);
-    const kindsOf = kindsByContainer(enumerated);
-    const pairs = enumerated.containers.flatMap((container) =>
-      applicableKinds(kinds, kindsOf.get(JSON.stringify(container))).map((kind) => ({ container, kind: kind.id })),
-    );
-    if (pairs.length > INVENTORY_PAIR_LIMIT) {
-      throw new ObjectRouteError(
-        `this search would list ${pairs.length} container and kind pairs, more than the ${INVENTORY_PAIR_LIMIT} ` +
-          'one search may list; name fewer kinds in "kinds"',
-        400,
-        ApiErrorCode.INVENTORY_PAIR_LIMIT,
-        { limit: INVENTORY_PAIR_LIMIT, pairs: pairs.length },
+      assertNotWholeServer(provider);
+      const tree = objectTree(provider, req.signal, context.route);
+      const enumerated = await enumerateContainers(tree);
+      const kindsOf = kindsByContainer(enumerated);
+      const pairs = enumerated.containers.flatMap((container) =>
+        applicableKinds(kinds, kindsOf.get(JSON.stringify(container))).map((kind) => ({ container, kind: kind.id })),
       );
-    }
-    const { listObjects } = tree;
-
-    // Sequential on purpose, and the `no-await-in-loop` warning is accepted here. Every listing
-    // takes a client from one pool, so a `Promise.all` over containers times kinds would open as
-    // many concurrent reads as the schema has folders and exhaust the pool on exactly the large
-    // schemas this route exists to serve.
-    const matches: DatabaseObject[] = [];
-    for (const pair of pairs) {
-      for (const object of await listObjects(pair.container, pair.kind)) {
-        if (object.name.toLowerCase().includes(term)) matches.push(object);
+      if (pairs.length > INVENTORY_PAIR_LIMIT) {
+        throw new ObjectRouteError(
+          `this search would list ${pairs.length} container and kind pairs, more than the ${INVENTORY_PAIR_LIMIT} ` +
+            'one search may list; name fewer kinds in "kinds"',
+          400,
+          ApiErrorCode.INVENTORY_PAIR_LIMIT,
+          { limit: INVENTORY_PAIR_LIMIT, pairs: pairs.length },
+        );
       }
-    }
-    return matches;
-  });
+      const { listObjects } = tree;
+
+      // Sequential on purpose, and the await says so where it stands. Every listing
+      // takes a client from one pool, so a `Promise.all` over containers times kinds would open as
+      // many concurrent reads as the schema has folders and exhaust the pool on exactly the large
+      // schemas this route exists to serve.
+      const matches: DatabaseObject[] = [];
+      for (const pair of pairs) {
+        // oxlint-disable-next-line no-await-in-loop -- one read at a time, so the walk never sends the pool a burst.
+        for (const object of await listObjects(pair.container, pair.kind)) {
+          if (object.name.toLowerCase().includes(term)) matches.push(object);
+        }
+      }
+      return matches;
+    },
+    { session: "metadata" },
+  );
 }

@@ -17,7 +17,15 @@
 // Factory (Primary API)
 // ============================================================================
 
-export { getOrCreateProvider, createDatabaseProvider, readProviderDeclarations } from "./factory";
+// `getOrCreateMetadataProvider` is here for the object routes' handler (src/lib/api/object-route.ts), which resolves the
+// tree routes' provider on the connection's metadata session (docs/providers/CONTRACT.md, clause C-66); the package
+// surface (src/exports/providers.ts) does not re-export it.
+export {
+  getOrCreateProvider,
+  getOrCreateMetadataProvider,
+  createDatabaseProvider,
+  readProviderDeclarations,
+} from "./factory";
 
 // ============================================================================
 // Types & Interfaces

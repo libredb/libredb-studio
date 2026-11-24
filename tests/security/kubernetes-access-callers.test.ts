@@ -60,6 +60,7 @@ const GATED_MODULES: Readonly<Record<string, readonly string[]>> = {
     "createDatabaseProvider",
     "readProviderDeclarations",
     "getOrCreateProvider",
+    "getOrCreateMetadataProvider",
     "acquireExecutionProfileProvider",
     "withOneShotTunnel",
     "findCachedProvider",
@@ -236,6 +237,10 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/lib/api/object-route.ts":
       "handleObjectRequest builds only after resolving the request's connection through resolveConnection",
   },
+  getOrCreateMetadataProvider: {
+    "src/lib/api/object-route.ts":
+      "handleObjectRequest builds only after resolving the request's connection through resolveConnection",
+  },
   acquireExecutionProfileProvider: {
     "src/app/api/agent/runs/[runId]/handover/route.ts":
       "opens the run's recorded connectionId only after resolving it through resolveConnection under the run's actor, and agent mode is held while the review is on",
@@ -304,7 +309,7 @@ const HIDDEN_FORMS_ALLOWED: Readonly<Record<string, readonly Allowance[]>> = {
       origin: "src/lib/db/factory.ts",
       form: "re-export",
       reason:
-        "the provider barrel re-exports getOrCreateProvider, createDatabaseProvider and readProviderDeclarations from the factory; the census gates the barrel for all three, so every importer through it is a reviewed caller above",
+        "the provider barrel re-exports getOrCreateProvider, getOrCreateMetadataProvider, createDatabaseProvider and readProviderDeclarations from the factory; the census gates the barrel for all four, so every importer through it is a reviewed caller above",
     },
   ],
   "src/exports/providers.ts": [
@@ -1087,6 +1092,7 @@ describe("the census reads every import form", () => {
   test("a module that re-exports a gated function is gated for it, through every barrel above it", () => {
     expect([...(GATED.get("src/lib/db/index.ts") ?? [])].sort()).toEqual([
       ["createDatabaseProvider", ["createDatabaseProvider"]],
+      ["getOrCreateMetadataProvider", ["getOrCreateMetadataProvider"]],
       ["getOrCreateProvider", ["getOrCreateProvider"]],
       ["readProviderDeclarations", ["readProviderDeclarations"]],
     ]);
