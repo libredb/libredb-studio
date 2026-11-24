@@ -86,6 +86,10 @@ const { runStatement } = await import("@/lib/mcp/tools/run-statement");
 const { mcpStatementArm } = await import("@/lib/mcp/tools/statement-arms");
 const { languageServer } = await import("@/lib/agent/languages/server");
 const { S3_AGENT_FAILURE_SENTENCES } = await import("@/lib/db/providers/objectstore/s3/agent-metadata-read");
+const { createHostCore } = await import("@/lib/provider-host/core/host-core");
+const { installHostCore } = await import("@/lib/provider-host/instance");
+// An MCP statement runs through the host core, so this script installs it once, as a test's composition root does.
+installHostCore(createHostCore(), "test");
 
 const BUCKETS = {
   granted: "scope-granted",

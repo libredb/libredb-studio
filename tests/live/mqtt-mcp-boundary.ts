@@ -37,6 +37,9 @@ import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { posix } from "node:path";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import type { OpenWait } from "@/lib/provider-host/core/open-once";
+import { installHostCore } from "@/lib/provider-host/instance";
 import type { DatabaseProvider } from "@/lib/db/types";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_CANCELLED_TEXT, type ToolResult } from "@/lib/mcp/output";
@@ -44,6 +47,9 @@ import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statem
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
+
+// An MCP statement runs through the host core, so this script installs it once, as a test's composition root does.
+installHostCore(createHostCore(), "test");
 
 const required = (name: string): string => {
   const value = process.env[name];
@@ -151,9 +157,9 @@ async function mcp(
     visibleConnections: async () => [connection],
     resolve: async () => connection,
     textScrub: fakeTextScrub,
-    acquire: async (target: ManagedConnection, profile: ExecutionProfile) => {
+    acquire: async (target: ManagedConnection, profile: ExecutionProfile, wait: OpenWait) => {
       acquired.push(profile);
-      const provider: DatabaseProvider = await acquireExecutionProfileProvider(target, profile);
+      const provider: DatabaseProvider = await acquireExecutionProfileProvider(target, profile, {}, {}, wait);
       return new Proxy(provider, {
         get(base, name, receiver) {
           const value = Reflect.get(base, name, receiver);

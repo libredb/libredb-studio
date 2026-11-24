@@ -40,6 +40,9 @@ import oracledb from "oracledb";
 import { isDeepStrictEqual } from "node:util";
 import { decodeValue } from "@libredb/provider-sdk/values";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import type { OpenWait } from "@/lib/provider-host/core/open-once";
+import { installHostCore } from "@/lib/provider-host/instance";
 import { OracleProvider } from "@/lib/db/providers/sql/oracle/index";
 import { buildResultExport } from "@/lib/export/result-export";
 import type { McpConnectionContext } from "@/lib/mcp/context";
@@ -49,6 +52,9 @@ import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
 import { fakeTextScrub } from "../helpers/mcp-fixtures";
+
+// An MCP statement runs through the host core, so this script installs it once, as a test's composition root does.
+installHostCore(createHostCore(), "test");
 
 const PREFIX = "LIBREDB_LV_";
 const RO = `${PREFIX}RO`;
@@ -218,9 +224,9 @@ async function mcp(sql: string): Promise<{ readonly result: ToolResult; readonly
     visibleConnections: async () => [connection],
     resolve: async () => connection,
     textScrub: fakeTextScrub,
-    acquire: (target: ManagedConnection, profile: ExecutionProfile) => {
+    acquire: (target: ManagedConnection, profile: ExecutionProfile, wait: OpenWait) => {
       acquired.push(profile);
-      return acquireExecutionProfileProvider(target, profile);
+      return acquireExecutionProfileProvider(target, profile, {}, {}, wait);
     },
   } as unknown as McpConnectionContext;
   const arm = mcpStatementArm("run_read_query");

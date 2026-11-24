@@ -51,6 +51,9 @@ import * as grpc from "@grpc/grpc-js";
 import { fromJSON, type MethodDefinition } from "@grpc/proto-loader";
 import protobuf from "protobufjs";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import type { OpenWait } from "@/lib/provider-host/core/open-once";
+import { installHostCore } from "@/lib/provider-host/instance";
 import { MILVUS_AGENT_SCOPE_SENTENCES } from "@/lib/db/providers/vector/milvus/metadata-read";
 import { MILVUS_AGENT_SENTENCES } from "@/lib/db/providers/vector/milvus/metadata-request";
 import { MILVUS_PROOF_SENTENCES } from "@/lib/db/providers/vector/milvus/read-only-proof";
@@ -62,6 +65,9 @@ import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement
 import type { ManagedConnection } from "@/lib/seed";
 import { loadMilvusDescriptor } from "../../scripts/generate-milvus-descriptor.mjs";
 import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
+
+// An MCP statement runs through the host core, so this script installs it once, as a test's composition root does.
+installHostCore(createHostCore(), "test");
 
 function env(name: string): string {
   const value = process.env[name];
@@ -353,9 +359,9 @@ function contextFor(connection: ManagedConnection, acquired: ExecutionProfile[])
     visibleConnections: async () => [connection],
     resolve: async () => connection,
     textScrub: fakeTextScrub,
-    acquire: (target: ManagedConnection, profile: ExecutionProfile) => {
+    acquire: (target: ManagedConnection, profile: ExecutionProfile, wait: OpenWait) => {
       acquired.push(profile);
-      return acquireExecutionProfileProvider(target, profile);
+      return acquireExecutionProfileProvider(target, profile, {}, {}, wait);
     },
   } as unknown as McpConnectionContext;
 }

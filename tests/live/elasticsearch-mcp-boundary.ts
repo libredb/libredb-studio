@@ -62,6 +62,9 @@ import { randomBytes } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import type { OpenWait } from "@/lib/provider-host/core/open-once";
+import { installHostCore } from "@/lib/provider-host/instance";
 import {
   CHARACTER_REFUSAL,
   COMMENT_REFUSAL,
@@ -81,6 +84,9 @@ import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statem
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
+
+// An MCP statement runs through the host core, so this script installs it once, as a test's composition root does.
+installHostCore(createHostCore(), "test");
 
 function env(name: string): string {
   const value = process.env[name];
@@ -251,9 +257,9 @@ async function mcp(
     visibleConnections: async () => [connection],
     resolve: async () => connection,
     textScrub: fakeTextScrub,
-    acquire: (target: ManagedConnection, profile: ExecutionProfile) => {
+    acquire: (target: ManagedConnection, profile: ExecutionProfile, wait: OpenWait) => {
       acquired.push(profile);
-      return acquireExecutionProfileProvider(target, profile);
+      return acquireExecutionProfileProvider(target, profile, {}, {}, wait);
     },
   } as unknown as McpConnectionContext;
   const input = arm.inputSchema.parse({ connection_id: connection.id, ...args }) as McpStatementInput;

@@ -32,6 +32,9 @@
 // oxlint-disable no-await-in-loop -- the checks run one at a time on purpose: each reads what the server holds after the one before.
 import { createHash, randomBytes } from "node:crypto";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import type { OpenWait } from "@/lib/provider-host/core/open-once";
+import { installHostCore } from "@/lib/provider-host/instance";
 import { agentRequestSettings } from "@/lib/db/providers/sql/clickhouse/agent-read";
 import { ClickHouseHttpTransport } from "@/lib/db/providers/sql/clickhouse/http-transport";
 import { ClickHouseTransportError } from "@/lib/db/providers/sql/clickhouse/transport";
@@ -42,6 +45,9 @@ import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement
 import type { ManagedConnection } from "@/lib/seed";
 import { egressDecision } from "@/lib/db/egress-decision";
 import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
+
+// An MCP statement runs through the host core, so this script installs it once, as a test's composition root does.
+installHostCore(createHostCore(), "test");
 
 const PREFIX = "libredb_lm_";
 const DB = `${PREFIX}data`;
@@ -124,9 +130,9 @@ async function mcp(
     visibleConnections: async () => [connection],
     resolve: async () => connection,
     textScrub: fakeTextScrub,
-    acquire: (target: ManagedConnection, profile: ExecutionProfile) => {
+    acquire: (target: ManagedConnection, profile: ExecutionProfile, wait: OpenWait) => {
       acquired.push(profile);
-      return acquireExecutionProfileProvider(target, profile);
+      return acquireExecutionProfileProvider(target, profile, {}, {}, wait);
     },
   } as unknown as McpConnectionContext;
   const input = arm.inputSchema.parse({ connection_id: connection.id, ...args }) as McpStatementInput;

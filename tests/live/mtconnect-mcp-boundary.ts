@@ -41,6 +41,9 @@
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { acquireExecutionProfileProvider, executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import type { OpenWait } from "@/lib/provider-host/core/open-once";
+import { installHostCore } from "@/lib/provider-host/instance";
 import { createNodeTransport, type NodeRequest } from "@/lib/db/http/node-transport";
 import { MTConnectProvider } from "@/lib/db/providers/industrial/mtconnect/index";
 import type { McpConnectionContext } from "@/lib/mcp/context";
@@ -52,6 +55,9 @@ import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
 import { egressDecision } from "@/lib/db/egress-decision";
 import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
+
+// An MCP statement runs through the host core, so this script installs it once, as a test's composition root does.
+installHostCore(createHostCore(), "test");
 
 const PORT = Number(process.env.MTCONNECT_MCP_PORT ?? "17422");
 const PUT_PORT = Number(process.env.MTCONNECT_MCP_PUT_PORT ?? "17423");
@@ -173,7 +179,7 @@ async function mcp(
     readonly arm?: McpStatementArm;
     readonly extra?: Partial<McpStatementInput>;
     readonly signal?: AbortSignal;
-    readonly acquire?: (connection: ManagedConnection, profile: ExecutionProfile) => Promise<unknown>;
+    readonly acquire?: (connection: ManagedConnection, profile: ExecutionProfile, wait: OpenWait) => Promise<unknown>;
   } = {},
 ): Promise<Call> {
   let acquired = 0;
@@ -183,9 +189,9 @@ async function mcp(
     visibleConnections: async () => [connection],
     resolve: async () => connection,
     textScrub: fakeTextScrub,
-    acquire: async (target: ManagedConnection, profile: ExecutionProfile) => {
+    acquire: async (target: ManagedConnection, profile: ExecutionProfile, wait: OpenWait) => {
       acquired++;
-      const provider = await acquire(target, profile);
+      const provider = await acquire(target, profile, wait);
       // The open's own model read is the connection's, not the call's.
       sent.splice(0);
       return provider;
@@ -769,7 +775,8 @@ check(
 
 // One read through the factory's own profiled acquisition, as the route makes it.
 const viaFactory = await mcp(fixture, "/current", {
-  acquire: (connection, profile) => acquireExecutionProfileProvider(connection as DatabaseConnection, profile),
+  acquire: (connection, profile, wait) =>
+    acquireExecutionProfileProvider(connection as DatabaseConnection, profile, {}, {}, wait),
 });
 check(viaFactory.result.isError !== true, "a read through the factory's profiled acquisition answers");
 

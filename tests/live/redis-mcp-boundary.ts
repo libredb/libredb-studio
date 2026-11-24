@@ -41,6 +41,9 @@
 import { createHash, randomBytes } from "node:crypto";
 import Redis from "ioredis";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import type { OpenWait } from "@/lib/provider-host/core/open-once";
+import { installHostCore } from "@/lib/provider-host/instance";
 import type { DatabaseProvider } from "@/lib/db/types";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import type { ToolResult } from "@/lib/mcp/output";
@@ -49,6 +52,9 @@ import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statem
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
+
+// An MCP statement runs through the host core, so this script installs it once, as a test's composition root does.
+installHostCore(createHostCore(), "test");
 
 const PREFIX = "libredb_lm_";
 
@@ -151,9 +157,9 @@ async function mcp(
     caller: { username: "live", role: "admin" },
     visibleConnections: async () => [connection],
     resolve: async () => connection,
-    acquire: async (target: ManagedConnection, profile: ExecutionProfile) => {
+    acquire: async (target: ManagedConnection, profile: ExecutionProfile, wait: OpenWait) => {
       acquired.push(profile);
-      const provider = await acquireExecutionProfileProvider(target, profile);
+      const provider = await acquireExecutionProfileProvider(target, profile, {}, {}, wait);
       // Records when the provider's read itself settles, which a cancel or the deadline does not wait for.
       return new Proxy(provider, {
         get(subject, key, receiver) {
@@ -467,7 +473,8 @@ async function inspectSchemaOf(connection: ManagedConnection): Promise<string> {
     visibleConnections: async () => [connection],
     resolve: async () => connection,
     textScrub: fakeTextScrub,
-    acquire: (target: ManagedConnection, profile: ExecutionProfile) => acquireExecutionProfileProvider(target, profile),
+    acquire: (target: ManagedConnection, profile: ExecutionProfile, wait: OpenWait) =>
+      acquireExecutionProfileProvider(target, profile, {}, {}, wait),
   } as unknown as McpConnectionContext;
   const args = InspectSchemaInputSchema.parse({ connection_id: connection.id });
   const result = await inspectSchema(args, { context, signal: new AbortController().signal });
