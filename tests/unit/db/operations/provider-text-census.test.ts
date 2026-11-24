@@ -659,7 +659,7 @@ const NOT_PROVIDER_TEXT: Readonly<Record<string, string>> = {
     "a description of which inspectTable answers only the index sentence, through engineMessage, which scrubs it",
   [`${objectRoute}: requireSourceReader: provider.readObjectSource`]:
     "the source reader, whose document the source route answers through scrubSourceDocument",
-  [`${childHandlers}: selectStatement: provider.describeObject`]:
+  [`${childHandlers}: selectStatement: tree.describeObject`]:
     "a description of which selectStatement reads only the columns, database content",
 };
 

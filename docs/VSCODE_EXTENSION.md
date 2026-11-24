@@ -256,6 +256,9 @@ The run is then answered at once, `QUERY_CANCELLED` with the outcome unknown, an
 `query/cancel` reaches the provider through the same host core's cancel call, `cancelEditorRun`, which waits for the engine at most 10 s.
 It waits for its provider's open within the same connect budget as `query/run`, and its own JSON-RPC request's cancellation is its caller signal: a `$/cancelRequest` for it ends the wait for the open and for the engine's answer at once, `QUERY_CANCELLED`, and a request already cancelled calls nothing.
 The extension's own client sends no cancellation for `query/cancel`, so only a JSON-RPC client that cancels the request reaches that signal.
+`objects/containers`, `objects/counts`, `objects/list`, `objects/describe` and the describe `objects/selectStatement` makes read through the same host core's tree call, `objectTree`, with the same deadline as the object routes, the connection's statement timeout plus 10 s from each read's start.
+Their JSON-RPC request's cancellation is their caller signal: a `$/cancelRequest` ends the read's wait at once, `QUERY_CANCELLED` with the outcome unknown, and a request already cancelled reads nothing, `QUERY_CANCELLED` with the outcome not-sent.
+A read past its deadline answers `TIMEOUT_ERROR`, naming the read, the statement timeout and the slack.
 
 ### Errors
 

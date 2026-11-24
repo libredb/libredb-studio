@@ -2609,13 +2609,13 @@ A session that offers the facet with no function is a defect of the host's sessi
 
 ### C-65 (normative): The object tree on the host
 
-The six tree routes read every container listing, count, object listing and description through one caller facade and the host core's tree call, C-64, on the session the legacy bridge serves, C-50.
-Each read waits until its own deadline, the statement timeout plus 10 s from that read's start, and the caller's signal, the request's.
+The six tree routes and the VS Code backend's tree calls, `selectStatement`'s describe among them, read every container listing, count, object listing and description through one caller facade and the host core's tree call, C-64, on the session the legacy bridge serves, C-50.
+Each read waits until its own deadline, the statement timeout plus 10 s from that read's start, and the caller's signal, the request's or the JSON-RPC request's cancellation.
 An inventory's and a search's walks take one deadline per read, not one per request, since a whole walk is a sum of round trips that grows with the server's distance.
 A read the caller left is answered at once as `QueryCancelledError`, outcome unknown, or not-sent when refused before the call, and one past its deadline as `StudioTimeoutRefusal` naming the read, the statement timeout and the slack.
 A read's later failure is logged by kind and code, never its text.
 The facade takes the provider its caller resolved and no catalog, so no catalog choice is honoured on this path, M-57.
-Each route's own checks and scrubs run where they ran.
+Each route's and handler's own checks and scrubs run where they ran.
 
 - test `tests/unit/lib/api/object-tree.test.ts` "each tree read is one host core tree call with a fresh request, on a deadline of the statement timeout plus ten seconds from its own start"
 - test `tests/unit/lib/api/object-tree.test.ts` "each tree read answers the provider's own answer by reference"
@@ -2634,6 +2634,11 @@ Each route's own checks and scrubs run where they ran.
 - test `tests/api/db-objects.test.ts` "a tree route past its deadline answers 504 studio-timeout-refusal naming the read"
 - test `tests/api/db-objects.test.ts` "every read of an inventory, its container walk included, is a host core tree call with a deadline of its own"
 - test `tests/api/db-objects.test.ts` "a tree route reads no catalog, and its provider's forCatalog is never called"
+- test `vscode-extension/test/unit/backend-handlers.test.ts` "each tree call reads through the host core's tree call, the provider resolved as before"
+- test `vscode-extension/test/unit/backend-handlers.test.ts` "a tree call whose request is cancelled while the provider reads answers QUERY_CANCELLED at once, outcome unknown"
+- test `vscode-extension/test/unit/backend-handlers.test.ts` "a tree call whose request is already cancelled reads nothing and answers QUERY_CANCELLED, not-sent"
+- test `vscode-extension/test/unit/backend-handlers.test.ts` "a tree call past its deadline answers TIMEOUT_ERROR naming the read"
+- test `vscode-extension/test/unit/backend-handlers.test.ts` "the columns are read through the host core's tree call, under the request's cancellation"
 
 ## Not yet in this contract
 
