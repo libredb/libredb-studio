@@ -116,20 +116,18 @@ describe("connection string registry census", () => {
 
   test("each function the table binds for an engine is the export of that engine's own module", () => {
     const bound: string[] = [];
+    const foreign: string[] = [];
     for (const [kind, suffix] of SLOT_EXPORTS) {
       for (const [id, slots] of Object.entries(CONNECTION_STRING_FUNCTIONS[kind])) {
         const exported = moduleOf(id);
         for (const held of Object.values(slots ?? {})) {
-          // Named by engine and kind, so a function bound under another engine fails naming the engine it is under.
-          expect({ id, kind, own: held === exported[`${id.toUpperCase()}_${suffix}`] }).toEqual({
-            id,
-            kind,
-            own: true,
-          });
+          // Listed by engine and slot, so a function bound under another engine fails naming the engine it is under.
+          if (held !== exported[`${id.toUpperCase()}_${suffix}`]) foreign.push(`${id}.${suffix}`);
           bound.push(`${id}.${suffix}`);
         }
       }
     }
+    expect(foreign).toEqual([]);
     expect(bound.length).toBe(4 + 13 + 3);
     // Every engine that names a function has a module, and every module is that of an engine that names one.
     expect(sorted(new Set(bound.map((name) => name.split(".")[0] as string)))).toEqual(
