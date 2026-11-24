@@ -958,7 +958,7 @@ describe("the committed declarations", () => {
     expect(stale).toEqual([]);
   });
 
-  test("the authored members are the catalog's, the data-only connection members, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, and the SQL writing, migration DDL and SQL generator segments", () => {
+  test("the authored members are the catalog's, the data-only connection members, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, the SQL writing, migration DDL and SQL generator segments, and the policy, MCP and safeguards segments", () => {
     expect([...AUTHORED_MEMBERS]).toEqual([
       "id",
       "displayName",
@@ -995,6 +995,9 @@ describe("the committed declarations", () => {
       "sqlWriting",
       "migrationDdl",
       "sqlGenerators",
+      "policy",
+      "mcp",
+      "safeguards",
     ]);
     const bigquery = declared("bigquery");
     expect(authored("bigquery")).toEqual({
@@ -1041,7 +1044,23 @@ describe("the committed declarations", () => {
       sqlWriting: bigquery.sqlWriting,
       migrationDdl: bigquery.migrationDdl,
       sqlGenerators: null,
+      policy: {
+        writeReach: "open",
+        readsFileAccessPosture: false,
+        deniedFileAccessRefusal: null,
+        singleWriterFile: false,
+        readRootsRequired: false,
+        agentCredentialForm: "service-account-key",
+        maskingExemptColumns: null,
+      },
+      mcp: bigquery.mcp,
+      safeguards: bigquery.safeguards,
     });
+    // The policy and MCP segments are claims an engine requests, authored with the safeguards, the evidence its write
+    // reach request summarizes; every gate reads Studio's grant of each claim, never the request.
+    expect(authored("etcd").policy.writeReach).toBe("guarded");
+    expect(authored("etcd").safeguards).toEqual(declared("etcd").safeguards);
+    expect(authored("s3").mcp.agentCredentialRequired).toBe(true);
     // The SQL writing segment holds no claim, so the whole segment is authored.
     expect(authored("cassandra").sqlWriting).toEqual(declared("cassandra").sqlWriting);
     // The redaction is a claim, so it is no authored member: the generator writes it from Studio's record.
@@ -1126,6 +1145,15 @@ describe("the committed declarations", () => {
       ...committed.sqlWriting,
       export: { ...committed.sqlWriting.export, ddlTypes: { ...committed.sqlWriting.export.ddlTypes, text: "CLOB" } },
     };
+    // The policy, MCP and safeguards segments are authored: a request edited by hand is kept, whatever Studio's records
+    // and the provider's capabilities say, and only Studio's grant of it reaches a gate.
+    const absent = { reach: "absent" as const, proof: null };
+    const policy = { ...committed.policy, writeReach: "none" as const, readRootsRequired: true };
+    const mcp = { ...committed.mcp, statementRead: false };
+    const safeguards = {
+      ...committed.safeguards,
+      writePaths: { editor: absent, objectEdit: absent, maintenance: absent, transaction: absent },
+    };
     const edited = {
       ...committed,
       displayName: "Edited by hand",
@@ -1134,11 +1162,14 @@ describe("the committed declarations", () => {
       editor: { ...editor, explainFormat: null },
       sqlText: { ...sqlText, redaction: { kind: "none" } },
       sqlWriting,
+      policy,
+      mcp,
+      safeguards,
     };
     const built = buildEngineDeclaration("postgres", CAPABILITIES.postgres, authoredMembersOf(edited, "postgres.json"));
 
     // The SQL text's authored members are kept, and its redaction, a claim, is rewritten from Studio's record; the SQL
-    // writing segment is kept as edited.
+    // writing segment and the policy, MCP and safeguards segments are kept as edited.
     expect(built).toEqual({
       ...committed,
       displayName: "Edited by hand",
@@ -1147,6 +1178,9 @@ describe("the committed declarations", () => {
       editor,
       sqlText,
       sqlWriting,
+      policy,
+      mcp,
+      safeguards,
     });
     // The editor's authored members come from the declaration alone: the generator reads no execution UI, fence, dialect
     // or editor language table, so a dialect row or an accent edited by hand is kept.
@@ -1234,6 +1268,11 @@ describe("the committed declarations", () => {
     expect(() => authoredMembersOf(without(committed, "sqlGenerators"), "bigquery.json")).toThrow(
       "bigquery.json lacks its authored member sqlGenerators",
     );
+    for (const member of ["policy", "mcp", "safeguards"] as const) {
+      expect(() => authoredMembersOf(without(committed, member), "bigquery.json")).toThrow(
+        `bigquery.json lacks its authored member ${member}`,
+      );
+    }
     // A segment stated as null is stated: an engine that writes the shared forms authors null.
     expect(authoredMembersOf(declared("postgres"), "postgres.json").sqlGenerators).toBeNull();
     // A declaration lacking its redaction is no authored member short: the generator writes it from Studio's record.
@@ -3734,15 +3773,16 @@ describe("the census", () => {
     expect(differing((_type, d) => sameList(sorted(Object.keys(d.safeguards)), facts))).toEqual([]);
   });
 
-  test("a declared write reach that misses a path is refused by name, by the generator and by the census", () => {
+  test("a declared write reach that misses a path is refused by name by the census, and the generator writes the authored safeguards whatever the provider declares", () => {
     const { editor, objectEdit, maintenance } = CAPABILITIES.etcd.writeReach ?? {};
     const partial = { editor, objectEdit, maintenance } as unknown as ProviderCapabilities["writeReach"];
     const refusal = "etcd: the provider declares a write reach with no transaction path";
 
     expect(CAPABILITIES.etcd.writeReach).toBeDefined();
-    expect(() =>
-      buildEngineDeclaration("etcd", { ...CAPABILITIES.etcd, writeReach: partial }, authored("etcd")),
-    ).toThrow(refusal);
+    // The safeguards are authored, so the generator builds none from the provider: the census reads them back to it.
+    expect(
+      buildEngineDeclaration("etcd", { ...CAPABILITIES.etcd, writeReach: partial }, authored("etcd")).safeguards,
+    ).toEqual(declared("etcd").safeguards);
     expect(() => declaredWritePaths("etcd", partial)).toThrow(refusal);
     // The documented absence stays open on every path.
     expect(Object.values(declaredWritePaths("etcd", undefined)).map((path) => path.reach)).toEqual([

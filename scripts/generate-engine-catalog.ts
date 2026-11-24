@@ -21,14 +21,16 @@
  * src/lib/db/engine-catalog/migration-ddl.generated.ts, each engine's migration DDL (clause M-80), which only
  * src/lib/db/migration-ddl/index.ts reads, so only the schema diff loads it; and
  * src/lib/db/engine-catalog/sql-generators.generated.ts, each SQL engine's generator forms (clause M-81), which only
- * src/lib/db/query-generators/index.ts reads, so the schema diff never loads them.
+ * src/lib/db/query-generators/index.ts reads, so the schema diff never loads them; and
+ * src/lib/db/engine-catalog/claims.generated.ts, each engine's policy and MCP claim requests (clause M-82), which only
+ * src/lib/db/claim-grants.ts reads, so no gate reads a request but through Studio's grant of it.
  *
  * Admission happens here, once for every module, in `--check`: every `.json` file of src/lib/db/engine-declarations is
  * parsed and admitted through the SDK's `compileManifestValidator`, which checks the SHA-256 of the schema's bytes
  * before it compiles them, and each module is held to the projection of the admitted set with `projectCatalog`,
  * `projectConnectionTables`, `projectConnectionForms`, `projectConnectionStrings`, `projectEditorFacts`,
- * `projectQueryEditorFacts`, `projectSqlText`, `projectSqlWriting`, `projectMigrationDdl` and `projectSqlGenerators`
- * (src/lib/db/engine-catalog/projection.ts).
+ * `projectQueryEditorFacts`, `projectSqlText`, `projectSqlWriting`, `projectMigrationDdl`, `projectSqlGenerators` and
+ * `projectClaimRequests` (src/lib/db/engine-catalog/projection.ts).
  * `--write` projects each file's authored members, `AUTHORED_MEMBERS`, without admitting the whole file: the validator
  * holds an authored member to members the declaration generator writes (each host path field to `connection.seedOnly`),
  * so a file whose authored members just changed is refused until that generator has rewritten the rest. The command
@@ -75,6 +77,7 @@ import path from "node:path";
 import { compileManifestValidator, type EngineDeclaration, refusalSentence } from "@libredb/provider-sdk/manifest";
 import {
   type AuthoredDeclaration,
+  type ClaimRequests,
   type ConnectionForms,
   type ConnectionStrings,
   type ConnectionTables,
@@ -86,6 +89,7 @@ import {
   type SqlTexts,
   type SqlWritings,
   projectCatalog,
+  projectClaimRequests,
   projectConnectionForms,
   projectConnectionStrings,
   projectConnectionTables,
@@ -154,6 +158,12 @@ export const ENGINE_MIGRATION_DDL_MODULE = "src/lib/db/engine-catalog/migration-
  */
 export const ENGINE_SQL_GENERATORS_MODULE = "src/lib/db/engine-catalog/sql-generators.generated.ts";
 
+/**
+ * The generated claim requests module in the repository: each engine's policy and MCP claim requests, which only
+ * src/lib/db/claim-grants.ts reads.
+ */
+export const ENGINE_CLAIMS_MODULE = "src/lib/db/engine-catalog/claims.generated.ts";
+
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
 const SCHEMA_FILE = path.join(REPO_ROOT, "packages/provider-sdk/src/manifest/manifest.schema.json");
 const WRITE_COMMAND = "bun run engines:generate";
@@ -207,6 +217,9 @@ export const AUTHORED_MEMBERS = [
   "sqlWriting",
   "migrationDdl",
   "sqlGenerators",
+  "policy",
+  "mcp",
+  "safeguards",
 ] as const;
 
 type Connection = EngineDeclaration["connection"];
@@ -285,6 +298,9 @@ export function authoredMembersOf(value: unknown, file: string): AuthoredMembers
     sqlWriting: read("sqlWriting") as EngineDeclaration["sqlWriting"],
     migrationDdl: read("migrationDdl") as EngineDeclaration["migrationDdl"],
     sqlGenerators: read("sqlGenerators") as EngineDeclaration["sqlGenerators"],
+    policy: read("policy") as EngineDeclaration["policy"],
+    mcp: read("mcp") as EngineDeclaration["mcp"],
+    safeguards: read("safeguards") as EngineDeclaration["safeguards"],
   };
   if (`${authored.id}.json` !== file) {
     throw new Error(`${file} names the engine id ${JSON.stringify(authored.id)}, not its file name`);
@@ -739,6 +755,20 @@ export function renderSqlGenerators(forms: SqlGeneratorForms): string {
   );
 }
 
+/**
+ * The text of the generated claim requests module for `requests`: a header, type imports only, and one frozen record,
+ * read only by src/lib/db/claim-grants.ts, which grants each request against Studio's review record of its claim.
+ */
+export function renderClaimRequests(requests: ClaimRequests): string {
+  return renderedEntryModule(
+    ENGINE_CLAIMS_MODULE,
+    "ClaimRequestEntry",
+    "Each engine's policy and MCP claim requests, read only by Studio's grant reader, claim-grants.ts (M-82).",
+    "export const BUNDLED_CLAIM_REQUESTS",
+    requests,
+  );
+}
+
 /** The current text of `file`, or null when it does not exist. */
 function textOf(file: string): string | null {
   try {
@@ -791,6 +821,7 @@ function main(argv: readonly string[]): number {
     { file: fileOf(ENGINE_SQL_WRITING_MODULE), text: renderSqlWriting(projectSqlWriting(declarations)) },
     { file: fileOf(ENGINE_MIGRATION_DDL_MODULE), text: renderMigrationDdl(projectMigrationDdl(declarations)) },
     { file: fileOf(ENGINE_SQL_GENERATORS_MODULE), text: renderSqlGenerators(projectSqlGenerators(declarations)) },
+    { file: fileOf(ENGINE_CLAIMS_MODULE), text: renderClaimRequests(projectClaimRequests(declarations)) },
   ];
 
   if (mode === "--check") {

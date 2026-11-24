@@ -15,6 +15,7 @@ import { compileManifestValidator, type EngineDeclaration } from "@libredb/provi
 import {
   admittedDeclarations,
   ENGINE_CATALOG_MODULE,
+  ENGINE_CLAIMS_MODULE,
   ENGINE_CONNECTION_FLAGS_MODULE,
   ENGINE_CONNECTION_FORM_MODULE,
   ENGINE_CONNECTION_MODULE,
@@ -26,6 +27,7 @@ import {
   ENGINE_SQL_TEXT_MODULE,
   ENGINE_SQL_WRITING_MODULE,
   renderCatalog,
+  renderClaimRequests,
   renderConnectionFlags,
   renderConnectionForms,
   renderConnectionStrings,
@@ -46,6 +48,7 @@ import {
   type ConnectionStringEntry,
   type ConnectionTables,
   projectCatalog,
+  projectClaimRequests,
   projectConnectionForms,
   projectConnectionStrings,
   projectConnectionTables,
@@ -451,6 +454,32 @@ describe("each projection of the admitted declarations, built with and without a
       expect(forms).toEqual(built);
       expect(Object.keys(forms)).toEqual(Object.keys(built));
       expect(JSON.stringify(forms)).toBe(JSON.stringify(built));
+    }
+  });
+
+  test("the claim requests built with the fixture engine hold its entry, and with it removed are exactly a fresh build from the remaining set and the committed module", () => {
+    const shipped = projectClaimRequests(ADMITTED);
+    const withFixture = projectClaimRequests([...ADMITTED, FIXTURE]);
+    // The fixture states postgres's requests, so its entry is postgres's under its own id.
+    expect(withFixture.acmefoo).toEqual({ policy: POSTGRES.policy, mcp: POSTGRES.mcp });
+    expect(Object.keys(withFixture)).toHaveLength(ADMITTED.length + 1);
+
+    const removed = projectClaimRequests([...ADMITTED, FIXTURE].filter((d) => d.id !== FIXTURE.id));
+    expect(removed).toEqual(shipped);
+    expect(Object.hasOwn(removed, FIXTURE.id)).toBe(false);
+    expect(Object.keys(removed)).toEqual([...SHIPPED_DATABASE_TYPES]);
+    expect(renderClaimRequests(removed)).toBe(readFileSync(path.join(ROOT, ENGINE_CLAIMS_MODULE), "utf8"));
+  });
+
+  test("the claim requests are the same whatever order the declarations are admitted in", () => {
+    const set = [...ADMITTED, FIXTURE];
+    const built = projectClaimRequests(set);
+
+    for (const order of [[...set].reverse(), shuffled(set)]) {
+      const requests = projectClaimRequests(order);
+      expect(requests).toEqual(built);
+      expect(Object.keys(requests)).toEqual(Object.keys(built));
+      expect(JSON.stringify(requests)).toBe(JSON.stringify(built));
     }
   });
 

@@ -155,6 +155,11 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
       "engine declaration: id, location and connection.connectBudgetMs, authored in each declaration and projected into this generated record, which tests/unit/db/engine-catalog.test.ts holds to them",
   },
   {
+    module: "src/lib/db/engine-catalog/claims.generated.ts",
+    name: "BUNDLED_CLAIM_REQUESTS",
+    destination: projected("policy and mcp"),
+  },
+  {
     module: CONNECTION_FLAGS_MODULE,
     name: "BUNDLED_CONNECTION_STRING_ACCEPTED",
     destination: projected("connection.connectionString.accepted"),

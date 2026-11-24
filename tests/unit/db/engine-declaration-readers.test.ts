@@ -1,13 +1,16 @@
 /**
- * Only the modules `DECLARATION_READERS` lists read an engine declaration or a projection of the declarations, none of
- * them reads a claim, no member a declaration authors is a claim, and every claim record Studio keeps in core is
- * written by hand (docs/providers/CONTRACT.md, clauses M-52, M-54, M-70, M-71, M-72, M-74, M-75 and M-77).
+ * Only the modules `DECLARATION_READERS` lists read an engine declaration or a projection of the declarations, only the
+ * modules `CLAIM_READERS` lists read a claim, the only authored claims are the policy and MCP claims and the
+ * confirmation gate's two, and every claim record Studio keeps in core is written by hand (docs/providers/CONTRACT.md,
+ * clauses M-52, M-54, M-70, M-71, M-72, M-74, M-75, M-77 and M-82).
  *
  * A declaration's `policy` and `mcp` members, and the members of its other segments M-53 names, are claims: requests
- * Studio grants only through its review record of each claim, the table of Studio's source every gate reads. A module
- * that read a claim from a declaration could hand a request to a gate as if it were granted, so every module that reads
- * a declaration or a projection of the declarations is listed here with the members it reads and why, and a listed
- * member that is a claim fails here, with the rule M-54 states for how a host grants one.
+ * Studio grants only as far as its review record of each claim allows. A module that read a claim from a declaration
+ * could hand a request to a gate as if it were granted, so every module that reads a declaration or a projection of the
+ * declarations is listed here with the members it reads and why, and a listed member that is a claim fails here, with
+ * the rule M-54 states for how a host grants one, unless `CLAIM_READERS` lists it: the policy and MCP claims are
+ * authored and projected into one generated module, and read from it only by Studio's grant reader, which grants each
+ * against Studio's review record (clause M-82).
  *
  * The scan reads Studio's source under `src/`, and parses every `.ts` and `.tsx` file there with the TypeScript
  * compiler (a `.tsx` file as TSX). A file is a reader when its syntax tree holds `engine-declarations` or
@@ -131,6 +134,29 @@ const MIGRATION_DDL_MEMBERS = ["migrationDdl"] as const;
  */
 const SQL_GENERATOR_MEMBERS = ["sqlGenerators"] as const;
 
+/**
+ * The segments the claim requests are projected from, M-82: authored members, M-15, every member a claim, read by the
+ * claim projection, its generated module and Studio's grant reader alone (`CLAIM_READERS`).
+ */
+const CLAIM_REQUEST_MEMBERS = ["policy", "mcp"] as const;
+
+/**
+ * The modules that may read a claim of a declaration, each with the members it reads them in: the claim projection and
+ * its generated module, which carry each request as declared, and Studio's grant reader, which grants each against
+ * Studio's review record of the claim (docs/providers/CONTRACT.md, clauses M-54 and M-82), so every gate reads a grant
+ * and never a request. A closed list: a reader of a claim not listed here fails.
+ */
+const CLAIM_READERS: Readonly<Record<string, readonly string[]>> = {
+  "src/lib/db/engine-catalog/claims.generated.ts": CLAIM_REQUEST_MEMBERS,
+  "src/lib/db/engine-catalog/projection.ts": CLAIM_REQUEST_MEMBERS,
+};
+
+/** The paths `CLAIM_READERS` lists, in its order, written out so a reader added to it is a reviewed change here too. */
+const EXPECTED_CLAIM_READERS = [
+  "src/lib/db/engine-catalog/claims.generated.ts",
+  "src/lib/db/engine-catalog/projection.ts",
+];
+
 /** Every module of Studio's source that reads a declaration or a projection of the declarations. */
 const DECLARATION_READERS: readonly DeclarationReader[] = [
   {
@@ -184,6 +210,11 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
     reason: "the engine catalog, generated from the admitted declarations",
   },
   {
+    path: "src/lib/db/engine-catalog/claims.generated.ts",
+    members: CLAIM_REQUEST_MEMBERS,
+    reason: "each engine's policy and MCP claim requests, generated from the admitted declarations",
+  },
+  {
     path: "src/lib/db/engine-catalog/connection-flags.generated.ts",
     members: CONNECTION_FLAG_MEMBERS,
     reason: "the connection tables compatibility.ts reads, generated from the admitted declarations",
@@ -228,9 +259,10 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
       ...SQL_WRITING_MEMBERS,
       ...MIGRATION_DDL_MEMBERS,
       ...SQL_GENERATOR_MEMBERS,
+      ...CLAIM_REQUEST_MEMBERS,
     ],
     reason:
-      "projects the admitted declarations into the engine catalog, the connection tables, the connection forms, the connection strings, the execution UI and fence aliases, the query dialects, tab type editors and editor languages, the SQL text, the SQL writing, the migration DDL and the SQL generator forms",
+      "projects the admitted declarations into the engine catalog, the connection tables, the connection forms, the connection strings, the execution UI and fence aliases, the query dialects, tab type editors and editor languages, the SQL text, the SQL writing, the migration DDL, the SQL generator forms and the claim requests",
   },
   {
     path: "src/lib/db/engine-catalog/query-editor.generated.ts",
@@ -466,16 +498,34 @@ function overlaps(member: string, claim: string): boolean {
   return member === claim || claim.startsWith(`${member}.`) || member.startsWith(`${claim}.`);
 }
 
-/** Each listed member of `readers` that is, holds or lies inside a claim, with what that breaks. */
-function claimReaders(readers: readonly DeclarationReader[], claims: readonly string[]): string[] {
+/** What a listed reader that reads a claim `CLAIM_READERS` does not list for it breaks. */
+const CLAIM_READ_RULE =
+  "but a claim reaches a gate only as Studio's grant of it, read by the modules CLAIM_READERS lists (docs/providers/CONTRACT.md, clause M-54)";
+
+/** What an authored member holding a claim breaks, unless the claim is a policy or MCP claim, which only grants read. */
+const AUTHORED_CLAIM_RULE =
+  "but an authored member feeds a projection Studio reads, and a claim reaches a gate only as Studio's grant of it (docs/providers/CONTRACT.md, clause M-54)";
+
+/**
+ * Each listed member of `readers` that is, holds or lies inside a claim, with what that breaks, except a claim of the
+ * policy and MCP segments that `allowed` lists for the reader's path.
+ */
+function claimReaders(
+  readers: readonly DeclarationReader[],
+  claims: readonly string[],
+  allowed: Readonly<Record<string, readonly string[]>> = CLAIM_READERS,
+): string[] {
   return readers.flatMap((reader) =>
     reader.members.flatMap((member) =>
       claims
         .filter((claim) => overlaps(member, claim))
-        .map(
+        .filter(
           (claim) =>
-            `${reader.path} reads ${member}, which holds the claim ${claim}, but a claim reaches a gate only through Studio's review record of it (docs/providers/CONTRACT.md, clause M-54)`,
-        ),
+            !(
+              Object.hasOwn(allowed, reader.path) && (allowed[reader.path] ?? []).some((read) => overlaps(read, claim))
+            ),
+        )
+        .map((claim) => `${reader.path} reads ${member}, which holds the claim ${claim}, ${CLAIM_READ_RULE}`),
     ),
   );
 }
@@ -485,10 +535,16 @@ function authoredClaims(authored: readonly string[], claims: readonly string[]):
   return authored.flatMap((member) =>
     claims
       .filter((claim) => overlaps(member, claim))
-      .map(
-        (claim) =>
-          `${member} is authored, and it holds the claim ${claim}, but an authored member feeds a projection Studio reads, and a claim reaches a gate only through Studio's review record of it (docs/providers/CONTRACT.md, clause M-54)`,
-      ),
+      .map((claim) => `${member} is authored, and it holds the claim ${claim}, ${AUTHORED_CLAIM_RULE}`),
+  );
+}
+
+/** The problems `authoredClaims` names for the authored `policy` and `mcp` segments holding the claims `requested`. */
+function authoredRequests(requested: readonly string[]): string[] {
+  return ["policy", "mcp"].flatMap((segment) =>
+    requested
+      .filter((claim) => claim.startsWith(`${segment}.`))
+      .map((claim) => `${segment} is authored, and it holds the claim ${claim}, ${AUTHORED_CLAIM_RULE}`),
   );
 }
 
@@ -622,47 +678,53 @@ describe("engine declaration readers", () => {
     );
   }, 60_000);
 
-  test("no listed reader reads a claim, so a declared claim reaches a gate only through Studio's review record", () => {
+  test("a listed reader reads a claim only where CLAIM_READERS lists it, so a declared claim reaches a gate only as Studio's grant of it", () => {
     const claims = declarationClaims();
+    const requested = claims.filter((claim) => claim.startsWith("policy.") || claim.startsWith("mcp."));
     const planted: DeclarationReader[] = [
       { path: "src/lib/planted-policy.ts", members: ["policy.writeReach"], reason: "planted" },
       { path: "src/lib/planted-connection.ts", members: ["id", "connection.opensLocalFile"], reason: "planted" },
       { path: "src/lib/planted-segment.ts", members: ["mcp"], reason: "planted" },
     ];
+    // The claim projection listed as reading a connection claim too: CLAIM_READERS lists only its policy and MCP ones.
+    const widened = DECLARATION_READERS.map((reader) =>
+      reader.path === "src/lib/db/engine-catalog/projection.ts"
+        ? { ...reader, members: [...reader.members, "connection.sshTunnel"] }
+        : reader,
+    );
 
     expect(claimReaders(DECLARATION_READERS, claims)).toEqual([]);
-    expect(authoredClaims(AUTHORED_MEMBERS, claims)).toEqual([]);
-    expect(authoredClaims([...AUTHORED_MEMBERS, "connection.opensLocalFile"], claims)).toEqual([
-      "connection.opensLocalFile is authored, and it holds the claim connection.opensLocalFile, but an authored member feeds a projection Studio reads, and a claim reaches a gate only through Studio's review record of it (docs/providers/CONTRACT.md, clause M-54)",
+    expect(Object.keys(CLAIM_READERS)).toEqual(EXPECTED_CLAIM_READERS);
+    // Vacuity: with no reader listed, each listed one reads every policy and MCP claim, and nothing else.
+    const unlisted = claimReaders(DECLARATION_READERS, claims, {});
+    expect([...new Set(unlisted.map((problem) => problem.split(" ")[0]))]).toEqual(EXPECTED_CLAIM_READERS);
+    expect(unlisted).toHaveLength(EXPECTED_CLAIM_READERS.length * requested.length);
+    expect(claimReaders(widened, claims)).toEqual([
+      `src/lib/db/engine-catalog/projection.ts reads connection.sshTunnel, which holds the claim connection.sshTunnel, ${CLAIM_READ_RULE}`,
     ]);
-    expect(authoredClaims(["id", "policy"], claims)).toEqual(
-      claims
-        .filter((claim) => claim.startsWith("policy."))
-        .map(
-          (claim) =>
-            `policy is authored, and it holds the claim ${claim}, but an authored member feeds a projection Studio reads, and a claim reaches a gate only through Studio's review record of it (docs/providers/CONTRACT.md, clause M-54)`,
-        ),
-    );
+    // The authored claims are exactly the policy and MCP claims, and a connection claim authored still fails.
+    expect(authoredClaims(AUTHORED_MEMBERS, claims)).toEqual(authoredRequests(requested));
+    expect(authoredClaims([...AUTHORED_MEMBERS, "connection.opensLocalFile"], claims)).toEqual([
+      ...authoredRequests(requested),
+      `connection.opensLocalFile is authored, and it holds the claim connection.opensLocalFile, ${AUTHORED_CLAIM_RULE}`,
+    ]);
     expect(claims).toContain("policy.writeReach");
     expect(claims).toContain("mcp.exposable");
     expect(claims).toContain("connection.opensLocalFile");
+    expect(requested).toHaveLength(11);
     expect(claimReaders(planted, claims)).toEqual([
-      "src/lib/planted-policy.ts reads policy.writeReach, which holds the claim policy.writeReach, but a claim reaches a gate only through Studio's review record of it (docs/providers/CONTRACT.md, clause M-54)",
-      "src/lib/planted-connection.ts reads connection.opensLocalFile, which holds the claim connection.opensLocalFile, but a claim reaches a gate only through Studio's review record of it (docs/providers/CONTRACT.md, clause M-54)",
+      `src/lib/planted-policy.ts reads policy.writeReach, which holds the claim policy.writeReach, ${CLAIM_READ_RULE}`,
+      `src/lib/planted-connection.ts reads connection.opensLocalFile, which holds the claim connection.opensLocalFile, ${CLAIM_READ_RULE}`,
       ...claims
         .filter((claim) => claim.startsWith("mcp."))
-        .map(
-          (claim) =>
-            `src/lib/planted-segment.ts reads mcp, which holds the claim ${claim}, but a claim reaches a gate only through Studio's review record of it (docs/providers/CONTRACT.md, clause M-54)`,
-        ),
+        .map((claim) => `src/lib/planted-segment.ts reads mcp, which holds the claim ${claim}, ${CLAIM_READ_RULE}`),
     ]);
   });
 
   test("the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module and the SQL grammar, and counted by the gate only through CONFIRMATION_CLAIM_REVIEW", () => {
     const gateClaims = (member: string) =>
       CONFIRMATION_GATE_CLAIMS.filter((claim) => overlaps(member, claim)).map(
-        (claim) =>
-          `${member} is authored, and it holds the claim ${claim}, but an authored member feeds a projection Studio reads, and a claim reaches a gate only through Studio's review record of it (docs/providers/CONTRACT.md, clause M-54)`,
+        (claim) => `${member} is authored, and it holds the claim ${claim}, ${AUTHORED_CLAIM_RULE}`,
       );
     // The only authored members holding one of the gate's claims: readsSqlText, and the grammar, which holds the forms.
     expect(authoredClaims(AUTHORED_MEMBERS, CONFIRMATION_GATE_CLAIMS)).toEqual([
