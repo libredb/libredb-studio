@@ -1262,6 +1262,8 @@ Removing a declaration gives exactly the query dialects, tab type editors and ed
 - test `tests/unit/editor/editor-language-registry.test.ts` "composeEditorLanguages refuses by name a stated language Studio holds no code for, a language no declaration states, and a console the code and the declarations disagree on"
 - test `tests/unit/editor/editor-language-registry.test.ts` "composeEditorLanguages refuses by name a code row or a console that names another Monaco id"
 - test `tests/unit/db/engine-declaration-readers.test.ts` "no listed reader reads a claim, so a declared claim reaches a gate only through Studio's review record"
+- test `tests/unit/db/engine-projections-removal.test.ts` "the query dialects, the tab type editors and the editor languages built with the fixture engine are the committed module's, and with it or the only declaration of a dialect, tab type and language removed are exactly a fresh build from the remaining set"
+- test `tests/unit/db/engine-projections-removal.test.ts` "the query dialects, the tab type editors and the editor languages are the same whatever order the declarations are admitted in"
 
 ## Values
 
