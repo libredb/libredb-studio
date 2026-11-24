@@ -29,6 +29,10 @@ import { AgentRunStoreError, AgentRunUnavailableError } from "@/lib/agent/run-st
 import { agentPosture } from "@/lib/agent/posture";
 import { AGENT_WORKFLOW_SENDS_STATEMENTS, type AgentRunWorkflowType } from "@/lib/agent/types";
 import { getDBConfig } from "@/lib/db-ui-config";
+import { createDatabaseProvider } from "@/lib/db/factory";
+import type { DatabaseProvider } from "@/lib/db/types";
+import type { DatabaseConnection } from "@/lib/types";
+import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 
 const { SeedConnectionError } = realSeed;
 
@@ -52,8 +56,10 @@ const mockResolveConnection = mock(async (body: { connectionId?: string }) => ({
 }));
 
 const mockForCatalog = mock(async (_catalog: string) => ({}));
-const mockGetOrCreateProvider = mock(async () => ({
-  type: "postgres",
+// The provider stands for the connection it is handed, which `catalogChoice` reads (M-57).
+const mockGetOrCreateProvider = mock(async (connection: { type: string }) => ({
+  type: connection.type,
+  config: connection,
   getCapabilities: () => ({ catalogSessions: true }),
   forCatalog: mockForCatalog,
 }));
@@ -1736,6 +1742,7 @@ describe("POST /api/agent/runs on a server-level connection (#1530)", () => {
   beforeEach(() => {
     mockResolveConnection.mockImplementation(async () => SERVER);
     mockForCatalog.mockImplementation(async () => ({}));
+    mockForCatalog.mockClear();
     mockStart.mockClear();
   });
 
@@ -1776,6 +1783,57 @@ describe("POST /api/agent/runs on a server-level connection (#1530)", () => {
     mockResolveConnection.mockImplementation(async () => ({ ...SERVER, database: "sales" }));
     expect((await POST(startRequest({ ...VALID_BODY, catalog: "shop" }))).status).toBe(400);
     expect(mockStart).not.toHaveBeenCalled();
+  });
+
+  /** The postgres or clickhouse provider's own `getCapabilities`, spied to declare catalog sessions on every connection. */
+  async function declaringCatalogSessions(connection: DatabaseConnection): Promise<{ mockRestore(): void }> {
+    const prototype = Object.getPrototypeOf(await createDatabaseProvider(connection)) as DatabaseProvider;
+    const original = prototype.getCapabilities;
+    return spyOn(prototype, "getCapabilities").mockImplementation(function (this: DatabaseProvider) {
+      return { ...original.call(this), catalogSessions: true };
+    });
+  }
+
+  test("a provider that declares catalog sessions on a connection naming a database is not read: a catalog is refused by name, and a run without one starts", async () => {
+    const naming = { ...SERVER, database: "sales" } as DatabaseConnection;
+    mockResolveConnection.mockImplementation(async () => naming);
+    const capabilities = await declaringCatalogSessions(naming);
+    try {
+      const refused = await POST(startRequest({ ...VALID_BODY, catalog: "shop" }));
+      expect(refused.status).toBe(400);
+      expect((await parseResponseJSON<{ error: string }>(refused)).error).toBe(
+        "catalog names a database only on a connection that reaches a whole server, and Studio does not read this one as one: it names its own database, so Studio honours no session per database its provider declares",
+      );
+      expect(mockForCatalog).not.toHaveBeenCalled();
+      expect(mockStart).not.toHaveBeenCalled();
+
+      expect((await POST(startRequest(VALID_BODY))).status).toBe(202);
+    } finally {
+      capabilities.mockRestore();
+    }
+  });
+
+  test("a provider that declares catalog sessions on an engine Studio's record does not hold is not read: a catalog is refused by name", async () => {
+    const clickhouse: DatabaseConnection = {
+      ...CENSUS_CONNECTION.clickhouse,
+      id: SERVER.id,
+      name: SERVER.name,
+      database: "",
+      connectionString: undefined,
+    };
+    mockResolveConnection.mockImplementation(async () => clickhouse);
+    const capabilities = await declaringCatalogSessions(clickhouse);
+    try {
+      const refused = await POST(startRequest({ ...VALID_BODY, catalog: "shop" }));
+      expect(refused.status).toBe(400);
+      expect((await parseResponseJSON<{ error: string }>(refused)).error).toBe(
+        "catalog names a database only on a connection that reaches a whole server, and Studio does not read this one as one: its provider declares a session per database, which Studio grants no clickhouse connection",
+      );
+      expect(mockForCatalog).not.toHaveBeenCalled();
+      expect(mockStart).not.toHaveBeenCalled();
+    } finally {
+      capabilities.mockRestore();
+    }
   });
 
   test("a configuration error of Studio's own keeps its answer when the credential occurs only in a frame line of its stack", async () => {

@@ -15,6 +15,7 @@ function pinned(): DatabaseProvider {
 function serverLevel(names: string[], forCatalog = mock(async (_catalog: string) => pinned())): DatabaseProvider {
   return {
     type: "postgres",
+    config: { id: "c", name: "c", type: "postgres", database: "" },
     getCapabilities: () => ({ catalogSessions: true }),
     listContainers: async () => names.map((name) => ({ path: [name], name, level: 0 })),
     forCatalog,
@@ -98,9 +99,50 @@ describe("providerInDatabase", () => {
     expect((failure as Error).message).toBe("connection reset");
   });
 
+  test("a provider that declares catalog sessions on a connection naming a database is read as it is, and another database is refused by name", async () => {
+    const listContainers = mock(async () => []);
+    const forCatalog = mock(async () => pinned());
+    const provider = {
+      type: "postgres",
+      config: { id: "c", name: "c", type: "postgres", database: "app" },
+      getCapabilities: () => ({ catalogSessions: true }),
+      listContainers,
+      forCatalog,
+    } as unknown as DatabaseProvider;
+    expect(await providerInDatabase(provider, undefined)).toEqual({ kind: "chosen", provider });
+    expect(listContainers).not.toHaveBeenCalled();
+    const refusal = await providerInDatabase(provider, "shop").catch((error: unknown) => error);
+    expect(refusal).toBeInstanceOf(McpDatabaseChoiceError);
+    expect((refusal as Error).message).toBe(
+      "This connection reads only its own database: it names its own database, so Studio honours no session per database its provider declares; call again without database.",
+    );
+    expect(forCatalog).not.toHaveBeenCalled();
+  });
+
+  test("a provider that declares catalog sessions on an engine Studio's record does not hold is read as it is, and a database is refused by name", async () => {
+    const listContainers = mock(async () => []);
+    const forCatalog = mock(async () => pinned());
+    const provider = {
+      type: "clickhouse",
+      config: { id: "c", name: "c", type: "clickhouse", database: "" },
+      getCapabilities: () => ({ catalogSessions: true }),
+      listContainers,
+      forCatalog,
+    } as unknown as DatabaseProvider;
+    expect(await providerInDatabase(provider, undefined)).toEqual({ kind: "chosen", provider });
+    expect(listContainers).not.toHaveBeenCalled();
+    const refusal = await providerInDatabase(provider, "shop").catch((error: unknown) => error);
+    expect(refusal).toBeInstanceOf(McpDatabaseChoiceError);
+    expect((refusal as Error).message).toBe(
+      "This connection reads only its own database: its provider declares a session per database, which Studio grants no clickhouse connection; call again without database.",
+    );
+    expect(forCatalog).not.toHaveBeenCalled();
+  });
+
   test("a provider that reaches a whole server and opens no database by name is refused in Studio's words, before it is asked", async () => {
     const provider = {
       type: "postgres",
+      config: { id: "c", name: "c", type: "postgres", database: "" },
       getCapabilities: () => ({ catalogSessions: true }),
       listContainers: async () => [],
     } as unknown as DatabaseProvider;

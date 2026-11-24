@@ -29,7 +29,7 @@ import {
 } from "@/lib/agent/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { getOrCreateProvider, readProviderDeclarations } from "@/lib/db";
-import { catalogSessionConnection } from "@/lib/db/catalog-scope";
+import { catalogChoice, catalogChoiceBound, catalogSessionConnection } from "@/lib/db/catalog-scope";
 import { READ_ROOTS_REQUIRED, READ_ROOTS_REQUIRED_SENTENCE } from "@/lib/db/compatibility";
 import { editorProvider } from "@/lib/api/editor-provider";
 import { resolveConfig } from "@/lib/llm/utils/config";
@@ -200,15 +200,17 @@ export async function GET(req: Request) {
 }
 
 /**
- * Whether the connection reaches a whole server (#1530), read through `readProviderDeclarations` without connecting
- * and without opening the connection's tunnel (FND-2 slice 5); a record that cannot be built declares nothing.
+ * Whether Studio honours a caller's choice of database on the connection (#1530): `catalogChoice` (M-57) over the
+ * capabilities read through `readProviderDeclarations` without connecting and without opening the connection's tunnel
+ * (FND-2 slice 5). A record that cannot be built declares nothing; `catalogChoice` runs outside that catch, so its own
+ * refusal of a type that names no provider is never read as a declaration.
  */
-async function reachesWholeServer(connection: DatabaseConnection): Promise<boolean> {
-  try {
-    return (await readProviderDeclarations(connection)).capabilities.catalogSessions === true;
-  } catch {
-    return false;
-  }
+async function catalogChoiceOn(connection: DatabaseConnection) {
+  const capabilities = await readProviderDeclarations(connection).then(
+    (declarations) => declarations.capabilities,
+    () => null,
+  );
+  return capabilities === null ? "not-declared" : catalogChoice(connection, capabilities);
 }
 
 export async function POST(req: Request) {
@@ -433,16 +435,27 @@ export async function POST(req: Request) {
       ON A SERVER-LEVEL CONNECTION A RUN READS ONE DATABASE (#1530), named in `catalog` and
       decided here, once: the connection itself names none, and a run that walked every
       database on the server to ground itself would open a session in each. Required exactly
-      when the declaration says so, read without connecting the way provider-meta reads it,
-      and a database the role cannot open is refused before the run exists rather than after
-      its first drive fails to connect.
+      where Studio honours the provider's catalog sessions (`catalogChoice`, M-57), read without
+      connecting the way provider-meta reads it, and refused elsewhere, saying why when the
+      provider declares sessions Studio does not honour. A database the role cannot open is
+      refused before the run exists rather than after its first drive fails to connect.
     */
-    const serverLevel = await reachesWholeServer(connection);
+    const choice = await catalogChoiceOn(connection);
+    const serverLevel = choice === "honoured";
     if (serverLevel !== (catalog !== undefined)) {
+      if (serverLevel) {
+        return badRequest(
+          "This connection reaches every database on its server: name the database the run reads in catalog",
+        );
+      }
+      if (choice === "not-declared") {
+        return badRequest(
+          "catalog names a database only on a connection that reaches a whole server, and this one names its own",
+        );
+      }
+      const bound = catalogChoiceBound(choice, connection.type);
       return badRequest(
-        serverLevel
-          ? "This connection reaches every database on its server: name the database the run reads in catalog"
-          : "catalog names a database only on a connection that reaches a whole server, and this one names its own",
+        `catalog names a database only on a connection that reaches a whole server, and Studio does not read this one as one: ${bound}`,
       );
     }
     if (catalog !== undefined) {

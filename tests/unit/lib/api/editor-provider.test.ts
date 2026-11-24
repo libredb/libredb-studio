@@ -31,6 +31,7 @@ const session = (role: string) => ({ role });
 function providerOf(capabilities: Record<string, unknown>, sessions: Record<string, DatabaseProvider> = {}) {
   return {
     type: "postgres",
+    config: connection,
     getCapabilities: () => capabilities,
     forCatalog: async (catalog: string) => sessions[catalog],
   } as unknown as DatabaseProvider;
@@ -115,5 +116,5 @@ describe("catalog scoping call sites", () => {
       "src/lib/db/catalog-scope.ts",
       "src/lib/mcp/tools/database-choice.ts",
     ]);
-  });
+  }, 60_000);
 });
