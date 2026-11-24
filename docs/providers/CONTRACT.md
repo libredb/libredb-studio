@@ -723,7 +723,7 @@ Each such member is a claim: a request, never a fact Studio believes as declared
 A declared fact is a claim when a gate Studio decides reads it, a value lets that gate pass what another value stops on the strength of what the provider or the engine does, and it has a restrictive value; any other declared fact is not a claim.
 A fact whose values only add to what a gate stops, from an open-ended vocabulary, such as a credential warning, has no restrictive value and is not a claim, and where it is absent the gate answers at core's own default.
 Studio's review record of each claim is the table of Studio's source the declaration is generated from, except the confirmation gate's claims, whose record is `CONFIRMATION_CLAIM_REVIEW` (S-8), and every gate reads that record.
-Each per-engine record of a claim Studio keeps in core is written by hand, a literal never computed, so no projection of the declarations can feed one; `CONFIRMATION_CLAIM_REVIEW` is built from a list written by hand in its own module.
+Each per-engine record of a claim Studio keeps in core is written by hand, a literal never computed, so no projection of the declarations can feed one; `CONFIRMATION_CLAIM_REVIEW` is written by hand too.
 Only the modules `tests/unit/db/engine-declaration-readers.test.ts` lists read a declaration or a projection of the declarations, and none of them reads a claim, nor is any member a declaration authors a claim, M-15, so a declared claim alone never reaches a gate.
 For every engine Studio ships, each request is its record's row.
 Read-only enforcement is no member: Studio keeps a connection's read-only mode wherever the write reach is not `open`.
