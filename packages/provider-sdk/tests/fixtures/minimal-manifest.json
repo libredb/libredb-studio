@@ -18,6 +18,10 @@
     "maintenance": {
       "run": "not-offered",
       "preview": "not-offered"
+    },
+    "monitoring": {
+      "panel": "offered",
+      "poolStats": "not-offered"
     }
   },
   "engines": [

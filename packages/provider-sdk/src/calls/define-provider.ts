@@ -1,5 +1,5 @@
 /**
- * The provider module record and its check (docs/providers/CONTRACT.md, clauses C-1, C-3, C-4 and C-67).
+ * The provider module record and its check (docs/providers/CONTRACT.md, clauses C-1, C-3, C-4, C-67, C-71 and C-72).
  *
  * A package's entry default-exports what `defineProvider` returns: `{ contract, manifest, impl }`. `checkProviderModule`
  * reads any value as such a record and answers every way it is not one, each a refusal naming its rule and a JSON
@@ -7,21 +7,23 @@
  * is checked by the host's copy.
  *
  * The check reads only what the calls need: the two contracts, the manifest's `calls` segment, its console facets, its
- * object facets and its maintenance facets, each engine's facets, of each maintenance spec only whether it previews,
- * and the implementation's functions. An engine's maintenance operation is admitted only where the manifest offers
- * `maintenance.run`, and a spec that previews only where it offers `maintenance.preview`; a monitoring panel and an
- * agent reading, for which the contract has no call yet, are refused when offered. Validating the manifest against the
- * schema is the loader's, which holds the schema bytes; a manifest is typed `unknown` here and read defensively,
- * because a JSON import's type is wider than the manifest's and a cast would hide a mismatch. Every key the check reads
- * is read as an own data property, by its descriptor: a method a class instance inherits is not read, and a getter is
- * never called but refused, so the functions checked are the functions the host calls. No refusal carries a value of
- * the manifest or the implementation; a contract is named only when it has the form `MAJOR.MINOR`.
+ * object facets, its maintenance facets and its monitoring facets, each engine's facets, of each maintenance spec only
+ * whether it previews, and the implementation's functions. An engine's maintenance operation is admitted only where the
+ * manifest offers `maintenance.run`, a spec that previews only where it offers `maintenance.preview`, and an offered
+ * monitoring panel only where it offers `monitoring.panel`; an agent reading, for which the contract has no call yet,
+ * is refused when offered. Validating the manifest against the schema is the loader's, which holds the schema bytes; a
+ * manifest is typed `unknown` here and read defensively, because a JSON import's type is wider than the manifest's and
+ * a cast would hide a mismatch. Every key the check reads is read as an own data property, by its descriptor: a method
+ * a class instance inherits is not read, and a getter is never called but refused, so the functions checked are the
+ * functions the host calls. No refusal carries a value of the manifest or the implementation; a contract is named only
+ * when it has the form `MAJOR.MINOR`.
  */
 import { type Fields, fieldsOf, isPlainRecord, type OwnRead, readOwn, token, valueOf } from "./records";
 import {
   CONSOLE_FACETS,
   EXECUTE_REQUEST_FIELDS,
   MAINTENANCE_FACETS,
+  MONITORING_FACETS,
   OBJECTS_FACETS,
   PROVIDER_CONTRACT,
   type ProviderImpl,
@@ -73,7 +75,17 @@ export class ProviderDefinitionError extends Error {
 }
 
 const RECORD_KEYS: readonly string[] = Object.freeze(["contract", "manifest", "impl"]);
-const IMPL_KEYS: readonly string[] = Object.freeze(["open", "close", "console", "objects", "maintenance"]);
+const IMPL_KEYS: readonly string[] = Object.freeze([
+  "open",
+  "close",
+  "health",
+  "console",
+  "objects",
+  "maintenance",
+  "monitoring",
+]);
+/** The mandatory calls at the top level of the implementation, in the order they are read. */
+const MANDATORY_CALLS: readonly string[] = Object.freeze(["open", "close", "health"]);
 const CONSOLE_KEYS: readonly string[] = Object.freeze(["execute", ...CONSOLE_FACETS]);
 const OFFERS: readonly unknown[] = Object.freeze(["offered", "not-offered"]);
 const REQUEST_FIELDS: readonly unknown[] = EXECUTE_REQUEST_FIELDS;
@@ -179,9 +191,9 @@ function readOffers(
 }
 
 /**
- * The manifest's console, object and maintenance facet offers, by contract name, each `true` when offered, `false`
- * when not, and absent when it cannot be read, with a refusal for every key the check reads that is missing, of the
- * wrong type or an accessor.
+ * The manifest's console, object, maintenance and monitoring facet offers, by contract name, each `true` when offered,
+ * `false` when not, and absent when it cannot be read, with a refusal for every key the check reads that is missing, of
+ * the wrong type or an accessor.
  */
 function readCalls(manifest: Fields, refusals: DefinitionRefusal[]): Offers {
   const offers: Offers = {};
@@ -199,6 +211,8 @@ function readCalls(manifest: Fields, refusals: DefinitionRefusal[]): Offers {
   if (maintenanceCalls !== undefined) {
     readOffers(maintenanceCalls, "maintenance", MAINTENANCE_FACETS, offers, refusals);
   }
+  const monitoringCalls = manifestRecord(calls, "monitoring", "/manifest/calls/monitoring", refusals);
+  if (monitoringCalls !== undefined) readOffers(monitoringCalls, "monitoring", MONITORING_FACETS, offers, refusals);
   return offers;
 }
 
@@ -221,8 +235,12 @@ function facetList(
   return undefined;
 }
 
-/** The refusals of an engine's offered monitoring panels, for which this contract has no call yet. */
-function readMonitoring(facets: Fields, at: string, refusals: DefinitionRefusal[]): void {
+/**
+ * The refusals of an engine's monitoring panels: each must be a facet offer, and an offered one is refused by name as
+ * `engine-facet-call-not-offered` where the manifest declares `monitoring.panel` not-offered. An offer that could not
+ * be read refuses nothing more here, since its own refusal names it.
+ */
+function readMonitoring(facets: Fields, at: string, offers: Offers, refusals: DefinitionRefusal[]): void {
   const monitoring = manifestRecord(facets, "monitoring", `${at}/facets/monitoring`, refusals);
   if (monitoring === undefined) return;
   for (const panel of Object.keys(monitoring)) {
@@ -231,7 +249,9 @@ function readMonitoring(facets: Fields, at: string, refusals: DefinitionRefusal[
     if (read.kind === "accessor") continue;
     const offer = valueOf(read);
     if (!OFFERS.includes(offer)) refusals.push({ rule: "manifest-unreadable", pointer });
-    else if (offer === "offered") refusals.push({ rule: "engine-facet-without-call", pointer });
+    else if (offer === "offered" && offers["monitoring.panel"] === false) {
+      refusals.push({ rule: "engine-facet-call-not-offered", pointer, name: "monitoring.panel" });
+    }
   }
 }
 
@@ -289,7 +309,7 @@ function readAgentReadings(facets: Fields, at: string, refusals: DefinitionRefus
 function readFacets(engine: Fields, at: string, offers: Offers, refusals: DefinitionRefusal[]): void {
   const facets = manifestRecord(engine, "facets", `${at}/facets`, refusals);
   if (facets === undefined) return;
-  readMonitoring(facets, at, refusals);
+  readMonitoring(facets, at, offers, refusals);
   readMaintenance(facets, at, offers, refusals);
   readMaintenanceSpecs(facets, at, offers, refusals);
   readAgentReadings(facets, at, refusals);
@@ -377,7 +397,7 @@ function readImpl(value: unknown, offers: Offers, refusals: DefinitionRefusal[])
   for (const key of Object.keys(impl ?? {})) {
     if (!IMPL_KEYS.includes(key)) refusals.push({ rule: "impl-key-unknown", pointer: `/impl/${token(key)}`, key });
   }
-  for (const call of ["open", "close"]) {
+  for (const call of MANDATORY_CALLS) {
     const pointer = `/impl/${call}`;
     const read = own(impl, call, pointer, refusals);
     if (read.kind !== "accessor" && typeof valueOf(read) !== "function") {
@@ -398,6 +418,10 @@ function readImpl(value: unknown, offers: Offers, refusals: DefinitionRefusal[])
   const maintenanceSegment = segmentOf(impl, "maintenance", MAINTENANCE_FACETS, refusals);
   if (!maintenanceSegment.unread) {
     readFacetImpls(maintenanceSegment.fields, "maintenance", MAINTENANCE_FACETS, offers, refusals);
+  }
+  const monitoringSegment = segmentOf(impl, "monitoring", MONITORING_FACETS, refusals);
+  if (!monitoringSegment.unread) {
+    readFacetImpls(monitoringSegment.fields, "monitoring", MONITORING_FACETS, offers, refusals);
   }
 }
 
@@ -456,8 +480,8 @@ function deepFreeze<T>(value: T): T {
  *
  * The record is frozen. Its manifest is a deep-frozen `structuredClone` of the one passed, so freezing never touches
  * the package's own object, which an import may share; a manifest holding a value JSON cannot hold, such as a function,
- * makes the clone throw its `DataCloneError`. The implementation, its `console`, and its `objects` and `maintenance`,
- * where it has them, are frozen in place, so the functions the check read are the ones the host calls.
+ * makes the clone throw its `DataCloneError`. The implementation, its `console`, and its `objects`, `maintenance` and
+ * `monitoring`, where it has them, are frozen in place, so the functions the check read are the ones the host calls.
  *
  * @throws {ProviderDefinitionError} With every refusal `checkProviderModule` answers, before anything is cloned or
  * frozen.
@@ -469,6 +493,7 @@ export function defineProvider<Handle>(manifest: unknown, impl: ProviderImpl<Han
   Object.freeze(impl.console);
   if (impl.objects !== undefined) Object.freeze(impl.objects);
   if (impl.maintenance !== undefined) Object.freeze(impl.maintenance);
+  if (impl.monitoring !== undefined) Object.freeze(impl.monitoring);
   return Object.freeze({ contract: PROVIDER_CONTRACT, manifest: copy, impl: Object.freeze(impl) });
 }
 

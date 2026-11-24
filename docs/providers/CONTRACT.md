@@ -1608,13 +1608,15 @@ How a host reconciles two packages that state one language differently is decide
 The host calls a provider's implementation in its own process, as async functions.
 Every request and answer is data in the value codec's domain, except the session handle `open` answers, so the calls need no framing.
 The handle holds the session's state and is the package's own: the host never reads it, which the memory test transport checks, C-22.
-The manifest's `calls` segment declares what the package's code answers beyond the mandatory calls: the optional console facets, the optional request fields its execute honours, the optional object facets and the optional maintenance facets.
+The mandatory calls are `open`, `close`, `health`, which reaches the engine and answers its health, C-72, and `console.execute`, C-3.
+The manifest's `calls` segment declares what the package's code answers beyond the mandatory calls: the optional console facets, the optional request fields its execute honours, the optional object facets, the optional maintenance facets and the optional monitoring facets.
 The optional console facets are `cancel`, which cancels a run, `endScope`, which ends a session scope, and `transaction`, which opens, commits and rolls back a transaction on the session and reads its state, C-57.
 The one object facet is `tree`, which lists a connection's containers and objects, counts them and describes them, C-61.
 The maintenance facets are `run`, which runs one operation an engine lists, and `preview`, which reads what a per-row operation would do, C-67.
+The monitoring facets are `panel`, which reads one monitoring panel an engine offers, and `poolStats`, which reads the counts of the session's own pool, C-71.
 One implementation serves every engine the package declares, so `calls` is a fact of the package, a sibling of `runtime`, and never a fact of an engine.
 The shapes of each call, its request, its answer and the contexts the host passes are the types `@libredb/provider-sdk/calls` exports.
-Every other surface of today's provider interface, health among them, joins this chapter with the change that carries it.
+Every other surface of today's provider interface joins this chapter with the change that carries it.
 
 ### C-1 (normative): A package's entry exports the record defineProvider returns
 
@@ -1656,9 +1658,9 @@ No loader exists yet, so nothing checks this.
 
 ### C-3 (normative): The mandatory calls
 
-The mandatory calls are `open`, `close` and `console.execute`, each a function of the implementation's own, found at the path its name spells.
-An implementation defines no other key than the calls this contract defines: its keys are `open`, `close`, `console`, `objects`, which holds the object facets, and `maintenance`, which holds the maintenance facets; an implementation that offers no object or maintenance facet may leave that segment out or hold it empty.
-Each calls segment it has, `console`, `objects` and `maintenance` alike, is a record of its calls: one that is `null`, a string, an array or any other value that is not an object is refused by name, and nothing under it is read.
+The mandatory calls are `open`, `close`, `health` and `console.execute`, each a function of the implementation's own, found at the path its name spells.
+An implementation defines no other key than the calls this contract defines: its keys are `open`, `close`, `health`, `console`, `objects`, which holds the object facets, `maintenance`, which holds the maintenance facets, and `monitoring`, which holds the monitoring facets; an implementation that offers no object, maintenance or monitoring facet may leave that segment out or hold it empty.
+Each calls segment it has, `console`, `objects`, `maintenance` and `monitoring` alike, is a record of its calls: one that is `null`, a string, an array or any other value that is not an object is refused by name, and nothing under it is read.
 
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a mandatory call that is missing or no function is refused as call-missing"
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a calls segment of the implementation that is not a record is refused as impl-segment-not-a-record, and nothing under it is read"
@@ -1666,16 +1668,19 @@ Each calls segment it has, `console`, `objects` and `maintenance` alike, is a re
 
 ### C-4 (normative): An optional facet is declared and implemented, both ways
 
-An optional facet, one of `CONSOLE_FACETS`, `OBJECTS_FACETS` or `MAINTENANCE_FACETS`, is offered in the manifest's `calls.console`, `calls.objects` or `calls.maintenance` exactly when the implementation has its function under `console`, `objects` or `maintenance`.
+An optional facet, one of `CONSOLE_FACETS`, `OBJECTS_FACETS`, `MAINTENANCE_FACETS` or `MONITORING_FACETS`, is offered in the manifest's `calls.console`, `calls.objects`, `calls.maintenance` or `calls.monitoring` exactly when the implementation has its function under `console`, `objects`, `maintenance` or `monitoring`.
 A facet is never discovered by calling it or by its shape.
 An engine's maintenance operation is admitted only where the package offers `maintenance.run`, and a maintenance spec that previews only where it offers `maintenance.preview`; each is otherwise refused by name as `engine-facet-call-not-offered`, naming the call that would serve it.
 Of a maintenance spec the check reads only whether it previews; every other rule of a spec is the validator's, M-64 and M-65.
 A package may offer either maintenance facet with no engine listing an operation: the host never calls it without one.
-An engine facet for which this contract has no call yet, a monitoring panel or an agent reading, is refused when it is offered.
+An engine's offered monitoring panel is admitted only where the package offers `monitoring.panel`, and is otherwise refused by name as `engine-facet-call-not-offered`, naming `monitoring.panel`.
+A package may offer either monitoring facet with no engine offering a panel: the host never asks a panel its session's engine does not offer, C-71, and pool statistics describe the session's own pool.
+An agent reading, for which this contract has no call yet, is refused when it is offered.
 
 - schema `/$defs/consoleCalls`
 - schema `/$defs/objectsCalls`
 - schema `/$defs/maintenanceCalls`
+- schema `/$defs/monitoringCalls`
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an offered facet the implementation lacks is refused as facet-unimplemented"
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an implemented facet the manifest does not offer is refused as facet-undeclared"
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "the transaction facet is declared and implemented both ways, like every console facet"
@@ -1683,10 +1688,13 @@ An engine facet for which this contract has no call yet, a monitoring panel or a
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "the maintenance facets are declared and implemented both ways, like every console facet"
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an engine's maintenance is admitted where the package offers maintenance.run, and refused by name as engine-facet-call-not-offered where it does not"
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a maintenance spec that previews is admitted where the package offers maintenance.preview, and refused by name where it does not"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "the monitoring facets are declared and implemented both ways, like every console facet"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an engine's offered monitoring panel is admitted where the package offers monitoring.panel, and refused by name as engine-facet-call-not-offered where it does not"
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an engine facet this contract has no call for is refused as engine-facet-without-call"
 - test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the console facets and execute's request fields are the schema's"
 - test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the objects facets are the schema's"
 - test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the maintenance facets are the schema's"
+- test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the monitoring facets are the schema's"
 
 ### C-5 (normative): A package declares the request fields its execute honours
 
@@ -1720,6 +1728,8 @@ The tree's answer shapes, the container, the object and its read range, the kind
 It covers today's maintenance surface, the run and the preview the maintenance routes call, each placed on its maintenance facet and each argument on a member of that facet's request, and the engine principal the maintenance audit row names, placed on the open answer, C-67.
 The run's answer and the preview are mutually assignable with Studio's maintenance result and preview and have their keys, the run's rows and fields compared by their items, and the maintenance vocabulary is Studio's.
 A session's maintenance, narrowed by what its server accepts, is what Studio's `narrowMaintenance` answers for every committed engine declaration, every spec and every placement a server may accept, one operation at a time and all of an engine's at once, C-68.
+It covers today's monitoring, pool statistics and health surface: each panel read placed on `monitoring.panel` with its panel and each of its options on a member of that panel's request, the pool statistics the pool-stats route reads on `monitoring.poolStats`, the health read on `health`, and the dashboard's orchestration, its panel states and the options that choose which panels are read with the host, C-71 and C-72.
+The panel shapes, the pool statistics and the health answer are mutually assignable with Studio's own and have their keys, each answer form's member is the answer of the member that reads its panel, lists compared by their items, and the panel vocabulary is Studio's.
 
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every input a provider is built with has a place in the open context or a reason it stays with the host"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's console answer and request has a place in the console calls"
@@ -1729,6 +1739,8 @@ A session's maintenance, narrowed by what its server accepts, is what Studio's `
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's maintenance surface has a place in the maintenance calls or the open answer"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "the maintenance answers are Studio's own shapes"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "a session's maintenance is narrowMaintenance's answer for every shipped spec and every placement a server accepts"
+- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's monitoring and health surface has a place in the monitoring calls, the health call or with the host"
+- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "the monitoring and health answers are Studio's own shapes"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "the context's shared shapes are Studio's own"
 
 ### C-8 (informative): A provider never ignores a request field it does not honour
@@ -1759,8 +1771,9 @@ A refusal names the field and a JSON Pointer into the request, never a value of 
 `checkRefinement` refuses a widening, an unknown key and an unreadable value by name, reading every value as a data property and never calling a getter, and no refusal carries a value of the refinement.
 An `honours` list longer than the declared one is refused as a widening by its length, before any item is read, so a sparse array's length bounds no loop of the check.
 `sessionCalls` answers the narrowed calls, frozen, and the host keeps them with the session and nowhere else, with no cache and no invalidation event.
-A refinement may withdraw any console facet the manifest offers, `console.transaction` among them, `objects.tree`, `maintenance.run` and `maintenance.preview`, and never offers one the manifest does not.
-Its `calls` may hold `console`, `objects` and `maintenance`, each optional and closed, and each is read by its own segment's reader, so a key that names no segment is refused by name and never read as another segment.
+A refinement may withdraw any console facet the manifest offers, `console.transaction` among them, `objects.tree`, `maintenance.run`, `maintenance.preview`, `monitoring.panel` and `monitoring.poolStats`, and never offers one the manifest does not.
+`health` is no member of `calls`, so no refinement withdraws it, C-72.
+Its `calls` may hold `console`, `objects`, `maintenance` and `monitoring`, each optional and closed, and each is read by its own segment's reader, so a key that names no segment is refused by name and never read as another segment.
 A refinement may also hold `maintenance`, the placements the session's server accepts, C-68, read for its shape here; any other top-level key is refused by name.
 A refinement is a call's answer, not a manifest fact, so the schema has no place for it.
 
@@ -1769,6 +1782,7 @@ A refinement is a call's answer, not a manifest fact, so the schema has no place
 - test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement may withdraw console.transaction, and never offer it where the manifest does not"
 - test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement may withdraw objects.tree, and never offer it where the manifest does not"
 - test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement may withdraw maintenance.run and maintenance.preview, and never offer one the manifest does not"
+- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement may withdraw monitoring.panel and monitoring.poolStats, and never offer one the manifest does not"
 - test `packages/provider-sdk/tests/calls/refinement.test.ts` "an honours list longer than the declared one is refused as refinement-widens at the list, and no item is read"
 - test `packages/provider-sdk/tests/calls/honours-bounds.test.ts` "a refinement honours list of the longest length is refused at the list, in a bounded child"
 - test `packages/provider-sdk/tests/calls/refinement.test.ts` "a key a refinement cannot have is refused as refinement-key-unknown"
@@ -1865,7 +1879,7 @@ How many pages larger than one batch the host holds at once is bounded by its pa
 
 ### C-17 (normative): The host calls a facet only when the session offers it
 
-The host holds every call to a console facet to the session's calls with `checkConsoleFacet` before the call, every call to an object facet with `checkObjectsFacet` and every call to a maintenance facet with `checkMaintenanceFacet`, and refuses it by `facet-not-offered`, a rule of `CALL_REFUSAL_RULES`, when the session's calls do not offer that facet.
+The host holds every call to a console facet to the session's calls with `checkConsoleFacet` before the call, every call to an object facet with `checkObjectsFacet`, every call to a maintenance facet with `checkMaintenanceFacet` and every call to a monitoring facet with `checkMonitoringFacet`, and refuses it by `facet-not-offered`, a rule of `CALL_REFUSAL_RULES`, when the session's calls do not offer that facet.
 The session's calls are the ones `sessionCalls` answers, so a facet the manifest offers and a refinement narrowed to not-offered is refused too.
 The refusal names the facet by its call name and a JSON Pointer into the session's calls.
 The host also holds every maintenance run request to the session's maintenance with `checkMaintenanceRunRequest`, and every maintenance preview request with `checkMaintenancePreviewRequest`, before the call.
@@ -1873,6 +1887,7 @@ It refuses an operation the session's maintenance does not list as `request-oper
 An operation its spec places nowhere, `kill`, passes the placement check, as does an operation listed with no spec.
 Empty text where a request names something, a target, a container, the path or a name in it, is refused as `request-field-empty`, named by the field.
 A preview request whose path is not a list is not read by the check: reading the request's frame refuses it by name.
+The host holds every monitoring panel request to the panels the session's engine offers with `checkMonitoringPanelRequest` before the call, and refuses a panel that engine does not offer, a request that names no panel and a panel name an object inherits as `request-panel-not-offered`, without throwing.
 Each refusal names a JSON Pointer into the request, in request order, and never a value of it.
 
 - test `packages/provider-sdk/tests/calls/request.test.ts` "a console facet the session does not offer is refused before the call"
@@ -1886,8 +1901,13 @@ Each refusal names a JSON Pointer into the request, in request order, and never 
 - test `packages/provider-sdk/tests/calls/request.test.ts` "a maintenance preview is held to an operation whose spec previews on a row"
 - test `packages/provider-sdk/tests/calls/request.test.ts` "a maintenance request with empty text where it names something is refused by the field"
 - test `packages/provider-sdk/tests/calls/request.test.ts` "no maintenance request refusal carries a value of the request"
+- test `packages/provider-sdk/tests/calls/request.test.ts` "the monitoring facets are refused by name to a session that does not offer them"
+- test `packages/provider-sdk/tests/calls/request.test.ts` "a session that offers monitoring.panel and monitoring.poolStats is called"
+- test `packages/provider-sdk/tests/calls/request.test.ts` "a monitoring panel request is held to the panels the session's engine offers"
+- test `packages/provider-sdk/tests/calls/request.test.ts` "no monitoring request refusal carries a value of the request"
 - test `packages/provider-sdk/tests/calls/request.test.ts` "every call refusal rule is worded in one sentence"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a served maintenance call whose request the session's maintenance does not take is refused before any frame"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a monitoring call on a session without the facet, or for a panel its engine does not offer, is refused before any frame"
 
 ### C-18 (normative): The testing entry is for tests
 
@@ -1904,7 +1924,8 @@ The package root never re-exports it, and Studio's runtime source under `src/`, 
 The provider receives decoded copies, its context frozen by `freezeContext` with the host's `signal` and `env` attached by reference, and its request by `freezeData`, and the host's own context and request are left as the host built them.
 A `result.next` frame carries the limit's numbers only, and the provider receives them decoded and frozen with the host's `measure` attached by reference, as the context's `signal` and `env` are.
 A row that crosses a frame is a new array, so the host's pump measures it itself.
-The host receives decoded copies of each answer.
+A call with no request part, `health` and `monitoring.poolStats`, crosses its context in the request frame and its answer in the answer frame.
+The host receives decoded copies of each answer, a timestamp member a new `Date` of the same time.
 A value outside the codec's domain fails where it is encoded, with the codec's own `ValueCodecError`, before the other side is called.
 An `undefined` optional member, which the codec leaves out (V-9), is refused by the round trip as `round-trip-changed` at its pointer, and a frame that `readFrame` or `roundTripRefusals` refuses fails as one `FrameRefusalError`.
 An error either side throws crosses by reference.
@@ -1919,6 +1940,8 @@ An error either side throws crosses by reference.
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a served transaction call crosses its request and answer as frames, and a statement inside the transaction carries its session state back"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a served tree call crosses each action's request and answer as frames, and the provider receives decoded frozen copies"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a served maintenance call crosses its request and answer as frames, and the provider receives decoded frozen copies"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served monitoring call crosses its request and answer as frames, and the provider receives decoded frozen copies"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served health call crosses its context and answer as frames, and the host receives a decoded copy"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a value that is not a provider module record is refused with every refusal before anything is served"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "the served implementation is an implementation of the module's manifest, with the module's facets"
 
@@ -1930,7 +1953,10 @@ A page bound is exactly one of its two forms, a transaction request is read as t
 A tree request is read as the closed shape of the action it names, so a member of another action is refused, and a tree answer is exactly one of its five forms, told apart by its keys, each read as its closed shape; a kind count, an object's read range and an object's indexes are each one of their forms, and the counts are a map whose every key is read.
 An open answer may carry the engine principal the session acts as, `engineUser`, as text.
 A maintenance run request is its operation, one of the maintenance vocabulary, with its target and container as text where it names them, and its answer is whether the engine took it, how long it ran, the engine's sentence, and its rows, each a record of codec values, with their fields, so an answer with rows and no fields is refused as `frame-key-missing` at `fields`; a maintenance preview request is its operation and the object's path, never empty, so an empty path is refused as `frame-value-unreadable` at `path`, and its answer is the summary, the facts, each a closed label and value, and the refusal and the note where it has them.
-The frame reader reads shapes only: which answer form answers which action is the host's, C-62.
+A monitoring panel request is read as the closed shape of the panel it names, so a member of another panel is refused and a panel outside the vocabulary is refused as `frame-value-unreadable` at `panel`, and a panel answer is exactly one of its forms, each with one key, the panel's own, told apart by it and read as its closed shape at every depth, a session's activity one of its vocabulary.
+A pool statistics answer is its four counts and the ceiling where it has one, and a health answer is its connection count where it has one, the size, the cache hit ratio and its two lists, each item a closed record.
+A timestamp member admits a valid `Date`, which the value codec carries as its timestamp, and nothing else.
+The frame reader reads shapes only: which answer form answers which action, or which panel, is the host's, C-62.
 Each reader is declared as the shape of its call type, so a member added to a call type, or to a union it reads, fails typecheck until its reader names it.
 
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "a well-formed frame of every call and part is admitted"
@@ -1943,6 +1969,10 @@ Each reader is declared as the shape of its call type, so a member added to a ca
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "a tree answer is exactly one of its five forms, each read as its closed shape"
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "a maintenance run request and answer are each read as their closed shape"
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "a maintenance preview request and answer are each read as their closed shape"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a monitoring panel request is the closed shape of the panel it names"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a monitoring panel answer is exactly one of its seven forms, each read as its closed shape"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a pool statistics answer and a health answer are each read as their closed shape"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a timestamp member admits a Date and nothing else"
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "a connection's keys are the contract's field names and each value a connection field value"
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "no frame refusal and no sentence carries a value of the frame"
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "every frame refusal rule is worded in one sentence"
@@ -1962,6 +1992,8 @@ A `Uint8Array` and a `Date` are compared by their bytes and their time alone, so
 - test `packages/provider-sdk/tests/testing/round-trip.test.ts` "an array's own property that is not an index is refused as round-trip-changed at the array"
 - test `packages/provider-sdk/tests/testing/round-trip.test.ts` "a received value that differs from the sent one is refused at the pointer where it differs"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a served tree call crosses each action's request and answer as frames, and the provider receives decoded frozen copies"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served monitoring call crosses its request and answer as frames, and the provider receives decoded frozen copies"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served health call crosses its context and answer as frames, and the host receives a decoded copy"
 
 ### C-22 (normative): A session handle and a result source never cross
 
@@ -1979,6 +2011,7 @@ A close takes its entry out of both tables whatever the provider's close answers
 
 The served host side refuses before any frame what C-9 and C-17 refuse, holding each call to the session's calls.
 It reads the refinement `open` answers by C-10, so the session's calls are the narrowed ones, and its maintenance narrowing by C-68 against the maintenance of the engine the open context names; an open context that names an engine the module's manifest does not declare is refused before any frame.
+It keeps the monitoring panels of that engine with the session, and refuses a panel call for a panel they do not offer before any frame, C-17.
 An answer the host refuses holds nothing open afterwards: a refused open answer closes its session through the provider's `close`, under a cleanup context of its own, C-47, never the open's, and a refused execute answer closes each result source it handed over through its own `close`.
 An item of an execute answer's `results` that is not an object is refused at its index, as a hole is, and a source whose `columns` or `rowCount` read throws is closed with the sources before it, the read's own error thrown.
 Every close runs, and when one fails the host receives an `AggregateError` with the refusal first and each close's error after it.
@@ -1987,6 +2020,7 @@ Every close runs, and when one fails the host receives an `AggregateError` with 
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a transaction call or a statement inside a transaction on a session without console.transaction is refused before any frame"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a tree call on a session without objects.tree is refused before any frame"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a maintenance call on a session without the facet is refused before any frame"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a monitoring call on a session without the facet, or for a panel its engine does not offer, is refused before any frame"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a refinement open answers narrows the served session's calls"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a served open whose maintenance narrowing names an operation its engine does not list is refused, and the session it opened is closed"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a served open is held to the maintenance of the engine its context names, which the module declares"
@@ -2357,6 +2391,7 @@ It offers `console.endScope` exactly where the provider ends the transactions it
 It offers `console.transaction` exactly when the provider holds a transaction session, the duck typing of begin, commit and rollback the transaction route has always read.
 It offers `objects.tree` on every session, since every legacy provider holds the five tree members.
 It offers `maintenance.run` on every session, since every legacy provider holds `runMaintenance`, and `maintenance.preview` exactly where the provider holds `previewMaintenance`.
+It offers neither monitoring facet, whether or not the provider reads pool statistics, and serves no `health` call: the monitoring, pool-stats, health and fleet health routes and Test Connection still call the provider's members themselves until they move onto the host core.
 Its run calls `runMaintenance` with exactly three arguments, the operation, the target and the container, `undefined` for an absent one, and its preview calls `previewMaintenance` with the operation and a fresh copy of the path.
 Each answers the provider's answer by reference, never calls `forCatalog`, and passes a provider's error by reference.
 The session's maintenance is the provider's declaration before it connects, narrowed through `sessionMaintenance` by the refinement the bridge answers from the connected provider's capabilities, C-68.
@@ -2381,6 +2416,7 @@ The page's row limit is set once execute answered: one past the page when the pr
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session offers the transaction facet exactly where the provider is a TransactionProvider"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session offers objects.tree for every provider"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session offers maintenance.run for every provider and maintenance.preview exactly where the provider previews"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session offers no monitoring facet, since the monitoring and pool-stats routes still call the provider's members themselves"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged maintenance run calls runMaintenance with the operation, the target and the container, undefined where absent, and answers its result by reference"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged maintenance preview calls previewMaintenance with a copy of the path and answers its preview by reference"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged maintenance call whose member throws passes the error by reference"
@@ -2942,6 +2978,48 @@ Each route's doors, checks, confirmations, scrubs and error mapping run where th
 - test `tests/api/db/maintenance-preview.test.ts` "a preview past its deadline answers 504 studio-timeout-refusal naming the preview"
 - test `tests/api/db/maintenance-preview.test.ts` "whether a preview is offered is read from the bridged session"
 
+### C-71 (normative): The monitoring facets
+
+`monitoring.panel` and `monitoring.poolStats` are the two monitoring facets, each offered or not in `calls.monitoring`, and each implemented as one function under the implementation's `monitoring`.
+`monitoring.panel` reads one monitoring panel of those the session's engine offers, its request naming the panel, one of the keys of `$defs/monitoringPanels`, with the panel's own members.
+The slow queries and the active sessions panels carry a limit, the most rows to answer, which the host resolves, and the table and the index statistics panels an optional schema, absent for every user schema.
+It answers one form with one key, the panel's own, holding what the panel reads, which is the monitoring payload's member for that panel.
+`monitoring.poolStats` reads the counts of the session's own pool, its connections in all, the idle and the active ones, the requests waiting for one and the configured ceiling where the provider reports one, takes no request and makes no round trip to the engine it does not need.
+The host never asks a panel the session's engine does not offer, C-17, and such a panel is answered as not offered, never read.
+Every implementation honours every member of its request, so neither facet has an honours list.
+A timestamp member of an answer, such as when the server started or when a query began, crosses as the value codec's timestamp, a `Date`.
+No member of either call is a claim.
+The answer shapes are Studio's own panel shapes and pool statistics, declared by the SDK and held mutually assignable with Studio's, C-7.
+
+- schema `/$defs/calls/properties/monitoring`
+- schema `/$defs/monitoringCalls/properties/panel`
+- schema `/$defs/monitoringCalls/properties/poolStats`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "calls that leave out monitoring, or monitoring that leaves out panel or poolStats, are refused as missing-key"
+- test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the monitoring facets are the schema's"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "the monitoring facets are declared and implemented both ways, like every console facet"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an engine's offered monitoring panel is admitted where the package offers monitoring.panel, and refused by name as engine-facet-call-not-offered where it does not"
+- test `packages/provider-sdk/tests/calls/request.test.ts` "a monitoring panel request is held to the panels the session's engine offers"
+- test `packages/provider-sdk/tests/calls/request.test.ts` "no monitoring request refusal carries a value of the request"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a monitoring panel request is the closed shape of the panel it names"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a monitoring panel answer is exactly one of its seven forms, each read as its closed shape"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a timestamp member admits a Date and nothing else"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served monitoring call crosses its request and answer as frames, and the provider receives decoded frozen copies"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a monitoring call on a session without the facet, or for a panel its engine does not offer, is refused before any frame"
+
+### C-72 (normative): The health call
+
+Every session answers `health`, a mandatory call beside `open` and `close` that reaches the engine and answers its health.
+It answers the count of open connections where the engine can measure it, left out where it cannot and never a zero in its place, the database's size, its cache hit ratio, its slowest queries and its sessions, as Studio's health shape.
+It takes no request, and no refinement withdraws it, since it is no member of `calls`.
+The answer shape is Studio's own health answer, declared by the SDK and held mutually assignable with Studio's, C-7.
+
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a mandatory call that is missing or no function is refused as call-missing"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a call inherited from a prototype is not read, so a class instance is refused as call-missing"
+- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a calls segment the contract does not define is refused by name, and never read as the objects segment"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a pool statistics answer and a health answer are each read as their closed shape"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served health call crosses its context and answer as frames, and the host receives a decoded copy"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a closed or foreign session token is refused as session-not-open before any frame"
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:
@@ -3004,6 +3082,8 @@ Against the manifest sketch the design started from:
 - Transactions are one console facet, `transaction`, whose request names its action, and a statement inside a transaction is console execute sent with `transaction`; the sketch named four wire methods and a separate `session/state` read, C-57.
 - The object tree is one facet, `objects.tree`, whose request names its action; the sketch named five wire methods, `objects/containers`, `objects/count`, `objects/list`, `objects/describe` and `objects/describeMany`, C-61.
 - Maintenance is two facets, `maintenance.run` and `maintenance.preview`, as the sketch named them, and an engine's maintenance is admitted only where its package offers the call that serves it, C-4 and C-67.
+- Monitoring is two facets, `monitoring.panel`, one call whose request names the panel, and `monitoring.poolStats`, where the sketch named a facet per panel such as `monitoring.sessions`, C-71.
+- Health is the mandatory call `health`, the sketch's `session/health`, C-72.
 
 Against this contract's earlier text:
 
@@ -3021,3 +3101,5 @@ Against this contract's earlier text:
 - A seed's agent credential form follows the agent credential form request, M-55.
 - A maintenance run or preview is held to the session's maintenance before the call, C-17 and C-69, where only its facet was.
 - The connection form and each engine's display name are projections of the declarations, M-15 and M-72, each named function bound by Studio's function table, where Studio kept each form in a hand-written entry.
+- An engine's monitoring panel is refused only where its package does not offer `monitoring.panel`, C-4, where every offered panel was refused as having no call.
+- Health is a mandatory call, C-3 and C-72, where the calls chapter left it out.

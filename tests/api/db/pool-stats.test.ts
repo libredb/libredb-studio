@@ -3,7 +3,7 @@ import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
-import { QueryError } from "@/lib/db/errors";
+import { ConnectionError, QueryError } from "@/lib/db/errors";
 
 // ─── Mock provider ──────────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -244,5 +244,80 @@ describe("POST /api/db/pool-stats: a body that is not a JSON object", () => {
     expect(res.status).toBe(400);
     expect(await parseResponseJSON(res)).toEqual({ error: "Invalid request body" });
     expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * What the pool-stats route answers today, at the provider's own `getPoolStats`, which the host core keeps when the
+ * route reads the session's pool through monitoring.poolStats, its not-available answer the one for a session that
+ * does not offer that facet.
+ */
+describe("what the pool-stats route answers today, which the host core keeps", () => {
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetOrCreateProvider.mockImplementation(async () => mockProvider);
+    mockGetSession.mockImplementation(
+      async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+    );
+  });
+
+  const send = () =>
+    POST(createMockRequest("/api/db/pool-stats", { method: "POST", body: { connection: validConnection } }) as never);
+
+  test("the provider's pool statistics are read once, with no argument, and answered as they are, with or without a ceiling", async () => {
+    for (const stats of [
+      { total: 5, max: 10, idle: 2, active: 3, waiting: 1 },
+      { total: 4, idle: 1, active: 3, waiting: 0 },
+    ]) {
+      const getPoolStats = mock(() => stats);
+      const pooled = { ...createMockProvider(), getPoolStats };
+      mockGetOrCreateProvider.mockResolvedValueOnce(pooled);
+      // oxlint-disable-next-line no-await-in-loop -- one request at a time, so each answer is its own provider's.
+      const res = await send();
+
+      expect(res.status).toBe(200);
+      // oxlint-disable-next-line no-await-in-loop -- the answer of the request above.
+      expect(await parseResponseJSON(res)).toEqual(stats);
+      expect(getPoolStats.mock.calls).toEqual([[]]);
+    }
+  });
+
+  test("a provider with no pool statistics answers zeros and the sentence that says they are not available", async () => {
+    const res = await send();
+
+    expect(res.status).toBe(200);
+    expect(await parseResponseJSON(res)).toEqual({
+      total: 0,
+      idle: 0,
+      active: 0,
+      waiting: 0,
+      message: "Pool statistics not available for this provider",
+    });
+  });
+
+  test("a pool statistics read that throws answers by its class", async () => {
+    const words = crypto.randomUUID();
+    const cases: [Error, number, Record<string, unknown>][] = [
+      [
+        new ConnectionError(words, "postgres", "localhost", 5432),
+        503,
+        { error: words, code: "CONNECTION_ERROR", retryable: true, kind: "connection", outcome: "unknown" },
+      ],
+      [new Error(words), 500, { error: words, code: "INTERNAL_ERROR" }],
+    ];
+
+    for (const [error, status, expected] of cases) {
+      const getPoolStats = mock(() => {
+        throw error;
+      });
+      const pooled = { ...createMockProvider(), getPoolStats };
+      mockGetOrCreateProvider.mockResolvedValueOnce(pooled);
+      // oxlint-disable-next-line no-await-in-loop -- one request at a time, so each answer is its own error's.
+      const res = await send();
+
+      expect([error.name, res.status]).toEqual([error.name, status]);
+      // oxlint-disable-next-line no-await-in-loop -- the answer of the request above.
+      expect(await parseResponseJSON(res)).toEqual({ ...expected, statusCode: status });
+    }
   });
 });

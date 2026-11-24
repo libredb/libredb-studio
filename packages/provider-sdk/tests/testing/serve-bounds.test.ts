@@ -59,6 +59,7 @@ async function runCase(deps: ChildDeps, name: string): Promise<ChildReport> {
   const impl = {
     open: async () => ({ handle: {} }),
     close: async () => {},
+    health: async () => ({ databaseSize: "0 B", cacheHitRatio: "N/A", slowQueries: [], activeSessions: [] }),
     console: {
       execute: async () => ({
         results: name === "results" ? (longest as ResultSource[]) : [source],
@@ -69,6 +70,7 @@ async function runCase(deps: ChildDeps, name: string): Promise<ChildReport> {
     },
   };
   const manifest = JSON.parse(JSON.stringify(deps.manifest));
+  manifest.calls.monitoring.panel = "not-offered";
   manifest.engines[0].facets.monitoring.overview = "not-offered";
   const served = deps.serve(deps.defineProvider(manifest, impl), {
     observe: (frame) => {

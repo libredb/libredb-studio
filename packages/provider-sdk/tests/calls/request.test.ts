@@ -6,9 +6,11 @@
  * and asserts the exact refusal list: a pointer into the request, the field's name, and never a value of the request.
  * A statement sent inside a transaction goes only to a session that offers `console.transaction`, and never with a
  * scope. A console facet call goes only to a session that offers the facet, and an object facet call only to one that
- * offers the object facet, and a maintenance facet call only to one that offers the maintenance facet (clause C-17).
+ * offers the object facet, a maintenance facet call only to one that offers the maintenance facet, and a monitoring
+ * facet call only to one that offers the monitoring facet (clause C-17).
  * A maintenance run or preview request is held to the session's maintenance: an operation it lists, a placement its
- * spec offers, a preview its spec declares on a row, and no empty text where the request names something.
+ * spec offers, a preview its spec declares on a row, and no empty text where the request names something. A monitoring
+ * panel request is held to the panels the session's engine offers (clause C-71).
  */
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
@@ -22,21 +24,25 @@ import {
   checkMaintenanceFacet,
   checkMaintenancePreviewRequest,
   checkMaintenanceRunRequest,
+  checkMonitoringFacet,
+  checkMonitoringPanelRequest,
   checkObjectsFacet,
   type EngineMaintenance,
   type ExecuteRequest,
   type MaintenancePreviewRequest,
   type MaintenanceRunRequest,
+  type MonitoringPanelRequest,
   sessionCalls,
   sessionMaintenance,
 } from "@libredb/provider-sdk/calls";
-import type { Calls, MaintenanceOperation, MaintenanceSpec } from "@libredb/provider-sdk/manifest";
+import type { Calls, MaintenanceOperation, MaintenanceSpec, MonitoringPanels } from "@libredb/provider-sdk/manifest";
 
 /** The calls of a package that honours nothing and offers no facet. */
 const NOTHING: Calls = {
   console: { execute: { honours: [] }, cancel: "not-offered", endScope: "not-offered", transaction: "not-offered" },
   objects: { tree: "not-offered" },
   maintenance: { run: "not-offered", preview: "not-offered" },
+  monitoring: { panel: "not-offered", poolStats: "not-offered" },
 };
 
 /** The calls of a package that honours every field and offers every facet. */
@@ -49,6 +55,7 @@ const EVERYTHING: Calls = {
   },
   objects: { tree: "offered" },
   maintenance: { run: "offered", preview: "offered" },
+  monitoring: { panel: "offered", poolStats: "offered" },
 };
 
 const statement = `select ${randomUUID()}`;
@@ -218,6 +225,92 @@ describe("checkMaintenanceFacet", () => {
       expect(checkMaintenanceFacet(sessionCalls(EVERYTHING, undefined), facet)).toEqual([]);
     }
     expect(checkMaintenanceFacet(previewWithdrawn, "run")).toEqual([]);
+  });
+});
+
+describe("checkMonitoringFacet", () => {
+  test("the monitoring facets are refused by name to a session that does not offer them", () => {
+    for (const facet of ["panel", "poolStats"] as const) {
+      const withdrawn = sessionCalls(EVERYTHING, { calls: { monitoring: { [facet]: "not-offered" } } });
+      const refused: CallRefusal = {
+        rule: "facet-not-offered",
+        pointer: `/monitoring/${facet}`,
+        name: `monitoring.${facet}`,
+      };
+
+      expect(checkMonitoringFacet(NOTHING, facet)).toEqual([refused]);
+      expect(checkMonitoringFacet(sessionCalls(NOTHING, undefined), facet)).toEqual([refused]);
+      expect(checkMonitoringFacet(withdrawn, facet)).toEqual([refused]);
+      expect(callRefusalSentence(refused)).toBe(
+        `The session does not offer the facet "monitoring.${facet}" at "/monitoring/${facet}", so the call was not made.`,
+      );
+    }
+  });
+
+  test("a session that offers monitoring.panel and monitoring.poolStats is called", () => {
+    const poolStatsWithdrawn = sessionCalls(EVERYTHING, { calls: { monitoring: { poolStats: "not-offered" } } });
+
+    for (const facet of ["panel", "poolStats"] as const) {
+      expect(checkMonitoringFacet(EVERYTHING, facet)).toEqual([]);
+      expect(checkMonitoringFacet(sessionCalls(EVERYTHING, undefined), facet)).toEqual([]);
+    }
+    expect(checkMonitoringFacet(poolStatsWithdrawn, "panel")).toEqual([]);
+  });
+});
+
+/** An engine that offers the overview, the slow queries and the table statistics, and no other panel. */
+const SOME_PANELS: MonitoringPanels = {
+  overview: "offered",
+  performance: "not-offered",
+  slowQueries: "offered",
+  activeSessions: "not-offered",
+  tables: "offered",
+  indexes: "not-offered",
+  storage: "not-offered",
+};
+
+const PANEL_NOT_OFFERED: CallRefusal = { rule: "request-panel-not-offered", pointer: "/panel" };
+
+describe("checkMonitoringPanelRequest", () => {
+  test("a monitoring panel request is held to the panels the session's engine offers", () => {
+    const offered: MonitoringPanelRequest[] = [
+      { panel: "overview" },
+      { panel: "slowQueries", limit: 10 },
+      { panel: "tables" },
+      { panel: "tables", schema: "public" },
+    ];
+    const notOffered: MonitoringPanelRequest[] = [
+      { panel: "performance" },
+      { panel: "activeSessions", limit: 50 },
+      { panel: "indexes", schema: "public" },
+      { panel: "storage" },
+    ];
+    // Requests no host builds: no panel, a key every object inherits, and no text.
+    const malformed = [{}, { panel: "__proto__" }, { panel: "constructor" }, { panel: "toString" }, { panel: 1 }].map(
+      (request) => request as unknown as MonitoringPanelRequest,
+    );
+
+    for (const request of offered) expect(checkMonitoringPanelRequest(SOME_PANELS, request)).toEqual([]);
+    for (const request of [...notOffered, ...malformed]) {
+      expect(checkMonitoringPanelRequest(SOME_PANELS, request)).toEqual([PANEL_NOT_OFFERED]);
+    }
+    expect(callRefusalSentence(PANEL_NOT_OFFERED)).toBe(
+      'The request names at "/panel" a monitoring panel the session\'s engine does not offer, so the call was not made.',
+    );
+  });
+
+  test("no monitoring request refusal carries a value of the request", () => {
+    const schema = randomUUID();
+    const unknownPanel = randomUUID();
+    const refusals = [
+      ...checkMonitoringPanelRequest(SOME_PANELS, { panel: "indexes", schema }),
+      ...checkMonitoringPanelRequest(SOME_PANELS, { panel: unknownPanel } as unknown as MonitoringPanelRequest),
+    ];
+    const text = JSON.stringify(refusals) + new CallRefusalError(refusals).message;
+
+    expect(refusals).toEqual([PANEL_NOT_OFFERED, PANEL_NOT_OFFERED]);
+    expect(text).not.toContain(schema);
+    expect(text).not.toContain(unknownPanel);
   });
 });
 

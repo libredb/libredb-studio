@@ -8,9 +8,10 @@
  *
  * The SDK declares each shape the contexts and the object tree share with Studio's own source (`TlsSettings`,
  * `EgressDecision`, `TrustMaterial`, `PoolSettings`, `TunnelFarEnd`, `AdmittedHostPaths`, and the tree's `Container`,
- * `DatabaseObject`, `KindCount`, `ObjectDetail` and the shapes they hold, and the maintenance run's answer and the
- * maintenance preview) itself, because a package imports nothing from Studio; a census in Studio's tests holds each one
- * mutually assignable with Studio's type.
+ * `DatabaseObject`, `KindCount`, `ObjectDetail` and the shapes they hold, the maintenance run's answer and the
+ * maintenance preview, the monitoring panels' answers and the pool statistics, and the health answer) itself, because a
+ * package imports nothing from Studio; a census in Studio's tests holds each one mutually assignable with Studio's
+ * type.
  */
 import type {
   ConsoleCalls,
@@ -21,6 +22,8 @@ import type {
   FieldName,
   MaintenanceCalls,
   MaintenanceOperation,
+  MonitoringCalls,
+  MonitoringPanels,
   ObjectsCalls,
   ProviderManifest,
 } from "../manifest/manifest-types.generated";
@@ -92,6 +95,17 @@ export const MAINTENANCE_OPERATIONS = Object.freeze([
   "load",
   "release",
 ] as const) satisfies readonly MaintenanceOperation[];
+
+/**
+ * The monitoring facets, the keys of `$defs/monitoringCalls`, in schema order. Each is the path to its function under
+ * the implementation's `monitoring`, and the manifest's `calls.monitoring` declares each as offered or not.
+ */
+export const MONITORING_FACETS = Object.freeze([
+  "panel",
+  "poolStats",
+] as const) satisfies readonly (keyof MonitoringCalls)[];
+
+export type MonitoringFacet = (typeof MONITORING_FACETS)[number];
 
 /** The optional request fields of console execute, `$defs/executeRequestField`, in schema order. */
 export const EXECUTE_REQUEST_FIELDS = Object.freeze([
@@ -250,6 +264,10 @@ export interface Refinement {
     readonly maintenance?: {
       readonly run?: FacetOffer;
       readonly preview?: FacetOffer;
+    };
+    readonly monitoring?: {
+      readonly panel?: FacetOffer;
+      readonly poolStats?: FacetOffer;
     };
   };
   readonly maintenance?: readonly MaintenanceAccepted[];
@@ -649,15 +667,253 @@ export interface MaintenanceImpl<Handle> {
   preview?(handle: Handle, request: MaintenancePreviewRequest, ctx: CallContext): Promise<MaintenancePreview>;
 }
 
+/** A monitoring panel, `$defs/monitoringPanels`' keys: the vocabulary an engine's `facets.monitoring` states. */
+export type MonitoringPanel = keyof MonitoringPanels;
+
+/** Read the overview panel. */
+export interface MonitoringOverviewRequest {
+  readonly panel: "overview";
+}
+
+/** Read the performance panel. */
+export interface MonitoringPerformanceRequest {
+  readonly panel: "performance";
+}
+
+/** Read the slow queries panel: at most `limit` queries, a bound the host resolves. */
+export interface MonitoringSlowQueriesRequest {
+  readonly panel: "slowQueries";
+  readonly limit: number;
+}
+
+/** Read the active sessions panel: at most `limit` sessions, a bound the host resolves. */
+export interface MonitoringActiveSessionsRequest {
+  readonly panel: "activeSessions";
+  readonly limit: number;
+}
+
+/** Read the table statistics panel: the tables of `schema`, or of every user schema when it is absent. */
+export interface MonitoringTablesRequest {
+  readonly panel: "tables";
+  readonly schema?: string;
+}
+
+/** Read the index statistics panel: the indexes of `schema`, or of every user schema when it is absent. */
+export interface MonitoringIndexesRequest {
+  readonly panel: "indexes";
+  readonly schema?: string;
+}
+
+/** Read the storage panel. */
+export interface MonitoringStorageRequest {
+  readonly panel: "storage";
+}
+
+/**
+ * What `monitoring.panel` is asked to read: one request per panel, each told apart by its `panel` and with its own
+ * members.
+ */
+export type MonitoringPanelRequest =
+  | MonitoringOverviewRequest
+  | MonitoringPerformanceRequest
+  | MonitoringSlowQueriesRequest
+  | MonitoringActiveSessionsRequest
+  | MonitoringTablesRequest
+  | MonitoringIndexesRequest
+  | MonitoringStorageRequest;
+
+/**
+ * The overview panel: the server's version and uptime, when it started, its open connections where the engine measures
+ * them, its connection ceiling, where `0` says none is published, its size, in bytes where the engine publishes a byte
+ * figure, and its table and index counts, the table count a floor where `tableCountSampledFrom` says what it counted.
+ */
+export interface DatabaseOverview {
+  readonly version: string;
+  readonly uptime: string;
+  readonly startTime?: Date;
+  readonly activeConnections?: number;
+  readonly maxConnections: number;
+  readonly databaseSize: string;
+  readonly databaseSizeBytes?: number;
+  readonly tableCount: number;
+  readonly tableCountSampledFrom?: string;
+  readonly indexCount: number;
+}
+
+/**
+ * The performance panel, each figure present only where the engine measures it: the cache hit ratio as a percentage,
+ * the engine's advice for a low one, transactions and queries per second, buffer pool usage as a percentage, deadlocks
+ * and checkpoint write time.
+ */
+export interface PerformanceMetrics {
+  readonly cacheHitRatio?: number;
+  readonly cacheHitAdvice?: string;
+  readonly transactionsPerSecond?: number;
+  readonly queriesPerSecond?: number;
+  readonly bufferPoolUsage?: number;
+  readonly deadlocks?: number;
+  readonly checkpointWriteTime?: string;
+}
+
+/** One slow query, with its statistics. */
+export interface SlowQueryStats {
+  readonly queryId?: string;
+  readonly query: string;
+  readonly calls: number;
+  readonly totalTime: number;
+  readonly avgTime: number;
+  readonly minTime?: number;
+  readonly maxTime?: number;
+  readonly rows: number;
+  readonly sharedBlksHit?: number;
+  readonly sharedBlksRead?: number;
+}
+
+/** Which summary card a session counts toward; `waiting` is a session that is blocked. */
+export type SessionActivity = "active" | "idle" | "idle-in-transaction" | "waiting" | "other";
+
+/**
+ * One session: its engine's own status word in `state`, the card it counts toward where the engine classifies its
+ * vocabulary, and `terminable` false on a row the engine's kill cannot end.
+ */
+export interface ActiveSessionDetails {
+  readonly pid: number | string;
+  readonly user: string;
+  readonly database: string;
+  readonly applicationName?: string;
+  readonly clientAddr?: string;
+  readonly state: string;
+  readonly activity?: SessionActivity;
+  readonly query: string;
+  readonly queryStart?: Date;
+  readonly duration: string;
+  readonly durationMs: number;
+  readonly waitEventType?: string;
+  readonly waitEvent?: string;
+  readonly blocked?: boolean;
+  readonly terminable?: boolean;
+}
+
+/** One table's statistics, each count and size present only where the engine publishes it. */
+export interface TableStats {
+  readonly schemaName: string;
+  readonly tableName: string;
+  readonly rowCount?: number;
+  readonly liveRowCount?: number;
+  readonly deadRowCount?: number;
+  readonly tableSize?: string;
+  readonly tableSizeBytes?: number;
+  readonly indexSize?: string;
+  readonly indexSizeBytes?: number;
+  readonly totalSize: string;
+  readonly totalSizeBytes: number;
+  readonly lastVacuum?: Date;
+  readonly lastAnalyze?: Date;
+  readonly bloatRatio?: number;
+}
+
+/** One index's statistics. Its columns are a mutable list, as Studio's own type has them. */
+export interface IndexStats {
+  readonly schemaName: string;
+  readonly tableName: string;
+  readonly indexName: string;
+  readonly indexType?: string;
+  readonly columns: string[];
+  readonly isUnique: boolean;
+  readonly isPrimary: boolean;
+  readonly indexSize: string;
+  readonly indexSizeBytes?: number;
+  readonly scans: number;
+  readonly usageRatio?: number;
+}
+
+/** One storage area: its name, where it lives, its size and usage, and its write-ahead log's size where it has one. */
+export interface StorageStats {
+  readonly name: string;
+  readonly location?: string;
+  readonly size: string;
+  readonly sizeBytes: number;
+  readonly usagePercent?: number;
+  readonly walSize?: string;
+  readonly walSizeBytes?: number;
+}
+
+/**
+ * What `monitoring.panel` answers: one form per panel with exactly one key, the panel's own, holding what that panel
+ * reads, which is the monitoring payload's member for that panel.
+ */
+export type MonitoringPanelAnswer =
+  | { readonly overview: DatabaseOverview }
+  | { readonly performance: PerformanceMetrics }
+  | { readonly slowQueries: readonly SlowQueryStats[] }
+  | { readonly activeSessions: readonly ActiveSessionDetails[] }
+  | { readonly tables: readonly TableStats[] }
+  | { readonly indexes: readonly IndexStats[] }
+  | { readonly storage: readonly StorageStats[] };
+
+/**
+ * The counts of the session's own pool: its connections in all, the idle and the active ones, the requests waiting for
+ * one, and the configured ceiling where the provider reports one.
+ */
+export interface PoolStats {
+  readonly total: number;
+  readonly idle: number;
+  readonly active: number;
+  readonly waiting: number;
+  readonly max?: number;
+}
+
+/**
+ * The monitoring facets. Each is implemented exactly when the manifest's `calls.monitoring` offers it. Written as
+ * methods so an implementation over its own handle type is a `ProviderImpl<unknown>` too.
+ */
+export interface MonitoringImpl<Handle> {
+  panel?(handle: Handle, request: MonitoringPanelRequest, ctx: CallContext): Promise<MonitoringPanelAnswer>;
+  poolStats?(handle: Handle, ctx: CallContext): Promise<PoolStats>;
+}
+
+/** One of the slowest queries a health answer names. */
+export interface SlowQuery {
+  readonly query: string;
+  readonly calls: number;
+  readonly avgTime: string;
+}
+
+/** One session a health answer names. */
+export interface ActiveSession {
+  readonly pid: number | string;
+  readonly user: string;
+  readonly database: string;
+  readonly state: string;
+  readonly query: string;
+  readonly duration: string;
+}
+
+/**
+ * What `health` answers: the count of open connections where the engine measures it, left out where it cannot and never
+ * a zero in its place, the database's size, its cache hit ratio, its slowest queries and its sessions.
+ */
+export interface HealthInfo {
+  readonly activeConnections?: number;
+  readonly databaseSize: string;
+  readonly cacheHitRatio: string;
+  readonly slowQueries: readonly SlowQuery[];
+  readonly activeSessions: readonly ActiveSession[];
+}
+
 /** A package's implementation: the functions the host calls, keyed by the path of each call's name. */
 export interface ProviderImpl<Handle> {
   open(ctx: OpenContext): Promise<OpenAnswer<Handle>>;
   close(handle: Handle, ctx: CallContext): Promise<void>;
+  /** Reaches the engine and answers its health; every session answers it. */
+  health(handle: Handle, ctx: CallContext): Promise<HealthInfo>;
   readonly console: ConsoleImpl<Handle>;
   /** The object facets; may be absent, or an empty record, when the implementation offers none. */
   readonly objects?: ObjectsImpl<Handle>;
   /** The maintenance facets; may be absent, or an empty record, when the implementation offers none. */
   readonly maintenance?: MaintenanceImpl<Handle>;
+  /** The monitoring facets; may be absent, or an empty record, when the implementation offers none. */
+  readonly monitoring?: MonitoringImpl<Handle>;
 }
 
 /**

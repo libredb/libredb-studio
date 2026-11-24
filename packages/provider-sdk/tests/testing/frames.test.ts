@@ -136,6 +136,168 @@ function objectDetail(change: (draft: Json) => void = () => {}): Json {
   return draft;
 }
 
+/** The overview panel with every optional member. */
+function overview(change: (draft: Json) => void = () => {}): Json {
+  const draft: Json = {
+    version: marker(),
+    uptime: marker(),
+    startTime: new Date(1_700_000_000_000),
+    activeConnections: 3,
+    maxConnections: 100,
+    databaseSize: marker(),
+    databaseSizeBytes: 8192,
+    tableCount: 12,
+    tableCountSampledFrom: marker(),
+    indexCount: 4,
+  };
+  change(draft);
+  return draft;
+}
+
+/** One session of the active sessions panel, with every optional member. */
+function session(change: (draft: Json) => void = () => {}): Json {
+  const draft: Json = {
+    pid: 4711,
+    user: marker(),
+    database: marker(),
+    applicationName: marker(),
+    clientAddr: marker(),
+    state: "active",
+    activity: "idle-in-transaction",
+    query: marker(),
+    queryStart: new Date(1_700_000_000_000),
+    duration: "1s",
+    durationMs: 1000,
+    waitEventType: marker(),
+    waitEvent: marker(),
+    blocked: false,
+    terminable: true,
+  };
+  change(draft);
+  return draft;
+}
+
+/** One table of the table statistics panel, with every optional member. */
+function tableStats(change: (draft: Json) => void = () => {}): Json {
+  const draft: Json = {
+    schemaName: marker(),
+    tableName: marker(),
+    rowCount: 10,
+    liveRowCount: 9,
+    deadRowCount: 1,
+    tableSize: "8 kB",
+    tableSizeBytes: 8192,
+    indexSize: "16 kB",
+    indexSizeBytes: 16384,
+    totalSize: "24 kB",
+    totalSizeBytes: 24576,
+    lastVacuum: new Date(1_700_000_000_000),
+    lastAnalyze: new Date(1_700_000_001_000),
+    bloatRatio: 0.1,
+  };
+  change(draft);
+  return draft;
+}
+
+/** One answer of each panel, with every optional member, then one with none where a panel has optional members. */
+function panelAnswers(): readonly Json[] {
+  return [
+    { overview: overview() },
+    {
+      overview: overview((o) => {
+        for (const key of ["startTime", "activeConnections", "databaseSizeBytes", "tableCountSampledFrom"])
+          delete o[key];
+      }),
+    },
+    {
+      performance: {
+        cacheHitRatio: 99.5,
+        cacheHitAdvice: marker(),
+        transactionsPerSecond: 1,
+        queriesPerSecond: 2,
+        bufferPoolUsage: 50,
+        deadlocks: 0,
+        checkpointWriteTime: "1 ms",
+      },
+    },
+    { performance: {} },
+    {
+      slowQueries: [
+        {
+          queryId: marker(),
+          query: marker(),
+          calls: 3,
+          totalTime: 30,
+          avgTime: 10,
+          minTime: 5,
+          maxTime: 15,
+          rows: 3,
+          sharedBlksHit: 1,
+          sharedBlksRead: 2,
+        },
+        { query: marker(), calls: 1, totalTime: 1, avgTime: 1, rows: 0 },
+      ],
+    },
+    { slowQueries: [] },
+    {
+      activeSessions: [
+        session(),
+        {
+          pid: marker(),
+          user: marker(),
+          database: marker(),
+          state: marker(),
+          query: marker(),
+          duration: "0s",
+          durationMs: 0,
+        },
+      ],
+    },
+    { tables: [tableStats(), { schemaName: marker(), tableName: marker(), totalSize: "0 B", totalSizeBytes: 0 }] },
+    {
+      indexes: [
+        {
+          schemaName: marker(),
+          tableName: marker(),
+          indexName: marker(),
+          indexType: "btree",
+          columns: ["id"],
+          isUnique: true,
+          isPrimary: true,
+          indexSize: "8 kB",
+          indexSizeBytes: 8192,
+          scans: 3,
+          usageRatio: 0.5,
+        },
+        {
+          schemaName: marker(),
+          tableName: marker(),
+          indexName: marker(),
+          columns: [],
+          isUnique: false,
+          isPrimary: false,
+          indexSize: "0 B",
+          scans: 0,
+        },
+      ],
+    },
+    {
+      storage: [
+        {
+          name: marker(),
+          location: marker(),
+          size: "1 GB",
+          sizeBytes: 1_073_741_824,
+          usagePercent: 10,
+          walSize: "16 MB",
+          walSizeBytes: 16_777_216,
+        },
+        { name: marker(), size: "0 B", sizeBytes: 0 },
+      ],
+    },
+  ];
+}
+
 /** One well-formed value of each part of each call, and a second, minimal one where a part has optional members. */
 function wellFormed(): readonly (readonly [ServedCall, FramePart, unknown])[] {
   return [
@@ -161,6 +323,22 @@ function wellFormed(): readonly (readonly [ServedCall, FramePart, unknown])[] {
     ],
     ["open", "answer", {}],
     ["close", "context", { deadline: 1 }],
+    ["health", "context", { deadline: 1 }],
+    [
+      "health",
+      "answer",
+      {
+        activeConnections: 3,
+        databaseSize: "1 GB",
+        cacheHitRatio: "99%",
+        slowQueries: [{ query: marker(), calls: 2, avgTime: "1 ms" }],
+        activeSessions: [
+          { pid: 4711, user: marker(), database: marker(), state: "active", query: marker(), duration: "1s" },
+          { pid: marker(), user: marker(), database: marker(), state: "idle", query: "", duration: "0s" },
+        ],
+      },
+    ],
+    ["health", "answer", { databaseSize: "0 B", cacheHitRatio: "N/A", slowQueries: [], activeSessions: [] }],
     ["console.execute", "context", { deadline: 1 }],
     [
       "console.execute",
@@ -256,6 +434,15 @@ function wellFormed(): readonly (readonly [ServedCall, FramePart, unknown])[] {
       { summary: marker(), facts: [{ label: marker(), value: marker() }], refusal: marker(), note: marker() },
     ],
     ["maintenance.preview", "answer", { summary: marker(), facts: [] }],
+    ["monitoring.panel", "context", { deadline: 1 }],
+    ["monitoring.panel", "request", { panel: "overview" }],
+    ["monitoring.panel", "request", { panel: "slowQueries", limit: 10 }],
+    ["monitoring.panel", "request", { panel: "tables", schema: marker() }],
+    ["monitoring.panel", "request", { panel: "indexes" }],
+    ...panelAnswers().map((answer) => ["monitoring.panel", "answer", answer] as const),
+    ["monitoring.poolStats", "context", { deadline: 1 }],
+    ["monitoring.poolStats", "answer", { total: 5, idle: 2, active: 3, waiting: 0, max: 10 }],
+    ["monitoring.poolStats", "answer", { total: 0, idle: 0, active: 0, waiting: 0 }],
     ["result.next", "request", { maxRows: 100, maxBytes: 1_048_576 }],
     [
       "result.next",
@@ -300,6 +487,8 @@ describe("readFrame", () => {
       "open context",
       "open answer",
       "close context",
+      "health context",
+      "health answer",
       "console.execute context",
       "console.execute request",
       "console.execute answer",
@@ -321,6 +510,11 @@ describe("readFrame", () => {
       "maintenance.preview context",
       "maintenance.preview request",
       "maintenance.preview answer",
+      "monitoring.panel context",
+      "monitoring.panel request",
+      "monitoring.panel answer",
+      "monitoring.poolStats context",
+      "monitoring.poolStats answer",
       "result.next request",
       "result.next answer",
     ]);
@@ -398,6 +592,20 @@ describe("readFrame", () => {
     expect(
       readFrame("maintenance.preview", "answer", { summary: marker(), facts: [{ label: "a", value: "b", unit: "c" }] }),
     ).toEqual([refusal("frame-key-unknown", "maintenance.preview", "answer", "/facts/0/unit", "unit")]);
+    expect(readFrame("monitoring.panel", "request", { panel: "storage", limit: 1 })).toEqual([
+      refusal("frame-key-unknown", "monitoring.panel", "request", "/limit", "limit"),
+    ]);
+    expect(readFrame("monitoring.poolStats", "answer", { total: 0, idle: 0, active: 0, waiting: 0, min: 0 })).toEqual([
+      refusal("frame-key-unknown", "monitoring.poolStats", "answer", "/min", "min"),
+    ]);
+    expect(
+      readFrame("health", "answer", {
+        databaseSize: "0 B",
+        cacheHitRatio: "N/A",
+        slowQueries: [{ query: marker(), calls: 1, avgTime: "1 ms", rows: 1 }],
+        activeSessions: [],
+      }),
+    ).toEqual([refusal("frame-key-unknown", "health", "answer", "/slowQueries/0/rows", "rows")]);
   });
 
   test("a required key a frame lacks is refused as frame-key-missing", () => {
@@ -430,6 +638,15 @@ describe("readFrame", () => {
     ).toEqual([refusal("frame-key-missing", "console.execute", "answer", "/results/0/columns", "columns")]);
     expect(readFrame("result.next", "answer", { rows: [] })).toEqual([
       refusal("frame-key-missing", "result.next", "answer", "/done", "done"),
+    ]);
+    expect(readFrame("monitoring.panel", "request", { panel: "activeSessions" })).toEqual([
+      refusal("frame-key-missing", "monitoring.panel", "request", "/limit", "limit"),
+    ]);
+    expect(readFrame("monitoring.poolStats", "answer", { total: 0, idle: 0, active: 0 })).toEqual([
+      refusal("frame-key-missing", "monitoring.poolStats", "answer", "/waiting", "waiting"),
+    ]);
+    expect(readFrame("health", "context", {})).toEqual([
+      refusal("frame-key-missing", "health", "context", "/deadline", "deadline"),
     ]);
   });
 
@@ -557,6 +774,16 @@ describe("readFrame", () => {
     expect(
       readFrame("maintenance.preview", "answer", { summary: marker(), facts: [{ label: "a", value: 1 }] }),
     ).toEqual([unreadable("maintenance.preview", "answer", "/facts/0/value")]);
+    expect(readFrame("monitoring.panel", "request", { panel: "sessions" })).toEqual([
+      unreadable("monitoring.panel", "request", "/panel"),
+    ]);
+    expect(readFrame("monitoring.poolStats", "answer", { total: "5", idle: 0, active: 0, waiting: null })).toEqual([
+      unreadable("monitoring.poolStats", "answer", "/total"),
+      unreadable("monitoring.poolStats", "answer", "/waiting"),
+    ]);
+    expect(
+      readFrame("health", "answer", { databaseSize: 0, cacheHitRatio: 99, slowQueries: [], activeSessions: [] }),
+    ).toEqual([unreadable("health", "answer", "/databaseSize"), unreadable("health", "answer", "/cacheHitRatio")]);
     expect(reads).toBe(0);
   });
 
@@ -627,6 +854,166 @@ describe("readFrame", () => {
       unreadable("answer", "/refusal"),
       unreadable("answer", "/note"),
     ]);
+  });
+
+  test("a monitoring panel request is the closed shape of the panel it names", () => {
+    const request = (value: unknown) => readFrame("monitoring.panel", "request", value);
+    const unreadable = (pointer: string) => refusal("frame-value-unreadable", "monitoring.panel", "request", pointer);
+    const unknown = (pointer: string, key: string) =>
+      refusal("frame-key-unknown", "monitoring.panel", "request", pointer, key);
+    let reads = 0;
+    const accessor = Object.defineProperty({}, "panel", {
+      enumerable: true,
+      get() {
+        reads += 1;
+        return "overview";
+      },
+    });
+
+    for (const panel of ["overview", "performance", "storage"]) {
+      expect(request({ panel })).toEqual([]);
+      expect(request({ panel, limit: 1, schema: marker() })).toEqual([
+        unknown("/limit", "limit"),
+        unknown("/schema", "schema"),
+      ]);
+    }
+    for (const panel of ["slowQueries", "activeSessions"]) {
+      expect(request({ panel, limit: 25 })).toEqual([]);
+      expect(request({ panel })).toEqual([
+        refusal("frame-key-missing", "monitoring.panel", "request", "/limit", "limit"),
+      ]);
+      expect(request({ panel, limit: "25" })).toEqual([unreadable("/limit")]);
+      expect(request({ panel, limit: 1, schema: marker() })).toEqual([unknown("/schema", "schema")]);
+    }
+    for (const panel of ["tables", "indexes"]) {
+      expect(request({ panel })).toEqual([]);
+      expect(request({ panel, schema: marker() })).toEqual([]);
+      expect(request({ panel, schema: 1 })).toEqual([unreadable("/schema")]);
+      expect(request({ panel, limit: 1 })).toEqual([unknown("/limit", "limit")]);
+    }
+    expect(request({})).toEqual([refusal("frame-key-missing", "monitoring.panel", "request", "/panel", "panel")]);
+    for (const panel of ["sessions", "__proto__", "constructor", 1, null])
+      expect(request({ panel })).toEqual([unreadable("/panel")]);
+    expect(request(accessor)).toEqual([unreadable("/panel")]);
+    expect(request([])).toEqual([unreadable("")]);
+    expect(request(null)).toEqual([unreadable("")]);
+    expect(reads).toBe(0);
+  });
+
+  test("a monitoring panel answer is exactly one of its seven forms, each read as its closed shape", () => {
+    const answer = (value: unknown) => readFrame("monitoring.panel", "answer", value);
+    const unreadable = (pointer: string) => refusal("frame-value-unreadable", "monitoring.panel", "answer", pointer);
+    const missing = (pointer: string, key: string) =>
+      refusal("frame-key-missing", "monitoring.panel", "answer", pointer, key);
+    const unknown = (pointer: string, key: string) =>
+      refusal("frame-key-unknown", "monitoring.panel", "answer", pointer, key);
+
+    for (const value of panelAnswers()) expect(answer(value)).toEqual([]);
+    expect(answer({ overview: overview(), storage: [] })).toEqual([unreadable("")]);
+    expect(answer({ sessions: [] })).toEqual([unreadable("")]);
+    expect(answer({})).toEqual([unreadable("")]);
+    expect(answer([])).toEqual([unreadable("")]);
+    expect(answer(null)).toEqual([unreadable("")]);
+    expect(answer({ overview: overview((o) => delete o.maxConnections) })).toEqual([
+      missing("/overview/maxConnections", "maxConnections"),
+    ]);
+    expect(answer({ overview: overview((o) => (o.startTime = "2026-01-01T00:00:00.000Z")) })).toEqual([
+      unreadable("/overview/startTime"),
+    ]);
+    expect(answer({ performance: { cacheHitRatio: "99", hitRate: 1 } })).toEqual([
+      unreadable("/performance/cacheHitRatio"),
+      unknown("/performance/hitRate", "hitRate"),
+    ]);
+    expect(answer({ slowQueries: [{ query: marker(), calls: 1, totalTime: 1, avgTime: "1", rows: 0 }] })).toEqual([
+      unreadable("/slowQueries/0/avgTime"),
+    ]);
+    expect(
+      answer({
+        activeSessions: [
+          session((r) => (r.activity = "busy")),
+          session((r) => (r.pid = null)),
+          session((r) => (r.queryStart = 1)),
+        ],
+      }),
+    ).toEqual([
+      unreadable("/activeSessions/0/activity"),
+      unreadable("/activeSessions/1/pid"),
+      unreadable("/activeSessions/2/queryStart"),
+    ]);
+    for (const activity of ["active", "idle", "idle-in-transaction", "waiting", "other"]) {
+      expect(answer({ activeSessions: [session((r) => (r.activity = activity))] })).toEqual([]);
+    }
+    expect(
+      answer({ tables: [tableStats((t) => (t.lastVacuum = {})), tableStats((t) => delete t.totalSizeBytes)] }),
+    ).toEqual([unreadable("/tables/0/lastVacuum"), missing("/tables/1/totalSizeBytes", "totalSizeBytes")]);
+    expect(answer({ indexes: [{ schemaName: marker() }] })).toEqual(
+      ["tableName", "indexName", "columns", "isUnique", "isPrimary", "indexSize", "scans"].map((key) =>
+        missing(`/indexes/0/${key}`, key),
+      ),
+    );
+    expect(answer({ storage: {} })).toEqual([unreadable("/storage")]);
+    expect(answer({ storage: [{ name: marker(), size: "0 B", sizeBytes: 0, extra: 1 }] })).toEqual([
+      unknown("/storage/0/extra", "extra"),
+    ]);
+  });
+
+  test("a pool statistics answer and a health answer are each read as their closed shape", () => {
+    const pool = (value: unknown) => readFrame("monitoring.poolStats", "answer", value);
+    const unreadable = (pointer: string) =>
+      refusal("frame-value-unreadable", "monitoring.poolStats", "answer", pointer);
+
+    expect(pool({ total: 5, idle: 2, active: 3, waiting: 0, max: 10 })).toEqual([]);
+    expect(pool({ total: 5, idle: 2, active: 3, waiting: 0 })).toEqual([]);
+    expect(pool({ total: 5, idle: 2, active: 3, waiting: 0, max: "10" })).toEqual([unreadable("/max")]);
+    expect(pool({})).toEqual(
+      ["total", "idle", "active", "waiting"].map((key) =>
+        refusal("frame-key-missing", "monitoring.poolStats", "answer", `/${key}`, key),
+      ),
+    );
+    expect(pool(null)).toEqual([unreadable("")]);
+
+    const health = (value: unknown) => readFrame("health", "answer", value);
+    const healthUnreadable = (pointer: string) => refusal("frame-value-unreadable", "health", "answer", pointer);
+    const session = { pid: 1, user: marker(), database: marker(), state: "active", query: marker(), duration: "1s" };
+    expect(health({ databaseSize: "0 B", cacheHitRatio: "N/A", slowQueries: [], activeSessions: [session] })).toEqual(
+      [],
+    );
+    expect(
+      health({
+        activeConnections: "3",
+        databaseSize: "0 B",
+        cacheHitRatio: "N/A",
+        slowQueries: [{ query: marker(), calls: "1", avgTime: 1 }],
+        activeSessions: [{ ...session, pid: null, blocked: true }],
+      }),
+    ).toEqual([
+      healthUnreadable("/activeConnections"),
+      healthUnreadable("/slowQueries/0/calls"),
+      healthUnreadable("/slowQueries/0/avgTime"),
+      healthUnreadable("/activeSessions/0/pid"),
+      refusal("frame-key-unknown", "health", "answer", "/activeSessions/0/blocked", "blocked"),
+    ]);
+    expect(health({ databaseSize: "0 B" })).toEqual([
+      refusal("frame-key-missing", "health", "answer", "/cacheHitRatio", "cacheHitRatio"),
+      refusal("frame-key-missing", "health", "answer", "/slowQueries", "slowQueries"),
+      refusal("frame-key-missing", "health", "answer", "/activeSessions", "activeSessions"),
+    ]);
+    expect(health({ databaseSize: "0 B", cacheHitRatio: "N/A", slowQueries: {}, activeSessions: null })).toEqual([
+      healthUnreadable("/slowQueries"),
+      healthUnreadable("/activeSessions"),
+    ]);
+  });
+
+  test("a timestamp member admits a Date and nothing else", () => {
+    const startTime = (value: unknown) =>
+      readFrame("monitoring.panel", "answer", { overview: overview((o) => (o.startTime = value)) });
+    const unreadable = [refusal("frame-value-unreadable", "monitoring.panel", "answer", "/overview/startTime")];
+
+    expect(startTime(new Date(0))).toEqual([]);
+    expect(startTime(new (class extends Date {})(1))).toEqual([]);
+    for (const value of [new Date(Number.NaN), "1970-01-01T00:00:00.000Z", 0, {}, null, [new Date(0)]]) {
+      expect(startTime(value)).toEqual(unreadable);
+    }
   });
 
   test("a page bound is exactly one of its two forms", () => {

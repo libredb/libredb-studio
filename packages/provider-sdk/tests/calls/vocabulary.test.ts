@@ -5,7 +5,8 @@
  * `TRANSACTION_ACTIONS` names the actions a `console.transaction` request may carry (clause C-57). `OBJECTS_FACETS`
  * holds the object facets `$defs/objectsCalls` declares, and `TREE_ACTIONS` names the actions an `objects.tree` request
  * may carry (clause C-61). `MAINTENANCE_FACETS` holds the maintenance facets `$defs/maintenanceCalls` declares, and
- * `MAINTENANCE_OPERATIONS` the operations `$defs/maintenanceOperation` names (clause C-67).
+ * `MAINTENANCE_OPERATIONS` the operations `$defs/maintenanceOperation` names (clause C-67). `MONITORING_FACETS` holds
+ * the monitoring facets `$defs/monitoringCalls` declares (clause C-71).
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -15,6 +16,7 @@ import {
   EXECUTE_REQUEST_FIELDS,
   MAINTENANCE_FACETS,
   MAINTENANCE_OPERATIONS,
+  MONITORING_FACETS,
   OBJECTS_FACETS,
   TRANSACTION_ACTIONS,
   TREE_ACTIONS,
@@ -67,5 +69,13 @@ describe("the call vocabularies", () => {
     );
     expect(MAINTENANCE_OPERATIONS).toHaveLength(11);
     expect(Object.isFrozen(MAINTENANCE_OPERATIONS)).toBe(true);
+  });
+
+  test("the monitoring facets are the schema's", () => {
+    expect<readonly string[]>([...MONITORING_FACETS]).toEqual(
+      Object.keys(SCHEMA.$defs.monitoringCalls?.properties ?? {}),
+    );
+    expect<readonly string[]>([...MONITORING_FACETS]).toEqual(["panel", "poolStats"]);
+    expect(Object.isFrozen(MONITORING_FACETS)).toBe(true);
   });
 });

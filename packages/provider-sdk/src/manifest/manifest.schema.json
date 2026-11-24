@@ -176,9 +176,12 @@
         },
         "maintenance": {
           "$ref": "#/$defs/maintenanceCalls"
+        },
+        "monitoring": {
+          "$ref": "#/$defs/monitoringCalls"
         }
       },
-      "required": ["console", "objects", "maintenance"],
+      "required": ["console", "objects", "maintenance", "monitoring"],
       "additionalProperties": false
     },
     "consoleCalls": {
@@ -224,6 +227,20 @@
         }
       },
       "required": ["run", "preview"],
+      "additionalProperties": false
+    },
+    "monitoringCalls": {
+      "description": "The monitoring facets: each optional call that reads what the monitoring dashboard shows, keyed by the path to its function under the implementation's monitoring. panel: read one monitoring panel an engine offers, the panel the request names. poolStats: read the counts of the session's own pool.",
+      "type": "object",
+      "properties": {
+        "panel": {
+          "$ref": "#/$defs/facetOffer"
+        },
+        "poolStats": {
+          "$ref": "#/$defs/facetOffer"
+        }
+      },
+      "required": ["panel", "poolStats"],
       "additionalProperties": false
     },
     "executeCall": {

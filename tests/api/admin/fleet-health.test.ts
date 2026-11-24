@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach, spyOn } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
@@ -19,6 +19,7 @@ import {
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
+import type { DatabaseOverview, HealthInfo } from "@/lib/db/types";
 
 // ─── Mock provider ──────────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -588,3 +589,116 @@ describe("POST /api/admin/fleet-health fan-out cap", () => {
 // file's process neighbours mock @/lib/audit process-wide (tests/api/db/maintenance.test.ts among
 // them), so an assertion on the authoritative stdout line would read whichever mock happened to
 // win the module registry. Nothing under tests/security mocks that module.
+
+/**
+ * What fleet health answers today, at the provider's own `getHealth` and `getOverview`, which the host core keeps when
+ * the route reads them through the health call and monitoring.panel. `Date.now` reads a clock the test owns, which only
+ * the health read advances, so a row's latency is the advance and no timer is awaited.
+ */
+describe("what fleet health answers today, which the host core keeps", () => {
+  type Mocked = ReturnType<typeof mock>;
+  let clock = 1_700_000_000_000;
+  let now: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetSession.mockImplementation(
+      async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+    );
+    mockReadProviderDeclarations.mockImplementation(async () => declarationsOf(mockProvider));
+    now = spyOn(Date, "now").mockImplementation(() => clock);
+  });
+
+  afterEach(() => {
+    now.mockRestore();
+    mockGetOrCreateProvider.mockImplementation(async () => mockProvider);
+  });
+
+  const health: HealthInfo = {
+    activeConnections: 7,
+    databaseSize: "8 MB",
+    cacheHitRatio: "99%",
+    slowQueries: [],
+    activeSessions: [],
+  };
+
+  /** A provider whose health read advances the test's clock by `advance` ms, then answers `answer`. */
+  function timedProvider(advance: number, answer: () => Promise<HealthInfo>) {
+    const provider = createMockProvider();
+    (provider.getHealth as Mocked).mockImplementation(async () => {
+      clock += advance;
+      return answer();
+    });
+    mockGetOrCreateProvider.mockImplementation(async () => provider);
+    return provider;
+  }
+
+  async function rowOf(): Promise<Record<string, unknown>> {
+    const res = await POST(
+      createMockRequest("/api/admin/fleet-health", { method: "POST", body: { connections: [connections[0]] } }),
+    );
+    expect(res.status).toBe(200);
+    const data = await parseResponseJSON<{ results: Record<string, unknown>[] }>(res);
+    expect(data.results).toHaveLength(1);
+    return data.results[0] as Record<string, unknown>;
+  }
+
+  test("a row is healthy up to 5,000 ms of health latency and degraded past it", async () => {
+    timedProvider(5000, async () => health);
+    const atBound = await rowOf();
+    timedProvider(5001, async () => health);
+    const past = await rowOf();
+
+    expect([atBound.status, atBound.latencyMs]).toEqual(["healthy", 5000]);
+    expect([past.status, past.latencyMs]).toEqual(["degraded", 5001]);
+  });
+
+  test("a row carries the health read's connection count and size, and the overview's byte figure where the engine offers the overview", async () => {
+    const databaseSize = crypto.randomUUID();
+    const overview: DatabaseOverview = {
+      version: crypto.randomUUID(),
+      uptime: "3 days",
+      maxConnections: 100,
+      databaseSize,
+      databaseSizeBytes: 8_388_608,
+      tableCount: 2,
+      indexCount: 1,
+    };
+    const provider = timedProvider(12, async () => ({ ...health, databaseSize }));
+    (provider.getOverview as Mocked).mockImplementation(async () => overview);
+
+    const row = await rowOf();
+
+    expect((provider.getHealth as Mocked).mock.calls).toEqual([[]]);
+    expect((provider.getOverview as Mocked).mock.calls).toEqual([[]]);
+    expect(row).toEqual({
+      connectionId: "conn-1",
+      connectionName: "Production DB",
+      type: "postgres",
+      status: "healthy",
+      latencyMs: 12,
+      activeConnections: 7,
+      databaseSize,
+      databaseSizeBytes: 8_388_608,
+    });
+  });
+
+  test("a row whose health read fails answers error with the error's sentence and the time it took", async () => {
+    const sentence = `connection to ${crypto.randomUUID()} refused`;
+    const provider = timedProvider(1234, async () => {
+      throw new ConnectionError(sentence, "postgres", "localhost", 5432);
+    });
+
+    const row = await rowOf();
+
+    expect(row).toEqual({
+      connectionId: "conn-1",
+      connectionName: "Production DB",
+      type: "postgres",
+      status: "error",
+      latencyMs: 1234,
+      error: sentence,
+    });
+    expect(provider.getOverview).not.toHaveBeenCalled();
+  });
+});

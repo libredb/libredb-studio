@@ -8,7 +8,8 @@
  * unions, fails typecheck here until its reader names it. Each record reader is declared as `ShapeOf` its type, a
  * mapped type that requires one entry per member, marked `required` or `optional` as the member is: a member is
  * optional exactly when the type admits a value without it. A union of records is read as the one form its keys name,
- * a request that names its action as that action's shape, and a map with free keys, the tree's counts, key by key.
+ * a request that names its action or its panel as that action's or that panel's shape, and a map with free keys, the
+ * tree's counts, key by key. A timestamp member is read as a valid `Date`, the value the codec decodes its timestamp to.
  *
  * A reader reads a value `decodeValue` produced, so every record is a plain object and every list dense and no longer
  * than the frame text. It still reads every key by its own descriptor, never calling a getter, and stops a list at its
@@ -23,10 +24,13 @@ import type {
   CancelAnswer,
   CancelRequest,
   Column,
+  ActiveSession,
+  ActiveSessionDetails,
   ColumnSchema,
   ConnectionFieldValues,
   Container,
   DatabaseObject,
+  DatabaseOverview,
   EgressDecision,
   EndScopeAnswer,
   EndScopeRequest,
@@ -34,13 +38,25 @@ import type {
   ExecuteAnswer,
   ExecuteRequest,
   ForeignKeySchema,
+  HealthInfo,
   IndexSchema,
+  IndexStats,
   KindCount,
   MaintenanceFact,
   MaintenancePreview,
   MaintenancePreviewRequest,
   MaintenanceRunAnswer,
   MaintenanceRunRequest,
+  MonitoringActiveSessionsRequest,
+  MonitoringIndexesRequest,
+  MonitoringOverviewRequest,
+  MonitoringPanel,
+  MonitoringPanelAnswer,
+  MonitoringPanelRequest,
+  MonitoringPerformanceRequest,
+  MonitoringSlowQueriesRequest,
+  MonitoringStorageRequest,
+  MonitoringTablesRequest,
   ObjectDetail,
   ObjectDetailBatch,
   ObjectReadRange,
@@ -48,8 +64,15 @@ import type {
   OpenContext,
   OpenPolicy,
   PageBound,
+  PerformanceMetrics,
   PoolSettings,
+  PoolStats,
   RowBatch,
+  SessionActivity,
+  SlowQuery,
+  SlowQueryStats,
+  StorageStats,
+  TableStats,
   TlsSettings,
   TransactionAnswer,
   TransactionRequest,
@@ -116,6 +139,7 @@ export type ExecuteAnswerFrame = Omit<ExecuteAnswer, "results"> & { readonly res
 export interface FrameShapes {
   readonly open: { readonly context: ContextData<OpenContext>; readonly answer: OpenAnswerFrame };
   readonly close: { readonly context: ContextData<CallContext> };
+  readonly health: { readonly context: ContextData<CallContext>; readonly answer: HealthInfo };
   readonly "console.execute": {
     readonly context: ContextData<CallContext>;
     readonly request: ExecuteRequest;
@@ -151,6 +175,12 @@ export interface FrameShapes {
     readonly request: MaintenancePreviewRequest;
     readonly answer: MaintenancePreview;
   };
+  readonly "monitoring.panel": {
+    readonly context: ContextData<CallContext>;
+    readonly request: MonitoringPanelRequest;
+    readonly answer: MonitoringPanelAnswer;
+  };
+  readonly "monitoring.poolStats": { readonly context: ContextData<CallContext>; readonly answer: PoolStats };
   readonly "result.next": { readonly request: BatchLimitData; readonly answer: RowBatch };
   readonly "result.close": Readonly<Record<never, never>>;
 }
@@ -174,6 +204,8 @@ const number = value((item) => typeof item === "number");
 const boolean = value((item) => typeof item === "boolean");
 const textOrNumber = value((item) => typeof item === "string" || typeof item === "number");
 const exactlyTrue = value((item) => item === true);
+/** A valid `Date`, a subclass included: what the value codec decodes a timestamp to. */
+const timestamp = value((item) => item instanceof Date && !Number.isNaN(item.getTime()));
 /** Any value in the codec's domain: the decoder admitted it. */
 const anyValue: Reader = () => {};
 
@@ -588,6 +620,228 @@ const maintenancePreview = record<MaintenancePreview>({
   note: optional(text),
 });
 
+/** The closed shape of each monitoring panel request, by the panel it names. */
+const PANEL_REQUESTS = Object.freeze<{ readonly [Panel in MonitoringPanel]: Reader }>({
+  overview: record<MonitoringOverviewRequest>({
+    panel: required(vocabulary<MonitoringOverviewRequest["panel"]>(Object.freeze({ overview: true }))),
+  }),
+  performance: record<MonitoringPerformanceRequest>({
+    panel: required(vocabulary<MonitoringPerformanceRequest["panel"]>(Object.freeze({ performance: true }))),
+  }),
+  slowQueries: record<MonitoringSlowQueriesRequest>({
+    panel: required(vocabulary<MonitoringSlowQueriesRequest["panel"]>(Object.freeze({ slowQueries: true }))),
+    limit: required(number),
+  }),
+  activeSessions: record<MonitoringActiveSessionsRequest>({
+    panel: required(vocabulary<MonitoringActiveSessionsRequest["panel"]>(Object.freeze({ activeSessions: true }))),
+    limit: required(number),
+  }),
+  tables: record<MonitoringTablesRequest>({
+    panel: required(vocabulary<MonitoringTablesRequest["panel"]>(Object.freeze({ tables: true }))),
+    schema: optional(text),
+  }),
+  indexes: record<MonitoringIndexesRequest>({
+    panel: required(vocabulary<MonitoringIndexesRequest["panel"]>(Object.freeze({ indexes: true }))),
+    schema: optional(text),
+  }),
+  storage: record<MonitoringStorageRequest>({
+    panel: required(vocabulary<MonitoringStorageRequest["panel"]>(Object.freeze({ storage: true }))),
+  }),
+});
+
+/**
+ * A monitoring panel request, read as the closed shape of the panel it names: a record whose `panel` is the data value
+ * of one of the panels is read as that panel's request, which refuses a member of another panel as a key it does not
+ * define. A record without `panel` is refused as `frame-key-missing` there, and one whose `panel` is an accessor or no
+ * panel as `frame-value-unreadable` there; any other value is refused at its pointer. The `panel` is read by its own
+ * descriptor, so a getter is never called.
+ */
+const panelRequest: Reader = (item, pointer, found) => {
+  if (!isPlainRecord(item)) return unreadable(pointer, found);
+  const read = readOwn(item, "panel");
+  const at = pointerTo(pointer, "panel");
+  if (read.kind === "absent") {
+    found.push({ rule: "frame-key-missing", pointer: at, name: "panel" });
+    return;
+  }
+  const word = read.kind === "data" ? read.value : undefined;
+  if (typeof word !== "string" || !Object.hasOwn(PANEL_REQUESTS, word)) return unreadable(at, found);
+  PANEL_REQUESTS[word as MonitoringPanel](item, pointer, found);
+};
+
+const SESSION_ACTIVITIES = Object.freeze<Record<SessionActivity, true>>({
+  active: true,
+  idle: true,
+  "idle-in-transaction": true,
+  waiting: true,
+  other: true,
+});
+
+/** The form of the panel answer whose one key is `Panel`. */
+type PanelAnswerOf<Panel extends MonitoringPanel> = Extract<MonitoringPanelAnswer, Readonly<Record<Panel, unknown>>>;
+
+/**
+ * A monitoring panel answer, exactly one of its seven forms, each with one key, the panel's own, told apart by it. The
+ * frame reader reads shapes only: which form answers which panel is the host's answer reader's.
+ */
+const panelAnswer = oneOfRecords([
+  form<PanelAnswerOf<"overview">>({
+    overview: required(
+      record<DatabaseOverview>({
+        version: required(text),
+        uptime: required(text),
+        startTime: optional(timestamp),
+        activeConnections: optional(number),
+        maxConnections: required(number),
+        databaseSize: required(text),
+        databaseSizeBytes: optional(number),
+        tableCount: required(number),
+        tableCountSampledFrom: optional(text),
+        indexCount: required(number),
+      }),
+    ),
+  }),
+  form<PanelAnswerOf<"performance">>({
+    performance: required(
+      record<PerformanceMetrics>({
+        cacheHitRatio: optional(number),
+        cacheHitAdvice: optional(text),
+        transactionsPerSecond: optional(number),
+        queriesPerSecond: optional(number),
+        bufferPoolUsage: optional(number),
+        deadlocks: optional(number),
+        checkpointWriteTime: optional(text),
+      }),
+    ),
+  }),
+  form<PanelAnswerOf<"slowQueries">>({
+    slowQueries: required(
+      listOf(
+        record<SlowQueryStats>({
+          queryId: optional(text),
+          query: required(text),
+          calls: required(number),
+          totalTime: required(number),
+          avgTime: required(number),
+          minTime: optional(number),
+          maxTime: optional(number),
+          rows: required(number),
+          sharedBlksHit: optional(number),
+          sharedBlksRead: optional(number),
+        }),
+      ),
+    ),
+  }),
+  form<PanelAnswerOf<"activeSessions">>({
+    activeSessions: required(
+      listOf(
+        record<ActiveSessionDetails>({
+          pid: required(textOrNumber),
+          user: required(text),
+          database: required(text),
+          applicationName: optional(text),
+          clientAddr: optional(text),
+          state: required(text),
+          activity: optional(vocabulary(SESSION_ACTIVITIES)),
+          query: required(text),
+          queryStart: optional(timestamp),
+          duration: required(text),
+          durationMs: required(number),
+          waitEventType: optional(text),
+          waitEvent: optional(text),
+          blocked: optional(boolean),
+          terminable: optional(boolean),
+        }),
+      ),
+    ),
+  }),
+  form<PanelAnswerOf<"tables">>({
+    tables: required(
+      listOf(
+        record<TableStats>({
+          schemaName: required(text),
+          tableName: required(text),
+          rowCount: optional(number),
+          liveRowCount: optional(number),
+          deadRowCount: optional(number),
+          tableSize: optional(text),
+          tableSizeBytes: optional(number),
+          indexSize: optional(text),
+          indexSizeBytes: optional(number),
+          totalSize: required(text),
+          totalSizeBytes: required(number),
+          lastVacuum: optional(timestamp),
+          lastAnalyze: optional(timestamp),
+          bloatRatio: optional(number),
+        }),
+      ),
+    ),
+  }),
+  form<PanelAnswerOf<"indexes">>({
+    indexes: required(
+      listOf(
+        record<IndexStats>({
+          schemaName: required(text),
+          tableName: required(text),
+          indexName: required(text),
+          indexType: optional(text),
+          columns: required(listOf(text)),
+          isUnique: required(boolean),
+          isPrimary: required(boolean),
+          indexSize: required(text),
+          indexSizeBytes: optional(number),
+          scans: required(number),
+          usageRatio: optional(number),
+        }),
+      ),
+    ),
+  }),
+  form<PanelAnswerOf<"storage">>({
+    storage: required(
+      listOf(
+        record<StorageStats>({
+          name: required(text),
+          location: optional(text),
+          size: required(text),
+          sizeBytes: required(number),
+          usagePercent: optional(number),
+          walSize: optional(text),
+          walSizeBytes: optional(number),
+        }),
+      ),
+    ),
+  }),
+]);
+
+const poolStats = record<PoolStats>({
+  total: required(number),
+  idle: required(number),
+  active: required(number),
+  waiting: required(number),
+  max: optional(number),
+});
+
+const health = record<HealthInfo>({
+  activeConnections: optional(number),
+  databaseSize: required(text),
+  cacheHitRatio: required(text),
+  slowQueries: required(
+    listOf(record<SlowQuery>({ query: required(text), calls: required(number), avgTime: required(text) })),
+  ),
+  activeSessions: required(
+    listOf(
+      record<ActiveSession>({
+        pid: required(textOrNumber),
+        user: required(text),
+        database: required(text),
+        state: required(text),
+        query: required(text),
+        duration: required(text),
+      }),
+    ),
+  ),
+});
+
 /** One value of a connection field: a string, a number, a boolean or a list of strings. */
 const connectionValue: Reader = (item, pointer, found) => {
   if (Array.isArray(item)) listOf(text)(item, pointer, found);
@@ -744,6 +998,7 @@ const READERS = Object.freeze<{
 }>({
   open: { context: openContext, answer: openAnswer },
   close: { context: callContext },
+  health: { context: callContext, answer: health },
   "console.execute": { context: callContext, request: executeRequest, answer: executeAnswer },
   "console.cancel": {
     context: callContext,
@@ -766,6 +1021,8 @@ const READERS = Object.freeze<{
   "objects.tree": { context: callContext, request: treeRequest, answer: treeAnswer },
   "maintenance.run": { context: callContext, request: maintenanceRunRequest, answer: maintenanceRunAnswer },
   "maintenance.preview": { context: callContext, request: maintenancePreviewRequest, answer: maintenancePreview },
+  "monitoring.panel": { context: callContext, request: panelRequest, answer: panelAnswer },
+  "monitoring.poolStats": { context: callContext, answer: poolStats },
   "result.next": {
     request: record<BatchLimitData>({ maxRows: required(number), maxBytes: required(number) }),
     answer: record<RowBatch>({ rows: required(listOf(listOf(anyValue))), done: required(boolean) }),

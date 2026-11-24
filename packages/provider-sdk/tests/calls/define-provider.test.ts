@@ -1,6 +1,6 @@
 /**
  * A package's entry default-exports the record `defineProvider` returns, and `checkProviderModule` refuses any other
- * value by a named rule (docs/providers/CONTRACT.md, clauses C-1, C-3, C-4 and C-67).
+ * value by a named rule (docs/providers/CONTRACT.md, clauses C-1, C-3, C-4, C-67 and C-71).
  *
  * Each case starts from a manifest and an implementation that match, changes one thing, and asserts the exact refusal
  * list. Every pointer is a JSON Pointer into the module record, `{ contract, manifest, impl }`, so a refusal of the
@@ -29,11 +29,12 @@ const SCHEMA: Json = JSON.parse(
   readFileSync(path.join(import.meta.dir, "../../src/manifest/manifest.schema.json"), "utf8"),
 );
 
-/** A manifest offering cancel and not endScope, honouring params, with no engine facet offered. */
+/** A manifest offering cancel and not endScope, honouring params, with no monitoring facet and no engine facet offered. */
 function manifest(change: (draft: Json) => void = () => {}): Json {
   const draft = JSON.parse(readFileSync(path.join(import.meta.dir, "../fixtures/minimal-manifest.json"), "utf8"));
   draft.calls.console.cancel = "offered";
   draft.calls.console.execute.honours = ["params"];
+  draft.calls.monitoring.panel = "not-offered";
   draft.engines[0].facets.monitoring.overview = "not-offered";
   change(draft);
   return draft;
@@ -43,11 +44,12 @@ interface Handle {
   readonly id: string;
 }
 
-/** An implementation of open, close, console.execute and console.cancel, changed by `change`. */
+/** An implementation of open, close, health, console.execute and console.cancel, changed by `change`. */
 function impl(change: (draft: Json) => void = () => {}): ProviderImpl<Handle> {
   const draft: Json = {
     open: async () => ({ handle: { id: "session" } }),
     close: async () => {},
+    health: async () => ({ databaseSize: "0 B", cacheHitRatio: "100%", slowQueries: [], activeSessions: [] }),
     console: {
       execute: async () => ({ results: [], warnings: [], executionTimeMs: 0, pageApplied: false }),
       cancel: async () => ({ cancelled: false }),
@@ -378,6 +380,147 @@ describe("checkProviderModule", () => {
     ).toEqual([refusal("manifest-unreadable", `${pointer}/0/preview`)]);
   });
 
+  test("the monitoring facets are declared and implemented both ways, like every console facet", () => {
+    const panel = async () => ({ storage: [] });
+    const poolStats = async () => ({ total: 0, idle: 0, active: 0, waiting: 0 });
+    const functions: Json = { panel, poolStats };
+    const offered = manifest((m) => (m.calls.monitoring = { panel: "offered", poolStats: "offered" }));
+    const implemented = impl((i) => (i.monitoring = { panel, poolStats }));
+    const defined = defineProvider(offered, implemented);
+
+    expect(defined.impl.monitoring?.panel).toBe(panel);
+    expect(defined.impl.monitoring?.poolStats).toBe(poolStats);
+    expect(Object.isFrozen(defined.impl.monitoring)).toBe(true);
+    for (const facet of ["panel", "poolStats"]) {
+      const name = `monitoring.${facet}`;
+      const pointer = `/impl/monitoring/${facet}`;
+      const offersOne = manifest((m) => (m.calls.monitoring[facet] = "offered"));
+      const implementsOne = impl((i) => (i.monitoring = { [facet]: functions[facet] }));
+
+      expect(checkProviderModule(record((r) => (r.manifest = offersOne)))).toEqual([
+        refusal("facet-unimplemented", pointer, { name }),
+      ]);
+      expect(
+        checkProviderModule(
+          record((r) => {
+            r.manifest = offersOne;
+            r.impl.monitoring = { [facet]: facet };
+          }),
+        ),
+      ).toEqual([refusal("facet-unimplemented", pointer, { name })]);
+      expect(checkProviderModule(record((r) => (r.impl = implementsOne)))).toEqual([
+        refusal("facet-undeclared", pointer, { name }),
+      ]);
+      expect(checkProviderModule(record((r) => (r.impl.monitoring = { [facet]: undefined })))).toEqual([
+        refusal("facet-undeclared", pointer, { name }),
+      ]);
+      expect(
+        checkProviderModule(
+          record((r) => {
+            r.manifest = offersOne;
+            r.impl = implementsOne;
+          }),
+        ),
+      ).toEqual([]);
+    }
+    expect(checkProviderModule(record((r) => (r.manifest = offered)))).toEqual([
+      refusal("facet-unimplemented", "/impl/monitoring/panel", { name: "monitoring.panel" }),
+      refusal("facet-unimplemented", "/impl/monitoring/poolStats", { name: "monitoring.poolStats" }),
+    ]);
+    expect(checkProviderModule(record((r) => (r.impl.monitoring = {})))).toEqual([]);
+    expect(
+      Object.isFrozen(
+        defineProvider(
+          manifest(),
+          impl((i) => (i.monitoring = {})),
+        ).impl.monitoring,
+      ),
+    ).toBe(true);
+  });
+
+  test("an engine's offered monitoring panel is admitted where the package offers monitoring.panel, and refused by name as engine-facet-call-not-offered where it does not", () => {
+    const panel = async () => ({
+      overview: { version: "", uptime: "", maxConnections: 0, databaseSize: "", tableCount: 0, indexCount: 0 },
+    });
+    const offering = (offer: unknown, implemented: boolean, change: (m: Json) => void = () => {}): Json =>
+      record((r) => {
+        r.manifest.calls.monitoring.panel = offer;
+        r.manifest.engines[0].facets.monitoring.overview = "offered";
+        r.manifest.engines[0].facets.monitoring.tables = "offered";
+        if (implemented) r.impl.monitoring = { panel };
+        change(r.manifest);
+      });
+    const pointer = "/manifest/engines/0/facets/monitoring";
+    const name = "monitoring.panel";
+
+    expect(checkProviderModule(offering("offered", true))).toEqual([]);
+    expect(checkProviderModule(offering("not-offered", false))).toEqual([
+      refusal("engine-facet-call-not-offered", `${pointer}/overview`, { name }),
+      refusal("engine-facet-call-not-offered", `${pointer}/tables`, { name }),
+    ]);
+    // A panel the engine declares not-offered refuses nothing, whether or not the package offers monitoring.panel.
+    const noPanel = (m: Json) => {
+      m.engines[0].facets.monitoring.overview = "not-offered";
+      m.engines[0].facets.monitoring.tables = "not-offered";
+    };
+    expect(checkProviderModule(offering("offered", true, noPanel))).toEqual([]);
+    expect(checkProviderModule(offering("not-offered", false, noPanel))).toEqual([]);
+    // Two engines: only the panels of the one that offers panels are refused.
+    const twoEngines = offering("not-offered", false, (m) => {
+      const second = structuredClone(m.engines[0]);
+      second.id = "otherdb";
+      for (const key of Object.keys(second.facets.monitoring)) second.facets.monitoring[key] = "not-offered";
+      m.engines.push(second);
+    });
+    expect(checkProviderModule(twoEngines)).toEqual([
+      refusal("engine-facet-call-not-offered", `${pointer}/overview`, { name }),
+      refusal("engine-facet-call-not-offered", `${pointer}/tables`, { name }),
+    ]);
+    // An offer that cannot be read is refused at the offer alone: the engine's panels are not refused again for it.
+    expect(checkProviderModule(offering("maybe", false))).toEqual([
+      refusal("manifest-unreadable", "/manifest/calls/monitoring/panel"),
+    ]);
+    // A panel value that is no facet offer stays manifest-unreadable at its pointer, either way.
+    for (const [offer, implemented] of [
+      ["offered", true],
+      ["not-offered", false],
+    ] as const) {
+      expect(
+        checkProviderModule(offering(offer, implemented, (m) => (m.engines[0].facets.monitoring.tables = true))),
+      ).toEqual(
+        offer === "offered"
+          ? [refusal("manifest-unreadable", `${pointer}/tables`)]
+          : [
+              refusal("engine-facet-call-not-offered", `${pointer}/overview`, { name }),
+              refusal("manifest-unreadable", `${pointer}/tables`),
+            ],
+      );
+    }
+    // The agent readings, for which the contract has no call yet, stay refused beside the panels.
+    expect(
+      checkProviderModule(offering("not-offered", false, (m) => (m.engines[0].facets.agentReadings = ["sessions"]))),
+    ).toEqual([
+      refusal("engine-facet-call-not-offered", `${pointer}/overview`, { name }),
+      refusal("engine-facet-call-not-offered", `${pointer}/tables`, { name }),
+      refusal("engine-facet-without-call", "/manifest/engines/0/facets/agentReadings/0"),
+    ]);
+    expect(
+      checkProviderModule(offering("offered", true, (m) => (m.engines[0].facets.agentReadings = ["sessions"]))),
+    ).toEqual([refusal("engine-facet-without-call", "/manifest/engines/0/facets/agentReadings/0")]);
+    // An offered monitoring.panel that no engine's panel uses, and an offered monitoring.poolStats, are admitted.
+    expect(
+      checkProviderModule(
+        record((r) => {
+          r.manifest.calls.monitoring = { panel: "offered", poolStats: "offered" };
+          r.impl.monitoring = { panel, poolStats: async () => ({ total: 0, idle: 0, active: 0, waiting: 0 }) };
+        }),
+      ),
+    ).toEqual([]);
+    expect(definitionRefusalSentence(refusal("engine-facet-call-not-offered", `${pointer}/overview`, { name }))).toBe(
+      'The engine facet at "/manifest/engines/0/facets/monitoring/overview" is offered, and the manifest does not offer the call monitoring.panel that serves it.',
+    );
+  });
+
   test("a maintenance specs list longer than the schema's maxItems is refused as manifest-unreadable at the list, and no item is read", () => {
     const longest = SCHEMA.$defs.facets.properties.maintenanceSpecs.maxItems;
     const pointer = "/manifest/engines/0/facets/maintenanceSpecs";
@@ -535,6 +678,7 @@ describe("checkProviderModule", () => {
     };
     const cases: [(r: Json) => void, string][] = [
       [(r) => accessor(r.impl, "open"), "/impl/open"],
+      [(r) => accessor(r.impl, "health"), "/impl/health"],
       [(r) => accessor(r.impl, "console"), "/impl/console"],
       [(r) => accessor(r.impl.console, "cancel"), "/impl/console/cancel"],
       [(r) => accessor(r.impl.console, "execute"), "/impl/console/execute"],
@@ -554,6 +698,16 @@ describe("checkProviderModule", () => {
         },
         "/impl/maintenance/run",
       ],
+      [(r) => accessor(r.impl, "monitoring"), "/impl/monitoring"],
+      [
+        (r) => {
+          r.impl.monitoring = {};
+          accessor(r.impl.monitoring, "panel");
+        },
+        "/impl/monitoring/panel",
+      ],
+      [(r) => accessor(r.manifest.calls, "monitoring"), "/manifest/calls/monitoring"],
+      [(r) => accessor(r.manifest.calls.monitoring, "poolStats"), "/manifest/calls/monitoring/poolStats"],
       [(r) => accessor(r.manifest.calls, "maintenance"), "/manifest/calls/maintenance"],
       [(r) => accessor(r.manifest.calls.maintenance, "preview"), "/manifest/calls/maintenance/preview"],
       [
@@ -620,6 +774,8 @@ describe("checkProviderModule", () => {
     });
     const noConsole = record((r) => delete r.impl.console);
     const noImpl = record((r) => (r.impl = null));
+    const noHealth = record((r) => delete r.impl.health);
+    const healthNotAFunction = record((r) => (r.impl.health = { databaseSize: "0 B" }));
 
     expect(checkProviderModule(changed)).toEqual([
       refusal("call-missing", "/impl/open", { name: "open" }),
@@ -629,9 +785,14 @@ describe("checkProviderModule", () => {
       refusal("call-missing", "/impl/console/execute", { name: "console.execute" }),
       refusal("facet-unimplemented", "/impl/console/cancel", { name: "console.cancel" }),
     ]);
+    expect(checkProviderModule(noHealth)).toEqual([refusal("call-missing", "/impl/health", { name: "health" })]);
+    expect(checkProviderModule(healthNotAFunction)).toEqual([
+      refusal("call-missing", "/impl/health", { name: "health" }),
+    ]);
     expect(checkProviderModule(noImpl)).toEqual([
       refusal("call-missing", "/impl/open", { name: "open" }),
       refusal("call-missing", "/impl/close", { name: "close" }),
+      refusal("call-missing", "/impl/health", { name: "health" }),
       refusal("call-missing", "/impl/console/execute", { name: "console.execute" }),
       refusal("facet-unimplemented", "/impl/console/cancel", { name: "console.cancel" }),
     ]);
@@ -640,12 +801,13 @@ describe("checkProviderModule", () => {
   test("a calls segment of the implementation that is not a record is refused as impl-segment-not-a-record, and nothing under it is read", () => {
     const offered = manifest((m) => (m.calls.objects.tree = "offered"));
     // The tree the offering manifest leaves unimplemented, refused in the order the segments are read: after the
-    // console, which is read before the objects, and before the maintenance, which is read after them.
+    // console, which is read before the objects, and before the maintenance and the monitoring, which are read after them.
     const tree = refusal("facet-unimplemented", "/impl/objects/tree", { name: "objects.tree" });
     const segments: [string, (expected: DefinitionRefusal[]) => DefinitionRefusal[]][] = [
       ["console", (expected) => [...expected, tree]],
       ["objects", (expected) => expected],
       ["maintenance", (expected) => [tree, ...expected]],
+      ["monitoring", (expected) => [tree, ...expected]],
     ];
     for (const [segment, withTree] of segments) {
       for (const shape of [null, "calls", [async () => ({})]]) {
@@ -665,6 +827,7 @@ describe("checkProviderModule", () => {
     }
     expect(checkProviderModule(record((r) => (r.impl.objects = undefined)))).toEqual([]);
     expect(checkProviderModule(record((r) => (r.impl.maintenance = undefined)))).toEqual([]);
+    expect(checkProviderModule(record((r) => (r.impl.monitoring = undefined)))).toEqual([]);
     expect(definitionRefusalSentence(refusal("impl-segment-not-a-record", "/impl/objects", { key: "objects" }))).toBe(
       'The implementation segment "objects" at "/impl/objects" is not a record of its calls, an object that is not an array, so nothing under it was read.',
     );
@@ -675,11 +838,16 @@ describe("checkProviderModule", () => {
       async open() {
         return { handle: {} };
       }
+
+      async health() {
+        return { databaseSize: "0 B", cacheHitRatio: "100%", slowQueries: [], activeSessions: [] };
+      }
     }
     const changed = record((r) => (r.impl = Object.assign(new Implementation(), { close: r.impl.close })));
 
     expect(checkProviderModule(changed)).toEqual([
       refusal("call-missing", "/impl/open", { name: "open" }),
+      refusal("call-missing", "/impl/health", { name: "health" }),
       refusal("call-missing", "/impl/console/execute", { name: "console.execute" }),
       refusal("facet-unimplemented", "/impl/console/cancel", { name: "console.cancel" }),
     ]);
@@ -687,31 +855,29 @@ describe("checkProviderModule", () => {
 
   test("an implementation key the contract does not define is refused as impl-key-unknown", () => {
     const changed = record((r) => {
-      r.impl.health = async () => ({});
+      r.impl.ping = async () => ({});
       r.impl.console.explain = async () => ({});
       r.impl.objects = { source: async () => ({}) };
       r.impl.maintenance = { explain: async () => ({}) };
+      r.impl.monitoring = { sessions: async () => ({}) };
     });
 
     expect(checkProviderModule(changed)).toEqual([
-      refusal("impl-key-unknown", "/impl/health", { key: "health" }),
+      refusal("impl-key-unknown", "/impl/ping", { key: "ping" }),
       refusal("impl-key-unknown", "/impl/console/explain", { key: "explain" }),
       refusal("impl-key-unknown", "/impl/objects/source", { key: "source" }),
       refusal("impl-key-unknown", "/impl/maintenance/explain", { key: "explain" }),
+      refusal("impl-key-unknown", "/impl/monitoring/sessions", { key: "sessions" }),
     ]);
   });
 
   test("an engine facet this contract has no call for is refused as engine-facet-without-call", () => {
     const changed = record((r) => {
-      r.manifest.engines[0].facets.monitoring.overview = "offered";
-      r.manifest.engines[0].facets.monitoring.storage = "offered";
       r.manifest.engines[0].facets.maintenance = ["vacuum", "analyze"];
       r.manifest.engines[0].facets.agentReadings = ["sessions"];
     });
 
     expect(checkProviderModule(changed)).toEqual([
-      refusal("engine-facet-without-call", "/manifest/engines/0/facets/monitoring/overview"),
-      refusal("engine-facet-without-call", "/manifest/engines/0/facets/monitoring/storage"),
       refusal("engine-facet-call-not-offered", "/manifest/engines/0/facets/maintenance/0", { name: "maintenance.run" }),
       refusal("engine-facet-call-not-offered", "/manifest/engines/0/facets/maintenance/1", { name: "maintenance.run" }),
       refusal("engine-facet-without-call", "/manifest/engines/0/facets/agentReadings/0"),
@@ -719,17 +885,13 @@ describe("checkProviderModule", () => {
     expect(
       checkProviderModule(
         record((r) => {
-          r.manifest.engines[0].facets.monitoring.overview = "offered";
           r.manifest.engines[0].facets.agentReadings = ["sessions"];
           r.manifest.calls.maintenance.run = "offered";
           r.impl.maintenance = { run: async () => ({ success: true, executionTime: 0, message: "" }) };
           r.manifest.engines[0].facets.maintenance = ["vacuum"];
         }),
       ),
-    ).toEqual([
-      refusal("engine-facet-without-call", "/manifest/engines/0/facets/monitoring/overview"),
-      refusal("engine-facet-without-call", "/manifest/engines/0/facets/agentReadings/0"),
-    ]);
+    ).toEqual([refusal("engine-facet-without-call", "/manifest/engines/0/facets/agentReadings/0")]);
   });
 
   test("a manifest or record built against another contract is refused as contract-not-served", () => {
@@ -770,6 +932,10 @@ describe("checkProviderModule", () => {
       [(r) => (r.manifest.calls.maintenance = ["run"]), "/manifest/calls/maintenance"],
       [(r) => (r.manifest.calls.maintenance.run = true), "/manifest/calls/maintenance/run"],
       [(r) => delete r.manifest.calls.maintenance.preview, "/manifest/calls/maintenance/preview"],
+      [(r) => delete r.manifest.calls.monitoring, "/manifest/calls/monitoring"],
+      [(r) => (r.manifest.calls.monitoring = "panel"), "/manifest/calls/monitoring"],
+      [(r) => (r.manifest.calls.monitoring.panel = true), "/manifest/calls/monitoring/panel"],
+      [(r) => delete r.manifest.calls.monitoring.poolStats, "/manifest/calls/monitoring/poolStats"],
       [(r) => (r.manifest.engines = { exampledb: {} }), "/manifest/engines"],
       [(r) => (r.manifest.engines[0] = null), "/manifest/engines/0"],
       [(r) => delete r.manifest.engines[0].facets, "/manifest/engines/0/facets"],

@@ -27,6 +27,7 @@ function callsOf(tree = true): Calls {
     },
     objects: { tree: tree ? "offered" : "not-offered" },
     maintenance: { run: "not-offered", preview: "not-offered" },
+    monitoring: { panel: "not-offered", poolStats: "not-offered" },
   };
 }
 

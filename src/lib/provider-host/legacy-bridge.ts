@@ -14,7 +14,8 @@
  * minted a run's scope ends it through the host core's endScope call (clause C-60). `objects.tree` is offered on every
  * session, since every legacy provider holds the five tree members. `maintenance.run` is offered on every session,
  * since every legacy provider holds `runMaintenance`, and `maintenance.preview` exactly where the provider holds
- * `previewMaintenance`.
+ * `previewMaintenance`. Neither monitoring facet is offered: the monitoring and pool-stats routes still call the
+ * provider's members themselves.
  *
  * Its maintenance run calls `runMaintenance` with exactly three arguments, the request's operation, target and
  * container, `undefined` for an absent one, and its preview calls `previewMaintenance` with the operation and a fresh
@@ -422,6 +423,7 @@ export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepare
       },
       objects: { tree: "offered" },
       maintenance: { run: "offered", preview: previewer === undefined ? "not-offered" : "offered" },
+      monitoring: { panel: "not-offered", poolStats: "not-offered" },
     },
     undefined,
   );

@@ -53,6 +53,7 @@ function runOn(core: HostCore, source: ResultSource): Promise<ExecuteRecord> {
       console: { execute: { honours: [] }, cancel: "not-offered", endScope: "not-offered", transaction: "not-offered" },
       objects: { tree: "not-offered" },
       maintenance: { run: "not-offered", preview: "not-offered" },
+      monitoring: { panel: "not-offered", poolStats: "not-offered" },
     },
     execute: async () => ({ results: [source], warnings: [], executionTimeMs: 1, pageApplied: true }),
   };

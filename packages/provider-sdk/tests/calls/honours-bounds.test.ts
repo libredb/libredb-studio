@@ -51,6 +51,7 @@ function runCase(deps: ChildDeps, name: string): ChildReport {
       },
       objects: { tree: "offered" },
       maintenance: { run: "not-offered", preview: "not-offered" },
+      monitoring: { panel: "not-offered", poolStats: "not-offered" },
     };
     const refine = { calls: { console: { execute: { honours: longest } } } };
     return { name, refusals: deps.checkRefinement(declared as never, refine) };

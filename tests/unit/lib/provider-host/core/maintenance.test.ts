@@ -43,6 +43,7 @@ function callsOf(run = true, preview = true): Calls {
     },
     objects: { tree: "not-offered" },
     maintenance: { run: run ? "offered" : "not-offered", preview: preview ? "offered" : "not-offered" },
+    monitoring: { panel: "not-offered", poolStats: "not-offered" },
   };
 }
 
