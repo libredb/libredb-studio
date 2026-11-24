@@ -1,9 +1,11 @@
 /**
  * The one core module that evaluates each engine's connection field rules (`fieldRules` and `fieldShownWhen` of its
- * form entry in ./connection-form): the connection dialog reads it before Test Connection and Save send anything, and
- * core reads it before it builds a provider to connect, for the required secrets. The rules themselves are data, the
- * projection of each engine's declaration; this module only reads them, so every reader answers the same refusal with
- * the same sentence (docs/providers/CONTRACT.md, clause M-33).
+ * form entry in ./connection-form): the connection dialog reads it before Test Connection and Save send anything, the
+ * test-connection path both post to reads it again before it opens a tunnel or builds a provider (`fieldRuleRefusal`,
+ * read by `testConnection` in src/lib/api/test-connection.ts), and core reads it before it builds a provider to
+ * connect, for the required secrets. The rules themselves are data, the projection of each engine's declaration; this
+ * module only reads them, so every reader answers the same refusal with the same sentence
+ * (docs/providers/CONTRACT.md, clause M-33).
  *
  * UI-free and provider-free: nothing here imports `react`, a component, a provider module or a Node built-in, so the
  * dialog's bundle and the server load the same functions. tests/unit/lib/db/connection-field-rules.test.ts holds its
@@ -79,6 +81,18 @@ export function connectionFieldRefusal(config: ConnectionFormSpec, connection: D
     if (checked !== undefined) return checked;
   }
   return undefined;
+}
+
+/**
+ * The first refusal of the field rules of `type`'s form entry for `connection`, or `undefined` when every declared
+ * check passes: `connectionFieldRefusal` on that entry, the dialog's own answer, read on the server path Test
+ * Connection and Save post to. The entry is read through `typeIdRow` (FND-1), so a type outside the `DatabaseType`
+ * union is refused by name.
+ *
+ * @throws {UnknownProviderError} When `type` is absent, not text, or names no provider.
+ */
+export function fieldRuleRefusal(type: DatabaseType, connection: DatabaseConnection): string | undefined {
+  return connectionFieldRefusal(typeIdRow(CONNECTION_FORM, type), connection);
 }
 
 /**

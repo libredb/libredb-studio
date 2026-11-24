@@ -1,9 +1,16 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { ConnectionError, ProviderTextWithheldError, TimeoutError } from "@/lib/db/errors";
+import {
+  ConnectionError,
+  DatabaseConfigError,
+  ProviderTextWithheldError,
+  TimeoutError,
+  UnknownProviderError,
+} from "@/lib/db/errors";
+import { snowflakeAccountRefusal } from "@/lib/db/providers/sql/snowflake/account-host";
 import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import type { DatabaseProvider, EditorExecutionContext } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
-import type { DatabaseConnection, QueryWarning } from "@/lib/types";
+import type { DatabaseConnection, DatabaseType, QueryWarning } from "@/lib/types";
 import { createMockProvider } from "../../../helpers/mock-provider";
 import { serverOnlyReach, valueImportClosure } from "../../../helpers/value-import-closure";
 
@@ -438,6 +445,49 @@ describe("testConnection", () => {
     fileOpen = true;
     await testConnection(connection, execution, route);
     expect(created[0][2]).toEqual({ readOnly: true });
+  });
+
+  test("a connection its engine's field rules refuse is refused with the rule's sentence before the tunnel opens or anything is built, and its statement was not sent", async () => {
+    built = recording();
+    // An IPv4 address is not a Snowflake account, which Snowflake's declared Account check refuses, and the tunnel is
+    // on, so a tunnel dialled before the refusal would show in the steps.
+    const refused = {
+      id: "sf",
+      name: "sf",
+      type: "snowflake",
+      host: "1.2.3.4",
+      user: "analyst",
+      role: "analyst",
+      authMethod: "pat",
+      password: crypto.randomUUID(),
+      sshTunnel: { enabled: true, host: "bastion.example.com", port: 22, username: "jump", authMethod: "password" },
+      createdAt: new Date(0),
+    } as DatabaseConnection;
+    let thrown: unknown;
+    try {
+      await testConnection(refused, execution, route);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(DatabaseConfigError);
+    const sentence = snowflakeAccountRefusal("1.2.3.4");
+    expect(sentence).toBeString();
+    expect((thrown as DatabaseConfigError).message).toBe(sentence as string);
+    expect((thrown as DatabaseConfigError).provider).toBe("snowflake");
+    expect((thrown as DatabaseConfigError).outcome).toBe("not-sent");
+    expect(steps).toEqual([]);
+    expect(created).toEqual([]);
+  });
+
+  test("a type outside the union is still refused by name, before the tunnel opens", async () => {
+    let thrown: unknown;
+    try {
+      await testConnection({ ...connection, type: "acmefoo" as DatabaseType }, execution, route);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(UnknownProviderError);
+    expect(steps).toEqual([]);
   });
 });
 

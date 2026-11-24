@@ -6,9 +6,10 @@
 import { describe, expect, test } from "bun:test";
 import { builtinModules } from "node:module";
 import { CONNECTION_FORM } from "@/lib/db/connection-form";
-import { connectionFieldRefusal, requiredSecretRefusal } from "@/lib/db/connection-field-rules";
+import { connectionFieldRefusal, fieldRuleRefusal, requiredSecretRefusal } from "@/lib/db/connection-field-rules";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
-import { fieldRuleBase } from "../../../helpers/field-rule-corpus";
+import { fieldRuleBase, fieldRuleCorpus } from "../../../helpers/field-rule-corpus";
+import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../../../helpers/outside-the-union";
 import { valueImportClosure, valueImportsOf } from "../../../helpers/value-import-closure";
 
 const MODULE = "src/lib/db/connection-field-rules.ts";
@@ -62,5 +63,27 @@ describe("src/lib/db/connection-field-rules.ts", () => {
     expect(connectionFieldRefusal(CONNECTION_FORM.rabbitmq, withFields("rabbitmq", { amqpPort: "null" }))).toBe(
       CONNECTION_FORM.rabbitmq.fieldRules?.amqpPort?.format?.sentence,
     );
+  });
+
+  test("fieldRuleRefusal answers what connectionFieldRefusal answers on the engine's form entry, and refuses a type outside the union by name", () => {
+    let refused = 0;
+    for (const { type, connection, label } of fieldRuleCorpus()) {
+      const expected = connectionFieldRefusal(CONNECTION_FORM[type], connection);
+      if (expected !== undefined) refused += 1;
+      expect({ label, answer: fieldRuleRefusal(type, connection) }).toEqual({ label, answer: expected });
+    }
+    // The control that the corpus holds refusals at all.
+    expect(refused).toBeGreaterThan(500);
+    // An engine that declares no rule refuses nothing.
+    expect(
+      fieldRuleRefusal("postgres", { id: "p", name: "p", type: "postgres", createdAt: new Date(0) }),
+    ).toBeUndefined();
+    for (const [label, value] of OUTSIDE_THE_UNION) {
+      const connection = { id: "x", name: "x", type: value, createdAt: new Date(0) } as DatabaseConnection;
+      expect({ label, refusal: refusalThrownBy(() => fieldRuleRefusal(value as DatabaseType, connection)) }).toEqual({
+        label,
+        refusal: refusalOf(value),
+      });
+    }
   });
 });
