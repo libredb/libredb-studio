@@ -36,6 +36,11 @@ import type {
   ForeignKeySchema,
   IndexSchema,
   KindCount,
+  MaintenanceFact,
+  MaintenancePreview,
+  MaintenancePreviewRequest,
+  MaintenanceRunAnswer,
+  MaintenanceRunRequest,
   ObjectDetail,
   ObjectDetailBatch,
   ObjectReadRange,
@@ -135,6 +140,16 @@ export interface FrameShapes {
     readonly context: ContextData<CallContext>;
     readonly request: TreeRequest;
     readonly answer: TreeAnswer;
+  };
+  readonly "maintenance.run": {
+    readonly context: ContextData<CallContext>;
+    readonly request: MaintenanceRunRequest;
+    readonly answer: MaintenanceRunAnswer;
+  };
+  readonly "maintenance.preview": {
+    readonly context: ContextData<CallContext>;
+    readonly request: MaintenancePreviewRequest;
+    readonly answer: MaintenancePreview;
   };
   readonly "result.next": { readonly request: BatchLimitData; readonly answer: RowBatch };
   readonly "result.close": Readonly<Record<never, never>>;
@@ -511,6 +526,68 @@ const treeAnswer = oneOfRecords([
   }),
 ]);
 
+const MAINTENANCE_OPERATION_WORDS = Object.freeze<Record<MaintenanceRunRequest["operation"], true>>({
+  vacuum: true,
+  analyze: true,
+  reindex: true,
+  kill: true,
+  optimize: true,
+  check: true,
+  compact: true,
+  defragment: true,
+  disarm: true,
+  load: true,
+  release: true,
+});
+
+const maintenanceOperation = vocabulary(MAINTENANCE_OPERATION_WORDS);
+
+const maintenanceRunRequest = record<MaintenanceRunRequest>({
+  operation: required(maintenanceOperation),
+  target: optional(text),
+  container: optional(text),
+});
+
+const readMaintenanceRunAnswer = record<MaintenanceRunAnswer>({
+  success: required(boolean),
+  executionTime: required(number),
+  message: required(text),
+  rows: optional(listOf(mapOf(anyValue))),
+  fields: optional(listOf(text)),
+});
+
+/**
+ * A maintenance run's answer: its rows each a record of codec values, keyed by its fields, which it carries whenever
+ * it carries rows, so an answer with `rows` and no `fields` is refused as `frame-key-missing` at `fields`.
+ */
+const maintenanceRunAnswer: Reader = (item, pointer, found) => {
+  readMaintenanceRunAnswer(item, pointer, found);
+  if (isPlainRecord(item) && Object.hasOwn(item, "rows") && !Object.hasOwn(item, "fields")) {
+    found.push({ rule: "frame-key-missing", pointer: pointerTo(pointer, "fields"), name: "fields" });
+  }
+};
+
+/**
+ * The path of the object a maintenance preview reads, container levels first and the object last, so an empty path,
+ * which names no object, is refused at its pointer.
+ */
+const objectPath: Reader = (item, pointer, found) => {
+  if (Array.isArray(item) && item.length === 0) return unreadable(pointer, found);
+  path(item, pointer, found);
+};
+
+const maintenancePreviewRequest = record<MaintenancePreviewRequest>({
+  operation: required(maintenanceOperation),
+  path: required(objectPath),
+});
+
+const maintenancePreview = record<MaintenancePreview>({
+  summary: required(text),
+  facts: required(listOf(record<MaintenanceFact>({ label: required(text), value: required(text) }))),
+  refusal: optional(text),
+  note: optional(text),
+});
+
 /** One value of a connection field: a string, a number, a boolean or a list of strings. */
 const connectionValue: Reader = (item, pointer, found) => {
   if (Array.isArray(item)) listOf(text)(item, pointer, found);
@@ -608,7 +685,11 @@ const openContext = record<ContextData<OpenContext>>({
   timezone: optional(text),
 });
 
-const openAnswer = record<OpenAnswerFrame>({ serverVersion: optional(text), refine: optional(anyValue) });
+const openAnswer = record<OpenAnswerFrame>({
+  serverVersion: optional(text),
+  refine: optional(anyValue),
+  engineUser: optional(text),
+});
 
 const executeRequest = record<ExecuteRequest>({
   statement: required(text),
@@ -683,6 +764,8 @@ const READERS = Object.freeze<{
     }),
   },
   "objects.tree": { context: callContext, request: treeRequest, answer: treeAnswer },
+  "maintenance.run": { context: callContext, request: maintenanceRunRequest, answer: maintenanceRunAnswer },
+  "maintenance.preview": { context: callContext, request: maintenancePreviewRequest, answer: maintenancePreview },
   "result.next": {
     request: record<BatchLimitData>({ maxRows: required(number), maxBytes: required(number) }),
     answer: record<RowBatch>({ rows: required(listOf(listOf(anyValue))), done: required(boolean) }),

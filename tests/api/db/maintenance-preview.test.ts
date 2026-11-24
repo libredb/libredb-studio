@@ -11,6 +11,7 @@ import {
   TimeoutError,
   AuthenticationError,
   PoolExhaustedError,
+  PermissionDeniedError,
   isDatabaseError,
   isConnectionError,
   isQueryError,
@@ -20,6 +21,8 @@ import {
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { SYNTHETIC_ENTITY_CAPABILITIES, SYNTHETIC_PREVIEW } from "../../fixtures/maintenance-entity-operations";
 import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
+import { TIMEOUT_SENTENCE } from "@/lib/api/error-body";
+import { errorKind } from "@/lib/db/error-record";
 
 /**
  * `POST /api/db/maintenance/preview` (spec 3.11, E36): an admin-only read beside the maintenance route. It makes the
@@ -454,5 +457,124 @@ describe("POST /api/db/maintenance/preview", () => {
     expect(res.status).toBe(400);
     expect(await errorOf(res)).toContain("required");
     expect(calledMethods()).toEqual([]);
+  });
+});
+
+describe("what the preview route answers today, which the host core keeps", () => {
+  /** Each Studio error class a provider raises, and the status, code and retry hint its answer carries. */
+  const STUDIO_ERRORS: readonly {
+    readonly name: string;
+    readonly raise: (text: string) => Error;
+    readonly status: number;
+    readonly code: string;
+    readonly retryable?: true;
+    readonly sentence?: string;
+  }[] = [
+    { name: "QueryError", raise: (text) => new QueryError(text, "etcd"), status: 400, code: "QUERY_ERROR" },
+    {
+      name: "ConnectionError",
+      raise: (text) => new ConnectionError(text, "etcd"),
+      status: 503,
+      code: "CONNECTION_ERROR",
+      retryable: true,
+    },
+    {
+      name: "TimeoutError",
+      raise: (text) => new TimeoutError(text, "etcd", 1000),
+      status: 504,
+      code: "TIMEOUT_ERROR",
+      retryable: true,
+      sentence: TIMEOUT_SENTENCE,
+    },
+    {
+      name: "PoolExhaustedError",
+      raise: (text) => new PoolExhaustedError(text, "etcd", 10),
+      status: 503,
+      code: "POOL_EXHAUSTED",
+      retryable: true,
+    },
+    {
+      name: "PermissionDeniedError",
+      raise: (text) => new PermissionDeniedError(text, "etcd"),
+      status: 403,
+      code: "PERMISSION_DENIED",
+    },
+  ];
+
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetSession.mockImplementation(async () => ({ role: "admin", username: "admin" }));
+    mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
+    (mockProvider.getCapabilities as ReturnType<typeof mock>).mockImplementation(() => declaredCapabilities);
+    mockPreviewMaintenance.mockReset();
+    (mockProvider as { previewMaintenance?: unknown }).previewMaintenance = mockPreviewMaintenance;
+  });
+
+  test("a preview's Studio error answers by its class, with its code, kind and outcome", async () => {
+    for (const studio of STUDIO_ERRORS) {
+      const text = `refused ${crypto.randomUUID()}`;
+      const error = studio.raise(text);
+      mockPreviewMaintenance.mockImplementation(async () => {
+        throw error;
+      });
+
+      // oxlint-disable-next-line no-await-in-loop -- one request at a time, so each answer is its own error's.
+      const response = await preview({ type: "compact", target: "orders", connection: validConnection });
+      // oxlint-disable-next-line no-await-in-loop -- the answer of the request above.
+      const body = await parseResponseJSON<Record<string, unknown>>(response);
+
+      expect([studio.name, response.status]).toEqual([studio.name, studio.status]);
+      expect([studio.name, body]).toEqual([
+        studio.name,
+        {
+          error: studio.sentence ?? text,
+          code: studio.code,
+          statusCode: studio.status,
+          ...(studio.retryable === undefined ? {} : { retryable: true }),
+          kind: errorKind(error),
+          outcome: "unknown",
+        },
+      ]);
+    }
+  });
+
+  test("a preview's raw error answers 500 INTERNAL_ERROR with its own words, and no kind or outcome", async () => {
+    const text = `socket ${crypto.randomUUID()}`;
+    mockPreviewMaintenance.mockImplementation(async () => {
+      throw new Error(text);
+    });
+
+    const response = await preview({ type: "compact", target: "orders", connection: validConnection });
+    const body = await parseResponseJSON<Record<string, unknown>>(response);
+
+    expect(response.status).toBe(500);
+    expect(body).toEqual({ error: text, code: "INTERNAL_ERROR", statusCode: 500 });
+  });
+
+  test("the provider is asked once with the operation and the object's path, its container first, and the answer is its preview", async () => {
+    const answered: MaintenancePreview = {
+      summary: `Compacting orders ${crypto.randomUUID()}`,
+      facts: [{ label: "Revision", value: "40" }],
+      refusal: "orders is busy",
+      note: "as reported by the server",
+    };
+    const calls: [Record<string, unknown>, [MaintenanceOperation, readonly string[]]][] = [
+      [{ type: "compact", target: "orders" }, ["compact", ["orders"]]],
+      [{ type: "compact", target: "orders", container: "app" }, ["compact", ["app", "orders"]]],
+    ];
+
+    for (const [body, args] of calls) {
+      mockPreviewMaintenance.mockReset();
+      mockPreviewMaintenance.mockImplementation(async () => answered);
+
+      // oxlint-disable-next-line no-await-in-loop -- one request at a time, so each call is its own request's.
+      const response = await preview({ ...body, connection: validConnection });
+      // oxlint-disable-next-line no-await-in-loop -- the answer of the request above.
+      const answer = await parseResponseJSON<Record<string, unknown>>(response);
+
+      expect([body, response.status]).toEqual([body, 200]);
+      expect([body, mockPreviewMaintenance.mock.calls]).toEqual([body, [args]]);
+      expect([body, answer]).toEqual([body, { preview: answered }]);
+    }
   });
 });

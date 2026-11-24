@@ -55,6 +55,7 @@ function callsOf(transaction = true): Calls {
       transaction: transaction ? "offered" : "not-offered",
     },
     objects: { tree: "not-offered" },
+    maintenance: { run: "not-offered", preview: "not-offered" },
   };
 }
 

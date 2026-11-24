@@ -1,21 +1,29 @@
 /**
- * A session's calls and the requests the host sends it (docs/providers/CONTRACT.md, clauses C-9, C-10, C-17 and C-57).
+ * A session's calls and the requests the host sends it (docs/providers/CONTRACT.md, clauses C-9, C-10, C-17, C-57,
+ * C-67 and C-68).
  *
  * The manifest's `calls` declares what a package answers; `open` may answer a refinement that narrows it for one
- * session, which `checkRefinement` reads and `sessionCalls` applies. The host keeps the session's calls with the
- * session, with no cache and no invalidation event, and holds every request to them with `checkExecuteRequest` before
- * the call, so a package is never sent a field it does not honour, and every console facet call to it with
- * `checkConsoleFacet` and every object facet call with `checkObjectsFacet`, so a package is never called on a facet the
- * session does not offer.
+ * session, which `checkRefinement` reads and `sessionCalls` applies. The refinement may also narrow the session's
+ * maintenance to the placements its server accepts, which `sessionMaintenance` applies to the engine's declaration.
+ * The host keeps the session's calls with the session, with no cache and no invalidation event, and holds every request
+ * to them with `checkExecuteRequest` before the call, so a package is never sent a field it does not honour, and every
+ * console facet call to it with `checkConsoleFacet`, every object facet call with `checkObjectsFacet` and every
+ * maintenance facet call with `checkMaintenanceFacet`, so a package is never called on a facet the session does not
+ * offer.
  */
-import type { Calls, ExecuteRequestField, FacetOffer } from "../manifest/manifest-types.generated";
+import type { Calls, ExecuteRequestField, FacetOffer, MaintenanceSpec } from "../manifest/manifest-types.generated";
 import { isPlainRecord, pointerTo, readOwn } from "./records";
 import { type CallRefusal, CallRefusalError } from "./refusals";
 import {
   CONSOLE_FACETS,
   type ConsoleFacet,
+  type EngineMaintenance,
   EXECUTE_REQUEST_FIELDS,
   type ExecuteRequest,
+  MAINTENANCE_FACETS,
+  MAINTENANCE_OPERATIONS,
+  type MaintenanceAccepted,
+  type MaintenanceFacet,
   OBJECTS_FACETS,
   type ObjectsFacet,
   type Refinement,
@@ -68,6 +76,16 @@ export function checkConsoleFacet(calls: Calls, facet: ConsoleFacet): readonly C
 export function checkObjectsFacet(calls: Calls, facet: ObjectsFacet): readonly CallRefusal[] {
   if (calls.objects[facet] === "offered") return [];
   return [{ rule: "facet-not-offered", pointer: pointerTo("/objects", facet), name: `objects.${facet}` }];
+}
+
+/**
+ * The refusal of a call to the maintenance facet `facet` when `calls`, the session's calls, do not offer it, a
+ * refinement's narrowing included: one `facet-not-offered` at the facet's pointer into the calls, named by its call
+ * name; none when the session offers it. The request is the host's own typed object and is not read here.
+ */
+export function checkMaintenanceFacet(calls: Calls, facet: MaintenanceFacet): readonly CallRefusal[] {
+  if (calls.maintenance[facet] === "offered") return [];
+  return [{ rule: "facet-not-offered", pointer: pointerTo("/maintenance", facet), name: `maintenance.${facet}` }];
 }
 
 const OFFERS: readonly unknown[] = Object.freeze(["offered", "not-offered"] satisfies FacetOffer[]);
@@ -186,12 +204,23 @@ function readObjects(value: unknown, declared: Calls, pointer: string, refusals:
   );
 }
 
+/** The refusals of a refinement's `calls.maintenance`. */
+function readMaintenance(value: unknown, declared: Calls, pointer: string, refusals: CallRefusal[]): void {
+  readClosed(value, MAINTENANCE_FACETS, pointer, refusals, (facet, offer, at) =>
+    readOffer(offer, declared.maintenance[facet], at, refusals),
+  );
+}
+
 /**
  * The reader of each segment a refinement's `calls` may have, one per segment of the manifest's calls, in schema order.
  * It satisfies a type over every segment, so a segment the calls gain fails typecheck here until it has a reader of
  * its own, and is never read by another segment's, and a reader for a segment the calls do not have fails it too.
  */
-const SEGMENT_READERS = Object.freeze({ console: readConsole, objects: readObjects } satisfies {
+const SEGMENT_READERS = Object.freeze({
+  console: readConsole,
+  objects: readObjects,
+  maintenance: readMaintenance,
+} satisfies {
   readonly [S in keyof Calls]: (value: unknown, declared: Calls, pointer: string, refusals: CallRefusal[]) => void;
 });
 
@@ -230,22 +259,143 @@ function readClosed<Key extends string>(
   }
 }
 
+/** The members of a maintenance narrowing's item, each required. */
+const ACCEPTED_KEYS = Object.freeze([
+  "operation",
+  "perEntity",
+  "global",
+] as const) satisfies readonly (keyof MaintenanceAccepted)[];
+const OPERATIONS: readonly unknown[] = MAINTENANCE_OPERATIONS;
+
+/**
+ * The refusals of one item of a maintenance narrowing at `pointer`: a closed record of exactly its operation, one of
+ * the vocabulary and none an earlier item named, which `seen` holds, and its two placements, each a boolean. A member
+ * it lacks is refused as `refinement-unreadable` at the member's pointer.
+ */
+function readAccepted(item: unknown, pointer: string, seen: unknown[], refusals: CallRefusal[]): void {
+  readClosed(item, ACCEPTED_KEYS, pointer, refusals, (key, value, at) => {
+    if (key !== "operation") {
+      if (typeof value !== "boolean") refusals.push({ rule: "refinement-unreadable", pointer: at });
+      return;
+    }
+    if (!OPERATIONS.includes(value) || seen.includes(value))
+      refusals.push({ rule: "refinement-unreadable", pointer: at });
+    seen.push(value);
+  });
+  if (!isPlainRecord(item)) return;
+  for (const key of ACCEPTED_KEYS) {
+    if (!Object.hasOwn(item, key)) refusals.push({ rule: "refinement-unreadable", pointer: pointerTo(pointer, key) });
+  }
+}
+
+/**
+ * The refusals of a refinement's `maintenance`, at `pointer`: a list of the placements the session's server accepts,
+ * each item read by `readAccepted`. A list longer than the operation vocabulary cannot name each operation once, so it
+ * is refused as `refinement-unreadable` at the list, by its length, before any item is read: a sparse array's length
+ * bounds no loop over it.
+ */
+function readNarrowing(value: unknown, pointer: string, refusals: CallRefusal[]): void {
+  if (!Array.isArray(value) || value.length > OPERATIONS.length) {
+    refusals.push({ rule: "refinement-unreadable", pointer });
+    return;
+  }
+  const seen: unknown[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const at = pointerTo(pointer, index);
+    const item = dataAt(value, String(index), at, refusals);
+    if (item !== undefined) readAccepted(item.value, at, seen, refusals);
+  }
+}
+
+/** The keys a refinement may have: the narrowing of its calls and the narrowing of its maintenance. */
+const REFINEMENT_KEYS = Object.freeze(["calls", "maintenance"] as const) satisfies readonly (keyof Refinement)[];
+
 /**
  * Every way `refine`, what `open` answered beside its handle, is not a refinement of `declared`, the manifest's calls,
  * in the refinement's own key order: a key a refinement cannot have (`refinement-key-unknown`), a value of the wrong
  * type, an accessor or a repeated field (`refinement-unreadable`), and a value that offers or honours more than
- * `declared` (`refinement-widens`). `undefined` is no refinement. Every pointer is rooted at the refinement, and no
- * refusal carries a value of it; a getter is never called.
+ * `declared` (`refinement-widens`). Its `maintenance` is read for its shape alone, since whether each operation is the
+ * engine's is `sessionMaintenance`'s to read. `undefined` is no refinement. Every pointer is rooted at the refinement,
+ * and no refusal carries a value of it; a getter is never called.
  */
 export function checkRefinement(declared: Calls, refine: unknown): readonly CallRefusal[] {
   if (refine === undefined) return [];
   const refusals: CallRefusal[] = [];
-  readClosed(refine, ["calls"], "", refusals, (_key, calls, at) =>
-    readClosed(calls, CALLS_KEYS, at, refusals, (segment, segmentValue, segmentAt) =>
+  readClosed(refine, REFINEMENT_KEYS, "", refusals, (key, value, at) => {
+    if (key === "maintenance") {
+      readNarrowing(value, at, refusals);
+      return;
+    }
+    readClosed(value, CALLS_KEYS, at, refusals, (segment, segmentValue, segmentAt) =>
       SEGMENT_READERS[segment](segmentValue, declared, segmentAt, refusals),
-    ),
-  );
+    );
+  });
   return refusals;
+}
+
+/**
+ * The refusals of the maintenance narrowing in `refine`, against `declared`, the session's engine's maintenance: the
+ * shape `checkRefinement` reads, a refinement that is no plain record refused at its top level, and then each item
+ * naming an operation `declared` does not list, refused as `refinement-widens` at its operation.
+ */
+function narrowingRefusals(declared: EngineMaintenance, refine: unknown): readonly CallRefusal[] {
+  if (!isPlainRecord(refine)) return [{ rule: "refinement-unreadable", pointer: "" }];
+  const read = readOwn(refine, "maintenance");
+  if (read.kind === "absent") return [];
+  if (read.kind === "accessor") return [{ rule: "refinement-unreadable", pointer: "/maintenance" }];
+  const refusals: CallRefusal[] = [];
+  readNarrowing(read.value, "/maintenance", refusals);
+  if (refusals.length > 0) return refusals;
+  const items = read.value as readonly MaintenanceAccepted[];
+  const listed: readonly unknown[] = declared.maintenance;
+  for (let index = 0; index < items.length; index += 1) {
+    if (!listed.includes(items[index]?.operation)) {
+      refusals.push({ rule: "refinement-widens", pointer: `/maintenance/${index}/operation` });
+    }
+  }
+  return refusals;
+}
+
+/** `spec` copied with every list it holds, frozen. */
+function frozenSpec(spec: MaintenanceSpec, perEntity: boolean, global: boolean): MaintenanceSpec {
+  const kinds = spec.kinds === null ? null : Object.freeze([...spec.kinds]);
+  return Object.freeze({ ...spec, perEntity, global, kinds });
+}
+
+/**
+ * The session's maintenance: `declared`, the maintenance of the engine the session was opened as, narrowed by the
+ * placements `refine` says its server accepts, frozen at every depth; `declared` is left as it is.
+ *
+ * An operation the narrowing names keeps a placement only where both its spec and the narrowing say true, and one left
+ * with none leaves both lists, `kill` among them; every other member of a spec, and every operation the narrowing does
+ * not name, stays as declared. So the narrowing only withdraws, as Studio's `narrowMaintenance` reads a connected
+ * provider's measurement. A refinement without `maintenance`, or no refinement, answers the declaration.
+ *
+ * @throws {CallRefusalError} With every refusal of the narrowing: its shape, as `checkRefinement` reads it, and each
+ * operation the engine does not list, as `refinement-widens`.
+ */
+export function sessionMaintenance(declared: EngineMaintenance, refine: Refinement | undefined): EngineMaintenance {
+  const refusals = refine === undefined ? [] : narrowingRefusals(declared, refine);
+  if (refusals.length > 0) throw new CallRefusalError(refusals);
+  const accepted = new Map<unknown, MaintenanceAccepted>();
+  const items = refine?.maintenance ?? [];
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index] as MaintenanceAccepted;
+    accepted.set(item.operation, item);
+  }
+  const withdrawn = new Set<unknown>();
+  const specs: MaintenanceSpec[] = [];
+  for (const spec of declared.maintenanceSpecs) {
+    const placements = accepted.get(spec.operation);
+    const perEntity = spec.perEntity && (placements?.perEntity ?? true);
+    const global = spec.global && (placements?.global ?? true);
+    if (placements !== undefined && !perEntity && !global) withdrawn.add(spec.operation);
+    else specs.push(frozenSpec(spec, perEntity, global));
+  }
+  return Object.freeze({
+    maintenance: Object.freeze(declared.maintenance.filter((operation) => !withdrawn.has(operation))),
+    maintenanceSpecs: Object.freeze(specs),
+  });
 }
 
 /**
@@ -270,6 +420,7 @@ export function sessionCalls(declared: Calls, refine: Refinement | undefined): C
   if (refusals.length > 0) throw new CallRefusalError(refusals);
   const narrowed = refine?.calls?.console;
   const narrowedObjects = refine?.calls?.objects;
+  const narrowedMaintenance = refine?.calls?.maintenance;
   const honours = narrowed?.execute?.honours ?? declared.console.execute.honours;
   return Object.freeze({
     console: Object.freeze({
@@ -280,6 +431,10 @@ export function sessionCalls(declared: Calls, refine: Refinement | undefined): C
     }),
     objects: Object.freeze({
       tree: narrowedObjects?.tree ?? declared.objects.tree,
+    }),
+    maintenance: Object.freeze({
+      run: narrowedMaintenance?.run ?? declared.maintenance.run,
+      preview: narrowedMaintenance?.preview ?? declared.maintenance.preview,
     }),
   });
 }

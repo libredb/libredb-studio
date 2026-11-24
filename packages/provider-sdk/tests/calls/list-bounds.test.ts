@@ -26,8 +26,8 @@ interface ChildReport {
 }
 
 /**
- * Runs in the child, from its text: a module record whose engine list, or whose one engine's maintenance or agent
- * readings list, is a sparse array of the longest length an array can have. Only the refusals of that list are
+ * Runs in the child, from its text: a module record whose engine list, or whose one engine's maintenance, maintenance
+ * specs or agent readings list, is a sparse array of the longest length an array can have. Only the refusals of that list are
  * reported.
  */
 function runCase(deps: ChildDeps, name: string): ChildReport {
@@ -74,6 +74,13 @@ describe(`the definition check's lists in a Node child under --max-old-space-siz
     expect(await child.run<ChildReport>("maintenance")).toEqual({
       name: "maintenance",
       refusals: [{ rule: "manifest-unreadable", pointer: "/manifest/engines/0/facets/maintenance" }],
+    });
+  }, 30_000);
+
+  test("a maintenance specs list of the longest length is refused at the list, in a bounded child", async () => {
+    expect(await child.run<ChildReport>("maintenanceSpecs")).toEqual({
+      name: "maintenanceSpecs",
+      refusals: [{ rule: "manifest-unreadable", pointer: "/manifest/engines/0/facets/maintenanceSpecs" }],
     });
   }, 30_000);
 

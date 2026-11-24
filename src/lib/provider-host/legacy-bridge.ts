@@ -12,7 +12,9 @@
  * with the request's scope and answers its outcome; `console.transaction` is offered exactly when the provider holds a
  * transaction session (`isTransactionProvider`). The bridge is the one caller of a provider's ender: the caller that
  * minted a run's scope ends it through the host core's endScope call (clause C-60). `objects.tree` is offered on every
- * session, since every legacy provider holds the five tree members.
+ * session, since every legacy provider holds the five tree members. Neither maintenance facet is offered, and no
+ * session answers a maintenance narrowing: the two maintenance routes still call the provider's maintenance members
+ * themselves.
  *
  * Its tree call runs the provider's own member for the action with today's arguments: `listContainers` with one
  * argument, the parent or `undefined` at the top level, `countObjects`, `listObjects`, `describeObject`, and
@@ -324,6 +326,7 @@ export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepare
         transaction: transactional === undefined ? "not-offered" : "offered",
       },
       objects: { tree: "offered" },
+      maintenance: { run: "not-offered", preview: "not-offered" },
     },
     undefined,
   );

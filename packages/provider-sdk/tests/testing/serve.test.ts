@@ -26,6 +26,10 @@ import {
   type ExecuteAnswer,
   type ExecuteRequest,
   type LateOutcome,
+  type MaintenancePreview,
+  type MaintenancePreviewRequest,
+  type MaintenanceRunAnswer,
+  type MaintenanceRunRequest,
   type OpenAnswer,
   type OpenContext,
   PAGE_MAX_BYTES,
@@ -75,6 +79,8 @@ function fixture(
     readonly endScope?: boolean;
     readonly transaction?: boolean;
     readonly tree?: boolean;
+    readonly run?: boolean;
+    readonly preview?: boolean;
     readonly honours?: string[];
   } = {},
 ): Fixture {
@@ -84,6 +90,8 @@ function fixture(
   manifest.calls.console.endScope = options.endScope === false ? "not-offered" : "offered";
   manifest.calls.console.transaction = options.transaction === false ? "not-offered" : "offered";
   manifest.calls.objects.tree = options.tree === false ? "not-offered" : "offered";
+  manifest.calls.maintenance.run = options.run === false ? "not-offered" : "offered";
+  manifest.calls.maintenance.preview = options.preview === false ? "not-offered" : "offered";
   manifest.engines[0].facets.monitoring.overview = "not-offered";
   const seen: Seen[] = [];
   const handle: ProviderHandle = { marker: marker() };
@@ -110,6 +118,8 @@ function fixture(
     endScope: () => ({ openTransaction: "none" }),
     transaction: () => ({ sessionState: "in-transaction" }),
     tree: () => ({ containers: [] }),
+    run: () => ({ success: true, executionTime: 1, message: marker() }),
+    preview: () => ({ summary: marker(), facts: [] }),
   };
   const impl: Json = {
     open: async (ctx: OpenContext) => {
@@ -153,6 +163,20 @@ function fixture(
       },
     };
   }
+  const maintenance: Json = {};
+  if (options.run !== false) {
+    maintenance.run = async (h: unknown, request: unknown, ctx: CallContext) => {
+      seen.push({ call: "maintenance.run", handle: h, request, ctx });
+      return answers.run();
+    };
+  }
+  if (options.preview !== false) {
+    maintenance.preview = async (h: unknown, request: unknown, ctx: CallContext) => {
+      seen.push({ call: "maintenance.preview", handle: h, request, ctx });
+      return answers.preview();
+    };
+  }
+  impl.maintenance = maintenance;
   return { module: defineProvider(manifest, impl as ProviderImpl<unknown>), seen, handle, answers };
 }
 
@@ -770,6 +794,197 @@ describe("serve", () => {
     ]);
     expect(narrowed.frames.length).toBe(before);
     expect(withdrawn.seen.map((item) => item.call)).toEqual(["open"]);
+  });
+
+  test("a served maintenance call crosses its request and answer as frames, and the provider receives decoded frozen copies", async () => {
+    const fx = fixture();
+    const { impl, frames } = served(fx);
+    const opened = await impl.open(openContext());
+    const before = frames.length;
+    const runs: [MaintenanceRunRequest, MaintenanceRunAnswer][] = [
+      [
+        { operation: "vacuum", target: marker(), container: marker() },
+        { success: true, executionTime: 4, message: marker() },
+      ],
+      [
+        { operation: "analyze" },
+        {
+          success: true,
+          executionTime: 2,
+          message: marker(),
+          rows: [{ key: marker(), size: 7 }],
+          fields: ["key", "size"],
+        },
+      ],
+      [
+        { operation: "kill", target: "4711" },
+        { success: false, executionTime: 0, message: marker() },
+      ],
+    ];
+    const previewRequest: MaintenancePreviewRequest = { operation: "release", path: [marker(), marker()] };
+    const previewAnswer: MaintenancePreview = {
+      summary: marker(),
+      facts: [{ label: marker(), value: marker() }],
+      refusal: marker(),
+      note: marker(),
+    };
+
+    for (const [sent, answer] of runs) {
+      fx.answers.run = () => answer;
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each frame pair and answer is its own call's.
+      const got = await impl.maintenance?.run?.(opened.handle, sent, callContext());
+      expect(got).toEqual(answer);
+      expect(got).not.toBe(answer);
+    }
+    fx.answers.preview = () => previewAnswer;
+    const previewed = await impl.maintenance?.preview?.(opened.handle, previewRequest, callContext());
+    const seen = fx.seen.slice(1);
+
+    expect(previewed).toEqual(previewAnswer);
+    expect(previewed).not.toBe(previewAnswer);
+    expect(frames.slice(before).map((frame) => `${frame.direction} ${frame.call}`)).toEqual([
+      ...runs.flatMap(() => ["to-provider maintenance.run", "to-host maintenance.run"]),
+      "to-provider maintenance.preview",
+      "to-host maintenance.preview",
+    ]);
+    expect(seen.map((item) => item.call)).toEqual([...runs.map(() => "maintenance.run"), "maintenance.preview"]);
+    for (const [index, item] of seen.entries()) {
+      const sent =
+        index < runs.length ? (runs[index] as [MaintenanceRunRequest, MaintenanceRunAnswer])[0] : previewRequest;
+      expect(item.handle).toBe(fx.handle);
+      expect(item.request).toEqual(sent);
+      expect(item.request).not.toBe(sent);
+      expect(deepFrozen(item.request)).toBe(true);
+      expect(Object.isFrozen(item.ctx)).toBe(true);
+    }
+
+    fx.answers.run = () => ({ success: true, executionTime: 1, message: marker(), columns: [] });
+    const unknownKey = await failure(async () =>
+      impl.maintenance?.run?.(opened.handle, { operation: "vacuum" }, callContext()),
+    );
+    expect((unknownKey as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-key-unknown", call: "maintenance.run", part: "answer", pointer: "/columns", name: "columns" },
+    ]);
+    const unknownOperation = await failure(async () =>
+      impl.maintenance?.preview?.(
+        opened.handle,
+        { operation: "shrink", path: ["a"] } as unknown as MaintenancePreviewRequest,
+        callContext(),
+      ),
+    );
+    expect((unknownOperation as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-value-unreadable", call: "maintenance.preview", part: "request", pointer: "/operation" },
+    ]);
+    expect(fx.seen.length).toBe(runs.length + 3);
+  });
+
+  test("a maintenance call on a session without the facet is refused before any frame", async () => {
+    for (const facet of ["run", "preview"] as const) {
+      const declaredNot = fixture({ [facet]: false });
+      const withdrawn = fixture();
+      withdrawn.answers.open = () => ({
+        handle: withdrawn.handle,
+        refine: { calls: { maintenance: { [facet]: "not-offered" } } },
+      });
+      const notServed = served(declaredNot);
+      const narrowed = served(withdrawn);
+      // oxlint-disable-next-line no-await-in-loop -- one facet at a time, so each case's frames are its own.
+      const narrowedSession = await narrowed.impl.open(openContext());
+      const before = narrowed.frames.length;
+      const call = (): Promise<unknown> | undefined =>
+        facet === "run"
+          ? narrowed.impl.maintenance?.run?.(narrowedSession.handle, { operation: "vacuum" }, callContext())
+          : narrowed.impl.maintenance?.preview?.(
+              narrowedSession.handle,
+              { operation: "release", path: [marker()] },
+              callContext(),
+            );
+
+      // oxlint-disable-next-line no-await-in-loop -- one facet at a time, so each case's frames are its own.
+      const refused = await failure(async () => call());
+
+      expect(notServed.impl.maintenance?.[facet]).toBeUndefined();
+      expect(refused).toBeInstanceOf(CallRefusalError);
+      expect((refused as CallRefusalError).refusals).toEqual([
+        { rule: "facet-not-offered", pointer: `/maintenance/${facet}`, name: `maintenance.${facet}` },
+      ]);
+      expect(narrowed.frames.length).toBe(before);
+      expect(withdrawn.seen.map((item) => item.call)).toEqual(["open"]);
+    }
+  });
+
+  test("a served open whose maintenance narrowing names an operation its engine does not list is refused, and the session it opened is closed", async () => {
+    const fx = fixture();
+    const { impl, frames } = served(fx);
+    const closes = () => fx.seen.filter((item) => item.call === "close");
+    const engineUser = marker();
+    fx.answers.open = () => ({
+      handle: fx.handle,
+      engineUser,
+      refine: { maintenance: [{ operation: "vacuum", perEntity: true, global: false }] },
+    });
+
+    const widened = await failure(() => impl.open(openContext()));
+
+    expect(widened).toBeInstanceOf(CallRefusalError);
+    expect((widened as CallRefusalError).refusals).toEqual([
+      { rule: "refinement-widens", pointer: "/maintenance/0/operation" },
+    ]);
+    expect(closes().map((item) => item.handle)).toEqual([fx.handle]);
+    expect(closes()[0]?.ctx?.deadline).toBeGreaterThan(Date.now());
+    // The served side closes a refused open's session on the provider's side directly, so no close frame crosses.
+    expect(frames.map((frame) => `${frame.direction} ${frame.call}`)).toEqual(["to-provider open", "to-host open"]);
+
+    const listing = fixture();
+    const offered = served(listing);
+    listing.answers.open = () => ({ handle: listing.handle, engineUser, refine: { maintenance: [] } });
+    const opened = await offered.impl.open(openContext());
+    expect(opened.engineUser).toBe(engineUser);
+    expect(opened.refine).toEqual({ maintenance: [] });
+    expect(listing.seen.map((item) => item.call)).toEqual(["open"]);
+
+    const unread = fixture();
+    const unreadServed = served(unread);
+    unread.answers.open = () => ({ handle: unread.handle, refine: { maintenance: [{ operation: "vacuum" }] } });
+    const shape = await failure(() => unreadServed.impl.open(openContext()));
+    expect((shape as CallRefusalError).refusals).toEqual([
+      { rule: "refinement-unreadable", pointer: "/maintenance/0/perEntity" },
+      { rule: "refinement-unreadable", pointer: "/maintenance/0/global" },
+    ]);
+    expect(unread.seen.map((item) => item.call)).toEqual(["open", "close"]);
+  });
+
+  test("a served open is held to the maintenance of the engine its context names, which the module declares", async () => {
+    const fx = fixture();
+    const manifest = structuredClone(fx.module.manifest) as Json;
+    manifest.engines[0].facets.maintenance = ["vacuum", "analyze"];
+    manifest.engines[0].facets.maintenanceSpecs = ["vacuum", "analyze"].map((operation) => ({
+      operation,
+      label: operation,
+      perEntity: true,
+      global: true,
+      title: null,
+      description: null,
+      confirmation: null,
+      preview: false,
+      kinds: null,
+    }));
+    const listing = defineProvider(manifest, fx.module.impl);
+    const impl = serve(listing);
+    fx.answers.open = () => ({
+      handle: fx.handle,
+      refine: { maintenance: [{ operation: "vacuum", perEntity: false, global: true }] },
+    });
+
+    const opened = await impl.open(openContext());
+    const undeclared = await failure(() => impl.open({ ...openContext(), engine: "otherdb" }));
+
+    expect(opened.refine).toEqual({ maintenance: [{ operation: "vacuum", perEntity: false, global: true }] });
+    expect(undeclared).toBeInstanceOf(Error);
+    expect((undeclared as Error).message).toBe(
+      'The open context names the engine "otherdb", which the served module\'s manifest does not declare, so the provider was not called.',
+    );
+    expect(fx.seen.map((item) => item.call)).toEqual(["open"]);
   });
 
   test("a refinement open answers narrows the served session's calls", async () => {
@@ -1390,7 +1605,14 @@ describe("serve", () => {
 
   test("the served implementation is an implementation of the module's manifest, with the module's facets", () => {
     const both = fixture();
-    const neither = fixture({ cancel: false, endScope: false, transaction: false, tree: false });
+    const neither = fixture({
+      cancel: false,
+      endScope: false,
+      transaction: false,
+      tree: false,
+      run: false,
+      preview: false,
+    });
     const servedBoth = serve(both.module);
     const servedNeither = serve(neither.module);
 
@@ -1400,8 +1622,12 @@ describe("serve", () => {
     expect(Object.keys(servedNeither.console)).toEqual(["execute"]);
     expect(Object.keys(servedBoth.objects ?? {})).toEqual(["tree"]);
     expect(Object.keys(servedNeither.objects ?? {})).toEqual([]);
+    expect(Object.keys(servedBoth.maintenance ?? {})).toEqual(["run", "preview"]);
+    expect(Object.keys(servedNeither.maintenance ?? {})).toEqual([]);
+    expect(Object.keys(serve(fixture({ preview: false }).module).maintenance ?? {})).toEqual(["run"]);
     expect(Object.isFrozen(servedBoth)).toBe(true);
     expect(Object.isFrozen(servedBoth.console)).toBe(true);
     expect(Object.isFrozen(servedBoth.objects)).toBe(true);
+    expect(Object.isFrozen(servedBoth.maintenance)).toBe(true);
   });
 });

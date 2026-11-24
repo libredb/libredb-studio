@@ -3605,6 +3605,24 @@ describe("the calls segment", () => {
     ]);
     expect(refusalsFor(manifest((m) => (m.calls.objects.tree = "offered")))).toEqual([]);
   });
+  test("calls that leave out maintenance, or maintenance that leaves out run or preview, are refused as missing-key", () => {
+    expect(refusalsFor(manifest((m) => delete m.calls.maintenance))).toEqual([
+      refusal("missing-key", "/calls", "maintenance"),
+    ]);
+    expect(refusalsFor(manifest((m) => delete m.calls.maintenance.run))).toEqual([
+      refusal("missing-key", "/calls/maintenance", "run"),
+    ]);
+    expect(refusalsFor(manifest((m) => delete m.calls.maintenance.preview))).toEqual([
+      refusal("missing-key", "/calls/maintenance", "preview"),
+    ]);
+    expect(refusalsFor(manifest((m) => (m.calls.maintenance.explain = "offered")))).toEqual([
+      refusal("unknown-key", "/calls/maintenance", "explain"),
+    ]);
+    expect(refusalsFor(manifest((m) => (m.calls.maintenance.run = "maybe")))).toEqual([
+      refusal("value-not-allowed", "/calls/maintenance/run"),
+    ]);
+    expect(refusalsFor(manifest((m) => (m.calls.maintenance = { run: "offered", preview: "offered" })))).toEqual([]);
+  });
 });
 
 describe("proxy variables", () => {

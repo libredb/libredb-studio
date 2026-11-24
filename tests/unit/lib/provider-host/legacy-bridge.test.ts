@@ -14,6 +14,7 @@ import path from "node:path";
 import {
   BATCH_MAX_BYTES,
   type CallContext,
+  checkMaintenanceFacet,
   checkObjectsFacet,
   encodedRowBytes,
   envReader,
@@ -154,6 +155,7 @@ describe("bridgedConsole", () => {
         transaction: "not-offered",
       },
       objects: { tree: "offered" },
+      maintenance: { run: "not-offered", preview: "not-offered" },
     });
     expect(plain.session.calls.console.cancel).toBe("not-offered");
     expect(typeof cancelling.session.cancel).toBe("function");
@@ -169,6 +171,7 @@ describe("bridgedConsole", () => {
         transaction: "not-offered",
       },
       objects: { tree: "offered" },
+      maintenance: { run: "not-offered", preview: "not-offered" },
     });
     expect(typeof ending.session.endScope).toBe("function");
     expect(Object.isFrozen(cancelling.session.calls)).toBe(true);
@@ -188,6 +191,29 @@ describe("bridgedConsole", () => {
       expect(Object.isFrozen(session.calls.objects)).toBe(true);
       expect(checkObjectsFacet(session.calls, "tree")).toEqual([]);
       expect(typeof session.tree).toBe("function");
+    }
+  });
+
+  test("a bridged session offers no maintenance facet, since the maintenance routes still call the provider's maintenance members themselves", () => {
+    const milvusLike = Object.assign(fake(resultOf([])), {
+      runMaintenance: mock(async () => ({ success: true, executionTime: 0, message: "" })),
+      previewMaintenance: mock(async () => ({ summary: "", facts: [] })),
+      engineUser: () => "root",
+    });
+    const sessions = [
+      bridgedConsole(fake(resultOf([])), {}),
+      bridgedConsole(milvusLike, {}),
+      bridgedConsole(transactionalFake().provider, {}),
+    ];
+
+    for (const { session } of sessions) {
+      expect(session.calls.maintenance).toEqual({ run: "not-offered", preview: "not-offered" });
+      expect(Object.isFrozen(session.calls.maintenance)).toBe(true);
+      for (const facet of ["run", "preview"] as const) {
+        expect(checkMaintenanceFacet(session.calls, facet)).toEqual([
+          { rule: "facet-not-offered", pointer: `/maintenance/${facet}`, name: `maintenance.${facet}` },
+        ]);
+      }
     }
   });
 

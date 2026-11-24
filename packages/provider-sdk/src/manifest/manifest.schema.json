@@ -173,9 +173,12 @@
         },
         "objects": {
           "$ref": "#/$defs/objectsCalls"
+        },
+        "maintenance": {
+          "$ref": "#/$defs/maintenanceCalls"
         }
       },
-      "required": ["console", "objects"],
+      "required": ["console", "objects", "maintenance"],
       "additionalProperties": false
     },
     "consoleCalls": {
@@ -207,6 +210,20 @@
         }
       },
       "required": ["tree"],
+      "additionalProperties": false
+    },
+    "maintenanceCalls": {
+      "description": "The maintenance facets: each optional call that runs or previews a maintenance operation an engine lists, keyed by the path to its function under the implementation's maintenance. run: run one operation on the object or session it targets, or over the whole database. preview: read what one per-row operation would do to the object its path addresses, before it runs.",
+      "type": "object",
+      "properties": {
+        "run": {
+          "$ref": "#/$defs/facetOffer"
+        },
+        "preview": {
+          "$ref": "#/$defs/facetOffer"
+        }
+      },
+      "required": ["run", "preview"],
       "additionalProperties": false
     },
     "executeCall": {

@@ -31,6 +31,7 @@ const child = boundedChild({
           transaction: "not-offered",
         },
         objects: { tree: "offered" },
+        maintenance: { run: "not-offered", preview: "not-offered" },
       },
       tree: () => new Promise<never>(() => {}),
     } as unknown as Parameters<typeof deps.treeCall>[0];

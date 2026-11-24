@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D700, U17 · 373
+- [Drivers and connections](#drivers-and-connections) — D1-D711, U17 · 375
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -4957,6 +4957,23 @@ The session sends one request at a time and refuses a second while one is in fli
 The other engines whose tree reads the server read it on a metadata session of their own (docs/providers/CONTRACT.md, C-66).
 
 **Done when:** the session limits of at least two real NETCONF implementations are measured, and NETCONF's row follows the measurement, with a test that a tree read answers while an editor request is pending where a second session is admitted.
+
+### D710. A monitoring or health read waits behind the editor's statements, because both use the editor's pool
+
+`POST /api/db/monitoring`, `POST /api/db/health` and fleet health's reads (`POST /api/admin/fleet-health`) read on the editor's provider (`editorProvider` in `src/lib/api/editor-provider.ts`, and `getOrCreateProvider` in the fleet health route), so each panel and the health read take a connection from the pool the editor's statements run on.
+Measured on 2026-11-24 against `postgres:18-alpine` with Studio's default pool of 10: with every connection held by a running `SELECT pg_sleep(6)`, the seven-panel monitoring read answered after 5,273 ms and the health read after 5,325 ms, against 46 ms and 17 ms on the connection's metadata session; an owned pool of 3 held by three statements gave 5,276 ms and 5,324 ms.
+A statement that runs longer than the pool's acquire timeout, 60 seconds by default, leaves the dashboard waiting until then, when every panel fails, and the connection pulse reports a server that answers as degraded.
+The Sessions panel, where an administrator looks for what holds the database, is the panel that cannot answer while it is held.
+
+**Done when:** monitoring and health reads on a pooled connection run on a session apart from the editor's pool, except where Studio's record says the connection serves one session, and a test that holds every editor connection shows a monitoring read and a health read answer at once.
+
+### D711. A kill from the Sessions panel waits for a free editor connection, and can then end its own connection instead of its target
+
+`POST /api/db/maintenance` runs `kill` on the editor's provider (`editorProvider` in `src/lib/api/editor-provider.ts`), and the PostgreSQL provider takes a client from the editor's pool for it (`runMaintenance` in `src/lib/db/providers/sql/postgres.ts`).
+Measured on 2026-11-24 against `postgres:18-alpine` with Studio's default pool of 10, every connection held by `SELECT pg_sleep(8)`: a kill of one of the holding backends answered after 7,247 ms, when a holder ended by itself, and the client it was handed was the killed backend's own, so it terminated itself and answered "terminating connection due to administrator command".
+So a kill cannot end a statement of a connection whose editor pool its own statements hold, and with a statement longer than the acquire timeout, 60 seconds by default, it answers a pool timeout instead.
+
+**Done when:** a kill runs on a connection apart from the editor's pool, or the route refuses it by name when none is free, and a test that holds every editor connection shows a kill ends its target and leaves its own connection open.
 
 ## Value interpolation
 
