@@ -1211,6 +1211,19 @@ describe("readFrame", () => {
     expect(reads).toBe(0);
   });
 
+  test("a containers answer may carry needsConfiguration as text, read as part of its closed shape", () => {
+    const tree = (answer: unknown) => readFrame("objects.tree", "answer", answer);
+    const reason = marker();
+
+    expect(tree({ containers: [], needsConfiguration: reason })).toEqual([]);
+    expect(tree({ containers: [], needsConfiguration: 1 })).toEqual([
+      refusal("frame-value-unreadable", "objects.tree", "answer", "/needsConfiguration"),
+    ]);
+    expect(tree({ containers: [], needsConfiguration: reason, extra: 1 })).toEqual([
+      refusal("frame-key-unknown", "objects.tree", "answer", "/extra", "extra"),
+    ]);
+  });
+
   test("a connection's keys are the contract's field names and each value a connection field value", () => {
     const fieldNames = SCHEMA.$defs.fieldName?.enum ?? [];
     const connection = (value: Json) =>

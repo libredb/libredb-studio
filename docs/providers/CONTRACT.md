@@ -2973,6 +2973,8 @@ Only the legacy bridge calls a provider's `endOpenQueryTransaction`.
 
 `objects.tree` is one object facet, offered or not in `calls.objects.tree`, and implemented as one function under the implementation's `objects` whose request names its action, one of `TREE_ACTIONS`.
 `containers` lists the containers under `parent`, or at the top level when the request sends none.
+A top-level listing that answers no container may carry `needsConfiguration`, the provider's sentence for why its inventory cannot be listed without configuration the session lacks, completing "could be listed:"; a listing with a container, or below the top level, never carries it.
+An engine with no container level reads no top-level listing, so it is never asked the question.
 `count` answers each kind's count of objects in one container, keyed by the kind: a count, a count read from a bounded sample with the provider's sentence for what bounded it, or the engine's sentence for a read that was refused.
 `list` answers one kind's objects in one container, by name and path, with no columns.
 `describe` answers one object's columns, indexes and foreign keys, its indexes the engine's sentence where that read was refused.
@@ -2991,7 +2993,9 @@ The answer shapes are Studio's own object tree shapes, declared by the SDK and h
 - test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement may withdraw objects.tree, and never offer it where the manifest does not"
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "a tree request is one of its actions, each with its own members"
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "a tree answer is exactly one of its five forms, each read as its closed shape"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a containers answer may carry needsConfiguration as text, read as part of its closed shape"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a served tree call crosses each action's request and answer as frames, and the provider receives decoded frozen copies"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a containers answer that says the inventory needs configuration crosses as a frame with its sentence"
 
 ### C-62 (informative): A tree answer is read by reference
 
@@ -3567,3 +3571,4 @@ Against this contract's earlier text:
 - A provider without `queryReadOnly` handed to the agent's statement path is refused at the read-only statement session's open with the acquisition's refusal, C-39 and C-79, where the run threw a plain error.
 - The hand-over replay runs through the host core's read-only execute under its request's signal, C-79: a client that leaves while the statement runs is answered at once, and a row larger than one page is refused by the host's page budget, where the replay waited for the statement and answered such a row.
 - Each engine's SQL grammar row is composed from its declaration's SQL text, M-15 and M-78, where each row was a module beside its provider, and its redaction is read from `SQL_TEXT_REDACTION`, Studio's hand-written record, M-54; a declared trailing limit clause is anchored as a whole, at its start and at the statement's end, S-6.
+- A top-level containers answer that lists no container may say the inventory needs configuration the session lacks, C-61, where a containers answer carried its containers alone.

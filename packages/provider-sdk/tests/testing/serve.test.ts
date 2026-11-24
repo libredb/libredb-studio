@@ -906,6 +906,24 @@ describe("serve", () => {
     expect(fx.seen.length).toBe(calls.length + 2);
   });
 
+  test("a containers answer that says the inventory needs configuration crosses as a frame with its sentence", async () => {
+    const fx = fixture();
+    const { impl, frames } = served(fx);
+    const opened = await impl.open(openContext());
+    const before = frames.length;
+    const answer = { containers: [], needsConfiguration: marker() };
+    fx.answers.tree = () => answer;
+
+    const got = await impl.objects?.tree?.(opened.handle, { action: "containers" }, callContext());
+
+    expect(got).toEqual(answer);
+    expect(got).not.toBe(answer);
+    expect(frames.slice(before).map((frame) => `${frame.direction} ${frame.call}`)).toEqual([
+      "to-provider objects.tree",
+      "to-host objects.tree",
+    ]);
+  });
+
   test("a tree call on a session without objects.tree is refused before any frame", async () => {
     const declaredNot = fixture({ tree: false });
     const withdrawn = fixture();

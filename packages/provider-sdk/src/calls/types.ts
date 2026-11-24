@@ -621,6 +621,12 @@ export type TreeRequest =
 /** What a `containers` request answers. */
 export interface TreeContainersAnswer {
   readonly containers: readonly Container[];
+  /**
+   * Sent only on a top-level listing (no `parent`) that answers no container: the provider's sentence for why its
+   * inventory cannot be listed without configuration the session lacks, completing "could be listed:". An engine with
+   * no container level reads no top-level listing, so it is never asked.
+   */
+  readonly needsConfiguration?: string;
 }
 
 /** What a `count` request answers: each kind's count, keyed by the kind. */
