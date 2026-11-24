@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D620, U17 · 370
+- [Drivers and connections](#drivers-and-connections) — D1-D630, U17 · 371
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -4930,6 +4930,16 @@ Read from the code on 2026-11-24 while moving the end onto `console.endScope`; t
 
 **Done when:** the provider keeps a client a scoped statement left in a transaction checked out under that scope until the scope's end, and runs the scope's later statements on it, as clause C-60 requires, with a route or integration test that holds the end and shows a concurrent request is not handed that client.
 The change must weigh multi-query scripts, whose statements today each borrow a client.
+
+### D630. A provider that declares a catalog level beside catalog sessions lets a caller's object path name another database, which Studio's record does not bound
+
+The object routes check a caller's container path against the levels the provider declares (`acceptedContainerShapes` in `src/lib/db/object-kinds.ts`, read by `src/lib/api/object-route.ts`) and hand it to the provider.
+The server-level PostgreSQL provider opens the database a path's first segment names through its own `forCatalog`.
+A `catalog` field and an MCP `database` argument are honoured only where `catalogChoice` in `src/lib/db/catalog-scope.ts` honours the connection, but an object path's database segment is the provider's to honour.
+Every shipped provider declares a `catalog` level beside `catalogSessions` only where `catalogChoice` honours the connection, so no shipped engine reaches another database this way; a provider package could, once one loads.
+A level that opens another database without `catalogSessions` is the provider's behaviour, under the operator's trust in the package, not a claim Studio reads.
+
+**Done when:** on a connection whose provider declares `catalogSessions` and a `catalog` level (`declaresCatalogSessions`) and that `catalogChoice` does not honour, the object routes refuse a path naming a catalog, by name, before the provider is asked, and a test with a provider declaring both on a connection naming a database shows the refusal.
 
 ## Value interpolation
 
