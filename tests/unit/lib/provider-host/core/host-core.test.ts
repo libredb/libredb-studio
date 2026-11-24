@@ -17,7 +17,7 @@ import {
 } from "@/lib/provider-host/core/console";
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
 import { maintenancePreviewCall, maintenanceRunCall } from "@/lib/provider-host/core/maintenance";
-import { panelCall, poolStatsCall } from "@/lib/provider-host/core/monitoring";
+import { healthCall, panelCall, poolStatsCall } from "@/lib/provider-host/core/monitoring";
 import { treeCall } from "@/lib/provider-host/core/objects";
 
 /** Lets every callback already queued run: one turn of the event loop, never a timer an assertion waits on. */
@@ -73,13 +73,14 @@ function pageOf(record: ExecuteRecord): PageRecord {
 }
 
 describe("the host core instance", () => {
-  test("the host core holds the console calls on a page budget of its own, the tree call, the maintenance calls and the monitoring calls, frozen, and nothing else", () => {
+  test("the host core holds the console calls on a page budget of its own, the tree call, the maintenance calls, the monitoring calls and the health call, frozen, and nothing else", () => {
     const core = createHostCore();
 
     expect(Object.keys(core).sort()).toEqual([
       "cancelCall",
       "endScopeCall",
       "executeCall",
+      "healthCall",
       "maintenancePreviewCall",
       "maintenanceRunCall",
       "panelCall",
@@ -93,6 +94,7 @@ describe("the host core instance", () => {
     expect(core.maintenancePreviewCall).toBe(maintenancePreviewCall);
     expect(core.panelCall).toBe(panelCall);
     expect(core.poolStatsCall).toBe(poolStatsCall);
+    expect(core.healthCall).toBe(healthCall);
     expect(core.endScopeCall).toBe(endScopeCall);
     expect(core.transactionCall).toBe(transactionCall);
     expect(typeof core.executeCall).toBe("function");

@@ -339,6 +339,45 @@ describe("bridgedConsole", () => {
     expect(await failure(() => call)).toBe(thrown);
   });
 
+  test("a bridged health call runs getHealth with no argument and answers its health by reference, and a throw as its rejection", async () => {
+    const health = {
+      activeConnections: 2,
+      databaseSize: marker(),
+      cacheHitRatio: "1",
+      slowQueries: [],
+      activeSessions: [],
+    };
+    const forCatalog = mock(async () => fake(resultOf([])));
+    const getHealth = mock(async () => health);
+    const provider = fake(resultOf([]), { getHealth, forCatalog });
+    const { session } = bridgedConsole(provider, {});
+
+    expect(await session.health(contextOf())).toBe(health);
+    expect(callsOf(getHealth)).toEqual([[]]);
+
+    const rejected = new Error(marker());
+    getHealth.mockImplementation(async () => {
+      throw rejected;
+    });
+    expect(await failure(() => session.health(contextOf()))).toBe(rejected);
+
+    const thrown = new Error(marker());
+    getHealth.mockImplementation(() => {
+      throw thrown;
+    });
+    const call = session.health(contextOf());
+    expect(call).toBeInstanceOf(Promise);
+    expect(await failure(() => call)).toBe(thrown);
+
+    expect(forCatalog).not.toHaveBeenCalled();
+    for (const member of ["query", "getOverview", "getMonitoringData", "getPoolStats", "runMaintenance"] as const) {
+      const fn = (provider as unknown as Record<string, unknown>)[member];
+      if (fn !== undefined) expect(fn).not.toHaveBeenCalled();
+    }
+    // Health is the mandatory call, never a facet of the session's calls.
+    expect(Object.hasOwn(session.calls, "health")).toBe(false);
+  });
+
   test("a bridged maintenance run calls runMaintenance with the operation, the target and the container, undefined where absent, and answers its result by reference", async () => {
     const results = [
       { success: true, executionTime: 2, message: marker() },

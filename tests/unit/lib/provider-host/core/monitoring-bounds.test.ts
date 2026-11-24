@@ -9,10 +9,11 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import path from "node:path";
-import type { panelCall, poolStatsCall } from "@/lib/provider-host/core/monitoring";
+import type { healthCall, panelCall, poolStatsCall } from "@/lib/provider-host/core/monitoring";
 import { boundedChild } from "../../../../helpers/bounded-node-child";
 
 interface ChildDeps {
+  readonly healthCall: typeof healthCall;
   readonly panelCall: typeof panelCall;
   readonly poolStatsCall: typeof poolStatsCall;
 }
@@ -21,7 +22,7 @@ const CORE = path.join(import.meta.dir, "..", "..", "..", "..", "..", "src", "li
 
 const child = boundedChild({
   label: "monitoring-bounds",
-  imports: [{ from: path.join(CORE, "monitoring.ts"), names: ["panelCall", "poolStatsCall"] }],
+  imports: [{ from: path.join(CORE, "monitoring.ts"), names: ["healthCall", "panelCall", "poolStatsCall"] }],
   runCase: async (deps: ChildDeps, name: string) => {
     const never = () => new Promise<never>(() => {});
     const session = {
@@ -47,12 +48,15 @@ const child = boundedChild({
       },
       panel: never,
       poolStats: never,
-    } as unknown as Parameters<typeof deps.panelCall>[0];
+      health: never,
+    } as unknown as Parameters<typeof deps.panelCall>[0] & Parameters<typeof deps.healthCall>[0];
     const ctx = { deadline: Date.now() + 50, signal: AbortSignal.timeout(50), env: { get: () => undefined } };
-    const record =
-      name === "panel"
-        ? await deps.panelCall(session, { panel: "overview" }, ctx, { late: () => {} })
-        : await deps.poolStatsCall(session, ctx, { late: () => {} });
+    const calls: Record<string, () => Promise<{ readonly kind: string; readonly reason?: unknown }>> = {
+      panel: () => deps.panelCall(session, { panel: "overview" }, ctx, { late: () => {} }),
+      poolStats: () => deps.poolStatsCall(session, ctx, { late: () => {} }),
+      health: () => deps.healthCall(session, ctx, { late: () => {} }),
+    };
+    const record = await calls[name]();
     return record.kind === "stopped" ? `stopped ${(record.reason as Error).name}` : record.kind;
   },
   heapLimitMiB: 128,
@@ -74,5 +78,9 @@ describe("a monitoring call in a bounded child", () => {
 
   test("a pool statistics read that never settles is stopped at the call's deadline", async () => {
     expect(await child.run<unknown>("poolStats")).toBe("stopped TimeoutError");
+  });
+
+  test("a health read that never settles is stopped at the call's deadline", async () => {
+    expect(await child.run<unknown>("health")).toBe("stopped TimeoutError");
   });
 });

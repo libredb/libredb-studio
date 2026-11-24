@@ -17,13 +17,14 @@
  * `previewMaintenance`. `monitoring.panel` is offered on every session, since every legacy provider holds the seven
  * panel members, and `monitoring.poolStats` exactly where the provider holds a pool statistics read (`getPoolStats`, a
  * function on the provider or its prototype); the session's panels are its engine's `ENGINE_FACETS` row
- * (`engineFacetsFor`). No `health` call is served: the health and fleet health routes and Test Connection still call
- * the provider's members themselves.
+ * (`engineFacetsFor`). `health` is served on every session, since every legacy provider holds `getHealth`: the health
+ * and fleet health routes and Test Connection still call `getHealth` themselves until they move onto the host core.
  *
  * Its panel call runs the panel's own member with today's argument through `readPanel`, the one mapping
  * `getMonitoringData` reads through too, and answers the member's answer by reference under the panel's key. Its pool
  * statistics call answers the provider's own `getPoolStats()` by reference, a synchronous throw answered as the call's
- * rejection. Neither calls `forCatalog`, and each passes a provider's error by reference. The facade that reads them is
+ * rejection. Its health call runs `getHealth()` with no argument and answers its health by reference, a synchronous
+ * throw answered as the call's rejection. None calls `forCatalog`, and each passes a provider's error by reference. The facade that reads them is
  * `providerMonitoring` in src/lib/api/provider-monitoring.ts.
  *
  * Its maintenance run calls `runMaintenance` with exactly three arguments, the request's operation, target and
@@ -86,6 +87,7 @@ import {
   type EngineMaintenance,
   type ExecuteAnswer,
   type ExecuteRequest,
+  type HealthInfo,
   type MaintenancePreview,
   type MaintenancePreviewRequest,
   type MaintenanceRunAnswer,
@@ -126,7 +128,7 @@ import {
 import { noteAppendedBound } from "@/lib/db/utils/query-limiter";
 import type { ConsoleSession } from "@/lib/provider-host/core/console";
 import type { MaintenanceSession } from "@/lib/provider-host/core/maintenance";
-import type { MonitoringSession } from "@/lib/provider-host/core/monitoring";
+import type { HealthSession, MonitoringSession } from "@/lib/provider-host/core/monitoring";
 import type { ObjectsSession } from "@/lib/provider-host/core/objects";
 import type { QueryResult, QueryWarning } from "@/lib/types";
 
@@ -151,7 +153,11 @@ export interface AnsweredRun {
  * not the bridge's to hold: the caller lays it beside the session.
  */
 export interface BridgedConsole {
-  readonly session: ConsoleSession & ObjectsSession & Omit<MaintenanceSession, "maintenance"> & MonitoringSession;
+  readonly session: ConsoleSession &
+    ObjectsSession &
+    Omit<MaintenanceSession, "maintenance"> &
+    MonitoringSession &
+    HealthSession;
   readonly run: LegacyRun;
   /**
    * What the execute that answered left, for the facade to answer from.
@@ -475,6 +481,7 @@ export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepare
       run: (request: MaintenanceRunRequest) => legacyRun(provider, request),
       panels: engineFacetsFor(provider.type).monitoring,
       panel: (request: MonitoringPanelRequest) => readPanel(provider, request),
+      health: async (): Promise<HealthInfo> => provider.getHealth(),
       ...(pooled === undefined ? {} : { poolStats: async (): Promise<PoolStats> => pooled.getPoolStats() }),
       ...(previewer === undefined
         ? {}

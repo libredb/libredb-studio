@@ -946,6 +946,7 @@ describe("runEditorQuery on the host core", () => {
         maintenancePreviewCall: real.maintenancePreviewCall,
         panelCall: real.panelCall,
         poolStatsCall: real.poolStatsCall,
+        healthCall: real.healthCall,
       },
       "test",
     );
@@ -998,6 +999,7 @@ describe("runEditorQuery on the host core", () => {
         maintenancePreviewCall: real.maintenancePreviewCall,
         panelCall: real.panelCall,
         poolStatsCall: real.poolStatsCall,
+        healthCall: real.healthCall,
       },
       "test",
     );

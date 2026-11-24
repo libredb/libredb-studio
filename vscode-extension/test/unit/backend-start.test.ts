@@ -245,6 +245,7 @@ describe("the child entry", () => {
       "cancelCall",
       "endScopeCall",
       "executeCall",
+      "healthCall",
       "maintenancePreviewCall",
       "maintenanceRunCall",
       "panelCall",

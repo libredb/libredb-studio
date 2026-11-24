@@ -14,6 +14,7 @@ import { randomUUID } from "node:crypto";
 import {
   type CallContext,
   envReader,
+  type HealthInfo,
   type MonitoringPanelAnswer,
   type MonitoringPanelRequest,
   type PoolStats,
@@ -21,6 +22,8 @@ import {
 import type { Calls, MonitoringPanels } from "@libredb/provider-sdk/manifest";
 import type { HostCallPorts } from "@/lib/provider-host/core/console";
 import {
+  type HealthSession,
+  healthCall,
   type MonitoringSession,
   type PanelRecord,
   type PoolStatsRecord,
@@ -393,5 +396,162 @@ describe("panelCall and poolStatsCall", () => {
     expect((poolStats as Error).message).toBe(
       "The session offers monitoring.poolStats and has no poolStats function, a defect of the host's session.",
     );
+  });
+});
+
+/** A health session whose `health` answers what `health` gives, recording each call's arguments. */
+function healthSessionOf(health: (ctx: CallContext) => Promise<HealthInfo>) {
+  const reads: unknown[][] = [];
+  const called = Promise.withResolvers<void>();
+  const session: HealthSession = {
+    health: (...args: [CallContext]) => {
+      reads.push(args);
+      called.resolve();
+      return health(...args);
+    },
+  };
+  return { session, reads, called: called.promise };
+}
+
+/** A health answer with nothing in its lists. */
+function healthOf(): HealthInfo {
+  return { activeConnections: 1, databaseSize: marker(), cacheHitRatio: "0", slowQueries: [], activeSessions: [] };
+}
+
+describe("healthCall", () => {
+  test("a health call whose signal aborted or whose deadline passed is refused as a record, and the session's health is never called", async () => {
+    const fx = healthSessionOf(async () => {
+      throw new Error("never called");
+    });
+    const { ports } = portsOf();
+    const controller = new AbortController();
+    const reason = new Error(marker());
+    controller.abort(reason);
+
+    const aborted = await healthCall(fx.session, contextOf(controller), ports);
+    const late = await healthCall(fx.session, contextOf(new AbortController(), Date.now() - 1), ports);
+
+    expect(aborted).toEqual({
+      kind: "refused",
+      called: false,
+      refusals: [{ rule: "call-signal-aborted", pointer: "/signal" }],
+      cause: reason,
+    });
+    expect((aborted as { cause?: unknown }).cause).toBe(reason);
+    expect(late).toEqual({
+      kind: "refused",
+      called: false,
+      refusals: [{ rule: "call-deadline-passed", pointer: "/deadline" }],
+    });
+    expect(fx.reads).toEqual([]);
+  });
+
+  test("a health call reads no facet and answers the session's own health, its context frozen", async () => {
+    const health = healthOf();
+    // The session holds no `calls`: the health call is mandatory, so no facet is read.
+    const fx = healthSessionOf(async () => health);
+    const { ports, late } = portsOf();
+    const ctx = contextOf();
+
+    const record = await healthCall(fx.session, ctx, ports);
+
+    if (record.kind !== "answered") throw new Error(`An answer was expected, not ${record.kind}.`);
+    expect(record.answer).toBe(health);
+    expect(fx.reads).toHaveLength(1);
+    expect(fx.reads[0]).toHaveLength(1);
+    expect(fx.reads[0]?.[0]).toBe(ctx);
+    expect(Object.isFrozen(ctx)).toBe(true);
+    expect(late).toEqual([]);
+  });
+
+  test("a health error the session raises reaches the caller as the same object, a synchronous throw as the call's rejection", async () => {
+    const rejected = new Error(marker());
+    const thrownNow = new Error(marker());
+    const { ports, late } = portsOf();
+
+    const later = await failure(() =>
+      healthCall(
+        healthSessionOf(async () => {
+          throw rejected;
+        }).session,
+        contextOf(),
+        ports,
+      ),
+    );
+    const now = await failure(() =>
+      healthCall(
+        healthSessionOf(() => {
+          throw thrownNow;
+        }).session,
+        contextOf(),
+        ports,
+      ),
+    );
+
+    expect(later).toBe(rejected);
+    expect(now).toBe(thrownNow);
+    expect(late).toEqual([]);
+  });
+
+  test("a health call the caller stops waiting for answers a stop at once, its later failure reaches the late handler once, and a later answer is dropped", async () => {
+    const failing = Promise.withResolvers<never>();
+    const failed = healthSessionOf(() => failing.promise);
+    const answering = Promise.withResolvers<HealthInfo>();
+    const answered = healthSessionOf(() => answering.promise);
+    const failedPorts = portsOf();
+    const answeredPorts = portsOf();
+    const failedController = new AbortController();
+    const answeredController = new AbortController();
+    const reason = new Error(marker());
+
+    const failedRun = healthCall(failed.session, contextOf(failedController), failedPorts.ports);
+    const answeredRun = healthCall(answered.session, contextOf(answeredController), answeredPorts.ports);
+    await Promise.all([failed.called, answered.called]);
+    failedController.abort(reason);
+    answeredController.abort(reason);
+    const [failedRecord, answeredRecord] = await Promise.all([failedRun, answeredRun]);
+    if (failedRecord.kind !== "stopped" || answeredRecord.kind !== "stopped") throw new Error("Stops were expected.");
+    let settled = false;
+    const watched = failedRecord.settled.then(() => {
+      settled = true;
+    });
+    await turn();
+    expect(settled).toBe(false);
+    const thrown = new Error(marker());
+    failing.reject(thrown);
+    answering.resolve(healthOf());
+
+    expect(failedRecord).toEqual({ kind: "stopped", reason, settled: expect.any(Promise) });
+    expect(failedRecord.reason).toBe(reason);
+    expect(await failedPorts.firstLate).toBe(thrown);
+    await watched;
+    await answeredRecord.settled;
+    await turn();
+    expect(settled).toBe(true);
+    expect(failedPorts.late).toEqual([thrown]);
+    expect(answeredPorts.late).toEqual([]);
+  });
+
+  test("a session that throws its health call's own signal reason is answered as a stop", async () => {
+    const { ports, late } = portsOf();
+    const controller = new AbortController();
+    const reason = new Error(marker());
+    const fx = healthSessionOf(
+      (ctx) =>
+        new Promise<never>((_resolve, reject) => {
+          ctx.signal.addEventListener("abort", () => reject(ctx.signal.reason), { once: true });
+        }),
+    );
+
+    const running = healthCall(fx.session, contextOf(controller), ports);
+    await fx.called;
+    controller.abort(reason);
+    const record = await running;
+    if (record.kind !== "stopped") throw new Error(`A stop was expected, not ${record.kind}.`);
+    await record.settled;
+    await turn();
+
+    expect(record.reason).toBe(reason);
+    expect(late).toEqual([]);
   });
 });

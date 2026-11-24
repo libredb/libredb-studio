@@ -2429,7 +2429,8 @@ It offers `monitoring.panel` on every session, since every legacy provider holds
 The session's panels are its engine's row of monitoring panels.
 Its panel call runs the panel's own member with today's argument and answers its answer under the panel's key by reference, and its pool statistics call answers the provider's own statistics by reference, a synchronous throw as the call's rejection.
 Neither calls `forCatalog`, and each passes a provider's error by reference.
-It serves no `health` call, and the health and fleet health routes and Test Connection still call the provider's members themselves until they move onto the host core.
+It serves `health` on every session, since every legacy provider holds `getHealth`: its health call runs `getHealth` with no argument and answers its answer by reference, a synchronous throw as the call's rejection, never calls `forCatalog`, and passes a provider's error by reference.
+The health and fleet health routes and Test Connection still call `getHealth` themselves until they move onto the host core.
 Its run calls `runMaintenance` with exactly three arguments, the operation, the target and the container, `undefined` for an absent one, and its preview calls `previewMaintenance` with the operation and a fresh copy of the path.
 Each answers the provider's answer by reference, never calls `forCatalog`, and passes a provider's error by reference.
 The session's maintenance is the provider's declaration before it connects, narrowed through `sessionMaintenance` by the refinement the bridge answers from the connected provider's capabilities, C-68.
@@ -2458,6 +2459,7 @@ The page's row limit is set once execute answered: one past the page when the pr
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session's panels are its engine's row"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged panel call runs the panel's own member with today's argument and answers its answer by reference under the panel's key"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged pool statistics call answers the provider's own statistics by reference, and a throw as its rejection"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged health call runs getHealth with no argument and answers its health by reference, and a throw as its rejection"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged maintenance run calls runMaintenance with the operation, the target and the container, undefined where absent, and answers its result by reference"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged maintenance preview calls previewMaintenance with a copy of the path and answers its preview by reference"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged maintenance call whose member throws passes the error by reference"
@@ -2511,7 +2513,7 @@ A refused offset and refused params of a session that refuses a field arrive wit
 ### C-52 (normative): One host core per process
 
 A process holds one host core, created by `createHostCore` and installed under a registered symbol by the process's composition root, which the install names: the server's instrumentation and the VS Code backend's entry.
-The core holds plain functions, the console calls, the tree call, the maintenance calls and the monitoring calls, and constructs no class, so a caller in any bundle of the process runs the core another bundle installed.
+The core holds plain functions, the console calls, the tree call, the maintenance calls, the monitoring calls and the health call, and constructs no class, so a caller in any bundle of the process runs the core another bundle installed.
 Its execute runs under a page budget the core creates for itself, C-53, so the process holds one page budget as it holds one core.
 The classes a caller tests with `instanceof` and the ports that read them stay the caller's, built per call, C-51.
 A call made before the core is installed fails by name, as a defect of how the process was composed, and nothing reaches the provider.
@@ -2520,7 +2522,7 @@ A second install from another composition root is refused by name, naming both r
 The library surface never reads the installed core, so an embedder composes nothing.
 The live check `tests/live/host-core-live.ts` holds the same rule against the built standalone server, in CI's "Host Core Live Check".
 
-- test `tests/unit/lib/provider-host/core/host-core.test.ts` "the host core holds the console calls on a page budget of its own, the tree call, the maintenance calls and the monitoring calls, frozen, and nothing else"
+- test `tests/unit/lib/provider-host/core/host-core.test.ts` "the host core holds the console calls on a page budget of its own, the tree call, the maintenance calls, the monitoring calls and the health call, frozen, and nothing else"
 - test `tests/unit/lib/provider-host/instance.test.ts` "the host core is installed once per process, under a registered symbol"
 - test `tests/unit/lib/provider-host/instance.test.ts` "a second install from the same composition root keeps the first core, and throws nothing"
 - test `tests/unit/lib/provider-host/instance.test.ts` "a second install from another composition root is refused by name, naming both roots, and the first core stays"
@@ -3079,6 +3081,7 @@ Each answers the session's answer by reference, a stop with its reason and `sett
 A failure after the stop reaches the caller's late handler once, and a later answer is dropped, so no promise the host stopped waiting for is left without a handler.
 A session that offers a facet with no function for it is a defect of the host's session, named.
 The core does not read a panel answer's form: the caller reads the member its request names.
+`healthCall` checks the context with `checkCallStart`, C-27, and no facet, since every session answers `health`, C-72, freezes the context in place, waits with `awaitWithin` until the context's signal, and answers the session's health by reference, a stop with its reason and `settled`, and a provider's error by reference, a later failure reaching the caller's late handler once.
 
 - test `tests/unit/lib/provider-host/core/monitoring.test.ts` "a monitoring call whose signal aborted or whose deadline passed is refused as a record, and the provider is never called"
 - test `tests/unit/lib/provider-host/core/monitoring.test.ts` "a monitoring call to a session without its facet is refused as a record before the call"
@@ -3091,6 +3094,12 @@ The core does not read a panel answer's form: the caller reads the member its re
 - test `tests/unit/lib/provider-host/core/monitoring.test.ts` "a session that offers a monitoring facet with no function is a host defect, named"
 - test `tests/unit/lib/provider-host/core/monitoring-bounds.test.ts` "a panel read that never settles is stopped at the call's deadline"
 - test `tests/unit/lib/provider-host/core/monitoring-bounds.test.ts` "a pool statistics read that never settles is stopped at the call's deadline"
+- test `tests/unit/lib/provider-host/core/monitoring.test.ts` "a health call whose signal aborted or whose deadline passed is refused as a record, and the session's health is never called"
+- test `tests/unit/lib/provider-host/core/monitoring.test.ts` "a health call reads no facet and answers the session's own health, its context frozen"
+- test `tests/unit/lib/provider-host/core/monitoring.test.ts` "a health error the session raises reaches the caller as the same object, a synchronous throw as the call's rejection"
+- test `tests/unit/lib/provider-host/core/monitoring.test.ts` "a health call the caller stops waiting for answers a stop at once, its later failure reaches the late handler once, and a later answer is dropped"
+- test `tests/unit/lib/provider-host/core/monitoring.test.ts` "a session that throws its health call's own signal reason is answered as a stop"
+- test `tests/unit/lib/provider-host/core/monitoring-bounds.test.ts` "a health read that never settles is stopped at the call's deadline"
 
 ### C-74 (normative): Monitoring on the host
 

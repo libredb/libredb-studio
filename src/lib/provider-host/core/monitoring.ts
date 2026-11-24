@@ -1,6 +1,6 @@
 /**
- * The host's monitoring calls (docs/providers/CONTRACT.md, clauses C-73, C-17, C-27 and C-28), part of the provider
- * host core.
+ * The host's monitoring calls and its health call (docs/providers/CONTRACT.md, clauses C-73, C-72, C-17, C-27 and
+ * C-28), part of the provider host core.
  *
  * `panelCall` makes one `monitoring.panel` call on a session and `poolStatsCall` one `monitoring.poolStats` call, and
  * each answers a record of how it ended. Each is checked before it is made: `checkCallStart` refuses a call whose
@@ -16,7 +16,12 @@
  * answer is dropped, so no promise the host stopped waiting for is left without a handler. A provider's error passes
  * by reference.
  *
- * Both calls share one private helper, `monitoringCall`, and read the core's call machinery from the console calls
+ * `healthCall` makes one `health` call on a session, the mandatory call every session answers (clause C-72), so it is
+ * checked only by `checkCallStart`: it reads no facet and has no request. Its context is frozen, it is waited for as
+ * the monitoring calls are, and it answers the session's health by reference, a stop with its reason and `settled`, or
+ * a provider's error by reference, a later failure reaching `ports.late` once.
+ *
+ * The three calls share one private helper, `monitoringCall`, and read the core's call machinery from the console calls
  * (src/lib/provider-host/core/console.ts): `refusedBefore`, `stoppedBy`, `lateFailure`, `settledOf` and `startCall`,
  * one definition for every call the core makes, as the tree and maintenance calls read them. Like them they construct
  * no class and keep no module state.
@@ -30,6 +35,7 @@ import {
   checkMonitoringPanelRequest,
   freezeContext,
   freezeData,
+  type HealthInfo,
   type MonitoringFacet,
   type MonitoringPanelAnswer,
   type MonitoringPanelRequest,
@@ -58,6 +64,14 @@ export interface MonitoringSession {
   poolStats?(ctx: CallContext): Promise<PoolStats>;
 }
 
+/**
+ * One session as the host core calls its health: its health function with the handle already bound. Required, since
+ * every session answers `health` (clause C-72).
+ */
+export interface HealthSession {
+  health(ctx: CallContext): Promise<HealthInfo>;
+}
+
 /** How a panel call ended: answered with the session's own answer, refused before the call, or stopped. */
 export type PanelRecord =
   | RefusedRecord
@@ -66,6 +80,9 @@ export type PanelRecord =
 
 /** How a pool statistics call ended: answered with the session's own statistics, refused before the call, or stopped. */
 export type PoolStatsRecord = RefusedRecord | StoppedRecord | { readonly kind: "answered"; readonly answer: PoolStats };
+
+/** How a health call ended: answered with the session's own health, refused before the call, or stopped. */
+export type HealthRecord = RefusedRecord | StoppedRecord | { readonly kind: "answered"; readonly answer: HealthInfo };
 
 /** `fn`, the session's function for `facet`; a host defect when the session offers the facet and holds no function. */
 function offeredFunction<Fn>(fn: Fn | undefined, facet: MonitoringFacet): Fn {
@@ -148,8 +165,24 @@ export function poolStatsCall(
   );
 }
 
-/** The monitoring calls one host core holds. */
+/**
+ * One `health` call on `session`: checked for its context only, since every session answers it, frozen, waited for
+ * until `ctx.signal`, answered as a record with the session's health by reference. A failure after the wait ended
+ * reaches `ports.late` once, and a later answer is dropped.
+ *
+ * @throws The provider's error by reference.
+ */
+export function healthCall(
+  session: HealthSession,
+  ctx: CallContext,
+  ports: Pick<HostCallPorts, "late">,
+): Promise<HealthRecord> {
+  return monitoringCall([], () => session.health(ctx), undefined, ctx, ports);
+}
+
+/** The monitoring calls one host core holds, the health call among them. */
 export interface MonitoringCalls {
   readonly panelCall: typeof panelCall;
   readonly poolStatsCall: typeof poolStatsCall;
+  readonly healthCall: typeof healthCall;
 }
