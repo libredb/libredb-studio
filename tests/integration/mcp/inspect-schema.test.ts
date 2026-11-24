@@ -56,6 +56,7 @@ import {
   fakeTextScrub,
   gateMethod,
   pinMcpTestEnvironment,
+  recordAcquisitions,
   resetMcpTestState,
   writeSeedFile,
 } from "../../helpers/mcp-fixtures";
@@ -1124,6 +1125,33 @@ describe("the deadline", () => {
       after.restore();
     }
   });
+
+  test("inspect_schema waits for its connection's open within the call's deadline and the request's signal", async () => {
+    const gate = gateMethod(SQLiteProvider.prototype, "connect");
+    const recorded = recordAcquisitions(McpConnectionContext.prototype);
+    try {
+      const controller = new AbortController();
+      const left = direct({ connection_id: "seed:shop" }, controller.signal);
+      await gate.entered;
+      const reason = new Error("the client left");
+      controller.abort(reason);
+      expect((await left).content).toEqual([{ type: "text", text: MCP_CANCELLED_TEXT }]);
+      // The open released the call with the request's reason, while the open itself goes on.
+      expect(await recorded.acquisitions[0].failure).toBe(reason);
+
+      const timed = await within(direct({ connection_id: "seed:shop", timeout_ms: 500 }), 5_000);
+      expect(timed === "still waiting" ? timed : timed.content).toEqual([{ type: "text", text: TIMEOUT_500 }]);
+      // The open released the call at its deadline.
+      expect(((await recorded.acquisitions[1].failure) as Error).name).toBe("TimeoutError");
+      expect(recorded.acquisitions.map(({ profile }) => profile)).toEqual(["agent-operations", "agent-operations"]);
+      expect(gate.calls).toBe(1);
+    } finally {
+      recorded.restore();
+      gate.release();
+      if (gate.calls > 0) await gate.finished;
+      gate.restore();
+    }
+  }, 10_000);
 });
 
 describe("foreign keys", () => {

@@ -249,7 +249,7 @@ async function inspected(
     }),
     { context, signal: new AbortController().signal },
   );
-  expect(acquire).toHaveBeenCalledWith(managed, "agent-operations");
+  expect(acquire).toHaveBeenCalledWith(managed, "agent-operations", { signal: expect.any(AbortSignal) });
   return { isError: result.isError === true, text: JSON.stringify(result) };
 }
 

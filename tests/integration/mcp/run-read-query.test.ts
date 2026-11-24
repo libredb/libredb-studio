@@ -64,6 +64,7 @@ import {
   fakeTextScrub,
   gateMethod,
   pinMcpTestEnvironment,
+  recordAcquisitions,
   resetMcpTestState,
   waitFor,
   writeSeedFile,
@@ -1003,6 +1004,49 @@ describe("the deadline and the signal", () => {
     } finally {
       gate.release();
       // The held call runs to its end before afterEach closes the provider under it.
+      await gate.finished;
+      gate.restore();
+    }
+  });
+
+  test("a client that leaves while the connection opens is answered cancelled at once, and the open is released by the host", async () => {
+    const gate = gateMethod(SQLiteProvider.prototype, "connect");
+    const recorded = recordAcquisitions(McpConnectionContext.prototype);
+    try {
+      const controller = new AbortController();
+      const call = direct({ connection_id: "seed:shop", sql: "SELECT 1" }, controller.signal);
+      await gate.entered;
+      const reason = new Error("the client left");
+      controller.abort(reason);
+
+      expect((await call).content).toEqual([{ type: "text", text: MCP_CANCELLED_TEXT }]);
+      expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_cancelled" });
+      // The host's open released the call with the request's reason, while the open itself is still held.
+      expect(await recorded.acquisitions[0].failure).toBe(reason);
+      expect(recorded.acquisitions.map(({ profile }) => profile)).toEqual(["agent-read-only"]);
+    } finally {
+      recorded.restore();
+      gate.release();
+      // The held call runs to its end before afterEach closes the provider under it.
+      await gate.finished;
+      gate.restore();
+    }
+  });
+
+  test("an open that outlasts timeout_ms is answered with the timeout, and the open is released by the host", async () => {
+    const gate = gateMethod(SQLiteProvider.prototype, "connect");
+    const recorded = recordAcquisitions(McpConnectionContext.prototype);
+    try {
+      const result = await direct({ connection_id: "seed:shop", sql: "SELECT 1", timeout_ms: 500 });
+
+      expect(result.content).toEqual([{ type: "text", text: timeoutText(500) }]);
+      expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_timeout" });
+      // The host's open released the call at its deadline, while the open itself is still held.
+      expect(((await recorded.acquisitions[0].failure) as Error).name).toBe("TimeoutError");
+      expect(gate.calls).toBe(1);
+    } finally {
+      recorded.restore();
+      gate.release();
       await gate.finished;
       gate.restore();
     }

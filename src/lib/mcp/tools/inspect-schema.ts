@@ -28,7 +28,7 @@ import {
   McpDatabaseChoiceError,
   providerInDatabase,
 } from "./database-choice";
-import { MCP_TIMEOUT_BOUNDS_MS, raceDeadline } from "./read-query-limits";
+import { acquireWithinCall, MCP_TIMEOUT_BOUNDS_MS, type Raced, raceDeadline } from "./read-query-limits";
 import { type McpStatementTool, mcpTablelessReadTool } from "./statement-arms";
 import {
   MCP_CONNECTIONS_UNREADABLE,
@@ -77,7 +77,9 @@ import {
  *
  * One deadline, the call's start plus timeout_ms, covers every provider call: the acquisition, the database choice,
  * each container listing, the relation listing and each table's description each run through `raceDeadline`, so none
- * starts after it, while one already started runs on.
+ * starts after it, while one already started runs on. The acquisition also hands the open the call's wait
+ * (`acquireWithinCall`), so the host's open releases the call at its deadline or when its request leaves
+ * (docs/providers/CONTRACT.md, clause C-81).
  * Foreign keys come from the description the call makes for columns or indexes anyway, so asking for them alone adds
  * a description only where the engine may declare keys.
  * The schema names are what the last container listing `chooseContainer` made answered, so asking for them sends
@@ -199,12 +201,14 @@ class InspectStopped extends Error {
 type Step = <T>(work: () => Promise<T>) => Promise<T>;
 
 function deadlineStep(signal: AbortSignal, deadline: number): Step {
-  return async (work) => {
-    const raced = await raceDeadline(work, signal, deadline);
-    if (raced.kind === "settled") return raced.value;
-    if (raced.kind === "failed") throw raced.error;
-    throw new InspectStopped(raced.kind === "timeout" ? "mcp_timeout" : "mcp_cancelled");
-  };
+  return async (work) => stepOf(await raceDeadline(work, signal, deadline));
+}
+
+/** A raced step's value, its own error thrown, or the stop thrown as `InspectStopped`. */
+function stepOf<T>(raced: Raced<T>): T {
+  if (raced.kind === "settled") return raced.value;
+  if (raced.kind === "failed") throw raced.error;
+  throw new InspectStopped(raced.kind === "timeout" ? "mcp_timeout" : "mcp_cancelled");
 }
 
 /** The refusal of an engine that holds no table, naming the statement tool that reads it. */
@@ -414,7 +418,8 @@ async function readPage(
 }
 
 export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall): Promise<ToolResult> {
-  const step = deadlineStep(call.signal, Date.now() + args.timeout_ms);
+  const deadline = Date.now() + args.timeout_ms;
+  const step = deadlineStep(call.signal, deadline);
   const record: McpCallRecord = {
     action: "inspect_schema",
     user: call.context.caller.username,
@@ -457,7 +462,7 @@ export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall)
   try {
     scrub = await step(() => call.context.textScrub(connection));
     // In the database the call names, on a connection that reaches a whole server (#1530).
-    const acquired = await step(() => call.context.acquire(connection, "agent-operations"));
+    const acquired = stepOf(await acquireWithinCall(call, connection, "agent-operations", deadline));
     const choice = await step(() => providerInDatabase(acquired, args.database));
     if (choice.kind === "provider-refused") {
       return finish(

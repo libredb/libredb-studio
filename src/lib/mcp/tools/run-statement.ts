@@ -55,6 +55,7 @@ import {
 import { redactErrorMessage } from "../serializer";
 import { databaseRequiredAnswer, McpDatabaseChoiceError, providerInDatabase } from "./database-choice";
 import {
+  acquireWithinCall,
   classifyReadQueryFailure,
   nextPageHint,
   offsetRefusalText,
@@ -359,7 +360,7 @@ async function executeOpened(
   scrub: ProviderTextScrub,
 ): Promise<Answer> {
   const { arm, args } = call;
-  const acquired = await raceDeadline(() => tool.context.acquire(connection, "agent-read-only"), tool.signal, deadline);
+  const acquired = await acquireWithinCall(tool, connection, "agent-read-only", deadline);
   if (acquired.kind === "cancelled") return [ownWordsError(MCP_CANCELLED_TEXT), "mcp_cancelled"];
   if (acquired.kind === "timeout") return [ownWordsError(timeoutText(args.timeout_ms)), "mcp_timeout"];
   if (acquired.kind === "failed") return acquisitionFailure(call, acquired, deadline, record, scrub);

@@ -369,9 +369,13 @@ describe("a connection no tool can read", () => {
         if (connection === null || connection === MCP_CONNECTIONS_UNREADABLE)
           throw new Error(`${row.id} did not resolve`);
         // oxlint-disable-next-line no-await-in-loop -- one caller at a time.
-        const readOnly = await outcomeOf(context.acquire(connection, "agent-read-only"));
+        const readOnly = await outcomeOf(
+          context.acquire(connection, "agent-read-only", { signal: new AbortController().signal }),
+        );
         // oxlint-disable-next-line no-await-in-loop -- one caller at a time.
-        const operations = await outcomeOf(context.acquire(connection, "agent-operations"));
+        const operations = await outcomeOf(
+          context.acquire(connection, "agent-operations", { signal: new AbortController().signal }),
+        );
         seen.push([caller.role, row.id, row.unavailable !== undefined, readOnly, operations]);
       }
     }

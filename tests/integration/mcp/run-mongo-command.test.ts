@@ -377,7 +377,9 @@ describe("the result cap", () => {
     const acquire = spyOn(context, "acquire");
     const result = await direct({ connection_id: "seed:fake", command: JSON.parse(find) }, context);
     expect(result.isError ?? false).toBe(false);
-    expect(acquire).toHaveBeenCalledWith(expect.anything(), "agent-read-only");
+    expect(acquire).toHaveBeenCalledWith(expect.anything(), "agent-read-only", {
+      signal: expect.any(AbortSignal),
+    });
     expect(query).not.toHaveBeenCalled();
   });
 });

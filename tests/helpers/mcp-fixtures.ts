@@ -14,7 +14,9 @@ import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { getServerAuditBuffer } from "@/lib/audit";
 import { clearProviderCache } from "@/lib/db/factory";
 import { providerAuthor, type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
+import type { McpConnectionContext } from "@/lib/mcp/context";
 import { providerTextNotice, type ToolResult } from "@/lib/mcp/output";
+import type { OpenWait } from "@/lib/provider-host/core/open-once";
 import type { DatabaseType } from "@/lib/types";
 import type { ManagedConnection } from "@/lib/seed";
 import { resetCache } from "@/lib/seed";
@@ -246,4 +248,44 @@ export function providerRefusalText(result: ToolResult, type: DatabaseType): str
   if (rest.length > 0 || notice === undefined || sentence === undefined) return "";
   if (!("text" in notice) || notice.text !== providerTextNotice(providerAuthor(type))) return "";
   return "text" in sentence ? sentence.text : "";
+}
+
+/** One acquisition a context made: its profile, the wait it handed the factory, and its answer, held from rejecting. */
+export interface RecordedAcquisition {
+  readonly profile: string;
+  readonly wait: OpenWait;
+  /** The acquisition's failure, or `undefined` once it answered a provider. */
+  readonly failure: Promise<unknown>;
+}
+
+export interface AcquisitionRecord {
+  readonly acquisitions: readonly RecordedAcquisition[];
+  restore(): void;
+}
+
+/**
+ * Records every acquisition of every context built from `prototype` (`McpConnectionContext.prototype`, handed in so
+ * this module never loads the context's imports), made as the real one is made.
+ */
+export function recordAcquisitions(prototype: McpConnectionContext): AcquisitionRecord {
+  const original = methodOf(prototype, "acquire") as McpConnectionContext["acquire"];
+  const acquisitions: RecordedAcquisition[] = [];
+  prototype.acquire = function recorded(this: McpConnectionContext, listed, profile, wait) {
+    const acquired = original.call(this, listed, profile, wait);
+    acquisitions.push({
+      profile,
+      wait,
+      failure: acquired.then(
+        () => undefined,
+        (error: unknown) => error,
+      ),
+    });
+    return acquired;
+  };
+  return {
+    acquisitions,
+    restore: () => {
+      prototype.acquire = original;
+    },
+  };
 }

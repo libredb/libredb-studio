@@ -3571,6 +3571,23 @@ A stop at whatever wait of the run, and a start refused at the deadline, is the 
 - test `tests/unit/db/operations/read-only-statement-callers.test.ts` "only the agent's statistics read opens a composed statement session, under the operations profile"
 - test `tests/unit/db/operations/read-only-statement-callers.test.ts` "the agent, hand-over and MCP sources call query() nowhere: the statistics read sends its statement through the host core's composed statement session"
 
+### C-81 (normative): MCP's acquisitions and statements on the host
+
+Each MCP tool's acquisition, run_statement's under the agent's read-only execution profile and inspect_schema's under the operations profile, hands the factory's profiled open the call's wait: a signal that aborts when the request's signal does or at the call's deadline, the call's start plus `timeout_ms`.
+The host's open releases the call with that signal's reason when it aborts and goes on for any other caller, C-44, so an open whose only caller stopped waiting and that fails afterwards is logged by the factory's unclaimed-open line.
+MCP's one call deadline still bounds every step of the acquisition, the steps before the open included, and an acquisition is never started once the request left or the deadline passed.
+An acquisition that fails with the wait's own reason, by reference, is answered as the request leaving or as the deadline, never as a failure of the acquisition.
+
+- test `tests/unit/mcp/read-query-limits.test.ts` "hands the acquisition the call's wait, ended by the request leaving or the call's deadline"
+- test `tests/unit/mcp/read-query-limits.test.ts` "answers cancelled or timeout without acquiring when the request has left or the deadline has passed"
+- test `tests/unit/mcp/read-query-limits.test.ts` "answers the wait's own reason as the request leaving or the deadline, never as a failure"
+- test `tests/unit/mcp/read-query-limits.test.ts` "passes any other failure of the acquisition by reference with its settle time"
+- test `tests/unit/mcp/acquire-within-call-bounds.test.ts` "an MCP acquisition whose open never settles ends at the call's deadline"
+- test `tests/integration/mcp/context.test.ts` "an acquisition hands the factory the caller's wait"
+- test `tests/integration/mcp/run-read-query.test.ts` "a client that leaves while the connection opens is answered cancelled at once, and the open is released by the host"
+- test `tests/integration/mcp/run-read-query.test.ts` "an open that outlasts timeout_ms is answered with the timeout, and the open is released by the host"
+- test `tests/integration/mcp/inspect-schema.test.ts` "inspect_schema waits for its connection's open within the call's deadline and the request's signal"
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:
@@ -3679,3 +3696,4 @@ Against this contract's earlier text:
 - The agent's grounding walk reads through the host core's tree call under one deadline, the time its call was granted, C-80: a walk whose time ends sends no further read and the run counts only the read in flight, where the run stopped waiting and the walk went on reading to its end; a read that fails after the stop is logged by kind and code, where it was released silently.
 - Plan mode's statistics read runs through the host core's console execute on a composed statement session, C-80, the statement exactly as composed: its rows are held to the byte budget by each row's UTF-8 JSON bytes summed, where it measured their JSON text's length, a row larger than one page is refused by the host's page budget, and an answer over 1 MiB waits for the host's large-page slot.
 - Each engine's SQL writing is a projection of its declaration, M-15 and M-79, its functions bound by Studio's own table, where each engine kept an SQL writing row beside its provider; the export takes a numeric wrapper off only while its capture is a strictly shorter type, S-15.
+- MCP's acquisitions hand the factory's open the call's wait, ended by the request's signal or the call's deadline, C-81, where they waited for the open alone within MCP's own race; an open whose only caller was an MCP call that stopped waiting, and that fails afterwards, is logged by the factory's unclaimed-open line, where it was dropped silently.

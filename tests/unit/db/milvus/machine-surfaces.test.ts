@@ -158,7 +158,7 @@ describe("inspect_schema", () => {
       { context, signal: new AbortController().signal },
     );
     expect(result.isError).not.toBe(true);
-    expect(acquire).toHaveBeenCalledWith(managed, "agent-operations");
+    expect(acquire).toHaveBeenCalledWith(managed, "agent-operations", { signal: expect.any(AbortSignal) });
     const text = JSON.stringify(result);
     expect(text).toContain("docs_int64");
     expect(text).toContain("fts");
