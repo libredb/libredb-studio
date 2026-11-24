@@ -1611,9 +1611,6 @@ const SPEC_3_1_MODULES: readonly string[] = [
   // provider.
   "connection-string.ts",
   "engine-facets.ts",
-  // The engine's migration DDL contract module (engine contract, migration DDL), which the registry under
-  // src/lib/db/migration-ddl/ reads.
-  "migration-ddl.ts",
   // The engine's row of the confirmation gate's vocabulary, which src/lib/db/destructive-commands.ts collects.
   "destructive.ts",
   // The dialect's row of the query generators, which src/lib/db/query-generators/index.ts collects.

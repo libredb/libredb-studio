@@ -588,7 +588,7 @@ Not measured: an etcd-backed managed cluster, Rancher's proxy, OpenShift (its pr
 
 ## Migration DDL
 
-[`KUBERNETES_MIGRATION_DDL`](../../src/lib/db/providers/platform/kubernetes/migration-ddl.ts) is what the schema-diff migration generator writes for `kubernetes`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/kubernetes.json`](../../src/lib/db/engine-declarations/kubernetes.json) declares what the schema-diff migration generator writes for `kubernetes`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
 It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
 `kubernetes` text is one kubectl statement, not SQL, so there is no table DDL to wrap (#284).
 

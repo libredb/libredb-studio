@@ -19,11 +19,10 @@
  *    the value `TUNNEL_FAR_END` from `@/lib/types` (the Qdrant shape, architect amendment from T09), and a file of no
  *    layer fails, so a new file is placed in one on purpose. The browser and InfluxQL server layers
  *    may take values from the influxql family module, which holds the lexer and the policy they read. Each type-id's
- *    SQL grammar and SQL writing are its declaration's (docs/providers/CONTRACT.md, clauses M-78 and M-79), so no
- *    module here declares either.
- *    Each type-id's migration DDL module (`<type-id>-migration-ddl.ts`) is a contract layer of its own: it may
- *    import values only from `@/lib/db/migration-ddl/*`, its contract's shared building blocks, and from none of
- *    this directory's modules.
+ *    SQL grammar, SQL writing and migration DDL are its declaration's (docs/providers/CONTRACT.md, clauses M-78, M-79
+ *    and M-80), so no module here declares any of them.
+ *    Each type-id's engine facets module (`<type-id>-engine-facets.ts`) is a contract layer of its own: it may import
+ *    no value, and from none of this directory's modules.
  *    The influxql family module is a layer of its own: its lexer, policy, confirmation row and agent statement reader
  *    are shipped to the browser, so each may import values only from another family member and from none of this
  *    directory's modules, and a family file of no layer fails too. Rules 1, 4 and 5 hold its files as they hold this
@@ -58,12 +57,7 @@ const BROWSER = [
 ];
 const INFLUXQL_SERVER = ["influxql-results", "influxql-objects", "influxql-provider", "influxql-agent-read"];
 /** Each type-id's declaration of a per-engine contract, which reads its contract and nothing of this directory. */
-const CONTRACT = [
-  "influxdb-migration-ddl",
-  "influxdb3-migration-ddl",
-  "influxdb-engine-facets",
-  "influxdb3-engine-facets",
-];
+const CONTRACT = ["influxdb-engine-facets", "influxdb3-engine-facets"];
 /**
  * The influxql family module, `src/lib/languages/influxql/`: the lexer, the policy, the confirmation row and the
  * agent's statement reader, all shipped to the browser, so it reads only its own members and nothing of this directory.
@@ -139,7 +133,7 @@ const OUTSIDE_VALUES: Readonly<Record<Layer, readonly string[]>> = {
     "src/lib/db/read-only-budget.ts",
     "src/lib/db/write-reach.ts",
   ],
-  contract: ["src/lib/db/migration-ddl/"],
+  contract: [],
   family: [`${FAMILY_DIR}/`],
 };
 
@@ -612,16 +606,22 @@ describe("planted violations fail by name", () => {
     ],
     ["stray.ts", "labels.ts", "", `layer: ${DIR}/stray.ts belongs to no layer of contract section 1`],
     [
-      "influxdb-migration-ddl.ts",
-      "influxdb-migration-ddl.ts",
+      "influxdb-engine-facets.ts",
+      "influxdb-engine-facets.ts",
       'import { DatabaseConfigError } from "@/lib/db/errors";\n',
-      `layer: ${DIR}/influxdb-migration-ddl.ts imports a value from @/lib/db/errors, which its layer may not`,
+      `layer: ${DIR}/influxdb-engine-facets.ts imports a value from @/lib/db/errors, which its layer may not`,
     ],
     [
-      "influxdb3-migration-ddl.ts",
-      "influxdb3-migration-ddl.ts",
+      "influxdb3-engine-facets.ts",
+      "influxdb3-engine-facets.ts",
       'import { INFLUX_LIST_CAP } from "./connection-options";\n',
-      `layer: ${DIR}/influxdb3-migration-ddl.ts imports a value from ./connection-options, which its layer may not`,
+      `layer: ${DIR}/influxdb3-engine-facets.ts imports a value from ./connection-options, which its layer may not`,
+    ],
+    [
+      "influxdb3-engine-facets.ts",
+      "influxdb3-engine-facets.ts",
+      'import { standardDropTable } from "@/lib/db/migration-ddl/shared";\n',
+      `layer: ${DIR}/influxdb3-engine-facets.ts imports a value from @/lib/db/migration-ddl/shared, which its layer may not`,
     ],
     [
       "sql-objects.ts",
@@ -652,9 +652,9 @@ describe("planted violations fail by name", () => {
     ["monitoring.ts", "monitoring.ts", 'const notAPath = "/api";\n'],
     ["sql-results.ts", "sql-policy.ts", 'import type { Readable } from "node:stream";\n'],
     [
-      "influxdb3-migration-ddl.ts",
-      "influxdb3-migration-ddl.ts",
-      'import { standardDropTable } from "@/lib/db/migration-ddl/shared";\n',
+      "influxdb3-engine-facets.ts",
+      "influxdb3-engine-facets.ts",
+      'import type { EngineFacets } from "@/lib/db/engine-facets/types";\n',
     ],
   ])("%s (from %s) with %p passes", (as, from, line) => {
     expect(plant(as, from, line)).toEqual([]);

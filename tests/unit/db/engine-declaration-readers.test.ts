@@ -119,6 +119,12 @@ const SQL_TEXT_MEMBERS = [
  */
 const SQL_WRITING_MEMBERS = ["sqlWriting"] as const;
 
+/**
+ * The migration DDL segment the migration DDL is projected from, M-80: an authored member, M-15, holding no claim, each
+ * function a name bound only to Studio's own function for that engine.
+ */
+const MIGRATION_DDL_MEMBERS = ["migrationDdl"] as const;
+
 /** Every module of Studio's source that reads a declaration or a projection of the declarations. */
 const DECLARATION_READERS: readonly DeclarationReader[] = [
   {
@@ -197,6 +203,11 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
     reason: "each engine's execution UI and the fence aliases, generated from the admitted declarations",
   },
   {
+    path: "src/lib/db/engine-catalog/migration-ddl.generated.ts",
+    members: MIGRATION_DDL_MEMBERS,
+    reason: "each engine's migration DDL, generated from the admitted declarations",
+  },
+  {
     path: "src/lib/db/engine-catalog/projection.ts",
     members: [
       ...CATALOG_MEMBERS,
@@ -209,9 +220,10 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
       ...QUERY_EDITOR_MEMBERS,
       ...SQL_TEXT_MEMBERS,
       ...SQL_WRITING_MEMBERS,
+      ...MIGRATION_DDL_MEMBERS,
     ],
     reason:
-      "projects the admitted declarations into the engine catalog, the connection tables, the connection forms, the connection strings, the execution UI and fence aliases, the query dialects, tab type editors and editor languages, the SQL text and the SQL writing",
+      "projects the admitted declarations into the engine catalog, the connection tables, the connection forms, the connection strings, the execution UI and fence aliases, the query dialects, tab type editors and editor languages, the SQL text, the SQL writing and the migration DDL",
   },
   {
     path: "src/lib/db/engine-catalog/query-editor.generated.ts",
@@ -233,6 +245,12 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
     path: "src/lib/db/execution-ui/index.ts",
     members: EXECUTION_UI_MEMBERS,
     reason: "each engine's execution UI, read from the generated execution UI record",
+  },
+  {
+    path: "src/lib/db/migration-ddl/index.ts",
+    members: MIGRATION_DDL_MEMBERS,
+    reason:
+      "each engine's migration DDL row, composed from the generated migration DDL and Studio's migration DDL function table, which binds each named function",
   },
   {
     path: "src/lib/db/query-dialects.ts",

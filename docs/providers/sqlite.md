@@ -1769,7 +1769,8 @@ not apply to SQLite ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
 
 ## Migration DDL
 
-[`SQLITE_MIGRATION_DDL`](../../src/lib/db/providers/sql/sqlite-migration-ddl.ts) is what the schema-diff migration generator writes for `sqlite`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/sqlite.json`](../../src/lib/db/engine-declarations/sqlite.json) declares what the schema-diff migration generator writes for `sqlite`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
+The table binds this engine's own functions from the module beside its provider: [`sql/sqlite-migration-ddl.ts`](../../src/lib/db/providers/sql/sqlite-migration-ddl.ts), `SQLITE_ADD_FOREIGN_KEY`, `SQLITE_CREATE_TABLE_FOREIGN_KEY`, `SQLITE_DROP_COLUMN`, `SQLITE_DROP_FOREIGN_KEY` and `SQLITE_MODIFY_COLUMN`.
 SQLite runs its own transaction, so `transactionWrapper` is `null` (#284).
 Its ALTER TABLE page enumerates rename table, rename column, add column, drop column, and SET/DROP NOT NULL since 3.53.0, and adding a constraint is not among them.
 Measured on sqlite3 3.53.3: `ALTER TABLE "users" ADD CONSTRAINT "fk_users_dept_id" FOREIGN KEY ("dept_id") REFERENCES "departments"("id")` is `near "FOREIGN": syntax error`.
@@ -1777,7 +1778,7 @@ So an added table takes the key inside `CREATE TABLE`, after the columns and the
 The key carries no `CONSTRAINT` name, because SQLite never reads a foreign key's name back.
 A dropped column and a dropped foreign key are comments naming the table recreation.
 A modified column is a comment too, though SQLite gained `ALTER COLUMN ... SET/DROP NOT NULL` in 3.53.0: the provider runs on whichever SQLite `bun:sqlite` or `node:sqlite` bundles, chosen at runtime with `LIBREDB_SQLITE_DRIVER` as an override, so the statement would write a migration that succeeds on one deployment and fails on another.
-The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `standardAddColumn`, `standardColumnDef`, `standardCreateIndex`, `standardDropIndex`, `standardDropTable` and `standardPrimaryKey`.
+The building blocks Studio's table binds for it from `src/lib/db/migration-ddl/shared.ts` are `standardAddColumn`, `standardColumnDef`, `standardCreateIndex`, `standardDropIndex`, `standardDropTable` and `standardPrimaryKey`.
 
 Every refusal reason it can print, verbatim:
 

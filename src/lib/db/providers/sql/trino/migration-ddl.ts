@@ -1,19 +1,12 @@
 /**
- * Trino's transactional semantics are the CONNECTOR's answer, not a property of Trino itself, so no portable
- * `BEGIN;`/`COMMIT;` exists and the migration has no wrapper (#284). Trino has no index or foreign-key grammar
+ * Trino's own migration DDL functions, each bound by Studio's migration DDL function table (`MIGRATION_DDL_FUNCTIONS`
+ * in src/lib/db/migration-ddl/index.ts) at the slot its name gives. Trino has no index or foreign-key grammar
  * (docs/providers/trino.md §3.8), and its CREATE TABLE has no primary-key constraint, so an added table's key is
  * declined in a comment after the statement rather than written into it; the comment names no key column. Trino
  * was the first engine declined that way.
  */
-import {
-  commentName,
-  NO_FOREIGN_KEY_CONSTRAINT,
-  standardAddColumn,
-  standardColumnDef,
-  standardDropColumn,
-  standardDropTable,
-} from "@/lib/db/migration-ddl/shared";
-import type { MigrationDdlSpec } from "@/lib/db/migration-ddl/types";
+import { commentName, NO_FOREIGN_KEY_CONSTRAINT } from "@/lib/db/migration-ddl/shared";
+import type { TableDdlWritten, WrittenCreateTable } from "@/lib/db/migration-ddl/types";
 
 // Measured 2026-08-20 on Trino 476, and the reason exists because the PostgreSQL
 // branch this id would otherwise inherit emits text Trino cannot even PARSE:
@@ -31,22 +24,24 @@ const NO_PORTABLE_INDEX_DDL =
 
 const NO_PRIMARY_KEY_CONSTRAINT = "Trino SQL has no primary-key constraint.";
 
-export const TRINO_MIGRATION_DDL: MigrationDdlSpec = {
-  tableDdl: "written",
-  transactionWrapper: null,
-  createTable: {
-    kind: "written",
-    primaryKey: () => ({ after: `-- Trino: Cannot declare a primary key. ${NO_PRIMARY_KEY_CONSTRAINT}` }),
-    foreignKey: () => ({ after: `-- Trino: Cannot add a foreign key. ${NO_FOREIGN_KEY_CONSTRAINT}` }),
-  },
-  columnDef: standardColumnDef,
-  createIndex: () => `-- ${NO_PORTABLE_INDEX_DDL}`,
-  dropIndex: () => `-- ${NO_PORTABLE_INDEX_DDL}`,
-  addForeignKey: () => `-- Trino: Cannot add a foreign key. ${NO_FOREIGN_KEY_CONSTRAINT}`,
-  dropForeignKey: () => `-- Trino: Cannot drop a foreign key. ${NO_FOREIGN_KEY_CONSTRAINT}`,
-  addColumn: standardAddColumn,
-  dropColumn: standardDropColumn,
-  modifyColumn: (col) => [`-- Trino: Cannot alter column "${commentName(col.columnName)}". ${NO_COLUMN_MODIFICATION}`],
-  dropTable: standardDropTable,
-  reasons: [NO_COLUMN_MODIFICATION, NO_PORTABLE_INDEX_DDL, NO_FOREIGN_KEY_CONSTRAINT, NO_PRIMARY_KEY_CONSTRAINT],
-};
+export const TRINO_CREATE_TABLE_PRIMARY_KEY: WrittenCreateTable["primaryKey"] = () => ({
+  after: `-- Trino: Cannot declare a primary key. ${NO_PRIMARY_KEY_CONSTRAINT}`,
+});
+
+export const TRINO_CREATE_TABLE_FOREIGN_KEY: WrittenCreateTable["foreignKey"] = () => ({
+  after: `-- Trino: Cannot add a foreign key. ${NO_FOREIGN_KEY_CONSTRAINT}`,
+});
+
+export const TRINO_CREATE_INDEX: TableDdlWritten["createIndex"] = () => `-- ${NO_PORTABLE_INDEX_DDL}`;
+
+export const TRINO_DROP_INDEX: TableDdlWritten["dropIndex"] = () => `-- ${NO_PORTABLE_INDEX_DDL}`;
+
+export const TRINO_ADD_FOREIGN_KEY: TableDdlWritten["addForeignKey"] = () =>
+  `-- Trino: Cannot add a foreign key. ${NO_FOREIGN_KEY_CONSTRAINT}`;
+
+export const TRINO_DROP_FOREIGN_KEY: TableDdlWritten["dropForeignKey"] = () =>
+  `-- Trino: Cannot drop a foreign key. ${NO_FOREIGN_KEY_CONSTRAINT}`;
+
+export const TRINO_MODIFY_COLUMN: TableDdlWritten["modifyColumn"] = (col) => [
+  `-- Trino: Cannot alter column "${commentName(col.columnName)}". ${NO_COLUMN_MODIFICATION}`,
+];

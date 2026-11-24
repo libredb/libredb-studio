@@ -598,7 +598,7 @@ An egress HTTPS proxy is not supported.
 
 ## Migration DDL
 
-[`FIRESTORE_MIGRATION_DDL`](../../src/lib/db/providers/document/firestore/migration-ddl.ts) is what the schema-diff migration generator writes for `firestore`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/firestore.json`](../../src/lib/db/engine-declarations/firestore.json) declares what the schema-diff migration generator writes for `firestore`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
 It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
 A document store keeps no schema and no catalog, so there is no table DDL to decline or to wrap.
 

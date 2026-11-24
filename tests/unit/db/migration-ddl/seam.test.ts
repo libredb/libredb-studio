@@ -1,9 +1,10 @@
 /**
- * The migration DDL seam (spec 5.3): an engine module imports only the contract's `types` and `shared`, and the
- * type-only `@/lib/types`, so it can reach no other engine's text, no registry and none of the quoting or export
- * helpers. The no-connection spec is built the same way and no engine module imports it; the
- * registry imports each engine module once; the generator names no type id (held here because the engine-branch guard
- * is not on this branch); and every engine module loads first in a fresh process.
+ * The migration DDL seam (spec 5.3): an engine's migration DDL function module imports only the contract's `types` and
+ * `shared`, and the type-only `@/lib/types`, so it can reach no other engine's text, no registry and none of the
+ * quoting or export helpers. The registry imports a function module for exactly the engines whose declarations name a
+ * migration DDL function of their own, each once. The no-connection spec is built the same way and no engine module
+ * imports it; the generator names no type id (held here because the engine-branch guard is not on this branch); and
+ * every engine module loads first in a fresh process.
  *
  * The guard is syntactic: a module name built at run time is reported, not chased. Each rule is proven both ways
  * where a planted text can show it: the real sources pass and a planted file fails by name.
@@ -117,8 +118,24 @@ function generatorFindings(file: string, text: string): string[] {
 }
 
 describe("migration DDL seam", () => {
-  test("the registry imports 42 engine modules, one per type id", () => {
-    expect(MODULES.map((engine) => engine.id).sort()).toEqual([...TYPE_IDS].sort());
+  test("the registry imports the function modules of exactly the engines that hold a migration DDL function of their own", () => {
+    expect(MODULES.map((engine) => engine.path)).toEqual([
+      "src/lib/db/providers/sql/bigquery/migration-ddl.ts",
+      "src/lib/db/providers/sql/cassandra/migration-ddl.ts",
+      "src/lib/db/providers/sql/clickhouse/migration-ddl.ts",
+      "src/lib/db/providers/sql/databend/migration-ddl.ts",
+      "src/lib/db/providers/sql/db2/migration-ddl.ts",
+      "src/lib/db/providers/sql/duckdb/migration-ddl.ts",
+      "src/lib/db/providers/sql/libsql/migration-ddl.ts",
+      "src/lib/db/providers/sql/mssql-migration-ddl.ts",
+      "src/lib/db/providers/sql/mysql-migration-ddl.ts",
+      "src/lib/db/providers/sql/oracle-migration-ddl.ts",
+      "src/lib/db/providers/sql/snowflake/migration-ddl.ts",
+      "src/lib/db/providers/sql/spark/migration-ddl.ts",
+      "src/lib/db/providers/sql/sqlite-migration-ddl.ts",
+      "src/lib/db/providers/sql/trino/migration-ddl.ts",
+    ]);
+    expect(MODULES.every((engine) => TYPE_IDS.has(engine.id))).toBe(true);
   });
 
   test("the registry imports each engine module exactly once", () => {
@@ -154,17 +171,17 @@ describe("migration DDL seam", () => {
   test("a planted engine module that reaches another engine fails by name", () => {
     const file = "src/lib/db/providers/sql/mysql-migration-ddl.ts";
     const planted = [
-      'import { POSTGRES_MIGRATION_DDL } from "./postgres-migration-ddl";',
+      'import { MSSQL_DROP_INDEX } from "./mssql-migration-ddl";',
       'import { quoteIdentifier } from "@/lib/sql/identifier";',
       'import { MIGRATION_DDL } from "@/lib/db/migration-ddl";',
       'import { DatabaseType } from "@/lib/types";',
       'import { standardDropTable } from "../../migration-ddl/shared";',
-      'import type { MigrationDdlSpec } from "@/lib/db/migration-ddl/types";',
+      'import type { TableDdlWritten } from "@/lib/db/migration-ddl/types";',
       'import type { SchemaDiff } from "@/lib/types";',
       "const lazy = await import(name);",
     ].join("\n");
     expect(seamFindings(file, planted)).toEqual([
-      `${file} imports ./postgres-migration-ddl, which the migration DDL seam does not allow`,
+      `${file} imports ./mssql-migration-ddl, which the migration DDL seam does not allow`,
       `${file} imports @/lib/sql/identifier, which the migration DDL seam does not allow`,
       `${file} imports @/lib/db/migration-ddl, which the migration DDL seam does not allow`,
       `${file} imports a value from @/lib/types; it takes types only`,

@@ -794,8 +794,8 @@ The answers live in [`tests/fixtures/elasticsearch/9.1.4/write-refusal/`](../../
   unimplemented features, so the EDIT toggle and the editable cell are not offered (#269).
 - The schema-diff migration generator emits, in place of a column change:
   *"Elasticsearch SQL reads only; change a field by reindexing into an index whose mapping declares
-  it."* (the `ELASTICSEARCH_MIGRATION_DDL` refusal in
-  [`elasticsearch-migration-ddl.ts`](../../src/lib/db/providers/sql/search/elasticsearch-migration-ddl.ts)). It says *reindex* rather than
+  it."* (the refusal line of the `migrationDdl` segment of
+  [`engine-declarations/elasticsearch.json`](../../src/lib/db/engine-declarations/elasticsearch.json)). It says *reindex* rather than
   "use the mapping API" for a reason: an existing field's type cannot be changed in place at all, even
   outside SQL.
 - `schemaRefreshPattern` is `\b(DELETE)\b` (`SEARCH_SCHEMA_REFRESH_PATTERN`, [index.ts](../../src/lib/db/providers/sql/search/index.ts)),
@@ -2006,7 +2006,7 @@ because the provider exposes no `cancelQuery` ([§3.8](#38-the-deadline-is-the-c
 
 ## Migration DDL
 
-[`ELASTICSEARCH_MIGRATION_DDL`](../../src/lib/db/providers/sql/search/elasticsearch-migration-ddl.ts) is what the schema-diff migration generator writes for `elasticsearch`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/elasticsearch.json`](../../src/lib/db/engine-declarations/elasticsearch.json) declares what the schema-diff migration generator writes for `elasticsearch`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
 It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
 Measured 2026-08-19 on Elasticsearch 9.1.4: `ALTER TABLE probe_orders ADD COLUMN x INT` and `... MODIFY COLUMN customer TEXT` are refused with `parsing_exception`, "mismatched input 'ALTER' expecting {'(', 'DEBUG', 'DESC', 'DESCRIBE', 'EXPLAIN', 'SELECT', 'SHOW', 'SYS', 'WITH'}".
 That list is every statement Elasticsearch SQL accepts, so it has no DDL and no `BEGIN` either (#284).

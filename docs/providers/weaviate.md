@@ -410,7 +410,7 @@ Create a database user with the built-in `viewer` role and give Studio its key.
 
 ## Migration DDL
 
-[`WEAVIATE_MIGRATION_DDL`](../../src/lib/db/providers/vector/weaviate/migration-ddl.ts) is what the schema-diff migration generator writes for `weaviate`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/weaviate.json`](../../src/lib/db/engine-declarations/weaviate.json) declares what the schema-diff migration generator writes for `weaviate`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
 It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
 `weaviate` text is a Weaviate console request, not SQL, so there is no table DDL to wrap (#284).
 

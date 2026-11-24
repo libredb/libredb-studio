@@ -396,7 +396,7 @@ Agent readings offered: `health`.
 
 ## Migration DDL
 
-[`MODBUS_MIGRATION_DDL`](../../src/lib/db/providers/industrial/modbus/migration-ddl.ts) is what the schema-diff migration generator writes for `modbus`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/modbus.json`](../../src/lib/db/engine-declarations/modbus.json) declares what the schema-diff migration generator writes for `modbus`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
 It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
 What a register means is the device vendor's, written down in the user's register map, so there is no table DDL to wrap either (#1723).
 

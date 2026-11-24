@@ -1,64 +1,22 @@
 /**
- * The migration DDL registry is total over the type-id union, one module per id at its spec 5.3
- * placement, and its reader answers no connection and a type id by name and refuses every other value outside the
- * `DatabaseType` union by name (FND-1).
+ * The migration DDL registry is total over the type-id union, each row its declaration's migration DDL composed with
+ * Studio's migration DDL function table (docs/providers/CONTRACT.md, clause M-80), and its reader answers no connection
+ * and a type id by name and refuses every other value outside the `DatabaseType` union by name (FND-1).
  */
 import { describe, expect, test } from "bun:test";
-import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
-import { MIGRATION_DDL, migrationDdlFor, migrationDialectHeader } from "@/lib/db/migration-ddl";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { BUNDLED_MIGRATION_DDL } from "@/lib/db/engine-catalog/migration-ddl.generated";
+import {
+  composeMigrationDdl,
+  MIGRATION_DDL,
+  MIGRATION_DDL_FUNCTIONS,
+  migrationDdlFor,
+  migrationDialectHeader,
+} from "@/lib/db/migration-ddl";
 import { DEFAULT_CONNECTION_TYPE } from "@/lib/db/default-connection-type";
 import { NO_CONNECTION_MIGRATION_DDL } from "@/lib/db/migration-ddl/no-connection";
-import type { MigrationDdlSpec } from "@/lib/db/migration-ddl/types";
 import type { DatabaseType } from "@/lib/types";
 import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../../../helpers/outside-the-union";
-
-const PROVIDERS = "@/lib/db/providers";
-
-const PLACEMENT: Record<DatabaseType, string> = {
-  postgres: "sql/postgres-migration-ddl",
-  mysql: "sql/mysql-migration-ddl",
-  mssql: "sql/mssql-migration-ddl",
-  oracle: "sql/oracle-migration-ddl",
-  sqlite: "sql/sqlite-migration-ddl",
-  redis: "keyvalue/redis-migration-ddl",
-  libredb: "embedded/libredb-migration-ddl",
-  elasticsearch: "sql/search/elasticsearch-migration-ddl",
-  opensearch: "sql/search/opensearch-migration-ddl",
-  influxdb: "timeseries/influxdb/influxdb-migration-ddl",
-  influxdb3: "timeseries/influxdb/influxdb3-migration-ddl",
-  couchbase: "document/couchbase/migration-ddl",
-  firestore: "document/firestore/migration-ddl",
-  mongodb: "document/mongodb/migration-ddl",
-  neo4j: "graph/neo4j/migration-ddl",
-  modbus: "industrial/modbus/migration-ddl",
-  mtconnect: "industrial/mtconnect/migration-ddl",
-  opcua: "industrial/opcua/migration-ddl",
-  sparkplug: "industrial/sparkplug/migration-ddl",
-  etcd: "keyvalue/etcd/migration-ddl",
-  mqtt: "keyvalue/mqtt/migration-ddl",
-  oxia: "keyvalue/oxia/migration-ddl",
-  netconf: "network/netconf/migration-ddl",
-  snmp: "network/snmp/migration-ddl",
-  s3: "objectstore/s3/migration-ddl",
-  kubernetes: "platform/kubernetes/migration-ddl",
-  bigquery: "sql/bigquery/migration-ddl",
-  cassandra: "sql/cassandra/migration-ddl",
-  clickhouse: "sql/clickhouse/migration-ddl",
-  databend: "sql/databend/migration-ddl",
-  db2: "sql/db2/migration-ddl",
-  druid: "sql/druid/migration-ddl",
-  duckdb: "sql/duckdb/migration-ddl",
-  libsql: "sql/libsql/migration-ddl",
-  snowflake: "sql/snowflake/migration-ddl",
-  spark: "sql/spark/migration-ddl",
-  trino: "sql/trino/migration-ddl",
-  kafka: "stream/kafka/migration-ddl",
-  rabbitmq: "stream/rabbitmq/migration-ddl",
-  prometheus: "timeseries/prometheus/migration-ddl",
-  milvus: "vector/milvus/migration-ddl",
-  qdrant: "vector/qdrant/migration-ddl",
-  weaviate: "vector/weaviate/migration-ddl",
-};
 
 const REFUSED: DatabaseType[] = [
   "mongodb",
@@ -95,14 +53,13 @@ const ids = Object.keys(MIGRATION_DDL) as DatabaseType[];
 
 describe("migration DDL registry census", () => {
   test("one row per shipped type id", () => {
-    expect([...ids].sort()).toEqual([...EXTERNAL_DATABASE_TYPES, "libredb" as const].sort());
-    expect(Object.keys(PLACEMENT).sort()).toEqual([...ids].sort());
+    expect([...ids].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
+    expect(Object.keys(BUNDLED_MIGRATION_DDL).sort()).toEqual([...ids].sort());
   });
 
-  for (const id of Object.keys(PLACEMENT) as DatabaseType[]) {
-    test(`${id} is declared at its placement`, async () => {
-      const imported = (await import(`${PROVIDERS}/${PLACEMENT[id]}`)) as Record<string, MigrationDdlSpec>;
-      expect(imported[`${id.toUpperCase()}_MIGRATION_DDL`]).toBe(MIGRATION_DDL[id]);
+  for (const id of SHIPPED_DATABASE_TYPES) {
+    test(`${id}: the row is its declaration's migration DDL composed with Studio's migration DDL function table`, () => {
+      expect(MIGRATION_DDL[id]).toEqual(composeMigrationDdl(id, BUNDLED_MIGRATION_DDL[id], MIGRATION_DDL_FUNCTIONS));
     });
   }
 

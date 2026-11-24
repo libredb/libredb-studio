@@ -1750,12 +1750,13 @@ The reach described in this section is an admin editor's on an inline connection
 
 ## Migration DDL
 
-[`DUCKDB_MIGRATION_DDL`](../../src/lib/db/providers/sql/duckdb/migration-ddl.ts) is what the schema-diff migration generator writes for `duckdb`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/duckdb.json`](../../src/lib/db/engine-declarations/duckdb.json) declares what the schema-diff migration generator writes for `duckdb`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
+The table binds this engine's own functions from the module beside its provider: [`sql/duckdb/migration-ddl.ts`](../../src/lib/db/providers/sql/duckdb/migration-ddl.ts), `DUCKDB_ADD_FOREIGN_KEY`, `DUCKDB_CREATE_TABLE_FOREIGN_KEY` and `DUCKDB_DROP_FOREIGN_KEY`.
 DuckDB writes the shared statements wrapped in `BEGIN;` and `COMMIT;`, except for foreign keys, which it declares only as a `CREATE TABLE` table constraint.
 Measured on DuckDB v1.5.5: `CREATE TABLE "users" (..., PRIMARY KEY ("id"), FOREIGN KEY ("dept_id") REFERENCES "departments"("id"))` lands and `duckdb_constraints()` reports the key, so an added table takes the key inside the statement.
 `ALTER TABLE t ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES u(id)` parses and then answers "Not implemented Error: No support for that ALTER TABLE option yet!" on v1.5.5, as does the `UNIQUE` form, so an added foreign key on an existing table is a comment.
 `ALTER TABLE t DROP CONSTRAINT IF EXISTS fk_x` answers the same "Not implemented" error, which is not an `IF EXISTS` no-op, so a dropped foreign key is a comment too.
-The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `BEGIN_COMMIT`, `standardAddColumn`, `standardColumnDef`, `standardCreateIndex`, `standardDropColumn`, `standardDropIndex`, `standardDropTable`, `standardModifyColumn` and `standardPrimaryKey`.
+The building blocks Studio's table binds for it from `src/lib/db/migration-ddl/shared.ts` are `standardAddColumn`, `standardColumnDef`, `standardCreateIndex`, `standardDropColumn`, `standardDropIndex`, `standardDropTable`, `standardModifyColumn` and `standardPrimaryKey`.
 
 Every refusal reason it can print, verbatim:
 

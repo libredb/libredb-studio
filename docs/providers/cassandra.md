@@ -765,7 +765,7 @@ performance`. `system_schema.columns` separates the two roles by `kind` (`partit
 `targetIsPrimary`, so both tables reduce to the same three key columns and the shared `PRIMARY KEY
 (a, b, c)` serializer would silently pick the flat layout. `src/components/SchemaDiff.tsx` calls
 `generateMigrationSQL` with the connection's type and never consults capabilities, so
-`CASSANDRA_MIGRATION_DDL` declines there itself, its `createTable` refused, and emits `-- Apache Cassandra: Cannot generate
+`CASSANDRA_CREATE_TABLE_REFUSAL` declines there itself, its `migrationDdl.createTable` refused, and emits `-- Apache Cassandra: Cannot generate
 CREATE TABLE for "<table>". …` in place of DDL that would run and quietly repartition the data.
 Two more shapes are left out of a Cassandra migration for the same reason. The **transaction
 wrapper** is not emitted: `BEGIN;` is `line 1:5 mismatched input ';' expecting K_BATCH` and
@@ -2033,16 +2033,18 @@ A role holding `SELECT` on `system_auth`, `system_traces` or `system` and bound 
 
 ## Migration DDL
 
-[`CASSANDRA_MIGRATION_DDL`](../../src/lib/db/providers/sql/cassandra/migration-ddl.ts) is what the schema-diff migration generator writes for `cassandra`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/cassandra.json`](../../src/lib/db/engine-declarations/cassandra.json) declares what the schema-diff migration generator writes for `cassandra`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
+The table binds this engine's own functions from the module beside its provider: [`sql/cassandra/migration-ddl.ts`](../../src/lib/db/providers/sql/cassandra/migration-ddl.ts), `CASSANDRA_ADD_COLUMN`, `CASSANDRA_ADD_FOREIGN_KEY`, `CASSANDRA_COLUMN_DEF`, `CASSANDRA_CREATE_TABLE_REFUSAL`, `CASSANDRA_DROP_COLUMN`, `CASSANDRA_DROP_FOREIGN_KEY` and `CASSANDRA_MODIFY_COLUMN`.
 Apache Cassandra has no transaction, so `transactionWrapper` is `null` (#284): measured on 5.0.9, `BEGIN;` is "line 1:5 mismatched input ';' expecting K_BATCH" and `COMMIT;` is "no viable alternative at input 'COMMIT'".
 CQL's only grouping, `BEGIN BATCH ... APPLY BATCH`, is not a transaction and takes no DDL, so there is nothing to translate the wrapper into.
+Every other statement of the migration was measured against a live server too, so the wrapper would have been the only line of it that does not run.
 `createTable` is refused whole, indexes and foreign keys included, and names `CASSANDRA_NO_CREATE_TABLE`: a CQL primary key splits into a partition key and clustering columns, and a `ColumnDiff` keeps only `targetIsPrimary`.
 Measured on 5.0.9, `probe.composite_pk` (`PRIMARY KEY ((tenant, day), ts)`) and `probe.pk_flat` (`PRIMARY KEY (tenant, day, ts)`) differ by one pair of brackets, and `WHERE tenant = 'a'` is served on the flat table while the composite one answers code 2200.
 A column definition is a name and a type and nothing else: `name TEXT NOT NULL`, `name TEXT UNIQUE` and `name TEXT DEFAULT 'x'` are each "no viable alternative at input" on 5.0.9.
 A column is added with `ADD` and dropped with `DROP`, without the `COLUMN` keyword, which 5.0.9 refuses in both directions ("mismatched input 'TEXT' expecting EOF" and "mismatched input 'extra' expecting EOF").
 A foreign key is a comment: `ADD CONSTRAINT ... FOREIGN KEY` is "mismatched input 'FOREIGN' expecting EOF" and `DROP CONSTRAINT IF EXISTS` is "mismatched input 'IF' expecting EOF", both measured.
 A modified column is a comment, because `ALTER TABLE probe.customers ALTER name TYPE blob` answers 8704, "Altering column types is no longer supported", on 5.0.9.
-The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `standardCreateIndex`, `standardDropIndex` and `standardDropTable`.
+The building blocks Studio's table binds for it from `src/lib/db/migration-ddl/shared.ts` are `standardCreateIndex`, `standardDropIndex` and `standardDropTable`.
 
 Every refusal reason it can print, verbatim:
 

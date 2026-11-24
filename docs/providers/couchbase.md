@@ -1617,7 +1617,7 @@ Everything else:
 
 ## Migration DDL
 
-[`COUCHBASE_MIGRATION_DDL`](../../src/lib/db/providers/document/couchbase/migration-ddl.ts) is what the schema-diff migration generator writes for `couchbase`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/couchbase.json`](../../src/lib/db/engine-declarations/couchbase.json) declares what the schema-diff migration generator writes for `couchbase`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
 It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
 Couchbase has index and collection DDL, but no `CREATE` or `ALTER TABLE` column grammar.
 Couchbase does have distributed ACID transactions, but spells one `BEGIN TRANSACTION` and answers with a `txid` every following statement has to carry as a request parameter, a shape a flat migration file cannot express (#284).

@@ -696,7 +696,7 @@ The token goes in `password`, there is no `user`, and `allowInsecureAuth: true` 
 
 ## Migration DDL
 
-[`INFLUXDB3_MIGRATION_DDL`](../../src/lib/db/providers/timeseries/influxdb/influxdb3-migration-ddl.ts) is what the schema-diff migration generator writes for `influxdb3`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/influxdb3.json`](../../src/lib/db/engine-declarations/influxdb3.json) declares what the schema-diff migration generator writes for `influxdb3`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
 It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
 `influxdb3` text is SQL, but the 3.x planner refuses DDL and DML, so there is no table DDL to wrap (#284).
 

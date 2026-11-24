@@ -341,7 +341,7 @@ describe("isolation", () => {
 
   test("a contract registry may import the Spark module that declares its contract, and no other", () => {
     const registry = "src/lib/db/migration-ddl/index.ts";
-    const own = 'import { SPARK_MIGRATION_DDL } from "@/lib/db/providers/sql/spark/migration-ddl";\n';
+    const own = 'import { SPARK_MODIFY_COLUMN } from "@/lib/db/providers/sql/spark/migration-ddl";\n';
     expect(outsideImportFindings(replaced(SOURCES, registry, own))).toEqual([]);
     const other = 'import { quoteSparkName } from "@/lib/db/providers/sql/spark/namespace";\n';
     expect(outsideImportFindings(replaced(SOURCES, registry, other))).toEqual([
@@ -353,7 +353,7 @@ describe("isolation", () => {
     const registry = "src/lib/db/sql-writing/index.ts";
     const own = 'import { sparkLiteral } from "@/lib/db/providers/sql/spark/typed-literals";\n';
     expect(outsideImportFindings(replaced(SOURCES, registry, own))).toEqual([]);
-    const other = 'import { SPARK_MIGRATION_DDL } from "@/lib/db/providers/sql/spark/migration-ddl";\n';
+    const other = 'import { SPARK_MODIFY_COLUMN } from "@/lib/db/providers/sql/spark/migration-ddl";\n';
     expect(outsideImportFindings(replaced(SOURCES, registry, other))).toEqual([
       `${registry} imports @/lib/db/providers/sql/spark/migration-ddl, a Spark module`,
     ]);

@@ -2065,7 +2065,7 @@ cancellation as unsupported because the provider exposes no `cancelQuery`
 
 ## Migration DDL
 
-[`DRUID_MIGRATION_DDL`](../../src/lib/db/providers/sql/druid/migration-ddl.ts) is what the schema-diff migration generator writes for `druid`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/druid.json`](../../src/lib/db/engine-declarations/druid.json) declares what the schema-diff migration generator writes for `druid`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
 It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
 Druid has no transaction concept to translate the wrapper into: a datasource is rewritten by an MSQ task, not by a bracketed statement list (#284).
 

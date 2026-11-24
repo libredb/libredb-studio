@@ -56,13 +56,13 @@ describe("typeIdsOfProviderFile", () => {
   });
 
   test("a per-engine contract module is named after its type-id and serves that one type-id", () => {
-    expect(typeIdsOfProviderFile(path.join(INFLUX, "influxdb-migration-ddl.ts"))).toEqual(["influxdb"]);
-    expect(typeIdsOfProviderFile(path.join(INFLUX, "influxdb3-migration-ddl.ts"))).toEqual(["influxdb3"]);
+    expect(typeIdsOfProviderFile(path.join(INFLUX, "influxdb-engine-facets.ts"))).toEqual(["influxdb"]);
+    expect(typeIdsOfProviderFile(path.join(INFLUX, "influxdb3-engine-facets.ts"))).toEqual(["influxdb3"]);
   });
 
   test("a search contract module serves the one type-id it is named after", () => {
-    expect(typeIdsOfProviderFile(path.join(SEARCH, "elasticsearch-migration-ddl.ts"))).toEqual(["elasticsearch"]);
-    expect(typeIdsOfProviderFile(path.join(SEARCH, "opensearch-migration-ddl.ts"))).toEqual(["opensearch"]);
+    expect(typeIdsOfProviderFile(path.join(SEARCH, "elasticsearch-engine-facets.ts"))).toEqual(["elasticsearch"]);
+    expect(typeIdsOfProviderFile(path.join(SEARCH, "opensearch-engine-facets.ts"))).toEqual(["opensearch"]);
     expect(typeIdsOfProviderFile(path.join(SEARCH, "transport.ts"))).toEqual(["elasticsearch", "opensearch"]);
   });
 

@@ -1,8 +1,8 @@
 /**
  * Studio's engine catalog, its data-only connection tables, its connection forms, its connection strings, each
  * engine's execution UI and fence aliases, its query dialects, tab type editors and editor languages, and each engine's
- * SQL text and SQL writing as projections of a set of admitted engine declarations (docs/providers/CONTRACT.md, clauses
- * M-70, M-71, M-72, M-74, M-75, M-77, M-78 and M-79).
+ * SQL text, SQL writing and migration DDL as projections of a set of admitted engine declarations
+ * (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72, M-74, M-75, M-77, M-78, M-79 and M-80).
  *
  * The catalog answers which engines Studio ships, whether each is an engine the user already runs (`external`) or the
  * store Studio carries with it (`embedded`), and how long the host waits for an open of each: one entry per declaration,
@@ -51,6 +51,12 @@
  * binds to Studio's own function when it composes each engine's SQL writing row. The segment holds no claim, and no SQL
  * writing fact is shared between engines, so nothing is refused across the set but a second declaration of one id.
  *
+ * The migration DDL answers, per engine, its whole `migrationDdl` segment as the declaration states it: a refused form
+ * as its refusal line and reasons, a written form as its transaction wrapper, its CREATE TABLE form, the names of its
+ * statement writers and its reasons, which src/lib/db/migration-ddl/index.ts binds to Studio's own functions when it
+ * composes each engine's migration DDL row. The segment holds no claim, and no migration DDL fact is shared between
+ * engines, so nothing is refused across the set but a second declaration of one id.
+ *
  * Every member a projection reads is one a declaration authors (scripts/generate-engine-catalog.ts,
  * `AUTHORED_MEMBERS`), so none reads anything the declaration generator writes, and none of them is a claim but the
  * confirmation gate's two, `sqlText.readsSqlText` and an exempt form of the grammar, which the gate counts only where
@@ -66,9 +72,9 @@
  * `scripts/generate-engine-catalog.ts` projects the committed declarations' authored members here and renders the
  * results into `catalog.generated.ts`, `connection.generated.ts`, `connection-flags.generated.ts`,
  * `connection-form.generated.ts`, `connection-string.generated.ts`, `editor.generated.ts`,
- * `query-editor.generated.ts`, `sql-text.generated.ts` and `sql-writing.generated.ts`, the modules Studio's readers
- * read, and holds each module to the projection of the set it admits through the SDK's validator. A loader that admits
- * a provider package at run time projects its set through these same functions.
+ * `query-editor.generated.ts`, `sql-text.generated.ts`, `sql-writing.generated.ts` and `migration-ddl.generated.ts`,
+ * the modules Studio's readers read, and holds each module to the projection of the set it admits through the SDK's
+ * validator. A loader that admits a provider package at run time projects its set through these same functions.
  */
 import type {
   ConnectBudget,
@@ -79,6 +85,7 @@ import type {
   EngineLocation,
   FieldName,
   HistoryMask,
+  MigrationDdl,
   MonacoLanguageId,
   QueryDialect,
   QueryLanguage,
@@ -127,6 +134,7 @@ export interface AuthoredDeclaration {
   };
   readonly sqlText: SqlTextEntry;
   readonly sqlWriting: SqlWriting;
+  readonly migrationDdl: MigrationDdl;
 }
 
 /**
@@ -151,6 +159,16 @@ export type SqlWritingEntry = SqlWriting;
 
 /** The SQL writing: one frozen entry per engine id, keyed in ascending code-unit order of the ids. */
 export type SqlWritings = Readonly<Record<string, SqlWritingEntry>>;
+
+/**
+ * One engine's migration DDL as its declaration authors it, the SDK's `MigrationDdl`: refused, with its refusal line and
+ * reasons, or written, with its transaction wrapper, its CREATE TABLE form, each statement writer as its name and its
+ * reasons.
+ */
+export type MigrationDdlEntry = MigrationDdl;
+
+/** The migration DDL: one frozen entry per engine id, keyed in ascending code-unit order of the ids. */
+export type MigrationDdls = Readonly<Record<string, MigrationDdlEntry>>;
 
 /** One engine's catalog entry: where the engine lives and its connect budget, null for the host's default. */
 export interface CatalogEntry {
@@ -592,4 +610,14 @@ export function projectSqlText(declarations: readonly AuthoredDeclaration[]): Sq
  */
 export function projectSqlWriting(declarations: readonly AuthoredDeclaration[]): SqlWritings {
   return recordOf(inIdOrder(declarations), ({ sqlWriting }) => frozenCopy<SqlWritingEntry>(sqlWriting));
+}
+
+/**
+ * The migration DDL of `declarations`, each entry the declaration's `migrationDdl` as it states it, a segment every
+ * declaration authors, in its own member order at every level.
+ *
+ * @throws {Error} When two declarations state the same `id`, naming it.
+ */
+export function projectMigrationDdl(declarations: readonly AuthoredDeclaration[]): MigrationDdls {
+  return recordOf(inIdOrder(declarations), ({ migrationDdl }) => frozenCopy<MigrationDdlEntry>(migrationDdl));
 }

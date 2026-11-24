@@ -209,6 +209,11 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     destination: projected("editor.commitKeyword and editor.consentDeadline"),
   },
   {
+    module: "src/lib/db/engine-catalog/migration-ddl.generated.ts",
+    name: "BUNDLED_MIGRATION_DDL",
+    destination: projected("migrationDdl"),
+  },
+  {
     module: "src/lib/db/engine-catalog/sql-text.generated.ts",
     name: "BUNDLED_SQL_TEXT",
     destination: projected("sqlText.readsSqlText, sqlText.grammar, sqlText.updateTarget and sqlText.completion"),
@@ -235,7 +240,7 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     module: "src/lib/db/migration-ddl/index.ts",
     name: "MIGRATION_DDL",
     destination:
-      "engine declaration: migrationDdl, its table DDL refused with its refusal line or written with its transaction wrapper and CREATE TABLE form, its reasons, each function named by the slot it fills",
+      "engine declaration: migrationDdl, authored in each declaration and composed with Studio's migration DDL function table",
   },
   {
     module: "src/lib/db/query-generators/index.ts",

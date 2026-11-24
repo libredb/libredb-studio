@@ -3032,10 +3032,11 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
 
 ## Migration DDL
 
-[`MYSQL_MIGRATION_DDL`](../../src/lib/db/providers/sql/mysql-migration-ddl.ts) is what the schema-diff migration generator writes for `mysql`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/mysql.json`](../../src/lib/db/engine-declarations/mysql.json) declares what the schema-diff migration generator writes for `mysql`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
+The table binds this engine's own functions from the module beside its provider: [`sql/mysql-migration-ddl.ts`](../../src/lib/db/providers/sql/mysql-migration-ddl.ts), `MYSQL_DROP_FOREIGN_KEY`, `MYSQL_DROP_INDEX` and `MYSQL_MODIFY_COLUMN`.
 MySQL drops an index with `ON <table>` and a foreign key with `DROP FOREIGN KEY`, and restates the whole column in `MODIFY COLUMN`.
 Everything else is the shared statement, wrapped in `BEGIN;` and `COMMIT;`.
-The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `BEGIN_COMMIT`, `standardAddColumn`, `standardAddForeignKey`, `standardColumnDef`, `standardCreateIndex`, `standardCreateTableForeignKey`, `standardDropColumn`, `standardDropTable` and `standardPrimaryKey`.
+The building blocks Studio's table binds for it from `src/lib/db/migration-ddl/shared.ts` are `standardAddColumn`, `standardAddForeignKey`, `standardColumnDef`, `standardCreateIndex`, `standardCreateTableForeignKey`, `standardDropColumn`, `standardDropTable` and `standardPrimaryKey`.
 
 It prints no refusal reason.
 

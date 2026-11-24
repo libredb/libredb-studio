@@ -2022,14 +2022,15 @@ under a `queryId` ([§5.4](#54-cancellation)); the transaction routes do not app
 
 ## Migration DDL
 
-[`CLICKHOUSE_MIGRATION_DDL`](../../src/lib/db/providers/sql/clickhouse/migration-ddl.ts) is what the schema-diff migration generator writes for `clickhouse`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/clickhouse.json`](../../src/lib/db/engine-declarations/clickhouse.json) declares what the schema-diff migration generator writes for `clickhouse`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
+The table binds this engine's own functions from the module beside its provider: [`sql/clickhouse/migration-ddl.ts`](../../src/lib/db/providers/sql/clickhouse/migration-ddl.ts), `CLICKHOUSE_ADD_FOREIGN_KEY`, `CLICKHOUSE_COLUMN_DEF`, `CLICKHOUSE_CREATE_INDEX`, `CLICKHOUSE_CREATE_TABLE_FOREIGN_KEY`, `CLICKHOUSE_DROP_FOREIGN_KEY`, `CLICKHOUSE_DROP_INDEX` and `CLICKHOUSE_MODIFY_COLUMN`.
 ClickHouse's transaction support is experimental and setting-gated, so `transactionWrapper` is `null` (#284).
 It has no foreign-key constraint, and its index changes are a comment, because the diff records column names and uniqueness, not the index kind, expression or granularity.
 A default whose value starts with `MATERIALIZED`, `ALIAS` or `EPHEMERAL` (`CLICKHOUSE_DEFAULT_KINDS`) already names its own clause and is written without `DEFAULT` in front of it.
 Live-probed on `clickhouse-server:26.7.1.1315`: `MODIFY COLUMN "y" Int32 DEFAULT MATERIALIZED toYear(d)` is a syntax error (code 62), while `MODIFY COLUMN "y" Int32 MATERIALIZED toYear(d)` is accepted.
 A dropped default is written as `REMOVE <kind>`, because omitting the clause leaves the old default in place; `REMOVE` takes `DEFAULT`, `MATERIALIZED` or `ALIAS` only (`CLICKHOUSE_REMOVABLE_KINDS`), `REMOVE EPHEMERAL` is code 62, and `REMOVE DEFAULT` on a column with no default is code 36.
 Nullability is part of the type (`Nullable(T)`), so a modified column restates its declared type and there is no `SET NOT NULL`.
-The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `standardAddColumn`, `standardDropColumn`, `standardDropTable` and `standardPrimaryKey`.
+The building blocks Studio's table binds for it from `src/lib/db/migration-ddl/shared.ts` are `standardAddColumn`, `standardDropColumn`, `standardDropTable` and `standardPrimaryKey`.
 
 Every refusal reason it can print, verbatim:
 

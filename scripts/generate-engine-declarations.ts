@@ -9,19 +9,20 @@
  * `urlTls`, `paste` and `seedCheck`, and its `tls`, `readsTrustMaterial`, `dialog`, `hostUriSchemes`,
  * `credentialWarnings`, `fieldRules`, `hostHint`, `hostIdentity`, `import` and `connectBudgetMs`, of `editor` its
  * `commitKeyword`, `consentDeadline`, `fenceAliases`, `dialect` and `language`, of `sqlText` its `readsSqlText`,
- * `grammar`, `updateTarget` and `completion`, and the whole `sqlWriting`), are written in the declaration itself: this
- * script reads them from the committed file of the engine in src/lib/db/engine-declarations, whatever directory `--out`
- * names, with `authoredMembersOf` (scripts/generate-engine-catalog.ts), which refuses by name a file that lacks one or
- * whose `id` is not its file name, and writes them back unchanged. Every other member is built from the tables. The
- * engine catalog, the connection tables, the connection forms, the connection strings, the execution UI and fence
- * aliases, the query dialects, tab type editors and editor languages, the SQL text and the SQL writing
- * (scripts/generate-engine-catalog.ts, clauses M-70, M-71, M-72, M-74, M-75, M-77, M-78 and M-79) project the authored
- * members, and `bun run engines:generate` runs that command's `--write` first and its `--check` last: this script
- * builds every provider through the factory, which builds only an engine the catalog holds, and `--check` admits every
- * declaration this script wrote, with the SDK validator's rules, which refuse by name, among others, a dialog entry or
- * a field rule for a field the engine does not take and a placeable field with no placement. A new engine's declaration
- * therefore starts as a copy of another engine's file with its authored members written for the new engine; the
- * catalog generator projects it, this script writes every other member, and the catalog generator then admits it.
+ * `grammar`, `updateTarget` and `completion`, and the whole `sqlWriting` and `migrationDdl`), are written in the
+ * declaration itself: this script reads them from the committed file of the engine in src/lib/db/engine-declarations,
+ * whatever directory `--out` names, with `authoredMembersOf` (scripts/generate-engine-catalog.ts), which refuses by
+ * name a file that lacks one or whose `id` is not its file name, and writes them back unchanged. Every other member is
+ * built from the tables. The engine catalog, the connection tables, the connection forms, the connection strings, the
+ * execution UI and fence aliases, the query dialects, tab type editors and editor languages, the SQL text, the SQL
+ * writing and the migration DDL (scripts/generate-engine-catalog.ts, clauses M-70, M-71, M-72, M-74, M-75, M-77, M-78,
+ * M-79 and M-80) project the authored members, and `bun run engines:generate` runs that command's `--write` first and
+ * its `--check` last: this script builds every provider through the factory, which builds only an engine the catalog
+ * holds, and `--check` admits every declaration this script wrote, with the SDK validator's rules, which refuse by
+ * name, among others, a dialog entry or a field rule for a field the engine does not take and a placeable field with no
+ * placement. A new engine's declaration therefore starts as a copy of another engine's file with its authored members
+ * written for the new engine; the catalog generator projects it, this script writes every other member, and the catalog
+ * generator then admits it.
  *
  * Each file is a `#/$defs/engineDeclaration` of the provider manifest schema
  * (packages/provider-sdk/src/manifest/manifest.schema.json): the engine's identity, its connection facts, its facets,
@@ -66,14 +67,16 @@
  * pattern is its source and flags, which the schema holds to none, i, u or iu and the validator to a pattern that
  * compiles with one capturing group where it is a wrapper, and the bare type families are six lists keyed by kind.
  *
- * The migration DDL facts come from the engine's row in `MIGRATION_DDL`, in the row's form: refused, with its refusal
- * line, its null transaction wrapper and its reasons, or written, member by member with the row's names and nesting.
- * The transaction wrapper is written as `{ begin, commit }` or null, the CREATE TABLE by its kind, and the reasons as an
- * array in the row's order. Each function is named by its slot: `createTablePrimaryKey` and `createTableForeignKey` for
- * a written CREATE TABLE's key writers, `createTableRefusal` for a refused one's line, and `columnDef`, `createIndex`,
- * `dropIndex`, `addForeignKey`, `dropForeignKey`, `addColumn`, `dropColumn`, `modifyColumn` and `dropTable` for the
- * statement writers. The generator refuses by name a member of the row, of its CREATE TABLE or of its transaction
- * wrapper it has no place for, and a table DDL or CREATE TABLE form that is neither refused nor written.
+ * The migration DDL, `migrationDdl`, is authored as a whole and written back as the committed file states it; the
+ * catalog generator projects it into src/lib/db/engine-catalog/migration-ddl.generated.ts, from which Studio composes
+ * each engine's migration DDL row (clause M-80). A refused form is its refusal line, its null transaction wrapper and
+ * its reasons; a written form is its transaction wrapper as `{ begin, commit }` or null, its CREATE TABLE by its kind,
+ * each function named by its slot, `createTablePrimaryKey` and `createTableForeignKey` for a written CREATE TABLE's
+ * key writers, `createTableRefusal` for a refused one's line, and `columnDef`, `createIndex`, `dropIndex`,
+ * `addForeignKey`, `dropForeignKey`, `addColumn`, `dropColumn`, `modifyColumn` and `dropTable` for the statement
+ * writers, each bound by Studio's migration DDL function table in src/lib/db/migration-ddl/index.ts, and its reasons.
+ * `boundSegments` binds every name through that table before the declaration is written, so a name Studio holds no
+ * function for stops this script by name.
  *
  * The SQL generator forms come from the engine's row in `SQL_ENGINE_GENERATORS`, read as an own key: null where the
  * engine has no row and writes Studio's shared forms; otherwise each member in the schema's order, each form named by
@@ -154,7 +157,6 @@ import type {
   EngineDeclaration,
   FieldName,
   MaintenanceSpec,
-  MigrationDdl,
   PlanEstimate,
   ProfileComposition,
   ProfileTypePattern,
@@ -195,8 +197,7 @@ import {
   SEED_ONLY_FIELD_NAMES,
 } from "../src/lib/db/connection-fields";
 import { ENGINE_FACETS } from "../src/lib/db/engine-facets";
-import { MIGRATION_DDL } from "../src/lib/db/migration-ddl";
-import type { MigrationDdlSpec } from "../src/lib/db/migration-ddl/types";
+import { composeMigrationDdl, MIGRATION_DDL_FUNCTIONS } from "../src/lib/db/migration-ddl";
 import { SQL_ENGINE_GENERATORS } from "../src/lib/db/query-generators";
 import type { SqlEngineGenerators } from "../src/lib/db/query-generators/types";
 import { SQL_TEXT_REDACTION } from "../src/lib/db/sql-grammar/redaction";
@@ -322,108 +323,19 @@ export function buildEditor(
 /** The flags a profile type pattern may carry. */
 const TYPE_PATTERN_FLAGS: readonly string[] = ["", "i", "u", "iu"];
 
-/** The members of each part of a migration DDL row the declaration places: a key a part's list lacks would be dropped. */
-const MIGRATION_DDL_MEMBERS = {
-  refused: ["tableDdl", "refusal", "transactionWrapper", "reasons"],
-  written: [
-    "tableDdl",
-    "transactionWrapper",
-    "createTable",
-    "columnDef",
-    "createIndex",
-    "dropIndex",
-    "addForeignKey",
-    "dropForeignKey",
-    "addColumn",
-    "dropColumn",
-    "modifyColumn",
-    "dropTable",
-    "reasons",
-  ],
-  createTableRefused: ["kind", "createTableRefusal"],
-  createTableWritten: ["kind", "primaryKey", "foreignKey"],
-  transactionWrapper: ["begin", "commit"],
-} as const satisfies Readonly<Record<string, readonly string[]>>;
-
 /**
- * Throws an error naming the engine and the member where `part`, at the dotted path `at` of a migration DDL row, has a
- * key the declaration does not write. The keys are read with `Object.keys`, so a key a spread carried in is read too.
+ * The engine's authored segments a Studio function table binds, `migrationDdl`, answered unchanged once every function
+ * name it gives is bound through Studio's migration DDL function table, so a name Studio holds no function for stops
+ * this script by name rather than reaching a committed declaration (docs/providers/CONTRACT.md, clauses M-15 and M-80).
+ * The module that holds the table also composes every engine when it loads, from the generated module `--write` has
+ * just written, which refuses the same name first; this call states the dependency rather than keeping an import for
+ * its side effect.
+ *
+ * @throws {Error} Naming the engine and the name, for a function name Studio's table holds none for at its slot.
  */
-function refuseUnplacedMigrationDdlMembers(
-  type: DatabaseType,
-  part: object,
-  at: string,
-  members: readonly string[],
-): void {
-  for (const key of Object.keys(part)) {
-    if (!members.includes(key)) {
-      throw new Error(`${type}: the migration DDL member "${at}${key}" has no place in the engine declaration`);
-    }
-  }
-}
-
-/**
- * Throws an error naming the engine and the member where the form `value`, read at `member` of a migration DDL row, is
- * neither refused nor written, so an unknown form is never written as the other.
- */
-function refuseUnknownMigrationDdlForm(type: DatabaseType, member: string, value: string): void {
-  if (value !== "refused" && value !== "written") {
-    throw new Error(`${type}: the migration DDL member "${member}" is "${value}", neither refused nor written`);
-  }
-}
-
-/**
- * One engine's migration DDL facts, read from its row in `MIGRATION_DDL` (a parameter, so a test can hand the generator
- * another row), in the row's form. A refused row is written with its own refusal line, transaction wrapper and reasons,
- * the wrapper written through, so a row that wraps a refusal is refused by the schema rather than dropped here. A
- * written row is written member by member in the order of the schema's `migrationDdlWritten`: the transaction wrapper
- * as `{ begin, commit }` or null, the CREATE TABLE by its kind, each function named by the slot it fills, and the
- * reasons as an array in order. A member the declaration has no place for, and a table DDL or CREATE TABLE form that is
- * neither refused nor written, are thrown errors naming the engine.
- */
-export function buildMigrationDdl(type: DatabaseType, spec: MigrationDdlSpec = MIGRATION_DDL[type]): MigrationDdl {
-  refuseUnknownMigrationDdlForm(type, "tableDdl", spec.tableDdl);
-  if (spec.tableDdl === "refused") {
-    refuseUnplacedMigrationDdlMembers(type, spec, "", MIGRATION_DDL_MEMBERS.refused);
-    return {
-      tableDdl: "refused",
-      refusal: spec.refusal,
-      transactionWrapper: spec.transactionWrapper,
-      reasons: [...spec.reasons],
-    };
-  }
-  const { createTable, transactionWrapper: wrapper } = spec;
-  refuseUnplacedMigrationDdlMembers(type, spec, "", MIGRATION_DDL_MEMBERS.written);
-  if (wrapper !== null) {
-    refuseUnplacedMigrationDdlMembers(type, wrapper, "transactionWrapper.", MIGRATION_DDL_MEMBERS.transactionWrapper);
-  }
-  refuseUnknownMigrationDdlForm(type, "createTable.kind", createTable.kind);
-  refuseUnplacedMigrationDdlMembers(
-    type,
-    createTable,
-    "createTable.",
-    createTable.kind === "refused"
-      ? MIGRATION_DDL_MEMBERS.createTableRefused
-      : MIGRATION_DDL_MEMBERS.createTableWritten,
-  );
-  return {
-    tableDdl: "written",
-    transactionWrapper: wrapper === null ? null : { begin: wrapper.begin, commit: wrapper.commit },
-    createTable:
-      createTable.kind === "refused"
-        ? { kind: "refused", createTableRefusal: "createTableRefusal" }
-        : { kind: "written", primaryKey: "createTablePrimaryKey", foreignKey: "createTableForeignKey" },
-    columnDef: "columnDef",
-    createIndex: "createIndex",
-    dropIndex: "dropIndex",
-    addForeignKey: "addForeignKey",
-    dropForeignKey: "dropForeignKey",
-    addColumn: "addColumn",
-    dropColumn: "dropColumn",
-    modifyColumn: "modifyColumn",
-    dropTable: "dropTable",
-    reasons: [...spec.reasons],
-  };
+export function boundSegments(type: DatabaseType, authored: AuthoredMembers): Pick<AuthoredMembers, "migrationDdl"> {
+  composeMigrationDdl(type, authored.migrationDdl, MIGRATION_DDL_FUNCTIONS);
+  return { migrationDdl: authored.migrationDdl };
 }
 
 /** The members of an SQL generator row the declaration places: a key this list lacks would be dropped. */
@@ -729,6 +641,7 @@ export function buildEngineDeclaration(
   const credential = SEED_AGENT_CREDENTIAL[type];
   const sshRefusal = SSH_TUNNEL_REFUSAL[type];
   const facets = ENGINE_FACETS[type];
+  const bound = boundSegments(type, authored);
   return {
     id: type,
     displayName: authored.displayName,
@@ -784,7 +697,7 @@ export function buildEngineDeclaration(
       completion: authored.sqlText.completion,
     },
     sqlWriting: authored.sqlWriting,
-    migrationDdl: buildMigrationDdl(type),
+    migrationDdl: bound.migrationDdl,
     sqlGenerators: buildSqlGenerators(type),
     policy: {
       writeReach: WRITE_REACH[type],

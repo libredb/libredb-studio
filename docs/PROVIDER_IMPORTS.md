@@ -86,8 +86,8 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/db/http/node-transport.ts` | host service: egress | The shared REST transport over Node's sockets, bound to the egress policy. |
 | `src/lib/db/inventory-bounds.ts` | host service: run bounds | How much one inventory read may take is a host decision the object browser and the inventory route share; a provider receives the bound. |
 | `src/lib/db/map-database-error.ts` | core only | It reads core's driver error registry; the host classifies a native provider's errors through that provider's own row. |
-| `src/lib/db/migration-ddl/shared.ts` | SDK /manifest | Pure statement builders a migration DDL row shares. |
-| `src/lib/db/migration-ddl/types.ts` | SDK /manifest | The migration DDL row contract. |
+| `src/lib/db/migration-ddl/shared.ts` | SDK /manifest | The statement building blocks Studio's migration DDL function table binds and an engine's own migration DDL function reads. |
+| `src/lib/db/migration-ddl/types.ts` | SDK /manifest | The types of the migration DDL row and of the migration DDL functions a declaration names. |
 | `src/lib/db/object-edit.ts` | SDK /objects | The pure edit text bound and position mapping. |
 | `src/lib/db/object-kinds.ts` | SDK /objects | Pure derivations over a provider's object declarations. |
 | `src/lib/db/object-path.ts` | SDK /objects | The pure order and spelling of object paths. |
@@ -240,7 +240,7 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 | `src/lib/db/engine-facets/index.ts` | 43 engine facets rows | PR 11 policy | manifest rows: the PR 9 schema, collected by the PR 11 projection |
 | `src/lib/db/factory.ts` | 42 provider entry modules, imported dynamically | PR 12 | providers loaded at runtime by the loader |
 | `src/lib/db/graph-policy-profiles.ts` | 1 neo4j policy profile | PR 8 cypher | the Cypher family, `src/lib/db/graph/cypher/` |
-| `src/lib/db/migration-ddl/index.ts` | 43 migration DDL rows | PR 11 editor and SQL text | manifest rows: the PR 9 schema, collected by the PR 11 projection |
+| `src/lib/db/migration-ddl/index.ts` | 14 migration DDL function modules, bound by Studio's migration DDL function table to the names the declarations give | bigquery native PR, cassandra native PR, clickhouse native PR, databend native PR, db2 native PR, duckdb native PR, libsql native PR, mssql native PR, mysql native PR, oracle native PR, snowflake native PR, spark native PR, sqlite native PR, trino native PR | each engine's provider package, which decides where its browser-side functions run (M-32) |
 | `src/lib/db/operations/cypher-admission.ts` | 1 statement reader module | PR 8 cypher | the Cypher family, `src/lib/db/graph/cypher/` |
 | `src/lib/db/operations/descriptors.ts` | 1 mongodb envelope reader | PR 8 mongo | the mongo family, `src/lib/languages/mongo/` |
 | `src/lib/db/operations/etcdctl-admission.ts` | 1 statement reader module | PR 8 etcdctl | the etcdctl family, `src/lib/languages/etcdctl/` |
@@ -284,8 +284,8 @@ A language slice may move an agent fact to PR 11 agent instead, changing its row
 No core file gains an import into a provider directory.
 `tests/unit/lib/db/provider-imports.test.ts` holds the tree to exactly the pairs of its allowlist: a new pair fails by name, and so does a listed pair the source no longer holds.
 Each slice deletes its pairs from the allowlist and its rows from the inward table in the same PR, so both only shrink.
-The one growth allowed before PR 11 and PR 12 land is a new type-id's row modules in the ten collector entries, the seven registry indexes and `src/lib/db/factory.ts`, added to the allowlist and counted here in the PR that adds the type-id.
-The connection string index takes a module only for a new engine whose declaration names a connection string function, and the SQL writing index only for one whose declaration names an SQL writing function of its own.
+The one growth allowed before PR 11 and PR 12 land is a new type-id's row modules in the ten collector entries, the six registry indexes and `src/lib/db/factory.ts`, added to the allowlist and counted here in the PR that adds the type-id.
+The connection string index takes a module only for a new engine whose declaration names a connection string function, the SQL writing index only for one whose declaration names an SQL writing function of its own, and the migration DDL index only for one whose declaration names a migration DDL function of its own.
 
 A provider that imports a core module the outward table does not list fails the same test until the module gets a row and a destination here.
 The same test holds the outward rows whose destination is SDK /sql: the value imports of each such module reach no provider module, so the readers it names can move into the SDK without bringing a provider row with them.

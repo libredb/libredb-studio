@@ -209,7 +209,7 @@ A declaration is not a full manifest: the runtime and compatibility segments des
 
 - test `tests/unit/db/engine-declarations.test.ts` "the directory holds exactly one declaration per shipped type-id"
 - test `tests/unit/db/engine-declarations.test.ts` "each declaration is what the generator builds from its authored members and Studio's tables"
-- test `tests/unit/db/engine-declarations.test.ts` "the authored members are the catalog's, the data-only connection members, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, and the SQL writing segment"
+- test `tests/unit/db/engine-declarations.test.ts` "the authored members are the catalog's, the data-only connection members, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, and the SQL writing and migration DDL segments"
 - test `tests/unit/db/engine-declarations.test.ts` "a declaration's authored members are its committed file's, and every other member is the tables'"
 - test `tests/unit/db/engine-declarations.test.ts` "a committed declaration lacking an authored member, or naming another id than its file, is refused by name"
 - test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate regenerates an authored connection.fields and connection.dialog change in one run: a placeable field added and a placed one removed"
@@ -414,7 +414,7 @@ Every such table looks a name up through one helper, `src/lib/db/function-table.
 - test `tests/unit/db/engine-declarations.test.ts` "every function an SQL writing row holds is named at its slot by its engine's declaration, and no slot the row leaves empty is named"
 - test `tests/unit/db/sql-writing/compose.test.ts` "Studio's SQL writing function table holds exactly the functions the committed declarations name, each at its own slot"
 - test `tests/unit/lib/db/function-table.test.ts` "a slot's table holds each engine's function under the slot's name, and nothing else"
-- test `tests/unit/db/engine-declarations.test.ts` "every name a migration DDL declaration states is its member's slot, and resolves through the census's slot table to the very function the engine's own module exports there"
+- test `tests/unit/db/engine-declarations.test.ts` "every name a migration DDL declaration states is its member's slot, and Studio's migration DDL function table binds it there to the function the engine's row runs"
 - test `tests/unit/db/engine-declarations.test.ts` "every function a migration DDL row holds is named at its slot by its engine's declaration, and no slot the row leaves empty is named"
 - test `tests/unit/db/engine-declarations.test.ts` "every name an SQL generator declaration states is its member's slot, and resolves through the census's slot table to the very function the engine's own module exports there"
 - test `tests/unit/db/engine-declarations.test.ts` "every function an SQL generator row holds is named at its slot by its engine's declaration, and no slot the row leaves empty is named"
@@ -1315,7 +1315,7 @@ A function stated null is left out of the row, or is the row's null where the ro
 The segment holds no claim, M-52, so every member is read as declared.
 Removing a declaration gives exactly the SQL writing a fresh build from the remaining set gives.
 
-- test `tests/unit/db/engine-declarations.test.ts` "the authored members are the catalog's, the data-only connection members, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, and the SQL writing segment"
+- test `tests/unit/db/engine-declarations.test.ts` "the authored members are the catalog's, the data-only connection members, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, and the SQL writing and migration DDL segments"
 - test `tests/unit/db/engine-catalog.test.ts` "projectSqlWriting answers each declaration's SQL writing, frozen, in ascending id order"
 - test `tests/unit/db/engine-catalog.test.ts` "the SQL writing reads only the members a declaration authors"
 - test `tests/unit/db/engine-catalog.test.ts` "the committed SQL writing module is what the generator renders from the admitted declarations"
@@ -1722,9 +1722,9 @@ Studio's census holds every member of every declaration to the engine's row, and
 - test `tests/unit/db/engine-declarations.test.ts` "migrationDdl states the row's table DDL, its refusal line, its transaction wrapper and its reasons in order"
 - test `tests/unit/db/engine-declarations.test.ts` "migrationDdl.createTable states the row's create table form"
 - test `tests/unit/db/engine-declarations.test.ts` "every member of a migration DDL row has its member in the declaration"
-- test `tests/unit/db/engine-declarations.test.ts` "the generator refuses, by name, a migration DDL member it has no place for"
-- test `tests/unit/db/engine-declarations.test.ts` "the generator refuses, by name, a table DDL or create table form that is neither refused nor written"
-- test `tests/unit/db/engine-declarations/migration-ddl-replay.test.ts` "every engine's migration DDL row, rebuilt from its declaration with each function resolved by its slot, renders the engine's golden migration text"
+- test `tests/unit/db/migration-ddl/compose.test.ts` "each row is its declaration's migration DDL composed with Studio's migration DDL function table"
+- test `tests/unit/db/migration-ddl/compose.test.ts` "a refused declaration composes to its refusal line, no wrapper and its reasons, naming no function"
+- test `tests/unit/db/migration-ddl/golden.test.ts` "migration DDL golden files"
 
 ### S-18 (normative): Text a migration writes from a declaration stays on its line
 
@@ -1740,7 +1740,7 @@ So nothing a declaration states becomes a second statement of the migration.
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "a migration DDL refusal that is not one comment line is one no-variant refusal at the segment"
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "a migration DDL reason that is not one line, or is listed twice, is one no-variant refusal at the segment"
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "a transaction wrapper statement that is not words ending in one semicolon is one no-variant refusal at the segment"
-- test `tests/unit/db/engine-declarations/migration-ddl-replay.test.ts` "every engine's migration DDL row, rebuilt from its declaration with each function resolved by its slot, renders the engine's golden migration text"
+- test `tests/unit/db/migration-ddl/golden.test.ts` "migration DDL golden files"
 
 ### S-19 (informative): Studio still reads its migration DDL rows, and where their functions run
 

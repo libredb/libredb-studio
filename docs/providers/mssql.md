@@ -2086,10 +2086,11 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
 
 ## Migration DDL
 
-[`MSSQL_MIGRATION_DDL`](../../src/lib/db/providers/sql/mssql-migration-ddl.ts) is what the schema-diff migration generator writes for `mssql`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/mssql.json`](../../src/lib/db/engine-declarations/mssql.json) declares what the schema-diff migration generator writes for `mssql`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
+The table binds this engine's own functions from the module beside its provider: [`sql/mssql-migration-ddl.ts`](../../src/lib/db/providers/sql/mssql-migration-ddl.ts), `MSSQL_ADD_COLUMN`, `MSSQL_DROP_INDEX` and `MSSQL_MODIFY_COLUMN`.
 SQL Server wraps the migration in `BEGIN TRANSACTION;` and `COMMIT;`, adds a column with a bare `ADD`, and drops an index with `ON <table>`.
 A modified column restates its type and nullability in one `ALTER COLUMN`, falling back to `NVARCHAR(MAX)`, and a changed default is a separate `ADD DEFAULT ... FOR <column>`.
-The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `standardAddForeignKey`, `standardColumnDef`, `standardCreateIndex`, `standardCreateTableForeignKey`, `standardDropColumn`, `standardDropForeignKey`, `standardDropTable` and `standardPrimaryKey`.
+The building blocks Studio's table binds for it from `src/lib/db/migration-ddl/shared.ts` are `standardAddForeignKey`, `standardColumnDef`, `standardCreateIndex`, `standardCreateTableForeignKey`, `standardDropColumn`, `standardDropForeignKey`, `standardDropTable` and `standardPrimaryKey`.
 
 It prints no refusal reason.
 

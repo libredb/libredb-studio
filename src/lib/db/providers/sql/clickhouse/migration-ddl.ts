@@ -1,19 +1,11 @@
 /**
- * ClickHouse's transaction support is experimental and setting-gated rather than a safe default, so the migration
- * has no wrapper (#284). The engine has no foreign-key constraint, and its indexes are declined because IndexDiff
- * carries column names/uniqueness, not ClickHouse's index expression, kind and granularity. It also cannot
- * distinguish its synthetic sorting-key rows.
+ * ClickHouse's own migration DDL functions, each bound by Studio's migration DDL function table
+ * (`MIGRATION_DDL_FUNCTIONS` in src/lib/db/migration-ddl/index.ts) at the slot its name gives. The engine has no
+ * foreign-key constraint, and its indexes are declined because IndexDiff carries column names/uniqueness, not
+ * ClickHouse's index expression, kind and granularity. It also cannot distinguish its synthetic sorting-key rows.
  */
-import {
-  commentName,
-  defaultSql,
-  NO_FOREIGN_KEY_CONSTRAINT,
-  standardAddColumn,
-  standardDropColumn,
-  standardDropTable,
-  standardPrimaryKey,
-} from "@/lib/db/migration-ddl/shared";
-import type { ColumnDiff, MigrationDdlSpec } from "@/lib/db/migration-ddl/types";
+import { commentName, defaultSql, NO_FOREIGN_KEY_CONSTRAINT } from "@/lib/db/migration-ddl/shared";
+import type { ColumnDiff, TableDdlWritten, WrittenCreateTable } from "@/lib/db/migration-ddl/types";
 
 /**
  * ClickHouse column-default kinds as `system.columns.default_kind` reports them, and as
@@ -48,46 +40,44 @@ const NO_PORTABLE_INDEX_DDL =
 
 const ONLY_REMOVABLE_KINDS = "REMOVE accepts DEFAULT, MATERIALIZED or ALIAS only; recreate the column.";
 
-export const CLICKHOUSE_MIGRATION_DDL: MigrationDdlSpec = {
-  tableDdl: "written",
-  transactionWrapper: null,
-  createTable: {
-    kind: "written",
-    primaryKey: standardPrimaryKey,
-    foreignKey: () => ({ after: `-- ClickHouse: Cannot add a foreign key. ${NO_FOREIGN_KEY_CONSTRAINT}` }),
-  },
-  columnDef: (col, column) => {
-    const type = col.targetType || col.sourceType || "TEXT";
-    const nullable = col.targetNullable === false ? " NOT NULL" : "";
-    return `${column} ${type}${nullable}${defaultClause(col)}`;
-  },
-  createIndex: () => `-- ${NO_PORTABLE_INDEX_DDL}`,
-  dropIndex: () => `-- ${NO_PORTABLE_INDEX_DDL}`,
-  addForeignKey: () => `-- ClickHouse: Cannot add a foreign key. ${NO_FOREIGN_KEY_CONSTRAINT}`,
-  dropForeignKey: () => `-- ClickHouse: Cannot drop a foreign key. ${NO_FOREIGN_KEY_CONSTRAINT}`,
-  addColumn: standardAddColumn,
-  dropColumn: standardDropColumn,
-  modifyColumn: (col, column, table) => {
-    // Nullability is part of the type here (`Nullable(T)`) — which is exactly what this
-    // provider's introspection reports (`clickhouse/introspect.ts`) — so restating the declared
-    // type covers a nullability change too; there is no `SET NOT NULL`. Dropping a default needs
-    // the explicit `REMOVE <kind>` form: omitting the clause leaves the old default in place
-    // (live-probed). See CLICKHOUSE_DEFAULT_KINDS for the kind vocabulary and its traps.
-    const lines: string[] = [];
-    const type = col.targetType || col.sourceType || "String";
-    lines.push(`ALTER TABLE ${table} MODIFY COLUMN ${column} ${type}${defaultClause(col)};`);
-    if (col.sourceDefault && defaultSql(col) === undefined) {
-      const kind = clickhouseDefaultKind(col.sourceDefault);
-      if (CLICKHOUSE_REMOVABLE_KINDS.includes(kind)) {
-        lines.push(`ALTER TABLE ${table} MODIFY COLUMN ${column} REMOVE ${kind};`);
-      } else {
-        lines.push(
-          `-- ClickHouse: Cannot remove the ${kind} property of column "${commentName(col.columnName)}". ${ONLY_REMOVABLE_KINDS}`,
-        );
-      }
+export const CLICKHOUSE_CREATE_TABLE_FOREIGN_KEY: WrittenCreateTable["foreignKey"] = () => ({
+  after: `-- ClickHouse: Cannot add a foreign key. ${NO_FOREIGN_KEY_CONSTRAINT}`,
+});
+
+export const CLICKHOUSE_COLUMN_DEF: TableDdlWritten["columnDef"] = (col, column) => {
+  const type = col.targetType || col.sourceType || "TEXT";
+  const nullable = col.targetNullable === false ? " NOT NULL" : "";
+  return `${column} ${type}${nullable}${defaultClause(col)}`;
+};
+
+export const CLICKHOUSE_CREATE_INDEX: TableDdlWritten["createIndex"] = () => `-- ${NO_PORTABLE_INDEX_DDL}`;
+
+export const CLICKHOUSE_DROP_INDEX: TableDdlWritten["dropIndex"] = () => `-- ${NO_PORTABLE_INDEX_DDL}`;
+
+export const CLICKHOUSE_ADD_FOREIGN_KEY: TableDdlWritten["addForeignKey"] = () =>
+  `-- ClickHouse: Cannot add a foreign key. ${NO_FOREIGN_KEY_CONSTRAINT}`;
+
+export const CLICKHOUSE_DROP_FOREIGN_KEY: TableDdlWritten["dropForeignKey"] = () =>
+  `-- ClickHouse: Cannot drop a foreign key. ${NO_FOREIGN_KEY_CONSTRAINT}`;
+
+export const CLICKHOUSE_MODIFY_COLUMN: TableDdlWritten["modifyColumn"] = (col, column, table) => {
+  // Nullability is part of the type here (`Nullable(T)`), which is exactly what this
+  // provider's introspection reports (`clickhouse/introspect.ts`), so restating the declared
+  // type covers a nullability change too; there is no `SET NOT NULL`. Dropping a default needs
+  // the explicit `REMOVE <kind>` form: omitting the clause leaves the old default in place
+  // (live-probed). See CLICKHOUSE_DEFAULT_KINDS for the kind vocabulary and its traps.
+  const lines: string[] = [];
+  const type = col.targetType || col.sourceType || "String";
+  lines.push(`ALTER TABLE ${table} MODIFY COLUMN ${column} ${type}${defaultClause(col)};`);
+  if (col.sourceDefault && defaultSql(col) === undefined) {
+    const kind = clickhouseDefaultKind(col.sourceDefault);
+    if (CLICKHOUSE_REMOVABLE_KINDS.includes(kind)) {
+      lines.push(`ALTER TABLE ${table} MODIFY COLUMN ${column} REMOVE ${kind};`);
+    } else {
+      lines.push(
+        `-- ClickHouse: Cannot remove the ${kind} property of column "${commentName(col.columnName)}". ${ONLY_REMOVABLE_KINDS}`,
+      );
     }
-    return lines;
-  },
-  dropTable: standardDropTable,
-  reasons: [NO_PORTABLE_INDEX_DDL, NO_FOREIGN_KEY_CONSTRAINT, ONLY_REMOVABLE_KINDS],
+  }
+  return lines;
 };

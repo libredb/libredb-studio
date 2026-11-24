@@ -731,8 +731,8 @@ Consequences elsewhere in the product:
   unimplemented features, so the EDIT toggle and the editable cell are not offered (#269).
 - The schema-diff migration generator emits, in place of a column change: *"OpenSearch SQL reads only;
   change a field by reindexing into an index whose mapping declares it."*
-  (the `OPENSEARCH_MIGRATION_DDL` refusal in
-  [`opensearch-migration-ddl.ts`](../../src/lib/db/providers/sql/search/opensearch-migration-ddl.ts)). It says *reindex*
+  (the refusal line of the `migrationDdl` segment of
+  [`engine-declarations/opensearch.json`](../../src/lib/db/engine-declarations/opensearch.json)). It says *reindex*
   rather than "use the mapping API" because an existing field's type cannot be changed in place at
   all, even outside SQL.
 - `schemaRefreshPattern` is `\b(DELETE)\b`
@@ -1986,7 +1986,7 @@ because the provider exposes no `cancelQuery`
 
 ## Migration DDL
 
-[`OPENSEARCH_MIGRATION_DDL`](../../src/lib/db/providers/sql/search/opensearch-migration-ddl.ts) is what the schema-diff migration generator writes for `opensearch`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/opensearch.json`](../../src/lib/db/engine-declarations/opensearch.json) declares what the schema-diff migration generator writes for `opensearch`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
 It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
 Measured 2026-08-19 on OpenSearch 3.8.0: `ALTER TABLE probe_orders ADD COLUMN x INT` and `... MODIFY COLUMN customer TEXT` are refused with `SQLFeatureNotSupportedException`, "Query must start with SELECT, DELETE, SHOW or DESCRIBE".
 OpenSearch SQL has no `BEGIN` either, measured on 3.8.0, so there is no wrapper (#284).

@@ -3011,13 +3011,14 @@ the object tree's own routes under `POST /api/db/objects/*`
 
 ## Migration DDL
 
-[`ORACLE_MIGRATION_DDL`](../../src/lib/db/providers/sql/oracle-migration-ddl.ts) is what the schema-diff migration generator writes for `oracle`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/oracle.json`](../../src/lib/db/engine-declarations/oracle.json) declares what the schema-diff migration generator writes for `oracle`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
+The table binds this engine's own functions from the module beside its provider: [`sql/oracle-migration-ddl.ts`](../../src/lib/db/providers/sql/oracle-migration-ddl.ts), `ORACLE_ADD_COLUMN`, `ORACLE_COLUMN_DEF`, `ORACLE_DROP_FOREIGN_KEY`, `ORACLE_DROP_INDEX`, `ORACLE_DROP_TABLE` and `ORACLE_MODIFY_COLUMN`.
 Oracle DDL commits implicitly and `BEGIN` opens a PL/SQL block, not a transaction, so `transactionWrapper` is `null`.
 Oracle has no `IF EXISTS` on `DROP CONSTRAINT` or `DROP INDEX`, so a dropped foreign key, index or table is written bare.
 A column definition puts `DEFAULT` before `NOT NULL`, falls back to `VARCHAR2(255)`, and is added with `ADD (...)`.
 A modified column writes its nullability only when it changes, because restating ` NULL` on a nullable column is ORA-01451 and the column keeps its old type (#1240).
 The live regression probe is `tests/live/schema-diff-dialects.ts`.
-The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `standardAddForeignKey`, `standardCreateIndex`, `standardCreateTableForeignKey`, `standardDropColumn` and `standardPrimaryKey`.
+The building blocks Studio's table binds for it from `src/lib/db/migration-ddl/shared.ts` are `standardAddForeignKey`, `standardCreateIndex`, `standardCreateTableForeignKey`, `standardDropColumn` and `standardPrimaryKey`.
 
 It prints no refusal reason.
 

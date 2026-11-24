@@ -376,12 +376,13 @@ It does not cover, so these stay covered by the replayed captures only: dry runs
 
 ## Migration DDL
 
-[`BIGQUERY_MIGRATION_DDL`](../../src/lib/db/providers/sql/bigquery/migration-ddl.ts) is what the schema-diff migration generator writes for `bigquery`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/bigquery.json`](../../src/lib/db/engine-declarations/bigquery.json) declares what the schema-diff migration generator writes for `bigquery`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
+The table binds this engine's own functions from the module beside its provider: [`sql/bigquery/migration-ddl.ts`](../../src/lib/db/providers/sql/bigquery/migration-ddl.ts), `BIGQUERY_ADD_FOREIGN_KEY`, `BIGQUERY_CREATE_INDEX`, `BIGQUERY_CREATE_TABLE_FOREIGN_KEY`, `BIGQUERY_CREATE_TABLE_PRIMARY_KEY`, `BIGQUERY_DROP_FOREIGN_KEY`, `BIGQUERY_DROP_INDEX` and `BIGQUERY_MODIFY_COLUMN`.
 BigQuery runs each statement as its own job, and `BEGIN TRANSACTION` exists only inside a multi-statement script, so `transactionWrapper` is `null` (#284).
 It has no foreign-key constraint this generator could write, so an added or dropped foreign key is a comment.
 An added table declines its primary key in a comment after the `CREATE TABLE`, and a modified column is a comment naming the column.
 Index changes are a comment too, because BigQuery's only indexes are search and vector indexes.
-The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `standardAddColumn`, `standardColumnDef`, `standardDropColumn` and `standardDropTable`.
+The building blocks Studio's table binds for it from `src/lib/db/migration-ddl/shared.ts` are `standardAddColumn`, `standardColumnDef`, `standardDropColumn` and `standardDropTable`.
 
 Every refusal reason it can print, verbatim:
 
