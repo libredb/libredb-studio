@@ -3121,6 +3121,7 @@ An engine in `AGENT_EXECUTION_ENGINES` must open at least one workflow that send
 4. Add its client row to `languages/<statement-language>/engines/client.ts`, and register both overlays in `languages/engines/server.ts` and `languages/engines/client.ts`; both registries are total, so the build fails until they hold the engine.
 5. Add the `Agent language pack` subsection to `docs/providers/<type-id>.md`, which `tests/unit/lib/agent/engine-docs.test.ts` holds to the overlay row for row.
 6. Run `engine-overlays.test.ts` and `engine-pack-contract.test.ts` under `tests/unit/lib/agent/`, which read the engine list from the manifest, so the new engine joins every case.
+7. Run `bun run engines:generate` and commit the regenerated engine declaration, whose `agent.overlay` states the server overlay (`docs/providers/CONTRACT.md`, M-67).
 
 **Where a new statement language's MCP tool lives.** In its own pack, at `languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS` in `languages/mcp.ts`.
 That registry is total over `AgentStatementLanguageId`, so a new language does not compile until it declares its facet, or `null` while it has no MCP tool.

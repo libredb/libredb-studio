@@ -172,7 +172,8 @@
     ]
   },
   "agent": {
-    "statementLanguage": null
+    "statementLanguage": null,
+    "overlay": null
   },
   "editor": {
     "commitKeyword": "COMMIT",

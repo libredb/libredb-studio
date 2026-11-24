@@ -191,7 +191,11 @@
     ]
   },
   "agent": {
-    "statementLanguage": "s3api"
+    "statementLanguage": "s3api",
+    "overlay": {
+      "dialect": null,
+      "grounding": null
+    }
   },
   "editor": {
     "commitKeyword": "COMMIT",

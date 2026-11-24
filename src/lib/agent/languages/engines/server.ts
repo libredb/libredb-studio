@@ -11,6 +11,9 @@
  * since they run on every engine in plan mode. A value that is not a type id, an inherited name such as `toString`
  * included, is refused with `UnknownProviderError` by `engineServerOverlay`, `engineServerDialect` and `runServerPack`
  * (FND-1).
+ *
+ * Each engine's overlay here is stated by its engine declaration at `agent.overlay`, generated from this registry and
+ * read back to it by the census, tests/unit/db/engine-declarations.test.ts (docs/providers/CONTRACT.md, clause M-67).
  */
 import { assertDatabaseType } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";

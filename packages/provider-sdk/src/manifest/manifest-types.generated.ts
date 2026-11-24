@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "54a438ec18bee12a2de19469e1dd0f0b9814f42563c7ddef452cc28e29bc5188";
+export const MANIFEST_SCHEMA_SHA256 = "5c7d67c008b61f9c60ef3f4572fb035d7cb8444a603593c5d2f0d68117b5e2ad";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -542,9 +542,116 @@ export type ObjectKindId = string;
 
 export type AgentReading = "sessions" | "slow-queries" | "table-stats" | "index-stats" | "storage" | "health";
 
-/** What agent mode sends to the engine. */
+/** The statement language agent mode sends to the engine, and the overlay by which agent mode composes on it. */
 export interface Agent {
   readonly statementLanguage: StatementLanguage;
+  readonly overlay: AgentOverlay;
+}
+
+/** How agent mode composes on the engine, member for member as Studio's engine server overlay holds it: null exactly where the engine speaks no statement language. dialect: the members of the engine's family that are bound to its dialect, which only the SQL family has, so null on an engine of any other family. grounding: a named derivation of the family's grounding, Studio's slot groundingOverride, null where the engine keeps its family's. The client view of a dialect and the engine's family are derived, the client view supplied exactly where the server member is, so neither is a member. No member says whether agent mode runs on the engine: the engines agent and MCP statements run on are Studio's agent execution record alone. */
+export type AgentOverlay = {
+  readonly dialect: SqlDialect;
+  /** The function that derives the engine's grounding from its family's, named by its slot, groundingOverride; null where the engine keeps its family's grounding. */
+  readonly grounding: FunctionName | null;
+} | null;
+
+/** The members of an SQL engine's agent overlay bound to its dialect, each a verified composition or null where the engine composes none, which Studio's overlay writes as unsupported. Every statement a member composes meets Studio's statement fence as a statement the model wrote does, so a member widens what agent mode composes on an engine it already runs on, never where it runs or what the fence admits. */
+export type SqlDialect = {
+  readonly catalogRead: CatalogRead;
+  readonly planEstimate: PlanEstimate;
+  readonly profileComposition: ProfileComposition;
+  readonly statistics: StatisticsReading;
+  readonly catalogCapture: CatalogCapture;
+} | null;
+
+/** How the engine reads its catalog, each composed statement sent as a bounded read: one composer per catalog kind, an optional fold of a selector's schema to the name a policy target declares, an optional retry of a refused read, whether the composed statement is a command, and an optional row mapper. Null where the engine composes no catalog read. */
+export type CatalogRead = {
+  readonly compose: CatalogCompose;
+  /** The function that folds a selector's schema to the name a policy target declares, named by its slot, declaredSchema; null where the name is declared as written. */
+  readonly declaredSchema: FunctionName | null;
+  readonly retry: CatalogRetry;
+  /** Whether the engine's catalog answers only to a command rather than to a SELECT, so the statement fence admits each composed catalog statement by identity, on the catalog read alone, still refusing a comment or a word with a side effect. A claim: a request, never a fact Studio believes as declared, granted only as far as Studio's review record of it, the engine's server overlay in Studio's agent overlay registry. Restrictive value: false, under which the composed command meets the fence's ordinary refusal, as the same text written by the model does. */
+  readonly commandShaped: boolean;
+  /** The function that turns the rows of one kind as the engine answered them into the catalog rows that kind reads as, named by its slot, mapRows; null where the composed statement answers the catalog rows itself. */
+  readonly mapRows: FunctionName | null;
+} | null;
+
+/** The composer of each catalog kind, each a function of a catalog selector named by its slot: catalogColumns, catalogRelations, catalogIndexes and catalogStatistics. */
+export interface CatalogCompose {
+  readonly columns: FunctionName;
+  readonly relations: FunctionName;
+  readonly indexes: FunctionName;
+  readonly statistics: FunctionName;
+}
+
+/** The one retry a refused catalog read may take, or null where it takes none: matches, named by its slot retryMatches, says whether a database error is the one the retry answers, and rewrite, named by its slot retryRewrite, writes the statement to send instead, which meets the statement fence as any statement does. */
+export type CatalogRetry = {
+  readonly matches: FunctionName;
+  readonly rewrite: FunctionName;
+} | null;
+
+/** How the engine asks for its estimating plan: a statement prefix, or a session mode the provider sets around the statement it is given unchanged; null where the engine has no estimating plan. One strip built from every engine's prefix removes a prefix the model wrote on every engine, so a prefix opens with EXPLAIN and holds no word that executes the plan. */
+export type PlanEstimate = PlanEstimatePrefix | PlanEstimateSessionMode | null;
+
+/** An estimating plan asked for by a prefix written in front of the statement: EXPLAIN, then words each after one space, up to 128 characters. */
+export interface PlanEstimatePrefix {
+  readonly kind: "prefix";
+  readonly prefix: string;
+}
+
+/** An estimating plan asked for by the session mode the provider sets around the statement it is given unchanged. */
+export interface PlanEstimateSessionMode {
+  readonly kind: "session-mode";
+  readonly mode: "estimate-plan";
+}
+
+/** How the engine composes a table profile, one aggregate over one scan: the shape tests in the engine's spelling, the type pattern of the columns whose distinct values the engine cannot count, and the type pattern of the columns it cannot count at all, null where it counts every type. Null where the engine composes no profile. */
+export type ProfileComposition = {
+  readonly shapeTests: ProfileShapeTests;
+  readonly incomparableType: ProfileTypePattern;
+  readonly uncountableType: ProfileTypePattern | null;
+} | null;
+
+/** The shape tests of a table profile, each a function over an already quoted column reference named by its slot: emailShapeTest and digitRunShapeTest. */
+export interface ProfileShapeTests {
+  readonly email: FunctionName;
+  readonly digitRun: FunctionName;
+}
+
+/** A pattern a column's type name is tested with anywhere in the name, so it is not anchored: its source and flags as JavaScript's RegExp reads them, which must compile. */
+export interface ProfileTypePattern {
+  readonly source: string;
+  /** No flag, i, u or iu: a flag that remembers where a match stopped is not one a type pattern takes. */
+  readonly flags: "" | "i" | "u" | "iu";
+}
+
+/** How the engine reads the estimates it already holds about its tables, as the catalog read's statistics kind, so it is stated only beside a catalog read; null where the engine reads none. */
+export type StatisticsReading = {
+  /** The statement that asks whether the engine holds any statistics, sent as a plain read; null where none is needed. */
+  readonly probe: string | null;
+  /** The function that builds the estimates from the statistics read's rows, named by its slot, statisticsBuild. */
+  readonly build: FunctionName;
+  /** The engine's absolute limit, said once ahead of the estimates; null where it has none to say. */
+  readonly limitNote: string | null;
+} | null;
+
+/** How the engine's grounding capture reads its catalog, through its catalog read, so it is stated only beside one; null where the provider describes its own schema instead. */
+export type CatalogCapture = {
+  /** The catalog kinds the capture reads, in statement order, each once. */
+  readonly kinds: readonly CatalogKind[];
+  /** The function that builds the captured tables from the rows of each kind, named by its slot, captureBuild. */
+  readonly build: FunctionName;
+  /** The engine's own word for what a relation is, each mapped onto the object kind the provider declares, in the order Studio's overlay holds them; each word once. */
+  readonly kindWords: readonly CaptureKindWord[];
+} | null;
+
+/** Which inventory a catalog read asks for. */
+export type CatalogKind = "columns" | "relations" | "indexes" | "statistics";
+
+/** One word the engine's catalog answers for what a relation is, a letter, then up to 63 letters, digits or underscores, and the object kind the provider declares for it. */
+export interface CaptureKindWord {
+  readonly word: string;
+  readonly kind: ObjectKindId;
 }
 
 /** The statement language family agent mode sends, or null where agent mode sends the engine no statement. */

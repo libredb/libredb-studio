@@ -15,11 +15,14 @@
  * provider tree (tests/unit/db/sql-writing/engine-modules.ts), the migration DDL modules from the import statements
  * of the registry file, read as source (`engineModules` in tests/unit/db/migration-ddl/modules.ts), and the SQL
  * generator modules the same way from the query generators' registry file (`sqlGeneratorModules` in
- * tests/unit/db/engine-declarations/sql-generator-modules.ts).
+ * tests/unit/db/engine-declarations/sql-generator-modules.ts). An engine's agent server overlay module is found by the
+ * agent leg's triad path, `src/lib/agent/languages/<family>/engines/<type-id>.ts`, the family being the engine's
+ * `AGENT_STATEMENT_LANGUAGE` row, and its slots sit at the same dotted path in the module's overlay and in the
+ * declaration's `agent.overlay`.
  */
 
 /** The registries whose rows the table names slots of. */
-export type SlotTable = "SQL_WRITING" | "MIGRATION_DDL" | "SQL_ENGINE_GENERATORS";
+export type SlotTable = "SQL_WRITING" | "MIGRATION_DDL" | "SQL_ENGINE_GENERATORS" | "AGENT_SERVER_OVERLAY";
 
 /** One slot: the registry whose row holds it and the dotted path of its member in that row. */
 export interface DeclaredSlot {
@@ -58,6 +61,19 @@ export const DECLARED_SLOTS = Object.freeze({
   generatorTable: { table: "SQL_ENGINE_GENERATORS", path: "table" },
   generatorSelect: { table: "SQL_ENGINE_GENERATORS", path: "select" },
   generatorSelectList: { table: "SQL_ENGINE_GENERATORS", path: "selectList" },
+  catalogColumns: { table: "AGENT_SERVER_OVERLAY", path: "dialect.catalogRead.compose.columns" },
+  catalogRelations: { table: "AGENT_SERVER_OVERLAY", path: "dialect.catalogRead.compose.relations" },
+  catalogIndexes: { table: "AGENT_SERVER_OVERLAY", path: "dialect.catalogRead.compose.indexes" },
+  catalogStatistics: { table: "AGENT_SERVER_OVERLAY", path: "dialect.catalogRead.compose.statistics" },
+  declaredSchema: { table: "AGENT_SERVER_OVERLAY", path: "dialect.catalogRead.declaredSchema" },
+  retryMatches: { table: "AGENT_SERVER_OVERLAY", path: "dialect.catalogRead.retry.matches" },
+  retryRewrite: { table: "AGENT_SERVER_OVERLAY", path: "dialect.catalogRead.retry.rewrite" },
+  mapRows: { table: "AGENT_SERVER_OVERLAY", path: "dialect.catalogRead.mapRows" },
+  emailShapeTest: { table: "AGENT_SERVER_OVERLAY", path: "dialect.profileComposition.shapeTests.email" },
+  digitRunShapeTest: { table: "AGENT_SERVER_OVERLAY", path: "dialect.profileComposition.shapeTests.digitRun" },
+  statisticsBuild: { table: "AGENT_SERVER_OVERLAY", path: "dialect.statistics.build" },
+  captureBuild: { table: "AGENT_SERVER_OVERLAY", path: "dialect.catalogCapture.build" },
+  groundingOverride: { table: "AGENT_SERVER_OVERLAY", path: "grounding" },
 } as const satisfies Readonly<Record<string, DeclaredSlot>>);
 
 /** The name of a slot of the table. */

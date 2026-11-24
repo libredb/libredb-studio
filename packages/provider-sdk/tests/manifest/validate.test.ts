@@ -438,6 +438,73 @@ function restrictiveClaims(m: Json): void {
   };
 }
 
+/** The agent segment of the fixture's one engine. */
+const agentOf = (m: Json): Json => m.engines[0].agent;
+
+/** The SQL dialect of the fixture's one engine's agent overlay. */
+const sqlDialectOf = (m: Json): Json => m.engines[0].agent.overlay.dialect;
+
+/** The pointer of the fixture's one engine's agent overlay. */
+const OVERLAY = "/engines/0/agent/overlay";
+
+/** The pointer of the fixture's one engine's SQL dialect. */
+const DIALECT = `${OVERLAY}/dialect`;
+
+/**
+ * An SQL dialect in every shape a shipped engine gives one: a catalog read with a schema fold, a retry, the command
+ * claim and a row mapper; a prefix estimating plan; a profile with an uncountable type pattern; statistics with a probe
+ * and a note; and a capture with its kinds and kind words. Each function is named by the slot it fills.
+ */
+function sqlDialect(): Json {
+  return {
+    catalogRead: {
+      compose: {
+        columns: "catalogColumns",
+        relations: "catalogRelations",
+        indexes: "catalogIndexes",
+        statistics: "catalogStatistics",
+      },
+      declaredSchema: "declaredSchema",
+      retry: { matches: "retryMatches", rewrite: "retryRewrite" },
+      commandShaped: true,
+      mapRows: "mapRows",
+    },
+    planEstimate: { kind: "prefix", prefix: "EXPLAIN (FORMAT JSON)" },
+    profileComposition: {
+      shapeTests: { email: "emailShapeTest", digitRun: "digitRunShapeTest" },
+      incomparableType: { source: "\\b(jsonb?|xml)\\b", flags: "i" },
+      uncountableType: { source: "\\b(text|ntext|image)\\b", flags: "i" },
+    },
+    statistics: {
+      probe: "SELECT 1 FROM sqlite_schema WHERE name = 'sqlite_stat1'",
+      build: "statisticsBuild",
+      limitNote: "The engine keeps no column distribution.",
+    },
+    catalogCapture: {
+      kinds: ["columns", "relations", "indexes"],
+      build: "captureBuild",
+      kindWords: [
+        { word: "r", kind: "table" },
+        { word: "v", kind: "view" },
+        { word: "S", kind: "sequence" },
+      ],
+    },
+  };
+}
+
+/** The fixture's one engine as an SQL engine whose overlay gives `sqlDialect()` and a grounding override. */
+function withSqlDialect(m: Json): void {
+  agentOf(m).statementLanguage = "sql";
+  agentOf(m).overlay = { dialect: sqlDialect(), grounding: "groundingOverride" };
+}
+
+/** The fixture's one engine as `withSqlDialect` makes it, then changed by `change`. */
+const dialected = (change: (m: Json) => void) =>
+  manifest((m) => {
+    withSqlDialect(m);
+    change(m);
+  });
+
 /** One missing-key row per member of the part `of` returns, named `<name>.<member>` and refused at `pointer`. */
 function missingRows(
   name: string,
@@ -819,6 +886,106 @@ describe("schema refusals", () => {
       },
       `${MAINTENANCE_SPECS}/0`,
       ["operation", "label", "perEntity", "global", "title", "description", "confirmation", "preview", "kinds"],
+    ),
+    ["agent.overlay", (m: Json) => delete agentOf(m).overlay, "/engines/0/agent", "overlay"],
+    ...missingRows(
+      "agent.overlay",
+      (m) => {
+        withSqlDialect(m);
+        return agentOf(m).overlay;
+      },
+      OVERLAY,
+      ["dialect", "grounding"],
+    ),
+    ...missingRows(
+      "agent.overlay.dialect",
+      (m) => {
+        withSqlDialect(m);
+        return sqlDialectOf(m);
+      },
+      DIALECT,
+      ["catalogRead", "planEstimate", "profileComposition", "statistics", "catalogCapture"],
+    ),
+    ...missingRows(
+      "agent.overlay.dialect.catalogRead",
+      (m) => {
+        withSqlDialect(m);
+        return sqlDialectOf(m).catalogRead;
+      },
+      `${DIALECT}/catalogRead`,
+      ["compose", "declaredSchema", "retry", "commandShaped", "mapRows"],
+    ),
+    ...missingRows(
+      "agent.overlay.dialect.catalogRead.compose",
+      (m) => {
+        withSqlDialect(m);
+        return sqlDialectOf(m).catalogRead.compose;
+      },
+      `${DIALECT}/catalogRead/compose`,
+      ["columns", "relations", "indexes", "statistics"],
+    ),
+    ...missingRows(
+      "agent.overlay.dialect.catalogRead.retry",
+      (m) => {
+        withSqlDialect(m);
+        return sqlDialectOf(m).catalogRead.retry;
+      },
+      `${DIALECT}/catalogRead/retry`,
+      ["matches", "rewrite"],
+    ),
+    ...missingRows(
+      "agent.overlay.dialect.profileComposition",
+      (m) => {
+        withSqlDialect(m);
+        return sqlDialectOf(m).profileComposition;
+      },
+      `${DIALECT}/profileComposition`,
+      ["shapeTests", "incomparableType", "uncountableType"],
+    ),
+    ...missingRows(
+      "agent.overlay.dialect.profileComposition.shapeTests",
+      (m) => {
+        withSqlDialect(m);
+        return sqlDialectOf(m).profileComposition.shapeTests;
+      },
+      `${DIALECT}/profileComposition/shapeTests`,
+      ["email", "digitRun"],
+    ),
+    ...missingRows(
+      "agent.overlay.dialect.profileComposition.incomparableType",
+      (m) => {
+        withSqlDialect(m);
+        return sqlDialectOf(m).profileComposition.incomparableType;
+      },
+      `${DIALECT}/profileComposition/incomparableType`,
+      ["source", "flags"],
+    ),
+    ...missingRows(
+      "agent.overlay.dialect.statistics",
+      (m) => {
+        withSqlDialect(m);
+        return sqlDialectOf(m).statistics;
+      },
+      `${DIALECT}/statistics`,
+      ["probe", "build", "limitNote"],
+    ),
+    ...missingRows(
+      "agent.overlay.dialect.catalogCapture",
+      (m) => {
+        withSqlDialect(m);
+        return sqlDialectOf(m).catalogCapture;
+      },
+      `${DIALECT}/catalogCapture`,
+      ["kinds", "build", "kindWords"],
+    ),
+    ...missingRows(
+      "agent.overlay.dialect.catalogCapture.kindWords[0]",
+      (m) => {
+        withSqlDialect(m);
+        return sqlDialectOf(m).catalogCapture.kindWords[0];
+      },
+      `${DIALECT}/catalogCapture/kindWords/0`,
+      ["word", "kind"],
     ),
   ])("a missing %s is refused as missing-key", (_name, change, pointer, key) => {
     expect(refusalsFor(manifest(change))).toEqual([refusal("missing-key", pointer, key)]);
@@ -2035,6 +2202,7 @@ describe("schema refusals", () => {
       agentCredential: null,
     });
     restrictive.engines[0].agent.statementLanguage = null;
+    restrictive.engines[0].agent.overlay = null;
     restrictive.engines[0].facets.agentReadings = [];
     sqlTextOf(restrictive).redaction = { kind: "none" };
 
@@ -2325,6 +2493,153 @@ describe("schema refusals", () => {
     });
 
     expect(refusalsFor(changed)).toEqual([refusal("too-many", MAINTENANCE_SPECS)]);
+  });
+
+  test("every shipped shape of an agent overlay is admitted", () => {
+    const shaped = dialected(() => {});
+    const bare = dialected((m) => {
+      Object.assign(sqlDialectOf(m).catalogRead, {
+        declaredSchema: null,
+        retry: null,
+        commandShaped: false,
+        mapRows: null,
+      });
+      sqlDialectOf(m).profileComposition.uncountableType = null;
+      Object.assign(sqlDialectOf(m).statistics, { probe: null, limitNote: null });
+      sqlDialectOf(m).catalogCapture.kindWords = [];
+      agentOf(m).overlay.grounding = null;
+    });
+    const sessionMode = dialected(
+      (m) => (sqlDialectOf(m).planEstimate = { kind: "session-mode", mode: "estimate-plan" }),
+    );
+    const composesNothing = dialected((m) =>
+      Object.assign(sqlDialectOf(m), {
+        catalogRead: null,
+        planEstimate: null,
+        profileComposition: null,
+        statistics: null,
+        catalogCapture: null,
+      }),
+    );
+    const kafka = kafkaManifest();
+    agentOf(kafka).overlay.grounding = "groundingOverride";
+
+    for (const admitted of [shaped, bare, sessionMode, composesNothing, kafka, manifest(), kafkaManifest()]) {
+      expect(refusalsFor(admitted)).toEqual([]);
+      expect(validator.validateEngine(admitted.engines[0]).admitted).toBe(true);
+    }
+  });
+
+  test("an agent overlay member Studio's declaration has no place for is refused as unknown-key", () => {
+    for (const key of ["workflowToolRules", "answerNotADataRead", "executes", "family"]) {
+      const changed = dialected((m) => (agentOf(m).overlay[key] = null));
+
+      expect(refusalsFor(changed)).toEqual([refusal("unknown-key", OVERLAY, key)]);
+    }
+    const views = dialected((m) => (sqlDialectOf(m).catalogRead.compose.views = "catalogViews"));
+
+    expect(refusalsFor(views)).toEqual([refusal("unknown-key", `${DIALECT}/catalogRead/compose`, "views")]);
+  });
+
+  test("a capture kind or pattern flag outside its vocabulary is refused as value-not-allowed", () => {
+    const kind = dialected((m) => (sqlDialectOf(m).catalogCapture.kinds = ["columns", "tables"]));
+    const flag = dialected((m) => (sqlDialectOf(m).profileComposition.incomparableType.flags = "g"));
+
+    expect(refusalsFor(kind)).toEqual([refusal("value-not-allowed", `${DIALECT}/catalogCapture/kinds/1`)]);
+    expect(refusalsFor(flag)).toEqual([
+      refusal("value-not-allowed", `${DIALECT}/profileComposition/incomparableType/flags`),
+    ]);
+  });
+
+  test("an agent overlay member that is not of its type is refused as wrong-type", () => {
+    const command = dialected((m) => (sqlDialectOf(m).catalogRead.commandShaped = "yes"));
+    const words = dialected((m) => (sqlDialectOf(m).catalogCapture.kindWords = { r: "table" }));
+    const unsupported = dialected((m) => (sqlDialectOf(m).catalogRead = "unsupported"));
+
+    expect(refusalsFor(command)).toEqual([refusal("wrong-type", `${DIALECT}/catalogRead/commandShaped`)]);
+    expect(refusalsFor(words)).toEqual([refusal("wrong-type", `${DIALECT}/catalogCapture/kindWords`)]);
+    expect(refusalsFor(unsupported)).toEqual([refusal("wrong-type", `${DIALECT}/catalogRead`)]);
+  });
+
+  test("a function name, kind word or kind word's kind outside its pattern is refused as pattern-mismatch", () => {
+    const name = dialected((m) => (sqlDialectOf(m).catalogRead.compose.columns = "Columns"));
+    const word = dialected((m) => (sqlDialectOf(m).catalogCapture.kindWords[0].word = "1r"));
+    const kind = dialected((m) => (sqlDialectOf(m).catalogCapture.kindWords[0].kind = "Table"));
+
+    expect(refusalsFor(name)).toEqual([refusal("pattern-mismatch", `${DIALECT}/catalogRead/compose/columns`)]);
+    expect(refusalsFor(word)).toEqual([refusal("pattern-mismatch", `${DIALECT}/catalogCapture/kindWords/0/word`)]);
+    expect(refusalsFor(kind)).toEqual([refusal("pattern-mismatch", `${DIALECT}/catalogCapture/kindWords/0/kind`)]);
+  });
+
+  test("an estimating plan that is neither an EXPLAIN prefix nor the session mode is refused as no-variant", () => {
+    const estimate = (planEstimate: Json) => dialected((m) => (sqlDialectOf(m).planEstimate = planEstimate));
+
+    for (const planEstimate of [
+      { kind: "prefix", prefix: "SHOW PLAN" },
+      { kind: "prefix", prefix: "explain" },
+      { kind: "prefix", prefix: "EXPLAIN  (FORMAT JSON)" },
+      { kind: "prefix", prefix: `EXPLAIN ${"x".repeat(121)}` },
+      { kind: "session-mode", mode: "execute" },
+      { kind: "prefix" },
+    ]) {
+      expect(refusalsFor(estimate(planEstimate))).toEqual([refusal("no-variant", `${DIALECT}/planEstimate`)]);
+    }
+    for (const prefix of [
+      "EXPLAIN",
+      "EXPLAIN QUERY PLAN",
+      "EXPLAIN json = 1, indexes = 1",
+      `EXPLAIN ${"x".repeat(120)}`,
+    ]) {
+      expect(refusalsFor(estimate({ kind: "prefix", prefix }))).toEqual([]);
+    }
+  });
+
+  test("a statistics probe or note or a profile type pattern that is empty or past its bound is refused as out-of-range", () => {
+    const STATISTICS = `${DIALECT}/statistics`;
+    const SOURCE = `${DIALECT}/profileComposition/incomparableType/source`;
+    for (const [member, bound] of [
+      ["probe", 2000],
+      ["limitNote", 2000],
+    ] as const) {
+      for (const text of ["", "x".repeat(bound + 1)]) {
+        expect(refusalsFor(dialected((m) => (sqlDialectOf(m).statistics[member] = text)))).toEqual([
+          refusal("out-of-range", `${STATISTICS}/${member}`),
+        ]);
+      }
+      expect(refusalsFor(dialected((m) => (sqlDialectOf(m).statistics[member] = "x".repeat(bound))))).toEqual([]);
+    }
+    for (const source of ["", "x".repeat(513)]) {
+      expect(
+        refusalsFor(dialected((m) => (sqlDialectOf(m).profileComposition.incomparableType.source = source))),
+      ).toEqual([refusal("out-of-range", SOURCE)]);
+    }
+    expect(
+      refusalsFor(dialected((m) => (sqlDialectOf(m).profileComposition.incomparableType.source = "x".repeat(512)))),
+    ).toEqual([]);
+  });
+
+  test("a capture's kinds that are none, more than the catalog's or repeated, and too many kind words, are refused", () => {
+    const CAPTURE = `${DIALECT}/catalogCapture`;
+    const kinds = (list: string[]) => dialected((m) => (sqlDialectOf(m).catalogCapture.kinds = list));
+    const words = Array.from({ length: 65 }, (_, index) => ({ word: `w${index}`, kind: "table" }));
+
+    expect(refusalsFor(kinds([]))).toEqual([refusal("too-few", `${CAPTURE}/kinds`)]);
+    expect(refusalsFor(kinds(["columns", "relations", "indexes", "statistics", "columns"]))).toEqual([
+      refusal("too-many", `${CAPTURE}/kinds`),
+      refusal("duplicate", `${CAPTURE}/kinds/4`),
+    ]);
+    expect(refusalsFor(kinds(["columns", "columns"]))).toEqual([refusal("duplicate", `${CAPTURE}/kinds/1`)]);
+    expect(refusalsFor(dialected((m) => (sqlDialectOf(m).catalogCapture.kindWords = words)))).toEqual([
+      refusal("too-many", `${CAPTURE}/kindWords`),
+    ]);
+    expect(refusalsFor(dialected((m) => (sqlDialectOf(m).catalogCapture.kindWords = words.slice(1))))).toEqual([]);
+  });
+
+  test("a catalog read that claims no command, the claim's restrictive value, is admitted", () => {
+    const restrictive = dialected((m) => (sqlDialectOf(m).catalogRead.commandShaped = false));
+
+    expect(refusalsFor(restrictive)).toEqual([]);
+    expect(validator.validateEngine(restrictive.engines[0]).admitted).toBe(true);
   });
 
   test("several failures are each refused, ordered by pointer", () => {
@@ -3143,6 +3458,86 @@ describe("rules the schema cannot state", () => {
     expect(refusalsFor(maintained(respec(0, { preview: true })))).toEqual([]);
   });
 
+  test("an engine that speaks a statement language with no agent overlay is refused as agent-overlay-missing", () => {
+    const changed = kafkaManifest();
+    agentOf(changed).overlay = null;
+
+    expect(refusalsFor(changed)).toEqual([refusal("agent-overlay-missing", OVERLAY)]);
+  });
+
+  test("an agent overlay on an engine that speaks no statement language is refused as agent-overlay-unspoken", () => {
+    const changed = manifest((m) => (agentOf(m).overlay = { dialect: null, grounding: null }));
+
+    expect(refusalsFor(changed)).toEqual([refusal("agent-overlay-unspoken", OVERLAY)]);
+  });
+
+  test("an SQL engine with no dialect is refused as agent-dialect-missing", () => {
+    const changed = dialected((m) => (agentOf(m).overlay.dialect = null));
+
+    expect(refusalsFor(changed)).toEqual([refusal("agent-dialect-missing", DIALECT)]);
+  });
+
+  test("a dialect on an engine of another family is refused as agent-dialect-unspoken", () => {
+    const changed = kafkaManifest();
+    agentOf(changed).overlay.dialect = sqlDialect();
+
+    expect(refusalsFor(changed)).toEqual([refusal("agent-dialect-unspoken", DIALECT)]);
+  });
+
+  test("a statistics reading without a catalog read is refused as statistics-without-catalog-read", () => {
+    const changed = dialected((m) => (sqlDialectOf(m).catalogRead = null));
+    const composesNone = dialected((m) =>
+      Object.assign(sqlDialectOf(m), { catalogRead: null, statistics: null, catalogCapture: null }),
+    );
+
+    expect(refusalsFor(changed)).toEqual([
+      refusal("catalog-capture-without-catalog-read", `${DIALECT}/catalogCapture`),
+      refusal("statistics-without-catalog-read", `${DIALECT}/statistics`),
+    ]);
+    expect(refusalsFor(composesNone)).toEqual([]);
+  });
+
+  test("a catalog capture without a catalog read is refused as catalog-capture-without-catalog-read", () => {
+    const changed = dialected((m) => Object.assign(sqlDialectOf(m), { catalogRead: null, statistics: null }));
+
+    expect(refusalsFor(changed)).toEqual([
+      refusal("catalog-capture-without-catalog-read", `${DIALECT}/catalogCapture`),
+    ]);
+  });
+
+  test("a kind word given twice is refused as capture-kind-word-duplicate, at the later one", () => {
+    const KIND_WORDS = `${DIALECT}/catalogCapture/kindWords`;
+    const repeated = dialected((m) => sqlDialectOf(m).catalogCapture.kindWords.push({ word: "r", kind: "view" }));
+    const sharedKind = dialected((m) => sqlDialectOf(m).catalogCapture.kindWords.push({ word: "p", kind: "table" }));
+
+    expect(refusalsFor(repeated)).toEqual([refusal("capture-kind-word-duplicate", `${KIND_WORDS}/3/word`)]);
+    expect(refusalsFor(sharedKind)).toEqual([]);
+  });
+
+  test("an estimating prefix that executes the plan is refused as plan-estimate-prefix-executes", () => {
+    const prefixed = (prefix: string) => dialected((m) => (sqlDialectOf(m).planEstimate = { kind: "prefix", prefix }));
+
+    for (const prefix of ["EXPLAIN ANALYZE", "EXPLAIN analyse", "EXPLAIN (ANALYZE, FORMAT JSON)"]) {
+      expect(refusalsFor(prefixed(prefix))).toEqual([
+        refusal("plan-estimate-prefix-executes", `${DIALECT}/planEstimate/prefix`),
+      ]);
+    }
+    expect(refusalsFor(prefixed("EXPLAIN ANALYZED"))).toEqual([]);
+  });
+
+  test("a profile type pattern that does not compile is refused as pattern-invalid", () => {
+    const PROFILE = `${DIALECT}/profileComposition`;
+    const changed = dialected((m) => {
+      sqlDialectOf(m).profileComposition.incomparableType.source = "(";
+      sqlDialectOf(m).profileComposition.uncountableType.source = "[";
+    });
+
+    expect(refusalsFor(changed)).toEqual([
+      refusal("pattern-invalid", `${PROFILE}/incomparableType/source`),
+      refusal("pattern-invalid", `${PROFILE}/uncountableType/source`),
+    ]);
+  });
+
   test("a sign-in shaped like Snowflake's is admitted", () => {
     expect(refusalsFor(manifest(signInShaped))).toEqual([]);
   });
@@ -3477,6 +3872,52 @@ describe("one engine declaration", () => {
     });
   });
 
+  test("an engine declaration's agent overlay is held to its rules, at pointers into it", () => {
+    const declaration = dialected(() => {}).engines[0] as Json;
+    const dialectOf = declaration.agent.overlay.dialect;
+    dialectOf.catalogRead = null;
+    dialectOf.planEstimate = { kind: "prefix", prefix: "EXPLAIN ANALYZE" };
+    dialectOf.profileComposition.incomparableType.source = "(";
+    dialectOf.profileComposition.uncountableType.source = "[";
+    dialectOf.catalogCapture.kindWords.push({ word: "v", kind: "table" });
+    const unspoken = kafkaManifest().engines[0] as Json;
+    unspoken.agent.statementLanguage = null;
+    const missing = kafkaManifest().engines[0] as Json;
+    missing.agent.overlay = null;
+    const sqlWithout = dialected(() => {}).engines[0] as Json;
+    sqlWithout.agent.overlay.dialect = null;
+    const otherWith = kafkaManifest().engines[0] as Json;
+    otherWith.agent.overlay.dialect = sqlDialect();
+
+    expect(validator.validateEngine(declaration)).toEqual({
+      admitted: false,
+      refusals: [
+        refusal("catalog-capture-without-catalog-read", "/agent/overlay/dialect/catalogCapture"),
+        refusal("capture-kind-word-duplicate", "/agent/overlay/dialect/catalogCapture/kindWords/3/word"),
+        refusal("plan-estimate-prefix-executes", "/agent/overlay/dialect/planEstimate/prefix"),
+        refusal("pattern-invalid", "/agent/overlay/dialect/profileComposition/incomparableType/source"),
+        refusal("pattern-invalid", "/agent/overlay/dialect/profileComposition/uncountableType/source"),
+        refusal("statistics-without-catalog-read", "/agent/overlay/dialect/statistics"),
+      ],
+    });
+    expect(validator.validateEngine(unspoken)).toEqual({
+      admitted: false,
+      refusals: [refusal("agent-overlay-unspoken", "/agent/overlay")],
+    });
+    expect(validator.validateEngine(missing)).toEqual({
+      admitted: false,
+      refusals: [refusal("agent-overlay-missing", "/agent/overlay")],
+    });
+    expect(validator.validateEngine(sqlWithout)).toEqual({
+      admitted: false,
+      refusals: [refusal("agent-dialect-missing", "/agent/overlay/dialect")],
+    });
+    expect(validator.validateEngine(otherWith)).toEqual({
+      admitted: false,
+      refusals: [refusal("agent-dialect-unspoken", "/agent/overlay/dialect")],
+    });
+  });
+
   test("an engine declaration's write reach is refused at its own pointer under validateEngine", () => {
     const declaration = kafkaManifest().engines[0] as Json;
     declaration.policy.writeReach = "partial";
@@ -3604,6 +4045,21 @@ describe("refusals carry no value", () => {
     expect(maintenanceRefusals).toEqual([refusal("maintenance-spec-unlisted", `${MAINTENANCE_SPECS}/5/operation`)]);
     expect(JSON.stringify(maintenanceRefusals)).not.toContain(label);
     for (const item of maintenanceRefusals) expect(refusalSentence(item)).not.toContain(label);
+
+    const word = `w${randomUUID().replaceAll("-", "")}`;
+    const repeatedWord = dialected((m) => {
+      sqlDialectOf(m).catalogCapture.kindWords = [
+        { word, kind: "table" },
+        { word, kind: "view" },
+      ];
+    });
+    const overlayRefusals = refusalsFor(repeatedWord);
+
+    expect(overlayRefusals).toEqual([
+      refusal("capture-kind-word-duplicate", `${DIALECT}/catalogCapture/kindWords/1/word`),
+    ]);
+    expect(JSON.stringify(overlayRefusals)).not.toContain(word);
+    for (const item of overlayRefusals) expect(refusalSentence(item)).not.toContain(word);
   });
 
   test("no SQL writing rule refusal carries the pattern or the type name it refuses", () => {

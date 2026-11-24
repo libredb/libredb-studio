@@ -106,7 +106,11 @@
     ]
   },
   "agent": {
-    "statementLanguage": "qdrantapi"
+    "statementLanguage": "qdrantapi",
+    "overlay": {
+      "dialect": null,
+      "grounding": null
+    }
   },
   "editor": {
     "commitKeyword": "COMMIT",

@@ -1274,6 +1274,7 @@ Those three reach code and tests only; the four prose greps of the published blo
 **For agent mode (#1821):**
 
 - [ ] `src/lib/agent/agent-manifest.ts`: the `AGENT_STATEMENT_LANGUAGE` row, null unless the provider joins agent mode; a non-null row requires the agent leg of the triad in `CLAUDE.md` and the steps in [`docs/AGENT.md`](AGENT.md#language-packs), "How to add an engine to a statement-language family".
+  A non-null row's server overlay is the source of the engine declaration's `agent.overlay`, so run `bun run engines:generate` after changing it and commit the regenerated declaration (`docs/providers/CONTRACT.md`, M-67).
 
 **Conditionally, and each one is easy to miss because the code still compiles without it:**
 
