@@ -1185,6 +1185,8 @@ Removing an engine's declaration gives exactly the connection strings a fresh bu
 - test `tests/unit/db/connection-string/compose.test.ts` "a name Studio holds only for another slot is refused by name"
 - test `tests/unit/db/connection-string/compose.test.ts` "Studio's connection string function table holds exactly the functions the committed declarations name, each at its own slot"
 - test `tests/unit/db/engine-declaration-readers.test.ts` "no listed reader reads a claim, so a declared claim reaches a gate only through Studio's review record"
+- test `tests/unit/db/engine-projections-removal.test.ts` "the connection strings built with the fixture engine hold its entry, and with it removed are exactly a fresh build from the remaining set and the committed module"
+- test `tests/unit/db/engine-projections-removal.test.ts` "the connection strings are the same whatever order the declarations are admitted in"
 
 ## Values
 
