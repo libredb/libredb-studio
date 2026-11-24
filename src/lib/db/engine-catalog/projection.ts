@@ -1,6 +1,6 @@
 /**
- * Studio's engine catalog and its data-only connection tables as projections of a set of admitted engine declarations
- * (docs/providers/CONTRACT.md, clauses M-70 and M-71).
+ * Studio's engine catalog, its data-only connection tables and its connection forms as projections of a set of admitted
+ * engine declarations (docs/providers/CONTRACT.md, clauses M-70, M-71 and M-72).
  *
  * The catalog answers which engines Studio ships, whether each is an engine the user already runs (`external`) or the
  * store Studio carries with it (`embedded`), and how long the host waits for an open of each: one entry per declaration,
@@ -12,20 +12,26 @@
  * provider is handed the operator's trust material (`connection.readsTrustMaterial`), and whether its provider opens a
  * connection string and its dialog offers one (`connection.connectionString.accepted` and `dialogOffersUri`).
  *
- * Every member either projection reads is one a declaration authors (scripts/generate-engine-catalog.ts,
- * `AUTHORED_MEMBERS`), so neither reads anything the declaration generator writes, and none of them is a claim. Each
+ * The connection forms answer, per engine, what its connection dialog draws: its `displayName`, and of its
+ * `connection` the `defaults`, the `tls` offer, the `dialog`, the `hostUriSchemes`, the `fieldRules`, the `hostHint`,
+ * the `hostIdentity` and the `import`, each as the declaration states it: a pattern as its source and flags, and a
+ * function as the name the declaration gives it, which src/lib/db/connection-form.ts binds to Studio's own function.
+ *
+ * Every member a projection reads is one a declaration authors (scripts/generate-engine-catalog.ts,
+ * `AUTHORED_MEMBERS`), so none reads anything the declaration generator writes, and none of them is a claim. Each
  * takes `AuthoredDeclaration`, those members alone: an admitted `EngineDeclaration` is one, and so are the authored
  * members the catalog generator's `--write` reads from a file whose generated members are not yet rewritten.
  *
- * Both projections are pure: their keys are the ids in ascending code-unit order, so the same set gives the same
- * answer whatever order it is admitted in, and removing a declaration gives exactly what a fresh build from the rest
- * gives. Two declarations of one id are refused by name before any entry is built. Every record, row and member they
- * answer is frozen.
+ * The projections are pure: their keys are the ids in ascending code-unit order, so the same set gives the same answer
+ * whatever order it is admitted in, and removing a declaration gives exactly what a fresh build from the rest gives.
+ * Two declarations of one id are refused by name before any entry is built. Every record, row and member they answer
+ * is frozen, and a copy: no list or record of a declaration is handed out.
  *
  * `scripts/generate-engine-catalog.ts` projects the committed declarations' authored members here and renders the
- * results into `catalog.generated.ts`, `connection.generated.ts` and `connection-flags.generated.ts`, the modules
- * Studio's readers read, and holds each module to the projection of the set it admits through the SDK's validator. A
- * loader that admits a provider package at run time projects its set through these same functions.
+ * results into `catalog.generated.ts`, `connection.generated.ts`, `connection-flags.generated.ts` and
+ * `connection-form.generated.ts`, the modules Studio's readers read, and holds each module to the projection of the
+ * set it admits through the SDK's validator. A loader that admits a provider package at run time projects its set
+ * through these same functions.
  */
 import type {
   ConnectBudget,
@@ -40,17 +46,26 @@ type Connection = EngineDeclaration["connection"];
 /** The members of a declaration the projections read, every one a member the declaration authors. */
 export interface AuthoredDeclaration {
   readonly id: string;
+  readonly displayName: EngineDeclaration["displayName"];
   readonly location: EngineLocation;
   readonly connection: {
     readonly fields: Connection["fields"];
+    readonly defaults: Connection["defaults"];
     readonly seedOnly: Connection["seedOnly"];
     readonly refused: Connection["refused"];
     readonly connectionString: {
       readonly accepted: Connection["connectionString"]["accepted"];
       readonly dialogOffersUri: Connection["connectionString"]["dialogOffersUri"];
     };
+    readonly tls: Connection["tls"];
     readonly readsTrustMaterial: Connection["readsTrustMaterial"];
+    readonly dialog: Connection["dialog"];
+    readonly hostUriSchemes: Connection["hostUriSchemes"];
     readonly credentialWarnings: Connection["credentialWarnings"];
+    readonly fieldRules: Connection["fieldRules"];
+    readonly hostHint: Connection["hostHint"];
+    readonly hostIdentity: Connection["hostIdentity"];
+    readonly import: Connection["import"];
     readonly connectBudgetMs: Connection["connectBudgetMs"];
   };
 }
@@ -93,6 +108,25 @@ export interface ConnectionTables {
   readonly connectionStringAccepted: Readonly<Record<string, boolean>>;
   readonly dialogOffersUri: Readonly<Record<string, boolean>>;
 }
+
+/**
+ * One engine's connection form: its display name and the connection members its dialog reads, each as the declaration
+ * states it, a function as its name. The SDK's types are read-only at every level, and the projection freezes them.
+ */
+export interface ConnectionFormEntry {
+  readonly displayName: EngineDeclaration["displayName"];
+  readonly defaults: Connection["defaults"];
+  readonly tls: Connection["tls"];
+  readonly dialog: Connection["dialog"];
+  readonly hostUriSchemes: Connection["hostUriSchemes"];
+  readonly fieldRules: Connection["fieldRules"];
+  readonly hostHint: Connection["hostHint"];
+  readonly hostIdentity: Connection["hostIdentity"];
+  readonly import: Connection["import"];
+}
+
+/** The connection forms: one frozen entry per engine id, keyed in ascending code-unit order of the ids. */
+export type ConnectionForms = Readonly<Record<string, ConnectionFormEntry>>;
 
 /**
  * `declarations` in ascending code-unit order of their ids.
@@ -188,4 +222,39 @@ export function projectConnectionTables(declarations: readonly AuthoredDeclarati
     connectionStringAccepted: recordOf(ordered, ({ connection }) => connection.connectionString.accepted),
     dialogOffersUri: recordOf(ordered, ({ connection }) => connection.connectionString.dialogOffersUri),
   });
+}
+
+/**
+ * A frozen copy of `value`, a member of a parsed declaration: each list and record copied in its own order and frozen,
+ * each string, number, boolean and null as it is.
+ */
+function frozenCopy<Value>(value: Value): Value {
+  if (Array.isArray(value)) return Object.freeze(value.map((item) => frozenCopy(item))) as Value;
+  if (typeof value === "object" && value !== null) {
+    return Object.freeze(
+      Object.fromEntries(Object.entries(value).map(([member, inner]) => [member, frozenCopy(inner)])),
+    ) as Value;
+  }
+  return value;
+}
+
+/**
+ * The connection forms of `declarations`, each entry read from the members every declaration authors.
+ *
+ * @throws {Error} When two declarations state the same `id`, naming it.
+ */
+export function projectConnectionForms(declarations: readonly AuthoredDeclaration[]): ConnectionForms {
+  return recordOf(inIdOrder(declarations), ({ displayName, connection }) =>
+    frozenCopy<ConnectionFormEntry>({
+      displayName,
+      defaults: connection.defaults,
+      tls: connection.tls,
+      dialog: connection.dialog,
+      hostUriSchemes: connection.hostUriSchemes,
+      fieldRules: connection.fieldRules,
+      hostHint: connection.hostHint,
+      hostIdentity: connection.hostIdentity,
+      import: connection.import,
+    }),
+  );
 }

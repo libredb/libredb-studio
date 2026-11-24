@@ -45,7 +45,7 @@ import {
 } from "@/components/icons/db-icons";
 import type { HostUriScheme } from "@/lib/connection-host-uri";
 import type { ConnectionField } from "@/lib/db/connection-fields";
-import { CONNECTION_FORM, type ConnectionFormSpec, type FieldPlacementDeclaration } from "@/lib/db/connection-form";
+import { CONNECTION_FORM, type ConnectionFormSpec } from "@/lib/db/connection-form";
 import { SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
 import { assertDatabaseType, typeIdRow } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
@@ -59,7 +59,6 @@ export {
   connectionFieldShown,
   DATABEND_FIELD_HINTS,
   DATABEND_FIELD_RULES,
-  type FieldPlacementDeclaration,
   KUBERNETES_FIELD_HINTS,
   KUBERNETES_FIELD_RULES,
   offersSslPanel,
@@ -97,9 +96,7 @@ function branded<F extends object>(form: F, icon: DBIcon, color: string): F & { 
   };
 }
 
-export const DB_UI_CONFIG: {
-  [T in DatabaseType]: Omit<DatabaseUIConfig, "fieldPlacement"> & FieldPlacementDeclaration<T>;
-} = {
+export const DB_UI_CONFIG: Readonly<Record<DatabaseType, DatabaseUIConfig>> = {
   postgres: branded(CONNECTION_FORM.postgres, PostgreSQLIcon, "text-hue-blue"),
   mysql: branded(CONNECTION_FORM.mysql, MySQLIcon, "text-hue-amber"),
   sqlite: branded(CONNECTION_FORM.sqlite, SQLiteIcon, "text-hue-cyan"),

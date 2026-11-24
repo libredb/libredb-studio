@@ -4,19 +4,21 @@
  * members, today's per-engine tables and what each engine's provider declares before it connects
  * (docs/providers/CONTRACT.md, clause M-15).
  *
- * A declaration's authored members, `AUTHORED_MEMBERS` (`id`, `location`, and of `connection` its `fields`,
- * `seedOnly`, `refused`, `connectionString.accepted` and `connectionString.dialogOffersUri`, `readsTrustMaterial`,
- * `credentialWarnings` and `connectBudgetMs`), are written in the declaration itself: this script reads them from the
- * committed file of the engine in src/lib/db/engine-declarations, whatever directory `--out` names, with
+ * A declaration's authored members, `AUTHORED_MEMBERS` (`id`, `displayName`, `location`, and of `connection` its
+ * `fields`, `defaults`, `seedOnly`, `refused`, `connectionString.accepted` and `connectionString.dialogOffersUri`,
+ * `tls`, `readsTrustMaterial`, `dialog`, `hostUriSchemes`, `credentialWarnings`, `fieldRules`, `hostHint`,
+ * `hostIdentity`, `import` and `connectBudgetMs`), are written in the declaration itself: this script reads them from
+ * the committed file of the engine in src/lib/db/engine-declarations, whatever directory `--out` names, with
  * `authoredMembersOf` (scripts/generate-engine-catalog.ts), which refuses by name a file that lacks one or whose `id`
- * is not its file name, and writes them back unchanged. Every other member is built from the tables. The engine catalog
- * and the connection tables (scripts/generate-engine-catalog.ts, clauses M-70 and M-71) project the authored members,
- * and `bun run engines:generate` runs that command's `--write` first and its `--check` last: this script builds every
- * provider through the factory, which builds only an engine the catalog holds, and reads `CONNECTION_FIELDS`, the
- * projection of each `connection.fields`, to refuse a dialog entry or a field rule for a field the engine does not
- * list, and `--check` admits every declaration this script wrote. A new engine's declaration therefore starts as a copy
- * of another engine's file with its authored members written for the new engine; the catalog generator projects it,
- * this script writes every other member, and the catalog generator then admits it.
+ * is not its file name, and writes them back unchanged. Every other member is built from the tables. The engine
+ * catalog, the connection tables and the connection forms (scripts/generate-engine-catalog.ts, clauses M-70, M-71 and
+ * M-72) project the authored members, and `bun run engines:generate` runs that command's `--write` first and its
+ * `--check` last: this script builds every provider through the factory, which builds only an engine the catalog
+ * holds, and `--check` admits every declaration this script wrote, with the SDK validator's rules, which refuse by
+ * name, among others, a dialog entry or a field rule for a field the engine does not take and a placeable field with no
+ * placement. A new engine's declaration therefore starts as a copy of another engine's file with its authored members
+ * written for the new engine; the catalog generator projects it, this script writes every other member, and the
+ * catalog generator then admits it.
  *
  * Each file is a `#/$defs/engineDeclaration` of the provider manifest schema
  * (packages/provider-sdk/src/manifest/manifest.schema.json): the engine's identity, its connection facts, its facets,
@@ -33,12 +35,13 @@
  * functions of its own.
  *
  * A function a table holds is named, never carried, and named by the slot it fills, one convention for every
- * engine: `<field>Check` for a field rule's check (`hostCheck`), `hostHint` and `hostIdentity` for the Host text
- * readers, `importer` for the connection import's parser, `urlTls` for the connection string's URL TLS reader,
- * `pasteReader` for its paste reader (one name for the reader's claims, names and parse) and `seedCheck` for its seed
- * load check. The name is read from where the function sits, never from the function itself, so this script imports no
- * provider module directly and reads no function's `name`; the census resolves each name with a table of its own and
- * holds it, by identity, to the function the connection form or the connection string row holds.
+ * engine: `urlTls` for the connection string's URL TLS reader, `pasteReader` for its paste reader (one name for the
+ * reader's claims, names and parse) and `seedCheck` for its seed load check, and, written by hand in the authored
+ * connection form members, `<field>Check` for a field rule's check (`hostCheck`), `hostHint` and `hostIdentity` for the
+ * Host text readers and `importer` for the connection import's parser, which Studio's function table in
+ * src/lib/db/connection-form.ts binds. The name is read from where the function sits, never from the function itself,
+ * so this script imports no provider module directly and reads no function's `name`; the census resolves each name with
+ * a table of its own and holds it, by identity, to the function the connection form or the connection string row holds.
  *
  * The SQL text facts come from the engine's row in `SQL_GRAMMAR`. A grammar fact the SDK's `SqlGrammar` type may leave
  * out is written at the reading its readers give that absence, false, an empty list, true for `dollarTags`,
@@ -144,28 +147,23 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type {
   AgentOverlay,
-  BoundedPattern,
   CatalogCapture,
   CatalogRead,
   ClausePattern,
-  ConnectionDialog,
   ConnectionStringOffer,
   Editor,
   EditorLanguageFacts,
   EngineDeclaration,
   FieldName,
-  FieldRule,
   GrammarFacts,
   MaintenanceSpec,
   MigrationDdl,
   NameQuote,
-  PlaceableFieldName,
   PlanEstimate,
   ProfileComposition,
   ProfileTypePattern,
   QueryDialectRow,
   Safeguards,
-  SelectFieldName,
   SqlDialect,
   SqlGenerators,
   SqlText,
@@ -204,14 +202,9 @@ import {
 import {
   AGENT_CREDENTIAL_FORM,
   CONNECTION_FIELD_DESCRIPTORS,
-  CONNECTION_FIELDS,
-  type ConnectionField,
-  PLACEABLE_FIELDS,
-  type PlaceableField,
   SEED_AGENT_CREDENTIAL,
   SEED_ONLY_FIELD_NAMES,
 } from "../src/lib/db/connection-fields";
-import { CONNECTION_FORM, type ConnectionFormSpec, offersSslPanel } from "../src/lib/db/connection-form";
 import { CONNECTION_STRING } from "../src/lib/db/connection-string";
 import { EDITOR_LANGUAGES, type EditorLanguage } from "../src/lib/db/editor-language";
 import type { EditorLanguageContribution } from "../src/lib/db/editor-language/types";
@@ -265,153 +258,6 @@ const FIELD_NAMES: ReadonlySet<string> = new Set([
 function fieldName(name: string, type: DatabaseType): FieldName {
   if (!FIELD_NAMES.has(name)) throw new Error(`${type}: "${name}" is not a field name of the provider contract`);
   return name as FieldName;
-}
-
-/** A placeable field of an engine's form as the contract's placeable name. */
-function isPlaceable(field: ConnectionField): field is PlaceableField & PlaceableFieldName {
-  return (PLACEABLE_FIELDS as readonly string[]).includes(field);
-}
-
-/** A field an engine's form declares choices for, as a select field name, or a thrown error naming it where it is not. */
-function selectField(field: ConnectionField, type: DatabaseType): SelectFieldName {
-  const descriptor = CONNECTION_FIELD_DESCRIPTORS[field];
-  if (descriptor.slot !== "body" || descriptor.control.kind !== "select") {
-    throw new Error(`${type}: "${field}" has fieldOptions but the dialog does not draw it as a select`);
-  }
-  return field as SelectFieldName;
-}
-
-/** A per-field record of an engine's form, which the generator walks in the engine's `fields` order. */
-type FieldRecordName =
-  | "fieldLabels"
-  | "fieldHints"
-  | "fieldPlaceholders"
-  | "fieldPlacement"
-  | "fieldOptions"
-  | "fieldShownWhen"
-  | "fieldDefaults"
-  | "fieldRules";
-
-/**
- * Throws an error naming the engine, the record and the field where one of `records` has an entry for a field the
- * engine does not list, since walking `fields` would otherwise drop that entry from the declaration.
- */
-function refuseUnlistedFields(
-  form: ConnectionFormSpec,
-  records: readonly FieldRecordName[],
-  fields: readonly ConnectionField[],
-  type: DatabaseType,
-): void {
-  for (const record of records) {
-    for (const field of Object.keys(form[record] ?? {})) {
-      if (!(fields as readonly string[]).includes(field)) {
-        throw new Error(`${type}: the ${record} entry for "${field}" names a field the engine does not list`);
-      }
-    }
-  }
-}
-
-/**
- * How the dialog presents one engine's fields: each per-field record of its form as a list of entries naming their
- * field, in `fields` order, empty where the form declares none. An entry for a field the engine does not list is a
- * thrown error naming the engine, the record and the field.
- */
-export function buildDialog(
-  form: ConnectionFormSpec,
-  fields: readonly ConnectionField[],
-  type: DatabaseType,
-): ConnectionDialog {
-  refuseUnlistedFields(
-    form,
-    [
-      "fieldLabels",
-      "fieldHints",
-      "fieldPlaceholders",
-      "fieldPlacement",
-      "fieldOptions",
-      "fieldShownWhen",
-      "fieldDefaults",
-    ],
-    fields,
-    type,
-  );
-  const textEntries = (record: Partial<Record<ConnectionField, string>> | undefined) =>
-    fields.flatMap((field) => {
-      const text = record?.[field];
-      return text === undefined ? [] : [{ field, text }];
-    });
-  return {
-    order: form.dialogOrder === undefined ? null : [...form.dialogOrder],
-    labels: textEntries(form.fieldLabels),
-    hints: textEntries(form.fieldHints),
-    placeholders: textEntries(form.fieldPlaceholders),
-    placement: fields.filter(isPlaceable).flatMap((field) => {
-      const where = form.fieldPlacement?.[field];
-      return where === undefined ? [] : [{ field, where }];
-    }),
-    options: fields.flatMap((field) => {
-      const choices = form.fieldOptions?.[field];
-      return choices === undefined
-        ? []
-        : [{ field: selectField(field, type), choices: choices.map(({ value, label }) => ({ value, label })) }];
-    }),
-    shownWhen: fields.flatMap((field) => {
-      const condition = form.fieldShownWhen?.[field];
-      return condition === undefined ? [] : [{ field, when: { field: condition.field, equals: condition.equals } }];
-    }),
-    absentValues: fields.flatMap((field) => {
-      const value = form.fieldDefaults?.[field];
-      return value === undefined ? [] : [{ field, value }];
-    }),
-  };
-}
-
-/** A field rule's pattern flags as the contract's flags, or a thrown error naming the rule where they are not. */
-function patternFlags(flags: string, field: ConnectionField, type: DatabaseType): BoundedPattern["flags"] {
-  if (flags !== "" && flags !== "u") {
-    throw new Error(
-      `${type}: the ${field} rule's pattern has flags "${flags}"; the provider contract allows none or u`,
-    );
-  }
-  return flags;
-}
-
-/**
- * One engine's field rules, one entry per field its form declares a rule for, in `fields` order: each pattern as its
- * source and flags, and each check named by its slot, `<field>Check`. A rule for a field the engine does not list is
- * a thrown error naming the engine and the field, since walking `fields` would otherwise drop it from the declaration.
- */
-export function buildFieldRules(
-  form: ConnectionFormSpec,
-  fields: readonly ConnectionField[],
-  type: DatabaseType,
-): FieldRule[] {
-  refuseUnlistedFields(form, ["fieldRules"], fields, type);
-  return fields.flatMap((field) => {
-    const rule = form.fieldRules?.[field];
-    if (rule === undefined) return [];
-    return [
-      {
-        field,
-        required: rule.required ?? null,
-        format:
-          rule.format === undefined
-            ? null
-            : {
-                pattern: {
-                  source: rule.format.pattern.source,
-                  flags: patternFlags(rule.format.pattern.flags, field, type),
-                },
-                sentence: rule.format.sentence,
-              },
-        charRange:
-          rule.charRange === undefined
-            ? null
-            : { min: rule.charRange.min, max: rule.charRange.max, sentence: rule.charRange.sentence },
-        check: rule.check === undefined ? null : `${field}Check`,
-      },
-    ];
-  });
 }
 
 /**
@@ -1384,24 +1230,20 @@ export function buildEngineDeclaration(
   if (authored.id !== type) {
     throw new Error(`${type}: the authored members given name the engine id ${JSON.stringify(authored.id)}`);
   }
-  const form = CONNECTION_FORM[type];
   const credential = SEED_AGENT_CREDENTIAL[type];
   const sshRefusal = SSH_TUNNEL_REFUSAL[type];
   const facets = ENGINE_FACETS[type];
-  const defaults: { port?: number; host?: string } = {};
-  if (form.defaultPort !== "") defaults.port = Number(form.defaultPort);
-  if (form.defaultHost !== undefined) defaults.host = form.defaultHost;
   return {
     id: type,
-    displayName: form.label,
+    displayName: authored.displayName,
     location: authored.location,
     connection: {
       fields: authored.connection.fields,
-      defaults,
+      defaults: authored.connection.defaults,
       seedOnly: authored.connection.seedOnly,
       refused: authored.connection.refused,
       connectionString: buildConnectionString(type, authored.connection.connectionString),
-      tls: offersSslPanel(type) ? "offered" : "not-offered",
+      tls: authored.connection.tls,
       readsTrustMaterial: authored.connection.readsTrustMaterial,
       sshTunnel: sshRefusal === null ? { offered: true } : { offered: false, refusal: sshRefusal },
       hostPathFields: [...HOST_PATH_FIELDS[type]],
@@ -1411,13 +1253,13 @@ export function buildEngineDeclaration(
         credential === null
           ? null
           : { form: credential.form, supersededBy: credential.supersededBy.map((field) => fieldName(field, type)) },
-      dialog: buildDialog(form, CONNECTION_FIELDS[type], type),
-      hostUriSchemes: [...(form.hostAcceptsUri ?? [])],
+      dialog: authored.connection.dialog,
+      hostUriSchemes: authored.connection.hostUriSchemes,
       credentialWarnings: authored.connection.credentialWarnings,
-      fieldRules: buildFieldRules(form, CONNECTION_FIELDS[type], type),
-      hostHint: form.hostHint === undefined ? null : "hostHint",
-      hostIdentity: form.hostIdentity === undefined ? null : "hostIdentity",
-      import: form.connectionImport === undefined ? null : { label: form.connectionImport.label, importer: "importer" },
+      fieldRules: authored.connection.fieldRules,
+      hostHint: authored.connection.hostHint,
+      hostIdentity: authored.connection.hostIdentity,
+      import: authored.connection.import,
       connectBudgetMs: authored.connection.connectBudgetMs,
     },
     facets: {

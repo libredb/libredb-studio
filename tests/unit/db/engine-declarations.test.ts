@@ -5,9 +5,10 @@
  *
  * `scripts/generate-engine-declarations.ts` writes `src/lib/db/engine-declarations/<type-id>.json`, one
  * `#/$defs/engineDeclaration` of the provider manifest schema each. The authored members, `AUTHORED_MEMBERS`, are read
- * from the committed file and written back unchanged; the engine catalog and the connection tables project them
- * (tests/unit/db/engine-catalog.test.ts), so the census of those members reads each table back to the declaration it
- * was projected from. The census below does not call the generator: its
+ * from the committed file and written back unchanged; the engine catalog, the connection tables and the connection
+ * forms project them (tests/unit/db/engine-catalog.test.ts), so the census of those members reads each table back to
+ * the declaration it was projected from: for the connection form, `CONNECTION_FORM` composed from the projection and
+ * Studio's function table (src/lib/db/connection-form.ts). The census below does not call the generator: its
  * read-back functions are written here, from the tables, so a slip in the generator cannot certify itself. Each test
  * loops over every shipped id and fails with the list of ids whose declaration and table differ.
  */
@@ -77,10 +78,8 @@ import {
   type AuthoredMembers,
   authoredMembersOf,
   buildAgentOverlay,
-  buildDialog,
   buildEditor,
   buildEngineDeclaration,
-  buildFieldRules,
   buildMigrationDdl,
   buildSqlGenerators,
   buildSqlText,
@@ -995,33 +994,56 @@ describe("the committed declarations", () => {
     expect(stale).toEqual([]);
   });
 
-  test("the authored members are the catalog's and the data-only connection members", () => {
+  test("the authored members are the catalog's, the data-only connection members and the connection form's", () => {
     expect([...AUTHORED_MEMBERS]).toEqual([
       "id",
+      "displayName",
       "location",
       "connection.fields",
+      "connection.defaults",
       "connection.seedOnly",
       "connection.refused",
       "connection.connectionString.accepted",
       "connection.connectionString.dialogOffersUri",
+      "connection.tls",
       "connection.readsTrustMaterial",
+      "connection.dialog",
+      "connection.hostUriSchemes",
       "connection.credentialWarnings",
+      "connection.fieldRules",
+      "connection.hostHint",
+      "connection.hostIdentity",
+      "connection.import",
       "connection.connectBudgetMs",
     ]);
     const bigquery = declared("bigquery");
     expect(authored("bigquery")).toEqual({
       id: "bigquery",
+      displayName: "BigQuery",
       location: "external",
       connection: {
         fields: bigquery.connection.fields,
+        defaults: {},
         seedOnly: null,
         refused: [],
         connectionString: { accepted: false, dialogOffersUri: false },
+        tls: "not-offered",
         readsTrustMaterial: false,
+        dialog: bigquery.connection.dialog,
+        hostUriSchemes: [],
         credentialWarnings: [],
+        fieldRules: [],
+        hostHint: null,
+        hostIdentity: null,
+        import: null,
         connectBudgetMs: 140_000,
       },
     });
+    expect(authored("snowflake").connection.fieldRules).toEqual(declared("snowflake").connection.fieldRules);
+    expect(authored("snowflake").connection.hostHint).toBe("hostHint");
+    expect(authored("kubernetes").connection.import).toEqual({ label: "Import kubeconfig", importer: "importer" });
+    expect(authored("kubernetes").connection.hostUriSchemes).toEqual(["https", "http"]);
+    expect(authored("postgres").connection.defaults).toEqual({ port: 5432 });
     expect(authored("libredb").location).toBe("embedded");
     expect(authored("libredb").connection.connectBudgetMs).toBeNull();
     expect(authored("opcua").connection.seedOnly).toEqual(declared("opcua").connection.seedOnly);
@@ -1041,12 +1063,25 @@ describe("the committed declarations", () => {
       readsTrustMaterial: true,
       connectionString: { ...committed.connection.connectionString, dialogOffersUri: true },
       connectBudgetMs: 90_000,
+      defaults: { port: 6543 },
+      tls: "not-offered" as const,
+      dialog: { ...committed.connection.dialog, labels: [{ field: "host" as const, text: "Edited by hand" }] },
+      hostUriSchemes: ["https" as const],
+      fieldRules: [{ field: "user" as const, required: "Edited by hand.", format: null, charRange: null, check: null }],
+      hostHint: "hostHint",
+      hostIdentity: "hostIdentity",
+      import: { label: "Edited by hand", importer: "importer" },
     };
-    const edited = { ...committed, displayName: "Edited by hand", location: "embedded", connection };
+    const edited = {
+      ...committed,
+      displayName: "Edited by hand",
+      location: "embedded",
+      connection: { ...connection, sshTunnel: { offered: false, refusal: "Edited by hand." } },
+    };
     const built = buildEngineDeclaration("postgres", CAPABILITIES.postgres, authoredMembersOf(edited, "postgres.json"));
 
-    expect(built).toEqual({ ...committed, location: "embedded", connection });
-    expect(built.displayName).toBe(CONNECTION_FORM.postgres.label);
+    expect(built).toEqual({ ...committed, displayName: "Edited by hand", location: "embedded", connection });
+    expect(built.connection.sshTunnel).toEqual(committed.connection.sshTunnel);
     expect(() =>
       buildEngineDeclaration("postgres", CAPABILITIES.postgres, { ...authored("postgres"), id: "mysql" }),
     ).toThrow('postgres: the authored members given name the engine id "mysql"');
@@ -1064,12 +1099,23 @@ describe("the committed declarations", () => {
     expect(() => authoredMembersOf(withoutLocation, "bigquery.json")).toThrow(
       "bigquery.json lacks its authored member location",
     );
+    expect(() => authoredMembersOf(without(committed, "displayName"), "bigquery.json")).toThrow(
+      "bigquery.json lacks its authored member displayName",
+    );
     for (const member of [
       "fields",
+      "defaults",
       "seedOnly",
       "refused",
+      "tls",
       "readsTrustMaterial",
+      "dialog",
+      "hostUriSchemes",
       "credentialWarnings",
+      "fieldRules",
+      "hostHint",
+      "hostIdentity",
+      "import",
       "connectBudgetMs",
     ] as const) {
       expect(() =>
@@ -1101,36 +1147,6 @@ describe("the committed declarations", () => {
     const refused = SHIPPED_DATABASE_TYPES.filter((type) => !validator.validateEngine(declared(type)).admitted);
 
     expect(refused).toEqual([]);
-  });
-
-  test("the generator refuses, by name, a field rule for a field the engine does not list", () => {
-    const form: ConnectionFormSpec = {
-      ...CONNECTION_FORM.postgres,
-      fieldRules: { warehouse: { required: crypto.randomUUID() } },
-    };
-
-    expect(() => buildFieldRules(form, CONNECTION_FIELDS.postgres, "postgres")).toThrow(
-      'postgres: the fieldRules entry for "warehouse" names a field the engine does not list',
-    );
-  });
-
-  test("the generator refuses, by name, a dialog entry for a field the engine does not list", () => {
-    const entries: Partial<ConnectionFormSpec>[] = [
-      { fieldLabels: { warehouse: "Warehouse" } },
-      { fieldHints: { warehouse: "The warehouse a session uses." } },
-      { fieldPlaceholders: { warehouse: "COMPUTE_WH" } },
-      { fieldOptions: { warehouse: [{ value: "small", label: "Small" }] } },
-      { fieldShownWhen: { warehouse: { field: "host", equals: "localhost" } } },
-      { fieldDefaults: { warehouse: "COMPUTE_WH" } },
-    ];
-
-    for (const entry of entries) {
-      const form: ConnectionFormSpec = { ...CONNECTION_FORM.postgres, ...entry };
-      const [record] = Object.keys(entry);
-      expect(() => buildDialog(form, CONNECTION_FIELDS.postgres, "postgres")).toThrow(
-        `postgres: the ${record} entry for "warehouse" names a field the engine does not list`,
-      );
-    }
   });
 
   test("the generator refuses, by name, an explain format the provider's explain support contradicts", () => {

@@ -1,11 +1,12 @@
 /**
- * Studio's engine catalog, which engines it ships, where each lives and how long its open may take, and its data-only
- * connection tables, projected from the engine declarations the catalog generator admits (docs/providers/CONTRACT.md,
- * clauses M-70 and M-71).
+ * Studio's engine catalog, which engines it ships, where each lives and how long its open may take, its data-only
+ * connection tables and its connection forms, projected from the engine declarations the catalog generator admits
+ * (docs/providers/CONTRACT.md, clauses M-70, M-71 and M-72).
  *
- * `scripts/generate-engine-catalog.ts` projects the committed declarations' authored members with `projectCatalog` and
- * `projectConnectionTables`, renders the projections into `src/lib/db/engine-catalog/catalog.generated.ts`,
- * `connection.generated.ts` and `connection-flags.generated.ts`, the modules Studio's readers read, and holds each to
+ * `scripts/generate-engine-catalog.ts` projects the committed declarations' authored members with `projectCatalog`,
+ * `projectConnectionTables` and `projectConnectionForms`, renders the projections into
+ * `src/lib/db/engine-catalog/catalog.generated.ts`, `connection.generated.ts`, `connection-flags.generated.ts` and
+ * `connection-form.generated.ts`, the modules Studio's readers read, and holds each to
  * the set it admits through the SDK's digest-checked validator. This file holds the projections, the admission, the
  * generated modules' bytes, the readers that answer from them, and `bun run engines:generate` end to end on a scratch
  * copy of the sources it reads.
@@ -29,10 +30,12 @@ import {
   authoredDeclarations,
   ENGINE_CATALOG_MODULE,
   ENGINE_CONNECTION_FLAGS_MODULE,
+  ENGINE_CONNECTION_FORM_MODULE,
   ENGINE_CONNECTION_MODULE,
   ENGINE_DECLARATIONS_DIRECTORY,
   renderCatalog,
   renderConnectionFlags,
+  renderConnectionForms,
   renderConnectionTables,
 } from "../../../scripts/generate-engine-catalog";
 import { EXTERNAL_DATABASE_TYPES, isExternalDatabaseType, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
@@ -48,7 +51,15 @@ import {
   BUNDLED_DIALOG_OFFERS_URI,
   BUNDLED_READS_TRUST_MATERIAL,
 } from "@/lib/db/engine-catalog/connection-flags.generated";
-import { type ConnectionTables, projectCatalog, projectConnectionTables } from "@/lib/db/engine-catalog/projection";
+import { BUNDLED_CONNECTION_FORMS } from "@/lib/db/engine-catalog/connection-form.generated";
+import {
+  type ConnectionFormEntry,
+  type ConnectionForms,
+  type ConnectionTables,
+  projectCatalog,
+  projectConnectionForms,
+  projectConnectionTables,
+} from "@/lib/db/engine-catalog/projection";
 import type { DatabaseType } from "@/lib/types";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
@@ -109,18 +120,22 @@ function generatingCopy(): {
   };
 }
 
-/** Writes the copy's mongodb declaration with authSource dropped from its connection fields, localDataCenter added. */
-function editMongodbFields(root: string): FieldName[] {
+/**
+ * Writes the copy's mongodb declaration with authSource dropped from its connection fields and localDataCenter added,
+ * and its connection dialog as `dialog` answers from the committed one; answers the fields written.
+ */
+function editMongodbDeclaration(
+  root: string,
+  dialog: (committed: EngineDeclaration["connection"]["dialog"]) => unknown,
+): FieldName[] {
   const file = path.join(root, ENGINE_DECLARATIONS_DIRECTORY, "mongodb.json");
   const committed = JSON.parse(readFileSync(file, "utf8"));
   const fields: FieldName[] = [
     ...committed.connection.fields.filter((field: FieldName) => field !== "authSource"),
     "localDataCenter",
   ];
-  writeFileSync(
-    file,
-    `${JSON.stringify({ ...committed, connection: { ...committed.connection, fields } }, null, 2)}\n`,
-  );
+  const connection = { ...committed.connection, fields, dialog: dialog(committed.connection.dialog) };
+  writeFileSync(file, `${JSON.stringify({ ...committed, connection }, null, 2)}\n`);
   return fields;
 }
 
@@ -148,6 +163,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
 
     expect(() => projectCatalog(twice)).toThrow('The engine id "postgres" is declared twice.');
     expect(() => projectConnectionTables(twice)).toThrow('The engine id "postgres" is declared twice.');
+    expect(() => projectConnectionForms(twice)).toThrow('The engine id "postgres" is declared twice.');
   });
 
   test("the catalog reads only the members a declaration authors", () => {
@@ -258,6 +274,91 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     expect(differs((d) => d.connection.connectionString.scheme)).toBeGreaterThan(0);
   });
 
+  test("the connection forms hold one entry per declaration, keyed in ascending id order whatever order they come in", () => {
+    const forms = projectConnectionForms([admitted("snowflake"), admitted("libredb"), admitted("kubernetes")]);
+
+    expect(Object.keys(forms)).toEqual(["kubernetes", "libredb", "snowflake"]);
+    // Each entry holds the nine form members in one order, each as the declaration states it.
+    const entryOf = ({ displayName, connection }: EngineDeclaration): ConnectionFormEntry => ({
+      displayName,
+      defaults: connection.defaults,
+      tls: connection.tls,
+      dialog: connection.dialog,
+      hostUriSchemes: connection.hostUriSchemes,
+      fieldRules: connection.fieldRules,
+      hostHint: connection.hostHint,
+      hostIdentity: connection.hostIdentity,
+      import: connection.import,
+    });
+    for (const id of Object.keys(forms)) {
+      expect(forms[id]).toEqual(entryOf(admitted(id)));
+      expect(Object.keys(forms[id] ?? {})).toEqual([
+        "displayName",
+        "defaults",
+        "tls",
+        "dialog",
+        "hostUriSchemes",
+        "fieldRules",
+        "hostHint",
+        "hostIdentity",
+        "import",
+      ]);
+    }
+    // Functions stay names, and a pattern stays its source and flags.
+    expect(forms.snowflake?.hostHint).toBe("hostHint");
+    expect(forms.snowflake?.fieldRules.find((rule) => rule.field === "host")?.check).toBe("hostCheck");
+    expect(forms.kubernetes?.import).toEqual({ label: "Import kubeconfig", importer: "importer" });
+    expect(forms.kubernetes?.fieldRules[0]?.format?.pattern).toEqual({
+      source: "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$",
+      flags: "",
+    });
+    // An id sorts after the id it begins with, given in either order.
+    expect(Object.keys(projectConnectionForms([admitted("influxdb3"), admitted("influxdb")]))).toEqual([
+      "influxdb",
+      "influxdb3",
+    ]);
+
+    // Frozen at every level, and a copy: no list or record of the declaration is handed out.
+    const frozen = (value: unknown): boolean =>
+      typeof value !== "object" || value === null || (Object.isFrozen(value) && Object.values(value).every(frozen));
+    expect(frozen(forms)).toBe(true);
+    expect(forms.snowflake?.dialog).not.toBe(admitted("snowflake").connection.dialog);
+    expect(forms.snowflake?.dialog.labels).not.toBe(admitted("snowflake").connection.dialog.labels);
+  });
+
+  test("the connection forms read only the members a declaration authors", () => {
+    // Every member but the authored ones replaced with postgres's: the forms the generator writes first, before the
+    // declaration generator rewrites those members, are therefore already the final ones.
+    const postgres = admitted("postgres");
+    const replaced = ADMITTED.map(
+      (d): EngineDeclaration => ({
+        ...postgres,
+        id: d.id,
+        displayName: d.displayName,
+        connection: {
+          ...postgres.connection,
+          defaults: d.connection.defaults,
+          tls: d.connection.tls,
+          dialog: d.connection.dialog,
+          hostUriSchemes: d.connection.hostUriSchemes,
+          fieldRules: d.connection.fieldRules,
+          hostHint: d.connection.hostHint,
+          hostIdentity: d.connection.hostIdentity,
+          import: d.connection.import,
+        },
+      }),
+    );
+
+    expect(projectConnectionForms(replaced)).toEqual(projectConnectionForms(ADMITTED));
+    // Vacuity: the replacement changed members the forms would read if they read them.
+    const differs = (read: (d: EngineDeclaration) => unknown) =>
+      replaced.filter((d, index) => JSON.stringify(read(d)) !== JSON.stringify(read(ADMITTED[index]))).length;
+    expect(differs((d) => d.connection.fields)).toBeGreaterThan(0);
+    expect(differs((d) => d.connection.sshTunnel)).toBeGreaterThan(0);
+    expect(differs((d) => d.connection.connectionString.scheme)).toBeGreaterThan(0);
+    expect(differs((d) => d.location)).toBeGreaterThan(0);
+  });
+
   test("every committed declaration is admitted through the SDK's digest-checked validator before it is projected", () => {
     expect(ADMITTED.map((d) => d.id)).toEqual([...SHIPPED_DATABASE_TYPES]);
     expect(ADMITTED.length).toBe(SHIPPED_DATABASE_TYPES.length);
@@ -316,7 +417,8 @@ describe("the engine catalog, projected from the admitted declarations", () => {
         JSON.stringify({ ...mongodb, connection: { ...mongodb.connection, fields } }),
       );
 
-      // The dialog the declaration generator wrote for the previous fields still places authSource.
+      // The declaration's dialog, authored for the previous fields, still places authSource and leaves localDataCenter
+      // unplaced, so the validator refuses the file while --write still projects its authored members.
       expect(() => admittedDeclarations(directory)).toThrow(
         /^mongodb\.json is refused by the provider manifest schema: .*has no placement in the engine's connection dialog\.$/,
       );
@@ -327,6 +429,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       writeFileSync(path.join(directory, "mongodb.json"), JSON.stringify(mongodb));
       expect(projectConnectionTables(authoredDeclarations(directory))).toEqual(projectConnectionTables(ADMITTED));
       expect(projectCatalog(authoredDeclarations(directory))).toEqual(projectCatalog(ADMITTED));
+      expect(projectConnectionForms(authoredDeclarations(directory))).toEqual(projectConnectionForms(ADMITTED));
     } finally {
       scratch.remove();
     }
@@ -379,22 +482,103 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     ]);
   });
 
+  test("the committed connection form module is what the generator renders from the admitted declarations", () => {
+    const committed = readFileSync(path.join(ROOT, ENGINE_CONNECTION_FORM_MODULE), "utf8");
+    const forms: ConnectionForms = projectConnectionForms(ADMITTED);
+
+    expect(committed).toBe(renderConnectionForms(forms));
+    expect(BUNDLED_CONNECTION_FORMS).toEqual(forms);
+    expect(Object.keys(BUNDLED_CONNECTION_FORMS)).toEqual(Object.keys(forms));
+    expect(committed).toContain("bun run engines:generate");
+    expect([...committed.matchAll(/^export const (\w+)/gm)].map((match) => match[1])).toEqual([
+      "BUNDLED_CONNECTION_FORMS",
+    ]);
+    // Frozen at every level, as the projection answers it.
+    const frozen = (value: unknown): boolean =>
+      typeof value !== "object" || value === null || (Object.isFrozen(value) && Object.values(value).every(frozen));
+    expect(frozen(BUNDLED_CONNECTION_FORMS)).toBe(true);
+  });
+
+  test("the renderer writes a backslash, a character outside ASCII and a number as the formatter leaves them, and refuses a control character by name", () => {
+    const tables = projectConnectionTables(ADMITTED);
+    const refusal = (text: string) => ({ ...tables, refused: { ...tables.refused, qdrant: { user: text } } });
+    const forms = projectConnectionForms(ADMITTED);
+    const withPort = (port: number) => ({
+      ...forms,
+      qdrant: { ...(forms.qdrant as ConnectionFormEntry), defaults: { port } },
+    });
+
+    // A backslash is written doubled, so the module's string is the declaration's text.
+    expect(renderConnectionTables(refusal("A back\\slash."))).toContain(
+      'qdrant: Object.freeze({ user: "A back\\\\slash." }),',
+    );
+    // A printable character outside ASCII is written as itself.
+    expect(renderConnectionTables(refusal("Caf\u00e9\u2026"))).toContain(
+      'qdrant: Object.freeze({ user: "Caf\u00e9\u2026" }),',
+    );
+    // An integer is written as its decimal text.
+    expect(renderConnectionForms(withPort(6334))).toContain("defaults: Object.freeze({ port: 6334 }),");
+    // A control character, and a number that is not an integer, are refused by name.
+    for (const text of ["A tab\there.", "A line\nbreak.", "A delete\u007f.", "A C1\u0085."]) {
+      expect(() => renderConnectionTables(refusal(text))).toThrow(
+        `The connection module cannot write ${JSON.stringify(text)}: it holds a character it does not quote`,
+      );
+    }
+    expect(() => renderConnectionForms(withPort(6334.5))).toThrow("The connection module cannot write 6334.5");
+    expect(() => renderConnectionForms(withPort(Number.NaN))).toThrow("The connection module cannot write NaN");
+    // What the committed declarations hold: six patterns with a backslash, an ellipsis and every port.
+    const rendered = renderConnectionForms(forms);
+    expect(rendered).toContain('source: "^[A-Za-z0-9_-]{1,63}$"');
+    expect(rendered).toContain(String.raw`source: "^[\\x21-\\x2b\\x2d\\x2e\\x30-\\x3c\\x3e-\\x7e]+$"`);
+    expect(rendered).toContain("\u2026");
+    expect(rendered).toContain("defaults: Object.freeze({ port: 5432 }),");
+  });
+
+  /** The renderer's refusal of `text` in a refused-field sentence, the one it gives a control character. */
+  function expectUnquoted(text: string): void {
+    const tables = projectConnectionTables(ADMITTED);
+    const planted = { ...tables, refused: { ...tables.refused, qdrant: { user: text } } };
+    expect(() => renderConnectionTables(planted)).toThrow(
+      `The connection module cannot write ${JSON.stringify(text)}: it holds a character it does not quote`,
+    );
+  }
+
+  test("the renderer refuses a line or paragraph separator by name, as it refuses a control character", () => {
+    expectUnquoted("A line\u2028separator.");
+    expectUnquoted("A paragraph\u2029separator.");
+  });
+
+  test("the renderer refuses a soft hyphen by name, as it refuses a control character", () => {
+    expectUnquoted("A soft\u00adhyphen.");
+  });
+
+  test("the renderer refuses a zero-width character by name, as it refuses a control character", () => {
+    expectUnquoted("A zero\u200bwidth space.");
+    expectUnquoted("A zero\u200cwidth non-joiner.");
+    expectUnquoted("A zero\u200dwidth joiner.");
+    expectUnquoted("A byte\ufefforder mark.");
+  });
+
+  test("the renderer refuses a lone surrogate by name, and writes a surrogate pair as itself", () => {
+    expectUnquoted("A lone high\ud83d.");
+    expectUnquoted("A lone low\ude00.");
+    const tables = projectConnectionTables(ADMITTED);
+    const planted = { ...tables, refused: { ...tables.refused, qdrant: { user: "A pair\ud83d\ude00." } } };
+    expect(renderConnectionTables(planted)).toContain('qdrant: Object.freeze({ user: "A pair\ud83d\ude00." }),');
+  });
+
   test("the connection module refuses by name a value it cannot write as the formatter lays it out", () => {
     const tables = projectConnectionTables(ADMITTED);
     const refusal = (text: string) => ({ ...tables, refused: { ...tables.refused, qdrant: { user: text } } });
     const planted = (table: Partial<ConnectionTables>) => () => renderConnectionTables({ ...tables, ...table });
     const plantedFlag = (table: Partial<ConnectionTables>) => () => renderConnectionFlags({ ...tables, ...table });
 
-    expect(planted(refusal("A back\\slash."))).toThrow(
-      'The connection module cannot write "A back\\\\slash.": it holds',
-    );
-    expect(planted(refusal("Caf\u00e9."))).toThrow("it holds a character it does not quote");
     expect(planted(refusal("A tab\there."))).toThrow("it holds a character it does not quote");
     expect(plantedFlag({ readsTrustMaterial: { ...tables.readsTrustMaterial, "acme-foo": true } })).toThrow(
       'The connection module cannot write the member "acme-foo"',
     );
-    expect(plantedFlag({ dialogOffersUri: { ...tables.dialogOffersUri, qdrant: 1 as unknown as boolean } })).toThrow(
-      "The connection module cannot write 1",
+    expect(plantedFlag({ dialogOffersUri: { ...tables.dialogOffersUri, qdrant: 1.5 as unknown as boolean } })).toThrow(
+      "The connection module cannot write 1.5",
     );
     // A sentence holding more double quotes than single ones is written in single quotes, as the formatter writes it.
     expect(renderConnectionTables(refusal('Say "no" and "yes", it\'s fine.'))).toContain(
@@ -450,14 +634,15 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       const catalog = path.join(dir, "catalog.generated.ts");
       const connection = path.join(dir, "connection.generated.ts");
       const flags = path.join(dir, "connection-flags.generated.ts");
-      expect(written.stdout.toString()).toBe(`Wrote ${catalog}\nWrote ${connection}\nWrote ${flags}\n`);
+      const form = path.join(dir, "connection-form.generated.ts");
+      expect(written.stdout.toString()).toBe(`Wrote ${catalog}\nWrote ${connection}\nWrote ${flags}\nWrote ${form}\n`);
       expect(readFileSync(connection, "utf8")).toBe(readFileSync(path.join(ROOT, ENGINE_CONNECTION_MODULE), "utf8"));
       expect(readFileSync(flags, "utf8")).toBe(readFileSync(path.join(ROOT, ENGINE_CONNECTION_FLAGS_MODULE), "utf8"));
       expect(readFileSync(catalog, "utf8")).toBe(readFileSync(path.join(ROOT, ENGINE_CATALOG_MODULE), "utf8"));
       const current = run("--check", "--out", dir);
       expect(current.exitCode).toBe(0);
       expect(current.stdout.toString()).toBe(
-        `${catalog} is up to date\n${connection} is up to date\n${flags} is up to date\n`,
+        `${catalog} is up to date\n${connection} is up to date\n${flags} is up to date\n${form} is up to date\n`,
       );
 
       const text = readFileSync(connection, "utf8");
@@ -489,22 +674,49 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     }
   }, 20000);
 
-  test("bun run engines:generate regenerates an authored connection.fields change in one run: a placeable field added and a placed one removed", () => {
+  test("--check names a stale connection form module, and --write writes every projected module", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "engine-connection-form-module-"));
+    const run = (...args: string[]) =>
+      Bun.spawnSync([process.execPath, SCRIPT, ...args], { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
+    try {
+      expect(run("--write", "--out", dir).exitCode).toBe(0);
+      const form = path.join(dir, "connection-form.generated.ts");
+      const text = readFileSync(form, "utf8");
+      expect(text).toBe(readFileSync(path.join(ROOT, ENGINE_CONNECTION_FORM_MODULE), "utf8"));
+
+      // A hint edited by hand in the generated module is named, and only that module.
+      writeFileSync(form, text.replace("Only for an encrypted key.", "Only for an encrypted private key."));
+      const stale = run("--check", "--out", dir);
+      expect(stale.exitCode).toBe(1);
+      expect(stale.stderr.toString()).toBe(
+        `${form} is not what the engine declarations project\nrun: bun run engines:generate\n`,
+      );
+
+      rmSync(form);
+      const missing = run("--check", "--out", dir);
+      expect(missing.exitCode).toBe(1);
+      expect(missing.stderr.toString()).toBe(
+        `${form} is not what the engine declarations project\nrun: bun run engines:generate\n`,
+      );
+
+      expect(run("--write", "--out", dir).exitCode).toBe(0);
+      expect(readFileSync(form, "utf8")).toBe(text);
+      expect(run("--check", "--out", dir).exitCode).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    // Each run admits every declaration, a fraction of a second; well inside ten times that.
+  }, 20000);
+
+  test("bun run engines:generate regenerates an authored connection.fields and connection.dialog change in one run: a placeable field added and a placed one removed", () => {
     const copy = generatingCopy();
     try {
-      const fields = editMongodbFields(copy.root);
-      // Studio's side: mongodb's form places localDataCenter and no longer places or hints authSource.
-      const formFile = path.join(copy.root, "src/lib/db/connection-form.ts");
-      const form = readFileSync(formFile, "utf8");
-      const placement = 'fieldPlacement: { authSource: "open" },';
-      const hint =
-        '      authSource:\n        "The database the user was created in, usually admin. Leave empty when the credentials live in the database above.",\n';
-      expect(form.split(placement).length).toBe(2);
-      expect(form.split(hint).length).toBe(2);
-      writeFileSync(
-        formFile,
-        form.replace(placement, 'fieldPlacement: { localDataCenter: "open" },').replace(hint, ""),
-      );
+      // The declaration's own dialog places localDataCenter and no longer places or hints authSource.
+      const fields = editMongodbDeclaration(copy.root, (dialog) => ({
+        ...dialog,
+        hints: dialog.hints.filter(({ field }) => field !== "authSource"),
+        placement: [{ field: "localDataCenter", where: "open" }],
+      }));
 
       const run = copy.generate();
       expect(run.stderr).not.toContain("refused");
@@ -518,6 +730,12 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       expect(mongodb?.connection.dialog.hints.map(({ field }) => field)).not.toContain("authSource");
       expect(readFileSync(path.join(copy.root, ENGINE_CONNECTION_MODULE), "utf8")).toBe(
         renderConnectionTables(projectConnectionTables(regenerated)),
+      );
+      expect(readFileSync(path.join(copy.root, ENGINE_CONNECTION_FORM_MODULE), "utf8")).toBe(
+        renderConnectionForms(projectConnectionForms(regenerated)),
+      );
+      expect(readFileSync(path.join(copy.root, ENGINE_CONNECTION_FORM_MODULE), "utf8")).not.toBe(
+        readFileSync(path.join(ROOT, ENGINE_CONNECTION_FORM_MODULE), "utf8"),
       );
       expect(readFileSync(path.join(copy.root, ENGINE_CONNECTION_FLAGS_MODULE), "utf8")).toBe(
         readFileSync(path.join(ROOT, ENGINE_CONNECTION_FLAGS_MODULE), "utf8"),
@@ -539,23 +757,35 @@ describe("the engine catalog, projected from the admitted declarations", () => {
   test("bun run engines:generate exits 1 with the validator's refusal when Studio's tables do not follow an authored change", () => {
     const copy = generatingCopy();
     try {
-      // The authored side changes and mongodb's form is left as it was: authSource is still placed, so the declaration
-      // generator refuses the form's first entry for it, and localDataCenter has no placement.
-      editMongodbFields(copy.root);
-      const unplaced = copy.generate();
-      expect(unplaced.exitCode).toBe(1);
-      expect(unplaced.stderr).toContain(
-        'mongodb: the fieldHints entry for "authSource" names a field the engine does not list',
+      // The authored side drops a host path field from OPC UA's seed-only fields, and Studio's HOST_PATH_FIELDS record
+      // still lists it: every generator writes, and the final admission refuses the declaration the run wrote.
+      const file = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY, "opcua.json");
+      const opcua = JSON.parse(readFileSync(file, "utf8"));
+      const seedOnly = {
+        ...opcua.connection.seedOnly,
+        fields: opcua.connection.seedOnly.fields.filter((field: string) => field !== "clientPrivateKeyPath"),
+      };
+      writeFileSync(file, `${JSON.stringify({ ...opcua, connection: { ...opcua.connection, seedOnly } }, null, 2)}\n`);
+      const untracked = copy.generate();
+      expect(untracked.exitCode).toBe(1);
+      expect(untracked.stderr).toContain(
+        "opcua.json is refused by the provider manifest schema: The host path field at /connection/hostPathFields/1 is not one of the engine's seed-only fields.",
       );
+    } finally {
+      copy.remove();
+    }
+    // Copying the sources and the three generator runs take a few seconds; well inside ten times that.
+  }, 60000);
 
-      // With the form's authSource entries gone and localDataCenter still unplaced, every generator writes, and the
-      // final admission refuses the declaration the run wrote.
-      const formFile = path.join(copy.root, "src/lib/db/connection-form.ts");
-      const form = readFileSync(formFile, "utf8");
-      const placement = '    fieldPlacement: { authSource: "open" },\n';
-      const hint =
-        '      authSource:\n        "The database the user was created in, usually admin. Leave empty when the credentials live in the database above.",\n';
-      writeFileSync(formFile, form.replace(placement, "").replace(hint, ""));
+  test("bun run engines:generate exits 1 with the validator's refusal when an authored change leaves a placeable field unplaced", () => {
+    const copy = generatingCopy();
+    try {
+      // The authored fields add localDataCenter and the authored dialog drops authSource without placing it.
+      editMongodbDeclaration(copy.root, (dialog) => ({
+        ...dialog,
+        hints: dialog.hints.filter(({ field }) => field !== "authSource"),
+        placement: [],
+      }));
       const refused = copy.generate();
       expect(refused.exitCode).toBe(1);
       expect(refused.stderr).toContain(
@@ -564,7 +794,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     } finally {
       copy.remove();
     }
-    // Copying the sources and up to six generator runs take a few seconds; well inside ten times that.
+    // Copying the sources and the three generator runs take a few seconds; well inside ten times that.
   }, 60000);
 
   test("SHIPPED_DATABASE_TYPES is the catalog's engines in its order", () => {

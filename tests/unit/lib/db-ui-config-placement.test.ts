@@ -13,7 +13,6 @@ import { CONNECTION_FIELDS, PLACEABLE_FIELDS } from "@/lib/db/connection-fields"
 import {
   DB_UI_CONFIG,
   type DatabaseUIConfig,
-  type FieldPlacementDeclaration,
   connectionFieldLabel,
   connectionFieldPlacement,
   connectionFieldPlaceholder,
@@ -56,28 +55,6 @@ describe("connectionFieldPlacement", () => {
     expect(() => connectionFieldPlacement(DB_UI_CONFIG.postgres, "serviceName")).toThrow(
       "PostgreSQL declares no placement for serviceName",
     );
-  });
-
-  /**
-   * Held by the compiler: `bun run typecheck` reads this file, and each `@ts-expect-error` below fails it the day its
-   * line compiles. The runtime assertion only keeps the fixtures from being unused.
-   */
-  test("the declaration is required where an engine takes a placeable field, and refused elsewhere", () => {
-    const fixtures: readonly unknown[] = [
-      // @ts-expect-error: Oracle takes serviceName, so it must say where the dialog draws it.
-      {} satisfies FieldPlacementDeclaration<"oracle">,
-      // @ts-expect-error: PostgreSQL takes no placeable field, so it declares no placement.
-      { fieldPlacement: { serviceName: "open" } } satisfies FieldPlacementDeclaration<"postgres">,
-      // @ts-expect-error: only the four placeable fields are drawn where a placement says.
-      { fieldPlacement: { warehouse: "advanced" } } satisfies FieldPlacementDeclaration<"databend">,
-      {
-        // @ts-expect-error: SQL Server does not take serviceName, so it cannot place one.
-        fieldPlacement: { instanceName: "advanced", serviceName: "open" },
-      } satisfies FieldPlacementDeclaration<"mssql">,
-      { fieldPlacement: { serviceName: "advanced" } } satisfies FieldPlacementDeclaration<"oracle">,
-      {} satisfies FieldPlacementDeclaration<"postgres">,
-    ];
-    expect(fixtures).toHaveLength(6);
   });
 });
 
