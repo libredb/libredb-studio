@@ -8,7 +8,7 @@
  * refused in the language's own words, and a result cut to max_rows says how to narrow it, since the tool takes no
  * offset. The tool and its schema are listed beside the SQL one, and each call is recorded under its own action.
  */
-import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test, beforeAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,6 +25,7 @@ import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseType } from "@/lib/types";
 import { fakeTextScrub, pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
+import { withRecordingHostCore } from "../../helpers/recording-host-core";
 import { listedMcpToolNames } from "../../helpers/mcp-tool-names";
 import {
   bsonDocumentBytes,
@@ -34,6 +35,11 @@ import {
   resetMongoDriver,
 } from "../../helpers/mongodb-driver";
 import readWriteStatus from "../../unit/db/mongodb/fixtures/connection-status-read-plus-insert-one-collection-9.0.4.json";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The notice an answer carrying database content opens with on this file's mongodb connections. */
 const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("mongodb"));
@@ -184,6 +190,27 @@ describe("a read", () => {
       ["run_mongo_command", "mcp/decision", "success"],
       ["run_mongo_command", "mcp/execution", "success"],
     ]);
+  });
+
+  test("a statement runs through the host core's read-only execute", async () => {
+    const find = { collection: "notes", operation: "find", filter: {} };
+    const { result, executes } = await withRecordingHostCore(async ({ executes }) => ({
+      result: await command({ connection_id: "seed:mongo", command: find }),
+      executes,
+    }));
+
+    expect(result.isError ?? false).toBe(false);
+    expect(executes.map(({ readOnlyStatements, request }) => [readOnlyStatements, request])).toEqual([
+      [
+        true,
+        {
+          statement: JSON.stringify(find),
+          page: { unlimited: true },
+          readOnly: { budget: { maxRows: 1000, maxBytes: 1048576 } },
+        },
+      ],
+    ]);
+    expect(mongoDriver.cursors.at(-1)).toMatchObject({ kind: "find", namespace: "app.notes" });
   });
 
   test("an aggregate answers through the same path", async () => {
@@ -367,6 +394,21 @@ describe("the result cap", () => {
       isError: true,
       content: [{ type: "text", text: RUN_MONGO_COMMAND_ARM.tooLarge(find, "mongodb").bytes as string }],
     });
+  });
+
+  test("a document with a bigint beside a missing field is answered through the host core as before", async () => {
+    // A union of fields: the first document lacks b, so its row holds a bigint beside an undefined cell.
+    const queryReadOnly = mock(async () => ({
+      rows: [{ a: BigInt(1), b: undefined }, { b: "x" }],
+      fields: ["a", "b"],
+      rowCount: 2,
+      executionTime: 0,
+    }));
+    const provider = { type: "mongodb", getCapabilities: () => ({}), queryReadOnly };
+    const result = await direct({ connection_id: "seed:fake", command: JSON.parse(find) }, fakeContext(provider));
+    expect(result.isError ?? false).toBe(false);
+    expect(result.structuredContent?.rows).toEqual([{ a: { $: "i64", v: "1" } }, { b: "x" }]);
+    expect(queryReadOnly).toHaveBeenCalledTimes(1);
   });
 
   test("the provider handed out is never asked for query()", async () => {

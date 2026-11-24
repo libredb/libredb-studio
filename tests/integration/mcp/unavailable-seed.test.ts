@@ -19,6 +19,11 @@ import { servingStatementArms } from "@/lib/mcp/tools/statement-arms";
 import { createSqliteFile, pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
 import { listedMcpToolNames, registeredMcpToolNames } from "../../helpers/mcp-tool-names";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 pinMcpTestEnvironment();
 

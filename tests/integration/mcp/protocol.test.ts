@@ -40,6 +40,11 @@ import {
   testAuthInfo,
 } from "../../helpers/mcp-harness";
 import { listedMcpToolNames, registeredMcpToolNames } from "../../helpers/mcp-tool-names";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 pinMcpTestEnvironment();
 
@@ -534,11 +539,12 @@ describe("the cells of an answer", () => {
     let doc: unknown = 1;
     for (let level = 0; level < 300; level++) doc = { a: doc };
     const result = await withDuckdbRows([{ c: doc }], () => callRows("seed:slow", "SELECT answer FROM answers"));
-    // The rows and the row are the first two of the arrays and objects the bound counts.
+    // The host core measures each row in the value codec's form as it pages the answer, so its refusal comes first, at
+    // the cell's place in the row read positionally: the row is the first of the arrays and objects the bound counts.
     expectRefused(
       result,
       `a value nested deeper than ${MAX_VALUE_DEPTH} arrays and objects`,
-      `/0/c${"/a".repeat(MAX_VALUE_DEPTH - 2)}`,
+      `/0${"/a".repeat(MAX_VALUE_DEPTH - 1)}`,
     );
   });
 

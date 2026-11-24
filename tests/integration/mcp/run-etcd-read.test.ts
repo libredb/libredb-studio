@@ -11,7 +11,7 @@
  * sentence; a key outside the user's READ ranges is refused in Studio's words whether it exists or not; and a read
  * past the row budget is refused with the command's own advice.
  */
-import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test, beforeAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -33,6 +33,11 @@ import { capturedClient, type EtcdAgentPrincipal, principalCapture } from "../..
 import { createFakeEtcdClient, type FakeEtcdClient } from "../../helpers/etcd-fake-client";
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The notice an answer carrying database content opens with on this file's etcd connections. */
 const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("etcd"));

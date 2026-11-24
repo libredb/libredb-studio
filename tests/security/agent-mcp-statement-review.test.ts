@@ -11,7 +11,7 @@
  * from the record as it loads (the MCP statement arms) derives it from the narrowed one. Run in its own process by
  * `tests/run-tests.ts`, so the substitution reaches no other file.
  */
-import { afterAll, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, describe, expect, mock, spyOn, test, beforeAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +19,11 @@ import type { AgentToolContext } from "@/lib/agent/tools";
 import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import type { DatabaseProvider, ProviderCapabilities, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection, DatabaseType, QueryResult } from "@/lib/types";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 const shippedCompatibility = { ...(await import("@/lib/db/compatibility")) };
 const shipped: readonly DatabaseType[] = [...shippedCompatibility.AGENT_EXECUTION_ENGINES];

@@ -12,7 +12,7 @@
  * profile refuses; a result cut to max_rows says how to read on with "after", since the tool takes no offset; and a
  * read past timeout_ms is answered as the timeout.
  */
-import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test, beforeAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,6 +29,12 @@ import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
+import { withRecordingHostCore } from "../../helpers/recording-host-core";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The notice an answer carrying database content opens with on this file's kafka connections. */
 const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("kafka"));
@@ -264,6 +270,23 @@ describe("a read", () => {
     expect(RUN_KAFKA_READ_ARM.description).toContain(
       'an answer that holds as many rows as its "limit" may have more after it, so read on with "after" until an answer holds fewer',
     );
+  });
+
+  test("a statement runs through the host core's read-only execute", async () => {
+    const statement = '{"read": "topics"}';
+    const reads = spyOn(KafkaProvider.prototype, "queryReadOnly");
+    const plain = spyOn(KafkaProvider.prototype, "query");
+    const { result, executes } = await withRecordingHostCore(async ({ executes }) => ({
+      result: await kafka(statement),
+      executes,
+    }));
+
+    expect(result.isError ?? false).toBe(false);
+    expect(executes.map(({ readOnlyStatements, request }) => [readOnlyStatements, request])).toEqual([
+      [true, { statement, page: { unlimited: true }, readOnly: { budget: { maxRows: 1000, maxBytes: 1048576 } } }],
+    ]);
+    expect(reads).toHaveBeenCalledTimes(1);
+    expect(plain).not.toHaveBeenCalled();
   });
 
   test("a read past timeout_ms is answered as the timeout, and the broker is not waited for", async () => {

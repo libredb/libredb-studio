@@ -6,7 +6,7 @@
  * after it read its password, so the secret is a marker the test can look for everywhere it could land, and the
  * provider's own copy of it is the proof that it was in play.
  */
-import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test, beforeAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +20,11 @@ import { resetVaultCache } from "@/lib/seed/vault-client";
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, routeServe, type TestClient } from "../../helpers/mcp-harness";
 import { mintTestToken, useMcpChannel } from "../../helpers/mcp-token";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 pinMcpTestEnvironment();
 

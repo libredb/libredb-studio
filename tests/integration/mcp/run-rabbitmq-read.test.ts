@@ -12,7 +12,7 @@
  * to read on by offset, since the tool takes no offset; and a timeout or a cancel ends the wait while the provider's
  * own deadline ends the read.
  */
-import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test, beforeAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -45,6 +45,11 @@ import {
 } from "../../helpers/rabbitmq-fake-peer";
 import { createManagementStub, type ManagementStub } from "../../helpers/rabbitmq-management-stub";
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The notice an answer carrying database content opens with on this file's rabbitmq connections. */
 const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("rabbitmq"));

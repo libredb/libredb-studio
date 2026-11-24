@@ -31,6 +31,11 @@ import {
 } from "../../helpers/mcp-harness";
 import { mintTestToken, useMcpChannel } from "../../helpers/mcp-token";
 import { listedMcpToolNames } from "../../helpers/mcp-tool-names";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 pinMcpTestEnvironment();
 

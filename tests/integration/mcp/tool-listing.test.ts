@@ -5,7 +5,7 @@
  * cannot be read or parsed answers tools/list with -32603, never a list, and a discovery export, which opts nothing in,
  * changes no answer. Every case runs in both protocol eras, against the production dispatcher.
  */
-import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test, beforeAll } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -42,6 +42,11 @@ import {
 import { servedEngineSeeds } from "../../helpers/mcp-served-seeds";
 import { mintTestToken, useMcpChannel } from "../../helpers/mcp-token";
 import { listedMcpToolNames, registeredMcpToolNames } from "../../helpers/mcp-tool-names";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 pinMcpTestEnvironment();
 

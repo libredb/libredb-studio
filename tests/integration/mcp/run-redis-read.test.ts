@@ -10,7 +10,7 @@
  * proof, and the proof runs again on the command's own connection right before the command. A key-pattern reader is
  * refused a key outside its patterns in the same words whether the key exists or not, and those words never name it.
  */
-import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test, beforeAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,6 +29,11 @@ import { fakeTextScrub, pinMcpTestEnvironment, resetMcpTestState, writeSeedFile 
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
 import { listedMcpToolNames } from "../../helpers/mcp-tool-names";
 import { asReply, type CapturedStep, principalCapture, probeLabel, stepFor } from "../../helpers/redis-agent";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The notice an answer carrying database content opens with on this file's redis connections. */
 const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("redis"));

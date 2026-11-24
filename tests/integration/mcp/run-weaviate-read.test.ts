@@ -12,7 +12,7 @@
  * row budget is refused with the request's own advice, and a result cut to max_rows says how to narrow it, since the
  * tool takes no offset. A verbose node read names no tenant, also for a key whose tenants the server filters elsewhere.
  */
-import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test, beforeAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -40,6 +40,11 @@ import {
 } from "../../helpers/weaviate-agent";
 import { type RecordedAnswer, okAnswer, recordingWeaviateTransport } from "../../helpers/weaviate-wire";
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The notice an answer carrying database content opens with on this file's weaviate connections. */
 const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("weaviate"));

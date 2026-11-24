@@ -41,7 +41,7 @@
  *    come back alphabetically, so declaration order is not recoverable - the tree
  *    orders partition key, then clustering, then the rest by name, and says so.
  */
-import { beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { beforeAll, beforeEach, describe, expect, spyOn, test, afterAll } from "bun:test";
 import { policies, types } from "cassandra-driver";
 import {
   AuthenticationError,
@@ -115,6 +115,11 @@ import {
 } from "../../helpers/cassandra-fake-peer";
 import { fakeTextScrub } from "../../helpers/mcp-fixtures";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The notice an answer carrying database content opens with on this file's cassandra connections. */
 const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("cassandra"));

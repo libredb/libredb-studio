@@ -407,6 +407,24 @@ describe("the protected read path", () => {
 });
 
 const HANDOVER_ROUTE = join("src", "app", "api", "agent", "runs", "[runId]", "handover", "route.ts");
+/** MCP's statement core, whose one helper sends every statement tool's statement through the read-only execute. */
+const MCP_STATEMENT = join("src", "lib", "mcp", "tools", "run-statement.ts");
+const MCP_STATEMENT_HELPER = "statementOnHost";
+
+/** The string literal arguments of each call of `callee` in `node`, in source order. */
+function literalArguments(node: ts.Node, callee: string): string[][] {
+  const found: string[][] = [];
+  const visit = (at: ts.Node) => {
+    if (ts.isCallExpression(at) && ts.isIdentifier(inner(at.expression))) {
+      if ((inner(at.expression) as ts.Identifier).text === callee) {
+        found.push(at.arguments.filter(ts.isStringLiteral).map((argument) => argument.text));
+      }
+    }
+    ts.forEachChild(at, visit);
+  };
+  visit(node);
+  return found;
+}
 const AGENT_TOOLS = join("src", "lib", "agent", "tools.ts");
 const AGENT_SOURCES = [join("src", "lib", "agent"), join("src", "app", "api", "agent")];
 
@@ -466,7 +484,7 @@ describe("the agent's statements and the hand-over replay on the host core", () 
     ]);
   }, 60_000);
 
-  test("only the agent's statement path and the hand-over route open a read-only statement session, each under a profile that sends statements", () => {
+  test("only the agent's statement path, the hand-over route and MCP's statement path open a read-only statement session, each under a profile that sends statements", () => {
     // The session is read-only for statements because its caller acquired the provider under a profile whose open
     // policy has both readOnly and sendsStatements; the host trusts the facade's word, so the callers are held here.
     const sessions = callsOutsideProviders(BRIDGE_SESSION);
@@ -478,11 +496,21 @@ describe("the agent's statements and the hand-over replay on the host core", () 
       [`${AGENT_TOOLS} in runStatement`]: "AGENT_EXECUTION_PROFILE",
       [`${HANDOVER_ROUTE} in POST`]: "AGENT_HANDOVER_PROFILE",
     };
-    expect(facade.map((call) => `${call.file} in ${call.declaration}`).sort()).toEqual(Object.keys(profiles).sort());
-    for (const call of facade) {
+    const mcpCaller = `${MCP_STATEMENT} in ${MCP_STATEMENT_HELPER}`;
+    expect(facade.map((call) => `${call.file} in ${call.declaration}`).sort()).toEqual(
+      [...Object.keys(profiles), mcpCaller].sort(),
+    );
+    for (const call of facade.filter((each) => `${each.file} in ${each.declaration}` !== mcpCaller)) {
       const profile = profiles[`${call.file} in ${call.declaration}`] as string;
       expect([call.declaration, call.names.has(profile)]).toEqual([call.declaration, true]);
     }
+    // MCP's helper is called by the one function that acquired its provider, under the agent's read-only profile, which
+    // it names as a string literal where the agent names its constant.
+    const helper = callsOutsideProviders(MCP_STATEMENT_HELPER);
+    expect(helper.map((call) => `${call.file} in ${call.declaration}`)).toEqual([`${MCP_STATEMENT} in executeOpened`]);
+    expect(literalArguments(declaredFunction(MCP_STATEMENT, "executeOpened"), "acquireWithinCall")).toEqual([
+      ["agent-read-only"],
+    ]);
   }, 60_000);
 
   test("only the agent's statistics read opens a composed statement session, under the operations profile", () => {
@@ -638,13 +666,13 @@ const FACTORY = join("src", "lib", "db", "factory.ts");
 const KNOWN_PRESENCE_TESTS: readonly string[] = [
   `${FACTORY} in openProfiledProvider`,
   `${CORE_CALLER} in read`,
-  `${join("src", "lib", "mcp", "tools", "run-statement.ts")} in executeOpened`,
   `${BRIDGE} in ${BRIDGE_SESSION}`,
 ];
-/** The presence tests that return their refusal as a value: MCP's statement tool answers every refusal that way. */
-const RETURNED_REFUSALS: readonly string[] = [
-  `${join("src", "lib", "mcp", "tools", "run-statement.ts")} in executeOpened`,
-];
+/**
+ * The presence tests that return their refusal as a value: none, since MCP's statement tool, which answered its own that
+ * way, reaches the bridge's open, which throws its refusal.
+ */
+const RETURNED_REFUSALS: readonly string[] = [];
 
 describe("the review record gates the protected read path", () => {
   test("the scan finds a presence test that opens, and not one that refuses the absence", () => {

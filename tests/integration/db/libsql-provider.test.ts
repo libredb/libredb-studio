@@ -23,7 +23,7 @@
  * 5. `dbstat` ANSWERS ON BOTH, so per-table bytes here are measured - which
  *    `bun:sqlite` cannot do at all.
  */
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test, afterAll, beforeAll } from "bun:test";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import {
   AuthenticationError,
@@ -69,6 +69,11 @@ import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 import { fakeTextScrub } from "../../helpers/mcp-fixtures";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { errorKind } from "@/lib/db/error-record";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The notice an answer carrying database content opens with on this file's libsql connections. */
 const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("libsql"));

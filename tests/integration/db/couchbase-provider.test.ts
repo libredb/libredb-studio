@@ -6,7 +6,7 @@
  * test files. Every payload below was captured from a live Couchbase Server
  * 8.0.2 Community node, so the fake speaks exactly what the cluster speaks.
  */
-import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, spyOn, afterAll, beforeAll } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { ServerResponse } from "node:http";
 import { createServer as createHttpsServer, type Server as HttpsServer } from "node:https";
@@ -49,6 +49,11 @@ import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 import { fakeTextScrub } from "../../helpers/mcp-fixtures";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { errorKind } from "@/lib/db/error-record";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The notice an answer carrying database content opens with on this file's couchbase connections. */
 const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("couchbase"));

@@ -148,9 +148,26 @@ describe("the bridge's measure of a row the value codec refuses", () => {
     });
   });
 
-  test("a bigint outside the codec's range fails the measure as JSON fails it", async () => {
-    const caught = await measured(["v"], [{ v: BigInt(2) ** BigInt(64) }]).catch((error: unknown) => error);
+  test("a row holding a bigint beside a cell outside the codec is measured with the bigint as its decimal text, never thrown", async () => {
+    const page = await measured(
+      ["a", "b", "p"],
+      [
+        { a: BigInt(1), b: undefined, p: 1 },
+        { a: BigInt(2), b: "x", p: new Point(3) },
+      ],
+    );
 
-    expect(caught).toBeInstanceOf(TypeError);
+    expect(page.refusalsThrown).toBe(0);
+    expect(page.rows).toEqual([
+      ["1", null, 1],
+      ["2", "x", { at: 3 }],
+    ]);
+    expect(page.bytes).toBe(real.encodedRowBytes(["1", null, 1]) + real.encodedRowBytes(["2", "x", { at: 3 }]));
+  });
+
+  test("a bigint outside the codec's range is measured as its decimal text, as a row read for a budget is", async () => {
+    const page = await measured(["v"], [{ v: BigInt(2) ** BigInt(64) }]);
+
+    expect(page.rows).toEqual([["18446744073709551616"]]);
   });
 });
