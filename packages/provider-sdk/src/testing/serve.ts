@@ -3,9 +3,10 @@
  * puts a provider module record behind JSON frames, so a test calls a provider exactly as the contract says calls
  * look.
  *
- * Every call crosses as one request frame and one answer frame, each the JSON text of values `encodeValue` wrote,
- * parsed and decoded with `decodeValue` on the other side, read as the closed shape of its call type (`readFrame`) and
- * compared with what the sending side handed (`roundTripRefusals`); a frame either refuses is thrown as one
+ * Every call crosses as one request frame and one answer frame, each the JSON text of values `encodeValue` wrote; a call
+ * with no request part, `health` and `monitoring.poolStats`, carries only its context in its request frame. Each frame
+ * is parsed and decoded with `decodeValue` on the other side, read as the closed shape of its call type (`readFrame`)
+ * and compared with what the sending side handed (`roundTripRefusals`); a frame either refuses is thrown as one
  * `FrameRefusalError`. The provider's side passes the implementation decoded copies, its context frozen by
  * `freezeContext` with the host's `signal` and `env` attached by reference, its request by `freezeData`, and a pull's
  * limit frozen with the host's `measure` attached by reference: a frame carries only the limit's numbers. The host
@@ -69,6 +70,7 @@ import type {
   EndScopeRequest,
   ExecuteAnswer,
   ExecuteRequest,
+  HealthInfo,
   MaintenanceFacet,
   MaintenanceImpl,
   MaintenancePreview,
@@ -201,6 +203,7 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
   const provider = Object.freeze({
     open: impl.open,
     close: impl.close,
+    health: impl.health,
     execute: consoleImpl.execute,
     cancel: consoleImpl.cancel,
     endScope: consoleImpl.endScope,
@@ -326,7 +329,7 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
    * compared, decoded for the host.
    */
   async function contextCall<Answer>(
-    call: "monitoring.poolStats",
+    call: "health" | "monitoring.poolStats",
     check: (session: HostSession) => readonly CallRefusal[],
     fn: (handle: unknown, ctx: CallContext) => Promise<unknown>,
     owner: unknown,
@@ -670,6 +673,8 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
   return Object.freeze({
     open,
     close,
+    health: (handle: ServedHandle, ctx: CallContext) =>
+      contextCall<HealthInfo>("health", () => [], provider.health, impl, handle, ctx),
     console: Object.freeze(served),
     objects: Object.freeze(servedObjects),
     maintenance: Object.freeze(servedMaintenance),

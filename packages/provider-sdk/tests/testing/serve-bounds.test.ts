@@ -59,6 +59,7 @@ async function runCase(deps: ChildDeps, name: string): Promise<ChildReport> {
   const impl = {
     open: async () => ({ handle: {} }),
     close: async () => {},
+    health: async () => ({ databaseSize: "0 B", cacheHitRatio: "N/A", slowQueries: [], activeSessions: [] }),
     console: {
       execute: async () => ({
         results: name === "results" ? (longest as ResultSource[]) : [source],

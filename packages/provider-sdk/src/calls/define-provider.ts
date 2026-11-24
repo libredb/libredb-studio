@@ -1,5 +1,5 @@
 /**
- * The provider module record and its check (docs/providers/CONTRACT.md, clauses C-1, C-3, C-4, C-67 and C-71).
+ * The provider module record and its check (docs/providers/CONTRACT.md, clauses C-1, C-3, C-4, C-67, C-71 and C-72).
  *
  * A package's entry default-exports what `defineProvider` returns: `{ contract, manifest, impl }`. `checkProviderModule`
  * reads any value as such a record and answers every way it is not one, each a refusal naming its rule and a JSON
@@ -78,11 +78,14 @@ const RECORD_KEYS: readonly string[] = Object.freeze(["contract", "manifest", "i
 const IMPL_KEYS: readonly string[] = Object.freeze([
   "open",
   "close",
+  "health",
   "console",
   "objects",
   "maintenance",
   "monitoring",
 ]);
+/** The mandatory calls at the top level of the implementation, in the order they are read. */
+const MANDATORY_CALLS: readonly string[] = Object.freeze(["open", "close", "health"]);
 const CONSOLE_KEYS: readonly string[] = Object.freeze(["execute", ...CONSOLE_FACETS]);
 const OFFERS: readonly unknown[] = Object.freeze(["offered", "not-offered"]);
 const REQUEST_FIELDS: readonly unknown[] = EXECUTE_REQUEST_FIELDS;
@@ -394,7 +397,7 @@ function readImpl(value: unknown, offers: Offers, refusals: DefinitionRefusal[])
   for (const key of Object.keys(impl ?? {})) {
     if (!IMPL_KEYS.includes(key)) refusals.push({ rule: "impl-key-unknown", pointer: `/impl/${token(key)}`, key });
   }
-  for (const call of ["open", "close"]) {
+  for (const call of MANDATORY_CALLS) {
     const pointer = `/impl/${call}`;
     const read = own(impl, call, pointer, refusals);
     if (read.kind !== "accessor" && typeof valueOf(read) !== "function") {

@@ -24,6 +24,7 @@ import type {
   CancelAnswer,
   CancelRequest,
   Column,
+  ActiveSession,
   ActiveSessionDetails,
   ColumnSchema,
   ConnectionFieldValues,
@@ -37,6 +38,7 @@ import type {
   ExecuteAnswer,
   ExecuteRequest,
   ForeignKeySchema,
+  HealthInfo,
   IndexSchema,
   IndexStats,
   KindCount,
@@ -67,6 +69,7 @@ import type {
   PoolStats,
   RowBatch,
   SessionActivity,
+  SlowQuery,
   SlowQueryStats,
   StorageStats,
   TableStats,
@@ -136,6 +139,7 @@ export type ExecuteAnswerFrame = Omit<ExecuteAnswer, "results"> & { readonly res
 export interface FrameShapes {
   readonly open: { readonly context: ContextData<OpenContext>; readonly answer: OpenAnswerFrame };
   readonly close: { readonly context: ContextData<CallContext> };
+  readonly health: { readonly context: ContextData<CallContext>; readonly answer: HealthInfo };
   readonly "console.execute": {
     readonly context: ContextData<CallContext>;
     readonly request: ExecuteRequest;
@@ -817,6 +821,27 @@ const poolStats = record<PoolStats>({
   max: optional(number),
 });
 
+const health = record<HealthInfo>({
+  activeConnections: optional(number),
+  databaseSize: required(text),
+  cacheHitRatio: required(text),
+  slowQueries: required(
+    listOf(record<SlowQuery>({ query: required(text), calls: required(number), avgTime: required(text) })),
+  ),
+  activeSessions: required(
+    listOf(
+      record<ActiveSession>({
+        pid: required(textOrNumber),
+        user: required(text),
+        database: required(text),
+        state: required(text),
+        query: required(text),
+        duration: required(text),
+      }),
+    ),
+  ),
+});
+
 /** One value of a connection field: a string, a number, a boolean or a list of strings. */
 const connectionValue: Reader = (item, pointer, found) => {
   if (Array.isArray(item)) listOf(text)(item, pointer, found);
@@ -973,6 +998,7 @@ const READERS = Object.freeze<{
 }>({
   open: { context: openContext, answer: openAnswer },
   close: { context: callContext },
+  health: { context: callContext, answer: health },
   "console.execute": { context: callContext, request: executeRequest, answer: executeAnswer },
   "console.cancel": {
     context: callContext,

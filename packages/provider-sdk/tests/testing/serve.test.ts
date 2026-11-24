@@ -26,6 +26,7 @@ import {
   envReader,
   type ExecuteAnswer,
   type ExecuteRequest,
+  type HealthInfo,
   type LateOutcome,
   type MaintenancePreview,
   type MaintenancePreviewRequest,
@@ -130,6 +131,7 @@ function fixture(
   const answers: Json = {
     open: () => ({ handle, serverVersion: marker() }),
     close: () => undefined,
+    health: () => ({ databaseSize: "0 B", cacheHitRatio: "N/A", slowQueries: [], activeSessions: [] }),
     execute: () => ({
       results: [
         rowsSource(
@@ -163,6 +165,10 @@ function fixture(
     close: async (h: unknown, ctx: CallContext) => {
       seen.push({ call: "close", handle: h, ctx });
       return answers.close();
+    },
+    health: async (h: unknown, ...rest: unknown[]) => {
+      seen.push({ call: "health", handle: h, ctx: rest[0] as CallContext, request: rest.slice(1) });
+      return answers.health();
     },
     console: {
       execute: async (h: unknown, request: unknown, ctx: CallContext) => {
@@ -548,6 +554,8 @@ describe("serve", () => {
     const foreign = await failure(
       () => impl.console.endScope?.(other.handle, { scope: marker() }, callContext()) as Promise<unknown>,
     );
+    const closedHealth = await failure(() => impl.health(opened.handle, callContext()));
+    const foreignHealth = await failure(() => impl.health(other.handle, callContext()));
 
     expect((closed as FrameRefusalError).refusals).toEqual([
       { rule: "session-not-open", call: "console.execute", part: "handle", pointer: "" },
@@ -558,6 +566,11 @@ describe("serve", () => {
     expect((foreign as FrameRefusalError).refusals).toEqual([
       { rule: "session-not-open", call: "console.endScope", part: "handle", pointer: "" },
     ]);
+    for (const refused of [closedHealth, foreignHealth]) {
+      expect((refused as FrameRefusalError).refusals).toEqual([
+        { rule: "session-not-open", call: "health", part: "handle", pointer: "" },
+      ]);
+    }
     expect((closed as Error).message).toBe(
       "The session handle at the top level of the console.execute call is not one the served instance holds open, so no frame was sent.",
     );
@@ -1184,6 +1197,63 @@ describe("serve", () => {
     }
     expect(frames.length).toBe(before);
     expect(fx.seen.map((item) => item.call)).toEqual(["open"]);
+  });
+
+  test("a served health call crosses its context and answer as frames, and the host receives a decoded copy", async () => {
+    const fx = fixture({ panel: false, poolStats: false });
+    const { impl, frames } = served(fx);
+    const opened = await impl.open(openContext());
+    const before = frames.length;
+    const answer: HealthInfo = {
+      activeConnections: 3,
+      databaseSize: marker(),
+      cacheHitRatio: marker(),
+      slowQueries: [{ query: marker(), calls: 2, avgTime: marker() }],
+      activeSessions: [
+        { pid: 4711, user: marker(), database: marker(), state: marker(), query: marker(), duration: "1s" },
+      ],
+    };
+    fx.answers.health = () => answer;
+    const ctx = callContext();
+
+    const got = await impl.health(opened.handle, ctx);
+    const seen = fx.seen.at(-1) as Seen;
+
+    expect(got).toEqual(answer);
+    expect(got).not.toBe(answer);
+    expect(frames.slice(before).map((frame) => `${frame.direction} ${frame.call}`)).toEqual([
+      "to-provider health",
+      "to-host health",
+    ]);
+    expect(JSON.parse((frames[before] as ServedFrame).text)).toEqual({
+      call: "health",
+      session: opened.handle.session,
+      context: dataOf(ctx),
+    });
+    expect(seen.call).toBe("health");
+    expect(seen.handle).toBe(fx.handle);
+    expect(seen.request).toEqual([]);
+    expect(Object.isFrozen(seen.ctx)).toBe(true);
+    expect(seen.ctx?.signal).toBe(ctx.signal);
+
+    const unmeasured: HealthInfo = {
+      databaseSize: answer.databaseSize,
+      cacheHitRatio: answer.cacheHitRatio,
+      slowQueries: answer.slowQueries,
+      activeSessions: answer.activeSessions,
+    };
+    fx.answers.health = () => unmeasured;
+    expect(await impl.health(opened.handle, callContext())).toEqual(unmeasured);
+    fx.answers.health = () => ({ ...answer, activeConnections: undefined });
+    const dropped = await failure(() => impl.health(opened.handle, callContext()));
+    expect((dropped as FrameRefusalError).refusals).toEqual([
+      { rule: "round-trip-changed", call: "health", part: "answer", pointer: "/activeConnections" },
+    ]);
+    fx.answers.health = () => ({ ...answer, uptime: marker() });
+    const unknownKey = await failure(() => impl.health(opened.handle, callContext()));
+    expect((unknownKey as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-key-unknown", call: "health", part: "answer", pointer: "/uptime", name: "uptime" },
+    ]);
   });
 
   test("a served open whose maintenance narrowing names an operation its engine does not list is refused, and the session it opened is closed", async () => {
@@ -1892,6 +1962,8 @@ describe("serve", () => {
     const servedNeither = serve(neither.module);
 
     expect(checkProviderModule(defineProvider(both.module.manifest, servedBoth))).toEqual([]);
+    expect(typeof servedBoth.health).toBe("function");
+    expect(typeof servedNeither.health).toBe("function");
     expect(checkProviderModule(defineProvider(neither.module.manifest, servedNeither))).toEqual([]);
     expect(Object.keys(servedBoth.console).sort()).toEqual(["cancel", "endScope", "execute", "transaction"]);
     expect(Object.keys(servedNeither.console)).toEqual(["execute"]);

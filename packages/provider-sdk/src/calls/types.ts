@@ -9,8 +9,9 @@
  * The SDK declares each shape the contexts and the object tree share with Studio's own source (`TlsSettings`,
  * `EgressDecision`, `TrustMaterial`, `PoolSettings`, `TunnelFarEnd`, `AdmittedHostPaths`, and the tree's `Container`,
  * `DatabaseObject`, `KindCount`, `ObjectDetail` and the shapes they hold, the maintenance run's answer and the
- * maintenance preview, and the monitoring panels' answers and the pool statistics) itself, because a package imports nothing from Studio; a census in Studio's tests holds each one
- * mutually assignable with Studio's type.
+ * maintenance preview, the monitoring panels' answers and the pool statistics, and the health answer) itself, because a
+ * package imports nothing from Studio; a census in Studio's tests holds each one mutually assignable with Studio's
+ * type.
  */
 import type {
   ConsoleCalls,
@@ -871,10 +872,41 @@ export interface MonitoringImpl<Handle> {
   poolStats?(handle: Handle, ctx: CallContext): Promise<PoolStats>;
 }
 
+/** One of the slowest queries a health answer names. */
+export interface SlowQuery {
+  readonly query: string;
+  readonly calls: number;
+  readonly avgTime: string;
+}
+
+/** One session a health answer names. */
+export interface ActiveSession {
+  readonly pid: number | string;
+  readonly user: string;
+  readonly database: string;
+  readonly state: string;
+  readonly query: string;
+  readonly duration: string;
+}
+
+/**
+ * What `health` answers: the count of open connections where the engine measures it, left out where it cannot and never
+ * a zero in its place, the database's size, its cache hit ratio, its slowest queries and its sessions.
+ */
+export interface HealthInfo {
+  readonly activeConnections?: number;
+  readonly databaseSize: string;
+  readonly cacheHitRatio: string;
+  readonly slowQueries: readonly SlowQuery[];
+  readonly activeSessions: readonly ActiveSession[];
+}
+
 /** A package's implementation: the functions the host calls, keyed by the path of each call's name. */
 export interface ProviderImpl<Handle> {
   open(ctx: OpenContext): Promise<OpenAnswer<Handle>>;
   close(handle: Handle, ctx: CallContext): Promise<void>;
+  /** Reaches the engine and answers its health; every session answers it. */
+  health(handle: Handle, ctx: CallContext): Promise<HealthInfo>;
   readonly console: ConsoleImpl<Handle>;
   /** The object facets; may be absent, or an empty record, when the implementation offers none. */
   readonly objects?: ObjectsImpl<Handle>;

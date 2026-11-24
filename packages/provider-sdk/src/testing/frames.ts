@@ -11,6 +11,7 @@
 export const SERVED_CALLS = Object.freeze([
   "open",
   "close",
+  "health",
   "console.execute",
   "console.cancel",
   "console.endScope",

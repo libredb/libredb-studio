@@ -323,6 +323,22 @@ function wellFormed(): readonly (readonly [ServedCall, FramePart, unknown])[] {
     ],
     ["open", "answer", {}],
     ["close", "context", { deadline: 1 }],
+    ["health", "context", { deadline: 1 }],
+    [
+      "health",
+      "answer",
+      {
+        activeConnections: 3,
+        databaseSize: "1 GB",
+        cacheHitRatio: "99%",
+        slowQueries: [{ query: marker(), calls: 2, avgTime: "1 ms" }],
+        activeSessions: [
+          { pid: 4711, user: marker(), database: marker(), state: "active", query: marker(), duration: "1s" },
+          { pid: marker(), user: marker(), database: marker(), state: "idle", query: "", duration: "0s" },
+        ],
+      },
+    ],
+    ["health", "answer", { databaseSize: "0 B", cacheHitRatio: "N/A", slowQueries: [], activeSessions: [] }],
     ["console.execute", "context", { deadline: 1 }],
     [
       "console.execute",
@@ -471,6 +487,8 @@ describe("readFrame", () => {
       "open context",
       "open answer",
       "close context",
+      "health context",
+      "health answer",
       "console.execute context",
       "console.execute request",
       "console.execute answer",
@@ -580,6 +598,14 @@ describe("readFrame", () => {
     expect(readFrame("monitoring.poolStats", "answer", { total: 0, idle: 0, active: 0, waiting: 0, min: 0 })).toEqual([
       refusal("frame-key-unknown", "monitoring.poolStats", "answer", "/min", "min"),
     ]);
+    expect(
+      readFrame("health", "answer", {
+        databaseSize: "0 B",
+        cacheHitRatio: "N/A",
+        slowQueries: [{ query: marker(), calls: 1, avgTime: "1 ms", rows: 1 }],
+        activeSessions: [],
+      }),
+    ).toEqual([refusal("frame-key-unknown", "health", "answer", "/slowQueries/0/rows", "rows")]);
   });
 
   test("a required key a frame lacks is refused as frame-key-missing", () => {
@@ -618,6 +644,9 @@ describe("readFrame", () => {
     ]);
     expect(readFrame("monitoring.poolStats", "answer", { total: 0, idle: 0, active: 0 })).toEqual([
       refusal("frame-key-missing", "monitoring.poolStats", "answer", "/waiting", "waiting"),
+    ]);
+    expect(readFrame("health", "context", {})).toEqual([
+      refusal("frame-key-missing", "health", "context", "/deadline", "deadline"),
     ]);
   });
 
@@ -752,6 +781,9 @@ describe("readFrame", () => {
       unreadable("monitoring.poolStats", "answer", "/total"),
       unreadable("monitoring.poolStats", "answer", "/waiting"),
     ]);
+    expect(
+      readFrame("health", "answer", { databaseSize: 0, cacheHitRatio: 99, slowQueries: [], activeSessions: [] }),
+    ).toEqual([unreadable("health", "answer", "/databaseSize"), unreadable("health", "answer", "/cacheHitRatio")]);
     expect(reads).toBe(0);
   });
 
@@ -939,6 +971,37 @@ describe("readFrame", () => {
       ),
     );
     expect(pool(null)).toEqual([unreadable("")]);
+
+    const health = (value: unknown) => readFrame("health", "answer", value);
+    const healthUnreadable = (pointer: string) => refusal("frame-value-unreadable", "health", "answer", pointer);
+    const session = { pid: 1, user: marker(), database: marker(), state: "active", query: marker(), duration: "1s" };
+    expect(health({ databaseSize: "0 B", cacheHitRatio: "N/A", slowQueries: [], activeSessions: [session] })).toEqual(
+      [],
+    );
+    expect(
+      health({
+        activeConnections: "3",
+        databaseSize: "0 B",
+        cacheHitRatio: "N/A",
+        slowQueries: [{ query: marker(), calls: "1", avgTime: 1 }],
+        activeSessions: [{ ...session, pid: null, blocked: true }],
+      }),
+    ).toEqual([
+      healthUnreadable("/activeConnections"),
+      healthUnreadable("/slowQueries/0/calls"),
+      healthUnreadable("/slowQueries/0/avgTime"),
+      healthUnreadable("/activeSessions/0/pid"),
+      refusal("frame-key-unknown", "health", "answer", "/activeSessions/0/blocked", "blocked"),
+    ]);
+    expect(health({ databaseSize: "0 B" })).toEqual([
+      refusal("frame-key-missing", "health", "answer", "/cacheHitRatio", "cacheHitRatio"),
+      refusal("frame-key-missing", "health", "answer", "/slowQueries", "slowQueries"),
+      refusal("frame-key-missing", "health", "answer", "/activeSessions", "activeSessions"),
+    ]);
+    expect(health({ databaseSize: "0 B", cacheHitRatio: "N/A", slowQueries: {}, activeSessions: null })).toEqual([
+      healthUnreadable("/slowQueries"),
+      healthUnreadable("/activeSessions"),
+    ]);
   });
 
   test("a timestamp member admits a Date and nothing else", () => {

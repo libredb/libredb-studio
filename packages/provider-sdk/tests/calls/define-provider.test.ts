@@ -44,11 +44,12 @@ interface Handle {
   readonly id: string;
 }
 
-/** An implementation of open, close, console.execute and console.cancel, changed by `change`. */
+/** An implementation of open, close, health, console.execute and console.cancel, changed by `change`. */
 function impl(change: (draft: Json) => void = () => {}): ProviderImpl<Handle> {
   const draft: Json = {
     open: async () => ({ handle: { id: "session" } }),
     close: async () => {},
+    health: async () => ({ databaseSize: "0 B", cacheHitRatio: "100%", slowQueries: [], activeSessions: [] }),
     console: {
       execute: async () => ({ results: [], warnings: [], executionTimeMs: 0, pageApplied: false }),
       cancel: async () => ({ cancelled: false }),
@@ -677,6 +678,7 @@ describe("checkProviderModule", () => {
     };
     const cases: [(r: Json) => void, string][] = [
       [(r) => accessor(r.impl, "open"), "/impl/open"],
+      [(r) => accessor(r.impl, "health"), "/impl/health"],
       [(r) => accessor(r.impl, "console"), "/impl/console"],
       [(r) => accessor(r.impl.console, "cancel"), "/impl/console/cancel"],
       [(r) => accessor(r.impl.console, "execute"), "/impl/console/execute"],
@@ -772,6 +774,8 @@ describe("checkProviderModule", () => {
     });
     const noConsole = record((r) => delete r.impl.console);
     const noImpl = record((r) => (r.impl = null));
+    const noHealth = record((r) => delete r.impl.health);
+    const healthNotAFunction = record((r) => (r.impl.health = { databaseSize: "0 B" }));
 
     expect(checkProviderModule(changed)).toEqual([
       refusal("call-missing", "/impl/open", { name: "open" }),
@@ -781,9 +785,14 @@ describe("checkProviderModule", () => {
       refusal("call-missing", "/impl/console/execute", { name: "console.execute" }),
       refusal("facet-unimplemented", "/impl/console/cancel", { name: "console.cancel" }),
     ]);
+    expect(checkProviderModule(noHealth)).toEqual([refusal("call-missing", "/impl/health", { name: "health" })]);
+    expect(checkProviderModule(healthNotAFunction)).toEqual([
+      refusal("call-missing", "/impl/health", { name: "health" }),
+    ]);
     expect(checkProviderModule(noImpl)).toEqual([
       refusal("call-missing", "/impl/open", { name: "open" }),
       refusal("call-missing", "/impl/close", { name: "close" }),
+      refusal("call-missing", "/impl/health", { name: "health" }),
       refusal("call-missing", "/impl/console/execute", { name: "console.execute" }),
       refusal("facet-unimplemented", "/impl/console/cancel", { name: "console.cancel" }),
     ]);
@@ -829,11 +838,16 @@ describe("checkProviderModule", () => {
       async open() {
         return { handle: {} };
       }
+
+      async health() {
+        return { databaseSize: "0 B", cacheHitRatio: "100%", slowQueries: [], activeSessions: [] };
+      }
     }
     const changed = record((r) => (r.impl = Object.assign(new Implementation(), { close: r.impl.close })));
 
     expect(checkProviderModule(changed)).toEqual([
       refusal("call-missing", "/impl/open", { name: "open" }),
+      refusal("call-missing", "/impl/health", { name: "health" }),
       refusal("call-missing", "/impl/console/execute", { name: "console.execute" }),
       refusal("facet-unimplemented", "/impl/console/cancel", { name: "console.cancel" }),
     ]);
@@ -841,7 +855,7 @@ describe("checkProviderModule", () => {
 
   test("an implementation key the contract does not define is refused as impl-key-unknown", () => {
     const changed = record((r) => {
-      r.impl.health = async () => ({});
+      r.impl.ping = async () => ({});
       r.impl.console.explain = async () => ({});
       r.impl.objects = { source: async () => ({}) };
       r.impl.maintenance = { explain: async () => ({}) };
@@ -849,7 +863,7 @@ describe("checkProviderModule", () => {
     });
 
     expect(checkProviderModule(changed)).toEqual([
-      refusal("impl-key-unknown", "/impl/health", { key: "health" }),
+      refusal("impl-key-unknown", "/impl/ping", { key: "ping" }),
       refusal("impl-key-unknown", "/impl/console/explain", { key: "explain" }),
       refusal("impl-key-unknown", "/impl/objects/source", { key: "source" }),
       refusal("impl-key-unknown", "/impl/maintenance/explain", { key: "explain" }),
