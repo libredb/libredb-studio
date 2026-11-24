@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, table } from "@libredb/libredb";
 import { getServerAuditBuffer } from "@/lib/audit";
+import { errorCode, errorKind } from "@/lib/db/error-record";
 import {
   DatabaseConfigError,
   ExecutionProfileError,
@@ -54,6 +55,8 @@ import {
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { MCP_STATEMENT_TOOLS, servingStatementArms } from "@/lib/mcp/tools/statement-arms";
 import { mcpConnectionUnavailable } from "@/lib/mcp/availability";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, HostCoreBootOrderError, hostCore, installHostCore } from "@/lib/provider-host/instance";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseType } from "@/lib/types";
 import {
@@ -64,6 +67,7 @@ import {
   fakeTextScrub,
   gateMethod,
   pinMcpTestEnvironment,
+  recordAcquisitions,
   resetMcpTestState,
   waitFor,
   writeSeedFile,
@@ -77,6 +81,7 @@ import {
   testAuthInfo,
   type Negotiation,
 } from "../../helpers/mcp-harness";
+import { withRecordingHostCore } from "../../helpers/recording-host-core";
 
 /** The notice an answer carrying database content opens with on this file's sqlite connections. */
 const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("sqlite"));
@@ -90,6 +95,9 @@ const ROWS =
 const BYTES =
   "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add a smaller LIMIT.";
 const series = (count: number) => `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${count})`;
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 beforeAll(async () => {
   createSqliteFile(join(dir, "shop.db"), [
@@ -163,7 +171,8 @@ const SERVER_LEVEL = { id: "seed:fake", name: "fake", type: "postgres", database
 
 /**
  * A context over one opted-in connection of the given engine that hands out the given provider. The connection is
- * offered to admins alone, so an admin's MCP open of a SQLite one is available.
+ * offered to admins alone, so an admin's MCP open of a SQLite one is available. A stand-in that sets no type is given
+ * its connection's, on the object itself, so it stands for the engine it is handed out for.
  */
 function fakeContext(
   provider: Partial<DatabaseProvider>,
@@ -171,6 +180,7 @@ function fakeContext(
   fields: Partial<ManagedConnection> = {},
   acquire: () => Promise<DatabaseProvider> = async () => provider as DatabaseProvider,
 ): McpConnectionContext {
+  if (provider.type === undefined) Object.assign(provider, { type });
   const connection = {
     id: "seed:fake",
     name: "fake",
@@ -1008,6 +1018,49 @@ describe("the deadline and the signal", () => {
     }
   });
 
+  test("a client that leaves while the connection opens is answered cancelled at once, and the open is released by the host", async () => {
+    const gate = gateMethod(SQLiteProvider.prototype, "connect");
+    const recorded = recordAcquisitions(McpConnectionContext.prototype);
+    try {
+      const controller = new AbortController();
+      const call = direct({ connection_id: "seed:shop", sql: "SELECT 1" }, controller.signal);
+      await gate.entered;
+      const reason = new Error("the client left");
+      controller.abort(reason);
+
+      expect((await call).content).toEqual([{ type: "text", text: MCP_CANCELLED_TEXT }]);
+      expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_cancelled" });
+      // The host's open released the call with the request's reason, while the open itself is still held.
+      expect(await recorded.acquisitions[0].failure).toBe(reason);
+      expect(recorded.acquisitions.map(({ profile }) => profile)).toEqual(["agent-read-only"]);
+    } finally {
+      recorded.restore();
+      gate.release();
+      // The held call runs to its end before afterEach closes the provider under it.
+      await gate.finished;
+      gate.restore();
+    }
+  });
+
+  test("an open that outlasts timeout_ms is answered with the timeout, and the open is released by the host", async () => {
+    const gate = gateMethod(SQLiteProvider.prototype, "connect");
+    const recorded = recordAcquisitions(McpConnectionContext.prototype);
+    try {
+      const result = await direct({ connection_id: "seed:shop", sql: "SELECT 1", timeout_ms: 500 });
+
+      expect(result.content).toEqual([{ type: "text", text: timeoutText(500) }]);
+      expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_timeout" });
+      // The host's open released the call at its deadline, while the open itself is still held.
+      expect(((await recorded.acquisitions[0].failure) as Error).name).toBe("TimeoutError");
+      expect(gate.calls).toBe(1);
+    } finally {
+      recorded.restore();
+      gate.release();
+      await gate.finished;
+      gate.restore();
+    }
+  });
+
   test("a signal aborted before the call is refused as a decision", async () => {
     const controller = new AbortController();
     controller.abort();
@@ -1037,6 +1090,177 @@ describe("the deadline and the signal", () => {
       // The held call runs to its end before afterEach closes the provider under it.
       await gate.finished;
       gate.restore();
+    }
+  });
+});
+
+describe("the host core", () => {
+  const empty = { rows: [], fields: [], rowCount: 0, executionTime: 0 };
+  const LATE_LINE = "A statement Studio stopped waiting for failed afterwards";
+
+  test("a statement runs through the host core's read-only execute on a read-only statement session, never the provider's plain query", async () => {
+    const reads = countMethod(SQLiteProvider.prototype, "queryReadOnly");
+    const plain = countMethod(SQLiteProvider.prototype, "query");
+    try {
+      await withRecordingHostCore(async ({ executes }) => {
+        const before = Date.now();
+        const result = await direct({ connection_id: "seed:shop", sql: "SELECT id FROM numbers", timeout_ms: 5_000 });
+        const after = Date.now();
+
+        expect(result.structuredContent?.row_count).toBe(100);
+        expect(executes).toHaveLength(1);
+        const [{ readOnlyStatements, request, ctx }] = executes;
+        expect(readOnlyStatements).toBe(true);
+        expect(request).toEqual({
+          statement: expect.stringContaining("SELECT id FROM numbers"),
+          page: { unlimited: true },
+          readOnly: { budget: { maxRows: 1000, maxBytes: 1048576 } },
+        });
+        expect(Object.keys(ctx).sort()).toEqual(["deadline", "env", "signal"]);
+        const { deadline } = ctx;
+        expect(deadline).toBeGreaterThanOrEqual(before + 5_000 - 1);
+        expect(deadline).toBeLessThanOrEqual(after + 5_000);
+      });
+      expect(reads.calls).toBe(1);
+      expect(plain.calls).toBe(0);
+    } finally {
+      reads.restore();
+      plain.restore();
+    }
+  });
+
+  test("a statement that outlasts timeout_ms is stopped by the host core, answered with the timeout and no record, and its later failure is logged by kind and code only", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    const error = spyOn(logger, "error").mockImplementation(() => {});
+    const unhandled = mock<(reason: unknown) => void>();
+    process.on("unhandledRejection", unhandled);
+    const statement = Promise.withResolvers<typeof empty>();
+    const marker = crypto.randomUUID();
+    const failure = new QueryError(`the engine failed: ${marker}`, "sqlite");
+    try {
+      const [result, kinds] = await withRecordingHostCore(async ({ kinds }) => [
+        await direct(
+          { connection_id: "seed:fake", sql: "SELECT 1", timeout_ms: 500 },
+          undefined,
+          fakeContext({
+            getCapabilities: () => ({}),
+            prepareQuery: (query: string) => ({ query, wasLimited: true, limit: 101, offset: 0 }),
+            queryReadOnly: () => statement.promise,
+          } as unknown as Partial<DatabaseProvider>),
+        ),
+        kinds,
+      ]);
+
+      expect(result).toEqual({ content: [{ type: "text", text: timeoutText(500) }], isError: true });
+      expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_timeout" });
+      expect(kinds).toEqual(["stopped"]);
+      statement.reject(failure);
+      await waitFor(() => warn.mock.calls.some(([message]) => message === LATE_LINE));
+      expect(warn.mock.calls.filter(([message]) => message === LATE_LINE)).toEqual([
+        [LATE_LINE, { route: "/api/mcp", kind: errorKind(failure), code: errorCode(failure) }],
+      ]);
+      const logged = JSON.stringify([...warn.mock.calls, ...error.mock.calls]);
+      expect(logged).not.toContain(marker);
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", unhandled);
+      warn.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  test("a client that leaves while the statement runs is answered cancelled at once through the host core, and its later answer is not logged", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    const statement = Promise.withResolvers<typeof empty>();
+    const entered = Promise.withResolvers<void>();
+    try {
+      const controller = new AbortController();
+      const [result, kinds] = await withRecordingHostCore(async ({ kinds }) => {
+        const call = direct(
+          { connection_id: "seed:fake", sql: "SELECT 1", timeout_ms: 30_000 },
+          controller.signal,
+          fakeContext({
+            getCapabilities: () => ({}),
+            prepareQuery: (query: string) => ({ query, wasLimited: true, limit: 101, offset: 0 }),
+            queryReadOnly: () => {
+              entered.resolve();
+              return statement.promise;
+            },
+          } as unknown as Partial<DatabaseProvider>),
+        );
+        await entered.promise;
+        controller.abort();
+        return [await call, kinds] as const;
+      });
+
+      expect(result).toEqual({ content: [{ type: "text", text: MCP_CANCELLED_TEXT }], isError: true });
+      expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_cancelled" });
+      expect(kinds).toEqual(["stopped"]);
+      statement.resolve(empty);
+      await statement.promise;
+      expect(warn.mock.calls.filter(([message]) => message === LATE_LINE)).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a statement whose call deadline passed while its connection opened is never sent", async () => {
+    const queryReadOnly = mock(async () => empty);
+    const provider = {
+      getCapabilities: () => ({}),
+      prepareQuery: (query: string) => ({ query, wasLimited: true, limit: 101, offset: 0 }),
+      queryReadOnly,
+    } as unknown as DatabaseProvider;
+    const result = await direct(
+      { connection_id: "seed:fake", sql: "SELECT 1", timeout_ms: 500 },
+      undefined,
+      fakeContext(provider, "sqlite", {}, async () => {
+        // The open holds the event loop past the call's deadline, as a synchronous driver's open does.
+        const until = Date.now() + 600;
+        while (Date.now() < until) {
+          // busy on purpose
+        }
+        return provider;
+      }),
+    );
+
+    expect(result).toEqual({ content: [{ type: "text", text: timeoutText(500) }], isError: true });
+    expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_timeout" });
+    expect(queryReadOnly).not.toHaveBeenCalled();
+  });
+
+  test("a statement tool called before the host core is installed throws by name, writes no audit record and opens nothing", async () => {
+    const resolve = mock(async () => null);
+    const acquire = mock(async () => ({}) as DatabaseProvider);
+    const context = {
+      caller: { username: "alice", role: "admin" },
+      resolve,
+      textScrub: fakeTextScrub,
+      acquire,
+    } as unknown as McpConnectionContext;
+    const connects = countMethod(SQLiteProvider.prototype, "connect");
+    const real = hostCore();
+    forgetHostCore();
+    try {
+      const thrown = await direct({ connection_id: "seed:fake", sql: "SELECT 1" }, undefined, context).catch(
+        (error: unknown) => error,
+      );
+      expect(thrown).toBeInstanceOf(HostCoreBootOrderError);
+      expect(mcpEvents()).toEqual([]);
+      expect(resolve).not.toHaveBeenCalled();
+      expect(acquire).not.toHaveBeenCalled();
+
+      // Through the MCP handler, the SDK answers the throw with its message, and no provider is built.
+      const answered = await query({ connection_id: "seed:shop", sql: "SELECT 1" });
+      expect(answered).toMatchObject({
+        isError: true,
+        content: [{ type: "text", text: (thrown as Error).message }],
+      });
+      expect(connects.calls).toBe(0);
+      expect(mcpEvents()).toEqual([]);
+    } finally {
+      installHostCore(real, "test");
+      connects.restore();
     }
   });
 });
@@ -1126,11 +1350,27 @@ describe("a provider the profile seam should never hand out", () => {
     const result = await direct(
       { connection_id: "seed:fake", sql: "SELECT 1" },
       undefined,
-      // A declaration it still has: every provider does, and the tool reads it before anything runs (#1530).
-      fakeContext({ query: writable, getCapabilities: () => ({}) } as unknown as Partial<DatabaseProvider>),
+      // A declaration it still has: every provider does, and the tool reads it before anything runs (#1530). Its
+      // prepareQuery pages the statement and sends nothing; the read-only statement session's open refuses it after.
+      fakeContext({
+        query: writable,
+        prepareQuery: (query: string) => ({ query, wasLimited: true, limit: 101, offset: 0 }),
+        getCapabilities: () => ({}),
+      } as unknown as Partial<DatabaseProvider>),
     );
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("exposes no read-only execution path");
+    expect(result).toEqual({
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: `run_read_query cannot run on this connection: Provider type "sqlite" implements no read-only statement path (queryReadOnly). It runs on ${RUN_READ_QUERY_ENGINES}.`,
+        },
+      ],
+      structuredContent: {
+        error: { kind: "studio-profile-refusal", code: "PROFILE_UNSUPPORTED_BY_PROVIDER", outcome: "unknown" },
+      },
+    });
+    expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_execution_failed" });
     expect(writable).not.toHaveBeenCalled();
   });
 

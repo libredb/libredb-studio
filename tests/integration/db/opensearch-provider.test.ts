@@ -49,7 +49,7 @@
  * categorisation lives on, and asserting it through a class that erases it would
  * have tested nothing.
  */
-import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, spyOn, afterAll, beforeAll } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { DatabaseProvider, ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
@@ -92,6 +92,11 @@ import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 import { fakeTextScrub } from "../../helpers/mcp-fixtures";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { errorKind } from "@/lib/db/error-record";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The notice an answer carrying database content opens with on this file's opensearch connections. */
 const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("opensearch"));

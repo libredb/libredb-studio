@@ -11,12 +11,13 @@ import { bridgedReadOnlyStatements } from "@/lib/provider-host/legacy-bridge";
 import type { DatabaseType, QueryResult } from "@/lib/types";
 
 /*
- * THE AGENT'S STATEMENTS AND THE HAND-OVER REPLAY ON THE PROVIDER HOST CORE (docs/providers/CONTRACT.md, clause C-79).
+ * THE AGENT'S, THE HAND-OVER'S AND MCP'S STATEMENTS ON THE PROVIDER HOST CORE (docs/providers/CONTRACT.md,
+ * clauses C-79 and C-81).
  *
  * `runReadOnlyExecute` is the caller facade of a read-only statement: every statement the agent's run sends, the
- * model's and every composed grounding statement (`runStatement` in src/lib/agent/tools.ts), and the editor's
- * hand-over replay (src/app/api/agent/runs/[runId]/handover/route.ts). MCP's statements keep `runReadOnlyStatement`
- * until they move onto the host core.
+ * model's and every composed grounding statement (`runStatement` in src/lib/agent/tools.ts), the editor's hand-over
+ * replay (src/app/api/agent/runs/[runId]/handover/route.ts), and every MCP statement tool's statement
+ * (`statementOnHost` in src/lib/mcp/tools/run-statement.ts, clause C-81), whose deadline is the MCP call's.
  *
  * In this order: the engine is refused by name when Studio's review record does not list it
  * (`assertStatementsReviewed`), then a budget that is not whole positive numbers (`assertReadOnlyBudget`), so neither
@@ -25,7 +26,8 @@ import type { DatabaseType, QueryResult } from "@/lib/types";
  * provider (`bridgedReadOnlyStatements`, clause C-50), which refuses a provider without `queryReadOnly` by name, so the
  * plain `query()` is never the fallback (clause C-39). The session is a read-only statement session because each
  * caller acquired its provider under a profile whose open policy has both `readOnly` and `sendsStatements`
- * (`agent-read-only` and `agent-handover`); a census holds the callers to those profiles.
+ * (`agent-read-only` and `agent-handover`, MCP's under `agent-read-only`); a census holds the callers to those
+ * profiles.
  *
  * The call is one host core execute on that session: a fresh request of the statement, every row as its page, and the
  * read-only execute of the budget's rows and bytes and the caller's mode (clause C-78), and a fresh context whose

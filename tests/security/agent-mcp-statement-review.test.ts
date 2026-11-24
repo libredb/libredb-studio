@@ -11,7 +11,7 @@
  * from the record as it loads (the MCP statement arms) derives it from the narrowed one. Run in its own process by
  * `tests/run-tests.ts`, so the substitution reaches no other file.
  */
-import { afterAll, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, describe, expect, mock, spyOn, test, beforeAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +19,11 @@ import type { AgentToolContext } from "@/lib/agent/tools";
 import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import type { DatabaseProvider, ProviderCapabilities, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection, DatabaseType, QueryResult } from "@/lib/types";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 const shippedCompatibility = { ...(await import("@/lib/db/compatibility")) };
 const shipped: readonly DatabaseType[] = [...shippedCompatibility.AGENT_EXECUTION_ENGINES];
@@ -33,7 +38,8 @@ const { acquireExecutionProfileProvider, clearProviderCache, getExecutionProfile
 );
 const { SQLiteProvider } = await import("@/lib/db/providers/sql/sqlite");
 const { ExecutionProfileError } = await import("@/lib/db/errors");
-const { runReadOnlyReading, runReadOnlyStatement } = await import("@/lib/db/operations/read-only-statement");
+const { runReadOnlyReading } = await import("@/lib/db/operations/read-only-statement");
+const { runReadOnlyExecute } = await import("@/lib/api/read-only-execute");
 const { runReadQueryTool } = await import("@/lib/agent/tools");
 const { captureContextSnapshot } = await import("@/lib/agent/context-snapshot");
 const { AGENT_WORKFLOW_BUDGETS } = await import("@/lib/agent/execution-policy");
@@ -209,12 +215,12 @@ describe("an engine the review record does not list, though its provider impleme
 
     expectNotReviewed(
       await settled(
-        runReadOnlyStatement(provider, {
+        runReadOnlyExecute(provider, {
           type: "sqlite",
-          scrub: { type: "sqlite", forms: [] },
           statement: "SELECT 1",
           budget,
-          wait: "statement-timeout",
+          caller: new AbortController().signal,
+          route: "/api/mcp",
         }),
       ),
       "sqlite",
@@ -226,7 +232,6 @@ describe("an engine the review record does not list, though its provider impleme
           scrub: { type: "sqlite", forms: [] },
           statement: "catalog",
           budget,
-          wait: "statement-timeout",
           read,
           servedRows: (result) => result.rows,
           maxRows: budget.maxResultRows,
@@ -237,12 +242,12 @@ describe("an engine the review record does not list, though its provider impleme
     expect(queryReadOnly).not.toHaveBeenCalled();
     expect(read).not.toHaveBeenCalled();
 
-    const served = await runReadOnlyStatement(provider, {
+    const served = await runReadOnlyExecute(provider, {
       type: "postgres",
-      scrub: { type: "postgres", forms: [] },
       statement: "SELECT 1",
       budget,
-      wait: "statement-timeout",
+      caller: new AbortController().signal,
+      route: "/api/mcp",
     });
     expect(served.rows).toEqual([{ id: 1 }]);
   });

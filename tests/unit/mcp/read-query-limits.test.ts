@@ -4,7 +4,7 @@
  * and the texts a caller reads. Which provider sites raise a budget refusal as its class is held by
  * tests/unit/db/operations/budget-refusal-census.test.ts.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import { ERROR_KINDS } from "@libredb/provider-sdk/errors";
 import {
   ByteBudgetRefusal,
@@ -36,7 +36,12 @@ import {
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
 } from "@/lib/db/read-only-budget";
+import type { DatabaseProvider } from "@/lib/db/types";
+import type { McpConnectionContext, McpToolCall } from "@/lib/mcp/context";
+import type { OpenWait } from "@/lib/provider-host/core/open-once";
+import type { ManagedConnection } from "@/lib/seed";
 import {
+  acquireWithinCall,
   classifyReadQueryFailure,
   fenceRefusalText,
   inSqlPaging,
@@ -581,5 +586,97 @@ describe("raceDeadline", () => {
     expect(await raceDeadline(work, aborted.signal, soon())).toEqual({ kind: "cancelled" });
     expect(await raceDeadline(work, new AbortController().signal, Date.now() - 1)).toEqual({ kind: "timeout" });
     expect(started).toBe(0);
+  });
+});
+
+describe("acquireWithinCall", () => {
+  const soon = () => Date.now() + 1_000;
+  const listed = { id: "seed:shop", type: "sqlite" } as ManagedConnection;
+  const provider = { type: "sqlite" } as DatabaseProvider;
+
+  /** A call whose context's acquisition is `acquire`, under the request signal `signal`. */
+  function callWith(
+    acquire: (listed: ManagedConnection, profile: string, wait: OpenWait) => Promise<DatabaseProvider>,
+    signal: AbortSignal = new AbortController().signal,
+  ): McpToolCall {
+    return { context: { acquire } as unknown as McpConnectionContext, signal };
+  }
+
+  /** Resolves once `signal` has aborted, with its reason. */
+  function abortOf(signal: AbortSignal): Promise<unknown> {
+    if (signal.aborted) return Promise.resolve(signal.reason);
+    return new Promise((resolve) => signal.addEventListener("abort", () => resolve(signal.reason), { once: true }));
+  }
+
+  test("hands the acquisition the call's wait, ended by the request leaving or the call's deadline", async () => {
+    const waits: OpenWait[] = [];
+    const acquire = mock(async (_listed: ManagedConnection, _profile: string, wait: OpenWait) => {
+      waits.push(wait);
+      return provider;
+    });
+    const request = new AbortController();
+
+    const answered = await acquireWithinCall(callWith(acquire, request.signal), listed, "agent-read-only", soon());
+
+    expect(answered).toEqual({ kind: "settled", value: provider });
+    expect(answered.kind === "settled" && answered.value).toBe(provider);
+    expect(acquire.mock.calls.map(([target, profile]) => [target, profile])).toEqual([[listed, "agent-read-only"]]);
+    expect(waits[0].signal.aborted).toBe(false);
+    const reason = new Error("the client left");
+    request.abort(reason);
+    expect(await abortOf(waits[0].signal)).toBe(reason);
+
+    await acquireWithinCall(callWith(acquire), listed, "agent-operations", Date.now() + 30);
+    const ended = (await abortOf(waits[1].signal)) as Error;
+    expect(ended.name).toBe("TimeoutError");
+  });
+
+  test("answers cancelled or timeout without acquiring when the request has left or the deadline has passed", async () => {
+    const acquire = mock(async () => provider);
+    const left = new AbortController();
+    left.abort();
+
+    expect(await acquireWithinCall(callWith(acquire, left.signal), listed, "agent-read-only", soon())).toEqual({
+      kind: "cancelled",
+    });
+    expect(await acquireWithinCall(callWith(acquire), listed, "agent-read-only", Date.now() - 1)).toEqual({
+      kind: "timeout",
+    });
+    expect(acquire).not.toHaveBeenCalled();
+  });
+
+  test("answers the wait's own reason as the request leaving or the deadline, never as a failure", async () => {
+    // The request leaves while the acquisition is made, and the open rejects with the wait's reason at once, before the
+    // race listens to the request's signal, so the answer is read from the failure itself.
+    const request = new AbortController();
+    const leaving = callWith(async (_listed, _profile, wait) => {
+      request.abort(new Error("the client left"));
+      throw wait.signal.reason;
+    }, request.signal);
+    expect(await acquireWithinCall(leaving, listed, "agent-read-only", soon())).toEqual({ kind: "cancelled" });
+
+    // The open releases the call at the deadline with the wait's reason, as the host's open table does.
+    const released = callWith(async (_listed, _profile, wait) => {
+      throw await abortOf(wait.signal);
+    });
+    expect(await acquireWithinCall(released, listed, "agent-read-only", Date.now() + 30)).toEqual({ kind: "timeout" });
+  });
+
+  test("passes any other failure of the acquisition by reference with its settle time", async () => {
+    const error = new Error("the connection was refused");
+    const before = Date.now();
+
+    const answered = await acquireWithinCall(
+      callWith(async () => {
+        throw error;
+      }),
+      listed,
+      "agent-read-only",
+      soon(),
+    );
+
+    expect(answered).toMatchObject({ kind: "failed", error });
+    expect(answered.kind === "failed" && answered.error).toBe(error);
+    expect(answered.kind === "failed" && answered.settledAt >= before).toBe(true);
   });
 });

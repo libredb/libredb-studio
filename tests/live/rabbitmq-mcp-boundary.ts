@@ -39,6 +39,9 @@ import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import type { OpenWait } from "@/lib/provider-host/core/open-once";
+import { installHostCore } from "@/lib/provider-host/instance";
 import { createNodeTransport } from "@/lib/db/http/node-transport";
 import { RabbitMQProvider } from "@/lib/db/providers/stream/rabbitmq";
 import { type AmqpDial, dialAmqp } from "@/lib/db/providers/stream/rabbitmq/amqp/dial";
@@ -60,6 +63,9 @@ import {
 } from "../helpers/rabbitmq-test-amqp091";
 import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
 import { egressDecision } from "@/lib/db/egress-decision";
+
+// An MCP statement runs through the host core, so this script installs it once, as a test's composition root does.
+installHostCore(createHostCore(), "test");
 
 function env(name: string): string {
   const value = process.env[name];
@@ -224,9 +230,11 @@ async function mcp(
     visibleConnections: async () => [connection],
     resolve: async () => connection,
     textScrub: fakeTextScrub,
-    acquire: (seeded: ManagedConnection, profile: ExecutionProfile) => {
+    acquire: (seeded: ManagedConnection, profile: ExecutionProfile, wait: OpenWait) => {
       acquired.push(profile);
-      return options.acquire === undefined ? acquireExecutionProfileProvider(seeded, profile) : options.acquire(seeded);
+      return options.acquire === undefined
+        ? acquireExecutionProfileProvider(seeded, profile, {}, {}, wait)
+        : options.acquire(seeded);
     },
   } as unknown as McpConnectionContext;
   const arm = options.arm ?? ARM;

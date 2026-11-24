@@ -1,10 +1,16 @@
+import { deadlineSignal } from "@libredb/provider-sdk/calls";
 import type { ErrorKind } from "@libredb/provider-sdk/errors";
 import { errorKind } from "@/lib/db/error-record";
 import type { ReadAllowanceExceededError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { ENGINE_TOO_LARGE_TEXTS } from "@/lib/sql/read-only-refusals";
 import { readQueryFormsOf } from "@/lib/sql/read-query-forms";
 import { analyzeQuery } from "@/lib/db/utils/query-limiter";
+import type { ExecutionProfile } from "@/lib/db/factory";
+import type { DatabaseProvider } from "@/lib/db/types";
+import type { OpenWait } from "@/lib/provider-host/core/open-once";
+import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseType } from "@/lib/types";
+import type { McpToolCall } from "../context";
 
 /**
  * The pure rules run_read_query follows (#246).
@@ -21,6 +27,8 @@ import type { DatabaseType } from "@/lib/types";
  * settles first never changes what the client reads.
  * The deadline race stops the wait for a statement, not the statement: no provider can cancel a read-only statement
  * yet (docs/BACKLOG.md D128).
+ * An acquisition waits within the call too (`acquireWithinCall`): the factory's open is handed the call's wait, so the
+ * host's open releases the call at the same moment the race stops waiting (docs/providers/CONTRACT.md, clause C-81).
  *
  * The statements an engine takes and its own paging clause differ by engine, so every text that names either reads the
  * engine's row in src/lib/sql/read-query-forms.ts rather than one engine's words for all.
@@ -227,4 +235,32 @@ export async function raceDeadline<T>(
     clearTimeout(timer);
     signal.removeEventListener("abort", onAbort);
   }
+}
+
+/**
+ * The connection's acquisition under `profile`, waited for within the call: the context's `acquire` is handed a wait
+ * whose signal aborts when the request's signal does or at `deadline` (`deadlineSignal`), so the host's open releases
+ * this call with that reason, and the acquisition is raced against the same signal and deadline (`raceDeadline`), so
+ * the call's one deadline also bounds every step of the acquisition the open's wait does not reach, and nothing starts
+ * late. A failure that is the wait's own reason, by reference, is that wait ending: `cancelled` when the request left,
+ * `timeout` otherwise, never a failure of the acquisition.
+ */
+export async function acquireWithinCall(
+  tool: McpToolCall,
+  listed: ManagedConnection,
+  profile: ExecutionProfile,
+  deadline: number,
+): Promise<Raced<DatabaseProvider>> {
+  // The wait is built only once the step starts, so a step `raceDeadline` never starts arms no deadline timer.
+  const handed: { wait?: OpenWait } = {};
+  const raced = await raceDeadline(
+    () => {
+      handed.wait = { signal: deadlineSignal(deadline, tool.signal) };
+      return tool.context.acquire(listed, profile, handed.wait);
+    },
+    tool.signal,
+    deadline,
+  );
+  if (raced.kind !== "failed" || handed.wait === undefined || raced.error !== handed.wait.signal.reason) return raced;
+  return tool.signal.aborted ? { kind: "cancelled" } : { kind: "timeout" };
 }

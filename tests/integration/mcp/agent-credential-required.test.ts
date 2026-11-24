@@ -10,12 +10,17 @@
  * both tools are driven against it through /api/mcp with a token minted at run time. The Postgres open is stubbed, so
  * a refusal that came too late shows up as an open.
  */
-import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test, beforeAll } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DatabaseType } from "@/lib/types";
 import * as realCompatibility from "@/lib/db/compatibility";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 const STAND_IN_PASSWORD = ["not", "a", "real", "password"].join("-");
 

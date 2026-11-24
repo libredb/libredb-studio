@@ -12,7 +12,7 @@
  * under the profile refuses; a result cut to max_rows says how to read a narrower route, since the tool takes no
  * offset; and a read past timeout_ms is answered as the timeout.
  */
-import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test, beforeAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,6 +32,11 @@ import { scopeMilvusWire } from "../../helpers/milvus-agent";
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
 import type { RecordedMilvusAnswer, RecordedMilvusWire } from "../../helpers/milvus-wire";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The notice an answer carrying database content opens with on this file's milvus connections. */
 const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("milvus"));

@@ -14,7 +14,7 @@
  * Identity is held open for the same reason: the session reader and the MCP token's owner check admit the caller, so
  * every answer here is the hold's and never an identity refusal.
  */
-import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test, beforeAll } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -37,6 +37,11 @@ import { legacyPost, readJsonRpc } from "../helpers/mcp-harness";
 import { mintTestToken, useMcpChannel } from "../helpers/mcp-token";
 import { discoverRoutes } from "./helpers/discover-routes";
 import { mcpRequest } from "./helpers/mcp-requests";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 pinMcpTestEnvironment();
 

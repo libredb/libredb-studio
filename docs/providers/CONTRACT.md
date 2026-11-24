@@ -2430,6 +2430,7 @@ The verdict is one of the members of `ConfirmationVerdict`, and a reader that th
 
 A provider without `queryReadOnly` is refused for agent and MCP statements before it is connected, and the plain query path is never the fallback.
 The host holds the same rule on its own side: the legacy bridge's read-only statement session over a provider without `queryReadOnly` is refused at its open by name, before anything is called, and the host core refuses a plain execute on a read-only statement session before the call, C-78, so `query()` is never called on that path.
+Every agent, hand-over and MCP statement reaches that open, C-79 and C-81, so a provider without `queryReadOnly` that an acquirer handed over anyway is refused there, answered as Studio's profile refusal with its record.
 
 - test `tests/integration/mcp/run-read-query.test.ts` "without queryReadOnly is refused, and query() is never the fallback"
 - test `tests/isolated/factory.test.ts` "refuses %s on an engine on the review record whose provider implements no read-only statement path, before connecting it, and query() is never the fallback"
@@ -2643,6 +2644,7 @@ The transaction route's script of several statements still calls `queryInTransac
 Its execute hands the provider a fresh copy of the caller's own page options and a new array of the request's params, so a provider that writes what it receives changes nothing the host froze, and runs the provider's prepare, the probe row past the page and the statement as the editor query always ran them.
 It answers one source per result set, the main rows first.
 A source reads each row positionally under the result's columns in its value codec form, or, when the codec refuses a cell, in the JSON form the answer writes for that row, sizes it with the pull's measure, C-15, and answers that same array, so each row is measured once, in the form closest to its answer.
+In that JSON form a bigint is written as its decimal text, as a row held to a read budget is measured, so a row holding a bigint beside a refused cell is measured rather than failing.
 Which cells the codec refuses is read before encoding, the codec's domain read as the codec reads it, so no codec error is thrown per row, and every error measuring a row throws passes by reference.
 A key a row holds outside its columns is answered and not measured.
 The page's row limit is set once execute answered: one past the page when the provider applied the page, otherwise every row the provider returned, at least one.
@@ -2703,6 +2705,7 @@ It answers and limits its page as the read-only statement session does, and read
 - test `tests/unit/lib/provider-host/legacy-bridge-measure.test.ts` "a row with a Map is measured in its JSON form, and the codec throws nothing"
 - test `tests/unit/lib/provider-host/legacy-bridge-measure.test.ts` "a row with a class instance, nested in a cell, is measured in its JSON form, and the codec throws nothing"
 - test `tests/unit/lib/provider-host/legacy-bridge-measure.test.ts` "the bridge reads the codec's domain as the codec does, for every kind it takes and refuses"
+- test `tests/unit/lib/provider-host/legacy-bridge-measure.test.ts` "a row holding a bigint beside a cell outside the codec is measured with the bigint as its decimal text, never thrown"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the page's row limit is the probe limit for a bound Studio wrote, and every returned row otherwise"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged cancel names the run and answers the provider's boolean"
 
@@ -3489,14 +3492,14 @@ In this order: an engine Studio's review record does not list is refused by name
 The request is a fresh copy of the statement, every row as its page, and the read-only execute of the budget's rows and bytes and the caller's mode; the context carries the deadline, the statement timeout from the call's start, a signal that aborts at it or when the caller's does, and the empty environment, never a credential.
 The statement timeout and the billed-read allowance reach the provider through the session's open, the allowance by reference.
 The agent's caller signal is one that never aborts, made for that call, as for its curated readings, C-76, and the hand-over's is its request's signal, so a client that leaves while the statement runs is answered at once.
-The answer is the provider's result by reference, held to the row budget, except for an estimating plan, whose rows are the optimizer's operators, and to the byte budget, each row's UTF-8 JSON bytes summed, in the providers' sentences, the check MCP's path and the agent's other budgeted readings make too.
+The answer is the provider's result by reference, held to the row budget, except for an estimating plan, whose rows are the optimizer's operators, and to the byte budget, each row's UTF-8 JSON bytes summed, in the providers' sentences, the check the read-only execute makes for MCP's statements, C-81, and the agent's other budgeted readings make too.
 The host pumps the first result within one page, C-53, so a row larger than one page is refused as `StudioByteBudgetRefusal` with the page's sentence, outcome unknown.
 An answer over 1 MiB waits for the host's large-page slot, C-53, within its deadline, so while another caller such as the editor holds that slot it can end in the time refusal rather than the byte refusal.
 A stop the deadline ended, at whatever wait of the run, is `StudioTimeBudgetRefusal` in the time budget's sentence, outcome unknown, through the accessor's budget view, C-51, and a refused start at the deadline is the same, outcome not-sent; a caller that leaves is `QueryCancelledError`.
 A stopped call's settlement is handed to the run, which counts the call as an execution until it settles.
 The session offers no cancel, so a stopped statement runs on, and its later failure is logged under the caller's route by kind and code, never its text, and a later answer is not logged.
 A provider's error passes as the same object.
-MCP's statements keep their own read path until they move onto the host core.
+MCP's statements run through the same read-only execute under the MCP call's deadline and its request's signal, C-81.
 
 - test `tests/unit/lib/api/read-only-execute.test.ts` "a read-only execute runs the provider's read-only path once through one host core execute call, on a fresh request and a context of deadline, signal and env alone"
 - test `tests/unit/lib/api/read-only-execute.test.ts` "its answer is the provider's result by reference, held to the row budget, except for an estimating plan, and to the byte budget, in the providers' sentences"
@@ -3512,10 +3515,10 @@ MCP's statements keep their own read path until they move onto the host core.
 - test `tests/unit/lib/api/read-only-execute-bounds.test.ts` "a read-only execute whose provider never answers ends at its own deadline in the time budget's sentence"
 - test `tests/unit/lib/agent/tools.test.ts` "a statement runs through the host core's read-only execute on a read-only statement session, never the provider's plain query"
 - test `tests/unit/lib/agent/tools.test.ts` "an acquired provider without a read-only path is refused by the host at the session's open, and the run propagates it"
-- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "no module outside the providers calls queryReadOnly except runReadOnlyStatement and the legacy bridge's read-only statement session"
+- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "no module outside the providers calls queryReadOnly except the legacy bridge's read-only statement session"
 - test `tests/unit/db/operations/read-only-statement-callers.test.ts` "runReadOnlyExecute reads the review record before it reads the budget, the host core or the provider"
-- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "the agent and the hand-over call no runReadOnlyStatement: their statements run through the host core's read-only execute"
-- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "only the agent's statement path and the hand-over route open a read-only statement session, each under a profile that sends statements"
+- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "the agent, the hand-over and MCP call no runReadOnlyStatement, and no module declares it: every statement runs through the host core's read-only execute"
+- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "only the agent's statement path, the hand-over route and MCP's statement path open a read-only statement session, each under a profile that sends statements"
 - test `tests/api/agent/handover.test.ts` "a hand-over whose client leaves while its statement runs answers 499 QUERY_CANCELLED, outcome unknown, and its later failure is logged by kind and code"
 - test `tests/api/agent/handover.test.ts` "a hand-over row larger than one page is refused by the host's page budget"
 - test `tests/api/agent/handover.test.ts` "a provider with no read-only statement path is a server fault, not a fallback"
@@ -3570,6 +3573,47 @@ A stop at whatever wait of the run, and a start refused at the deadline, is the 
 - test `tests/isolated/composed-statistics-statement.test.ts` "every dialect that reads statistics under the operations profile hands its provider the composed statement unchanged"
 - test `tests/unit/db/operations/read-only-statement-callers.test.ts` "only the agent's statistics read opens a composed statement session, under the operations profile"
 - test `tests/unit/db/operations/read-only-statement-callers.test.ts` "the agent, hand-over and MCP sources call query() nowhere: the statistics read sends its statement through the host core's composed statement session"
+
+### C-81 (normative): MCP's acquisitions and statements on the host
+
+Each MCP tool's acquisition, run_statement's under the agent's read-only execution profile and inspect_schema's under the operations profile, hands the factory's profiled open the call's wait: a signal that aborts when the request's signal does or at the call's deadline, the call's start plus `timeout_ms`.
+The host's open releases the call with that signal's reason when it aborts and goes on for any other caller, C-44, so an open whose only caller stopped waiting and that fails afterwards is logged by the factory's unclaimed-open line.
+MCP's one call deadline still bounds every step of the acquisition, the steps before the open included, and an acquisition is never started once the request left or the deadline passed.
+An acquisition that fails with the wait's own reason, by reference, is answered as the request leaving or as the deadline, never as a failure of the acquisition.
+
+A statement tool reads the host core before anything else, so a call made before its install throws by name, writes no audit record, resolves no connection and opens nothing.
+Every statement tool's statement runs through the read-only execute of C-79 on the read-only statement session of the provider acquired under the agent's read-only profile: the request's signal is its caller, so a request that leaves while the statement runs is answered as cancelled at once; its deadline is the call's, the time left handed to the provider as its statement timeout; and each call is handed a billed-read allowance of its own through the session's open.
+A call whose request left, or whose deadline passed while its connection opened, sends nothing.
+A stop the deadline ended is answered as the timeout with no failure record, as the deadline itself is, and a failure that settles at or after the deadline is the timeout too, its cause written to the server log.
+A provider without `queryReadOnly` is refused at the session's open, C-39, answered in the tool's sentence as Studio's profile refusal with its record.
+A statement that fails after MCP stopped waiting for it is logged under `/api/mcp` by kind and code, never its text, and a later answer is not logged.
+A value the host's page cannot carry, refused by the value codec as the host measures the rows, refuses the answer by the codec's sentence behind the notice naming the provider, as a value outside the codec in the answer's own rows does.
+An answer over 1 MiB in the host's measure waits for the host's large-page slot, C-53, within the call's deadline.
+The database choice's listing, inspect_schema's tree reads and the SQL arm's paging through the provider's `prepareQuery`, which sends nothing, still call the provider directly.
+
+- test `tests/unit/mcp/read-query-limits.test.ts` "hands the acquisition the call's wait, ended by the request leaving or the call's deadline"
+- test `tests/unit/mcp/read-query-limits.test.ts` "answers cancelled or timeout without acquiring when the request has left or the deadline has passed"
+- test `tests/unit/mcp/read-query-limits.test.ts` "answers the wait's own reason as the request leaving or the deadline, never as a failure"
+- test `tests/unit/mcp/read-query-limits.test.ts` "passes any other failure of the acquisition by reference with its settle time"
+- test `tests/unit/mcp/acquire-within-call-bounds.test.ts` "an MCP acquisition whose open never settles ends at the call's deadline"
+- test `tests/integration/mcp/context.test.ts` "an acquisition hands the factory the caller's wait"
+- test `tests/integration/mcp/run-read-query.test.ts` "a client that leaves while the connection opens is answered cancelled at once, and the open is released by the host"
+- test `tests/integration/mcp/run-read-query.test.ts` "an open that outlasts timeout_ms is answered with the timeout, and the open is released by the host"
+- test `tests/integration/mcp/inspect-schema.test.ts` "inspect_schema waits for its connection's open within the call's deadline and the request's signal"
+- test `tests/integration/mcp/run-read-query.test.ts` "a statement tool called before the host core is installed throws by name, writes no audit record and opens nothing"
+- test `tests/integration/mcp/run-read-query.test.ts` "a statement runs through the host core's read-only execute on a read-only statement session, never the provider's plain query"
+- test `tests/integration/mcp/run-mongo-command.test.ts` "a statement runs through the host core's read-only execute"
+- test `tests/integration/mcp/run-kafka-read.test.ts` "a statement runs through the host core's read-only execute"
+- test `tests/integration/mcp/run-read-query.test.ts` "each call is handed an allowance of its own, so one call's spend never reaches the next"
+- test `tests/integration/mcp/run-read-query.test.ts` "a statement that outlasts timeout_ms is stopped by the host core, answered with the timeout and no record, and its later failure is logged by kind and code only"
+- test `tests/integration/mcp/run-read-query.test.ts` "a client that leaves while the statement runs is answered cancelled at once through the host core, and its later answer is not logged"
+- test `tests/integration/mcp/run-read-query.test.ts` "a statement whose call deadline passed while its connection opened is never sent"
+- test `tests/integration/mcp/run-read-query.test.ts` "a failure that settles after the deadline is the timeout answer, and its cause goes to the server log, redacted"
+- test `tests/integration/mcp/run-read-query.test.ts` "a failure settling after the deadline answers as the deadline, with no record, as the deadline timer does"
+- test `tests/integration/mcp/run-read-query.test.ts` "without queryReadOnly is refused, and query() is never the fallback"
+- test `tests/integration/mcp/protocol.test.ts` "a document nested deeper than MAX_VALUE_DEPTH refuses the answer by the depth rule"
+- test `tests/integration/mcp/run-mongo-command.test.ts` "a document with a bigint beside a missing field is answered through the host core as before"
+- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "only the agent's statement path, the hand-over route and MCP's statement path open a read-only statement session, each under a profile that sends statements"
 
 ## Not yet in this contract
 
@@ -3679,3 +3723,8 @@ Against this contract's earlier text:
 - The agent's grounding walk reads through the host core's tree call under one deadline, the time its call was granted, C-80: a walk whose time ends sends no further read and the run counts only the read in flight, where the run stopped waiting and the walk went on reading to its end; a read that fails after the stop is logged by kind and code, where it was released silently.
 - Plan mode's statistics read runs through the host core's console execute on a composed statement session, C-80, the statement exactly as composed: its rows are held to the byte budget by each row's UTF-8 JSON bytes summed, where it measured their JSON text's length, a row larger than one page is refused by the host's page budget, and an answer over 1 MiB waits for the host's large-page slot.
 - Each engine's SQL writing is a projection of its declaration, M-15 and M-79, its functions bound by Studio's own table, where each engine kept an SQL writing row beside its provider; the export takes a numeric wrapper off only while its capture is a strictly shorter type, S-15.
+- MCP's acquisitions hand the factory's open the call's wait, ended by the request's signal or the call's deadline, C-81, where they waited for the open alone within MCP's own race; an open whose only caller was an MCP call that stopped waiting, and that fails afterwards, is logged by the factory's unclaimed-open line, where it was dropped silently.
+- Every MCP statement tool's statement runs through the host core's read-only execute under the call's deadline and its request's signal, C-81, where it called the provider's read-only path under MCP's own race; a statement that fails after MCP stopped waiting is logged by kind and code, where it was dropped silently, and an answer over 1 MiB in the host's measure waits for the host's large-page slot.
+- A provider without `queryReadOnly` handed to an MCP statement tool is refused at the read-only statement session's open as Studio's profile refusal with its record, C-39 and C-81, where MCP answered its own sentence with no record.
+- A value nested deeper than the value codec's bound in an MCP statement's rows is refused as the host measures the rows, at its place in the row read positionally, C-81, where MCP's own encoding refused it at its place under the column's name.
+- The legacy bridge measures a bigint beside a cell outside the value codec as its decimal text, C-50, where the measure threw.

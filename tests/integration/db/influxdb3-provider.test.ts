@@ -17,7 +17,7 @@
  * the ones `table_schema = 'iox'` keeps, are what the provider's listing answers), and the column listings of the
  * tables other than `home` and the hostile one, answered with `home`'s.
  */
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test, afterAll, beforeAll } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
@@ -51,6 +51,11 @@ import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from ".
 import { fakeTextScrub } from "../../helpers/mcp-fixtures";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { errorKind } from "@/lib/db/error-record";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The notice an answer carrying database content opens with on this file's influxdb3 connections. */
 const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("influxdb3"));

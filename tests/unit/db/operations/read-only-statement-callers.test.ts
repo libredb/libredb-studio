@@ -7,12 +7,13 @@ import ts from "typescript";
  * The protected read path has one core caller.
  *
  * A provider's `queryReadOnly` is the read-only statement path the agent, the hand-over replay and MCP run statements
- * on. MCP reaches it through `runReadOnlyStatement` (`src/lib/db/operations/read-only-statement.ts`), and the agent and
- * the hand-over through the host core's read-only execute (`runReadOnlyExecute`, src/lib/api/read-only-execute.ts),
- * whose session the legacy bridge serves (`bridgedReadOnlyStatements`); each holds the answer to the budget handed out.
- * A third caller would be a path where the caps are only the provider's claim, so outside provider code no module
- * reads the method except to test that it exists (`typeof`), and those two are the exceptions. Any read counts, not
- * only a call: a read is how a call, a `.bind`, a `.call`, an `.apply` or an alias begins.
+ * on. All three reach it through the host core's read-only execute (`runReadOnlyExecute`,
+ * src/lib/api/read-only-execute.ts), whose session the legacy bridge serves (`bridgedReadOnlyStatements`), and which
+ * holds the answer to the budget handed out. A second reader would be a path where the caps are only the provider's
+ * claim, so outside provider code no module reads the method except to test that it exists (`typeof`), and the bridge
+ * is the exception. Any read counts, not only a call: a read is how a call, a `.bind`, a `.call`, an `.apply` or an
+ * alias begins. `runReadOnlyStatement`, MCP's own reader until its statements moved onto the host core, is declared by
+ * no module.
  *
  * The agent's other budgeted reads, the catalog read `readCatalogReadOnly` and the cluster readings `readClusterUsage`
  * and `readWorkloadProfile`, are held the same way: each is read once outside provider code, in the one agent function
@@ -318,19 +319,15 @@ describe("the protected read path", () => {
     ]);
   });
 
-  test("no module outside the providers calls queryReadOnly except runReadOnlyStatement and the legacy bridge's read-only statement session", () => {
+  test("no module outside the providers calls queryReadOnly except the legacy bridge's read-only statement session", () => {
     const outside = SOURCE_ROOTS.flatMap(sourceFiles).filter(
-      (file) => !file.startsWith(PROVIDER_CODE) && file !== CORE_CALLER && file !== BRIDGE,
+      (file) => !file.startsWith(PROVIDER_CODE) && file !== BRIDGE,
     );
     expect(outside.length).toBeGreaterThan(0);
     const uses = outside.flatMap((file) => queryReadOnlyUses(file, readFileSync(join(ROOT, file), "utf8")));
     expect(uses.map(label)).toEqual([]);
-    // Both readers are still there, so the rule above is not vacuous: inside `runReadOnlyStatement`, in the read it
-    // hands `runReadOnlyReading`, and inside the bridge's read-only statement session, its one bound read.
-    const core = queryReadOnlyUses(CORE_CALLER, readFileSync(join(ROOT, CORE_CALLER), "utf8"));
-    expect(core.map((use) => `${use.file} in ${use.functions.at(-1)}`)).toEqual([
-      `${CORE_CALLER} in runReadOnlyStatement`,
-    ]);
+    // The reader is still there, so the rule above is not vacuous: inside the bridge's read-only statement session, its
+    // one bound read.
     const bridge = queryReadOnlyUses(BRIDGE, readFileSync(join(ROOT, BRIDGE), "utf8"));
     expect(bridge.map((use) => [`${use.file} in ${use.functions.at(-1)}`, use.called])).toEqual([
       [`${BRIDGE} in ${BRIDGE_SESSION}`, true],
@@ -407,8 +404,43 @@ describe("the protected read path", () => {
 });
 
 const HANDOVER_ROUTE = join("src", "app", "api", "agent", "runs", "[runId]", "handover", "route.ts");
+/** MCP's statement core, whose one helper sends every statement tool's statement through the read-only execute. */
+const MCP_STATEMENT = join("src", "lib", "mcp", "tools", "run-statement.ts");
+const MCP_STATEMENT_HELPER = "statementOnHost";
+
+/** The core statement call MCP was the last to use, removed with that use. */
+const RETIRED = "runReadOnlyStatement";
+
+/** Whether `text` declares, calls or imports a binding named `name`; a comment that names it is none of these. */
+function declaresOrCalls(file: string, text: string, name: string): boolean {
+  let found = false;
+  const visit = (node: ts.Node) => {
+    if (found) return;
+    if (ts.isIdentifier(node) && node.text === name) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(parse(file, text));
+  return found;
+}
+
+/** The string literal arguments of each call of `callee` in `node`, in source order. */
+function literalArguments(node: ts.Node, callee: string): string[][] {
+  const found: string[][] = [];
+  const visit = (at: ts.Node) => {
+    if (ts.isCallExpression(at) && ts.isIdentifier(inner(at.expression))) {
+      if ((inner(at.expression) as ts.Identifier).text === callee) {
+        found.push(at.arguments.filter(ts.isStringLiteral).map((argument) => argument.text));
+      }
+    }
+    ts.forEachChild(at, visit);
+  };
+  visit(node);
+  return found;
+}
 const AGENT_TOOLS = join("src", "lib", "agent", "tools.ts");
-const AGENT_SOURCES = [join("src", "lib", "agent"), join("src", "app", "api", "agent")];
 
 interface FunctionCall {
   readonly file: string;
@@ -450,23 +482,24 @@ function callsOutsideProviders(name: string): FunctionCall[] {
 }
 
 describe("the agent's statements and the hand-over replay on the host core", () => {
-  test("the agent and the hand-over call no runReadOnlyStatement: their statements run through the host core's read-only execute", () => {
-    const agentFiles = AGENT_SOURCES.flatMap(sourceFiles);
-    expect(agentFiles.length).toBeGreaterThan(0);
-    const legacy = agentFiles.flatMap((file) =>
-      functionCalls(file, readFileSync(join(ROOT, file), "utf8"), "runReadOnlyStatement"),
-    );
-    expect(legacy.map((call) => `${call.file} in ${call.declaration}`)).toEqual([]);
-    const facade = agentFiles.flatMap((file) =>
+  test("the agent, the hand-over and MCP call no runReadOnlyStatement, and no module declares it: every statement runs through the host core's read-only execute", () => {
+    const files = SOURCE_ROOTS.flatMap(sourceFiles);
+    expect(files.length).toBeGreaterThan(0);
+    const named = files.filter((file) => declaresOrCalls(file, readFileSync(join(ROOT, file), "utf8"), RETIRED));
+    expect(named).toEqual([]);
+    const callers = AGENT_AND_MCP_SOURCES.flatMap(sourceFiles).flatMap((file) =>
       functionCalls(file, readFileSync(join(ROOT, file), "utf8"), "runReadOnlyExecute"),
     );
-    expect(facade.map((call) => `${call.file} in ${call.declaration}`).sort()).toEqual([
-      `${HANDOVER_ROUTE} in POST`,
-      `${AGENT_TOOLS} in runStatement`,
-    ]);
+    expect(callers.map((call) => `${call.file} in ${call.declaration}`).sort()).toEqual(
+      [
+        `${HANDOVER_ROUTE} in POST`,
+        `${AGENT_TOOLS} in runStatement`,
+        `${MCP_STATEMENT} in ${MCP_STATEMENT_HELPER}`,
+      ].sort(),
+    );
   }, 60_000);
 
-  test("only the agent's statement path and the hand-over route open a read-only statement session, each under a profile that sends statements", () => {
+  test("only the agent's statement path, the hand-over route and MCP's statement path open a read-only statement session, each under a profile that sends statements", () => {
     // The session is read-only for statements because its caller acquired the provider under a profile whose open
     // policy has both readOnly and sendsStatements; the host trusts the facade's word, so the callers are held here.
     const sessions = callsOutsideProviders(BRIDGE_SESSION);
@@ -478,11 +511,21 @@ describe("the agent's statements and the hand-over replay on the host core", () 
       [`${AGENT_TOOLS} in runStatement`]: "AGENT_EXECUTION_PROFILE",
       [`${HANDOVER_ROUTE} in POST`]: "AGENT_HANDOVER_PROFILE",
     };
-    expect(facade.map((call) => `${call.file} in ${call.declaration}`).sort()).toEqual(Object.keys(profiles).sort());
-    for (const call of facade) {
+    const mcpCaller = `${MCP_STATEMENT} in ${MCP_STATEMENT_HELPER}`;
+    expect(facade.map((call) => `${call.file} in ${call.declaration}`).sort()).toEqual(
+      [...Object.keys(profiles), mcpCaller].sort(),
+    );
+    for (const call of facade.filter((each) => `${each.file} in ${each.declaration}` !== mcpCaller)) {
       const profile = profiles[`${call.file} in ${call.declaration}`] as string;
       expect([call.declaration, call.names.has(profile)]).toEqual([call.declaration, true]);
     }
+    // MCP's helper is called by the one function that acquired its provider, under the agent's read-only profile, which
+    // it names as a string literal where the agent names its constant.
+    const helper = callsOutsideProviders(MCP_STATEMENT_HELPER);
+    expect(helper.map((call) => `${call.file} in ${call.declaration}`)).toEqual([`${MCP_STATEMENT} in executeOpened`]);
+    expect(literalArguments(declaredFunction(MCP_STATEMENT, "executeOpened"), "acquireWithinCall")).toEqual([
+      ["agent-read-only"],
+    ]);
   }, 60_000);
 
   test("only the agent's statistics read opens a composed statement session, under the operations profile", () => {
@@ -637,14 +680,13 @@ const REVIEW_GATE = "assertStatementsReviewed";
 const FACTORY = join("src", "lib", "db", "factory.ts");
 const KNOWN_PRESENCE_TESTS: readonly string[] = [
   `${FACTORY} in openProfiledProvider`,
-  `${CORE_CALLER} in read`,
-  `${join("src", "lib", "mcp", "tools", "run-statement.ts")} in executeOpened`,
   `${BRIDGE} in ${BRIDGE_SESSION}`,
 ];
-/** The presence tests that return their refusal as a value: MCP's statement tool answers every refusal that way. */
-const RETURNED_REFUSALS: readonly string[] = [
-  `${join("src", "lib", "mcp", "tools", "run-statement.ts")} in executeOpened`,
-];
+/**
+ * The presence tests that return their refusal as a value: none, since MCP's statement tool, which answered its own that
+ * way, reaches the bridge's open, which throws its refusal.
+ */
+const RETURNED_REFUSALS: readonly string[] = [];
 
 describe("the review record gates the protected read path", () => {
   test("the scan finds a presence test that opens, and not one that refuses the absence", () => {

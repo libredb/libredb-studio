@@ -46,6 +46,9 @@
 import { randomBytes } from "node:crypto";
 import neo4j, { type Driver } from "neo4j-driver-lite";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import type { OpenWait } from "@/lib/provider-host/core/open-once";
+import { installHostCore } from "@/lib/provider-host/instance";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import { databaseContentNotice, MCP_CANCELLED_TEXT, type ToolResult } from "@/lib/mcp/output";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
@@ -54,6 +57,9 @@ import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statem
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
+
+// An MCP statement runs through the host core, so this script installs it once, as a test's composition root does.
+installHostCore(createHostCore(), "test");
 
 /** The notice an answer carrying database content opens with on this file's neo4j connections. */
 const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("neo4j"));
@@ -111,9 +117,9 @@ function contextOf(connection: ManagedConnection, acquired: ExecutionProfile[]):
     visibleConnections: async () => [connection],
     resolve: async () => connection,
     textScrub: fakeTextScrub,
-    acquire: (target: ManagedConnection, profile: ExecutionProfile) => {
+    acquire: (target: ManagedConnection, profile: ExecutionProfile, wait: OpenWait) => {
       acquired.push(profile);
-      return acquireExecutionProfileProvider(target, profile);
+      return acquireExecutionProfileProvider(target, profile, {}, {}, wait);
     },
   } as unknown as McpConnectionContext;
 }

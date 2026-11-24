@@ -11,7 +11,7 @@
  * in the tool's sentence; a read past the row budget is refused with the request's own advice, and a result cut to
  * max_rows says how to narrow it, since the tool takes no offset.
  */
-import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test, beforeAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -33,6 +33,11 @@ import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-har
 import { agentAnswer, agentServer } from "../../helpers/qdrant-agent";
 import { type RecordedAnswer, okAnswer, recordingQdrantTransport } from "../../helpers/qdrant-transport";
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The notice an answer carrying database content opens with on this file's qdrant connections. */
 const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("qdrant"));

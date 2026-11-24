@@ -5,6 +5,7 @@ import { MCP_AGENT_CREDENTIAL_REQUIRED, READ_ROOTS_REQUIRED } from "@/lib/db/com
 import { StudioProfileRefusal } from "@/lib/db/errors";
 import { assertDatabaseType } from "@/lib/db/type-id";
 import { acquireExecutionProfileProvider, type ExecutionProfile } from "@/lib/db/factory";
+import type { OpenWait } from "@/lib/provider-host/core/open-once";
 import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
@@ -30,7 +31,8 @@ export const MCP_CONNECTIONS_UNREADABLE_TEXT =
  * Acquisition goes through acquireExecutionProfileProvider and nothing else. The factory joins
  * concurrent first acquisitions of one connection and profile into one open, on its own key, and a
  * failed one is retried by the next caller (docs/providers/CONTRACT.md, clause C-44), so this
- * context keeps no table of its own.
+ * context keeps no table of its own. Every acquisition hands the factory the caller's wait, so the
+ * open releases a call that stopped waiting (clause C-81, `acquireWithinCall`).
  *
  * A seed file that cannot be loaded answers MCP_CONNECTIONS_UNREADABLE, which every tool turns
  * into its own explicit error.
@@ -182,14 +184,18 @@ export class McpConnectionContext {
     return providerTextScrub(await this.open(listed), "profiled");
   }
 
-  async acquire(listed: ManagedConnection, profile: ExecutionProfile): Promise<DatabaseProvider> {
+  /**
+   * The provider of the listed connection under `profile`, opened with the caller's `wait`: the open stops waiting for
+   * this call with the wait's reason when its signal aborts, and goes on for any other caller.
+   */
+  async acquire(listed: ManagedConnection, profile: ExecutionProfile, wait: OpenWait): Promise<DatabaseProvider> {
     const connection = await this.open(listed);
     // The caller's editor posture on this connection (non-admin DuckDB file access): it decides whether a
     // SQLite handle opens at all and which open single-writer handle an operations acquisition may
     // borrow, and it is part of the key, so it is derived first; every caller that can resolve one seed
     // shares it.
     const requester = editorExecutionContext(this.caller, connection);
-    return acquireExecutionProfileProvider(connection, profile, {}, requester);
+    return acquireExecutionProfileProvider(connection, profile, {}, requester, wait);
   }
 
   /** The listed connection checked and its Vault references read, once per request (`opened`). */

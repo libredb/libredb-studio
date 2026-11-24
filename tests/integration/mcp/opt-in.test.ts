@@ -18,6 +18,11 @@ import { createSqliteFile, pinMcpTestEnvironment, resetMcpTestState, writeSeedFi
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
 import { registeredMcpToolNames } from "../../helpers/mcp-tool-names";
 import { seedSamples } from "../../helpers/sample-seeding";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 pinMcpTestEnvironment();
 

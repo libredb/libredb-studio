@@ -2003,13 +2003,12 @@ export interface ProviderLabels {
  *   once the statement returns, and an overrun result is refused rather than served.
  *
  * On the agent statement path, the hand-over replay and every MCP statement tool, core holds the provider's answer to
- * the same caps again (`runReadOnlyExecute` in `src/lib/api/read-only-execute.ts` for the agent and the hand-over,
- * `runReadOnlyStatement` in `src/lib/db/operations/read-only-statement.ts` for MCP): it refuses an answer
- * past the row cap (an estimating plan excepted, whose rows are operators), sums each served row's UTF-8 JSON bytes
- * against the byte cap, and stops waiting at the timeout or at the caller's own deadline. Stopping the wait does not
- * stop the statement, and the wait includes the provider's connection checkout. A provider that runs its statement
- * synchronously on the event loop (LibreDB, SQLite without its worker) returns only once the statement has ended, so
- * no timer of core's bounds it, and its own check once the statement returns is the time bound there.
+ * the same caps again (`runReadOnlyExecute` in `src/lib/api/read-only-execute.ts`): it refuses an answer past the row
+ * cap (an estimating plan excepted, whose rows are operators), sums each served row's UTF-8 JSON bytes against the
+ * byte cap, and stops waiting at the timeout, which for an MCP statement is the call's own deadline. Stopping the wait
+ * does not stop the statement, and the wait includes the provider's connection checkout. A provider that runs its
+ * statement synchronously on the event loop (LibreDB, SQLite without its worker) returns only once the statement has
+ * ended, so no timer of core's bounds it, and its own check once the statement returns is the time bound there.
  *
  * The three caps bound one statement. `readAllowance` is the one bound that spans statements:
  * the billed-read allowance of the agent run, or of the single call (an MCP statement call, the

@@ -253,14 +253,19 @@ function outsideCodec(value: unknown): boolean {
 }
 
 /**
- * `row` read positionally under `fields`, in its value codec form, or in its JSON form when the codec refuses a cell.
+ * `row` read positionally under `fields`, in its value codec form, or in its JSON form when the codec refuses a cell,
+ * a bigint written as its decimal text, as a row read for a read budget is measured (`measureRowBytes` in
+ * src/lib/db/read-only-budget.ts), so a bigint beside a refused cell is measured rather than failing the JSON form. The
+ * form is a measure, never the answer: a facade answers the legacy rows.
  *
  * @throws Any error reading the row or writing its JSON form throws, by reference.
  */
 function rowForm(fields: readonly string[], row: Readonly<Record<string, unknown>>): readonly unknown[] {
   const cells = fields.map((field) => row[field]);
   if (!outsideCodec(cells)) return cells;
-  return JSON.parse(JSON.stringify(cells)) as readonly unknown[];
+  return JSON.parse(
+    JSON.stringify(cells, (_key, value: unknown) => (typeof value === "bigint" ? value.toString() : value)),
+  ) as readonly unknown[];
 }
 
 /** A result source over a legacy result set's rows, each in its measured form, sized with its pull's measure. */

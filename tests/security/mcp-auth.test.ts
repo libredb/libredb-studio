@@ -7,7 +7,7 @@
  * proxy() here; the route's own half of the boundary is below it. Every request carries an
  * explicit Host and HOSTNAME is fixed, as csrf-origin.test.ts builds requests.
  */
-import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test, beforeAll } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -38,6 +38,11 @@ import {
 import { legacyPost, readJsonRpc, routeServe } from "../helpers/mcp-harness";
 import { mintTestToken, useMcpChannel } from "../helpers/mcp-token";
 import { mcpRequest, permissionDeniedLines } from "./helpers/mcp-requests";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 pinMcpTestEnvironment();
 

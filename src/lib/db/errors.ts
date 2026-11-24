@@ -366,7 +366,7 @@ export class SerialisedResultRefusal extends QueryError {
 
 /**
  * Core's refusal of a provider's answer that held more rows than the read's row budget (`holdReadOnlyRows`, read by
- * `runReadOnlyExecute`, `runReadOnlyStatement` and `runReadOnlyReading`). A `RowBudgetRefusal`, so a reader of the row
+ * `runReadOnlyExecute` and `runReadOnlyReading`). A `RowBudgetRefusal`, so a reader of the row
  * budget sees it whoever raised it; its own class, so its error record answers kind `studio-row-budget-refusal` and the
  * agent says it in Studio's voice where it fences a provider's as database content. Its `name` stays `QueryError`, so a
  * log line, an error body and a reader of the name see no difference. No provider constructs it;

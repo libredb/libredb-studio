@@ -1,8 +1,14 @@
-import { encodeValue, type WireValue } from "@libredb/provider-sdk/values";
+import { encodeValue, ValueCodecError, type WireValue } from "@libredb/provider-sdk/values";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
+import { runReadOnlyExecute } from "@/lib/api/read-only-execute";
 import { getDBConfig } from "@/lib/db-ui-config";
-import { ExecutionProfileError, OffsetUnsupportedError } from "@/lib/db/errors";
+import {
+  ExecutionProfileError,
+  OffsetUnsupportedError,
+  QueryCancelledError,
+  StudioTimeBudgetRefusal,
+} from "@/lib/db/errors";
 import {
   isStudioRefusal,
   providerAuthor,
@@ -11,10 +17,10 @@ import {
   scrubProviderText,
   withScrubbedWarnings,
 } from "@/lib/db/operations/provider-text";
-import { runReadOnlyStatement } from "@/lib/db/operations/read-only-statement";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import type { DatabaseProvider, PreparedQuery } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
+import { hostCore } from "@/lib/provider-host/instance";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseType, QueryResult } from "@/lib/types";
 import {
@@ -55,11 +61,13 @@ import {
 import { redactErrorMessage } from "../serializer";
 import { databaseRequiredAnswer, McpDatabaseChoiceError, providerInDatabase } from "./database-choice";
 import {
+  acquireWithinCall,
   classifyReadQueryFailure,
   nextPageHint,
   offsetRefusalText,
   pagesWithOffset,
   profileRefusalText,
+  type Raced,
   raceDeadline,
   timeoutText,
 } from "./read-query-limits";
@@ -75,29 +83,35 @@ import {
  * The one core every MCP statement tool runs (#246): one read-only statement, on an engine that
  * can bound it itself, in the arm's language.
  *
- * The order is run_read_query's: signal, resolve, availability, the served-engine gate, canonicalize, fence, the decision
- * record, the open's `textScrub`, `acquire(connection, "agent-read-only")`, `providerInDatabase`, for an arm that
- * pages the provider's `prepareQuery` with the row cap and offset, `queryReadOnly` under the provider budgets through
- * `runReadOnlyStatement`, which refuses an answer past either budget again in core, the cut to max_rows and the result
- * cap, the outcome record.
+ * The order is run_read_query's: the host core, signal, resolve, availability, the served-engine gate, canonicalize,
+ * fence, the decision record, the open's `textScrub`, the acquisition under "agent-read-only" within the call
+ * (`acquireWithinCall`), `providerInDatabase`, for an arm that pages the provider's `prepareQuery` with the row cap and
+ * offset, the statement through the host core's read-only execute (`runReadOnlyExecute`) under the provider budgets,
+ * which refuses an answer past either budget again in core, the cut to max_rows and the result cap, the outcome record
+ * (docs/providers/CONTRACT.md, clause C-81). The host core is read before anything else, so a call made before its
+ * install throws `HostCoreBootOrderError` by name, with no record written and nothing opened.
  *
- * The boundary is the agent-read-only acquisition and the provider's queryReadOnly, which the factory refuses to hand
- * out for an engine without one; this module never calls query(), and that is what makes every statement tool's
- * readOnlyHint true. A profile refusal, from the acquisition or from a provider that proves its principal before every
+ * The boundary is the agent-read-only acquisition, which the factory refuses to hand out for an engine without a
+ * read-only statement path, and the read-only statement session the legacy bridge opens over the provider, which
+ * refuses one without `queryReadOnly` by name (clause C-39); this module never calls query(), and that is what makes
+ * every statement tool's readOnlyHint true. A profile refusal, from the acquisition or from a provider that proves its principal before every
  * statement, is answered in the tool's own sentence: Studio's own refusal in Studio's words, and a provider's behind a
  * notice naming the provider that wrote it, since it may quote database names. Every provider text an answer or a log
  * line carries passes core's scrub of the connection's credential first, taken from the open (`textScrub`) so a
  * Vault-resolved secret is covered. A connection no MCP open can serve for the caller is refused first, with the
  * sentence list_connections lists it with, naming no tool. An engine the arm does not serve is refused before anything is
  * acquired, naming the tool that does serve it, and the arm's fence then runs as defence in depth. One deadline, the
- * call's start plus timeout_ms, covers acquisition and execution; neither a cancel nor the deadline stops a statement
- * already running (docs/BACKLOG.md D128), they end the wait.
+ * call's start plus timeout_ms, covers acquisition and execution: the acquisition hands the open the call's wait, and
+ * the statement runs under the host core's deadline, the time left, and the request's signal. Neither a cancel nor the
+ * deadline stops a statement already running (docs/BACKLOG.md D128), they end the wait; a statement that fails after
+ * the wait ended is logged under `/api/mcp` by kind and code, never its text.
  *
  * Rows are fetched one past the page where the arm pages, so the extra row proves more exist, cut to max_rows, then
  * cut to the result cap by binary search. The rows an answer can carry, the first max_rows, are written in the value
  * codec's wire form (`encodeValue` of `@libredb/provider-sdk/values`, `MCP_CELL_FORM`), in structuredContent and in the
  * JSON text block alike; a value outside the codec refuses the whole answer by the codec's sentence, behind the notice
- * naming the provider, since its place quotes column names and document keys. offset on a query the provider did not rewrite is refused before anything
+ * naming the provider, since its place quotes column names and document keys, and so does a value the host core's
+ * page refuses as it measures the rows. offset on a query the provider did not rewrite is refused before anything
  * runs, because the provider would answer the first page labelled with the requested offset; so is an offset the
  * provider's prepareQuery refuses by throwing OffsetUnsupportedError, answered in its words behind a notice naming
  * it, and any offset on an engine whose accepted-forms row says its SQL has none, refused before prepareQuery with the
@@ -358,8 +372,8 @@ async function executeOpened(
   deadline: number,
   scrub: ProviderTextScrub,
 ): Promise<Answer> {
-  const { arm, args } = call;
-  const acquired = await raceDeadline(() => tool.context.acquire(connection, "agent-read-only"), tool.signal, deadline);
+  const { args } = call;
+  const acquired = await acquireWithinCall(tool, connection, "agent-read-only", deadline);
   if (acquired.kind === "cancelled") return [ownWordsError(MCP_CANCELLED_TEXT), "mcp_cancelled"];
   if (acquired.kind === "timeout") return [ownWordsError(timeoutText(args.timeout_ms)), "mcp_timeout"];
   if (acquired.kind === "failed") return acquisitionFailure(call, acquired, deadline, record, scrub);
@@ -383,46 +397,69 @@ async function executeOpened(
     if (error instanceof McpDatabaseChoiceError) return [ownWordsError(error.message), "mcp_execution_failed"];
     throw error;
   }
-  if (typeof provider.queryReadOnly !== "function") {
-    // The profile seam refuses such a provider, so this is a server fault; query() is never the fallback.
-    const refusal = profileRefusalText(
-      "the acquired provider exposes no read-only execution path",
-      arm.engines,
-      arm.tool,
-    );
-    return [ownWordsError(refusal), "mcp_execution_failed"];
-  }
   const prepared = prepare(call, provider, connection.type, scrub);
   if ("refused" in prepared) return prepared.refused;
-  const { query } = prepared.prepared;
-  // Through the one core call of the read-only path, which holds the answer to the read budget before it is cut to
-  // max_rows and the answer cap; this call's own deadline bounds the wait, so that function sets no timer of its own.
-  const executed = await raceDeadline(
-    () =>
-      runReadOnlyStatement(provider, {
-        type: connection.type,
-        scrub,
-        statement: query,
-        budget: {
-          maxResultRows: MCP_PROVIDER_ROW_CAP,
-          maxResultBytes: MCP_PROVIDER_BYTE_CAP,
-          statementTimeoutMs: Math.max(1, Math.floor(deadline - Date.now())),
-          // A call is its own run here: a fresh allowance per call, so one call's billed reads never reach the next.
-          readAllowance: new RunReadAllowance(MCP_CALL_READ_ALLOWANCE, { scope: "call" }),
-        },
-        wait: "caller-deadline",
-      }),
-    tool.signal,
-    deadline,
-  );
+  const executed = await statementOnHost(tool, provider, connection.type, prepared.prepared.query, deadline);
   if (executed.kind === "cancelled") return [ownWordsError(MCP_CANCELLED_TEXT), "mcp_cancelled"];
   if (executed.kind === "timeout") return [ownWordsError(timeoutText(args.timeout_ms)), "mcp_timeout"];
   // A provider whose principal check runs before every statement, rather than at the open, refuses there, in the
   // tool's sentence. That refusal quotes names any user of the database may have chosen (a function, a view, a role),
-  // so it goes behind a notice naming the provider, scrubbed, redacted and cut as an engine message is.
-  if (executed.kind === "failed") return acquisitionFailure(call, executed, deadline, record, scrub);
+  // so it goes behind a notice naming the provider, scrubbed, redacted and cut as an engine message is. A value the
+  // host core's page cannot carry, refused by the value codec as the host measures the rows, is refused as the answer's
+  // own cut refuses one, by the codec's sentence behind the notice.
+  if (executed.kind === "failed") {
+    if (executed.error instanceof ValueCodecError) {
+      return [
+        engineError(MCP_CELL_REFUSED_PREFIX, executed.error, scrub, providerAuthor(call.type)),
+        "mcp_execution_failed",
+      ];
+    }
+    return acquisitionFailure(call, executed, deadline, record, scrub);
+  }
   // The notes an arm answers are the provider's text too, scrubbed before the answer is built.
   return resultOf(call, connection.type, prepared.prepared, withScrubbedWarnings(scrub, executed.value), scrub);
+}
+
+/**
+ * The statement through the host core's read-only execute (`runReadOnlyExecute`, docs/providers/CONTRACT.md, clauses
+ * C-79 and C-81), which opens the legacy bridge's read-only statement session over the provider, refusing one without
+ * `queryReadOnly` by name, and holds the answer to the read budget before it is cut to max_rows and the answer cap. Its
+ * deadline is the call's, as the time left, and its caller is the request's signal, so the host core ends the wait and
+ * no race of this module's runs beside it. A call whose request left, or whose deadline passed while the connection
+ * opened, sends nothing, as a raced step starts nothing late. The facade's ends are read into the race's kinds: its
+ * time refusal, which on this path only the call's deadline builds, is the timeout; a cancel while the request has left
+ * is the request leaving; any other error is a failure with its settle time, a provider's by reference.
+ */
+async function statementOnHost(
+  tool: McpToolCall,
+  provider: DatabaseProvider,
+  type: DatabaseType,
+  statement: string,
+  deadline: number,
+): Promise<Raced<QueryResult>> {
+  if (tool.signal.aborted) return { kind: "cancelled" };
+  const remaining = Math.floor(deadline - Date.now());
+  if (remaining <= 0) return { kind: "timeout" };
+  try {
+    const value = await runReadOnlyExecute(provider, {
+      type,
+      statement,
+      budget: {
+        maxResultRows: MCP_PROVIDER_ROW_CAP,
+        maxResultBytes: MCP_PROVIDER_BYTE_CAP,
+        statementTimeoutMs: remaining,
+        // A call is its own run here: a fresh allowance per call, so one call's billed reads never reach the next.
+        readAllowance: new RunReadAllowance(MCP_CALL_READ_ALLOWANCE, { scope: "call" }),
+      },
+      caller: tool.signal,
+      route: "/api/mcp",
+    });
+    return { kind: "settled", value };
+  } catch (error) {
+    if (error instanceof StudioTimeBudgetRefusal) return { kind: "timeout" };
+    if (error instanceof QueryCancelledError && tool.signal.aborted) return { kind: "cancelled" };
+    return { kind: "failed", error, settledAt: Date.now() };
+  }
 }
 
 /** The sentence an engine this arm does not serve is refused with, naming the tool that does serve it. */
@@ -440,6 +477,9 @@ export async function runStatement(
   args: McpStatementInput,
   tool: McpToolCall,
 ): Promise<ToolResult> {
+  // First: a call made before the host core is installed throws by name, with no record written and nothing opened, so
+  // Studio's boot-order defect is never answered as the database's error.
+  hostCore();
   const startedAt = Date.now();
   const deadline = startedAt + args.timeout_ms;
   const record: McpCallRecord = {

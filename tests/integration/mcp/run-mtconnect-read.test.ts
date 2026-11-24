@@ -12,7 +12,7 @@
  * read, in the same words as a value no item holds; a read past the row budget is refused with the language's own
  * advice; a timeout and a client cancel end the wait, and the provider's own budget, the time left, ends the read.
  */
-import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test, beforeAll } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,6 +39,11 @@ import {
 } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The notice an answer carrying database content opens with on this file's mtconnect connections. */
 const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("mtconnect"));

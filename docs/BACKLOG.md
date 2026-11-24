@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D880, U17 · 382
+- [Drivers and connections](#drivers-and-connections) — D1-D890, U17 · 383
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -1839,8 +1839,8 @@ When an MCP client cancels by closing the request, or `timeout_ms` passes, the s
 A 2025-era `notifications/cancelled` sent in its own `POST` does not even stop the wait: the stateless server answers it 202 without knowing the call, which runs to completion or `timeout_ms` (`tests/integration/mcp/http-route.test.ts`).
 This departs from the MCP rule that a server should stop work on a cancelled request as soon as practical.
 Where an engine serialises a seed's reads, the read that runs on also holds the next call: it keeps the seed's read slot until it ends on its own, so a later call on that seed waits behind a read its client already gave up, and one whose `timeout_ms` ends first is answered as the timeout; the cancel table says which engines do.
-The agent run and the editor's hand-over stop waiting by Studio's own statement timer (`runReadOnlyStatement` in `src/lib/db/operations/read-only-statement.ts`), and there too the statement runs on.
-The timer's wait includes the provider's connection checkout, so a statement Studio stopped waiting for may still be waiting for a connection, and may start once it gets one.
+The agent run, the editor's hand-over and MCP's statement tools stop waiting at the deadline of the host core's read-only execute (`runReadOnlyExecute` in `src/lib/api/read-only-execute.ts`), an MCP statement's being the call's own, and there too the statement runs on.
+That wait includes the provider's connection checkout, so a statement Studio stopped waiting for may still be waiting for a connection, and may start once it gets one.
 An engine the cancel table lists as running a statement to its end runs it to its end on this path too, also where its provider stops waiting at the budget's timeout; a provider with no deadline of its own on this path settles its call only when the statement ends.
 Where a provider runs a handle's statements on one connection, a later statement on that handle waits behind the abandoned one, although that provider already stops a running statement for `cancelQuery` by interrupting its connection, which a deadline could do as well.
 A provider that arms its own kill only after round trips to a worker process arms it a few milliseconds after Studio's timer, so Studio's time refusal arrives first and the provider's kill just after it (measured 2026-11-21: refused at 506 ms under a 500 ms timeout, the worker killed 1 to 3 ms later, and about 19 ms later once an earlier kill had restarted the worker).
@@ -5052,6 +5052,16 @@ Reading the wrapper case-insensitively would change the export's own reading ins
 Found 2026-11-24 while projecting each engine's SQL writing from its declaration.
 
 **Done when:** the inline edit reads the engine's declared wrapper with the export's bound, SQL Server's bound edit receives what it needs to do the same, and the answers that change, a wrapper spelled in another case, are stated as breaking with a test.
+
+### D890. MCP's statement tools answer an error Studio raised for its own defect as the database's error, behind a notice naming the provider
+
+`execute` in `src/lib/mcp/tools/run-statement.ts` answers every error `executeOpened` throws through `engineError` with the provider's author (`providerAuthor`).
+An error of Studio's own making there, a `TypeError` in Studio's code or the host core's refusal that only a defect of Studio's legacy bridge can cause (`HOST_DEFECT_PREFIX` in `src/lib/provider-host/access.ts`), is then presented as text the database wrote; the agent and the editor answer such errors as a server fault.
+It is not new with the host core: every error that is not a database error has taken this path since the tool existed, and a host defect cannot be reached without a defect of Studio.
+
+Found 2026-11-24 while moving MCP's statements onto the host core.
+
+**Done when:** an error MCP's statement and schema tools cannot attribute to the provider or the database is answered in Studio's words as a server fault, with its cause in the server log, and a test pins a host defect answered that way.
 
 ## Value interpolation
 
@@ -10282,7 +10292,7 @@ Found 2026-11-21 while reviewing the read-only statement re-check.
 
 ### B173. The hand-over route answers an execution-profile refusal as an unhandled server error
 
-`POST /api/agent/runs/{runId}/handover` (`src/app/api/agent/runs/[runId]/handover/route.ts`) passes every error from `acquireExecutionProfileProvider` and `runReadOnlyStatement` to `createErrorResponse` (`src/lib/api/errors.ts`).
+`POST /api/agent/runs/{runId}/handover` (`src/app/api/agent/runs/[runId]/handover/route.ts`) passes every error from `acquireExecutionProfileProvider` and `runReadOnlyExecute` to `createErrorResponse` (`src/lib/api/errors.ts`).
 `createErrorResponse` has no branch for `ExecutionProfileError` (`src/lib/db/errors.ts`), which is a plain `Error` and not a `DatabaseError`, so it falls through to the generic branch.
 Measured 2026-11-22 by calling `createErrorResponse` with an `ExecutionProfileError` under the route's name: for `PROFILE_ENGINE_NOT_REVIEWED`, `PROFILE_PRIVILEGES_TOO_BROAD` and `PROFILE_UNSUPPORTED_BY_PROVIDER` alike it answered `500` `{"code":"INTERNAL_ERROR"}` and logged `Unhandled error` at error level with the stack.
 So a principal or engine the profile refuses at replay reads to the user as a server fault, and to the operator as a defect, although the refusal is the boundary working and its `reasonCode` already says why.

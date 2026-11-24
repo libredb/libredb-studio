@@ -9,7 +9,7 @@
  * the test by name.
  */
 
-import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test, afterAll, beforeAll } from "bun:test";
 import { tmpdir } from "node:os";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -107,6 +107,11 @@ import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from ".
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { fakeTextScrub } from "../../helpers/mcp-fixtures";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The notice an answer carrying database content opens with on this file's db2 connections. */
 const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("db2"));

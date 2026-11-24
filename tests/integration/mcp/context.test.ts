@@ -25,6 +25,7 @@ import {
   mcpCaller,
 } from "@/lib/mcp/context";
 import { MCP_AGENT_CREDENTIAL_REQUIRED } from "@/lib/db/compatibility";
+import type { OpenWait } from "@/lib/provider-host/core/open-once";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseType } from "@/lib/types";
 import { resetVaultCache } from "@/lib/seed/vault-client";
@@ -62,6 +63,9 @@ afterEach(async () => {
 afterAll(() => {
   rmSync(dir, { recursive: true, force: true });
 });
+
+/** A caller's wait that never ends, for an acquisition whose wait the test does not read. */
+const noWait = (): OpenWait => ({ signal: new AbortController().signal });
 
 async function visibleIds(context: McpConnectionContext): Promise<string[]> {
   const visible = await context.visibleConnections();
@@ -255,7 +259,7 @@ describe("acquire", () => {
     const connection = await shopConnection(context);
     const gate = gateMethod(SQLiteProvider.prototype, "connect");
     try {
-      const acquisitions = Array.from({ length: 12 }, () => context.acquire(connection, "agent-read-only"));
+      const acquisitions = Array.from({ length: 12 }, () => context.acquire(connection, "agent-read-only", noWait()));
       await gate.entered;
       await holdGate();
       expect(gate.calls).toBe(1);
@@ -270,6 +274,31 @@ describe("acquire", () => {
     }
   });
 
+  test("an acquisition hands the factory the caller's wait", async () => {
+    seedShop();
+    const context = new McpConnectionContext(alice);
+    const connection = await shopConnection(context);
+    const gate = gateMethod(SQLiteProvider.prototype, "connect");
+    try {
+      const leaving = new AbortController();
+      const left = context.acquire(connection, "agent-read-only", { signal: leaving.signal });
+      const staying = context.acquire(connection, "agent-read-only", noWait());
+      await gate.entered;
+      const reason = new Error("the caller stopped waiting");
+      leaving.abort(reason);
+
+      // The open releases the caller whose wait ended with its reason, while it goes on for the one still waiting.
+      expect(await left.catch((error: unknown) => error)).toBe(reason);
+      gate.release();
+      const provider = await staying;
+      expect(provider.isConnected()).toBe(true);
+      expect(gate.calls).toBe(1);
+    } finally {
+      gate.release();
+      gate.restore();
+    }
+  });
+
   test("opens one provider per profile", async () => {
     seedShop();
     const context = new McpConnectionContext(alice);
@@ -277,8 +306,8 @@ describe("acquire", () => {
     const connects = countMethod(SQLiteProvider.prototype, "connect");
     try {
       const [readOnly, operations] = await Promise.all([
-        context.acquire(connection, "agent-read-only"),
-        context.acquire(connection, "agent-operations"),
+        context.acquire(connection, "agent-read-only", noWait()),
+        context.acquire(connection, "agent-operations", noWait()),
       ]);
 
       expect(connects.calls).toBe(2);
@@ -295,7 +324,10 @@ describe("acquire", () => {
     const other = { ...connection, password: "a-different-credential-written-in-words" };
     const connects = countMethod(SQLiteProvider.prototype, "connect");
     try {
-      await Promise.all([context.acquire(connection, "agent-read-only"), context.acquire(other, "agent-read-only")]);
+      await Promise.all([
+        context.acquire(connection, "agent-read-only", noWait()),
+        context.acquire(other, "agent-read-only", noWait()),
+      ]);
 
       expect(connects.calls).toBe(2);
     } finally {
@@ -309,8 +341,8 @@ describe("acquire", () => {
     const connection = await shopConnection(context);
     const failing = failNextCall(SQLiteProvider.prototype, "connect", new Error("the first open failed"));
     try {
-      await expect(context.acquire(connection, "agent-read-only")).rejects.toThrow("the first open failed");
-      const provider = await context.acquire(connection, "agent-read-only");
+      await expect(context.acquire(connection, "agent-read-only", noWait())).rejects.toThrow("the first open failed");
+      const provider = await context.acquire(connection, "agent-read-only", noWait());
 
       expect(provider.isConnected()).toBe(true);
       expect(failing.calls).toBe(2);
@@ -332,7 +364,9 @@ describe("acquire", () => {
         // oxlint-disable-next-line no-await-in-loop -- each refusal is read before the next caller asks.
         const connection = await shopConnection(context);
         // oxlint-disable-next-line no-await-in-loop -- as above.
-        await expect(context.acquire(connection, "agent-read-only")).rejects.toThrow("require an administrator");
+        await expect(context.acquire(connection, "agent-read-only", noWait())).rejects.toThrow(
+          "require an administrator",
+        );
       }
     },
   );
@@ -350,7 +384,7 @@ describe("acquire", () => {
       throw new Error("seed:warehouse did not resolve");
     const editor = await getOrCreateProvider(connection, {}, { allowExternalFileAccess: true });
 
-    expect(await context.acquire(connection, "agent-operations")).toBe(editor);
+    expect(await context.acquire(connection, "agent-operations", noWait())).toBe(editor);
   });
 
   test("a user's operations acquisition is never lent an admin's full-reach handle on the same file", async () => {
@@ -380,9 +414,9 @@ describe("acquire", () => {
     if (process.platform === "win32") {
       // Windows refuses any second handle on a file this process holds, and the user must not borrow
       // the admin's, so the acquisition is refused rather than served the wider handle.
-      await expect(context.acquire(connection, "agent-operations")).rejects.toThrow();
+      await expect(context.acquire(connection, "agent-operations", noWait())).rejects.toThrow();
     } else {
-      const acquired = await context.acquire(connection, "agent-operations");
+      const acquired = await context.acquire(connection, "agent-operations", noWait());
       expect(acquired).not.toBe(adminEditor);
     }
   });
@@ -401,7 +435,7 @@ describe("acquire", () => {
       if (connection === null || connection === MCP_CONNECTIONS_UNREADABLE)
         throw new Error("seed:warehouse did not resolve");
       // oxlint-disable-next-line no-await-in-loop -- as above.
-      providers.push(await context.acquire(connection, "agent-read-only"));
+      providers.push(await context.acquire(connection, "agent-read-only", noWait()));
     }
     expect(providers[1]).toBe(providers[0]);
   });
@@ -477,8 +511,8 @@ describe("a seed's Vault reference", () => {
     expect(vaultCalls).toEqual([]);
     const captured = capturePasswords();
     try {
-      await expect(context.acquire(connection, "agent-read-only")).rejects.toThrow("stopped after the open");
-      await expect(context.acquire(connection, "agent-operations")).rejects.toThrow("stopped after the open");
+      await expect(context.acquire(connection, "agent-read-only", noWait())).rejects.toThrow("stopped after the open");
+      await expect(context.acquire(connection, "agent-operations", noWait())).rejects.toThrow("stopped after the open");
     } finally {
       captured.restore();
     }
@@ -497,7 +531,7 @@ describe("a seed's Vault reference", () => {
     let refusal: unknown;
     let logged: unknown[][] = [];
     try {
-      refusal = await context.acquire(connection, "agent-read-only").catch((error: unknown) => error);
+      refusal = await context.acquire(connection, "agent-read-only", noWait()).catch((error: unknown) => error);
       logged = [...errors.mock.calls];
     } finally {
       captured.restore();
@@ -528,7 +562,9 @@ describe("a seed's Vault reference", () => {
     const errors = spyOn(logger, "error").mockImplementation(() => {});
     let refusal: unknown;
     try {
-      refusal = await context.acquire(await warehouse(context), "agent-read-only").catch((error: unknown) => error);
+      refusal = await context
+        .acquire(await warehouse(context), "agent-read-only", noWait())
+        .catch((error: unknown) => error);
     } finally {
       errors.mockRestore();
     }
@@ -552,7 +588,7 @@ describe("a seed's Vault reference", () => {
     let refusal: unknown;
     let logged: unknown[][] = [];
     try {
-      refusal = await context.acquire(connection, "agent-read-only").catch((error: unknown) => error);
+      refusal = await context.acquire(connection, "agent-read-only", noWait()).catch((error: unknown) => error);
       logged = [...errors.mock.calls];
     } finally {
       captured.restore();
@@ -573,7 +609,7 @@ describe("a seed's Vault reference", () => {
     const context = new McpConnectionContext(alice);
     const captured = capturePasswords();
     try {
-      await expect(context.acquire(await warehouse(context), "agent-read-only")).rejects.toThrow(
+      await expect(context.acquire(await warehouse(context), "agent-read-only", noWait())).rejects.toThrow(
         "stopped after the open",
       );
     } finally {
@@ -636,9 +672,11 @@ describe("a seed's agent credential", () => {
       throw new Error("seed:warehouse did not resolve");
     const captured = captureLogins();
     try {
-      for (const profile of ["agent-read-only", "agent-operations"] as const) {
-        await expect(context.acquire(connection, profile)).rejects.toThrow("stopped after the open");
-      }
+      await Promise.all(
+        (["agent-read-only", "agent-operations"] as const).map((profile) =>
+          expect(context.acquire(connection, profile, noWait())).rejects.toThrow("stopped after the open"),
+        ),
+      );
     } finally {
       captured.restore();
     }
@@ -684,7 +722,7 @@ describe("an engine MCP reads only beneath read roots", () => {
 
   test("an acquisition refuses it before anything is resolved or opened", async () => {
     const context = new McpConnectionContext(mcpCaller({ extra: { role: "admin", username: "alice" } } as never));
-    await expect(context.acquire(listed(), "agent-read-only")).rejects.toMatchObject({
+    await expect(context.acquire(listed(), "agent-read-only", noWait())).rejects.toMatchObject({
       reasonCode: "READ_ROOTS_REQUIRED",
     });
   });
@@ -795,7 +833,7 @@ describe("a connection whose type names no provider (FND-1)", () => {
     try {
       const context = new McpConnectionContext(alice);
       const refusal = await context
-        .acquire(listed("acmefoo", { password: "${vault:secret/data/acme#password}" }), "agent-read-only")
+        .acquire(listed("acmefoo", { password: "${vault:secret/data/acme#password}" }), "agent-read-only", noWait())
         .catch((error: unknown) => error);
       expect(refusal).toBeInstanceOf(UnknownProviderError);
       expect((refusal as UnknownProviderError).message).toBe(unknownTypeSentence("acmefoo"));

@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, mock, spyOn, afterAll, beforeAll } from "bun:test";
 import {
   callerBoundTruncationReason,
   isSourcePartUnavailable,
@@ -41,6 +41,11 @@ import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from ".
 import { fakeTextScrub } from "../../helpers/mcp-fixtures";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { errorKind, errorOutcome } from "@/lib/db/error-record";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The notice an answer carrying database content opens with on this file's oracle connections. */
 const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("oracle"));

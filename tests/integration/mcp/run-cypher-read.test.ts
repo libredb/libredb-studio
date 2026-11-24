@@ -11,7 +11,7 @@
  * classification; a read past the row budget is refused with the language's advice, and a result cut to max_rows says
  * how to page it with SKIP and LIMIT, since the tool takes no offset.
  */
-import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test, beforeAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -31,6 +31,11 @@ import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../h
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
 import { listedMcpToolNames } from "../../helpers/mcp-tool-names";
 import { NEO4J_FIXTURES, recordedGraphClient } from "../../helpers/neo4j-fixtures";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The notice an answer carrying database content opens with on this file's neo4j connections. */
 const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("neo4j"));

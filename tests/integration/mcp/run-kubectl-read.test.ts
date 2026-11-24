@@ -11,7 +11,7 @@
  * profile are refused by the provider; a read past the row budget is refused with the command's own advice, and a
  * result cut to max_rows says how to narrow it, since the tool takes no offset.
  */
-import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test, beforeAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,6 +34,11 @@ import { fakeCluster, manyRows } from "../../helpers/kubernetes-cluster";
 import { TEST_CA_PEM, TEST_TOKEN } from "../../helpers/kubernetes-connection";
 import { KUBERNETES_SAMPLE_MARKERS as M } from "../../helpers/kubernetes-markers";
 import { recordingKubernetesTransport, testSeams } from "../../helpers/kubernetes-transport";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The notice an answer carrying database content opens with on this file's kubernetes connections. */
 const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("kubernetes"));
