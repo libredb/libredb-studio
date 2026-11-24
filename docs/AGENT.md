@@ -1824,6 +1824,9 @@ under a **third execution profile**, `agent-handover`:
 | Bytes | 256 KiB | 64 MiB |
 
 The replay's rows and bytes are checked against this budget again by Studio, after the provider's own check and before the response is written, through the same host core read-only execute the run's own read goes through (`runReadOnlyExecute`).
+The replay runs under the request's signal: a client that leaves while the statement runs is answered `499 QUERY_CANCELLED`, outcome unknown, and the statement runs on, since the session offers no cancel; a later failure of it is logged by its kind and code.
+A row larger than the 32 MiB one page of the host's result holds is refused by the host's page budget, though the replay's byte budget is 64 MiB.
+An agent or hand-over answer over 1 MiB waits for the host's large-page slot within its deadline, so while another caller such as the editor holds that slot it can end in the time refusal rather than the byte refusal.
 
 The agent's own profile is unchanged: what a MODEL may spend on a run and what a USER's replay may
 spend are different questions, and a shared row would have made a later change to one move the other.

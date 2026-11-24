@@ -17,10 +17,12 @@
  *  - The gate's outcome is honoured: only an answer the run recorded as
  *    `auto-executed` is replayed.
  *  - It runs through `queryReadOnly` under `agent-handover`, never `query()`, and
- *    with the budget the checkbox names.
+ *    with the budget the checkbox names, through the host core's read-only execute
+ *    under the request's signal and the host's page budget.
  */
 
-import { describe, test, expect, mock, beforeEach, afterEach, spyOn } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach, spyOn, beforeAll, afterAll } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { configureAgentModel, restoreAgentModel } from "../../helpers/agent-model-env";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { AGENT_ENABLED_ENV } from "@/lib/agent/config";
@@ -51,6 +53,12 @@ import { seedRolesOf } from "@/lib/seed/roles";
 import type { SeedConnection } from "@/lib/seed/types";
 import * as realAuth from "@/lib/auth";
 import type { DatabaseType } from "@/lib/types";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The replay's statement runs through the host core's read-only execute, so this file installs one for its requests.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 const ANSWER_SQL = "SELECT region, SUM(net_total) AS net_total FROM orders GROUP BY region";
 
@@ -558,6 +566,71 @@ describe("POST /api/agent/runs/[runId]/handover", () => {
 
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(body.error).toContain("read-only transaction");
+  });
+});
+
+describe("the hand-over's statement on the host core", () => {
+  test("a hand-over whose client leaves while its statement runs answers 499 QUERY_CANCELLED, outcome unknown, and its later failure is logged by kind and code", async () => {
+    const secret = randomUUID();
+    const reached = Promise.withResolvers<void>();
+    const pending = Promise.withResolvers<typeof RESULT>();
+    mockQueryReadOnly.mockImplementationOnce(() => {
+      reached.resolve();
+      return pending.promise;
+    });
+    const logged = Promise.withResolvers<unknown[]>();
+    const warn = spyOn(logger, "warn").mockImplementation((...args: unknown[]) => {
+      logged.resolve(args);
+    });
+    try {
+      const controller = new AbortController();
+      const answer = POST(
+        new Request("http://localhost:3000/api/agent/runs/arun_1/handover", {
+          method: "POST",
+          signal: controller.signal,
+        }),
+        params(),
+      );
+      await reached.promise;
+      controller.abort();
+      const res = await answer;
+      const body = await parseResponseJSON<Record<string, unknown>>(res);
+
+      expect(res.status).toBe(499);
+      expect(body).toMatchObject({ code: "QUERY_CANCELLED", kind: "cancelled", outcome: "unknown" });
+      pending.reject(new Error(secret));
+      const line = await logged.promise;
+
+      expect(line).toEqual([
+        "A statement Studio stopped waiting for failed afterwards",
+        { route: "POST /api/agent/runs/[runId]/handover", kind: "internal", code: "INTERNAL_ERROR" },
+      ]);
+      expect(JSON.stringify(line)).not.toContain(secret);
+      expect(mockQuery).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a hand-over row larger than one page is refused by the host's page budget", async () => {
+    // One row of 33 MiB, within the hand-over's 64 MiB byte budget but past the 32 MiB one page of a result holds.
+    const wide = { ...RESULT, fields: ["wide"], rows: [{ wide: "x".repeat(33 * 1024 * 1024) }], rowCount: 1 };
+    mockQueryReadOnly.mockResolvedValueOnce(wide as never);
+    const errorLog = spyOn(logger, "error").mockImplementation(() => {});
+    try {
+      const res = await POST(request(), params());
+      const body = await parseResponseJSON<Record<string, unknown>>(res);
+
+      expect(res.status).toBe(400);
+      expect(body.kind).toBe("studio-byte-budget-refusal");
+      expect(body.outcome).toBe("unknown");
+      expect(String(body.error)).toMatch(
+        /^A row of the result is \d+ bytes, over the 33554432 bytes one page of a result may hold, so Studio answers no page of it\.$/,
+      );
+      expect(body.result).toBeUndefined();
+    } finally {
+      errorLog.mockRestore();
+    }
   });
 });
 

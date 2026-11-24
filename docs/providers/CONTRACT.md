@@ -3390,13 +3390,13 @@ The billed-read allowance a run spends stays with the host: it is a ledger charg
 - test `tests/unit/lib/provider-host/core/console.test.ts` "a read-only execute is refused before the call on a session not opened for read-only statements, and a plain execute on one that is"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's read-only statement surface has a place in the console calls or with the host"
 
-### C-79 (normative): The agent's statements on the host
+### C-79 (normative): The agent's statements and the hand-over replay on the host
 
-Every statement the agent's run sends, the model's and every composed grounding statement, runs through the host core's execute, C-48, on the legacy bridge's read-only statement session, C-50, of the provider the run acquired under its read-only execution profile, whose open policy has both `readOnly` and `sendsStatements`, C-78.
+Every statement the agent's run sends, the model's and every composed grounding statement, and the editor's hand-over replay of the run's answer, runs through the host core's execute, C-48, on the legacy bridge's read-only statement session, C-50, of the provider acquired under the agent's read-only execution profile or the hand-over's, each with an open policy of both `readOnly` and `sendsStatements`, C-78.
 In this order: an engine Studio's review record does not list is refused by name, then a budget that is not whole positive numbers, so neither reads the host core or reaches the provider; then the host core is read, so a call made before its install fails by name; then the session is opened, which refuses a provider without `queryReadOnly` by name, C-39, and the run propagates that refusal as a server fault, never a repairable failure.
 The request is a fresh copy of the statement, every row as its page, and the read-only execute of the budget's rows and bytes and the caller's mode; the context carries the deadline, the statement timeout from the call's start, a signal that aborts at it or when the caller's does, and the empty environment, never a credential.
 The statement timeout and the billed-read allowance reach the provider through the session's open, the allowance by reference.
-The agent's caller signal is one that never aborts, made for that call, as for its curated readings, C-76.
+The agent's caller signal is one that never aborts, made for that call, as for its curated readings, C-76, and the hand-over's is its request's signal, so a client that leaves while the statement runs is answered at once.
 The answer is the provider's result by reference, held to the row budget, except for an estimating plan, whose rows are the optimizer's operators, and to the byte budget, each row's UTF-8 JSON bytes summed, in the providers' sentences, the check MCP's path and the agent's other budgeted readings make too.
 The host pumps the first result within one page, C-53, so a row larger than one page is refused as `StudioByteBudgetRefusal` with the page's sentence, outcome unknown.
 An answer over 1 MiB waits for the host's large-page slot, C-53, within its deadline, so while another caller such as the editor holds that slot it can end in the time refusal rather than the byte refusal.
@@ -3422,6 +3422,11 @@ MCP's statements keep their own read path until they move onto the host core.
 - test `tests/unit/lib/agent/tools.test.ts` "an acquired provider without a read-only path is refused by the host at the session's open, and the run propagates it"
 - test `tests/unit/db/operations/read-only-statement-callers.test.ts` "no module outside the providers calls queryReadOnly except runReadOnlyStatement and the legacy bridge's read-only statement session"
 - test `tests/unit/db/operations/read-only-statement-callers.test.ts` "runReadOnlyExecute reads the review record before it reads the budget, the host core or the provider"
+- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "the agent and the hand-over call no runReadOnlyStatement: their statements run through the host core's read-only execute"
+- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "only the agent's statement path and the hand-over route open a read-only statement session, each under a profile that sends statements"
+- test `tests/api/agent/handover.test.ts` "a hand-over whose client leaves while its statement runs answers 499 QUERY_CANCELLED, outcome unknown, and its later failure is logged by kind and code"
+- test `tests/api/agent/handover.test.ts` "a hand-over row larger than one page is refused by the host's page budget"
+- test `tests/api/agent/handover.test.ts` "a provider with no read-only statement path is a server fault, not a fallback"
 
 ## Not yet in this contract
 
@@ -3523,3 +3528,4 @@ Against this contract's earlier text:
 - A caller whose time refusal is its own reads the host's records through a budget view, C-51, where every call ended at its deadline answered `StudioTimeoutRefusal`.
 - The agent's statements run through the host core's read-only execute, C-79, where they called the provider's read-only path through Studio's own timer; a failure after Studio stopped waiting is logged by kind and code, and a later answer is not logged.
 - A provider without `queryReadOnly` handed to the agent's statement path is refused at the read-only statement session's open with the acquisition's refusal, C-39 and C-79, where the run threw a plain error.
+- The hand-over replay runs through the host core's read-only execute under its request's signal, C-79: a client that leaves while the statement runs is answered at once, and a row larger than one page is refused by the host's page budget, where the replay waited for the statement and answered such a row.

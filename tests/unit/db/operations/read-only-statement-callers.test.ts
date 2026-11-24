@@ -399,6 +399,86 @@ describe("the protected read path", () => {
   });
 });
 
+const HANDOVER_ROUTE = join("src", "app", "api", "agent", "runs", "[runId]", "handover", "route.ts");
+const AGENT_TOOLS = join("src", "lib", "agent", "tools.ts");
+const AGENT_SOURCES = [join("src", "lib", "agent"), join("src", "app", "api", "agent")];
+
+interface FunctionCall {
+  readonly file: string;
+  /** The innermost named function around the call. */
+  readonly declaration: string;
+  /** Every identifier that innermost named function's body names. */
+  readonly names: ReadonlySet<string>;
+}
+
+/** Every call of the function named `name` in `text`, with the identifiers its innermost named function names. */
+function functionCalls(file: string, text: string, name: string): FunctionCall[] {
+  const source = parse(file, text);
+  const found: FunctionCall[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(inner(node.expression))) {
+      if ((inner(node.expression) as ts.Identifier).text === name) {
+        let scope: ts.Node | undefined = node.parent;
+        while (scope !== undefined && namedFunction(scope) === undefined) scope = scope.parent;
+        const names = new Set<string>();
+        const collect = (at: ts.Node) => {
+          if (ts.isIdentifier(at)) names.add(at.text);
+          ts.forEachChild(at, collect);
+        };
+        if (scope !== undefined) collect(scope);
+        found.push({ file, declaration: enclosingDeclaration(node), names });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
+}
+
+/** Every call of `name` in the tracked sources outside provider code. */
+function callsOutsideProviders(name: string): FunctionCall[] {
+  return SOURCE_ROOTS.flatMap(sourceFiles)
+    .filter((file) => !file.startsWith(PROVIDER_CODE))
+    .flatMap((file) => functionCalls(file, readFileSync(join(ROOT, file), "utf8"), name));
+}
+
+describe("the agent's statements and the hand-over replay on the host core", () => {
+  test("the agent and the hand-over call no runReadOnlyStatement: their statements run through the host core's read-only execute", () => {
+    const agentFiles = AGENT_SOURCES.flatMap(sourceFiles);
+    expect(agentFiles.length).toBeGreaterThan(0);
+    const legacy = agentFiles.flatMap((file) =>
+      functionCalls(file, readFileSync(join(ROOT, file), "utf8"), "runReadOnlyStatement"),
+    );
+    expect(legacy.map((call) => `${call.file} in ${call.declaration}`)).toEqual([]);
+    const facade = agentFiles.flatMap((file) =>
+      functionCalls(file, readFileSync(join(ROOT, file), "utf8"), "runReadOnlyExecute"),
+    );
+    expect(facade.map((call) => `${call.file} in ${call.declaration}`).sort()).toEqual([
+      `${HANDOVER_ROUTE} in POST`,
+      `${AGENT_TOOLS} in runStatement`,
+    ]);
+  }, 60_000);
+
+  test("only the agent's statement path and the hand-over route open a read-only statement session, each under a profile that sends statements", () => {
+    // The session is read-only for statements because its caller acquired the provider under a profile whose open
+    // policy has both readOnly and sendsStatements; the host trusts the facade's word, so the callers are held here.
+    const sessions = callsOutsideProviders(BRIDGE_SESSION);
+    expect(sessions.map((call) => `${call.file} in ${call.declaration}`)).toEqual([
+      `${EXECUTE_FACADE} in runReadOnlyExecute`,
+    ]);
+    const facade = callsOutsideProviders("runReadOnlyExecute");
+    const profiles: Record<string, string> = {
+      [`${AGENT_TOOLS} in runStatement`]: "AGENT_EXECUTION_PROFILE",
+      [`${HANDOVER_ROUTE} in POST`]: "AGENT_HANDOVER_PROFILE",
+    };
+    expect(facade.map((call) => `${call.file} in ${call.declaration}`).sort()).toEqual(Object.keys(profiles).sort());
+    for (const call of facade) {
+      const profile = profiles[`${call.file} in ${call.declaration}`] as string;
+      expect([call.declaration, call.names.has(profile)]).toEqual([call.declaration, true]);
+    }
+  }, 60_000);
+});
+
 /** The function declared as `name` in `file`, parsed from the source. */
 function declaredFunction(file: string, name: string): ts.FunctionDeclaration {
   const source = parse(file, readFileSync(join(ROOT, file), "utf8"));
@@ -535,7 +615,6 @@ const REVIEW_GATE = "assertStatementsReviewed";
 /** The presence tests outside provider code today, each refusing the absence: none opens a path. */
 const FACTORY = join("src", "lib", "db", "factory.ts");
 const KNOWN_PRESENCE_TESTS: readonly string[] = [
-  `${join("src", "app", "api", "agent", "runs", "[runId]", "handover", "route.ts")} in POST`,
   `${FACTORY} in openProfiledProvider`,
   `${CORE_CALLER} in read`,
   `${join("src", "lib", "mcp", "tools", "run-statement.ts")} in executeOpened`,

@@ -7,12 +7,12 @@ import {
 import type { AgentRunEvent } from "@/lib/agent/types";
 import { accessAgentRun } from "@/lib/api/agent-run-access";
 import { openWithinCall } from "@/lib/api/editor-query";
+import { runReadOnlyExecute } from "@/lib/api/read-only-execute";
 import { createErrorResponse } from "@/lib/api/errors";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { catalogSessionConnection } from "@/lib/db/catalog-scope";
 import { acquireExecutionProfileProvider } from "@/lib/db/factory";
 import { providerTextScrub, withScrubbedWarnings } from "@/lib/db/operations/provider-text";
-import { runReadOnlyStatement } from "@/lib/db/operations/read-only-statement";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import { logger } from "@/lib/logger";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
@@ -56,8 +56,12 @@ import type { DatabaseConnection } from "@/lib/types";
  *
  * The open waits within the engine's connect budget and the request's signal (`openWithinCall`): a client that leaves
  * while the provider opens is answered 499 and one whose open outlasts the budget 504, both not-sent, and nothing is
- * read. The replay goes through `runReadOnlyStatement`, the one core call of a provider's read-only path, so its rows
- * and bytes are held to the hand-over budget again before the response is written, whatever the provider does.
+ * read. The replay goes through the host core's read-only execute (`runReadOnlyExecute`) on a read-only statement
+ * session, whose open refuses a provider without a read-only statement path, so its rows and bytes are held to the
+ * hand-over budget again before the response is written, whatever the provider does, and a row larger than one page of
+ * the host's is refused. It runs under the request's signal: a client that leaves while the statement runs is answered
+ * 499, outcome unknown, the session offers no cancel so the statement runs on, and its later failure is logged by kind
+ * and code.
  *
  * What it does NOT do is record a ledger event. The run may already have finished,
  * and a finished ledger does not accept appends; the replay is the editor's action on
@@ -132,26 +136,20 @@ export async function POST(req: Request, context?: HandoverParams) {
         wait,
       ),
     );
-    if (typeof provider.queryReadOnly !== "function") {
-      // Never a fallback to `query()`. `acquireExecutionProfileProvider` already
-      // refuses a provider without a read-only statement path under this profile, so
-      // reaching here is a server fault — and the one thing it must not do is put the
-      // statement on the writable path this route exists to leave.
-      throw new Error("agent hand-over: the acquired provider exposes no read-only execution path");
-    }
-
     // A read allowance of this request's own: the run has ended, and the replay is the editor's read, not the run's.
-    // Through the one core call of the read-only path, which holds the answer to the hand-over budget before any of
-    // it is written into the response, and stops waiting at the budget's timeout, the ceiling stated beside it.
-    const result = await runReadOnlyStatement(provider, {
+    // Through the host core's read-only execute, whose session's open refuses a provider without a read-only statement
+    // path, so `query()` is never the fallback; it holds the answer to the hand-over budget before any of it is written
+    // into the response, stops waiting at the budget's timeout, the ceiling stated beside it, and answers at once a
+    // client that leaves.
+    const result = await runReadOnlyExecute(provider, {
       type: connection.type,
-      scrub,
       statement: answer.sql,
       budget: {
         ...AGENT_HANDOVER_BUDGET,
         readAllowance: new RunReadAllowance(AGENT_HANDOVER_READ_ALLOWANCE, { scope: "call" }),
       },
-      wait: "statement-timeout",
+      caller: req.signal,
+      route: ROUTE,
     });
     logger.info("Agent hand-over replayed in the editor", {
       route: ROUTE,
