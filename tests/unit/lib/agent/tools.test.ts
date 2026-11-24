@@ -6335,7 +6335,7 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
    * The measured spans: `curatedHarness`'s clock advances 3 ms per read, so the settled
    * sessions reading is charged 9 ms — `executeAuditedOperation` reads the clock around
    * the call and the curated path measures its OWN `executionTime` inside the invoke
-   * callback, four reads in all — while the unsupported kind is refused once the host
+   * callback, four reads in all, while the unsupported kind is refused once the host
    * core answers that the provider's session does not offer its panel, after that inner
    * measurement started and before it ended, three reads, and is charged 6. The
    * tracker's running total after both is 15.

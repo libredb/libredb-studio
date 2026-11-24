@@ -3590,16 +3590,16 @@ function schemaRequest<P extends "tables" | "indexes">(panel: P, input: AgentCur
 
 /**
  * The MEASURED scalars of a health answer only. `HealthInfo` also nests its own slow-query and session
- * lists, and those are the two readings that have their own kind — projecting them
+ * lists, and those are the two readings that have their own kind: projecting them
  * here as well would give one fact two shapes and two ways to be cited. Their
  * LENGTHS used to travel here, and that was the same defect one size down: every
  * provider that fills either list caps it (5 slow-query rows on MySQL's
  * `HEALTH_SLOW_QUERY_LIMIT`, PostgreSQL's `LIMIT 5`, SQL Server's `TOP 5`, Oracle's
  * `ROWNUM <= 5`, MongoDB's `.limit(5)`, Couchbase and ClickHouse `{ limit: 5 }`; and
- * 10 sessions on those seven plus Druid, 10 on BOTH of Trino's — one
- * `TRINO_HEALTH_LIMIT` serves its slow queries and its sessions alike — and 50 on
+ * 10 sessions on those seven plus Druid, 10 on BOTH of Trino's (one
+ * `TRINO_HEALTH_LIMIT` serves its slow queries and its sessions alike), and 50 on
  * Cassandra's `DEFAULT_SESSION_LIMIT`), and none of the slow-query
- * statements carries a slowness predicate at all — "slow" is the ORDERING. So the
+ * statements carries a slowness predicate at all: "slow" is the ORDERING. So the
  * length was the cap, permanently, on any server with that many digests; and where
  * the source could not be read it was 0, or 1, or 2 (PostgreSQL and MongoDB still
  * push a sentence wearing a row's clothes, and SQLite's list is two integrity rows).
