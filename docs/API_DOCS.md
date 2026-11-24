@@ -559,6 +559,7 @@ That rollback is waited for at most 10 seconds of its own, never ended by the re
 Past that the answer is `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`: "Ending the transaction this request may have left open did not answer within 10 seconds, so Studio stopped waiting for it."
 A rollback that fails is answered in the statement's place, its own error and status.
 After a caller went away, the transaction is rolled back once the statement's own end arrives, and a failure there is logged by its kind and code, never its text.
+`POST /api/db/multi-query` ends a transaction its script left open the same way, once every statement it ran has answered, under the same 10 seconds and the same 504.
 
 A caller that goes away while the statement runs, a browser that drops the request, is answered at once with `499 QUERY_CANCELLED` and `outcome: "unknown"`, and the server sends the run's cancel under the `queryId` the request named, when the provider can cancel.
 The statement's own end arrives after that answer; a failure there is logged by its kind and code, never its text, except the engine's cancellation answer to the cancel the server sent, which is the run's expected end.

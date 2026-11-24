@@ -21,7 +21,8 @@ import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
 import { consoleTextByteLimit } from "@/lib/db/destructive-commands";
 import type { DatabaseType, QueryResult, QueryWarning } from "@/lib/types";
-import { endsOpenQueryTransactions, newQueryCallScope } from "@/lib/db/types";
+import { newQueryCallScope } from "@/lib/db/types";
+import { endEditorScope } from "@/lib/api/editor-query";
 import type { DatabaseProvider, OpenQueryTransactionOutcome } from "@/lib/db/types";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 import type { DatabaseConnection } from "@/lib/types";
@@ -363,6 +364,12 @@ export async function POST(req: NextRequest) {
     // rolling a concurrent script's and an interactive session's work away. The `scope`
     // above is this request's own, and nothing it did not run on can be ended here.
     //
+    // It ends through the host: `endEditorScope` sends the scope to the legacy bridge's
+    // `console.endScope` through the host core's endScope call, under a cleanup context of
+    // its own that the request's leaving does not end, and waits for it at most 10 s
+    // (docs/providers/CONTRACT.md, clause C-60). A provider that ends nothing of its query
+    // path is not offered the facet and is asked nothing.
+    //
     // What it is NOT: a guard on the word BEGIN. The same shape arrives from a BEGIN
     // inside a statement the splitter cannot see through, so the leak is the missing
     // rollback and not the keyword. And it is not an unconditional ROLLBACK either:
@@ -391,9 +398,8 @@ export async function POST(req: NextRequest) {
       }
     } finally {
       release();
-      if (endsOpenQueryTransactions(provider)) {
-        openTransaction = await provider.endOpenQueryTransaction(scope);
-      }
+      const ended = await endEditorScope(provider, scope, req.signal, "api/db/multi-query");
+      if (ended.offered) openTransaction = ended.openTransaction;
     }
 
     // Return the last successful result as the main result (for ResultsGrid). A statement

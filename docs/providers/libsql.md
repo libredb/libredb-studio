@@ -488,7 +488,7 @@ This transport appends `{ "type": "close" }` to the statements of every pipeline
 That is the same decision as `supportsTransactions: false` ([§3.5](#35-the-server-refuses-four-statements-so-four-controls-are-withheld) lists what else it costs) and as the interactive controls this provider withholds: the `baton` is the feature an interactive transaction would consume, and nothing here consumes it.
 So a `BEGIN` has no stream to outlive, and the next request opens a new one.
 
-This is a declared boundary, not a default: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default value, and the route shape-checks for it rather than assuming `"none"`.
+This is a declared boundary, not a default: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default value, and the legacy bridge offers `console.endScope` only where it is implemented ([`CONTRACT.md`](CONTRACT.md), C-50), rather than assuming `"none"`.
 
 
 ---

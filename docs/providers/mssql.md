@@ -627,7 +627,7 @@ So the absence is not the server's refusal, and it is not the pool's either: it 
 `SELECT @@SPID` issued afterwards is a NEW request, which the pool is free to place on another connection, and answering a question about the wrong session is how a rollback ends up rolling back somebody else's transaction.
 Closing that needs a different query path rather than a different question, which is its own change and is filed as D90.
 
-Not implementing it is therefore a declared boundary rather than an oversight, and it is declared in the type: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default, and `POST /api/db/multi-query` shape-checks for it.
+Not implementing it is therefore a declared boundary rather than an oversight, and it is declared in the type: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default, and the legacy bridge offers `console.endScope` only where it is implemented ([`CONTRACT.md`](CONTRACT.md), C-50), rather than assuming `"none"`.
 The cost while it stands: an abandoned transaction holds its locks until the connection is reused by a caller that ends it, or the pool closes.
 
 ---

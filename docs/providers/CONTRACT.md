@@ -2276,6 +2276,8 @@ The editor query ends its run's scope once its execute answered or failed, befor
 An end that fails is answered in the run's place, its error by reference, and an end its deadline stopped answers `StudioTimeoutRefusal` naming the end, outcome unknown; after a stop, either is logged by kind and code, since the stop was already answered.
 The answer carries `openTransaction: "rolled-back"` only when the end answered it.
 `POST /api/db/query` and the VS Code backend's `query/run` end their run's scope so.
+`POST /api/db/multi-query` ends its script's scope so once every statement settled, its statements still calling the provider with the scope themselves, C-50, and answers 504 naming the end when its cleanup deadline stopped it.
+Only the legacy bridge calls a provider's `endOpenQueryTransaction`.
 
 - test `tests/unit/lib/api/editor-query.test.ts` "the run on a session that offers console.endScope is sent a scope of its own, and that scope is ended once after the run"
 - test `tests/unit/lib/api/editor-query.test.ts` "a provider that declares no transaction ender is sent no scope and asked to end none, and answers no openTransaction key"
@@ -2297,6 +2299,12 @@ The answer carries `openTransaction: "rolled-back"` only when the end answered i
 - test `tests/api/db/query.test.ts` "governance: a rollback that fails after the statement answered is answered in the statement's place and recorded as the run's error, as the finally always did"
 - test `vscode-extension/test/unit/backend-handlers.test.ts` "answers a transaction the statement left open as rolled back (D74)"
 - test `vscode-extension/test/unit/backend-handlers.test.ts` "ends the statement's own scope after the run, and answers an end that fails in the run's place"
+- test `tests/api/db/multi-query.test.ts` "the script's scope is ended once through the host core's console.endScope, under a cleanup context the request's leaving does not end"
+- test `tests/api/db/multi-query.test.ts` "a script whose end does not answer within 10 s answers 504 naming the end"
+- test `tests/api/db/multi-query.test.ts` "a script the request leaves still ends its scope once the statement in flight settled"
+- test `tests/api/db/multi-query.test.ts` "every statement and the ender run under ONE scope, this request's own (D87)"
+- test `tests/api/db/multi-query.test.ts` "a provider that cannot end one is asked nothing and answers as before"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "only the legacy bridge calls a provider's endOpenQueryTransaction, so a run's open transaction ends through console.endScope alone"
 
 ## Not yet in this contract
 

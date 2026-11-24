@@ -1,4 +1,5 @@
-import { describe, test, expect, mock, beforeEach, afterEach, spyOn } from "bun:test";
+import { afterAll, beforeAll, describe, test, expect, mock, beforeEach, afterEach, spyOn } from "bun:test";
+import { type CallContext, CLEANUP_DEADLINE_MS, type EndScopeRequest } from "@libredb/provider-sdk/calls";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../../helpers/stand-in-vocabulary";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
@@ -25,6 +26,26 @@ import type { QueryEventBatchWrite, QueryEventWriteFailure } from "@/lib/query-e
 import * as admission from "@/lib/query-events/admission";
 import { CONFIRMATION_FIELD_MESSAGE } from "@/lib/api/run-confirmation";
 import { forgetUsedRunConfirmations } from "@/lib/api/run-confirmation-token";
+import type { EndScopeRecord } from "@/lib/provider-host/core/console";
+import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The script's end reads the process's host core (src/lib/provider-host/instance.ts), so this file composes its own.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
+
+/** Runs `body` with `core` installed in place of the file's own, and puts the file's own back after it. */
+async function withCore<T>(core: HostCore, body: () => Promise<T>): Promise<T> {
+  const real = hostCore();
+  forgetHostCore();
+  installHostCore(core, "test");
+  try {
+    return await body();
+  } finally {
+    forgetHostCore();
+    installHostCore(real, "test");
+  }
+}
 
 // ─── Create mock objects ────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -1284,6 +1305,157 @@ describe("POST /api/db/multi-query", () => {
     const second = (mockProvider.query as ReturnType<typeof mock>).mock.calls[0][3];
     expect(second).not.toBe(scopes[0]);
     expect(endOpenQueryTransaction).toHaveBeenLastCalledWith(second);
+  });
+
+  /** A request to this route that the test can abort. */
+  function leavingRequest(body: Record<string, unknown>, signal: AbortSignal): Request {
+    return new Request("http://localhost:3000/api/db/multi-query", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal,
+    });
+  }
+
+  test("the script's scope is ended once through the host core's console.endScope, under a cleanup context the request's leaving does not end", async () => {
+    const real = hostCore();
+    const ends: { request: EndScopeRequest; ctx: CallContext; record: EndScopeRecord }[] = [];
+    const spying: HostCore = {
+      ...real,
+      endScopeCall: async (session, request, ctx, ports) => {
+        const record = await real.endScopeCall(session, request, ctx, ports);
+        ends.push({ request, ctx, record });
+        return record;
+      },
+    };
+    const endOpenQueryTransaction = providerEndingTransactions("rolled-back");
+    const controller = new AbortController();
+
+    const before = Date.now();
+    const res = await withCore(spying, () =>
+      POST(
+        leavingRequest(
+          { connection: validConnection, sql: "BEGIN; INSERT INTO t VALUES (1)" },
+          controller.signal,
+        ) as never,
+      ),
+    );
+    const after = Date.now();
+    controller.abort(new DOMException("The request went away.", "AbortError"));
+    const data = await parseResponseJSON<Record<string, unknown>>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.openTransaction).toBe("rolled-back");
+    const scopes = (mockProvider.query as ReturnType<typeof mock>).mock.calls.map((call) => call[3]);
+    expect(new Set(scopes).size).toBe(1);
+    expect(endOpenQueryTransaction).toHaveBeenCalledTimes(1);
+    expect(endOpenQueryTransaction).toHaveBeenCalledWith(scopes[0]);
+    expect(ends).toHaveLength(1);
+    const [end] = ends;
+    expect(end?.request).toEqual({ scope: scopes[0] as string });
+    expect(end?.record).toEqual({ kind: "answered", openTransaction: "rolled-back" });
+    expect(end?.ctx.deadline).toBeGreaterThanOrEqual(before + CLEANUP_DEADLINE_MS);
+    expect(end?.ctx.deadline).toBeLessThanOrEqual(after + CLEANUP_DEADLINE_MS);
+    expect(end?.ctx.signal.aborted).toBe(false);
+
+    // A provider without the ender: the host refuses the end as not offered, and the body says nothing.
+    mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
+    const plain = await withCore(spying, () =>
+      POST(
+        createMockRequest("/api/db/multi-query", {
+          method: "POST",
+          body: { connection: validConnection, sql: "SELECT 1" },
+        }) as never,
+      ),
+    );
+    expect(plain.status).toBe(200);
+    expect("openTransaction" in (await parseResponseJSON<Record<string, unknown>>(plain))).toBe(false);
+    expect(ends[1]?.record).toEqual({
+      kind: "refused",
+      called: false,
+      refusals: [{ rule: "facet-not-offered", pointer: "/console/endScope", name: "console.endScope" }],
+    });
+  });
+
+  test("a script whose end does not answer within 10 s answers 504 naming the end", async () => {
+    const real = hostCore();
+    providerEndingTransactions("rolled-back");
+
+    const res = await withCore(
+      {
+        ...real,
+        endScopeCall: async () => ({
+          kind: "stopped",
+          reason: new DOMException("The call's deadline has passed.", "TimeoutError"),
+          settled: Promise.resolve(),
+        }),
+      },
+      () =>
+        POST(
+          createMockRequest("/api/db/multi-query", {
+            method: "POST",
+            body: { connection: validConnection, sql: "BEGIN; INSERT INTO t VALUES (1)" },
+          }) as never,
+        ),
+    );
+    const data = await parseResponseJSON<Record<string, unknown>>(res);
+
+    expect(res.status).toBe(504);
+    expect(data).toMatchObject({
+      error:
+        "Ending the transaction this request may have left open did not answer within 10 seconds, so Studio stopped waiting for it.",
+      code: "TIMEOUT_ERROR",
+      kind: "studio-timeout-refusal",
+      outcome: "unknown",
+    });
+    expect("statements" in data).toBe(false);
+  });
+
+  test("a script the request leaves still ends its scope once the statement in flight settled", async () => {
+    const real = hostCore();
+    const order: string[] = [];
+    let endCalls = 0;
+    const counting: HostCore = {
+      ...real,
+      endScopeCall: (...args) => {
+        endCalls += 1;
+        return real.endScopeCall(...args);
+      },
+    };
+    const started = Promise.withResolvers<void>();
+    const statement = Promise.withResolvers<void>();
+    const provider = createMockProvider();
+    (provider.query as ReturnType<typeof mock>).mockImplementation(async () => {
+      started.resolve();
+      await statement.promise;
+      order.push("statement settled");
+      return { rows: [], fields: [], rowCount: 0, executionTime: 1 };
+    });
+    const endOpenQueryTransaction = mock(async () => {
+      order.push("end");
+      return "rolled-back" as const;
+    });
+    Object.assign(provider, { endOpenQueryTransaction });
+    mockGetOrCreateProvider.mockImplementation(async () => provider as never);
+    const controller = new AbortController();
+
+    const answered = withCore(counting, async () => {
+      const answer = POST(
+        leavingRequest({ connection: validConnection, sql: "BEGIN; SELECT 2; SELECT 3" }, controller.signal) as never,
+      );
+      await started.promise;
+      controller.abort(new DOMException("The request went away.", "AbortError"));
+      expect(order).toEqual([]);
+      statement.resolve();
+      return answer;
+    });
+    await answered;
+
+    const calls = (provider.query as ReturnType<typeof mock>).mock.calls;
+    expect(calls).toHaveLength(1);
+    expect(order).toEqual(["statement settled", "end"]);
+    expect(endOpenQueryTransaction).toHaveBeenCalledWith(calls[0]?.[3]);
+    expect(endCalls).toBe(1);
   });
 
   test("a provider that cannot end one is asked nothing and answers as before", async () => {

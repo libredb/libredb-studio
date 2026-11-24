@@ -7,7 +7,10 @@
  * Every provider here is a fake the test builds; every marker is generated at run time and no timer runs.
  */
 import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import {
   BATCH_MAX_BYTES,
   type CallContext,
@@ -573,5 +576,24 @@ describe("bridgedConsole", () => {
     expect(known).toEqual({ cancelled: true });
     expect(unknown).toEqual({ cancelled: false });
     expect(callsOf(cancelQuery)[0]).toEqual(["known"]);
+  });
+});
+
+describe("the one ender", () => {
+  const ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..");
+
+  /** Every tracked `.ts` and `.tsx` source of Studio and the VS Code extension outside the providers, repository-relative. */
+  function trackedSources(): string[] {
+    return execFileSync("git", ["ls-files", "--", "src", "vscode-extension/src"], { cwd: ROOT, encoding: "utf8" })
+      .split("\n")
+      .filter((file) => /\.tsx?$/.test(file) && !file.startsWith("src/lib/db/providers/"));
+  }
+
+  test("only the legacy bridge calls a provider's endOpenQueryTransaction, so a run's open transaction ends through console.endScope alone", () => {
+    const callers = trackedSources().filter((file) =>
+      /\.endOpenQueryTransaction\s*\(/.test(readFileSync(path.join(ROOT, file), "utf8")),
+    );
+
+    expect(callers).toEqual(["src/lib/provider-host/legacy-bridge.ts"]);
   });
 });

@@ -12,7 +12,7 @@
  * the seed loader and `resolveConnection` are the real ones, so a seed resolves to the record the
  * product builds. Each request carries only the fields its route checks before opening a provider.
  */
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,8 +20,13 @@ import * as actualDb from "@/lib/db";
 import * as actualFactory from "@/lib/db/factory";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { resetCache as resetSeedCache } from "@/lib/seed";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { createMockRequest } from "../../helpers/mock-next";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 const mockProvider = createMockProvider();
 const mockGetOrCreateProvider = mock(async (...args: unknown[]) => {
@@ -114,6 +119,13 @@ const EXTRA: Record<string, Record<string, unknown>> = {
 /** The routes refused to every role but admin before any provider is opened. */
 const ADMIN_ONLY = new Set(["maintenance", "maintenance/preview"]);
 
+/**
+ * The routes that run the request's statement through the host core this file installs, `query` through its
+ * execute and `multi-query` through the end of its script's scope, so each answers 200 as in production rather
+ * than 500 on a missing core.
+ */
+const RUNS_TO_ITS_SCOPE_END = new Set(["query", "multi-query"]);
+
 /** The routes that build their own provider rather than take a cached one. */
 const BUILDS_ITS_OWN = new Set(["test-connection"]);
 
@@ -151,9 +163,10 @@ const INLINE = {
 
 /** What the route handed the factory as the execution context. */
 async function postureFrom(route: string, target: Record<string, unknown>): Promise<unknown> {
-  await handlers[route](
+  const response = await handlers[route](
     createMockRequest(`/api/db/${route}`, { method: "POST", body: { ...target, ...EXTRA[route] } }) as never,
   );
+  if (RUNS_TO_ITS_SCOPE_END.has(route)) expect(response.status).toBe(200);
   if (READS_DECLARATIONS.has(route)) {
     expect(mockReadProviderDeclarations.mock.calls.length).toBeGreaterThan(0);
     return mockReadProviderDeclarations.mock.calls[0]?.[1];

@@ -545,3 +545,31 @@ export async function cancelEditorRun(
   if (record.refusals.some((refusal) => refusal.rule === "facet-not-offered")) return { offered: false };
   throw refusalError(record, view);
 }
+
+/** What the end of a script's scope answers: the provider ends nothing of its query path, or the end's outcome. */
+export type EditorScopeEnd =
+  | { readonly offered: false }
+  | { readonly offered: true; readonly openTransaction: EndScopeAnswer["openTransaction"] };
+
+/**
+ * Ends `scope`, which a caller minted and sent with every statement it ran on `provider` itself, through the bridge's
+ * `console.endScope` and the host core's endScope call, under a cleanup context of its own that `caller`'s leaving does
+ * not end (docs/providers/CONTRACT.md, clause C-60). A provider that ends nothing of its query path is answered
+ * `offered: false`, the core's refusal of the facet, as `cancelEditorRun` answers one that cannot cancel.
+ *
+ * @throws The provider's error by reference; `StudioTimeoutRefusal` naming the end when its cleanup deadline stopped
+ * it, outcome unknown; a host defect for any other refusal.
+ */
+export async function endEditorScope(
+  provider: DatabaseProvider,
+  scope: string,
+  caller: AbortSignal,
+  route: string,
+): Promise<EditorScopeEnd> {
+  const core = hostCore();
+  const record = await endScopeRecord(core, bridgedConsole(provider, {}).session, scope, route);
+  if (record.kind === "refused" && record.refusals.some((refusal) => refusal.rule === "facet-not-offered")) {
+    return { offered: false };
+  }
+  return { offered: true, openTransaction: endedScope(record, caller) };
+}

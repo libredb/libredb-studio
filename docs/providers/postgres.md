@@ -2235,7 +2235,7 @@ Both were false, measured 2026-09-15 on 18.4 (D87).
 And `beginTransaction()` calls `pool.connect()` on a LIFO idle list, so it is handed the very object a previous `query()` recorded: the ender rolled the interactive session's committed `CREATE TABLE` away while the status route still read `inTransaction` and `commit` answered "Transaction committed".
 Both controls, run without the ender, kept the table.
 
-`POST /api/db/query` ends its run's scope through the host core's `console.endScope` after the run ([`CONTRACT.md`](CONTRACT.md), C-60), and `POST /api/db/multi-query` calls this in a `finally`, each under a scope of its own, and each reports the outcome.
+`POST /api/db/multi-query` and `POST /api/db/query` each end their scope through the host core's `console.endScope` after the run ([`CONTRACT.md`](CONTRACT.md), C-60), each under a scope of its own, and report the outcome; an end that fails is answered in the run's place.
 What it still cannot undo: a client this scope released in `T` is back in the idle list, and the pool may hand it to another request in the moment before the ender runs, whose statement then joins this transaction and is discarded with it.
 On `POST /api/db/query` the end comes after the run's page is read, one turn of the event loop later for a page of one batch, and after the whole read, and any wait for the large-page slot, for a page of several batches, so that moment is that much longer, tracked as [D620](../BACKLOG.md).
 That is the leak ending it promptly is for, not a second defect.

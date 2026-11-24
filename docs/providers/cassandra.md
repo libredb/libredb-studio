@@ -456,7 +456,7 @@ CQL has no statement that opens one.
 The provider holds a long-lived `Client` session ([`driver-transport.ts`](../../src/lib/db/providers/sql/cassandra/driver-transport.ts)), so it WOULD have a handle to name; there is simply no state on it to name.
 That is the same fact `supportsTransactions: false` reports to the editor toolbar.
 
-This is a declared boundary, not a default: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default value, and the route shape-checks for it rather than assuming `"none"`.
+This is a declared boundary, not a default: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default value, and the legacy bridge offers `console.endScope` only where it is implemented ([`CONTRACT.md`](CONTRACT.md), C-50), rather than assuming `"none"`.
 
 ### 3.10 A frame the driver cannot read fails the connection by name (patched driver)
 

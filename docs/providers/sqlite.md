@@ -334,7 +334,7 @@ Measured 2026-09-13 through `POST /api/db/multi-query`: after `BEGIN; INSERT INT
 The question is answered without a round trip, because SQLite answers it itself: `sqlite3_get_autocommit` is published by both drivers, as `inTransaction` on bun:sqlite and `isTransaction` on node:sqlite, bridged to one name in [`sqlite-driver.ts`](../../src/lib/db/providers/sql/sqlite-driver.ts).
 Asking matters: measured on bun:sqlite 1.4.2, a `ROLLBACK` with no transaction active raises "cannot rollback - no transaction is active", so a caller that rolled back unconditionally would report an error on every script that ended cleanly.
 Rolled back and not committed: a script that never said COMMIT did not ask for its work to be kept.
-`POST /api/db/query` ends its run's scope through the host core's `console.endScope` after the run ([`CONTRACT.md`](CONTRACT.md), C-60), and `POST /api/db/multi-query` calls this in a `finally`, each under a call scope of its own (D74, D87), and each reports the outcome, so the person who wrote the `BEGIN` is told what became of it wherever they typed it.
+Both query routes end their scope through the host core's `console.endScope` after the run ([`CONTRACT.md`](CONTRACT.md), C-60) and report the outcome, `POST /api/db/multi-query` and `POST /api/db/query`, each under a call scope of its own (D74, D87), so the person who wrote the `BEGIN` is told what became of it wherever they typed it.
 
 **WHAT IS NOT CLOSED: the ender cannot tell whose transaction it is ending.**
 The `scope` parameter is declared on the interface and ignored here, because this provider holds ONE handle and there is no other client to name, and that is not the same as the transaction being the caller's own.
