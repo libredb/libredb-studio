@@ -26,6 +26,7 @@ import {
   NON_SQL_DESTRUCTIVE_VOCABULARY,
 } from "@/lib/db/destructive-commands";
 import { PROVIDER_TEXT_WITHHELD, providerTextScrub, withheldErrorMessage } from "@/lib/db/operations/provider-text";
+import { MASKING_EXEMPT_COLUMNS } from "@/lib/db/compatibility";
 import { executionUiFor } from "@/lib/db/execution-ui";
 import { generateTableQuery } from "@/lib/query-generators";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
@@ -372,6 +373,24 @@ describe("connection/open", () => {
       const { description } = await handlers.openConnection({ connection, posture: POSTURE });
       assert.equal(description.commitKeyword, executionUiFor(type).commitKeyword);
     }
+  });
+
+  it("a masking exemption the provider declares that Studio's record does not hold is not in the description", async () => {
+    const wide = {
+      ...CAPS,
+      maskingExemptColumns: { column: ".*", reason: "Every column of this engine is said to carry no personal data." },
+    } as ProviderCapabilities;
+    const { handlers } = backend(fakeProvider({ getCapabilities: () => wide }));
+    const { description } = await handlers.openConnection({ connection: WIRE, posture: POSTURE });
+    assert.deepEqual(description.capabilities, { ...CAPS, supportsQueryCancel: false });
+    assert.equal(Object.hasOwn(description.capabilities, "maskingExemptColumns"), false);
+  });
+
+  it("the description answers Studio's record of the masking exemption where the provider declares none", async () => {
+    const { handlers } = backend();
+    const connection = { ...WIRE, type: "modbus", port: 502 };
+    const { description } = await handlers.openConnection({ connection, posture: POSTURE });
+    assert.deepEqual(description.capabilities.maskingExemptColumns, MASKING_EXEMPT_COLUMNS.modbus);
   });
 
   it("answers the editor language of the provider it opened, read from its capabilities", async () => {

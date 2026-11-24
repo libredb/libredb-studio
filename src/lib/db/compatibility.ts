@@ -21,6 +21,7 @@
  * hold its own copy of the data.
  */
 import type { DatabaseType, HostPathField } from "@/lib/types";
+import type { ProviderCapabilities } from "./types";
 import type { WriteReach } from "./write-reach";
 
 /**
@@ -679,6 +680,77 @@ export const SINGLE_WRITER_FILE: Readonly<Record<DatabaseType, boolean>> = Objec
   snmp: false,
   sparkplug: false,
   libredb: true,
+});
+
+/**
+ * The result columns each shipped engine's provider exempts from the masking rules, with the reason the grid shows in
+ * place of the masked-column lock, or `null` where it exempts none, the restrictive value: every column the rules
+ * match stays masked.
+ *
+ * Studio's producers of client capabilities answer this row in place of the provider's own, through `clientCapabilities`
+ * (src/lib/db/client-capabilities.ts): `readProviderDeclarations`, which `POST /api/db/provider-meta` hands to the
+ * browser, and the VS Code backend's connection description, which the webview's grid reads. So a provider that
+ * declares a wider pattern than its row exempts nothing more.
+ *
+ * The embedded workspace and the published grid take the exemption from the embedder instead, as they take the
+ * masking configuration, and the embedded workspace masks nothing at all; this record does not reach them.
+ *
+ * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone answering, and
+ * `tests/unit/db/masking-exemption-guard.test.ts` holds every row equal to what that engine's provider declares and
+ * each exempting row to the protected names it was accepted for. Frozen like the records above it, each row too.
+ *
+ * This table is Studio's review record of the claim a provider declares at `ProviderCapabilities.maskingExemptColumns`
+ * (docs/providers/CONTRACT.md, clause M-57), and it is never computed from providers.
+ */
+export const MASKING_EXEMPT_COLUMNS: Readonly<
+  Record<DatabaseType, NonNullable<ProviderCapabilities["maskingExemptColumns"]> | null>
+> = Object.freeze({
+  postgres: null,
+  bigquery: null,
+  snowflake: null,
+  spark: null,
+  mysql: null,
+  sqlite: null,
+  libsql: null,
+  duckdb: null,
+  oracle: null,
+  db2: null,
+  mssql: null,
+  clickhouse: null,
+  druid: null,
+  trino: null,
+  cassandra: null,
+  elasticsearch: null,
+  opensearch: null,
+  mongodb: null,
+  couchbase: null,
+  redis: null,
+  prometheus: null,
+  kafka: null,
+  etcd: null,
+  neo4j: null,
+  milvus: null,
+  qdrant: null,
+  weaviate: null,
+  influxdb: null,
+  influxdb3: null,
+  oxia: null,
+  databend: null,
+  s3: null,
+  kubernetes: null,
+  mqtt: null,
+  firestore: null,
+  rabbitmq: null,
+  opcua: null,
+  mtconnect: null,
+  modbus: Object.freeze({
+    column: "^address$",
+    reason: "The PDU register number this row answered for, not a postal address, so it is shown as it was read.",
+  }),
+  netconf: null,
+  snmp: null,
+  sparkplug: null,
+  libredb: null,
 });
 
 /**

@@ -1136,8 +1136,12 @@ export interface ProviderCapabilities {
    *
    * ANCHOR IT. Measured: an unanchored `address` reaches `ip_address` too, which belongs to the
    * IP rule, so an exemption written for one column of one engine crosses into a second rule.
-   * `tests/unit/db/masking-exemption-guard.test.ts` measures which protected names a declared
-   * pattern reaches and holds each declarer to the set it was accepted for.
+   * Studio reads it from `MASKING_EXEMPT_COLUMNS` in `src/lib/db/compatibility.ts`, never from
+   * the provider: its producers of client capabilities answer that row (`clientCapabilities`,
+   * docs/providers/CONTRACT.md clause M-57), and `tests/unit/db/masking-exemption-guard.test.ts`
+   * holds the record equal to this declaration and measures the protected names each row reaches.
+   * The embedded workspace and the published grid components take it from their embedder instead,
+   * as the record's own docblock says, so the record does not bind them.
    *
    * It exempts, it never adds: a column this does not name is masked exactly as before, so no
    * engine can widen what another engine's user sees.
@@ -1146,10 +1150,12 @@ export interface ProviderCapabilities {
    * (`providers/industrial/modbus/read.ts`), the zero-based PDU register the caller asked for
    * rather than a place; `builtin-address` stars out the one value the request was about.
    *
-   * WHERE THIS BOUNDARY WILL BREAK. The exemption is read by the grid alone, and that is enough
-   * TODAY only because the two other surfaces that mask cannot reach the engines needing it: the
-   * Graph tab is offered only for a result holding a graph value (`hasGraphValues`), and the
-   * column profiler only where `offersColumnProfiling` is true, which every one of the eighteen
+   * WHERE THIS BOUNDARY WILL BREAK. The exemption is read, through `splitMaskedColumns`, by the
+   * grid, `PivotTable.tsx` and `DataCharts.tsx` from the capabilities `BottomPanel.tsx` hands them,
+   * and by `Studio.tsx` for the result rows it hands on. That is enough TODAY only because the two
+   * other surfaces that mask do not read it and cannot reach the engines needing it: the Graph
+   * tab is offered only for a result holding a graph value (`hasGraphValues`), and the column
+   * profiler only where `offersColumnProfiling` is true, which every one of the eighteen
    * JSON dialects declares false. The day a JSON dialect opens profiling, this exemption has to
    * travel to `DataProfiler.tsx` with it, or the same column reads one way in the grid and
    * another in the profiler.

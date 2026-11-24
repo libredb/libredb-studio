@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { MASKING_EXEMPT_COLUMNS, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import type { DatabaseType } from "@/lib/types";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { DEFAULT_MASKING_CONFIG } from "@/lib/data-masking";
@@ -78,55 +78,57 @@ describe("the exemption guard measures reach rather than spelling", () => {
 });
 
 /**
- * THE FLEET, AND WHAT EACH DECLARER IS ALLOWED TO REACH.
+ * THE RECORD, AND WHAT EACH OF ITS EXEMPTING ROWS IS ALLOWED TO REACH.
  *
- * Both halves are named sets. `DECLARERS` fails when an engine starts declaring the field without
- * anyone writing down what it touches; `REACH` fails when a declared pattern starts touching a
- * different protected name than the one it was accepted for.
+ * `MASKING_EXEMPT_COLUMNS` in `src/lib/db/compatibility.ts` is the declaring set: Studio's review record of each
+ * engine's exemption, the row its producers of client capabilities answer in place of the provider's own, held equal to
+ * every provider's declaration below. `REACH` is the reviewed reach: the protected names each exempting row was accepted
+ * for, by name. The census fails when a provider starts declaring the field without its row being written down, and
+ * `REACH` fails when a row starts touching a different protected name than the one it was accepted for.
  */
-const DECLARERS: readonly DatabaseType[] = ["modbus"];
 const REACH: Readonly<Record<string, readonly string[]>> = { modbus: ["address"] };
 
-describe("maskingExemptColumns across the shipped providers", () => {
-  test("the two named sets cannot drift apart", () => {
-    // Written down separately, so this is the only thing keeping them one fact. While
-    // `DECLARERS` is empty the two tests below iterate nothing and measure nothing; the sweep
-    // immediately after is what makes them live, by failing the moment an engine declares the
-    // field without being written down here.
-    expect(Object.keys(REACH).sort()).toEqual([...DECLARERS].sort());
+/** The record's rows that exempt something, by type id. */
+const exemptingRows = (): [DatabaseType, { readonly column: string; readonly reason: string }][] =>
+  SHIPPED_DATABASE_TYPES.flatMap((type) => {
+    const row = MASKING_EXEMPT_COLUMNS[type];
+    return row === null ? [] : [[type, row] as [DatabaseType, typeof row]];
   });
 
-  test("the declaring set is the one written down here", async () => {
-    const declarers: string[] = [];
-    for (const type of SHIPPED_DATABASE_TYPES) {
-      const capabilities = (await createDatabaseProvider(CENSUS_CONNECTION[type])).getCapabilities();
-      if (capabilities.maskingExemptColumns !== undefined) declarers.push(type);
-    }
-    expect(declarers.sort()).toEqual([...DECLARERS].sort());
-    // Measured: building every shipped provider takes about 2.1 s on an idle machine and over
-    // 5 s under load, so the default 5 s timeout fails this test for the machine's reasons
-    // rather than the fleet's. The sibling census (`column-profiling-capability.test.ts`) runs
-    // the same sweep inside that default and is the test that will flake first.
-  }, 30_000);
+describe("MASKING_EXEMPT_COLUMNS against each provider's own declaration, and what each row may reach", () => {
+  test("MASKING_EXEMPT_COLUMNS answers for every shipped type-id and for nothing else, and it and each of its rows are frozen", () => {
+    expect(Object.keys(MASKING_EXEMPT_COLUMNS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
+    expect(Object.isFrozen(MASKING_EXEMPT_COLUMNS)).toBe(true);
+    for (const [type, row] of exemptingRows())
+      expect({ type, frozen: Object.isFrozen(row) }).toEqual({ type, frozen: true });
+  });
 
-  test("each declarer reaches exactly the protected names it was accepted for", async () => {
+  test.each([...SHIPPED_DATABASE_TYPES])(
+    "%s: MASKING_EXEMPT_COLUMNS is the exemption its provider declares, null where it declares none",
+    async (type) => {
+      const capabilities = (await createDatabaseProvider(CENSUS_CONNECTION[type])).getCapabilities();
+      expect(MASKING_EXEMPT_COLUMNS[type]).toStrictEqual(capabilities.maskingExemptColumns ?? null);
+    },
+  );
+
+  test("the record's exempting rows and REACH cannot drift apart", () => {
+    // Written down separately, so this is the only thing keeping them one fact: a row added to the record without
+    // naming what it reaches fails here, and so does a REACH entry left behind by a row set back to null.
+    const exempting: string[] = exemptingRows().map(([type]) => type);
+    expect(exempting.sort()).toEqual(Object.keys(REACH).sort());
+  });
+
+  test("each exempting row reaches exactly the protected names it was accepted for", () => {
     const reach: Record<string, string[]> = {};
-    for (const type of DECLARERS) {
-      const capabilities = (await createDatabaseProvider(CENSUS_CONNECTION[type])).getCapabilities();
-      const declared = capabilities.maskingExemptColumns;
-      expect({ type, declared: declared !== undefined }).toEqual({ type, declared: true });
-      reach[type] = protectedNamesReachedBy(declared!.column);
-    }
+    for (const [type, row] of exemptingRows()) reach[type] = protectedNamesReachedBy(row.column);
     expect(reach).toEqual(REACH as Record<string, string[]>);
-  }, 30_000);
+  });
 
-  test("every declarer gives a reason a reader can act on", async () => {
-    for (const type of DECLARERS) {
-      const capabilities = (await createDatabaseProvider(CENSUS_CONNECTION[type])).getCapabilities();
-      const reason = capabilities.maskingExemptColumns?.reason ?? "";
+  test("every exempting row gives a reason a reader can act on", () => {
+    for (const [type, row] of exemptingRows()) {
       // An exemption with no reason is a hole dug in two steps: the column stops being masked and
       // the screen has nothing to answer "why is this one not masked" with.
-      expect({ type, long: reason.trim().length > 20 }).toEqual({ type, long: true });
+      expect({ type, long: row.reason.trim().length > 20 }).toEqual({ type, long: true });
     }
-  }, 30_000);
+  });
 });

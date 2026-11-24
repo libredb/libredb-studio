@@ -65,6 +65,12 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
   },
   { module: COMPATIBILITY, name: "REFUSES_DENIED_FILE_ACCESS", destination: claim("policy.deniedFileAccessRefusal") },
   { module: COMPATIBILITY, name: "SINGLE_WRITER_FILE", destination: claim("policy.singleWriterFile") },
+  {
+    module: COMPATIBILITY,
+    name: "MASKING_EXEMPT_COLUMNS",
+    destination:
+      "planned segment: the provider's policy facts, with the masking exemption an engine's provider requests, which this table grants as Studio's review record of the claim",
+  },
   { module: COMPATIBILITY, name: "MCP_EXPOSABLE", destination: claim("mcp.exposable") },
   { module: COMPATIBILITY, name: "MCP_STATEMENT_READ", destination: claim("mcp.statementRead") },
   {

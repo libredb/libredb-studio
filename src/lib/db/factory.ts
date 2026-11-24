@@ -53,6 +53,7 @@ import {
   SINGLE_WRITER_FILE,
 } from "./compatibility";
 import { assertStatementsReviewed } from "./statement-review";
+import { clientCapabilities } from "./client-capabilities";
 import { requiredSecretRefusal } from "./connection-form";
 import { type ProviderTextScrub, providerTextScrub, withholdProviderError } from "./operations/provider-text";
 import { AGENT_CREDENTIAL_FORM, REFUSED_CONNECTION_FIELDS } from "./connection-fields";
@@ -341,8 +342,9 @@ export async function createDatabaseProvider(
 }
 
 /**
- * What Studio reads of a provider it never connects: its capabilities, its labels and whether it can cancel a running
- * statement (`supportsQueryCancel` in ./query-cancel). Plain data, never the provider.
+ * What Studio reads of a provider it never connects: its capabilities, with the masking exemption Studio's record
+ * answers, its labels and whether it can cancel a running statement (`supportsQueryCancel` in ./query-cancel). Plain
+ * data, never the provider.
  */
 export interface ProviderDeclarations {
   readonly capabilities: ProviderCapabilities;
@@ -362,6 +364,9 @@ export interface ProviderDeclarations {
  * never signs in. It builds the provider from such a connection, reads it and lets it go, so the provider, whose
  * `host` and `port` are the database's own, is never handed out and can never be connected past the tunnel. It is not exported from the
  * package (`src/exports/`); an embedder reads a tunnelled connection's declarations inside `withOneShotTunnel`.
+ *
+ * Its capabilities are the provider's as `clientCapabilities` (./client-capabilities) answers them: the masking
+ * exemption is `MASKING_EXEMPT_COLUMNS`'s row for the connection's type, never the provider's own.
  */
 export async function readProviderDeclarations(
   connection: DatabaseConnection,
@@ -369,7 +374,7 @@ export async function readProviderDeclarations(
 ): Promise<ProviderDeclarations> {
   const provider = await buildPhase(() => buildProvider(connection, {}, execution, "declarations"));
   return {
-    capabilities: provider.getCapabilities(),
+    capabilities: clientCapabilities(connection.type, provider.getCapabilities()),
     labels: provider.getLabels(),
     supportsQueryCancel: supportsQueryCancel(provider),
   };
