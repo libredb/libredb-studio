@@ -260,9 +260,9 @@
       "additionalProperties": false
     },
     "executeRequestField": {
-      "description": "An optional field of the console execute request. params: bound parameter values. offset: a page that starts past the first row.",
+      "description": "An optional field of the console execute request. params: bound parameter values. offset: a page that starts past the first row. readOnly: a read-only execute, its row and byte budget and its mode, sent only to a session opened under the read-only policy to be sent statements.",
       "type": "string",
-      "enum": ["params", "offset"]
+      "enum": ["params", "offset", "readOnly"]
     },
     "engineId": {
       "description": "An engine's type-id: a lower-case letter, then up to 31 lower-case letters or digits.",

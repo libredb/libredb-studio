@@ -78,6 +78,16 @@
  * `pumpLimits` sets the page's row limit once execute answered: the probe limit, one past the page, when the provider
  * applied the page, otherwise every row the provider returned, at least one, so a result the limiter did not bound
  * answers every row as before, bounded by bytes alone.
+ *
+ * The console session is no read-only statement session (`readOnlyStatements` false): it serves the editor's and the
+ * operations profile's sessions, none of which is sent read-only statements. A provider's read-only statement path is
+ * served by `bridgedReadOnlyStatements`, a session of its own built per call by its facade, `runReadOnlyExecute` in
+ * src/lib/api/read-only-execute.ts (clause C-78). Its open refuses a provider without `queryReadOnly` by name, before
+ * anything is called, so the plain `query()` is never the fallback (clause C-39); its calls offer execute alone,
+ * honouring `readOnly`; its execute runs `queryReadOnly` with the statement, a fresh budget of the open's statement
+ * timeout and read allowance, by reference, and the request's rows and bytes, and the request's mode, and answers one
+ * source per result set, `pageApplied` false. Its page limits read every row the provider returned, at least one,
+ * within one page, and it keeps the legacy result for the facade to answer from.
  */
 import {
   BATCH_MAX_BYTES,
@@ -110,9 +120,10 @@ import {
   type Warning,
 } from "@libredb/provider-sdk/calls";
 import type { SessionState } from "@libredb/provider-sdk/errors";
-import type { MaintenanceSpec } from "@libredb/provider-sdk/manifest";
+import type { Calls, MaintenanceSpec } from "@libredb/provider-sdk/manifest";
 import { probePastPage } from "@/lib/api/page-probe";
 import { engineFacetsFor } from "@/lib/db/engine-facets";
+import { StudioProfileRefusal } from "@/lib/db/errors";
 import { type PanelReads, readPanel } from "@/lib/db/engine-facets/monitoring";
 import { MONITORING_PANELS, type MonitoringPanel, type MonitoringPanelOffer } from "@/lib/db/engine-facets/types";
 import { type QueryCancelProvider, supportsQueryCancel } from "@/lib/db/query-cancel";
@@ -126,14 +137,16 @@ import {
   type PreparedQuery,
   type ProviderCapabilities,
   type QueryPrepareOptions,
+  type ReadOnlyStatementBudget,
   type TransactionProvider,
 } from "@/lib/db/types";
+import type { RunReadAllowance } from "@/lib/db/read-allowance";
 import { noteAppendedBound } from "@/lib/db/utils/query-limiter";
 import type { ConsoleSession } from "@/lib/provider-host/core/console";
 import type { MaintenanceSession } from "@/lib/provider-host/core/maintenance";
 import type { HealthSession, MonitoringSession } from "@/lib/provider-host/core/monitoring";
 import type { ObjectsSession } from "@/lib/provider-host/core/objects";
-import type { QueryResult, QueryWarning } from "@/lib/types";
+import type { DatabaseType, QueryResult, QueryWarning } from "@/lib/types";
 
 /**
  * What one bridged execute left for the facade: the prepared query and the legacy result, and whether the session's
@@ -273,14 +286,17 @@ function sessionStateOf(provider: TransactionProvider): SessionState {
   return provider.isInTransaction() ? "in-transaction" : "not-in-transaction";
 }
 
-/** The execute answer over a legacy `result` its `prepared` query produced: one source per result set. */
-function answerOf(result: QueryResult, prepared: PreparedQuery): ExecuteAnswer {
+/**
+ * The execute answer over a legacy `result`: one source per result set, `pageApplied` whether the provider rewrote the
+ * statement to apply the page.
+ */
+function answerOf(result: QueryResult, pageApplied: boolean): ExecuteAnswer {
   const others = (result.resultSets ?? []).slice(1).map((set) => legacySource(set.fields, set.rows));
   return {
     results: [legacySource(result.fields, result.rows, result.rowCount), ...others],
     warnings: (result.warnings ?? []).map((warning) => contractWarning(warning)),
     executionTimeMs: result.executionTime,
-    pageApplied: prepared.wasLimited,
+    pageApplied,
     ...(result.pagination?.wasLimited === true ? { boundApplied: true as const } : {}),
     ...(result.explainPlan === undefined ? {} : { explainPlan: result.explainPlan }),
   };
@@ -463,7 +479,7 @@ export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepare
         throw noteAppendedBound(error, statement, probe.query);
       }
       run.result = inTransaction;
-      return { ...answerOf(inTransaction, prepared), sessionState: sessionStateOf(transactional) };
+      return { ...answerOf(inTransaction, prepared.wasLimited), sessionState: sessionStateOf(transactional) };
     }
     const cancelId = canceller === undefined ? undefined : request.runId;
     let result: QueryResult;
@@ -474,7 +490,7 @@ export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepare
       throw noteAppendedBound(error, statement, probe.query);
     }
     run.result = result;
-    return answerOf(result, prepared);
+    return answerOf(result, prepared.wasLimited);
   }
 
   const calls = sessionCalls(
@@ -509,6 +525,7 @@ export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepare
   return {
     session: Object.freeze({
       calls,
+      readOnlyStatements: false,
       execute,
       tree: (request: TreeRequest) => legacyTree(provider, request),
       run: (request: MaintenanceRunRequest) => legacyRun(provider, request),
@@ -544,5 +561,112 @@ export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepare
     run,
     answered,
     pumpLimits,
+  };
+}
+
+/**
+ * What a read-only statement session is opened with: the connection's type, named in the refusal of a provider without
+ * a read-only statement path, and the budget members the contract's request does not carry, the statement timeout the
+ * provider bounds its statement by and the billed-read allowance, handed over by reference (clause C-78).
+ */
+export interface ReadOnlyStatementsOpen {
+  readonly type: DatabaseType;
+  readonly statementTimeoutMs: number;
+  readonly readAllowance?: RunReadAllowance;
+}
+
+/** A bridged read-only statement session, the legacy result its execute answered, and the page limits read from it. */
+export interface BridgedReadOnlyStatements {
+  readonly session: ConsoleSession;
+  /**
+   * The legacy result the execute that answered left, for the facade to answer from.
+   *
+   * @throws {Error} When execute has not answered, a host defect.
+   */
+  readonly answered: () => QueryResult;
+  /**
+   * The pump's limits for the answer execute gave: every row the provider returned, at least one, within one page.
+   *
+   * @throws {Error} When execute has not answered, a host defect.
+   */
+  readonly pumpLimits: (answer: ExecuteAnswer) => PumpLimits;
+}
+
+/** The calls of every read-only statement session: execute alone, honouring `readOnly`. */
+const READ_ONLY_STATEMENT_CALLS: Calls = sessionCalls(
+  {
+    console: {
+      execute: { honours: ["readOnly"] },
+      cancel: "not-offered",
+      endScope: "not-offered",
+      transaction: "not-offered",
+    },
+    objects: { tree: "not-offered" },
+    maintenance: { run: "not-offered", preview: "not-offered" },
+    monitoring: { panel: "not-offered", poolStats: "not-offered" },
+  },
+  undefined,
+);
+
+/**
+ * `provider`'s read-only statement path served as a read-only statement session (clause C-50): its open refuses, by
+ * name and before anything is called, a provider without `queryReadOnly`, in the words the execution-profile
+ * acquisition refuses it with, so the plain `query()` is never the fallback (clause C-39). Its execute runs
+ * `queryReadOnly` with the statement, a fresh budget of the open's timeout and read allowance and the request's rows
+ * and bytes, and the request's mode, absent where the request names none; it never calls `query`, `prepareQuery` or
+ * the probe. Its calls offer execute alone, honouring `readOnly`, and it is a read-only statement session, so the host
+ * core refuses any execute without `readOnly` before the call. The caller states the policy: it builds this session
+ * only over a provider it acquired under a profile whose open policy has both `readOnly` and `sendsStatements`.
+ *
+ * @throws {StudioProfileRefusal} `PROFILE_UNSUPPORTED_BY_PROVIDER` for a provider without `queryReadOnly`.
+ */
+export function bridgedReadOnlyStatements(
+  provider: DatabaseProvider,
+  open: ReadOnlyStatementsOpen,
+): BridgedReadOnlyStatements {
+  if (typeof provider.queryReadOnly !== "function") {
+    throw new StudioProfileRefusal(
+      `Provider type "${open.type}" implements no read-only statement path (queryReadOnly)`,
+      "PROFILE_UNSUPPORTED_BY_PROVIDER",
+    );
+  }
+  const queryReadOnly = provider.queryReadOnly.bind(provider);
+  let answeredResult: QueryResult | undefined;
+
+  async function execute(request: ExecuteRequest): Promise<ExecuteAnswer> {
+    const { readOnly } = request;
+    if (readOnly === undefined) {
+      throw new Error(
+        "The bridge's read-only statement session was sent an execute without readOnly, which the host core refuses before the call, so this is a defect of the host.",
+      );
+    }
+    const budget: ReadOnlyStatementBudget = {
+      statementTimeoutMs: open.statementTimeoutMs,
+      maxResultRows: readOnly.budget.maxRows,
+      maxResultBytes: readOnly.budget.maxBytes,
+      ...(open.readAllowance === undefined ? {} : { readAllowance: open.readAllowance }),
+    };
+    const result = await queryReadOnly(request.statement, budget, readOnly.mode);
+    answeredResult = result;
+    return answerOf(result, false);
+  }
+
+  function answered(): QueryResult {
+    if (answeredResult === undefined) {
+      throw new Error(
+        "The bridge's read-only statement run was read before its execute answered, a defect of the host.",
+      );
+    }
+    return answeredResult;
+  }
+
+  return {
+    session: Object.freeze({ calls: READ_ONLY_STATEMENT_CALLS, readOnlyStatements: true, execute }),
+    answered,
+    pumpLimits: () => ({
+      maxRows: Math.max(1, answered().rows.length),
+      maxBytes: PAGE_MAX_BYTES,
+      batchMaxBytes: BATCH_MAX_BYTES,
+    }),
   };
 }

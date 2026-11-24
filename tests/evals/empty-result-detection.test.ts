@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import type { EvalRun } from "../isolated/fixtures/agent-eval-harness";
 import {
   answersProse,
@@ -8,6 +8,12 @@ import {
   reportOnAll,
 } from "../isolated/fixtures/agent-scripted-model";
 import { CASES, openCaseRun, summarise } from "./real-model";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The agent's statements run through the host core's read-only execute, so this file installs one for its runs.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /**
  * What the real-model eval's `empty-result` case is ABLE to catch (#331 T7).

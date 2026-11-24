@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import { readSchemaStatistics } from "@/lib/agent/schema-stats";
@@ -13,6 +13,12 @@ import { QueryError } from "@/lib/db/errors";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
 import { TABLE_LABELS } from "../fixtures/provider-labels";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The agent's statements run through the host core's read-only execute, so this file installs one for its runs.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /**
  * Control 3.5 — accountability of the agent TOOL layer (#329 T6).

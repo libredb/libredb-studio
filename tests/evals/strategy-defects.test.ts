@@ -1,6 +1,12 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { DEPARTMENTS, type EvalRun, openEvalRun } from "../isolated/fixtures/agent-eval-harness";
 import { answersProse, callsTool, reportOn, reportOnAll } from "../isolated/fixtures/agent-scripted-model";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The agent's statements run through the host core's read-only execute, so this file installs one for its runs.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /**
  * The strategy defects #341 observed against a real model, as scripted scenarios

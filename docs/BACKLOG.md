@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D820, U17 · 380
+- [Drivers and connections](#drivers-and-connections) — D1-D850, U17 · 381
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -5029,6 +5029,17 @@ Neither pilot provider reads them.
 Found 2026-11-24 while moving the agent's curated readings onto the host core.
 
 **Done when:** a contract call serves a statement family's own reading, and the three go through the host core under the time their call was granted, a stopped read held by the run until its provider call settles, with a test per reading; or the readings are retired.
+
+### D850. A native provider of an engine that bills every read cannot be handed the run's billed-read allowance
+
+The contract's read-only execute carries a statement's rows, bytes and mode (docs/providers/CONTRACT.md C-78), and the run's billed-read allowance reaches only a legacy provider, through the legacy bridge's read-only statement session, by reference.
+Firestore's `queryReadOnly` and Modbus's agent read charge that allowance before each request they send, and `RunReadAllowance.charge` (`src/lib/db/read-allowance.ts`) is a synchronous mutation that no frame carries.
+So a native provider of an engine that bills every read is handed none and refuses every statement, as its own rule already refuses a budget that carries none.
+Neither pilot provider bills its reads.
+
+Found 2026-11-24 while moving the agent's statements and the hand-over replay onto the host core.
+
+**Done when:** the contract carries the allowance in a form that crosses a frame, for example the units a call may spend in its request and what it spent in its answer, charged by the host before the run's next call, a native provider of a billing engine draws on it, the object tree's reads take it the same way, and tests through the memory transport hold each.
 
 ## Value interpolation
 

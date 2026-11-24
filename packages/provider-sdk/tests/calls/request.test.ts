@@ -5,9 +5,10 @@
  * Each case holds a request to the session's calls, the manifest's `calls` or the narrowed ones a refinement leaves,
  * and asserts the exact refusal list: a pointer into the request, the field's name, and never a value of the request.
  * A statement sent inside a transaction goes only to a session that offers `console.transaction`, and never with a
- * scope. A console facet call goes only to a session that offers the facet, and an object facet call only to one that
- * offers the object facet, a maintenance facet call only to one that offers the maintenance facet, and a monitoring
- * facet call only to one that offers the monitoring facet (clause C-17).
+ * scope. A read-only execute goes only to a session opened under the read-only policy to be sent statements, and such
+ * a session takes no other execute (clause C-78). A console facet call goes only to a session that offers the facet,
+ * and an object facet call only to one that offers the object facet, a maintenance facet call only to one that offers
+ * the maintenance facet, and a monitoring facet call only to one that offers the monitoring facet (clause C-17).
  * A maintenance run or preview request is held to the session's maintenance: an operation it lists, a placement its
  * spec offers, a preview its spec declares on a row, and no empty text where the request names something. A monitoring
  * panel request is held to the panels the session's engine offers (clause C-71).
@@ -27,6 +28,7 @@ import {
   checkMonitoringFacet,
   checkMonitoringPanelRequest,
   checkObjectsFacet,
+  checkReadOnlyRequest,
   type EngineMaintenance,
   type ExecuteRequest,
   type MaintenancePreviewRequest,
@@ -48,7 +50,7 @@ const NOTHING: Calls = {
 /** The calls of a package that honours every field and offers every facet. */
 const EVERYTHING: Calls = {
   console: {
-    execute: { honours: ["params", "offset"] },
+    execute: { honours: ["params", "offset", "readOnly"] },
     cancel: "offered",
     endScope: "offered",
     transaction: "offered",
@@ -73,6 +75,14 @@ const SCOPE: CallRefusal = { rule: "request-scope-not-offered", pointer: "/scope
 const TRANSACTION: CallRefusal = { rule: "request-transaction-not-offered", pointer: "/transaction" };
 const SCOPE_IN_TRANSACTION: CallRefusal = { rule: "request-scope-in-transaction", pointer: "/scope" };
 const inTransaction: ExecuteRequest = { ...firstPage, transaction: true };
+const readOnly: ExecuteRequest = {
+  statement,
+  page: { unlimited: true },
+  readOnly: { budget: { maxRows: 200, maxBytes: 262144 } },
+};
+const READ_ONLY: CallRefusal = { rule: "request-field-not-honoured", pointer: "/readOnly", name: "readOnly" };
+const NOT_OPENED: CallRefusal = { rule: "request-read-only-not-opened", pointer: "/readOnly" };
+const MISSING: CallRefusal = { rule: "request-read-only-missing", pointer: "/readOnly" };
 
 describe("checkExecuteRequest", () => {
   test("a request field the session does not honour is refused before the call", () => {
@@ -83,10 +93,15 @@ describe("checkExecuteRequest", () => {
     expect(checkExecuteRequest(NOTHING, scoped)).toEqual([SCOPE]);
     expect(checkExecuteRequest(NOTHING, allThree)).toEqual([PARAMS, OFFSET, SCOPE]);
     expect(checkExecuteRequest(NOTHING, unlimited)).toEqual([]);
+    expect(checkExecuteRequest(NOTHING, readOnly)).toEqual([READ_ONLY]);
+    expect(checkExecuteRequest(NOTHING, { ...readOnly, params: [1] })).toEqual([PARAMS, READ_ONLY]);
+    expect(callRefusalSentence(READ_ONLY)).toBe(
+      'The request carries the field "readOnly" at "/readOnly", which the session\'s execute does not honour, so the call was not made.',
+    );
   });
 
   test("a session that honours every field and offers endScope takes each", () => {
-    for (const request of [firstPage, withParams, withEmptyParams, laterPage, scoped, unlimited, allThree]) {
+    for (const request of [firstPage, withParams, withEmptyParams, laterPage, scoped, unlimited, allThree, readOnly]) {
       expect(checkExecuteRequest(EVERYTHING, request)).toEqual([]);
     }
   });
@@ -132,6 +147,30 @@ describe("checkExecuteRequest", () => {
       expect(checkExecuteRequest(calls, inTransaction)).toEqual([]);
       expect(checkExecuteRequest(calls, { ...withParams, transaction: true })).toEqual([]);
       expect(checkExecuteRequest(calls, { ...laterPage, params: [1], transaction: true })).toEqual([]);
+    }
+  });
+});
+
+describe("checkReadOnlyRequest", () => {
+  test("a read-only execute goes only to a session opened under the read-only policy to be sent statements, and such a session takes no other execute", () => {
+    const estimating: ExecuteRequest = { ...readOnly, readOnly: { ...readOnly.readOnly!, mode: "estimate-plan" } };
+
+    expect(checkReadOnlyRequest(false, readOnly)).toEqual([NOT_OPENED]);
+    expect(checkReadOnlyRequest(false, estimating)).toEqual([NOT_OPENED]);
+    expect(checkReadOnlyRequest(true, unlimited)).toEqual([MISSING]);
+    expect(checkReadOnlyRequest(true, firstPage)).toEqual([MISSING]);
+    expect(checkReadOnlyRequest(true, readOnly)).toEqual([]);
+    expect(checkReadOnlyRequest(true, estimating)).toEqual([]);
+    expect(checkReadOnlyRequest(false, firstPage)).toEqual([]);
+    expect(checkReadOnlyRequest(false, allThree)).toEqual([]);
+    expect(callRefusalSentence(NOT_OPENED)).toBe(
+      'The request carries a read-only execute at "/readOnly", and the session was not opened under the read-only policy to be sent statements, so the call was not made.',
+    );
+    expect(callRefusalSentence(MISSING)).toBe(
+      'The request carries no read-only execute at "/readOnly", and the session was opened under the read-only policy to be sent statements, which takes no other execute, so the call was not made.',
+    );
+    for (const refusal of [...checkReadOnlyRequest(false, readOnly), ...checkReadOnlyRequest(true, firstPage)]) {
+      expect(callRefusalSentence(refusal)).not.toContain(statement);
     }
   });
 });
@@ -497,6 +536,14 @@ describe("CallRefusalError", () => {
       'The request carries a scope at "/scope", and the session does not offer console.endScope, so the call was not made.',
     );
     expect(error.message).not.toContain(statement);
+    const policy = new CallRefusalError([
+      ...checkReadOnlyRequest(false, readOnly),
+      ...checkReadOnlyRequest(true, firstPage),
+    ]);
+    expect(policy.refusals).toEqual([NOT_OPENED, MISSING]);
+    expect(policy.message).toBe([NOT_OPENED, MISSING].map(callRefusalSentence).join(" "));
+    expect(CALL_REFUSAL_RULES).toContain("request-read-only-not-opened");
+    expect(CALL_REFUSAL_RULES).toContain("request-read-only-missing");
   });
 
   test("every call refusal rule is worded in one sentence", () => {

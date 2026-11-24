@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
 import { QueryError, RowBudgetRefusal } from "@/lib/db/errors";
 import type { AgentRunEvent } from "@/lib/agent/types";
@@ -11,6 +11,12 @@ import {
   openEvalRun,
 } from "../isolated/fixtures/agent-eval-harness";
 import { type ScriptedTurn, answersProse, modelOver, scriptedModel } from "../isolated/fixtures/agent-scripted-model";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The agent's statements run through the host core's read-only execute, so this file installs one for its runs.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /**
  * Plan mode, driven end to end against the run loop, on every engine the harness

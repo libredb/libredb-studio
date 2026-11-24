@@ -2,7 +2,8 @@
  * The legacy bridge (src/lib/provider-host/legacy-bridge.ts; docs/providers/CONTRACT.md, clause C-50): a legacy
  * `DatabaseProvider` served as a session of console execute, cancel, endScope and transaction, its declared calls, the
  * copies it hands the provider, today's provider steps, one source per result set, the measured form of a row and the
- * page's row limit.
+ * page's row limit; and a provider's read-only statement path served as a read-only statement session, refused at its
+ * open where the provider has none.
  *
  * Every provider here is a fake the test builds; every marker is generated at run time and no timer runs.
  */
@@ -23,6 +24,7 @@ import {
   type ExecuteRequest,
   freezeData,
   type MonitoringPanelRequest,
+  type ReadOnlyExecute,
   PAGE_MAX_BYTES,
   pumpPage,
   type ResultSource,
@@ -48,7 +50,9 @@ import { runEditorQuery } from "@/lib/api/editor-query";
 import { providerTextScrub } from "@/lib/db/operations/provider-text";
 import { engineFacetsFor } from "@/lib/db/engine-facets";
 import { appendedBoundNote } from "@/lib/db/utils/query-limiter";
-import { bridgedConsole, bridgedMaintenance } from "@/lib/provider-host/legacy-bridge";
+import { bridgedConsole, bridgedMaintenance, bridgedReadOnlyStatements } from "@/lib/provider-host/legacy-bridge";
+import { StudioProfileRefusal } from "@/lib/db/errors";
+import { RunReadAllowance } from "@/lib/db/read-allowance";
 import type { QueryResult } from "@/lib/types";
 import { createMockProvider } from "../../../helpers/mock-provider";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
@@ -1181,6 +1185,140 @@ describe("bridgedMaintenance", () => {
       maintenance: ["vacuum", "kill"],
       maintenanceSpecs: [{ ...POSTGRES_SPECS.vacuum, description: null, perEntity: false }, POSTGRES_SPECS.kill],
     });
+  });
+});
+
+/** A provider whose read-only statement path answers `answer`, beside a plain path that is never to be called. */
+function readOnlyFake(answer: QueryResult | Error) {
+  const queryReadOnly = mock<(...args: unknown[]) => Promise<QueryResult>>(async () => {
+    if (answer instanceof Error) throw answer;
+    return answer;
+  });
+  return { provider: fake(resultOf([]), { queryReadOnly }), queryReadOnly };
+}
+
+function readOnlyRequest(readOnly: ReadOnlyExecute, statement = `SELECT ${marker()}`): ExecuteRequest {
+  return freezeData({ statement, page: { unlimited: true }, readOnly });
+}
+
+describe("bridgedReadOnlyStatements", () => {
+  test("a read-only statement session runs the provider's queryReadOnly with the request's rows, bytes and mode and the open's timeout and read allowance, and never its plain query", async () => {
+    const result = resultOf(rowsOf(3), {
+      resultSets: [
+        { rows: rowsOf(3), fields: ["n"] },
+        { rows: [{ m: 9 }], fields: ["m"] },
+      ],
+      warnings: [{ message: marker() }],
+    });
+    const { provider, queryReadOnly } = readOnlyFake(result);
+    const readAllowance = new RunReadAllowance(5);
+    const open = { type: "postgres" as const, statementTimeoutMs: 1_234, readAllowance };
+    const bridged = bridgedReadOnlyStatements(provider, open);
+    const statement = `SELECT ${marker()}`;
+
+    const answer = await bridged.session.execute(
+      readOnlyRequest({ budget: { maxRows: 7, maxBytes: 4_096 }, mode: "estimate-plan" }, statement),
+      contextOf(),
+    );
+
+    expect(callsOf(queryReadOnly)).toEqual([
+      [
+        statement,
+        { statementTimeoutMs: 1_234, maxResultRows: 7, maxResultBytes: 4_096, readAllowance },
+        "estimate-plan",
+      ],
+    ]);
+    const [, budget] = callsOf(queryReadOnly)[0] as [string, { readonly readAllowance: RunReadAllowance }];
+    expect(budget.readAllowance).toBe(readAllowance);
+    expect(Object.isFrozen(budget)).toBe(false);
+    expect(callsOf(provider.query)).toEqual([]);
+    expect(callsOf(provider.prepareQuery)).toEqual([]);
+    expect(answer.results.map((source) => source.columns)).toEqual([[{ name: "n" }], [{ name: "m" }]]);
+    expect(answer.results[0]?.rowCount).toBe(3);
+    expect(answer.pageApplied).toBe(false);
+    expect(answer.warnings).toEqual(result.warnings as never);
+    expect(bridged.pumpLimits(answer)).toEqual({
+      maxRows: 3,
+      maxBytes: PAGE_MAX_BYTES,
+      batchMaxBytes: BATCH_MAX_BYTES,
+    });
+    expect(bridged.answered()).toBe(result);
+
+    const executing = readOnlyFake(resultOf([]));
+    const withoutAllowance = bridgedReadOnlyStatements(executing.provider, { type: "postgres", statementTimeoutMs: 9 });
+    const empty = await withoutAllowance.session.execute(
+      readOnlyRequest({ budget: { maxRows: 1, maxBytes: 2 } }),
+      contextOf(),
+    );
+    const [, , mode] = callsOf(executing.queryReadOnly)[0] as unknown[];
+    expect(callsOf(executing.queryReadOnly)[0]?.[1]).toEqual({
+      statementTimeoutMs: 9,
+      maxResultRows: 1,
+      maxResultBytes: 2,
+    });
+    expect(callsOf(executing.queryReadOnly)[0]).toHaveLength(3);
+    expect(mode).toBeUndefined();
+    expect(withoutAllowance.pumpLimits(empty).maxRows).toBe(1);
+  });
+
+  test("a read-only statement session over a provider without queryReadOnly is refused at its open by name, and nothing is called", () => {
+    const provider = fake(resultOf([]));
+
+    let thrown: unknown;
+    try {
+      bridgedReadOnlyStatements(provider, { type: "mysql", statementTimeoutMs: 10 });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(StudioProfileRefusal);
+    expect((thrown as StudioProfileRefusal).reasonCode).toBe("PROFILE_UNSUPPORTED_BY_PROVIDER");
+    expect((thrown as Error).message).toBe(
+      'Provider type "mysql" implements no read-only statement path (queryReadOnly)',
+    );
+    expect(callsOf(provider.query)).toEqual([]);
+    expect(callsOf(provider.prepareQuery)).toEqual([]);
+  });
+
+  test("the bridge's console session is no read-only statement session, and the read-only one offers nothing but execute", async () => {
+    const { provider, queryReadOnly } = readOnlyFake(resultOf([]));
+    const bridged = bridgedReadOnlyStatements(provider, { type: "postgres", statementTimeoutMs: 10 });
+
+    expect(bridgedConsole(provider, {}).session.readOnlyStatements).toBe(false);
+    expect(bridged.session.readOnlyStatements).toBe(true);
+    expect(bridged.session.calls).toEqual({
+      console: {
+        execute: { honours: ["readOnly"] },
+        cancel: "not-offered",
+        endScope: "not-offered",
+        transaction: "not-offered",
+      },
+      objects: { tree: "not-offered" },
+      maintenance: { run: "not-offered", preview: "not-offered" },
+      monitoring: { panel: "not-offered", poolStats: "not-offered" },
+    });
+    expect(Object.isFrozen(bridged.session)).toBe(true);
+    expect(Object.keys(bridged.session).sort()).toEqual(["calls", "execute", "readOnlyStatements"]);
+    expect(() => bridged.answered()).toThrow(
+      "The bridge's read-only statement run was read before its execute answered, a defect of the host.",
+    );
+
+    const plain = await failure(() => bridged.session.execute(requestOf(), contextOf()));
+    expect((plain as Error).message).toBe(
+      "The bridge's read-only statement session was sent an execute without readOnly, which the host core refuses before the call, so this is a defect of the host.",
+    );
+    expect(callsOf(queryReadOnly)).toEqual([]);
+    expect(callsOf(provider.query)).toEqual([]);
+
+    const rejection = new Error(marker());
+    const rejecting = readOnlyFake(rejection);
+    const failed = await failure(() =>
+      bridgedReadOnlyStatements(rejecting.provider, { type: "postgres", statementTimeoutMs: 10 }).session.execute(
+        readOnlyRequest({ budget: { maxRows: 1, maxBytes: 1 } }),
+        contextOf(),
+      ),
+    );
+    expect(failed).toBe(rejection);
   });
 });
 

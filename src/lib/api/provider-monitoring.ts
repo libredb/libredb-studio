@@ -238,11 +238,12 @@ function grantedContext(grant: GrantedRead) {
 }
 
 /**
- * The caller signal of one granted read: a signal that never aborts, made for that call. The agent's drive has no
- * signal of its own, since its cancellation is the run's checkpoint between tool calls, so the drive cannot leave a call
- * mid-way, and the accessor reads a granted read that ended as its deadline's, never as the caller leaving.
+ * The caller signal of one call the agent's drive makes, a granted read or a statement (`runReadOnlyExecute`): a signal
+ * that never aborts, made for that call. The agent's drive has no signal of its own, since its cancellation is the
+ * run's checkpoint between tool calls, so the drive cannot leave a call mid-way, and the accessor reads a call that
+ * ended as its deadline's, never as the caller leaving.
  */
-function driveCaller(): AbortSignal {
+export function driveCaller(): AbortSignal {
   return new AbortController().signal;
 }
 

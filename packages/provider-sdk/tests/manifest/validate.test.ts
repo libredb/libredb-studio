@@ -3727,6 +3727,12 @@ describe("the calls segment", () => {
       refusal("value-not-allowed", "/calls/console/execute/honours/0"),
     ]);
     expect(refusalsFor(manifest((m) => (m.calls.console.execute.honours = ["params", "offset"])))).toEqual([]);
+    expect(refusalsFor(manifest((m) => (m.calls.console.execute.honours = ["params", "offset", "readOnly"])))).toEqual(
+      [],
+    );
+    expect(refusalsFor(manifest((m) => (m.calls.console.execute.honours = ["readonly"])))).toEqual([
+      refusal("value-not-allowed", "/calls/console/execute/honours/0"),
+    ]);
   });
 
   test("a console facet offer outside the vocabulary, or a key the calls segment does not define, is refused", () => {

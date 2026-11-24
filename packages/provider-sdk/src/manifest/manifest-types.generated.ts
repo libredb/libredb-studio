@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "4b6fbc159a19a4a80927412cbc9fbe3f14b3ac45778854eda44117d2ff696781";
+export const MANIFEST_SCHEMA_SHA256 = "46eccadcfafb2daa47c76d59303847d7e9b6856fa04edf80d17d550145d39e63";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -115,8 +115,8 @@ export interface ExecuteCall {
   readonly honours: readonly ExecuteRequestField[];
 }
 
-/** An optional field of the console execute request. params: bound parameter values. offset: a page that starts past the first row. */
-export type ExecuteRequestField = "params" | "offset";
+/** An optional field of the console execute request. params: bound parameter values. offset: a page that starts past the first row. readOnly: a read-only execute, its row and byte budget and its mode, sent only to a session opened under the read-only policy to be sent statements. */
+export type ExecuteRequestField = "params" | "offset" | "readOnly";
 
 /** An engine's type-id: a lower-case letter, then up to 31 lower-case letters or digits. */
 export type EngineId = string;

@@ -2003,7 +2003,8 @@ export interface ProviderLabels {
  *   once the statement returns, and an overrun result is refused rather than served.
  *
  * On the agent statement path, the hand-over replay and every MCP statement tool, core holds the provider's answer to
- * the same caps again (`runReadOnlyStatement` in `src/lib/db/operations/read-only-statement.ts`): it refuses an answer
+ * the same caps again (`runReadOnlyExecute` in `src/lib/api/read-only-execute.ts` for the agent and the hand-over,
+ * `runReadOnlyStatement` in `src/lib/db/operations/read-only-statement.ts` for MCP): it refuses an answer
  * past the row cap (an estimating plan excepted, whose rows are operators), sums each served row's UTF-8 JSON bytes
  * against the byte cap, and stops waiting at the timeout or at the caller's own deadline. Stopping the wait does not
  * stop the statement, and the wait includes the provider's connection checkout. A provider that runs its statement
@@ -2123,7 +2124,7 @@ export type ReadOnlyCatalogReading =
  * argument entirely: a provider written before this existed keeps its behaviour.
  *
  * A provider handed `"estimate-plan"` answers a plan or refuses, as LibreDB and
- * Kubernetes refuse; it never executes the statement instead. `runReadOnlyStatement`
+ * Kubernetes refuse; it never executes the statement instead. Core (`holdReadOnlyRows`)
  * holds an estimating plan's answer to the byte budget only, because its rows are
  * operators rather than data rows, so a provider that executed the statement there
  * would serve data rows no row cap in core checks.

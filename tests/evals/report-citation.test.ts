@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { type EvalRun, openEvalRun } from "../isolated/fixtures/agent-eval-harness";
 import {
   answersProse,
@@ -7,6 +7,12 @@ import {
   promptText,
   reportCitingWhatWasOffered,
 } from "../isolated/fixtures/agent-scripted-model";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The agent's statements run through the host core's read-only execute, so this file installs one for its runs.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /**
  * The citation contract, driven end to end (#350).

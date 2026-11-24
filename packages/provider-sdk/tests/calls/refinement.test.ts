@@ -127,6 +127,13 @@ describe("checkRefinement and sessionCalls", () => {
     expect(Object.isFrozen(unfrozen.objects)).toBe(false);
     expect(Object.isFrozen(unfrozen.maintenance)).toBe(false);
     expect(Object.isFrozen(unfrozen.monitoring)).toBe(false);
+    const readOnly: Calls = { ...DECLARED, console: { ...DECLARED.console, execute: { honours: ["readOnly"] } } };
+    const withdrawn = { calls: { console: { execute: { honours: [] } } } };
+    expect(checkRefinement(readOnly, withdrawn)).toEqual([]);
+    expect(sessionCalls(readOnly, withdrawn).console.execute.honours).toEqual([]);
+    expect(checkRefinement(DECLARED, { calls: { console: { execute: { honours: ["readOnly"] } } } })).toEqual([
+      refused("refinement-widens", "/calls/console/execute/honours/0"),
+    ]);
   });
 
   test("a refinement that widens a declared value is refused as refinement-widens", () => {

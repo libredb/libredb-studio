@@ -118,8 +118,8 @@ export interface AuditedInvocation {
   /**
    * Keeps this execution live, counted against `maxConcurrentExecutions`, until `call` settles as well as the
    * callback. Handed the provider's call the callback makes, so a callback answered before that call settles (core's
-   * read-only statement timer refusing it at its timeout, `runReadOnlyStatement`) leaves the execution counted for as
-   * long as the call runs.
+   * read-only statement deadline refusing it, `runReadOnlyExecute`, which hands over the stopped call's settlement)
+   * leaves the execution counted for as long as the call runs.
    */
   readonly holdUntilSettled: (call: PromiseLike<unknown>) => void;
 }

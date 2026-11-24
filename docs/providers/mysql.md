@@ -2656,7 +2656,7 @@ layers are complementary: the variable stops the server's own production for a s
 `LIMIT`, and the stream holds the line for one that carries a `LIMIT` past the budget.
 
 A row's bytes are the UTF-8 JSON of the row as it is served, keyed by its column names, so the agent and MCP byte budget counts every row's column names as well as its values.
-That is the measure Studio checks the answer against again on the agent, hand-over and MCP paths (`runReadOnlyStatement` in `src/lib/db/operations/read-only-statement.ts`), so the stream stops on the same row that check would refuse.
+That is the measure Studio checks the answer against again on the agent, hand-over and MCP paths (`holdReadOnlyRows` in `src/lib/db/operations/read-only-statement.ts`, read by the host core's read-only execute for the agent and the hand-over and by `runReadOnlyStatement` for MCP), so the stream stops on the same row that check would refuse.
 The names are not a rounding error: on MySQL 8.4.13, 200 rows of three named columns came to 4,531 bytes as bare values and 17,931 as served rows.
 
 The deadline has a server-side half and a provider-owned half, because the server-side half is

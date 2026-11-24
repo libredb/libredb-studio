@@ -56,6 +56,7 @@ function sessionOf(answer: (request: EndScopeRequest, ctx: CallContext) => Promi
   const called = Promise.withResolvers<void>();
   const session: ConsoleSession = {
     calls,
+    readOnlyStatements: false,
     execute: async () => ({ results: [], warnings: [], executionTimeMs: 1, pageApplied: false }),
     endScope: (request, ctx) => {
       ends.push({ request, ctx });
@@ -223,6 +224,7 @@ describe("endScopeCall", () => {
     const { ports } = portsOf();
     const missing: ConsoleSession = {
       calls: callsOf(),
+      readOnlyStatements: false,
       execute: async () => ({ results: [], warnings: [], executionTimeMs: 1, pageApplied: false }),
     };
 

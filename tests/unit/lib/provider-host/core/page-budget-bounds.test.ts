@@ -46,6 +46,7 @@ const child = boundedChild({
           maintenance: { run: "not-offered", preview: "not-offered" },
           monitoring: { panel: "not-offered", poolStats: "not-offered" },
         },
+        readOnlyStatements: false,
         execute: async () => ({ results: [source], warnings: [], executionTimeMs: 1, pageApplied: true }),
       }) as unknown as Parameters<typeof calls.executeCall>[0];
     const request = { statement: "page", page: { limit: 10, offset: 0 } };

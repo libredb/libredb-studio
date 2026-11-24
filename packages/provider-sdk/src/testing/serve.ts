@@ -24,6 +24,8 @@
  * whose signal has aborted (`checkCallStart`), the signal's reason as the error's cause, so the provider is never
  * called and the tables are unchanged. It holds every call to the session's calls before any frame
  * (`checkExecuteRequest`, `checkConsoleFacet`, `checkObjectsFacet`, `checkMaintenanceFacet`, `checkMonitoringFacet`),
+ * every execute to the read-only policy its session was opened under (`checkReadOnlyRequest`, clause C-78), read from
+ * the open context's `policy` and kept with the session,
  * every maintenance request to the session's maintenance (`checkMaintenanceRunRequest`,
  * `checkMaintenancePreviewRequest`) and every monitoring panel request to the panels the session's engine offers
  * (`checkMonitoringPanelRequest`), reads `open`'s refinement with `sessionCalls` and `sessionMaintenance`, the latter
@@ -55,6 +57,7 @@ import {
   checkMonitoringFacet,
   checkMonitoringPanelRequest,
   checkObjectsFacet,
+  checkReadOnlyRequest,
   sessionCalls,
   sessionMaintenance,
 } from "../calls/session";
@@ -120,12 +123,14 @@ export interface ServedHandle {
 const SERVICES: readonly string[] = Object.freeze(["signal", "env"] satisfies (keyof CallContext)[]);
 
 /**
- * What the host's side keeps of an open session: its calls and its maintenance, narrowed as its open answered, and the
- * monitoring panels of the engine it was opened as.
+ * What the host's side keeps of an open session: its calls and its maintenance, narrowed as its open answered, the
+ * monitoring panels of the engine it was opened as, and whether its open policy made it a read-only statement session,
+ * `policy.readOnly` and `policy.sendsStatements` both true.
  */
 interface HostSession {
   readonly id: string;
   readonly calls: Calls;
+  readonly readOnlyStatements: boolean;
   readonly maintenance: EngineMaintenance;
   readonly monitoring: MonitoringPanels;
 }
@@ -484,7 +489,9 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
       const calls = sessionCalls(declared, refine);
       const maintenance = sessionMaintenance(engine, refine);
       const token: ServedHandle = Object.freeze({ session: id });
-      sessions.set(token, { id, calls, maintenance, monitoring: panels.get(ctx.engine) as MonitoringPanels });
+      const readOnlyStatements = ctx.policy.readOnly && ctx.policy.sendsStatements;
+      const monitoring = panels.get(ctx.engine) as MonitoringPanels;
+      sessions.set(token, { id, calls, readOnlyStatements, maintenance, monitoring });
       return { ...decoded, handle: token };
     } catch (error) {
       return throwAfterClosing(error, [closeSession]);
@@ -514,6 +521,8 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
     const session = hostSession(call, handle);
     const requestRefusals = checkExecuteRequest(session.calls, request);
     if (requestRefusals.length > 0) throw new CallRefusalError(requestRefusals);
+    const policyRefusals = checkReadOnlyRequest(session.readOnlyStatements, request);
+    if (policyRefusals.length > 0) throw new CallRefusalError(policyRefusals);
     const sent = cross(call, "to-provider", {
       call,
       session: session.id,

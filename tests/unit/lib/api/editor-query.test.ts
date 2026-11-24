@@ -888,6 +888,7 @@ describe("runEditorQuery on the host core", () => {
           maintenance: { run: "not-offered", preview: "not-offered" },
           monitoring: { panel: "not-offered", poolStats: "not-offered" },
         },
+        readOnlyStatements: false,
         execute: async () => ({ results: [holderSource], warnings: [], executionTimeMs: 1, pageApplied: true }),
       },
       { statement: "SELECT 1", page: { limit: 10, offset: 0 } },

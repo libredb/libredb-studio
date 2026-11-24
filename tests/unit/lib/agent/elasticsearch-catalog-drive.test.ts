@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -21,6 +21,12 @@ import type { QueryResult } from "@/lib/types";
 import { createLocalWorld } from "@workflow/world-local";
 import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
 import { answersProse, callsTool, modelOver, scriptedModel } from "../../../isolated/fixtures/agent-scripted-model";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The agent's statements run through the host core's read-only execute, so this file installs one for its runs.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /**
  * The statement workflows on Elasticsearch, driven through the real run loop, the real Elasticsearch overlay and the

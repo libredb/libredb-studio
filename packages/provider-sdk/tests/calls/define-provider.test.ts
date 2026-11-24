@@ -591,9 +591,9 @@ describe("checkProviderModule", () => {
       });
 
     for (const honours of [
-      counted(["params", "offset", "params"]),
+      counted(["params", "offset", "readOnly", "params"]),
       counted([1, 2, 3, 4, 5]),
-      ["params", "offset", "rows"],
+      ["params", "offset", "readOnly", "rows"],
     ]) {
       expect(checkProviderModule(record((r) => (r.manifest.calls.console.execute.honours = honours)))).toEqual([
         refusal("manifest-unreadable", "/manifest/calls/console/execute/honours"),

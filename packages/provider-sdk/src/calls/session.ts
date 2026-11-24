@@ -1,12 +1,14 @@
 /**
  * A session's calls and the requests the host sends it (docs/providers/CONTRACT.md, clauses C-9, C-10, C-17, C-57,
- * C-67, C-68 and C-71).
+ * C-67, C-68, C-71 and C-78).
  *
  * The manifest's `calls` declares what a package answers; `open` may answer a refinement that narrows it for one
  * session, which `checkRefinement` reads and `sessionCalls` applies. The refinement may also narrow the session's
  * maintenance to the placements its server accepts, which `sessionMaintenance` applies to the engine's declaration.
  * The host keeps the session's calls with the session, with no cache and no invalidation event, and holds every request
- * to them with `checkExecuteRequest` before the call, so a package is never sent a field it does not honour, and every
+ * to them with `checkExecuteRequest` before the call, so a package is never sent a field it does not honour, every
+ * execute to the session's read-only policy with `checkReadOnlyRequest`, so a read-only execute goes only to a session
+ * opened to be sent read-only statements and such a session takes no other, and every
  * console facet call to it with `checkConsoleFacet`, every object facet call with `checkObjectsFacet`, every
  * maintenance facet call with `checkMaintenanceFacet` and every monitoring facet call with `checkMonitoringFacet`, so a
  * package is never called on a facet the session does not offer. It holds every maintenance run and preview request to
@@ -49,7 +51,8 @@ import {
  * Every way `request` sends what `calls` does not take, in request order: a `params` key, of any length, to a session
  * that does not honour `params`; a non-zero offset to one that does not honour `offset`; a `scope` key to one that does
  * not offer `console.endScope`, and one on a statement sent inside a transaction, which runs on the transaction's own
- * session and never in a scope; a `transaction` key to one that does not offer `console.transaction`. A refusal names
+ * session and never in a scope; a `transaction` key to one that does not offer `console.transaction`; a `readOnly` key
+ * to one that does not honour `readOnly`. A refusal names
  * the field and a pointer into the request, never a value of it.
  */
 export function checkExecuteRequest(calls: Calls, request: ExecuteRequest): readonly CallRefusal[] {
@@ -71,7 +74,24 @@ export function checkExecuteRequest(calls: Calls, request: ExecuteRequest): read
   if (inTransaction && calls.console.transaction !== "offered") {
     refusals.push({ rule: "request-transaction-not-offered", pointer: "/transaction" });
   }
+  if (Object.hasOwn(request, "readOnly") && !honours.includes("readOnly")) {
+    refusals.push({ rule: "request-field-not-honoured", pointer: "/readOnly", name: "readOnly" });
+  }
   return refusals;
+}
+
+/**
+ * The refusal of `request` by the read-only policy of the session it is sent to (clause C-78): `readOnlyStatements` is
+ * true exactly when the session's open policy has both `readOnly` and `sendsStatements`. A read-only execute to a
+ * session that is not one is refused `request-read-only-not-opened`, and a request without `readOnly` to one that is
+ * `request-read-only-missing`, so such a session's plain path is never the fallback; both at `/readOnly`, never a value
+ * of the request. Whether the session honours the field is `checkExecuteRequest`'s.
+ */
+export function checkReadOnlyRequest(readOnlyStatements: boolean, request: ExecuteRequest): readonly CallRefusal[] {
+  const sent = Object.hasOwn(request, "readOnly");
+  if (sent && !readOnlyStatements) return [{ rule: "request-read-only-not-opened", pointer: "/readOnly" }];
+  if (!sent && readOnlyStatements) return [{ rule: "request-read-only-missing", pointer: "/readOnly" }];
+  return [];
 }
 
 /**

@@ -2415,6 +2415,9 @@ the run decided against. A row or byte budget overrun **refuses** rather than tr
 the agent's own read path does.
 The connection opens within its engine's connect budget and while the request stays, as on `POST /api/db/query`.
 A request that leaves while it opens answers `499 QUERY_CANCELLED` at once, `outcome: "not-sent"`, and an open past the budget answers `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "not-sent"`, in a sentence naming the budget; the statement is never sent either way, and the open goes on for the next request.
+The statement runs through the host core's read-only execute while the request stays.
+A request that leaves while the statement runs answers `499 QUERY_CANCELLED` at once, `outcome: "unknown"`, since the statement may have run; it is not cancelled and runs on, and a later failure of it is written to the server log by its kind and code only.
+A row larger than the 32 MiB one page of a result holds is refused with `400`, `kind: "studio-byte-budget-refusal"` and `outcome: "unknown"`, in a sentence naming the row's size and the page's bytes, though the hand-over's byte budget is 64 MiB.
 A failure whose text held a credential of the connection keeps its own status, `code`, `kind` and `outcome`, with only its text replaced, as [Error Response Format](#error-response-format) describes.
 
 #### POST /api/agent/drive

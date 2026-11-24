@@ -41,6 +41,7 @@ const child = boundedChild({
         maintenance: { run: "not-offered", preview: "not-offered" },
         monitoring: { panel: "not-offered", poolStats: "not-offered" },
       },
+      readOnlyStatements: false,
       execute: () => new Promise<never>(() => {}),
       transaction: () => new Promise<never>(() => {}),
       endScope: () => new Promise<never>(() => {}),

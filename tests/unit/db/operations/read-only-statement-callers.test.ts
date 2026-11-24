@@ -7,11 +7,12 @@ import ts from "typescript";
  * The protected read path has one core caller.
  *
  * A provider's `queryReadOnly` is the read-only statement path the agent, the hand-over replay and MCP run statements
- * on, and `runReadOnlyStatement` (`src/lib/db/operations/read-only-statement.ts`) is the one core function that holds
- * its answer to the budget handed out. A second core caller would be a path where the caps are only the provider's
- * claim, so outside provider code no module reads the method except to test that it exists (`typeof`), and that
- * function is the one exception. Any read counts, not only a call: a read is how a call, a `.bind`, a `.call`, an
- * `.apply` or an alias begins.
+ * on. MCP reaches it through `runReadOnlyStatement` (`src/lib/db/operations/read-only-statement.ts`), and the agent and
+ * the hand-over through the host core's read-only execute (`runReadOnlyExecute`, src/lib/api/read-only-execute.ts),
+ * whose session the legacy bridge serves (`bridgedReadOnlyStatements`); each holds the answer to the budget handed out.
+ * A third caller would be a path where the caps are only the provider's claim, so outside provider code no module
+ * reads the method except to test that it exists (`typeof`), and those two are the exceptions. Any read counts, not
+ * only a call: a read is how a call, a `.bind`, a `.call`, an `.apply` or an alias begins.
  *
  * The agent's other budgeted reads, the catalog read `readCatalogReadOnly` and the cluster readings `readClusterUsage`
  * and `readWorkloadProfile`, are held the same way: each is read once outside provider code, in the one agent function
@@ -29,6 +30,11 @@ const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const SOURCE_ROOTS = ["src", join("vscode-extension", "src")];
 const PROVIDER_CODE = join("src", "lib", "db", "providers") + sep;
 const CORE_CALLER = join("src", "lib", "db", "operations", "read-only-statement.ts");
+/** The legacy bridge, whose read-only statement session is the host core's reader of a provider's read-only path. */
+const BRIDGE = join("src", "lib", "provider-host", "legacy-bridge.ts");
+const BRIDGE_SESSION = "bridgedReadOnlyStatements";
+/** The read-only execute facade, which reads the review record before it opens that session. */
+const EXECUTE_FACADE = join("src", "lib", "api", "read-only-execute.ts");
 const AGENT_AND_MCP_SOURCES = [
   join("src", "lib", "agent"),
   join("src", "lib", "mcp"),
@@ -305,18 +311,22 @@ describe("the protected read path", () => {
     ]);
   });
 
-  test("no module outside the providers calls queryReadOnly except runReadOnlyStatement", () => {
+  test("no module outside the providers calls queryReadOnly except runReadOnlyStatement and the legacy bridge's read-only statement session", () => {
     const outside = SOURCE_ROOTS.flatMap(sourceFiles).filter(
-      (file) => !file.startsWith(PROVIDER_CODE) && file !== CORE_CALLER,
+      (file) => !file.startsWith(PROVIDER_CODE) && file !== CORE_CALLER && file !== BRIDGE,
     );
     expect(outside.length).toBeGreaterThan(0);
     const uses = outside.flatMap((file) => queryReadOnlyUses(file, readFileSync(join(ROOT, file), "utf8")));
     expect(uses.map(label)).toEqual([]);
-    // The one caller is still there, so the rule above is not vacuous: inside `runReadOnlyStatement`, in the read it
-    // hands `runReadOnlyReading`.
+    // Both readers are still there, so the rule above is not vacuous: inside `runReadOnlyStatement`, in the read it
+    // hands `runReadOnlyReading`, and inside the bridge's read-only statement session, its one bound read.
     const core = queryReadOnlyUses(CORE_CALLER, readFileSync(join(ROOT, CORE_CALLER), "utf8"));
     expect(core.map((use) => `${use.file} in ${use.functions.at(-1)}`)).toEqual([
       `${CORE_CALLER} in runReadOnlyStatement`,
+    ]);
+    const bridge = queryReadOnlyUses(BRIDGE, readFileSync(join(ROOT, BRIDGE), "utf8"));
+    expect(bridge.map((use) => [`${use.file} in ${use.functions.at(-1)}`, use.called])).toEqual([
+      [`${BRIDGE} in ${BRIDGE_SESSION}`, true],
     ]);
   }, 60_000);
 
@@ -387,6 +397,86 @@ describe("the protected read path", () => {
       `${join("src", "lib", "agent", "tools.ts")} in ${STATISTICS_READ}`,
     ]);
   });
+});
+
+const HANDOVER_ROUTE = join("src", "app", "api", "agent", "runs", "[runId]", "handover", "route.ts");
+const AGENT_TOOLS = join("src", "lib", "agent", "tools.ts");
+const AGENT_SOURCES = [join("src", "lib", "agent"), join("src", "app", "api", "agent")];
+
+interface FunctionCall {
+  readonly file: string;
+  /** The innermost named function around the call. */
+  readonly declaration: string;
+  /** Every identifier that innermost named function's body names. */
+  readonly names: ReadonlySet<string>;
+}
+
+/** Every call of the function named `name` in `text`, with the identifiers its innermost named function names. */
+function functionCalls(file: string, text: string, name: string): FunctionCall[] {
+  const source = parse(file, text);
+  const found: FunctionCall[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(inner(node.expression))) {
+      if ((inner(node.expression) as ts.Identifier).text === name) {
+        let scope: ts.Node | undefined = node.parent;
+        while (scope !== undefined && namedFunction(scope) === undefined) scope = scope.parent;
+        const names = new Set<string>();
+        const collect = (at: ts.Node) => {
+          if (ts.isIdentifier(at)) names.add(at.text);
+          ts.forEachChild(at, collect);
+        };
+        if (scope !== undefined) collect(scope);
+        found.push({ file, declaration: enclosingDeclaration(node), names });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
+}
+
+/** Every call of `name` in the tracked sources outside provider code. */
+function callsOutsideProviders(name: string): FunctionCall[] {
+  return SOURCE_ROOTS.flatMap(sourceFiles)
+    .filter((file) => !file.startsWith(PROVIDER_CODE))
+    .flatMap((file) => functionCalls(file, readFileSync(join(ROOT, file), "utf8"), name));
+}
+
+describe("the agent's statements and the hand-over replay on the host core", () => {
+  test("the agent and the hand-over call no runReadOnlyStatement: their statements run through the host core's read-only execute", () => {
+    const agentFiles = AGENT_SOURCES.flatMap(sourceFiles);
+    expect(agentFiles.length).toBeGreaterThan(0);
+    const legacy = agentFiles.flatMap((file) =>
+      functionCalls(file, readFileSync(join(ROOT, file), "utf8"), "runReadOnlyStatement"),
+    );
+    expect(legacy.map((call) => `${call.file} in ${call.declaration}`)).toEqual([]);
+    const facade = agentFiles.flatMap((file) =>
+      functionCalls(file, readFileSync(join(ROOT, file), "utf8"), "runReadOnlyExecute"),
+    );
+    expect(facade.map((call) => `${call.file} in ${call.declaration}`).sort()).toEqual([
+      `${HANDOVER_ROUTE} in POST`,
+      `${AGENT_TOOLS} in runStatement`,
+    ]);
+  }, 60_000);
+
+  test("only the agent's statement path and the hand-over route open a read-only statement session, each under a profile that sends statements", () => {
+    // The session is read-only for statements because its caller acquired the provider under a profile whose open
+    // policy has both readOnly and sendsStatements; the host trusts the facade's word, so the callers are held here.
+    const sessions = callsOutsideProviders(BRIDGE_SESSION);
+    expect(sessions.map((call) => `${call.file} in ${call.declaration}`)).toEqual([
+      `${EXECUTE_FACADE} in runReadOnlyExecute`,
+    ]);
+    const facade = callsOutsideProviders("runReadOnlyExecute");
+    const profiles: Record<string, string> = {
+      [`${AGENT_TOOLS} in runStatement`]: "AGENT_EXECUTION_PROFILE",
+      [`${HANDOVER_ROUTE} in POST`]: "AGENT_HANDOVER_PROFILE",
+    };
+    expect(facade.map((call) => `${call.file} in ${call.declaration}`).sort()).toEqual(Object.keys(profiles).sort());
+    for (const call of facade) {
+      const profile = profiles[`${call.file} in ${call.declaration}`] as string;
+      expect([call.declaration, call.names.has(profile)]).toEqual([call.declaration, true]);
+    }
+  }, 60_000);
 });
 
 /** The function declared as `name` in `file`, parsed from the source. */
@@ -525,11 +615,10 @@ const REVIEW_GATE = "assertStatementsReviewed";
 /** The presence tests outside provider code today, each refusing the absence: none opens a path. */
 const FACTORY = join("src", "lib", "db", "factory.ts");
 const KNOWN_PRESENCE_TESTS: readonly string[] = [
-  `${join("src", "app", "api", "agent", "runs", "[runId]", "handover", "route.ts")} in POST`,
-  `${join("src", "lib", "agent", "tools.ts")} in runStatement`,
   `${FACTORY} in openProfiledProvider`,
   `${CORE_CALLER} in read`,
   `${join("src", "lib", "mcp", "tools", "run-statement.ts")} in executeOpened`,
+  `${BRIDGE} in ${BRIDGE_SESSION}`,
 ];
 /** The presence tests that return their refusal as a value: MCP's statement tool answers every refusal that way. */
 const RETURNED_REFUSALS: readonly string[] = [
@@ -629,6 +718,15 @@ describe("the review record gates the protected read path", () => {
       profiledCacheKey: "gated",
       createSSHTunnel: "gated",
       createDatabaseProvider: "gated",
+    });
+  });
+
+  test("runReadOnlyExecute reads the review record before it reads the budget, the host core or the provider", () => {
+    const body = declaredFunction(EXECUTE_FACADE, "runReadOnlyExecute");
+    expect(gatedBefore(body, REVIEW_GATE, ["assertReadOnlyBudget", "hostCore", BRIDGE_SESSION])).toEqual({
+      assertReadOnlyBudget: "gated",
+      hostCore: "gated",
+      [BRIDGE_SESSION]: "gated",
     });
   });
 

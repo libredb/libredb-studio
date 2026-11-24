@@ -89,6 +89,7 @@ function sessionOf(
   const called = Promise.withResolvers<void>();
   const session: ConsoleSession = {
     calls: options.calls ?? callsOf(),
+    readOnlyStatements: false,
     execute: options.execute ?? (async () => ({ results: [], warnings: [], executionTimeMs: 1, pageApplied: false })),
     transaction: (request, ctx) => {
       transactions.push({ request, ctx });
@@ -167,7 +168,7 @@ describe("transactionCall", () => {
   test("a transaction call to a session without console.transaction is refused as a record before the call", async () => {
     const fx = sessionOf(async () => ({ sessionState: "in-transaction" }), { calls: callsOf(false) });
     const { ports } = portsOf();
-    const missing: ConsoleSession = { calls: callsOf(), execute: fx.session.execute };
+    const missing: ConsoleSession = { calls: callsOf(), readOnlyStatements: false, execute: fx.session.execute };
 
     const record = await transactionCall(fx.session, { action: "state" }, contextOf(), ports);
     const defect = await failure(() => transactionCall(missing, { action: "state" }, contextOf(), ports));
