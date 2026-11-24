@@ -562,6 +562,13 @@ const SNAPSHOT_SENTENCE =
   "a snapshot's provider sentence: walkObjectInventory scrubbed it at the capture, scrubSnapshotSentences before a prompt";
 
 /**
+ * The reason the legacy bridge's tree reads are no crossing of their own: the bridge hands each answer by reference to
+ * the host core's tree call, and the tree's caller, a route or the VS Code backend, scrubs it where it always did.
+ */
+const LEGACY_TREE_ANSWER =
+  "a legacy tree answer carried by reference through the host core's tree call to its caller, which answers it through its core scrubs";
+
+/**
  * Every read of such a text on the three paths outside a recorded crossing, each with the reason it is not a
  * provider's text, or is one a crossing already scrubbed.
  */
@@ -601,6 +608,9 @@ const NOT_PROVIDER_TEXT: Readonly<Record<string, string>> = {
   [`${mcp("tools", "run-statement.ts")}: build: raw.warnings`]: "a result executeOpened scrubbed before resultOf",
   [`${providerHost("legacy-bridge.ts")}: answerOf: result.warnings`]:
     "a legacy result's warnings carried into the execute answer, which runEditorQuery never renders: it answers the legacy result through withScrubbedWarnings",
+  [`${providerHost("legacy-bridge.ts")}: legacyTree: provider.countObjects`]: LEGACY_TREE_ANSWER,
+  [`${providerHost("legacy-bridge.ts")}: legacyTree: provider.describeObject`]: LEGACY_TREE_ANSWER,
+  [`${providerHost("legacy-bridge.ts")}: legacyTree: provider.describeObjects`]: LEGACY_TREE_ANSWER,
   [`${join("src", "lib", "api", "editor-transaction.ts")}: readTransactionState: read.error.message`]:
     "the accessor's own sentence for a state read the host stopped waiting for or refused before the call, Studio's: no provider text reaches it",
   [`${providerHost("core", "console.ts")}: runExecute: answer.warnings`]:

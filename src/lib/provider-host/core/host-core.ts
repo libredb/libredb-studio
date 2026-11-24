@@ -2,10 +2,11 @@
  * The host core instance (docs/providers/CONTRACT.md, clauses C-52 and C-53), part of the provider host core.
  *
  * `createHostCore` answers what a composition root installs once per process (src/lib/provider-host/instance.ts): the
- * core's console calls in a frozen object, and nothing else. `executeCall` is bound to a page budget of
- * `LARGE_PAGE_SLOTS` slots the core creates for itself (src/lib/provider-host/core/page-budget.ts), so the process holds
- * one page budget as it holds one core; `cancelCall`, `endScopeCall` and `transactionCall` pump nothing and are the
- * console's own functions. The budget is not exposed: it is reached only through the core's execute.
+ * core's console calls and its tree call in a frozen object, and nothing else. `executeCall` is bound to a page budget
+ * of `LARGE_PAGE_SLOTS` slots the core creates for itself (src/lib/provider-host/core/page-budget.ts), so the process
+ * holds one page budget as it holds one core; `cancelCall`, `endScopeCall` and `transactionCall` pump nothing and are
+ * the console's own functions, and `treeCall` is the object facet's own (src/lib/provider-host/core/objects.ts). The
+ * budget is not exposed: it is reached only through the core's execute.
  *
  * Next.js bundles instrumentation apart from every route handler, and each bundle holds its own copy of Studio's error
  * classes (docs/ARCHITECTURE.md, "The provider host core"). The core answers records and constructs no class, so the
@@ -15,12 +16,13 @@
  * factory's, per bundle, since the factory is part of the npm package and needs no core.
  */
 import { type ConsoleCalls, consoleCalls } from "./console";
+import { type ObjectsCalls, treeCall } from "./objects";
 import { createPageBudget, LARGE_PAGE_SLOTS } from "./page-budget";
 
-/** The host core one process holds: the core's console calls, on its page budget. */
-export type HostCore = ConsoleCalls;
+/** The host core one process holds: the core's console calls, on its page budget, and its tree call. */
+export type HostCore = ConsoleCalls & ObjectsCalls;
 
 /** A new host core instance, with a page budget of its own, frozen, for a composition root to install. */
 export function createHostCore(): HostCore {
-  return Object.freeze(consoleCalls(createPageBudget(LARGE_PAGE_SLOTS)));
+  return Object.freeze({ ...consoleCalls(createPageBudget(LARGE_PAGE_SLOTS)), treeCall });
 }
