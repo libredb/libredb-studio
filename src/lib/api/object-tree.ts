@@ -20,9 +20,18 @@ import type {
   ProviderCapabilities,
 } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
-import { type CallerView, refusalError, stopError } from "@/lib/provider-host/access";
+import {
+  type BudgetView,
+  budgetRefusalError,
+  budgetStopError,
+  type CallerView,
+  refusalError,
+  stopError,
+} from "@/lib/provider-host/access";
+import type { RefusedRecord, StoppedRecord } from "@/lib/provider-host/core/console";
+import type { HostCore } from "@/lib/provider-host/core/host-core";
 import { hostCore } from "@/lib/provider-host/instance";
-import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
+import { type BridgedConsole, bridgedConsole } from "@/lib/provider-host/legacy-bridge";
 
 /*
  * THE OBJECT TREE ON THE PROVIDER HOST CORE (docs/providers/CONTRACT.md, clauses C-64, C-65 and C-80).
@@ -63,6 +72,17 @@ import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
  * grant's own time refusal (`budgetGrantEnd`), the stopped read's settlement handed to the grant's hold first, so the
  * run counts the read in flight until it settles; the walk sends no further read. Its containers read answers the
  * whole answer, so the walk reads the configuration question on its first read.
+ *
+ * MCP'S SCHEMA READS (clause C-82). `objectTreeWithinCall` is the facade of MCP's tree reads: inspect_schema's container
+ * listings, relation listings and descriptions, and the database choice's listing. An MCP call holds ONE deadline, its
+ * start plus `timeout_ms`, which already bounds every step of the call, so the facade takes that deadline and the
+ * request's signal, and builds one bridged session, with no read allowance, and one signal that aborts at the deadline
+ * or when the request leaves, both when it is called; each read takes a fresh context on both. A read the request left
+ * answers `QueryCancelledError`; a read the deadline stopped, or one refused at its start because the deadline passed,
+ * answers the call's own time refusal (`timeRefusal`), so only the caller's own reads can answer its timeout. Nothing is
+ * held: a stopped read's provider promise keeps the host's rejection handler, and a later failure is logged under the
+ * call's route by action, kind and code. It answers `ObjectTree`, its containers read the containers alone, as the
+ * editor's facade does.
  */
 
 /**
@@ -218,12 +238,75 @@ export function objectTree(
     return record.answer;
   }
 
+  return treeOf(provider, read);
+}
+
+/**
+ * The `ObjectTree` of `provider` whose reads are `read`'s host core tree calls: the capabilities handed through, and the
+ * containers read answering the containers alone.
+ */
+function treeOf(provider: DatabaseProvider, read: (request: TreeRequest) => Promise<TreeAnswer>): ObjectTree {
   const { containers, ...reads } = treeReads(read);
   return {
     getCapabilities: () => provider.getCapabilities(),
     listContainers: async (parent) => (await containers(parent)).containers,
     ...reads,
   };
+}
+
+/** How a tree read on one session ends when the core did not answer it: the error `end` builds for the record. */
+type TreeEnd = (record: RefusedRecord | StoppedRecord) => Error;
+
+/**
+ * One host core tree call per read on `session`, each a fresh context of `deadline`, `signal` and the empty
+ * environment, a later failure logged under `route`; a record the core did not answer throws `end`'s error for it.
+ */
+function sessionReads(
+  core: HostCore,
+  session: BridgedConsole["session"],
+  { deadline, signal, route }: { readonly deadline: number; readonly signal: AbortSignal; readonly route: string },
+  end: TreeEnd,
+): (request: TreeRequest) => Promise<TreeAnswer> {
+  return async (request) => {
+    const record = await core.treeCall(session, request, contextOn(deadline, signal), {
+      late: treeLate(route, request.action),
+    });
+    if (record.kind !== "answered") throw end(record);
+    return record.answer;
+  };
+}
+
+/** What an MCP call hands its tree: its one deadline, the request's signal, its own time refusal and its route. */
+interface TreeCallWithin {
+  /** The call's one deadline, its start plus `timeout_ms`. */
+  readonly deadline: number;
+  /** The request's signal: a read it ended is the caller leaving. */
+  readonly caller: AbortSignal;
+  /** The call's own refusal of a read its deadline ended, built fresh for each read. */
+  readonly timeRefusal: () => Error;
+  /** The route a read's failure after the call stopped waiting is logged under. */
+  readonly route: string;
+}
+
+/**
+ * The object tree of `provider` within one MCP call (clause C-82): one bridged session with no read allowance, and one
+ * signal that aborts at `call.deadline` or when `call.caller` does, both built when this is called. Each read is one
+ * host core tree call with a fresh request and a fresh context of the call's deadline, that one signal and the empty
+ * environment. A read the caller left throws `QueryCancelledError`; one the deadline ended, or refused at its start
+ * because the deadline passed, throws `call.timeRefusal()`; a later failure is logged under `call.route` by action,
+ * kind and code.
+ *
+ * @throws {HostCoreBootOrderError} Synchronously, before the host core is installed, before any read.
+ */
+export function objectTreeWithinCall(provider: DatabaseProvider, call: TreeCallWithin): ObjectTree {
+  const core = hostCore();
+  const { session } = bridgedConsole(provider, {});
+  const signal = deadlineSignal(call.deadline, call.caller);
+  const view: BudgetView = { caller: call.caller, timeRefusal: call.timeRefusal };
+  const read = sessionReads(core, session, { deadline: call.deadline, signal, route: call.route }, (record) =>
+    record.kind === "refused" ? budgetRefusalError(record, view) : budgetStopError(record.reason, view),
+  );
+  return treeOf(provider, read);
 }
 
 /**
@@ -259,14 +342,9 @@ export function grantedObjectTree(provider: DatabaseProvider, grant: WalkGrant):
   const { readAllowance } = grant;
   const { session } = bridgedConsole(provider, {}, readAllowance === undefined ? {} : { readAllowance });
   const signal = deadlineSignal(grant.deadline);
-
-  async function read(request: TreeRequest): Promise<TreeAnswer> {
-    const record = await core.treeCall(session, request, contextOn(grant.deadline, signal), {
-      late: treeLate(grant.route, request.action),
-    });
-    if (record.kind !== "answered") throw budgetGrantEnd(record, grant);
-    return record.answer;
-  }
+  const read = sessionReads(core, session, { deadline: grant.deadline, signal, route: grant.route }, (record) =>
+    budgetGrantEnd(record, grant),
+  );
 
   const { containers, countObjects, listObjects, describeObjects } = treeReads(read);
   return {

@@ -439,6 +439,7 @@ Measured on Silo `RELEASE.2026-09-16T00-00-00Z`, Garage `v2.4.1` and RustFS `1.0
 A PostgreSQL seed with an empty `database` reaches every database its role can CONNECT to (#1530, [`docs/providers/postgres.md` §4.1.1](providers/postgres.md#411-server-level-connections-an-empty-database-1530)).
 On such a connection both `inspect_schema` and `run_read_query` take a `database` argument naming the one to read, and a call without it is refused rather than run in whichever came first.
 The refusal is Studio's sentence, holding no database name, then the notice naming the provider that relayed the names, then the databases the call could name as one JSON list, at most fifty, with Studio's count of the rest in its sentence.
+The listing behind it ends at `timeout_ms` and when the client closes the request, answered as the timeout or the cancel, on both tools ([Limits](#limits)).
 On every other connection `database` is refused, because the connection names its own.
 The answer echoes the `database` it read.
 

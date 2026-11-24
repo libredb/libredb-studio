@@ -1,7 +1,8 @@
 import { deadlineSignal } from "@libredb/provider-sdk/calls";
 import type { ErrorKind } from "@libredb/provider-sdk/errors";
+import { type ObjectTree, objectTreeWithinCall } from "@/lib/api/object-tree";
 import { errorKind } from "@/lib/db/error-record";
-import type { ReadAllowanceExceededError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { QueryCancelledError, type ReadAllowanceExceededError, type RefusedBeforeSendError } from "@/lib/db/errors";
 import { ENGINE_TOO_LARGE_TEXTS } from "@/lib/sql/read-only-refusals";
 import { readQueryFormsOf } from "@/lib/sql/read-query-forms";
 import { analyzeQuery } from "@/lib/db/utils/query-limiter";
@@ -29,6 +30,9 @@ import type { McpToolCall } from "../context";
  * yet (docs/BACKLOG.md D128).
  * An acquisition waits within the call too (`acquireWithinCall`): the factory's open is handed the call's wait, so the
  * host's open releases the call at the same moment the race stops waiting (docs/providers/CONTRACT.md, clause C-81).
+ * The schema reads, inspect_schema's and the database choice's, are host core tree calls within the call too
+ * (`mcpObjectTree`, clause C-82), each under the call's one deadline and the request's signal, and `treeReadWithinCall`
+ * answers each read's end as a raced step's.
  *
  * The statements an engine takes and its own paging clause differ by engine, so every text that names either reads the
  * engine's row in src/lib/sql/read-query-forms.ts rather than one engine's words for all.
@@ -263,4 +267,45 @@ export async function acquireWithinCall(
   );
   if (raced.kind !== "failed" || handed.wait === undefined || raced.error !== handed.wait.signal.reason) return raced;
   return tool.signal.aborted ? { kind: "cancelled" } : { kind: "timeout" };
+}
+
+/**
+ * The time refusal of MCP's own tree reads, built only by `mcpObjectTree`: a read the call's deadline ended. Module
+ * private, so a provider's own timeout error can never be read as the call's deadline.
+ */
+class McpCallDeadline extends Error {
+  constructor() {
+    super("The MCP call's deadline ended a schema read before it answered.");
+    this.name = "McpCallDeadline";
+  }
+}
+
+/**
+ * The object tree of `provider` within one MCP call (clause C-82): every read one host core tree call under the call's
+ * one `deadline` and the request's `signal`, a read's failure after the call stopped waiting logged under `/api/mcp`.
+ *
+ * @throws {HostCoreBootOrderError} Synchronously, before the host core is installed, before any read.
+ */
+export function mcpObjectTree(provider: DatabaseProvider, signal: AbortSignal, deadline: number): ObjectTree {
+  return objectTreeWithinCall(provider, {
+    deadline,
+    caller: signal,
+    timeRefusal: () => new McpCallDeadline(),
+    route: "/api/mcp",
+  });
+}
+
+/**
+ * One read of an `mcpObjectTree`, answered as a raced step: its value by reference; `timeout` when the call's deadline
+ * ended it; `cancelled` when the request left (`QueryCancelledError` while `signal` has aborted); otherwise the
+ * provider's failure by reference with the time it settled, a provider's own timeout or cancel error among them.
+ */
+export async function treeReadWithinCall<T>(read: () => Promise<T>, signal: AbortSignal): Promise<Raced<T>> {
+  try {
+    return { kind: "settled", value: await read() };
+  } catch (error) {
+    if (error instanceof McpCallDeadline) return { kind: "timeout" };
+    if (error instanceof QueryCancelledError && signal.aborted) return { kind: "cancelled" };
+    return { kind: "failed", error, settledAt: Date.now() };
+  }
 }

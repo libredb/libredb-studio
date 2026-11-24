@@ -4,12 +4,14 @@
  * and the texts a caller reads. Which provider sites raise a budget refusal as its class is held by
  * tests/unit/db/operations/budget-refusal-census.test.ts.
  */
-import { describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { ERROR_KINDS } from "@libredb/provider-sdk/errors";
 import {
   ByteBudgetRefusal,
   ConnectionError,
   CutValueRefusal,
+  QueryCancelledError,
   QueryError,
   ReadAllowanceExceededError,
   RefusedBeforeSendError,
@@ -37,8 +39,11 @@ import {
   TIME_BUDGET_PREFIX,
 } from "@/lib/db/read-only-budget";
 import type { DatabaseProvider } from "@/lib/db/types";
+import { logger } from "@/lib/logger";
 import type { McpConnectionContext, McpToolCall } from "@/lib/mcp/context";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
 import type { OpenWait } from "@/lib/provider-host/core/open-once";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import type { ManagedConnection } from "@/lib/seed";
 import {
   acquireWithinCall,
@@ -47,6 +52,7 @@ import {
   inSqlPaging,
   MCP_FAILURE_OF_KIND,
   MCP_TIMEOUT_BOUNDS_MS,
+  mcpObjectTree,
   moreRowsThanPageableHint,
   nextPageHint,
   offsetRefusalText,
@@ -56,7 +62,9 @@ import {
   ROW_OVER_CAP_TEXT,
   timeoutText,
   tooLargeTextsOf,
+  treeReadWithinCall,
 } from "@/lib/mcp/tools/read-query-limits";
+import { createMockProvider } from "../../helpers/mock-provider";
 import { RUN_READ_QUERY_ENGINES, RUN_READ_QUERY_TYPES } from "../../helpers/run-read-query";
 
 const ROWS =
@@ -678,5 +686,109 @@ describe("acquireWithinCall", () => {
     expect(answered).toMatchObject({ kind: "failed", error });
     expect(answered.kind === "failed" && answered.error).toBe(error);
     expect(answered.kind === "failed" && answered.settledAt >= before).toBe(true);
+  });
+});
+
+describe("the MCP object tree", () => {
+  beforeAll(() => installHostCore(createHostCore(), "test"));
+  afterAll(forgetHostCore);
+
+  /** The mock behind a provider's member, for its implementation. */
+  const mockOf = (fn: unknown) => fn as ReturnType<typeof mock>;
+
+  test("a tree read of an MCP call ends at the call's deadline as the timeout and when the request leaves as cancelled, logged under /api/mcp afterwards", async () => {
+    const warned: unknown[][] = [];
+    const warn = spyOn(logger, "warn").mockImplementation((...args: unknown[]) => {
+      warned.push(args);
+    });
+    const secret = randomUUID();
+    try {
+      const timed = createMockProvider();
+      const neverTimed = Promise.withResolvers<never>();
+      mockOf(timed.describeObject).mockImplementation(() => neverTimed.promise);
+      const request = new AbortController();
+      const tree = mcpObjectTree(timed, request.signal, Date.now() + 500);
+
+      // A plain await of the read, which the call's real deadline ends.
+      const ended = await treeReadWithinCall(() => tree.describeObject(["app", "orders"], "table"), request.signal);
+
+      expect(ended).toEqual({ kind: "timeout" });
+
+      const left = createMockProvider();
+      const neverLeft = Promise.withResolvers<never>();
+      const entered = Promise.withResolvers<void>();
+      mockOf(left.listObjects).mockImplementation(() => {
+        entered.resolve();
+        return neverLeft.promise;
+      });
+      const leaving = new AbortController();
+      const reading = treeReadWithinCall(
+        () => mcpObjectTree(left, leaving.signal, Date.now() + 60_000).listObjects(["app"], "table"),
+        leaving.signal,
+      );
+      await entered.promise;
+      leaving.abort(new DOMException("The client left.", "AbortError"));
+
+      expect(await reading).toEqual({ kind: "cancelled" });
+
+      for (const pending of [neverTimed, neverLeft]) pending.reject(new Error(secret));
+      await Promise.all([neverTimed.promise, neverLeft.promise].map((pending) => pending.catch(() => undefined)));
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(warned).toEqual([
+        [
+          "A tree read Studio stopped waiting for failed afterwards",
+          { route: "/api/mcp", action: "describe", kind: "internal", code: "INTERNAL_ERROR" },
+        ],
+        [
+          "A tree read Studio stopped waiting for failed afterwards",
+          { route: "/api/mcp", action: "list", kind: "internal", code: "INTERNAL_ERROR" },
+        ],
+      ]);
+      expect(JSON.stringify(warned)).not.toContain(secret);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a tree read's answer and a provider's failure pass by reference", async () => {
+    const provider = createMockProvider();
+    const containers = [{ path: ["app"], name: "app", level: 0 }];
+    const thrown = new Error(randomUUID());
+    mockOf(provider.listContainers).mockImplementation(async () => containers);
+    mockOf(provider.listObjects).mockImplementation(async () => {
+      throw thrown;
+    });
+    const signal = new AbortController().signal;
+    const tree = mcpObjectTree(provider, signal, Date.now() + 60_000);
+    const before = Date.now();
+
+    const settled = await treeReadWithinCall(() => tree.listContainers(), signal);
+    const failed = await treeReadWithinCall(() => tree.listObjects(["app"], "table"), signal);
+
+    expect(settled).toEqual({ kind: "settled", value: containers });
+    expect(settled.kind === "settled" && settled.value).toBe(containers);
+    expect(failed).toMatchObject({ kind: "failed", error: thrown });
+    expect(failed.kind === "failed" && failed.error).toBe(thrown);
+    expect(failed.kind === "failed" && failed.settledAt >= before).toBe(true);
+  });
+
+  test("a provider's own timeout or cancel error is its failure, never the call's deadline or the request leaving", async () => {
+    const provider = createMockProvider();
+    const timeout = new StudioTimeoutRefusal(randomUUID());
+    const cancelled = new QueryCancelledError(randomUUID());
+    mockOf(provider.listContainers).mockImplementation(async () => {
+      throw timeout;
+    });
+    mockOf(provider.listObjects).mockImplementation(async () => {
+      throw cancelled;
+    });
+    const signal = new AbortController().signal;
+    const tree = mcpObjectTree(provider, signal, Date.now() + 60_000);
+
+    const timedOut = await treeReadWithinCall(() => tree.listContainers(), signal);
+    const cancel = await treeReadWithinCall(() => tree.listObjects(["app"], "table"), signal);
+
+    expect(timedOut.kind === "failed" && timedOut.error).toBe(timeout);
+    expect(cancel.kind === "failed" && cancel.error).toBe(cancelled);
   });
 });

@@ -5,14 +5,15 @@
  * until the spawn timeout kills it, and the case fails within seconds; the child holds a referenced interval, so Node
  * cannot exit early on the unsettled read (tests/helpers/bounded-node-child.ts).
  *
- * A granted read of the grounding walk that never answers is held the same way, its grant's deadline 50 ms out.
+ * A granted read of the grounding walk that never answers is held the same way, its grant's deadline 50 ms out, and so
+ * is a within-call read of an MCP call, its call's deadline 50 ms out.
  *
  * `object-tree.test.ts` holds the same rules with a core of the test's own, in the test process.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import path from "node:path";
 import type { EXECUTE_SLACK_MS } from "@/lib/api/editor-query";
-import type { grantedObjectTree, objectTree } from "@/lib/api/object-tree";
+import type { grantedObjectTree, objectTree, objectTreeWithinCall } from "@/lib/api/object-tree";
 import type { errorKind, errorOutcome } from "@/lib/db/error-record";
 import type { createHostCore } from "@/lib/provider-host/core/host-core";
 import type { installHostCore } from "@/lib/provider-host/instance";
@@ -22,6 +23,7 @@ interface ChildDeps {
   readonly EXECUTE_SLACK_MS: typeof EXECUTE_SLACK_MS;
   readonly objectTree: typeof objectTree;
   readonly grantedObjectTree: typeof grantedObjectTree;
+  readonly objectTreeWithinCall: typeof objectTreeWithinCall;
   readonly errorKind: typeof errorKind;
   readonly errorOutcome: typeof errorOutcome;
   readonly createHostCore: typeof createHostCore;
@@ -34,7 +36,10 @@ const child = boundedChild({
   label: "object-tree-bounds",
   imports: [
     { from: path.join(SOURCE, "lib", "api", "editor-query.ts"), names: ["EXECUTE_SLACK_MS"] },
-    { from: path.join(SOURCE, "lib", "api", "object-tree.ts"), names: ["objectTree", "grantedObjectTree"] },
+    {
+      from: path.join(SOURCE, "lib", "api", "object-tree.ts"),
+      names: ["objectTree", "grantedObjectTree", "objectTreeWithinCall"],
+    },
     { from: path.join(SOURCE, "lib", "db", "error-record.ts"), names: ["errorKind", "errorOutcome"] },
     { from: path.join(SOURCE, "lib", "provider-host", "core", "host-core.ts"), names: ["createHostCore"] },
     { from: path.join(SOURCE, "lib", "provider-host", "instance.ts"), names: ["installHostCore"] },
@@ -65,6 +70,21 @@ const child = boundedChild({
         return "answered";
       } catch (error) {
         return `${(error as Error).message}, held ${held}`;
+      }
+    }
+    if (name === "within-call-never-answers") {
+      // The call's deadline ends 50 ms from now, and its time refusal is the call's own.
+      const within = deps.objectTreeWithinCall(provider, {
+        deadline: Date.now() + 50,
+        caller: new AbortController().signal,
+        timeRefusal: () => new Error("the call's own time refusal"),
+        route: "bounds",
+      });
+      try {
+        await within.listObjects(["app"], "table");
+        return "answered";
+      } catch (error) {
+        return (error as Error).message;
       }
     }
     const tree = deps.objectTree(
@@ -102,5 +122,9 @@ describe("a tree read in a bounded child", () => {
 
   test("a granted tree read that never answers ends at the grant's deadline in the grant's own time refusal", async () => {
     expect(await child.run<unknown>("granted-never-answers")).toBe("the grant's own time refusal, held 1");
+  });
+
+  test("a within-call tree read that never answers ends at the call's deadline in the call's own time refusal", async () => {
+    expect(await child.run<unknown>("within-call-never-answers")).toBe("the call's own time refusal");
   });
 });

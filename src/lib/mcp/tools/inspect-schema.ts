@@ -25,6 +25,7 @@ import { metadataReadAnnotations } from "./annotations";
 import {
   DATABASE_ARGUMENT_DESCRIPTION,
   databaseRequiredAnswer,
+  type McpDatabaseChoice,
   McpDatabaseChoiceError,
   providerInDatabase,
 } from "./database-choice";
@@ -209,6 +210,12 @@ function stepOf<T>(raced: Raced<T>): T {
   if (raced.kind === "settled") return raced.value;
   if (raced.kind === "failed") throw raced.error;
   throw new InspectStopped(raced.kind === "timeout" ? "mcp_timeout" : "mcp_cancelled");
+}
+
+/** The database choice, its listing's stop thrown as `InspectStopped`. */
+function choiceOf(choice: McpDatabaseChoice): Exclude<McpDatabaseChoice, { readonly kind: "cancelled" | "timeout" }> {
+  if (choice.kind === "cancelled" || choice.kind === "timeout") return stepOf<never>(choice);
+  return choice;
 }
 
 /** The refusal of an engine that holds no table, naming the statement tool that reads it. */
@@ -463,7 +470,9 @@ export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall)
     scrub = await step(() => call.context.textScrub(connection));
     // In the database the call names, on a connection that reaches a whole server (#1530).
     const acquired = stepOf(await acquireWithinCall(call, connection, "agent-operations", deadline));
-    const choice = await step(() => providerInDatabase(acquired, args.database));
+    // The race bounds the choice's catalog session open, which no tree read reaches; its listing ends at the same
+    // deadline and signal on the host, whichever settles first.
+    const choice = choiceOf(await step(() => providerInDatabase(acquired, args.database, call.signal, deadline)));
     if (choice.kind === "provider-refused") {
       return finish(
         providerTextError("The database could not be opened: ", choice.error, scrub, author),

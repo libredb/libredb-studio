@@ -18,6 +18,7 @@ import {
   grantedObjectTree,
   type ObjectTree,
   objectTree,
+  objectTreeWithinCall,
   type WalkGrant,
 } from "@/lib/api/object-tree";
 import { errorOutcome } from "@/lib/db/error-record";
@@ -615,5 +616,247 @@ describe("grantedObjectTree", () => {
 
     expect(thrown).toBeInstanceOf(HostCoreBootOrderError);
     for (const { action } of GRANTED_READS) expect(mockOf(provider[MEMBER[action]])).not.toHaveBeenCalled();
+  });
+});
+
+/** What a within-call tree is handed: the call's deadline, its caller signal, its own time refusal and its route. */
+type WithinCall = Parameters<typeof objectTreeWithinCall>[1];
+
+/** A call of `ms` from now whose time refusal is `refusal` by reference, its caller signal `caller`'s. */
+function withinCallOf(
+  caller: AbortController = new AbortController(),
+  ms = 60_000,
+  refusal: Error = new Error(marker()),
+): WithinCall {
+  return { deadline: Date.now() + ms, caller: caller.signal, timeRefusal: () => refusal, route: ROUTE };
+}
+
+/** One read of each action the within-call tree offers, each with arrays of its own. */
+const WITHIN_READS: readonly {
+  readonly action: Extract<TreeRequest["action"], "containers" | "list" | "describe">;
+  readonly run: (tree: ObjectTree) => Promise<unknown>;
+}[] = [
+  { action: "containers", run: (tree) => tree.listContainers(["app"]) },
+  { action: "list", run: (tree) => tree.listObjects(["app"], "table") },
+  { action: "describe", run: (tree) => tree.describeObject(["app", "orders"], "table") },
+];
+
+describe("objectTreeWithinCall", () => {
+  test("each read is one host core tree call on the tree's one bridged session, a fresh request, and a fresh context on the call's one deadline and one signal, of deadline, signal and env alone", async () => {
+    const provider = providerOf();
+    const seen: { session: unknown; request: TreeRequest; ctx: CallContext }[] = [];
+    const parent = ["app"];
+    const path = ["app", "orders"];
+    const caller = new AbortController();
+    const call = withinCallOf(caller, 45_000);
+    await withCore(
+      (real) => ({
+        ...real,
+        treeCall: (session, request, ctx, ports) => {
+          seen.push({ session, request, ctx });
+          return real.treeCall(session, request, ctx, ports);
+        },
+      }),
+      async () => {
+        const tree = objectTreeWithinCall(provider, call);
+        await tree.listContainers();
+        await tree.listContainers(parent);
+        await tree.listObjects(parent, "table");
+        await tree.describeObject(path, "table");
+      },
+    );
+
+    expect(seen.map(({ request }) => request)).toEqual([
+      { action: "containers" },
+      { action: "containers", parent: ["app"] },
+      { action: "list", container: ["app"], kind: "table" },
+      { action: "describe", path: ["app", "orders"], kind: "table" },
+    ]);
+    expect(new Set(seen.map(({ session }) => session)).size).toBe(1);
+    expect(new Set(seen.map(({ ctx }) => ctx)).size).toBe(seen.length);
+    expect(new Set(seen.map(({ ctx }) => ctx.signal)).size).toBe(1);
+    for (const { ctx } of seen) {
+      expect(Object.keys(ctx).sort()).toEqual(["deadline", "env", "signal"]);
+      expect(ctx.deadline).toBe(call.deadline);
+      expect(ctx.signal.aborted).toBe(false);
+    }
+    for (const owned of [parent, path]) expect(Object.isFrozen(owned)).toBe(false);
+    const requests = seen.map(({ request }) => request as Partial<Record<"parent" | "container" | "path", unknown>>);
+    expect(requests[1]?.parent).not.toBe(parent);
+    expect(requests[2]?.container).not.toBe(parent);
+    expect(requests[3]?.path).not.toBe(path);
+    const reason = new DOMException(marker(), "AbortError");
+    caller.abort(reason);
+    expect(seen[0]?.ctx.signal.aborted).toBe(true);
+    expect(seen[0]?.ctx.signal.reason).toBe(reason);
+  });
+
+  test("it answers the provider's answer by reference, hands the capabilities through, and reads a listing that says the inventory needs configuration as no container", async () => {
+    const provider = providerOf();
+    const containers = [{ path: ["app"], name: "app", level: 0 }];
+    const objects = [{ path: ["app", "orders"], name: "orders", kind: "table" }];
+    const detail = { path: ["app", "orders"], columns: [], indexes: [], foreignKeys: [] };
+    mockOf(provider.listContainers).mockImplementation(async () => containers);
+    mockOf(provider.listObjects).mockImplementation(async () => objects);
+    mockOf(provider.describeObject).mockImplementation(async () => detail);
+    const tree = objectTreeWithinCall(provider, withinCallOf());
+
+    expect(await tree.listContainers()).toBe(containers);
+    expect(await tree.listObjects(["app"], "table")).toBe(objects);
+    expect(await tree.describeObject(["app", "orders"], "table")).toBe(detail);
+    expect(tree.getCapabilities()).toEqual(provider.getCapabilities());
+
+    const unconfigured = Object.assign(providerOf(), {
+      inventoryNeedsConfiguration: mock<() => Promise<string | undefined>>(async () => marker()),
+    });
+    expect(await objectTreeWithinCall(unconfigured, withinCallOf()).listContainers()).toEqual([]);
+    expect(mockOf(unconfigured.listContainers)).not.toHaveBeenCalled();
+  });
+
+  test("a caller that leaves while a read is pending is answered QueryCancelledError at once, and the read's later failure is logged by kind and code only", async () => {
+    const warned: unknown[][] = [];
+    const warn = spyOn(logger, "warn").mockImplementation((...args: unknown[]) => {
+      warned.push(args);
+    });
+    const secret = marker();
+    try {
+      for (const { action, run } of WITHIN_READS) {
+        const provider = providerOf();
+        const pending = Promise.withResolvers<never>();
+        const entered = Promise.withResolvers<void>();
+        mockOf(provider[MEMBER[action]]).mockImplementation(() => {
+          entered.resolve();
+          return pending.promise;
+        });
+        const caller = new AbortController();
+        const reading = failure(() => run(objectTreeWithinCall(provider, withinCallOf(caller))));
+        // oxlint-disable-next-line no-await-in-loop -- one read at a time, so each read's log is its own.
+        await entered.promise;
+        caller.abort(new DOMException("The request went away.", "AbortError"));
+        // oxlint-disable-next-line no-await-in-loop -- one read at a time, so each read's log is its own.
+        const left = await reading;
+        expect(left).toBeInstanceOf(QueryCancelledError);
+        expect(errorOutcome(left)).toBe("unknown");
+        pending.reject(new Error(secret));
+        // oxlint-disable-next-line no-await-in-loop -- the late failure is logged once the provider's promise settled.
+        await pending.promise.catch(() => undefined);
+        // oxlint-disable-next-line no-await-in-loop -- one turn for the late handler's reaction.
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+
+      expect(warned).toEqual(
+        WITHIN_READS.map(({ action }) => [
+          "A tree read Studio stopped waiting for failed afterwards",
+          { route: ROUTE, action, kind: "internal", code: "INTERNAL_ERROR" },
+        ]),
+      );
+      expect(JSON.stringify(warned)).not.toContain(secret);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a read its deadline stopped answers the call's own time refusal, and its later failure is logged by kind and code only", async () => {
+    const warned: unknown[][] = [];
+    const warn = spyOn(logger, "warn").mockImplementation((...args: unknown[]) => {
+      warned.push(args);
+    });
+    const secret = marker();
+    try {
+      const provider = providerOf();
+      const pending = Promise.withResolvers<never>();
+      mockOf(provider.describeObject).mockImplementation(() => pending.promise);
+      const built: Error[] = [];
+      const call: WithinCall = {
+        deadline: Date.now() + 50,
+        caller: new AbortController().signal,
+        timeRefusal: () => {
+          const refusal = new Error(marker());
+          built.push(refusal);
+          return refusal;
+        },
+        route: ROUTE,
+      };
+
+      // A plain await of the read, which the call's real deadline ends.
+      const caught = await failure(() => objectTreeWithinCall(provider, call).describeObject(["app", "t"], "table"));
+
+      expect(built).toHaveLength(1);
+      expect(caught).toBe(built[0]);
+      pending.reject(new Error(secret));
+      await pending.promise.catch(() => undefined);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(warned).toEqual([
+        [
+          "A tree read Studio stopped waiting for failed afterwards",
+          { route: ROUTE, action: "describe", kind: "internal", code: "INTERNAL_ERROR" },
+        ],
+      ]);
+      expect(JSON.stringify(warned)).not.toContain(secret);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a read after the call's deadline or after the caller left is refused before the call and reads nothing", async () => {
+    const passedProvider = providerOf();
+    const refusal = new Error(marker());
+    const passed = objectTreeWithinCall(passedProvider, withinCallOf(new AbortController(), -1, refusal));
+    const leftProvider = providerOf();
+    const caller = new AbortController();
+    caller.abort(new DOMException("The request went away.", "AbortError"));
+    const left = objectTreeWithinCall(leftProvider, withinCallOf(caller));
+
+    const late = await Promise.all(WITHIN_READS.map(({ run }) => failure(() => run(passed))));
+    const gone = await Promise.all(WITHIN_READS.map(({ run }) => failure(() => run(left))));
+
+    for (const error of late) expect(error).toBe(refusal);
+    for (const error of gone) {
+      expect(error).toBeInstanceOf(QueryCancelledError);
+      expect(errorOutcome(error)).toBe("not-sent");
+    }
+    for (const provider of [passedProvider, leftProvider]) {
+      for (const { action } of WITHIN_READS) expect(mockOf(provider[MEMBER[action]])).not.toHaveBeenCalled();
+    }
+  });
+
+  test("a read passes the provider's error as the same object", async () => {
+    const provider = providerOf();
+    const thrown = WITHIN_READS.map(() => new Error(marker()));
+    WITHIN_READS.forEach(({ action }, index) => {
+      mockOf(provider[MEMBER[action]]).mockImplementation(async () => {
+        throw thrown[index];
+      });
+    });
+    const syncProvider = providerOf();
+    const syncThrown = new Error(marker());
+    mockOf(syncProvider.listContainers).mockImplementation(() => {
+      throw syncThrown;
+    });
+    const tree = objectTreeWithinCall(provider, withinCallOf());
+
+    const caught = await Promise.all(WITHIN_READS.map(({ run }) => failure(() => run(tree))));
+
+    caught.forEach((error, index) => {
+      expect(error).toBe(thrown[index]);
+    });
+    expect(await failure(() => objectTreeWithinCall(syncProvider, withinCallOf()).listContainers())).toBe(syncThrown);
+  });
+
+  test("before the host core is installed it throws by name and reads nothing", () => {
+    const provider = providerOf();
+    const real = hostCore();
+    forgetHostCore();
+    let thrown: unknown;
+    try {
+      objectTreeWithinCall(provider, withinCallOf());
+    } catch (error) {
+      thrown = error;
+    } finally {
+      installHostCore(real, "test");
+    }
+
+    expect(thrown).toBeInstanceOf(HostCoreBootOrderError);
+    for (const { action } of WITHIN_READS) expect(mockOf(provider[MEMBER[action]])).not.toHaveBeenCalled();
   });
 });

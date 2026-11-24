@@ -488,7 +488,7 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   [mcp("tools", "run-statement.ts"), "profileRefusal", "scrubProviderText"],
   [mcp("tools", "run-statement.ts"), "profileRefusal", "providerTextError"],
   [mcp("tools", "run-statement.ts"), "prepare", "providerTextError"],
-  [mcp("tools", "run-statement.ts"), "executeOpened", "providerTextError"],
+  [mcp("tools", "run-statement.ts"), "callDatabase", "providerTextError"],
   [mcp("tools", "run-statement.ts"), "executeOpened", "withScrubbedWarnings"],
   [mcp("tools", "inspect-schema.ts"), "inspectSchema", "textScrub"],
   [mcp("tools", "inspect-schema.ts"), "inspectSchema", "providerTextError"],
