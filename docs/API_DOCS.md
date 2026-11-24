@@ -645,6 +645,21 @@ Every route that takes a `connection` answers it the same way, `POST /api/db/tes
 It resolves a record only without governance and only for an `id` outside `seed:`, so only that record is refused as above; under governance it removes the caller's providers of the `id` without reading the record, and answers `200`.
 While custom connections are off, an inline connection answers `403 CUSTOM_CONNECTIONS_DISABLED` whatever it holds.
 
+**The order of `POST /api/db/test-connection`'s refusals:**
+
+The route answers the first of these that applies, and the VS Code extension's `connection/test` runs the same steps from the field rules on (`testConnection` in `src/lib/api/test-connection.ts`):
+
+1. The session guard: no session answers `401`, an account store it cannot read `503`, and a spent `query` rate limit `429`.
+2. A body that is not a JSON object answers `400 { "success": false, "error": "Invalid request body" }`.
+3. The connection's resolution (`resolveConnection` in `src/lib/seed/resolve-connection.ts`) answers as the sections above say for its id, its seed entry, its type and its name, and `403 CUSTOM_CONNECTIONS_DISABLED` for an inline connection while custom connections are off.
+4. A resolved connection with no type answers `400 { "success": false, "error": "Connection configuration is required" }`.
+5. The engine's field rules (`fieldRuleRefusal` in `src/lib/db/connection-field-rules.ts`), the rules the connection dialog refuses with before it posts here, answer `400` with `code` `CONFIG_ERROR`, the rule's sentence and `outcome` `not-sent`, before the connect budget starts, any tunnel opens or any provider is built; a type outside the `DatabaseType` union is refused by name here on the VS Code path, which resolves no connection first.
+6. The tunnel scope (`withOneShotTunnel` in `src/lib/db/factory.ts`) answers `400 CONFIG_ERROR` for a type `LIBREDB_ENABLED_PROVIDERS` leaves out, a `readOnly` that is not honoured, a record that is not plain data, a malformed tunnel, a tunnel on an engine that takes none, a tunnel with nothing to forward to and an invalid `DB_HTTP_BLOCK_PRIVATE_HOSTS`, in that order, and then dials the SSH tunnel that is on.
+7. The build (`createDatabaseProvider` in `src/lib/db/factory.ts`) runs the factory's checks again and then answers `400 CONFIG_ERROR` for a field the engine refuses by name (`REFUSED_CONNECTION_FIELDS`), a required secret the engine declares left blank, a file or host path it does not admit and, for an engine that reads trust material, an invalid `NODE_EXTRA_CA_CERTS` bundle, unless the test borrows the handle already open on a single-writer file, which builds nothing.
+
+So a connection that breaks a field rule and also names a provider `LIBREDB_ENABLED_PROVIDERS` leaves out, or sets a field its engine refuses by name, is answered with the field rule's sentence.
+Past these, the connect, the test's own checks and the health read answer within the engine's connect budget (docs/providers/CONTRACT.md, clause C-56).
+
 **A connection type's console text bound:**
 
 A connection type can declare a bound on its statement text in UTF-8 bytes, on its row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/destructive-commands.ts`), declared in its statement language's family module or, for a row its slice has not moved yet, in the provider's `destructive.ts` module.

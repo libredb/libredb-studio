@@ -65,7 +65,7 @@ The editor, the confirmation gate, the agent and the provider read the kubectl s
 | `port` | Port | 6443 by default |
 | `password` | Token | A bearer token, without the word `Bearer`; empty for a client certificate or `kubectl proxy` |
 | `database` | Default namespace | A DNS-1123 label; empty means `default`, as kubectl reads a context with no namespace |
-| `namespaces` | Namespaces | Optional DNS-1123 labels separated by commas or spaces; when set, the tree lists them and reads no namespace list |
+| `namespaces` | Namespaces | Optional DNS-1123 labels separated by commas or spaces; when set, the tree lists them and reads no namespace list; a value of only commas and white space is no list |
 | `apiPath` | API path | Optional path every request goes under, such as `/k8s/clusters/c-m-abc12` |
 | `tlsServerName` | TLS server name | Optional name the server's certificate is checked against, a kubeconfig's `tls-server-name` |
 

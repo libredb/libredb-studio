@@ -108,9 +108,10 @@ export interface ConnectionFormSpec {
   /**
    * The checks the connection dialog runs on a field before Test Connection and Save send anything, each refusal a
    * sentence that names the field and never repeats its value. Read through `connectionFieldRefusal` in
-   * ./connection-field-rules, the one module that evaluates them. The provider runs the same checks again at connect,
-   * because a seed or an API call never passes the dialog; this declaration says them before a request is made, so
-   * each rule takes every value the provider takes.
+   * ./connection-field-rules, the one module that evaluates them, in the dialog and again on the test-connection path
+   * Test Connection and Save post to, before a tunnel opens or a provider is built. The provider runs the same checks
+   * again at connect, because a seed opened in the editor or an API call never passes either; so each rule takes every
+   * value the provider takes.
    */
   fieldRules?: Partial<Record<ConnectionField, ConnectionFieldRule>>;
   /**

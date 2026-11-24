@@ -630,6 +630,11 @@ Its sentence names the field as the dialog labels it, and `tests/unit/lib/db-ui-
 Where it depends on another field, declare a `connection.dialog.shownWhen` entry, and the other field's `connection.dialog.absentValues` entry: the value your provider reads when that field is absent.
 A value that is absent, not text or only whitespace is blank: the dialog refuses it before Test connection and Save, `createDatabaseProvider` refuses it before your provider is built, and your provider keeps its own refusal for a provider built directly.
 
+Every `connection.fieldRules` entry runs in two places through one module, `src/lib/db/connection-field-rules.ts`: in the dialog before Test Connection and Save send anything, and on the test-connection path both post to, before a tunnel opens or your provider is built (`docs/providers/CONTRACT.md`, M-33).
+So a rule must take every value your provider takes, or Test Connection would refuse a connection that opens in the editor.
+A field holding null holds no value, as your provider's text reader should read it.
+`tests/unit/db/connection-field-rules/provider-acceptance.test.ts` holds each rule to its provider: every value the rules refuse must be refused by the provider before it opens a socket.
+
 ## Step 5: Install the Driver
 
 ```bash

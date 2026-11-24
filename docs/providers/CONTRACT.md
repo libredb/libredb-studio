@@ -411,6 +411,7 @@ No package function runs in a browser, so Studio calls a named check, hint or id
 Nothing resolves a package's names yet: until the definition step does, Studio runs its own functions, which its census holds to their names.
 Where an engine names no identity reader, Studio reads a Host text's identity as the text trimmed and lower-cased.
 Studio's own source holds every named check, hint and identity reader the engines it ships name, and the connection dialog calls each in the browser: the hint on each render of the Host box, the identity on a paste, and the check before Test Connection and Save.
+The test-connection path that Test Connection and Save post to runs the same check again on the server, through the same module, M-33.
 Composing a connection form refuses by name any function name Studio holds no function for at its slot, M-72, so no form binds a function only a package holds.
 A package's named check will be answered by the route that Test Connection and Save post to, never on a keystroke, and the dialog will draw no hint from a package and read a Host text's identity as the default above, the text trimmed and lower-cased.
 
@@ -420,8 +421,10 @@ An engine may give a field it takes one rule, in `connection.fieldRules`, and a 
 The dialog checks the fields in the order of `connection.fields`, so the order of the rules carries no meaning, and it answers the first refusal it meets.
 On each field it reads `required` first, which refuses a blank field, then, only for a field that is not blank, `format`, `charRange` and `check`, in that order.
 A field hidden by its condition is not checked.
-A field is blank when it holds no value or an empty one; a secret field is also blank when its value is not text or holds only whitespace.
-Core refuses a connection that leaves a shown required secret blank before it builds a provider, with that rule's sentence, and the provider checks again when it connects, because a seed or an API call never passes the dialog.
+A field is blank when it holds no value, being absent or null, or an empty one; a secret field is also blank when its value is not text or holds only whitespace.
+One core module evaluates the rules: the connection dialog before Test Connection and Save send anything, and the test-connection path both post to, before it opens a tunnel or builds a provider, so the two refuse exactly the same connections with the same sentence, and the path answers a refusal as a configuration error whose statement was not sent.
+A rule takes every value its engine's provider takes, so Test Connection never refuses a connection the editor opens.
+Core refuses a connection that leaves a shown required secret blank before it builds a provider, with that rule's sentence, and the provider checks again when it connects, because a seed opened in the editor, an agent's or MCP's connection and an API call never pass the dialog or the test-connection path.
 
 - schema `/$defs/fieldRule`
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "a field rule for a field the engine does not take is refused as field-undeclared"
@@ -433,6 +436,14 @@ Core refuses a connection that leaves a shown required secret blank before it bu
 - test `tests/unit/db/engine-declarations.test.ts` "a form whose rules are read from the declaration refuses exactly what the connection form refuses"
 - test `tests/unit/lib/db-ui-config.test.ts` "connectionFieldRefusal checks charRange after format"
 - test `tests/unit/lib/db-ui-config.test.ts` "the dialog refuses exactly what core refuses of a required secret"
+- test `tests/unit/lib/db/connection-field-rules.test.ts` "its run-time graph reaches no React, component, provider or Node built-in module"
+- test `tests/unit/lib/db/connection-field-rules.test.ts` "fieldRuleRefusal answers what connectionFieldRefusal answers on the engine's form entry, and refuses a type outside the union by name"
+- test `tests/unit/lib/db/connection-field-rules.test.ts` "a field holding null holds no value: its required rule refuses it and no other check reads it"
+- test `tests/unit/db/connection-field-rules/provider-acceptance.test.ts` "every connection the shared field rules refuse, its engine's provider refuses before it opens a socket"
+- test `tests/unit/db/connection-field-rules/provider-acceptance.test.ts` "each engine's base connection passes its provider's checks and reaches the loopback socket"
+- test `tests/api/db/test-connection-field-rules.test.ts` "Test Connection's route refuses exactly the connections the dialog refuses, with the dialog's sentence, over every engine's field rules"
+- test `tests/api/db/test-connection-field-rules.test.ts` "every connection the dialog lets through reaches the tunnel and the build on Test Connection's route"
+- test `tests/unit/lib/api/test-connection.test.ts` "a connection its engine's field rules refuse is refused with the rule's sentence before the tunnel opens or anything is built, and its statement was not sent"
 
 ### M-34 (normative): A bounded pattern
 
@@ -3114,3 +3125,4 @@ Against this contract's earlier text:
 - An engine's monitoring panel is refused only where its package does not offer `monitoring.panel`, C-4, where every offered panel was refused as having no call.
 - Health is a mandatory call, C-3 and C-72, where the calls chapter left it out.
 - A kill runs on the connection's metadata session where the host's session capacity class is several, C-66 and C-70, where it ran on the editor's.
+- One core module evaluates the field rules for the connection dialog and for the test-connection path Test Connection and Save post to, and a field holding null holds no value, M-33, where only the dialog evaluated them and null was a value.
