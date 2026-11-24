@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { MSSQL_SQL_WRITING } from "@/lib/db/providers/sql/mssql-sql-writing";
-import { ORACLE_SQL_WRITING } from "@/lib/db/providers/sql/oracle-sql-writing";
+import { SQL_WRITING } from "@/lib/db/sql-writing";
 import type { InlineEditSpec } from "@/lib/db/sql-writing/types";
 
 /**
@@ -33,7 +32,7 @@ function run(
 
 describe("oracle boundEdit", () => {
   const oracle = (text: string, declaredType: string | undefined) =>
-    run(ORACLE_SQL_WRITING, (position) => `:${position}`, text, declaredType);
+    run(SQL_WRITING.oracle, (position) => `:${position}`, text, declaredType);
 
   test.each(["DATE", "date"])("a wall clock in a %s column goes through TO_DATE", (declaredType) => {
     expect(oracle("2026-10-04 12:34:56", declaredType)).toEqual({
@@ -86,7 +85,7 @@ describe("oracle boundEdit", () => {
 
 describe("mssql boundEdit", () => {
   const mssql = (text: string, declaredType: string | undefined) =>
-    run(MSSQL_SQL_WRITING, (position) => `@p${position}`, text, declaredType);
+    run(SQL_WRITING.mssql, (position) => `@p${position}`, text, declaredType);
 
   test("a datetime text is bound in its T form", () => {
     expect(mssql("2026-10-04 12:34:57.123", "datetime")).toEqual({

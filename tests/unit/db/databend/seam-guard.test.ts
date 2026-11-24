@@ -16,8 +16,8 @@
  * tunnel's route comes from core under    `TUNNEL_ROUTE`, read through `requireTunnelRoute` of
  * `@/lib/db/utils/require-tunnel-route`, so no value of    `@/lib/db/connection-fingerprint` is allowed: this directory
  * frames no route of its own (FND-2 slice 5b).    `migration-ddl.ts`, the engine's migration DDL contract module, may
- * also import values from    `@/lib/db/migration-ddl/*`, its contract's shared building blocks, and    `sql-writing.ts`
- * and its `typed-literals.ts` sibling, the engine's SQL writing contract modules, from    `@/lib/db/sql-writing/*`, and
+ * also import values from    `@/lib/db/migration-ddl/*`, its contract's shared building blocks, and
+ * `typed-literals.ts`, the engine's typed SQL writing function, from    `@/lib/db/sql-writing/*`, and
  * `paste.ts`, the engine's connection string paste reader, from    `@/lib/db/connection-string/shared`. 8. Every value
  * export has an importer other than its own file, so nothing is exported only for a test [12 #15].    An importer is a
  * module under `src/`, or `tests/unit/db/databend/provider-doc.test.ts`, which reads back what
@@ -60,7 +60,6 @@ const OUTSIDE_VALUES = [
  */
 const CONTRACT_VALUES: Readonly<Record<string, string>> = {
   "migration-ddl": "src/lib/db/migration-ddl/",
-  "sql-writing": "src/lib/db/sql-writing/",
   "typed-literals": "src/lib/db/sql-writing/",
   paste: "src/lib/db/connection-string/shared.ts",
 };
@@ -532,10 +531,10 @@ describe("planted violations fail by name", () => {
       `rule 7: ${DIR}/objects.ts imports a value from @/lib/db/sql-writing/shared, which this directory may not`,
     ],
     [
-      "sql-writing.ts",
-      "sql-writing.ts",
+      "typed-literals.ts",
+      "typed-literals.ts",
       'import { standardDropTable } from "@/lib/db/migration-ddl/shared";\n',
-      `rule 7: ${DIR}/sql-writing.ts imports a value from @/lib/db/migration-ddl/shared, which this directory may not`,
+      `rule 7: ${DIR}/typed-literals.ts imports a value from @/lib/db/migration-ddl/shared, which this directory may not`,
     ],
     [
       "decode.ts",
@@ -569,7 +568,7 @@ describe("planted violations fail by name", () => {
     ["errors.ts", "errors.ts", 'const sentence = "Databend refused POST /v1/query before it ran.";\n'],
     ["session.ts", "session.ts", 'const header = "x-databend-session";\n'],
     ["migration-ddl.ts", "migration-ddl.ts", 'import { standardDropTable } from "@/lib/db/migration-ddl/shared";\n'],
-    ["sql-writing.ts", "sql-writing.ts", 'import { binaryUnhex } from "@/lib/db/sql-writing/export-shared";\n'],
+    ["typed-literals.ts", "typed-literals.ts", 'import { binaryUnhex } from "@/lib/db/sql-writing/export-shared";\n'],
     [
       "typed-literals.ts",
       "typed-literals.ts",

@@ -1,7 +1,7 @@
 /**
  * Removing an engine's declaration from the admitted set gives exactly what a fresh build from the remaining set gives,
  * in every projection Studio makes of the declarations (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72, M-74,
- * M-75, M-77 and M-78).
+ * M-75, M-77, M-78 and M-79).
  *
  * A fixture engine, `acmefoo` (tests/helpers/fixture-engine-declaration.ts), is added to the committed declarations and
  * removed again; each projection built without it must equal a fresh build from the committed set and the committed
@@ -22,6 +22,7 @@ import {
   ENGINE_EDITOR_MODULE,
   ENGINE_QUERY_EDITOR_MODULE,
   ENGINE_SQL_TEXT_MODULE,
+  ENGINE_SQL_WRITING_MODULE,
   renderCatalog,
   renderConnectionFlags,
   renderConnectionForms,
@@ -30,6 +31,7 @@ import {
   renderEditorFacts,
   renderQueryEditorFacts,
   renderSqlText,
+  renderSqlWriting,
 } from "../../../scripts/generate-engine-catalog";
 import { defaultConnection, savedConnectionNotice, shownConnection } from "@/lib/connection-availability";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
@@ -46,9 +48,12 @@ import {
   projectEditorFacts,
   projectQueryEditorFacts,
   projectSqlText,
+  projectSqlWriting,
   type SqlTextEntry,
+  type SqlWritingEntry,
 } from "@/lib/db/engine-catalog/projection";
 import { composeSqlGrammar, SQL_GRAMMAR_FUNCTIONS, sqlGrammarFor } from "@/lib/db/sql-grammar";
+import { composeSqlWriting, SQL_WRITING_FUNCTIONS, sqlWritingFor } from "@/lib/db/sql-writing";
 import { unknownTypeSentence } from "@/lib/db/type-id";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { fixtureEngineDeclaration } from "../../helpers/fixture-engine-declaration";
@@ -318,6 +323,43 @@ describe("each projection of the admitted declarations, built with and without a
       expect(texts).toEqual(built);
       expect(Object.keys(texts)).toEqual(Object.keys(built));
       expect(JSON.stringify(texts)).toBe(JSON.stringify(built));
+    }
+  });
+
+  test("the SQL writing built with the fixture engine holds its entry, and with it removed is exactly a fresh build from the remaining set and the committed module", () => {
+    const shipped = projectSqlWriting(ADMITTED);
+    const withFixture = projectSqlWriting([...ADMITTED, FIXTURE]);
+    const entry = withFixture.acmefoo as SqlWritingEntry;
+    // Its own DDL text type and its own standing-alone name, so its entry is one no shipped engine has.
+    expect(entry.export.ddlTypes.text).toBe("ACMETEXT");
+    expect(entry.export.standsAlone).toEqual(["acmetext"]);
+    expect(Object.values(shipped)).not.toContainEqual(entry);
+    expect(Object.keys(withFixture)).toHaveLength(ADMITTED.length + 1);
+    // Its function names are its slots' names, which Studio's SQL writing function table holds for no fixture engine,
+    // so composing its row is refused by name: the answer a package's declaration gets until a package fills a slot.
+    expect(entry.escapeLiteral).toBe("escapeLiteral");
+    expect(() => composeSqlWriting(FIXTURE.id as DatabaseType, entry, SQL_WRITING_FUNCTIONS)).toThrow(
+      'acmefoo names the function "escapeLiteral", which Studio holds no function for.',
+    );
+
+    const removed = projectSqlWriting([...ADMITTED, FIXTURE].filter((d) => d.id !== FIXTURE.id));
+    expect(removed).toEqual(shipped);
+    expect(Object.hasOwn(removed, FIXTURE.id)).toBe(false);
+    expect(Object.keys(removed)).toEqual([...SHIPPED_DATABASE_TYPES]);
+    expect(renderSqlWriting(removed)).toBe(readFileSync(path.join(ROOT, ENGINE_SQL_WRITING_MODULE), "utf8"));
+    // Nothing is kept on purpose: the SQL writing composed from the committed module refuses the fixture's id by name.
+    expect(() => sqlWritingFor(FIXTURE.id)).toThrow(unknownTypeSentence(FIXTURE.id));
+  });
+
+  test("the SQL writing is the same whatever order the declarations are admitted in", () => {
+    const set = [...ADMITTED, FIXTURE];
+    const built = projectSqlWriting(set);
+
+    for (const order of [[...set].reverse(), shuffled(set)]) {
+      const writings = projectSqlWriting(order);
+      expect(writings).toEqual(built);
+      expect(Object.keys(writings)).toEqual(Object.keys(built));
+      expect(JSON.stringify(writings)).toBe(JSON.stringify(built));
     }
   });
 

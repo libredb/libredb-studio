@@ -1389,7 +1389,8 @@ No `slowQueriesEmptyState` is declared: `getSlowQueries()` is empty by design ([
 
 ### SQL writing
 
-[`cassandra/sql-writing.ts`](../../src/lib/db/providers/sql/cassandra/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+The `sqlWriting` segment of [`engine-declarations/cassandra.json`](../../src/lib/db/engine-declarations/cassandra.json) declares how a generated statement spells a literal, a name and a bind for this engine, and Studio composes it into this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), each function it names bound by Studio's SQL writing function table, `SQL_WRITING_FUNCTIONS`; the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look the row up.
+The table binds this engine's own functions from the modules beside its provider: [`cassandra/sql-writing.ts`](../../src/lib/db/providers/sql/cassandra/sql-writing.ts), `CASSANDRA_CREATE_TABLE_KEY_CLAUSE` and [`cassandra/typed-literals.ts`](../../src/lib/db/providers/sql/cassandra/typed-literals.ts), `cassandraLiteral` and `cqlFrozenNested`.
 A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
 A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
 There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
@@ -1399,17 +1400,18 @@ A backslash is data: `… WHERE name = 'a\\b'` runs, and `… WHERE name = 'a\\'
 The name quote is measured on 5.0.9 as well: `SELECT "id" FROM probe.customers` returns the column, a backtick is ``no viable alternative at character '`'``, and a double-quoted string is a syntax error, so `"` is the name quote and nothing else.
 CQL does bind `?` positionally, and `cassandra-driver` binds an array against it, but only through a prepared statement, which is exactly what the transport does not send (`prepare: false`, so a one-shot statement costs one round trip and no server-side cache entry).
 `CassandraProvider.query()` therefore refuses a non-empty params array outright, and emitting `?` would build a statement whose placeholder the provider then declines to fill.
-Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+Inline row editing reads a key column's kind through the declaration's `inlineEdit`, whose `instantTypeNames`, `float64TypeNames` and `exactDecimalTypeNames` are the same words as the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES`, and binds every edit as typed.
 
-The module's `export` field spells a result export's column types through `ddlTypes`, the standard spelling with `DOUBLE` for a float: CQL has no `DOUBLE PRECISION`, and measured on Cassandra 5.0.9, `CREATE TABLE … (c DOUBLE PRECISION)` is `SyntaxException: no viable alternative at input 'PRECISION'`, while `DOUBLE`, `TEXT`, `BIGINT`, `BOOLEAN`, `TIMESTAMP` and `BLOB` are all whole type names.
+The declaration's `export` spells a result export's column types through `ddlTypes`, the standard spelling with `DOUBLE` for a float: CQL has no `DOUBLE PRECISION`, and measured on Cassandra 5.0.9, `CREATE TABLE … (c DOUBLE PRECISION)` is `SyntaxException: no viable alternative at input 'PRECISION'`, while `DOUBLE`, `TEXT`, `BIGINT`, `BOOLEAN`, `TIMESTAMP` and `BLOB` are all whole type names.
 Each name in `standsAlone` was measured, one `CREATE TABLE probe (c <name>)` per name on Cassandra 5.0.9, read back out of `system_schema.columns`, and is listed only because Cassandra both accepted it and stored it unnarrowed.
 Cassandra's `decimal` is arbitrary-precision.
 A binary cell is written by `binaryZeroX`: measured on 5.0.9, the generated pair replays and `SELECT "payload"` answers `0x0102deadbeef`; a bare `0x` is the empty blob (`blobAsText(0x)` answers the empty string rather than raising), and `X'…'` is not in the grammar at all.
 `rewriteDeclared` restores the `frozen<…>` the driver drops from a nested collection: measured on 5.0.9, a `list<frozen<list<int>>>` column is declared `list<list<int>>`, and CQL refuses that spelling with `Non-frozen collections are not allowed inside collections`.
 `createTableKey` adds a key, because measured on 5.0.9 a CQL `CREATE TABLE` with a column list and no key is `InvalidRequest ... No PRIMARY KEY specifed for table (exactly one required)`.
 A result set does not know which column is the real key, so the first one is chosen as a placeholder, and a comment above the statement says so: a wrong key that replays beats a file that fails to parse.
+The comment is the declaration's `createTableKey.note`, written above the Cassandra `CREATE TABLE` only, immediately before the statement, and every line of it is its own `--` comment closed by a line feed: a CQL line comment that reaches the end of the file with no trailing newline is left open, so the note is never the last thing in a file without one, since the statement always follows it.
 `typedLiteral` writes lists, sets, maps, tuples, vectors and the other cells whose generic form CQL refuses, from the engine's own [`cassandra/typed-literals.ts`](../../src/lib/db/providers/sql/cassandra/typed-literals.ts).
-`NO_BARE_SPELLING` and `NULL_NON_FINITE` complete it.
+`bareSpelling` is empty and `nonFinite` writes NULL for NaN and the infinities, as `NO_BARE_SPELLING` and `NULL_NON_FINITE` do.
 
 ---
 

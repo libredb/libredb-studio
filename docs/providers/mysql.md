@@ -2476,24 +2476,25 @@ act on.
 
 ### SQL writing
 
-[`sql/mysql-sql-writing.ts`](../../src/lib/db/providers/sql/mysql-sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+The `sqlWriting` segment of [`engine-declarations/mysql.json`](../../src/lib/db/engine-declarations/mysql.json) declares how a generated statement spells a literal, a name and a bind for this engine, and Studio composes it into this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), each function it names bound by Studio's SQL writing function table, `SQL_WRITING_FUNCTIONS`; the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look the row up.
 A literal is written by `literalDoubleAndBackslash` and read back by `unquoteDoubleAndBackslash`: the quote is doubled and a backslash escapes, so the backslash is doubled first.
 A name is quoted by `identifierBacktickDoubled`: a backtick name with an inner backtick doubled and a backslash as data.
 A bind is spelled by `placeholderQuestion`, as `?` at every position.
 The literal form assumes the default `sql_mode`.
 A server running with `NO_BACKSLASH_ESCAPES` reads the doubled backslash as two characters, which is why binding the value beats quoting it wherever a bind form exists.
 `mysql2` takes `?`.
-Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+Inline row editing reads a key column's kind through the declaration's `inlineEdit`, whose `instantTypeNames`, `float64TypeNames` and `exactDecimalTypeNames` are the same words as the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES`, and binds every edit as typed.
 
-The module's `export` field spells a result export's column types through `ddlTypes`, the standard spelling with `DOUBLE` for a float and `DATETIME` for a timestamp, because a bare `NUMERIC` on MySQL is `DECIMAL(10,0)`, which silently truncates every decimal it was chosen for.
+The declaration's `export` spells a result export's column types through `ddlTypes`, the standard spelling with `DOUBLE` for a float and `DATETIME` for a timestamp, because a bare `NUMERIC` on MySQL is `DECIMAL(10,0)`, which silently truncates every decimal it was chosen for.
 Each name in `standsAlone` was measured, one `CREATE TABLE probe (c <name>)` per name on MySQL 26.7.0, read back out of `information_schema.COLUMNS.COLUMN_TYPE`, and is listed only because MySQL both accepted it and stored it unnarrowed.
 `text` and `longtext` are whole types already.
 MySQL's `varchar` is absent because MySQL refuses it outright, unlike PostgreSQL's.
 `bareSpelling` writes a bare `bit` as `bit(64)`, MySQL's widest, because `mysql2` hands a bit string back as bytes, which `bit(64)` takes for every width.
 It writes a bare `datetime`, `timestamp` and `time` at precision 6, because MySQL's bare forms have fractional precision 0, which rounds a `.999` replayed into them up to the next second (#1386).
 A binary cell is written by `binaryStandardHex`: measured on MySQL 26.7.0, `SELECT HEX(X'0102deadbeef')` answers `0102DEADBEEF` and `SELECT LENGTH(X'')` answers 0.
+MySQL accepts `0x0102deadbeef` too, but it is not on `binaryZeroX`: a zero-length value has no `0x` spelling (`SELECT LENGTH(0x)` is `ERROR 1054 … Unknown column '0x'`), and an empty cell is not a case an export gets to refuse.
 MySQL accepts `0x0102deadbeef` too, but a zero-length value has no `0x` spelling (`SELECT LENGTH(0x)` is `ERROR 1054 … Unknown column '0x'`), and an empty cell is not a case an export gets to refuse.
-NaN and the infinities are written as NULL, `NULL_NON_FINITE`.
+`nonFinite` writes NaN and the infinities as NULL, as `NULL_NON_FINITE` does.
 
 ---
 

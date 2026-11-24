@@ -577,21 +577,22 @@ Object edit is not in this version: no Spark kind accepts definition edits, and 
 
 ### 8.8 SQL writing
 
-[`spark/sql-writing.ts`](../../src/lib/db/providers/sql/spark/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+The `sqlWriting` segment of [`engine-declarations/spark.json`](../../src/lib/db/engine-declarations/spark.json) declares how a generated statement spells a literal, a name and a bind for this engine, and Studio composes it into this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), each function it names bound by Studio's SQL writing function table, `SQL_WRITING_FUNCTIONS`; the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look the row up.
+The table binds this engine's own functions from the modules beside its provider: [`spark/typed-literals.ts`](../../src/lib/db/providers/sql/spark/typed-literals.ts), `sparkLiteral`.
 A literal is written by `literalBackslash` and read back by `unquoteBackslash`: every escape, the quote's included, is spelled with a backslash, and doubling is not part of the grammar.
 A name is quoted by `identifierBacktickDoubled`: a backtick name with an inner backtick doubled and a backslash as data.
 There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
 Spark's lexer pairs a backslash with the next character inside `'...'` under every setting, so the quote is written `\'` as Spark's own `Literal.sql` writes it; a doubled quote is an escape only from 4.1, so it is not used.
 Spark SQL (4.1 and 4.2) quotes a name in backticks and doubles a backtick inside it, the form its own `quoteIfNeeded` writes; a double-quoted text is a string literal in Spark, so the standard form would turn a name into a string.
 Names are case-insensitive there, so quoting never changes which object a name means.
-Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+Inline row editing reads a key column's kind through the declaration's `inlineEdit`, whose `instantTypeNames`, `float64TypeNames` and `exactDecimalTypeNames` are the same words as the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES`, and binds every edit as typed.
 
-The module's `export` field spells a result export's column types through `ddlTypes`: Spark SQL has no TEXT, DOUBLE PRECISION or BLOB, and its spellings are `STRING`, `DOUBLE` and `BINARY`.
-No Spark server read a probe column back, so it holds `NOTHING_STANDS_ALONE` and every bare name is re-spelled portably until one does.
+The declaration's `export` spells a result export's column types through `ddlTypes`: Spark SQL has no TEXT, DOUBLE PRECISION or BLOB, and its spellings are `STRING`, `DOUBLE` and `BINARY`.
+No Spark server read a probe column back, so its `standsAlone` is empty, as `NOTHING_STANDS_ALONE` is, and every bare name is re-spelled portably until one does.
 A binary cell is written by `binaryStandardHex`, which Spark reads as a BINARY literal.
 `nonFinite` writes `CAST('NaN' AS DOUBLE)`, `CAST('Infinity' AS DOUBLE)` and `CAST('-Infinity' AS DOUBLE)`, Spark's documented special floating-point values.
 `typedLiteral` writes the temporal, interval and nested cells, from the engine's own [`spark/typed-literals.ts`](../../src/lib/db/providers/sql/spark/typed-literals.ts).
-`NO_BARE_SPELLING` completes it.
+`bareSpelling` is empty, as `NO_BARE_SPELLING` is.
 
 ## 9. The confirmation gate
 

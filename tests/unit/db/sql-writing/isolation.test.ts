@@ -2,30 +2,31 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SQL_WRITING } from "@/lib/db/sql-writing";
 import { runPool, separatingGroups } from "../isolation-children";
-import { type EngineModule, ENGINE_MODULES, ROOT } from "./engine-modules";
+import { ROOT } from "./engine-modules";
 import { GOLDEN_KEYS, goldenFileName } from "./fixtures";
 
 /**
- * One engine's SQL writing module cannot reach another engine's output.
+ * One engine's SQL writing declaration cannot reach another engine's output.
  *
  * For each of `separatingGroups`' groups of engines a fresh `bun` process replaces every
- * module in the group with a sentinel spec whose every function answers `"SENTINEL"`, then
- * renders every golden key through the public functions. Every key OUTSIDE the group must
- * still match its committed golden file; since the groups separate every ordered pair of
- * engines, each engine is held real while each other engine is replaced. Each engine's own
- * output must show the sentinel in the first child that replaces it, so a mock that never
- * took hold cannot pass as isolation. Each group runs in its own process because bun's
- * module mocks are process-wide with no undo.
+ * group member's entry of the generated SQL writing every row is composed from
+ * (src/lib/db/engine-catalog/sql-writing.generated.ts) with a sentinel entry, then renders
+ * every golden key through the public functions. Every key OUTSIDE the group must still match
+ * its committed golden file; since the groups separate every ordered pair of engines, each
+ * engine is held real while each other engine is replaced. Each engine's own output must show
+ * the sentinel in the first child that replaces it, so a mock that never took hold cannot pass
+ * as isolation. Each group runs in its own process because bun's module mocks are
+ * process-wide with no undo.
  *
- * The inline edit field gets a sentinel of its own, `BOUND_EDIT`, because every other
- * sentinel already lands in an edit's SQL through the quoted names and the placeholders.
- * Where the committed golden file shows an edit reaching its UPDATE, every edit of a value
- * that is not NULL must carry `BOUND_EDIT`, so the hook read the mocked `inlineEdit`.
- *
- * The export field answers `SENTINEL` for every spelling it writes. The replaced engine's
- * `ddl(inferred)` line must show a quoted name followed by a sentinel type, so the export
- * read the mocked `export` and not a table of its own.
+ * The sentinel entry keeps the engine's function names, so each still binds the function
+ * Studio's SQL writing function table holds for it: which function runs at which slot is held
+ * by the golden files and tests/unit/db/sql-writing/compose.test.ts. Every data fact is a
+ * sentinel instead: the export's DDL types and non-finite literals are `SENTINEL`, no bare
+ * name stands alone or is re-spelled, and the inline edit names no instant or exact decimal
+ * type and reads every key as float64. The replaced engine's `ddl(inferred)` line must show a
+ * sentinel type, so the export read the replaced entry and not a table of its own.
  *
  * Its type vocabulary is a sentinel too, one that disagrees with the shared vocabulary on
  * every declared type the fixtures use: no bare name has a family, no wrapper unwraps, no
@@ -36,52 +37,39 @@ import { GOLDEN_KEYS, goldenFileName } from "./fixtures";
  */
 const GOLDEN_DIR = join(import.meta.dir, "golden");
 const FIXTURES = join(import.meta.dir, "fixtures.ts");
-const GROUPS = separatingGroups(ENGINE_MODULES.map(({ id }) => id));
-const BOUND_EDIT = "INLINE_EDIT_SENTINEL";
+const GENERATED = join(ROOT, "src", "lib", "db", "engine-catalog", "sql-writing.generated.ts");
+const IDS = Object.keys(SQL_WRITING);
+const GROUPS = separatingGroups(IDS);
 
 const keyOf = (key: string): string | undefined => (key === "no-connection" ? undefined : key);
 
-function mockFor(engine: EngineModule, index: number): string {
-  return `
-const actual${index} = await import(${JSON.stringify(engine.absPath)});
-mock.module(${JSON.stringify(engine.absPath)}, () => ({
-  ...actual${index},
-  ${engine.exportName}: {
-    escapeLiteral: SENTINEL,
-    unescapeLiteral: SENTINEL,
-    quoteIdentifier: SENTINEL,
-    placeholder: SENTINEL,
-    temporalLiteral: SENTINEL,
-    inlineEdit: {
-      instantTypeNames: new Set(),
-      exactDecimalTypeNames: new Set(),
-      float64TypeNames: "all",
-      boundEdit: () => ${JSON.stringify(BOUND_EDIT)},
+/** The sentinel entry of a group member: its function names kept, every data fact replaced. */
+const SENTINEL_ENTRY = `(entry) => ({
+  ...entry,
+  inlineEdit: { ...entry.inlineEdit, instantTypeNames: [], exactDecimalTypeNames: [], float64TypeNames: "all" },
+  export: {
+    ...entry.export,
+    ddlTypes: { text: "SENTINEL", integer: "SENTINEL", numeric: "SENTINEL", boolean: "SENTINEL", timestamp: "SENTINEL", binary: "SENTINEL" },
+    standsAlone: [],
+    bareSpelling: [],
+    typeVocabulary: {
+      bareTypeFamily: { text: [], integer: [], numeric: [], boolean: [], timestamp: [], binary: [] },
+      floatType: { source: "^Float64$", flags: "" },
+      exactNumericType: { source: "^SENTINEL_EXACT$", flags: "" },
+      numericWrapper: { source: "^SENTINEL_WRAPPER<(.*)>$", flags: "" },
     },
-    export: {
-      ddlTypes: { text: "SENTINEL", integer: "SENTINEL", numeric: "SENTINEL", boolean: "SENTINEL", timestamp: "SENTINEL", binary: "SENTINEL" },
-      standsAlone: [],
-      bareSpelling: {},
-      typeVocabulary: {
-        bareTypeFamily: {},
-        floatType: /^Float64$/,
-        exactNumericType: /^SENTINEL_EXACT$/,
-        numericWrapper: /^SENTINEL_WRAPPER<(.*)>$/,
-      },
-      binaryLiteral: SENTINEL,
-      nonFinite: { NaN: "SENTINEL", Infinity: "SENTINEL", "-Infinity": "SENTINEL" },
-      insertForm: "values",
-      typedLiteral: SENTINEL,
-    },
+    nonFinite: { NaN: "SENTINEL", Infinity: "SENTINEL", "-Infinity": "SENTINEL" },
   },
-}));`;
-}
+})`;
 
-function scriptFor(group: readonly EngineModule[]): string {
+function scriptFor(group: readonly string[]): string {
   return `
 import { mock } from "bun:test";
-const SENTINEL = () => "SENTINEL";
-${group.map(mockFor).join("\n")}
+const real = await import(${JSON.stringify(GENERATED)});
+const sentinel = ${SENTINEL_ENTRY};
+const replaced = { ...real.BUNDLED_SQL_WRITING };
+for (const id of ${JSON.stringify(group)}) replaced[id] = sentinel(replaced[id]);
+mock.module(${JSON.stringify(GENERATED)}, () => ({ BUNDLED_SQL_WRITING: replaced }));
 const { GOLDEN_KEYS, renderGolden } = await import(${JSON.stringify(FIXTURES)});
 const keyOf = ${keyOf.toString()};
 const out = {};
@@ -97,8 +85,6 @@ interface Run {
   readonly rendered: Record<string, string>;
 }
 
-const membersOf = (group: readonly string[]): EngineModule[] => ENGINE_MODULES.filter(({ id }) => group.includes(id));
-
 let dir = "";
 
 /**
@@ -110,7 +96,7 @@ let dir = "";
  */
 async function render(group: readonly string[], index: number): Promise<Run> {
   const script = join(dir, `group-${index}.ts`);
-  writeFileSync(script, scriptFor(membersOf(group)));
+  writeFileSync(script, scriptFor(group));
   const child = Bun.spawn(["bun", script], { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(child.stdout).text(),
@@ -141,17 +127,9 @@ const ownRun = (id: string): Run | undefined => runs.get(GROUPS.findIndex((group
 
 const golden = (key: string): string => readFileSync(join(GOLDEN_DIR, goldenFileName(key)), "utf8");
 
-/** The `edit(` lines of a rendering whose edited text is a value, not NULL. */
-const valueEdits = (rendered: string): string[] =>
-  rendered.split("\n").filter((line) => line.startsWith("edit(") && !/^edit\([^,]+, "(NULL)?", /.test(line));
-
-/** The engine's committed edits reach their UPDATE: the key check ran, so a bound edit has a statement to land in. */
-const editsReachUpdate = (key: string): boolean =>
-  valueEdits(golden(key)).every((line) => !line.includes('"keyCheck":null'));
-
 describe("SQL writing isolation", () => {
   test("the groups replace every engine while holding every other engine real", () => {
-    const ids = ENGINE_MODULES.map(({ id }) => id);
+    const ids = IDS;
     const unseparated: string[] = [];
     for (const a of ids) {
       for (const b of ids) {
@@ -174,25 +152,18 @@ describe("SQL writing isolation", () => {
     });
   });
 
-  for (const engine of ENGINE_MODULES) {
-    test(`${engine.id}: its replaced module is what its own output reads`, () => {
-      const run = ownRun(engine.id);
+  for (const id of IDS) {
+    test(`${id}: its replaced declaration is what its own output reads`, () => {
+      const run = ownRun(id);
       expect({ exitCode: run?.exitCode, stderr: run?.stderr }).toEqual({ exitCode: 0, stderr: "" });
       const rendered = run?.rendered ?? {};
-      expect(rendered[engine.id]).toContain('=> "SENTINEL"');
-      const ddl = (rendered[engine.id] ?? "").split("\n").find((line) => line.startsWith("ddl(inferred) => "));
-      expect(ddl).toContain("SENTINEL SENTINEL");
       const lineOf = (prefix: string): string | undefined =>
-        (rendered[engine.id] ?? "").split("\n").find((line) => line.startsWith(prefix));
-      expect(lineOf('ddl("varchar2") => ')).toBe('ddl("varchar2") => "CREATE TABLE t (\\n  SENTINEL varchar2\\n);"');
+        (rendered[id] ?? "").split("\n").find((line) => line.startsWith(prefix));
+      expect(lineOf("ddl(inferred) => ")).toMatch(/\S SENTINEL,\\n/);
+      expect(lineOf('ddl("varchar2") => ')).toMatch(/\\n {2}\S+ varchar2(,|\\n)/);
       expect(lineOf("csv(numeric) => ")).toBe(
         `csv(numeric) => "nf,lc,df,nm,bd,tx,none\\n${Array(7).fill(`\\"'-Infinity\\"`).join(",")}\\n${Array(7).fill(`\\"'=1+1\\"`).join(",")}"`,
       );
-      if (editsReachUpdate(engine.id)) {
-        const edits = valueEdits(rendered[engine.id] ?? "");
-        expect(edits.length).toBeGreaterThan(0);
-        expect(edits.filter((line) => !line.includes(BOUND_EDIT))).toEqual([]);
-      }
     });
   }
 });

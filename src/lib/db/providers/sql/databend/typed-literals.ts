@@ -65,7 +65,7 @@ function databendValue(value: unknown, declared: string, scalar: ScalarLiteral):
     return `parse_json(${literalDoubleAndBackslash(typeof value === "string" ? value : jsonText(value))})`;
   if (name === "Boolean")
     return Object.hasOwn(DATABEND_BOOLEAN, String(value)) ? DATABEND_BOOLEAN[String(value)] : scalar(value);
-  // The generic writer spells a non-finite number with `DATABEND_SQL_WRITING.export.nonFinite`.
+  // The generic writer spells a non-finite number with the engine's `export.nonFinite`.
   const word = name.startsWith("Float") ? floatWord(value) : undefined;
   if (word !== undefined) return scalar(Number(word));
   if (DATABEND_NUMBER.test(name)) {
@@ -77,6 +77,6 @@ function databendValue(value: unknown, declared: string, scalar: ScalarLiteral):
   throw new UnwritableValue(`a value of type ${databendTypeName(name)}`);
 }
 
-/** Every declared cell but bytes from a host, which the generic writer spells with `DATABEND_SQL_WRITING.export.binaryLiteral`. */
+/** Every declared cell but bytes from a host, which the generic writer spells with its `export.binaryLiteral`. */
 export const databendLiteral: TypedWriter = (value, declared, scalar) =>
   declared === undefined || asBytes(value) !== undefined ? undefined : databendValue(value, declared, scalar);

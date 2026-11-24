@@ -16,8 +16,9 @@ import type { DatabaseType } from "@/lib/types";
  * name; a table name guessed from a tab title is not.
  *
  * Which quote character a dialect uses, and how it escapes it, is declared in the engine's
- * module beside its provider, with the measurement behind it; `SQL_WRITING` in
- * `src/lib/db/sql-writing/index.ts` is the total record of those modules. An undefined
+ * declaration and measured in its provider document; `SQL_WRITING` in
+ * `src/lib/db/sql-writing/index.ts` is the total record of the rows composed from those
+ * declarations. An undefined
  * dialect gets the SQL standard double quote: a generator with no connection to name one
  * can claim only the standard.
  */

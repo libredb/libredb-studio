@@ -709,7 +709,6 @@ const BROWSER_SET: ReadonlySet<string> = new Set([
   "parquet-thrift-guard.ts",
   "preview-cells.ts",
   "preview-render.ts",
-  "sql-writing.ts",
   "destructive.ts",
 ]);
 

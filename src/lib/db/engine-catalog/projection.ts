@@ -1,8 +1,8 @@
 /**
  * Studio's engine catalog, its data-only connection tables, its connection forms, its connection strings, each
  * engine's execution UI and fence aliases, its query dialects, tab type editors and editor languages, and each engine's
- * SQL text as projections of a set of admitted engine declarations (docs/providers/CONTRACT.md, clauses M-70, M-71,
- * M-72, M-74, M-75, M-77 and M-78).
+ * SQL text and SQL writing as projections of a set of admitted engine declarations (docs/providers/CONTRACT.md, clauses
+ * M-70, M-71, M-72, M-74, M-75, M-77, M-78 and M-79).
  *
  * The catalog answers which engines Studio ships, whether each is an engine the user already runs (`external`) or the
  * store Studio carries with it (`embedded`), and how long the host waits for an open of each: one entry per declaration,
@@ -46,6 +46,11 @@
  * `sqlText.redaction` is a claim, so it is never projected: src/lib/db/sql-grammar/redaction.ts is Studio's record of
  * it.
  *
+ * The SQL writing answers, per engine, its whole `sqlWriting` segment as the declaration states it: each type name list
+ * a list, each type pattern its source and flags, and each function its name, which src/lib/db/sql-writing/index.ts
+ * binds to Studio's own function when it composes each engine's SQL writing row. The segment holds no claim, and no SQL
+ * writing fact is shared between engines, so nothing is refused across the set but a second declaration of one id.
+ *
  * Every member a projection reads is one a declaration authors (scripts/generate-engine-catalog.ts,
  * `AUTHORED_MEMBERS`), so none reads anything the declaration generator writes, and none of them is a claim but the
  * confirmation gate's two, `sqlText.readsSqlText` and an exempt form of the grammar, which the gate counts only where
@@ -61,9 +66,9 @@
  * `scripts/generate-engine-catalog.ts` projects the committed declarations' authored members here and renders the
  * results into `catalog.generated.ts`, `connection.generated.ts`, `connection-flags.generated.ts`,
  * `connection-form.generated.ts`, `connection-string.generated.ts`, `editor.generated.ts`,
- * `query-editor.generated.ts` and `sql-text.generated.ts`, the modules Studio's readers read, and holds
- * each module to the projection of the set it admits through the SDK's validator. A loader that admits a provider
- * package at run time projects its set through these same functions.
+ * `query-editor.generated.ts`, `sql-text.generated.ts` and `sql-writing.generated.ts`, the modules Studio's readers
+ * read, and holds each module to the projection of the set it admits through the SDK's validator. A loader that admits
+ * a provider package at run time projects its set through these same functions.
  */
 import type {
   ConnectBudget,
@@ -78,6 +83,7 @@ import type {
   QueryDialect,
   QueryLanguage,
   SqlText,
+  SqlWriting,
 } from "@libredb/provider-sdk/manifest";
 
 type Connection = EngineDeclaration["connection"];
@@ -120,6 +126,7 @@ export interface AuthoredDeclaration {
     readonly language: Editor["language"];
   };
   readonly sqlText: SqlTextEntry;
+  readonly sqlWriting: SqlWriting;
 }
 
 /**
@@ -135,6 +142,15 @@ export interface SqlTextEntry {
 
 /** The SQL text: one frozen entry per engine id, keyed in ascending code-unit order of the ids. */
 export type SqlTexts = Readonly<Record<string, SqlTextEntry>>;
+
+/**
+ * One engine's SQL writing as its declaration authors it, the SDK's `SqlWriting`: a type pattern is its source and
+ * flags, each type name list a list and each function its name.
+ */
+export type SqlWritingEntry = SqlWriting;
+
+/** The SQL writing: one frozen entry per engine id, keyed in ascending code-unit order of the ids. */
+export type SqlWritings = Readonly<Record<string, SqlWritingEntry>>;
 
 /** One engine's catalog entry: where the engine lives and its connect budget, null for the host's default. */
 export interface CatalogEntry {
@@ -566,4 +582,14 @@ export function projectSqlText(declarations: readonly AuthoredDeclaration[]): Sq
       completion: sqlText.completion,
     }),
   );
+}
+
+/**
+ * The SQL writing of `declarations`, each entry the declaration's `sqlWriting` as it states it, a segment every
+ * declaration authors, in its own member order at every level.
+ *
+ * @throws {Error} When two declarations state the same `id`, naming it.
+ */
+export function projectSqlWriting(declarations: readonly AuthoredDeclaration[]): SqlWritings {
+  return recordOf(inIdOrder(declarations), ({ sqlWriting }) => frozenCopy<SqlWritingEntry>(sqlWriting));
 }

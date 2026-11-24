@@ -19,13 +19,11 @@
  *    the value `TUNNEL_FAR_END` from `@/lib/types` (the Qdrant shape, architect amendment from T09), and a file of no
  *    layer fails, so a new file is placed in one on purpose. The browser and InfluxQL server layers
  *    may take values from the influxql family module, which holds the lexer and the policy they read. Each type-id's
- *    SQL grammar is its declaration's (docs/providers/CONTRACT.md, clause M-78), so no module here declares one.
+ *    SQL grammar and SQL writing are its declaration's (docs/providers/CONTRACT.md, clauses M-78 and M-79), so no
+ *    module here declares either.
  *    Each type-id's migration DDL module (`<type-id>-migration-ddl.ts`) is a contract layer of its own: it may
  *    import values only from `@/lib/db/migration-ddl/*`, its contract's shared building blocks, and from none of
  *    this directory's modules.
- *    Each type-id's SQL writing module (`<type-id>-sql-writing.ts`) is a layer of its own in the same way: it may
- *    import values only from `@/lib/db/sql-writing/*`, its contract's shared building blocks, and from none of this
- *    directory's modules.
  *    The influxql family module is a layer of its own: its lexer, policy, confirmation row and agent statement reader
  *    are shipped to the browser, so each may import values only from another family member and from none of this
  *    directory's modules, and a family file of no layer fails too. Rules 1, 4 and 5 hold its files as they hold this
@@ -66,15 +64,13 @@ const CONTRACT = [
   "influxdb-engine-facets",
   "influxdb3-engine-facets",
 ];
-/** Each type-id's SQL writing row, which reads its contract's building blocks and nothing of this directory. */
-const WRITING = ["influxdb-sql-writing", "influxdb3-sql-writing"];
 /**
  * The influxql family module, `src/lib/languages/influxql/`: the lexer, the policy, the confirmation row and the
  * agent's statement reader, all shipped to the browser, so it reads only its own members and nothing of this directory.
  */
 const FAMILY = ["lexer", "policy", "destructive", "agent-statement"];
 
-type Layer = "connection" | "browser" | "influxql-server" | "sql" | "contract" | "writing" | "family";
+type Layer = "connection" | "browser" | "influxql-server" | "sql" | "contract" | "family";
 
 const canonical = (path: string): string => realpathSync.native(path).split("\\").join("/");
 const relative = (path: string): string => path.slice(canonical(ROOT).length + 1);
@@ -88,7 +84,6 @@ function layerOf(file: string): Layer | undefined {
   if (SHARED.includes(name) || name === "index") return "connection";
   if (BROWSER.includes(name)) return "browser";
   if (INFLUXQL_SERVER.includes(name)) return "influxql-server";
-  if (WRITING.includes(name)) return "writing";
   if (name.startsWith("sql-")) return "sql";
   if (CONTRACT.includes(name)) return "contract";
   return undefined;
@@ -145,7 +140,6 @@ const OUTSIDE_VALUES: Readonly<Record<Layer, readonly string[]>> = {
     "src/lib/db/write-reach.ts",
   ],
   contract: ["src/lib/db/migration-ddl/"],
-  writing: ["src/lib/db/sql-writing/"],
   family: [`${FAMILY_DIR}/`],
 };
 
@@ -163,7 +157,6 @@ function insideAllowed(file: string, layer: Layer, target: string): boolean {
     case "sql":
       return shared || name.startsWith("sql-");
     case "contract":
-    case "writing":
     case "family":
       return false;
   }
@@ -642,18 +635,6 @@ describe("planted violations fail by name", () => {
       'import { literalStandard } from "@/lib/db/sql-writing/shared";\n',
       `layer: ${DIR}/sql-objects.ts imports a value from @/lib/db/sql-writing/shared, which its layer may not`,
     ],
-    [
-      "influxdb-sql-writing.ts",
-      "influxdb-sql-writing.ts",
-      'import { INFLUX_LIST_CAP } from "./connection-options";\n',
-      `layer: ${DIR}/influxdb-sql-writing.ts imports a value from ./connection-options, which its layer may not`,
-    ],
-    [
-      "influxdb3-sql-writing.ts",
-      "influxdb3-sql-writing.ts",
-      'import { standardDropTable } from "@/lib/db/migration-ddl/shared";\n',
-      `layer: ${DIR}/influxdb3-sql-writing.ts imports a value from @/lib/db/migration-ddl/shared, which its layer may not`,
-    ],
   ])("%s (from %s) with %p fails", (as, from, line, finding) => {
     expect(plant(as, from, line)).toContain(finding);
   });
@@ -674,11 +655,6 @@ describe("planted violations fail by name", () => {
       "influxdb3-migration-ddl.ts",
       "influxdb3-migration-ddl.ts",
       'import { standardDropTable } from "@/lib/db/migration-ddl/shared";\n',
-    ],
-    [
-      "influxdb3-sql-writing.ts",
-      "influxdb3-sql-writing.ts",
-      'import { binaryStandardHex } from "@/lib/db/sql-writing/export-shared";\n',
     ],
   ])("%s (from %s) with %p passes", (as, from, line) => {
     expect(plant(as, from, line)).toEqual([]);

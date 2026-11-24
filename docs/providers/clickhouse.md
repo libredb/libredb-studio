@@ -1775,15 +1775,16 @@ log_queries is off."* The Queries panel's empty state was hardcoded to PostgreSQ
 
 ### SQL writing
 
-[`clickhouse/sql-writing.ts`](../../src/lib/db/providers/sql/clickhouse/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+The `sqlWriting` segment of [`engine-declarations/clickhouse.json`](../../src/lib/db/engine-declarations/clickhouse.json) declares how a generated statement spells a literal, a name and a bind for this engine, and Studio composes it into this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), each function it names bound by Studio's SQL writing function table, `SQL_WRITING_FUNCTIONS`; the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look the row up.
+The table binds this engine's own functions from the modules beside its provider: [`clickhouse/typed-literals.ts`](../../src/lib/db/providers/sql/clickhouse/typed-literals.ts), `clickhouseLiteral`.
 A literal is written by `literalDoubleAndBackslash` and read back by `unquoteDoubleAndBackslash`: the quote is doubled and a backslash escapes, so the backslash is doubled first.
 A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
 There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
 This matches what the ClickHouse provider already does when it builds its own literals ([`index.ts`](../../src/lib/db/providers/sql/clickhouse/index.ts)).
 ClickHouse binds named parameters only, and its provider refuses positional ones outright.
-Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+Inline row editing reads a key column's kind through the declaration's `inlineEdit`, whose `instantTypeNames`, `float64TypeNames` and `exactDecimalTypeNames` are the same words as the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES`, and binds every edit as typed.
 
-The module's `export` field spells a result export's column types through `ddlTypes`, the standard spelling with `String` for a binary column: ClickHouse has no BLOB, and its byte container is `String`, a byte sequence rather than a text encoding.
+The declaration's `export` spells a result export's column types through `ddlTypes`, the standard spelling with `String` for a binary column: ClickHouse has no BLOB, and its byte container is `String`, a byte sequence rather than a text encoding.
 Measured on 26.7.1, the other standard spellings all resolve to a whole type (`TEXT` to `String`, `BIGINT` to `Int64`, `DOUBLE PRECISION` to `Float64`, `TIMESTAMP` to `DateTime`).
 Each name in `standsAlone` was measured, one `CREATE TABLE probe (c <name>)` per name on ClickHouse 26.7.1, read back out of `system.columns`, and is listed only because ClickHouse both accepted it and stored it unnarrowed.
 ClickHouse resolves every character and byte alias it knows to `String`.
@@ -1791,7 +1792,7 @@ ClickHouse's `decimal` is absent because it is stored as `Decimal(10, 0)`, the M
 A binary cell is written by `binaryUnhex`: measured on 26.7.1, `unhex('0102deadbeef')` into a `String` column reads back as `hex(payload)` = `0102DEADBEEF` with `length(payload)` 6, and `length(unhex(''))` is 0.
 `nonFinite` writes the bare `nan`, `inf` and `-inf`, which ClickHouse 26.9.18.11 read back into `Float64` and `Float32` (2026-10-14).
 `typedLiteral` writes arrays, maps, tuples and the other cells whose quoted JSON form ClickHouse refuses, from the engine's own [`clickhouse/typed-literals.ts`](../../src/lib/db/providers/sql/clickhouse/typed-literals.ts).
-`NO_BARE_SPELLING` completes it.
+`bareSpelling` is empty, as `NO_BARE_SPELLING` is.
 
 ---
 

@@ -1556,7 +1556,8 @@ is the thing a DBA can act on.
 
 ### SQL writing
 
-[`sql/mssql-sql-writing.ts`](../../src/lib/db/providers/sql/mssql-sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+The `sqlWriting` segment of [`engine-declarations/mssql.json`](../../src/lib/db/engine-declarations/mssql.json) declares how a generated statement spells a literal, a name and a bind for this engine, and Studio composes it into this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), each function it names bound by Studio's SQL writing function table, `SQL_WRITING_FUNCTIONS`; the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look the row up.
+The table binds this engine's own functions from the modules beside its provider: [`sql/mssql-sql-writing.ts`](../../src/lib/db/providers/sql/mssql-sql-writing.ts), `MSSQL_BOUND_EDIT` and `MSSQL_TYPED_LITERAL`.
 A literal is written by `literalUnicode` and read back by `unquoteUnicode`: the quote is doubled, a backslash is data, and the `N` prefix decides that the server reads the text as Unicode.
 A name is quoted by `identifierBracket`: a bracketed name with an inner `]` doubled.
 A bind is spelled by `placeholderAtP`, as `@p1`, `@p2`.
@@ -1566,19 +1567,19 @@ So `… WHERE s.name = 'Müşteri'` matched `Müsteri.Siparis`, the wrong object
 With no `Müsteri` present the bare form matched nothing at all.
 Both failures are silent, which is why this dialect does not share the standard literal: the escaping is the same, the code page is not.
 The mssql provider registers its inputs as `p1`, `p2`, … which the statement spells `@p1`, `@p2`.
-Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`.
+Inline row editing reads a key column's kind through the declaration's `inlineEdit`, whose `instantTypeNames`, `float64TypeNames` and `exactDecimalTypeNames` are the same words as the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES`.
 Its `boundEdit` binds a `datetime` or `smalldatetime` edit still in the provider's `yyyy-mm-dd hh:mi:ss[.mmm]` text (#1452) with its space as a `T`, because the nvarchar parameter reaches those two types through the session's DATEFORMAT.
 Measured 2026-10-12 on SQL Server 2022 CU27 (16.0.4295.3), the inline edit's own `UPDATE … SET [dt] = @p1` under `british`: `2026-10-04 12:34:57.123` was stored as April 10th and `2026-10-25 23:59:58.997` was refused as out of range, while the same text with a `T` was stored as written, and a `smalldatetime` the same ([§5.5](#55-what-the-sql-insert-export-writes-for-a-bit)).
 Every other edit is bound as typed.
 
-The module's `export` field spells a result export's column types through `ddlTypes`: `NVARCHAR(MAX)`, `BIGINT`, `FLOAT`, `BIT`, `DATETIME2` and `VARBINARY(MAX)`, since SQL Server has no `BOOLEAN`, `BLOB` is not a T-SQL type name at all, and `IMAGE` has been deprecated since 2005.
+The declaration's `export` spells a result export's column types through `ddlTypes`: `NVARCHAR(MAX)`, `BIGINT`, `FLOAT`, `BIT`, `DATETIME2` and `VARBINARY(MAX)`, since SQL Server has no `BOOLEAN`, `BLOB` is not a T-SQL type name at all, and `IMAGE` has been deprecated since 2005.
 Each name in `standsAlone` was measured, one `CREATE TABLE probe (c <name>)` per name on SQL Server 2022 CU26, read back out of `INFORMATION_SCHEMA.COLUMNS`, and is listed only because SQL Server both accepted it and stored it unnarrowed.
 `nvarchar` is absent because it came back as length 1.
 SQL Server's `timestamp` is absent because it is not a moment in time at all: measured, `CREATE TABLE t (c timestamp)` on 2022 CU26 creates a `rowversion`, which no INSERT may name, so keeping a foreign engine's `timestamp` would produce a file that parses and then fails on its own INSERT.
 A binary cell is written by `binaryZeroX`: measured on SQL Server 2022, `SELECT CONVERT(varchar(64), 0x0102deadbeef, 2)` answers `0102DEADBEEF`, `DATALENGTH(0x)` answers 0, so the empty case is spelled, and `SELECT X'0102'` is `Msg 207 … Invalid column name 'X'`.
 `typedLiteral` writes a boolean as `1` / `0`, because T-SQL has no boolean literal: `true` parses as a column name (`Msg 207: Invalid column name 'true'`, measured on SQL Server 2025 17.0.5005.3) and fails the whole batch.
 It writes a `datetime` or `smalldatetime` cell's `yyyy-mm-dd hh:mi:ss[.mmm]` text with a `T` for the space (#1452), because those two types read the space form through the session's DATEFORMAT: measured on SQL Server 2022 CU27 (16.0.4295.3), under `british`, `Deutsch` and `Français` `'2026-10-04 12:34:56.123'` is stored as April 10th and `'2026-10-25 …'` is refused, while the `T` form is October 4th under those and under `us_english` and `Japanese`.
-`NO_BARE_SPELLING` and `NULL_NON_FINITE` complete it.
+`bareSpelling` is empty and `nonFinite` writes NULL for NaN and the infinities, as `NO_BARE_SPELLING` and `NULL_NON_FINITE` do.
 
 ---
 

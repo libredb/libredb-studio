@@ -716,7 +716,7 @@ another's.
 **String literals double the quote and read a backslash as data.** Measured: `SELECT 'a''b'` → `a'b`;
 `SELECT 'a\\b'` → the two characters `a\b`; `SELECT 'a\'b'` is a `parsing_exception` at the character
 *after* the backslash, which is only possible if the `\` did not escape the quote. Hence
-`escapeLiteral: literalStandard` in `ELASTICSEARCH_SQL_WRITING` ([`elasticsearch-sql-writing.ts`](../../src/lib/db/providers/sql/search/elasticsearch-sql-writing.ts)) — and note
+`escapeLiteral: literalStandard` in the declaration's `sqlWriting` ([`elasticsearch.json`](../../src/lib/db/engine-declarations/elasticsearch.json)), and note
 the fork does **both** forms, so the two ids do not share that answer either.
 
 **`_id` is not a column.** `SELECT _id FROM probe_orders` answers `verification_exception`, "Unknown
@@ -1739,7 +1739,7 @@ row **and** a declared maintenance capability.
 
 ### SQL writing
 
-[`search/elasticsearch-sql-writing.ts`](../../src/lib/db/providers/sql/search/elasticsearch-sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+The `sqlWriting` segment of [`engine-declarations/elasticsearch.json`](../../src/lib/db/engine-declarations/elasticsearch.json) declares how a generated statement spells a literal, a name and a bind for this engine, and Studio composes it into this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), each function it names bound by Studio's SQL writing function table, `SQL_WRITING_FUNCTIONS`; the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look the row up.
 A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
 A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
 There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
@@ -1749,9 +1749,9 @@ The name quote is measured as well: `FROM "probe_orders"` and `SELECT "note.keyw
 Elasticsearch 9.1.4 is the exact opposite of OpenSearch, answering a backtick with "backquoted identifiers not supported; please use double quotes instead", so the two search ids cannot share a form.
 Both search endpoints do bind `?` (measured: Elasticsearch takes `{"query":"… WHERE id = ?","params":[1]}`, OpenSearch takes a `parameters` array of `{type,value}` objects, both HTTP 200), but they spell the request differently and the provider's seam carries the statement alone, so its `query()` refuses positional parameters outright.
 Emitting `?` would produce a statement whose placeholder the provider then declines to fill.
-Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+Inline row editing reads a key column's kind through the declaration's `inlineEdit`, whose `instantTypeNames`, `float64TypeNames` and `exactDecimalTypeNames` are the same words as the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES`, and binds every edit as typed.
 
-The module's `export` field writes a result export's CREATE TABLE and INSERT from the shared building blocks alone: `STANDARD_DDL_TYPES` for the column types, `NOTHING_STANDS_ALONE` and `NO_BARE_SPELLING`, so every bare declared name is re-spelled from its family, `NULL_NON_FINITE` for NaN and the infinities, and `binaryStandardHex` for a binary cell (`X'0102'`).
+The declaration's `export` writes a result export's CREATE TABLE and INSERT from the shared words alone: `ddlTypes` the same spellings as `STANDARD_DDL_TYPES`, `standsAlone` and `bareSpelling` empty, as `NOTHING_STANDS_ALONE` and `NO_BARE_SPELLING` are, so every bare declared name is re-spelled from its family, `nonFinite` NULL for NaN and the infinities, as `NULL_NON_FINITE` writes them, and `binaryStandardHex` for a binary cell (`X'0102'`).
 The SQL endpoint parses no CREATE TABLE, so a file written from it is meant to run somewhere else, and every bare name in it is re-spelled from its family, portably.
 
 ---
@@ -2027,7 +2027,7 @@ The refusal reason it prints, verbatim:
 - Interface & DTOs: [`src/lib/db/types.ts`](../../src/lib/db/types.ts)
 - Errors: [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts)
 - Connection form config: [`src/lib/db/engine-declarations/elasticsearch.json`](../../src/lib/db/engine-declarations/elasticsearch.json), composed by [`src/lib/db/connection-form.ts`](../../src/lib/db/connection-form.ts)
-- Dialect facts elsewhere in the codebase: `sqlText.grammar` in [`src/lib/db/engine-declarations/elasticsearch.json`](../../src/lib/db/engine-declarations/elasticsearch.json) (`#`, `[`, block comments) · `quoteIdentifier()` in [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) (double quotes) · `ELASTICSEARCH_SQL_WRITING` in [`elasticsearch-sql-writing.ts`](../../src/lib/db/providers/sql/search/elasticsearch-sql-writing.ts) (literal escaping) · [`src/lib/sql/fence-tags.ts`](../../src/lib/sql/fence-tags.ts) (the fence tag)
+- Dialect facts elsewhere in the codebase: `sqlText.grammar` in [`src/lib/db/engine-declarations/elasticsearch.json`](../../src/lib/db/engine-declarations/elasticsearch.json) (`#`, `[`, block comments) · `quoteIdentifier()` in [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) (double quotes) · `sqlWriting.escapeLiteral` in the same declaration (literal escaping) · [`src/lib/sql/fence-tags.ts`](../../src/lib/sql/fence-tags.ts) (the fence tag)
 - Local cluster: [`database-compose.yml`](../../database-compose.yml) (`elasticsearch` service, 9200)
 - Tests: [`tests/integration/db/elasticsearch-provider.test.ts`](../../tests/integration/db/elasticsearch-provider.test.ts) · [`tests/unit/db/search/`](../../tests/unit/db/search/)
 - API contract: [`docs/API_DOCS.md`](../API_DOCS.md)

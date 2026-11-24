@@ -1,8 +1,8 @@
 import type { EngineDeclaration } from "@libredb/provider-sdk/manifest";
 
 /**
- * The fixture engine of the removal tests (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72, M-74, M-75, M-77 and
- * M-78):
+ * The fixture engine of the removal tests (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72, M-74, M-75, M-77,
+ * M-78 and M-79):
  * `base` declared as `acmefoo`, the id the FND-1 tests give a stored connection of an engine no provider serves, named
  * "Acme Foo", with a connect budget of 90 s.
  *
@@ -22,7 +22,10 @@ import type { EngineDeclaration } from "@libredb/provider-sdk/manifest";
  * trailing limit clause of its own after `base`'s, `\s+WITH\s+ACME\s+HINT\s*$`, so its entry is one no shipped
  * engine has, and it names no completion reader, whatever `base` names, so Studio's grammar function table holds
  * nothing for it and its grammar composes (clause M-78); its `sqlText.redaction` is `base`'s, a claim no projection
- * reads.
+ * reads. Its SQL writing is `base`'s with the DDL text type `ACMETEXT` and the one standing-alone name `acmetext`, so
+ * its entry is one no shipped engine has; its function names stay its slots' names, which Studio's SQL writing
+ * function table holds for no `acmefoo`, so composing its row is refused by name, the answer a package's declaration
+ * gets until a package fills a slot (clause M-79).
  */
 export function fixtureEngineDeclaration(base: EngineDeclaration): EngineDeclaration {
   return {
@@ -77,6 +80,14 @@ export function fixtureEngineDeclaration(base: EngineDeclaration): EngineDeclara
         ],
       },
       completion: { formatSegment: null, readQuotedQualifier: null },
+    },
+    sqlWriting: {
+      ...base.sqlWriting,
+      export: {
+        ...base.sqlWriting.export,
+        ddlTypes: { ...base.sqlWriting.export.ddlTypes, text: "ACMETEXT" },
+        standsAlone: ["acmetext"],
+      },
     },
   };
 }

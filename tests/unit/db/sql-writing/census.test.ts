@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
-import { SQL_WRITING, sqlWritingFor } from "@/lib/db/sql-writing";
+import { BUNDLED_SQL_WRITING } from "@/lib/db/engine-catalog/sql-writing.generated";
+import { composeSqlWriting, SQL_WRITING, SQL_WRITING_FUNCTIONS, sqlWritingFor } from "@/lib/db/sql-writing";
 import { NO_CONNECTION_SQL_WRITING } from "@/lib/db/sql-writing/no-connection";
 import {
   binaryBinaryHex,
@@ -16,22 +17,17 @@ import * as SHARED from "@/lib/db/sql-writing/shared";
 import {
   BARE_TYPE_FAMILY,
   CLICKHOUSE_WRAPPER,
-  EVERY_TYPE_IS_FLOAT64,
   EXACT_DECIMAL_TYPE_NAMES,
   EXACT_NUMERIC_TYPE,
   FLOAT64_TYPE_NAMES,
   FLOAT_TYPE,
   INSTANT_TYPE_NAMES,
   NO_BARE_SPELLING,
-  NO_EXACT_DECIMAL_TYPE_NAMES,
-  NO_INSTANT_TYPE_NAMES,
   NOTHING_STANDS_ALONE,
   literalBackslash,
   NULL_NON_FINITE,
-  QUOTED_WORD_NON_FINITE,
   STANDARD_DDL_TYPES,
   STANDARD_TYPE_VOCABULARY,
-  VERBATIM_DECLARED_TYPES_STAND_ALONE,
 } from "@/lib/db/sql-writing/shared";
 import type { ExportSpec, InferredKind, SqlWritingSpec } from "@/lib/db/sql-writing/types";
 import { buildResultExport } from "@/lib/export/result-export";
@@ -39,73 +35,22 @@ import type { DatabaseType } from "@/lib/types";
 import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../../../helpers/outside-the-union";
 import { TYPED_LITERAL_MODULES } from "./engine-modules";
 
-/**
- * The SQL writing registry is one row per type id, and each row is the object the engine's
- * own module exports at its placement beside the provider (spec 5.3), so a reader of the
- * registry and a typed writer that imports the module directly hold the same rules.
- */
-const PLACEMENT: Readonly<Record<DatabaseType, string>> = {
-  bigquery: "sql/bigquery/sql-writing",
-  cassandra: "sql/cassandra/sql-writing",
-  clickhouse: "sql/clickhouse/sql-writing",
-  couchbase: "document/couchbase/sql-writing",
-  databend: "sql/databend/sql-writing",
-  db2: "sql/db2/sql-writing",
-  druid: "sql/druid/sql-writing",
-  duckdb: "sql/duckdb/sql-writing",
-  elasticsearch: "sql/search/elasticsearch-sql-writing",
-  etcd: "keyvalue/etcd/sql-writing",
-  firestore: "document/firestore/sql-writing",
-  influxdb: "timeseries/influxdb/influxdb-sql-writing",
-  influxdb3: "timeseries/influxdb/influxdb3-sql-writing",
-  kafka: "stream/kafka/sql-writing",
-  kubernetes: "platform/kubernetes/sql-writing",
-  libredb: "embedded/libredb-sql-writing",
-  libsql: "sql/libsql/sql-writing",
-  milvus: "vector/milvus/sql-writing",
-  modbus: "industrial/modbus/sql-writing",
-  mongodb: "document/mongodb/sql-writing",
-  mqtt: "keyvalue/mqtt/sql-writing",
-  mssql: "sql/mssql-sql-writing",
-  mtconnect: "industrial/mtconnect/sql-writing",
-  mysql: "sql/mysql-sql-writing",
-  neo4j: "graph/neo4j/sql-writing",
-  netconf: "network/netconf/sql-writing",
-  opcua: "industrial/opcua/sql-writing",
-  opensearch: "sql/search/opensearch-sql-writing",
-  oracle: "sql/oracle-sql-writing",
-  oxia: "keyvalue/oxia/sql-writing",
-  postgres: "sql/postgres-sql-writing",
-  prometheus: "timeseries/prometheus/sql-writing",
-  qdrant: "vector/qdrant/sql-writing",
-  weaviate: "vector/weaviate/sql-writing",
-  rabbitmq: "stream/rabbitmq/sql-writing",
-  redis: "keyvalue/redis-sql-writing",
-  s3: "objectstore/s3/sql-writing",
-  snmp: "network/snmp/sql-writing",
-  snowflake: "sql/snowflake/sql-writing",
-  spark: "sql/spark/sql-writing",
-  sparkplug: "industrial/sparkplug/sql-writing",
-  sqlite: "sql/sqlite-sql-writing",
-  trino: "sql/trino/sql-writing",
-};
-
-const exportName = (type: DatabaseType): string => `${type.toUpperCase()}_SQL_WRITING`;
+/** A pattern as its source and flags, the form a declaration states it in. */
+const patternOf = ({ source, flags }: RegExp) => ({ source, flags });
 
 describe("SQL writing census", () => {
   test("one row per shipped type id", () => {
     expect(Object.keys(SQL_WRITING).sort()).toEqual([...EXTERNAL_DATABASE_TYPES, "libredb"].sort());
-    expect(Object.keys(PLACEMENT).sort()).toEqual(Object.keys(SQL_WRITING).sort());
+    expect(Object.keys(BUNDLED_SQL_WRITING).sort()).toEqual(Object.keys(SQL_WRITING).sort());
   });
 
   test("the registry is frozen", () => {
     expect(Object.isFrozen(SQL_WRITING)).toBe(true);
   });
 
-  for (const type of Object.keys(PLACEMENT) as DatabaseType[]) {
-    test(`${type}: the row is the module at its placement`, async () => {
-      const engineModule = (await import(`@/lib/db/providers/${PLACEMENT[type]}`)) as Record<string, unknown>;
-      expect(engineModule[exportName(type)]).toBe(SQL_WRITING[type]);
+  for (const type of Object.keys(SQL_WRITING) as DatabaseType[]) {
+    test(`${type}: the row is its declaration's SQL writing composed with Studio's SQL writing function table`, () => {
+      expect(SQL_WRITING[type]).toEqual(composeSqlWriting(type, BUNDLED_SQL_WRITING[type], SQL_WRITING_FUNCTIONS));
     });
   }
 
@@ -128,9 +73,9 @@ describe("SQL writing census", () => {
     expect(sqlWritingFor("postgres")).toBe(SQL_WRITING.postgres);
   });
 
-  // Every engine but the two that embed SQLite reads the shared type-name sets, and so does
-  // the no-connection spec, because before the contract a type outside the dialect sets read
-  // those sets.
+  // Every engine but the two that embed SQLite declares the shared type-name words, and the
+  // no-connection spec reads the shared sets, because before the contract a type outside the
+  // dialect sets read those sets.
   const NO_DECLARED_KINDS = new Set(["sqlite", "libsql"]);
   const SHARED_SET_ROWS: readonly (readonly [string, SqlWritingSpec])[] = [
     ...Object.entries(SQL_WRITING).filter(([id]) => !NO_DECLARED_KINDS.has(id)),
@@ -138,10 +83,11 @@ describe("SQL writing census", () => {
   ];
 
   for (const [name, spec] of SHARED_SET_ROWS) {
-    test(`${name}: the inline edit reads the shared type-name sets`, () => {
-      expect(spec.inlineEdit.instantTypeNames).toBe(INSTANT_TYPE_NAMES);
-      expect(spec.inlineEdit.exactDecimalTypeNames).toBe(EXACT_DECIMAL_TYPE_NAMES);
-      expect(spec.inlineEdit.float64TypeNames).toBe(FLOAT64_TYPE_NAMES);
+    test(`${name}: the inline edit reads the shared type-name words`, () => {
+      const { instantTypeNames, exactDecimalTypeNames, float64TypeNames } = spec.inlineEdit;
+      expect([...instantTypeNames]).toEqual([...INSTANT_TYPE_NAMES]);
+      expect([...exactDecimalTypeNames]).toEqual([...EXACT_DECIMAL_TYPE_NAMES]);
+      expect(float64TypeNames === "all" ? "all" : [...float64TypeNames]).toEqual([...FLOAT64_TYPE_NAMES]);
     });
   }
 
@@ -154,13 +100,6 @@ describe("SQL writing census", () => {
       expect(inlineEdit.float64TypeNames).toBe("all");
     },
   );
-
-  test.each(["sqlite", "libsql"] as const)("%s: the inline edit reads the SQLite storage-class facts by name", (id) => {
-    const inlineEdit = SQL_WRITING[id].inlineEdit;
-    expect(inlineEdit.instantTypeNames).toBe(NO_INSTANT_TYPE_NAMES);
-    expect(inlineEdit.exactDecimalTypeNames).toBe(NO_EXACT_DECIMAL_TYPE_NAMES);
-    expect(inlineEdit.float64TypeNames).toBe(EVERY_TYPE_IS_FLOAT64);
-  });
 
   test("only mssql and oracle bind an edit through their own form", () => {
     const bound = Object.entries(SQL_WRITING)
@@ -257,34 +196,28 @@ describe("SQL export census", () => {
   for (const [id, spec] of rows) {
     test(`${id}: the DDL type spellings are today's`, () => {
       const override = TODAY_DDL_OVERRIDES[id];
-      if (override === undefined) {
-        expect(spec.export.ddlTypes).toBe(STANDARD_DDL_TYPES);
-      } else {
-        expect(spec.export.ddlTypes).not.toBe(STANDARD_DDL_TYPES);
-        expect(spec.export.ddlTypes).toEqual({ ...STANDARD_DDL_TYPES, ...override });
-      }
+      expect(spec.export.ddlTypes).toEqual({ ...STANDARD_DDL_TYPES, ...override });
     });
 
     test(`${id}: the bare names standing alone are today's`, () => {
       if (STANDS_ALONE_IDS.includes(id)) {
         expect(spec.export.standsAlone.length).toBeGreaterThan(0);
       } else {
-        expect(spec.export.standsAlone).toBe(NOTHING_STANDS_ALONE);
+        expect(spec.export.standsAlone).toEqual([]);
       }
     });
 
     test(`${id}: the bare spellings are today's`, () => {
       const today = TODAY_BARE_SPELLING[id];
-      if (today === undefined) expect(spec.export.bareSpelling).toBe(NO_BARE_SPELLING);
-      else expect(spec.export.bareSpelling).toEqual(today);
+      expect(spec.export.bareSpelling).toEqual(today ?? {});
     });
 
-    test(`${id}: the type vocabulary is the shared set`, () => {
-      expect(spec.export.typeVocabulary).toBe(STANDARD_TYPE_VOCABULARY);
-      expect(spec.export.typeVocabulary.bareTypeFamily).toBe(BARE_TYPE_FAMILY);
-      expect(spec.export.typeVocabulary.floatType).toBe(FLOAT_TYPE);
-      expect(spec.export.typeVocabulary.exactNumericType).toBe(EXACT_NUMERIC_TYPE);
-      expect(spec.export.typeVocabulary.numericWrapper).toBe(CLICKHOUSE_WRAPPER);
+    test(`${id}: the type vocabulary is the shared words and patterns`, () => {
+      const vocabulary = spec.export.typeVocabulary;
+      expect(vocabulary.bareTypeFamily).toEqual(BARE_TYPE_FAMILY);
+      expect(patternOf(vocabulary.floatType)).toEqual(patternOf(FLOAT_TYPE));
+      expect(patternOf(vocabulary.exactNumericType)).toEqual(patternOf(EXACT_NUMERIC_TYPE));
+      expect(patternOf(vocabulary.numericWrapper)).toEqual(patternOf(CLICKHOUSE_WRAPPER));
     });
 
     test(`${id}: the binary literal is today's form`, () => {
@@ -293,8 +226,7 @@ describe("SQL export census", () => {
 
     test(`${id}: the non-finite literals are today's`, () => {
       const today = TODAY_NON_FINITE[id];
-      if (today === undefined) expect(spec.export.nonFinite).toBe(NULL_NON_FINITE);
-      else expect(spec.export.nonFinite).toEqual(today);
+      expect(spec.export.nonFinite).toEqual(today ?? NULL_NON_FINITE);
     });
   }
 
@@ -330,12 +262,22 @@ describe("SQL export census", () => {
     }
   });
 
-  test.each(["sqlite", "libsql"] as const)("%s: keeps every declared type verbatim, by the shared name", (id) => {
-    expect(SQL_WRITING[id].export.standsAlone).toBe(VERBATIM_DECLARED_TYPES_STAND_ALONE);
-  });
+  test.each(["sqlite", "libsql"] as const)(
+    "%s: keeps every declared type verbatim, the shared bare type names but the four the affinity narrows",
+    (id) => {
+      const narrowed = ["enum", "set", "uniqueidentifier", "rowid"];
+      expect(SQL_WRITING[id].export.standsAlone).toEqual(
+        Object.keys(BARE_TYPE_FAMILY).filter((name) => !narrowed.includes(name)),
+      );
+    },
+  );
 
-  test.each(["postgres", "duckdb"] as const)("%s: writes the quoted non-finite words, by the shared name", (id) => {
-    expect(SQL_WRITING[id].export.nonFinite).toBe(QUOTED_WORD_NON_FINITE);
+  test.each(["postgres", "duckdb"] as const)("%s: writes the quoted non-finite words", (id) => {
+    expect(SQL_WRITING[id].export.nonFinite).toEqual({
+      NaN: "'NaN'",
+      Infinity: "'Infinity'",
+      "-Infinity": "'-Infinity'",
+    });
   });
 
   test("only snowflake writes its INSERT as a SELECT", () => {

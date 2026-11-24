@@ -15,25 +15,27 @@
  * (clause M-77), which src/lib/db/query-dialects.ts, src/lib/editor/dialect-editors.ts and
  * src/lib/db/editor-language/index.ts read, so neither the server routes that read a dialect row nor the execution UI's
  * readers load another's records; and src/lib/db/engine-catalog/sql-text.generated.ts, each engine's SQL text (clause
- * M-78), which only src/lib/db/sql-grammar/index.ts reads, so no other module's readers load its grammar data.
+ * M-78), which only src/lib/db/sql-grammar/index.ts reads, so no other module's readers load its grammar data; and
+ * src/lib/db/engine-catalog/sql-writing.generated.ts, each engine's SQL writing (clause M-79), which only
+ * src/lib/db/sql-writing/index.ts reads, so no grammar reader loads the export's type vocabulary.
  *
- * Admission happens here, once for every module, in `--check`: every `.json` file of src/lib/db/engine-declarations
- * is parsed and admitted through the SDK's `compileManifestValidator`, which checks the SHA-256 of the schema's bytes
+ * Admission happens here, once for every module, in `--check`: every `.json` file of src/lib/db/engine-declarations is
+ * parsed and admitted through the SDK's `compileManifestValidator`, which checks the SHA-256 of the schema's bytes
  * before it compiles them, and each module is held to the projection of the admitted set with `projectCatalog`,
  * `projectConnectionTables`, `projectConnectionForms`, `projectConnectionStrings`, `projectEditorFacts`,
- * `projectQueryEditorFacts` and `projectSqlText` (src/lib/db/engine-catalog/projection.ts). `--write` projects each
- * file's authored members, `AUTHORED_MEMBERS`,
- * without admitting the whole file: the validator holds an authored member to members the declaration generator writes
- * (each host path field to `connection.seedOnly`), so a file whose authored members just changed is refused until that
- * generator has rewritten the rest. The command refuses, by name, an entry that is not a `.json` file, a file that is
- * not JSON, and a declaration whose `id` is not its file name; `--write` a file that lacks an authored member,
- * `--check` a declaration the schema refuses, with the validator's refusal sentences; the projections refuse two
- * declarations of one id, the editor facts a fence alias two declarations state or one equal to another
- * declaration's engine id, and the query editor facts a dialect, a tab type or an editor language two declarations
- * state differently, so either mode exits 1 naming it before any module is written. Studio's runtime reads no
- * declaration file: the browser cannot compile the schema under Studio's content security policy, which allows no
- * `eval`, and the published library and the standalone server carry no schema file, so every reader reads a generated
- * module, which tests/unit/db/engine-catalog.test.ts holds byte for byte to what this command renders.
+ * `projectQueryEditorFacts`, `projectSqlText` and `projectSqlWriting` (src/lib/db/engine-catalog/projection.ts).
+ * `--write` projects each file's authored members, `AUTHORED_MEMBERS`, without admitting the whole file: the validator
+ * holds an authored member to members the declaration generator writes (each host path field to `connection.seedOnly`),
+ * so a file whose authored members just changed is refused until that generator has rewritten the rest. The command
+ * refuses, by name, an entry that is not a `.json` file, a file that is not JSON, and a declaration whose `id` is not
+ * its file name; `--write` a file that lacks an authored member, `--check` a declaration the schema refuses, with the
+ * validator's refusal sentences; the projections refuse two declarations of one id, the editor facts a fence alias two
+ * declarations state or one equal to another declaration's engine id, and the query editor facts a dialect, a tab type
+ * or an editor language two declarations state differently, so either mode exits 1 naming it before any module is
+ * written. Studio's runtime reads no declaration file: the browser cannot compile the schema under Studio's content
+ * security policy, which allows no `eval`, and the published library and the standalone server carry no schema file, so
+ * every reader reads a generated module, which tests/unit/db/engine-catalog.test.ts holds byte for byte to what this
+ * command renders.
  *
  * Each module holds frozen records keyed in ascending id order and typed as records over `DatabaseType`, so a member
  * of the union with no declaration fails the typecheck at the record; the query editor module's records are typed over
@@ -42,7 +44,9 @@
  * does not breaks one element or member per line, and a member whose string does not fit puts the string on the next
  * line. A string is written in the formatter's quotes, a backslash doubled and a printable character outside ASCII as
  * itself, a member's key bare where it is an identifier and in the formatter's quotes where it is not (`graph-cypher`),
- * and a number is an integer written as its decimal text; a control character or another number is refused by name.
+ * and a number is an integer written as its decimal text. A line feed is written as its escape, `\n`, since the
+ * schema's comment lines, an SQL writing note, end each line with one; any other control character, and another
+ * number, is refused by name.
  *
  * `bun run engines:generate` runs `--write` before scripts/generate-engine-declarations.ts and `--check` after it. The
  * declaration generator builds every provider through the factory, which builds only an engine the catalog holds, so
@@ -51,8 +55,9 @@
  * validator's refusal sentences when the authored members leave the declaration inconsistent, such as a placeable field
  * with no placement in the authored dialog, or when they and Studio's tables still disagree, such as a host path field
  * Studio's record lists that the authored seed-only fields no longer hold. A function name Studio holds no function for
- * fails the run earlier, at the declaration generator: it loads the connection form, the connection string index and
- * the SQL grammar, which compose every engine from the modules `--write` just wrote and refuse such a name by name.
+ * fails the run earlier, at the declaration generator: it loads the connection form, the connection string index, the
+ * SQL grammar and the SQL writing, which compose every engine from the modules `--write` just wrote and refuse such a
+ * name by name.
  *
  * Run: bun scripts/generate-engine-catalog.ts --write | --check [--out <directory>]
  * --write writes every module, --check exits 1 naming each module that is missing or is not what the declarations
@@ -71,6 +76,7 @@ import {
   type EngineCatalog,
   type QueryEditorFacts,
   type SqlTexts,
+  type SqlWritings,
   projectCatalog,
   projectConnectionForms,
   projectConnectionStrings,
@@ -78,6 +84,7 @@ import {
   projectEditorFacts,
   projectQueryEditorFacts,
   projectSqlText,
+  projectSqlWriting,
 } from "../src/lib/db/engine-catalog/projection";
 
 /** The declarations' directory in the repository. */
@@ -118,6 +125,12 @@ export const ENGINE_QUERY_EDITOR_MODULE = "src/lib/db/engine-catalog/query-edito
  * The generated SQL text module in the repository: each engine's SQL text, which src/lib/db/sql-grammar/index.ts reads.
  */
 export const ENGINE_SQL_TEXT_MODULE = "src/lib/db/engine-catalog/sql-text.generated.ts";
+
+/**
+ * The generated SQL writing module in the repository: each engine's SQL writing, which src/lib/db/sql-writing/index.ts
+ * reads.
+ */
+export const ENGINE_SQL_WRITING_MODULE = "src/lib/db/engine-catalog/sql-writing.generated.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
 const SCHEMA_FILE = path.join(REPO_ROOT, "packages/provider-sdk/src/manifest/manifest.schema.json");
@@ -169,6 +182,7 @@ export const AUTHORED_MEMBERS = [
   "sqlText.grammar",
   "sqlText.updateTarget",
   "sqlText.completion",
+  "sqlWriting",
 ] as const;
 
 type Connection = EngineDeclaration["connection"];
@@ -244,6 +258,7 @@ export function authoredMembersOf(value: unknown, file: string): AuthoredMembers
       updateTarget: read("sqlText.updateTarget") as SqlText["updateTarget"],
       completion: read("sqlText.completion") as SqlText["completion"],
     },
+    sqlWriting: read("sqlWriting") as EngineDeclaration["sqlWriting"],
   };
   if (`${authored.id}.json` !== file) {
     throw new Error(`${file} names the engine id ${JSON.stringify(authored.id)}, not its file name`);
@@ -334,28 +349,29 @@ export function renderCatalog(catalog: EngineCatalog): string {
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 
 /**
- * A character the module does not write as itself: a control character, below U+0020 and U+007F to U+009F; the line
- * and paragraph separators U+2028 and U+2029; the soft hyphen U+00AD; a zero-width character, U+200B to U+200D and
- * U+FEFF; and a lone surrogate. Each is invisible or breaks a line where it is read, and the formatter may spell its
- * escape otherwise.
+ * A character the module does not write: a control character other than the line feed, below U+0020 and U+007F
+ * to U+009F; the line and paragraph separators U+2028 and U+2029; the soft hyphen U+00AD; a zero-width character,
+ * U+200B to U+200D and U+FEFF; and a lone surrogate. Each is invisible or breaks a line where it is read, and the
+ * formatter may spell its escape otherwise. The line feed, which ends each of the schema's comment lines, is written as
+ * its escape.
  */
-const UNQUOTED_CHARACTER = /[\x00-\x1f\x7f-\x9f\u00ad\u200b-\u200d\u2028\u2029\ufeff]|\p{Cs}/u;
+const UNQUOTED_CHARACTER = /[\x00-\x09\x0b-\x1f\x7f-\x9f\u00ad\u200b-\u200d\u2028\u2029\ufeff]|\p{Cs}/u;
 
 /**
  * `text` as a string literal in the formatter's quotes: double quotes, unless the text holds more double quotes than
- * single ones, as the one projection refusal that quotes `{id}` and `{type}` does. A backslash is written doubled and
- * the quote escaped, and a printable character outside ASCII, such as an ellipsis, is written as itself: spellings
- * the formatter leaves as they are.
+ * single ones, as the one projection refusal that quotes `{id}` and `{type}` does. A backslash is written doubled, a
+ * line feed as `\n` and the quote escaped, and a printable character outside ASCII, such as an ellipsis, is written as
+ * itself: spellings the formatter leaves as they are.
  *
  * @throws {Error} For a text holding a character `UNQUOTED_CHARACTER` names, which no declaration's text holds.
  */
 function quoted(text: string): string {
   if (UNQUOTED_CHARACTER.test(text)) {
     throw new Error(
-      `The connection module cannot write ${JSON.stringify(text)}: it holds a character it does not quote`,
+      `The generated module cannot write ${JSON.stringify(text)}: it holds a character it does not quote`,
     );
   }
-  const escaped = text.replaceAll("\\", "\\\\");
+  const escaped = text.replaceAll("\\", "\\\\").replaceAll("\n", "\\n");
   const doubles = text.split('"').length - 1;
   const singles = text.split("'").length - 1;
   return doubles > singles ? `'${escaped.replaceAll("'", "\\'")}'` : `"${escaped.replaceAll('"', '\\"')}"`;
@@ -377,18 +393,19 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 }
 
 /**
- * `value` on one line: a list or a record frozen, a list `as const` so each element keeps its literal type, and an
- * integer as its decimal text.
+ * `value` on one line of the generated module `module`: a list or a record frozen, a list `as const` so each element
+ * keeps its literal type, and an integer as its decimal text.
  *
- * @throws {Error} For a value that is not a string, an integer, a boolean, null, a list or a record of them, which no
- * member the connection modules read holds.
+ * @throws {Error} Naming `module`, for a value that is not a string, an integer, a boolean, null, a list or a record of
+ * them, which no member the generated modules read holds.
  */
-function flat(value: unknown): string {
+function flat(module: string, value: unknown): string {
   if (typeof value === "string") return quoted(value);
   if (typeof value === "boolean" || value === null || Number.isSafeInteger(value)) return String(value);
-  if (Array.isArray(value)) return `Object.freeze([${value.map(flat).join(", ")}] as const)`;
-  if (!isRecord(value)) throw new Error(`The connection module cannot write ${String(value)}`);
-  const members = Object.entries(value).map(([key, member]) => `${memberKey(key)}: ${flat(member)}`);
+  const write = (member: unknown) => flat(module, member);
+  if (Array.isArray(value)) return `Object.freeze([${value.map(write).join(", ")}] as const)`;
+  if (!isRecord(value)) throw new Error(`The generated module ${module} cannot write ${String(value)}`);
+  const members = Object.entries(value).map(([key, member]) => `${memberKey(key)}: ${write(member)}`);
   return members.length === 0 ? "Object.freeze({})" : `Object.freeze({ ${members.join(", ")} })`;
 }
 
@@ -398,8 +415,8 @@ function flat(value: unknown): string {
  * on the line after its key where the key is `SHORT_KEY_WIDTH` or wider. A string in a list, or after a shorter key,
  * stays on its line whatever its width, as the formatter leaves it.
  */
-function laidOut(value: unknown, indent: number, head: string, tail: string, key?: string): string[] {
-  const line = `${head}${flat(value)}${tail}`;
+function laidOut(module: string, value: unknown, indent: number, head: string, tail: string, key?: string): string[] {
+  const line = `${head}${flat(module, value)}${tail}`;
   if (line.length <= LINE_WIDTH || typeof value === "boolean" || typeof value === "number" || value === null) {
     return [line];
   }
@@ -413,26 +430,28 @@ function laidOut(value: unknown, indent: number, head: string, tail: string, key
   if (Array.isArray(value)) {
     return [
       `${head}Object.freeze([`,
-      ...value.flatMap((element) => laidOut(element, indent + 2, inner, ",")),
+      ...value.flatMap((element) => laidOut(module, element, indent + 2, inner, ",")),
       `${close}] as const)${tail}`,
     ];
   }
   return [
     `${head}Object.freeze({`,
     ...Object.entries(value as Readonly<Record<string, unknown>>).flatMap(([key, member]) =>
-      laidOut(member, indent + 2, `${inner}${memberKey(key)}: `, ",", key),
+      laidOut(module, member, indent + 2, `${inner}${memberKey(key)}: `, ",", key),
     ),
     `${close}})${tail}`,
   ];
 }
 
 /**
- * One exported record of a connection module: its docblock, its declaration up to the record, and what follows it.
+ * One exported record of the generated module `module`: its docblock, its declaration up to the record, and what
+ * follows it.
  *
- * @throws {Error} When the docblock's or the declaration's line is wider than the line width, which the formatter
- * would break.
+ * @throws {Error} Naming `module`, when the docblock's or the declaration's line is wider than the line width, which
+ * the formatter would break.
  */
 function renderedRecord(
+  module: string,
   doc: string,
   declaration: string,
   record: Readonly<Record<string, unknown>>,
@@ -440,10 +459,10 @@ function renderedRecord(
 ): string[] {
   const lines = [`/** ${doc} */`, `${declaration} Object.freeze({`];
   const wide = lines.find((line) => line.length > LINE_WIDTH);
-  if (wide !== undefined) throw new Error(`The connection module's line is too wide: ${wide}`);
+  if (wide !== undefined) throw new Error(`A line of the generated module ${module} is too wide: ${wide}`);
   return [
     ...lines,
-    ...Object.entries(record).flatMap(([id, row]) => laidOut(row, 2, `  ${memberKey(id)}: `, ",", id)),
+    ...Object.entries(record).flatMap(([id, row]) => laidOut(module, row, 2, `  ${memberKey(id)}: `, ",", id)),
     `})${after};`,
   ];
 }
@@ -460,6 +479,7 @@ export function renderConnectionTables(tables: ConnectionTables): string {
     'import type { DatabaseType } from "@/lib/types";',
     "",
     ...renderedRecord(
+      ENGINE_CONNECTION_MODULE,
       "Each engine's connection fields, `connection.fields`, read by `CONNECTION_FIELDS` (CONTRACT.md, M-71).",
       "export const BUNDLED_CONNECTION_FIELDS =",
       tables.fields,
@@ -467,18 +487,21 @@ export function renderConnectionTables(tables: ConnectionTables): string {
     ),
     "",
     ...renderedRecord(
+      ENGINE_CONNECTION_MODULE,
       "Each engine's seed-only fields, `connection.seedOnly`, read by `SEED_ONLY_FIELDS` (CONTRACT.md, M-71).",
       "export const BUNDLED_SEED_ONLY: Readonly<Record<DatabaseType, SeedOnlyFields | null>> =",
       tables.seedOnly,
     ),
     "",
     ...renderedRecord(
+      ENGINE_CONNECTION_MODULE,
       "Each engine's refused fields, `connection.refused`, read by `REFUSED_CONNECTION_FIELDS` (CONTRACT.md, M-71).",
       "export const BUNDLED_REFUSED_FIELDS: Readonly<Record<DatabaseType, RefusedFieldRow>> =",
       tables.refused,
     ),
     "",
     ...renderedRecord(
+      ENGINE_CONNECTION_MODULE,
       "Each engine's credential warnings, `connection.credentialWarnings`, read by `CREDENTIAL_WARNINGS` (M-71).",
       "export const BUNDLED_CREDENTIAL_WARNINGS =",
       tables.credentialWarnings,
@@ -498,18 +521,21 @@ export function renderConnectionFlags(tables: ConnectionTables): string {
     'import type { DatabaseType } from "@/lib/types";',
     "",
     ...renderedRecord(
+      ENGINE_CONNECTION_FLAGS_MODULE,
       "Whether each engine's provider is handed trust material, `connection.readsTrustMaterial` (M-71).",
       "export const BUNDLED_READS_TRUST_MATERIAL: Readonly<Record<DatabaseType, boolean>> =",
       tables.readsTrustMaterial,
     ),
     "",
     ...renderedRecord(
+      ENGINE_CONNECTION_FLAGS_MODULE,
       "Whether each engine's provider opens a connection string, `connection.connectionString.accepted` (M-71).",
       "export const BUNDLED_CONNECTION_STRING_ACCEPTED: Readonly<Record<DatabaseType, boolean>> =",
       tables.connectionStringAccepted,
     ),
     "",
     ...renderedRecord(
+      ENGINE_CONNECTION_FLAGS_MODULE,
       "Whether each engine's dialog offers a URI mode, `connection.connectionString.dialogOffersUri` (M-71).",
       "export const BUNDLED_DIALOG_OFFERS_URI: Readonly<Record<DatabaseType, boolean>> =",
       tables.dialogOffersUri,
@@ -519,10 +545,11 @@ export function renderConnectionFlags(tables: ConnectionTables): string {
 }
 
 /**
- * The text of a generated module holding one frozen record of projected entries: a header, the type-id union's and
- * `entryType`'s type imports, and the record under `doc` and `declaration`, typed over the union.
+ * The text of the generated module `module`, holding one frozen record of projected entries: a header, the type-id
+ * union's and `entryType`'s type imports, and the record under `doc` and `declaration`, typed over the union.
  */
 function renderedEntryModule(
+  module: string,
   entryType: string,
   doc: string,
   declaration: string,
@@ -533,7 +560,7 @@ function renderedEntryModule(
     'import type { DatabaseType } from "@/lib/types";',
     `import type { ${entryType} } from "./projection";`,
     "",
-    ...renderedRecord(doc, `${declaration}: Readonly<Record<DatabaseType, ${entryType}>> =`, record),
+    ...renderedRecord(module, doc, `${declaration}: Readonly<Record<DatabaseType, ${entryType}>> =`, record),
     "",
   ].join("\n");
 }
@@ -544,6 +571,7 @@ function renderedEntryModule(
  */
 export function renderConnectionForms(forms: ConnectionForms): string {
   return renderedEntryModule(
+    ENGINE_CONNECTION_FORM_MODULE,
     "ConnectionFormEntry",
     "Each engine's connection form, its display name and connection dialog members, read by `CONNECTION_FORM` (M-72).",
     "export const BUNDLED_CONNECTION_FORMS",
@@ -557,6 +585,7 @@ export function renderConnectionForms(forms: ConnectionForms): string {
  */
 export function renderConnectionStrings(strings: ConnectionStrings): string {
   return renderedEntryModule(
+    ENGINE_CONNECTION_STRING_MODULE,
     "ConnectionStringEntry",
     "Each engine's connection string, its scheme and the functions it names, read by `CONNECTION_STRING` (M-74).",
     "export const BUNDLED_CONNECTION_STRINGS",
@@ -576,12 +605,14 @@ export function renderEditorFacts(facts: EditorFacts): string {
     'import type { ExecutionUiEntry } from "./projection";',
     "",
     ...renderedRecord(
+      ENGINE_EDITOR_MODULE,
       "Each engine's execution UI, `editor.commitKeyword` and `editor.consentDeadline`, read by `EXECUTION_UI` (M-75).",
       "export const BUNDLED_EXECUTION_UI: Readonly<Record<DatabaseType, ExecutionUiEntry>> =",
       facts.executionUi,
     ),
     "",
     ...renderedRecord(
+      ENGINE_EDITOR_MODULE,
       "Each fence alias, `editor.fenceAliases`, mapped to its engine, read by `ALIAS_ENGINES` (M-75).",
       "export const BUNDLED_FENCE_ALIASES: Readonly<Record<string, DatabaseType>> =",
       facts.fenceAliases,
@@ -603,18 +634,21 @@ export function renderQueryEditorFacts(facts: QueryEditorFacts): string {
     'import type { DialectEditorEntry, EditorLanguageEntry, QueryDialectEntry } from "./projection";',
     "",
     ...renderedRecord(
+      ENGINE_QUERY_EDITOR_MODULE,
       "Each query dialect's row, `editor.dialect`, read by `QUERY_DIALECTS` (CONTRACT.md, M-77).",
       "export const BUNDLED_QUERY_DIALECTS: Readonly<Record<QueryDialect, QueryDialectEntry>> =",
       facts.queryDialects,
     ),
     "",
     ...renderedRecord(
+      ENGINE_QUERY_EDITOR_MODULE,
       "Each tab type's editor language, `editor.language.monacoId`, read by `DIALECT_EDITORS` (CONTRACT.md, M-77).",
       'export const BUNDLED_DIALECT_EDITORS: Readonly<Record<QueryTab["type"], DialectEditorEntry>> =',
       facts.dialectEditors,
     ),
     "",
     ...renderedRecord(
+      ENGINE_QUERY_EDITOR_MODULE,
       "Each editor language's accent and console, `editor.language`, read by `EDITOR_LANGUAGES` (CONTRACT.md, M-77).",
       "export const BUNDLED_EDITOR_LANGUAGES: Readonly<Record<MonacoLanguageId, EditorLanguageEntry>> =",
       facts.editorLanguages,
@@ -629,10 +663,25 @@ export function renderQueryEditorFacts(facts: QueryEditorFacts): string {
  */
 export function renderSqlText(texts: SqlTexts): string {
   return renderedEntryModule(
+    ENGINE_SQL_TEXT_MODULE,
     "SqlTextEntry",
     "Each engine's SQL text but its redaction, a claim, read by `SQL_GRAMMAR` (docs/providers/CONTRACT.md, M-78).",
     "export const BUNDLED_SQL_TEXT",
     texts,
+  );
+}
+
+/**
+ * The text of the generated SQL writing module for `writings`: a header, type imports only, and one frozen record, read
+ * by src/lib/db/sql-writing/index.ts.
+ */
+export function renderSqlWriting(writings: SqlWritings): string {
+  return renderedEntryModule(
+    ENGINE_SQL_WRITING_MODULE,
+    "SqlWritingEntry",
+    "Each engine's SQL writing, its data and the names of its functions, read by `SQL_WRITING` (CONTRACT.md, M-79).",
+    "export const BUNDLED_SQL_WRITING",
+    writings,
   );
 }
 
@@ -685,6 +734,7 @@ function main(argv: readonly string[]): number {
       text: renderQueryEditorFacts(projectQueryEditorFacts(declarations)),
     },
     { file: fileOf(ENGINE_SQL_TEXT_MODULE), text: renderSqlText(projectSqlText(declarations)) },
+    { file: fileOf(ENGINE_SQL_WRITING_MODULE), text: renderSqlWriting(projectSqlWriting(declarations)) },
   ];
 
   if (mode === "--check") {

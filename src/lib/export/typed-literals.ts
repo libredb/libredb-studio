@@ -22,8 +22,9 @@ import type { ScalarLiteral } from "@/lib/db/sql-writing/types";
  * has no form for, answers `undefined` and is written by the generic writer exactly as
  * before.
  *
- * Each engine's writer lives beside its provider under `src/lib/db/providers/sql/`, and
- * its `SqlWritingSpec` names it as `export.typedLiteral`.
+ * Each engine's writer lives beside its provider under `src/lib/db/providers/sql/`, its
+ * declaration names it as `export.typedLiteral`, and Studio's SQL writing function table
+ * binds that name to it.
  */
 
 // The two names the tests and `result-export.ts` read from here, now declared in the
