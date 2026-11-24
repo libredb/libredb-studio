@@ -51,7 +51,7 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/db/base-provider.ts` | core only | The base class of the legacy provider bridge reads core registries (the engine facets and the driver error rows); a native provider is declared through the SDK's contract instead. |
 | `src/lib/db/connection-fingerprint.ts` | host service: connection fingerprint | Which fields name the server a plan was made against is a host decision the apply step checks, so the host computes the fingerprint and passes it. |
 | `src/lib/db/connection-string/shared.ts` | SDK /manifest | Pure parsing helpers a connection string row composes. |
-| `src/lib/db/connection-string/types.ts` | SDK /manifest | The connection string row contract. |
+| `src/lib/db/connection-string/types.ts` | SDK /manifest | The types of the connection string functions a declaration names, and what a paste parses to. |
 | `src/lib/db/console/bounds.ts` | SDK /console | Pure UTF-8 length arithmetic, the unit every console bound is stated in. |
 | `src/lib/db/console/completion.ts` | SDK /console | Pure code of the shared console layer, the same for every console provider. |
 | `src/lib/db/console/dialect.ts` | SDK /console | A console dialect as data, the contract a console provider fills in. |
@@ -233,9 +233,9 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 | `src/lib/agent/languages/sparkplugread/definitions.ts` | 4 agent fact and reader modules | PR 8 sparkplugread | the sparkplugread family, `src/lib/languages/sparkplugread/` |
 | `src/lib/agent/languages/sparkplugread/mcp.ts` | 1 agent fact and reader module | PR 8 sparkplugread | the sparkplugread family, `src/lib/languages/sparkplugread/` |
 | `src/lib/agent/languages/sparkplugread/server.ts` | 2 agent fact and reader modules | PR 8 sparkplugread | the sparkplugread family, `src/lib/languages/sparkplugread/` |
-| `src/lib/connection-string-parser.ts` | 2 paste readers, re-exported (databend, snowflake) | PR 11 connection | the manifest's connection section |
-| `src/lib/db/connection-form.ts` | 1 snowflake account host reader, bound by Studio's form function table to the names the declaration gives | PR 11 connection | the manifest's connection section |
-| `src/lib/db/connection-string/index.ts` | 15 connection string function modules, bound by Studio's connection string function table to the names the declarations give | PR 11 connection | manifest rows: the PR 9 schema, collected by the PR 11 projection |
+| `src/lib/connection-string-parser.ts` | 2 paste reader modules, their sentences re-exported (databend, snowflake) | databend native PR, snowflake native PR | each engine's provider package, which decides where its browser-side functions run (M-32) |
+| `src/lib/db/connection-form.ts` | 1 snowflake account host reader, bound by Studio's form function table to the names the declaration gives | snowflake native PR | each engine's provider package, which decides where its browser-side functions run (M-32) |
+| `src/lib/db/connection-string/index.ts` | 15 connection string function modules, bound by Studio's connection string function table to the names the declarations give | clickhouse native PR, couchbase native PR, databend native PR, db2 native PR, etcd native PR, libsql native PR, mongodb native PR, mssql native PR, mysql native PR, opcua native PR, oracle native PR, postgres native PR, redis native PR, snowflake native PR, spark native PR | each engine's provider package, which decides where its browser-side functions run (M-32) |
 | `src/lib/db/destructive-commands.ts` | 5 confirmation vocabulary rows | PR 8 etcdctl, PR 8 fsquery, PR 8 milvusrpc, PR 8 qdrantapi, PR 8 s3api | each row into its statement language's core family module |
 | `src/lib/db/driver-errors/index.ts` | 7 driver error rows | PR 11 policy | manifest rows: the PR 9 schema, collected by the PR 11 projection |
 | `src/lib/db/editor-language/index.ts` | 15 editor language rows | PR 11 editor and SQL text | manifest rows: the PR 9 schema, collected by the PR 11 projection |
@@ -267,7 +267,7 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 | `src/lib/db/sql-grammar/index.ts` | 43 SQL grammar rows | PR 11 editor and SQL text | manifest rows: the PR 9 schema, collected by the PR 11 projection |
 | `src/lib/db/sql-writing/index.ts` | 43 SQL writing rows | PR 11 editor and SQL text | manifest rows: the PR 9 schema, collected by the PR 11 projection |
 | `src/lib/explain/firestore-explain.ts` | 1 firestore console parser | PR 8 fsquery | the fsquery family, `src/lib/languages/fsquery/` |
-| `src/lib/kubernetes/kubeconfig-import.ts` | 1 kubernetes limits module | PR 11 connection | the manifest's connection section |
+| `src/lib/kubernetes/kubeconfig-import.ts` | 1 kubernetes limits module | kubernetes native PR | moves with the kubernetes provider package as its connection importer |
 
 ## Slices of PR 8
 
@@ -288,6 +288,7 @@ No core file gains an import into a provider directory.
 `tests/unit/lib/db/provider-imports.test.ts` holds the tree to exactly the pairs of its allowlist: a new pair fails by name, and so does a listed pair the source no longer holds.
 Each slice deletes its pairs from the allowlist and its rows from the inward table in the same PR, so both only shrink.
 The one growth allowed before PR 11 and PR 12 land is a new type-id's row modules in the ten collector entries, the nine registry indexes and `src/lib/db/factory.ts`, added to the allowlist and counted here in the PR that adds the type-id.
+The connection string index takes a module only for a new engine whose declaration names a connection string function.
 
 A provider that imports a core module the outward table does not list fails the same test until the module gets a row and a destination here.
 The same test holds the outward rows whose destination is SDK /sql: the value imports of each such module reach no provider module, so the readers it names can move into the SDK without bringing a provider row with them.
