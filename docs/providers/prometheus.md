@@ -225,7 +225,7 @@ A third member is not neutral by default: a reader written `=== "json"` sends it
 Every reader was classified when the union widened (#1085, section 3.2): the editor has a `promql` tab type and a Monarch tokenizer (`src/lib/db/providers/timeseries/prometheus/editor-syntax.ts`), the two generators have a PromQL arm built through `promql.ts`, and the profile route refuses a language it cannot profile.
 On a metric row both row menus withhold Profile and Code Generator, through `offersColumnProfiling` and `offersCodeGeneration`, which offer neither for `promql`, and Generate Test Data, because no kind declares `acceptsRowWrites`; the tree's menu for a metric keeps Generate Query and View Source.
 Both menus also withhold Generate Count Query, through `offersCountQuery` (#702): PromQL's `count()` counts series at an instant, which is not the row count that action promises.
-A plan-mode draft is fenced with the canonical type-id, `prometheus`, which `ENGINE_FENCE_TAGS` accepts; a block tagged `promql` is accepted too, and that alias names the `prometheus` type-id (`ALIAS_ENGINES` in `src/lib/sql/fence-tags.ts`), because every PromQL server this product reaches, VictoriaMetrics included, connects through it.
+A plan-mode draft is fenced with the canonical type-id, `prometheus`, a fence tag naming this engine through the catalog; a block tagged `promql` is accepted too, and that alias names the `prometheus` type-id (its declaration's `editor.fenceAliases`, read as `ALIAS_ENGINES` in `src/lib/sql/fence-tags.ts`), because every PromQL server this product reaches, VictoriaMetrics included, connects through it.
 So a `promql` block is not the statement of a plan run on another engine, the rule a `mysql` block on a PostgreSQL run already follows.
 Widening a published union breaks an external consumer's exhaustive switch over it, and that ships with a release note rather than a compatibility layer.
 
@@ -393,7 +393,10 @@ The host field cannot carry the prefix instead: a host holding `/` is refused be
 ### Execution UI
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `prometheus` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
-Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/timeseries/prometheus/execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`prometheus.json`](../../src/lib/db/engine-declarations/prometheus.json)), projected into the generated execution UI record.
+The fence tags that name it are its id, `prometheus`, and its declaration's `editor.fenceAliases`, `promql`.
+A block tagged `prometheus` holds a PromQL expression the editor sends unchanged to `/api/v1/query` (#1085), and it is the tag the planning contract asks a model for.
+`promql` spells the language and still names this engine, since every PromQL server this product reaches, VictoriaMetrics included, connects through `prometheus`: without it a `promql` block contradicted no connection and was recorded as a PostgreSQL run's statement, and a second type-id that runs PromQL is the moment to revisit it.
 What a tree click and Generate Query write is `PROMQL_GENERATORS`, the `promql` row of `LANGUAGE_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/timeseries/prometheus/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 Its editor language, `promql`, is the row in `EDITOR_LANGUAGES` declared in [`editor-language.ts`](../../src/lib/db/providers/timeseries/prometheus/editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
 

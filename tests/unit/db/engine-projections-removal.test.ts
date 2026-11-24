@@ -1,6 +1,7 @@
 /**
  * Removing an engine's declaration from the admitted set gives exactly what a fresh build from the remaining set gives,
- * in every projection Studio makes of the declarations (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72 and M-74).
+ * in every projection Studio makes of the declarations (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72, M-74 and
+ * M-75).
  *
  * A fixture engine, `acmefoo` (tests/helpers/fixture-engine-declaration.ts), is added to the committed declarations and
  * removed again; each projection built without it must equal a fresh build from the committed set and the committed
@@ -18,11 +19,13 @@ import {
   ENGINE_CONNECTION_FORM_MODULE,
   ENGINE_CONNECTION_MODULE,
   ENGINE_CONNECTION_STRING_MODULE,
+  ENGINE_EDITOR_MODULE,
   renderCatalog,
   renderConnectionFlags,
   renderConnectionForms,
   renderConnectionStrings,
   renderConnectionTables,
+  renderEditorFacts,
 } from "../../../scripts/generate-engine-catalog";
 import { defaultConnection, savedConnectionNotice, shownConnection } from "@/lib/connection-availability";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
@@ -36,6 +39,7 @@ import {
   projectConnectionForms,
   projectConnectionStrings,
   projectConnectionTables,
+  projectEditorFacts,
 } from "@/lib/db/engine-catalog/projection";
 import { unknownTypeSentence } from "@/lib/db/type-id";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
@@ -191,6 +195,39 @@ describe("each projection of the admitted declarations, built with and without a
       const strings = projectConnectionStrings(order);
       expect(strings).toEqual(built);
       expect(Object.keys(strings)).toEqual(Object.keys(built));
+    }
+  });
+
+  test("the execution UI and the fence aliases built with the fixture engine hold its entries, and with it removed are exactly a fresh build from the remaining set and the committed module", () => {
+    const withFixture = projectEditorFacts([...ADMITTED, FIXTURE]);
+    expect(withFixture.executionUi.acmefoo).toEqual({
+      commitKeyword: "APPLY",
+      consentDeadline: FIXTURE.editor.consentDeadline,
+    });
+    expect(withFixture.fenceAliases.acmefooql).toBe("acmefoo");
+    expect(Object.keys(withFixture.executionUi).length).toBe(ADMITTED.length + 1);
+    // Its entries are ones no shipped engine has.
+    const shipped = projectEditorFacts(ADMITTED);
+    expect(Object.values(shipped.executionUi)).not.toContainEqual(withFixture.executionUi.acmefoo);
+    expect(Object.keys(withFixture.fenceAliases)).toEqual(["acmefooql", ...Object.keys(shipped.fenceAliases)]);
+
+    const removed = projectEditorFacts([...ADMITTED, FIXTURE].filter((d) => d.id !== FIXTURE.id));
+    expect(removed).toEqual(shipped);
+    expect(Object.hasOwn(removed.executionUi, FIXTURE.id)).toBe(false);
+    expect(Object.values(removed.fenceAliases)).not.toContain(FIXTURE.id);
+    expect(Object.keys(removed.executionUi)).toEqual([...SHIPPED_DATABASE_TYPES]);
+    expect(renderEditorFacts(removed)).toBe(readFileSync(path.join(ROOT, ENGINE_EDITOR_MODULE), "utf8"));
+  });
+
+  test("the execution UI and the fence aliases are the same whatever order the declarations are admitted in", () => {
+    const set = [...ADMITTED, FIXTURE];
+    const built = projectEditorFacts(set);
+
+    for (const order of [[...set].reverse(), shuffled(set)]) {
+      const facts = projectEditorFacts(order);
+      expect(facts).toEqual(built);
+      expect(Object.keys(facts.executionUi)).toEqual(Object.keys(built.executionUi));
+      expect(Object.keys(facts.fenceAliases)).toEqual(Object.keys(built.fenceAliases));
     }
   });
 

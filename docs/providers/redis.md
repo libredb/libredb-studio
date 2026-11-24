@@ -652,7 +652,9 @@ It runs no seed load check.
 An open Redis transaction is a `MULTI`, and the keyword that keeps it is `EXEC`, so the rolled-back notice names `EXEC` where every other engine's names `COMMIT`.
 D74 gave the single-statement route the same `finally` as the script route, and `redis` implements the surface, so the notice reaches a reader whose open transaction is a `MULTI`.
 Naming `COMMIT` would tell them to type a command their engine does not have.
-Its row in `EXECUTION_UI` is declared in [`redis-execution-ui.ts`](../../src/lib/db/providers/keyvalue/redis-execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`redis.json`](../../src/lib/db/engine-declarations/redis.json)), projected into the generated execution UI record.
+The fence tags that name it are its id, `redis`, and its declaration's `editor.fenceAliases`, `rediscli`.
+`rediscli` names the agent's Redis command language, which only `redis` runs.
 What a tree click and Generate Query write is `REDIS_GENERATORS`, the `redis` row of `DIALECT_GENERATORS`, declared in [`redis-generators.ts`](../../src/lib/db/providers/keyvalue/redis-generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 Its editor language, `redis`, is the row in `EDITOR_LANGUAGES` declared in [`redis-editor-language.ts`](../../src/lib/db/providers/keyvalue/redis-editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
 The agent's consent card has no consent deadline chip or sentence for it.

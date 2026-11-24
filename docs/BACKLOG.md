@@ -9494,14 +9494,15 @@ Not fixed in #1085: each remedy moves something else, because a per-kind share o
 
 `cql` is in `QUERY_FENCE_ALIASES` and not in `ALIAS_ENGINES` (`src/lib/sql/fence-tags.ts`), so `fenceTagEngine("cql")` is `null`, and `fencedBlock` in `src/lib/agent/plan-draft.ts` reads a tag that names no engine as one that cannot contradict the connection.
 So on a PostgreSQL plan run a CQL block written before the `postgres` block is recorded as `plan-statement-drafted`, stamped `postgres` and judged by the SQL guard, and a closing whose only block is tagged `cql` is read as the run's statement, so the run is not asked for one.
-The reason the comment at the `cassandra` entry of `ENGINE_FENCE_TAGS` gives, that ScyllaDB speaks CQL too, does not hold for this record: an entry names the type-id a block's text runs on, and ScyllaDB connects through `cassandra` (`src/lib/db/compatibility.ts`).
+The reason the `Execution UI` subsection of [`cassandra.md`](providers/cassandra.md) gives, that ScyllaDB speaks CQL too, does not hold for this record: an entry names the type-id a block's text runs on, and ScyllaDB connects through `cassandra` (`src/lib/db/compatibility.ts`).
 `promql` had the same flaw, and #1085 fixed it by naming `prometheus`.
 Reproduced 2026-09-23 on `main` and on the #1085 branch: `readPlanStatement` over a `cql` block then a `postgres` block, on dialect `postgres`, returns the CQL, and over a `cql` block alone returns it as the statement.
 
 Found 2026-09-23 in the #1085 review.
 Not fixed in #1085: the alias predates it, and that PR changes no existing arm's behaviour (#1085, section 3.5).
 
-**Done when:** `fenceTagEngine("cql")` is `"cassandra"`, a `cql` block before a `postgres` block on a PostgreSQL plan run records the PostgreSQL statement, a `cql`-only closing there records none and is asked for one, a `cql` block on a Cassandra run is still the deliverable, the `cql` test in `tests/unit/lib/sql/fence-tags.test.ts` and the comment at the `cassandra` entry state the type-id rule, and the `KNOWN_GAPS` entry of that file's alias-registry test is deleted.
+**Done when:** the provider manifest schema (`packages/provider-sdk/src/manifest/manifest.schema.json`) no longer lists `cql` as a `genericFenceTag`, which the validator refuses as an alias, so Cassandra's declaration (`src/lib/db/engine-declarations/cassandra.json`) claims `cql` in its `editor.fenceAliases` and `bun run engines:generate` projects it.
+Then `fenceTagEngine("cql")` is `"cassandra"`, a `cql` block before a `postgres` block on a PostgreSQL plan run records the PostgreSQL statement, a `cql`-only closing there records none and is asked for one, a `cql` block on a Cassandra run is still the deliverable, the `cql` test in `tests/unit/lib/sql/fence-tags.test.ts` and the `Execution UI` subsection of `cassandra.md` state the type-id rule, and the `KNOWN_GAPS` entry of that file's alias-registry test is deleted.
 
 ### B87. A run's inventory count names every kind with the engine's own noun
 

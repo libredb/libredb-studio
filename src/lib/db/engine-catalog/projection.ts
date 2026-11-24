@@ -1,6 +1,7 @@
 /**
- * Studio's engine catalog, its data-only connection tables, its connection forms and its connection strings as
- * projections of a set of admitted engine declarations (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72 and M-74).
+ * Studio's engine catalog, its data-only connection tables, its connection forms, its connection strings, and each
+ * engine's execution UI and fence aliases as projections of a set of admitted engine declarations
+ * (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72, M-74 and M-75).
  *
  * The catalog answers which engines Studio ships, whether each is an engine the user already runs (`external`) or the
  * store Studio carries with it (`embedded`), and how long the host waits for an open of each: one entry per declaration,
@@ -21,6 +22,13 @@
  * the `scheme`, `urlTls`, `paste` and `seedCheck` of its `connection.connectionString`, each as the declaration states
  * it: a function as its name, which src/lib/db/connection-string/index.ts binds to Studio's own function.
  *
+ * The editor facts answer, per engine, its execution UI, the keyword the rolled-back notice names and the consent card's
+ * deadline (`editor.commitKeyword` and `editor.consentDeadline`), and, per alias, the engine each of its
+ * `editor.fenceAliases` names. Every alias names one engine: an alias two declarations state, and an alias equal to
+ * another declaration's engine id, are refused by name before any entry is built, the rules across a set of
+ * declarations that admitting each declaration on its own cannot see. An alias equal to its own declaration's id, and
+ * an alias that is a generic fence tag, are refused by the SDK's validator when the declaration is admitted.
+ *
  * Every member a projection reads is one a declaration authors (scripts/generate-engine-catalog.ts,
  * `AUTHORED_MEMBERS`), so none reads anything the declaration generator writes, and none of them is a claim. Each
  * takes `AuthoredDeclaration`, those members alone: an admitted `EngineDeclaration` is one, and so are the authored
@@ -33,13 +41,15 @@
  *
  * `scripts/generate-engine-catalog.ts` projects the committed declarations' authored members here and renders the
  * results into `catalog.generated.ts`, `connection.generated.ts`, `connection-flags.generated.ts`,
- * `connection-form.generated.ts` and `connection-string.generated.ts`, the modules Studio's readers read, and holds
+ * `connection-form.generated.ts`, `connection-string.generated.ts` and `editor.generated.ts`, the modules Studio's
+ * readers read, and holds
  * each module to the projection of the set it admits through the SDK's validator. A loader that admits a provider
  * package at run time projects its set through these same functions.
  */
 import type {
   ConnectBudget,
   CredentialWarning,
+  Editor,
   EngineDeclaration,
   EngineLocation,
   FieldName,
@@ -76,6 +86,11 @@ export interface AuthoredDeclaration {
     readonly hostIdentity: Connection["hostIdentity"];
     readonly import: Connection["import"];
     readonly connectBudgetMs: Connection["connectBudgetMs"];
+  };
+  readonly editor: {
+    readonly commitKeyword: Editor["commitKeyword"];
+    readonly consentDeadline: Editor["consentDeadline"];
+    readonly fenceAliases: Editor["fenceAliases"];
   };
 }
 
@@ -150,6 +165,22 @@ export interface ConnectionStringEntry {
 
 /** The connection strings: one frozen entry per engine id, keyed in ascending code-unit order of the ids. */
 export type ConnectionStrings = Readonly<Record<string, ConnectionStringEntry>>;
+
+/** One engine's execution UI: the keyword the rolled-back notice names, and the consent card's deadline or null. */
+export interface ExecutionUiEntry {
+  readonly commitKeyword: Editor["commitKeyword"];
+  readonly consentDeadline: Editor["consentDeadline"];
+}
+
+/**
+ * The editor facts: one frozen execution UI entry per engine id, keyed in ascending code-unit order of the ids, and one
+ * frozen record mapping each fence alias to the engine id that declares it, keyed in ascending order of those ids and
+ * then in each declaration's own order of its aliases.
+ */
+export interface EditorFacts {
+  readonly executionUi: Readonly<Record<string, ExecutionUiEntry>>;
+  readonly fenceAliases: Readonly<Record<string, string>>;
+}
 
 /**
  * `declarations` in ascending code-unit order of their ids.
@@ -296,4 +327,53 @@ export function projectConnectionStrings(declarations: readonly AuthoredDeclarat
       seedCheck: connectionString.seedCheck,
     }),
   );
+}
+
+/**
+ * Each fence alias of `ordered` mapped to the engine id that declares it, in `ordered`'s order and then each
+ * declaration's own order of its aliases.
+ *
+ * @throws {Error} When an alias is another declaration's engine id, naming the alias and its engine; when one
+ * declaration states one alias twice, naming the alias and its engine; and when two declarations state one alias,
+ * naming the alias and both engines in ascending id order.
+ */
+function fenceAliasesOf(ordered: readonly AuthoredDeclaration[]): Readonly<Record<string, string>> {
+  const ids = new Set(ordered.map(({ id }) => id));
+  const engines = new Map<string, string>();
+  for (const { id, editor } of ordered) {
+    for (const alias of editor.fenceAliases) {
+      if (alias !== id && ids.has(alias)) {
+        throw new Error(
+          `The fence alias ${JSON.stringify(alias)} of ${id} is the engine id of another admitted declaration.`,
+        );
+      }
+      const earlier = engines.get(alias);
+      if (earlier === id) {
+        throw new Error(`The fence alias ${JSON.stringify(alias)} of ${id} is stated twice by its declaration.`);
+      }
+      if (earlier !== undefined) {
+        throw new Error(`The fence alias ${JSON.stringify(alias)} is declared by both ${earlier} and ${id}.`);
+      }
+      engines.set(alias, id);
+    }
+  }
+  return Object.freeze(Object.fromEntries(engines));
+}
+
+/**
+ * The editor facts of `declarations`, each read from the members every declaration authors.
+ *
+ * @throws {Error} When two declarations state the same `id`, naming it; when a fence alias is another declaration's
+ * engine id, naming the alias and its engine; when one declaration states one fence alias twice, naming the alias and
+ * its engine; and when two declarations state one fence alias, naming the alias and both engines.
+ */
+export function projectEditorFacts(declarations: readonly AuthoredDeclaration[]): EditorFacts {
+  const ordered = inIdOrder(declarations);
+  const fenceAliases = fenceAliasesOf(ordered);
+  return Object.freeze({
+    executionUi: recordOf(ordered, ({ editor }) =>
+      frozenCopy<ExecutionUiEntry>({ commitKeyword: editor.commitKeyword, consentDeadline: editor.consentDeadline }),
+    ),
+    fenceAliases,
+  });
 }

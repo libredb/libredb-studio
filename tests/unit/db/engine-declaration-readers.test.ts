@@ -1,7 +1,7 @@
 /**
  * Only the modules `DECLARATION_READERS` lists read an engine declaration or a projection of the declarations, none of
  * them reads a claim, no member a declaration authors is a claim, and every claim record Studio keeps in core is
- * written by hand (docs/providers/CONTRACT.md, clauses M-52, M-54, M-70, M-71, M-72 and M-74).
+ * written by hand (docs/providers/CONTRACT.md, clauses M-52, M-54, M-70, M-71, M-72, M-74 and M-75).
  *
  * A declaration's `policy` and `mcp` members, and the members of its other segments M-53 names, are claims: requests
  * Studio grants only through its review record of each claim, the table of Studio's source every gate reads. A module
@@ -89,6 +89,12 @@ const CONNECTION_STRING_MEMBERS = [
   "connection.connectionString.seedCheck",
 ] as const;
 
+/** The editor members each engine's execution UI is projected from, M-75: authored members, M-15. */
+const EXECUTION_UI_MEMBERS = ["editor.commitKeyword", "editor.consentDeadline"] as const;
+
+/** The editor member the fence aliases are projected from, M-75: an authored member, M-15. */
+const FENCE_ALIAS_MEMBERS = ["editor.fenceAliases"] as const;
+
 /** Every module of Studio's source that reads a declaration or a projection of the declarations. */
 const DECLARATION_READERS: readonly DeclarationReader[] = [
   {
@@ -156,6 +162,11 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
     reason: "the other data-only connection tables, generated from the admitted declarations",
   },
   {
+    path: "src/lib/db/engine-catalog/editor.generated.ts",
+    members: [...EXECUTION_UI_MEMBERS, ...FENCE_ALIAS_MEMBERS],
+    reason: "each engine's execution UI and the fence aliases, generated from the admitted declarations",
+  },
+  {
     path: "src/lib/db/engine-catalog/projection.ts",
     members: [
       ...CATALOG_MEMBERS,
@@ -163,9 +174,21 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
       ...CONNECTION_FLAG_MEMBERS,
       ...CONNECTION_FORM_MEMBERS,
       ...CONNECTION_STRING_MEMBERS,
+      ...EXECUTION_UI_MEMBERS,
+      ...FENCE_ALIAS_MEMBERS,
     ],
     reason:
-      "projects the admitted declarations into the engine catalog, the connection tables, the connection forms and the connection strings",
+      "projects the admitted declarations into the engine catalog, the connection tables, the connection forms, the connection strings, and the execution UI and fence aliases",
+  },
+  {
+    path: "src/lib/db/execution-ui/index.ts",
+    members: EXECUTION_UI_MEMBERS,
+    reason: "each engine's execution UI, read from the generated execution UI record",
+  },
+  {
+    path: "src/lib/sql/fence-tags.ts",
+    members: FENCE_ALIAS_MEMBERS,
+    reason: "the fence aliases that name each engine, read from the generated fence alias record",
   },
 ];
 

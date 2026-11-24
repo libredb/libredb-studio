@@ -7,19 +7,19 @@
  * A declaration's authored members, `AUTHORED_MEMBERS` (`id`, `displayName`, `location`, and of `connection` its
  * `fields`, `defaults`, `seedOnly`, `refused`, of its `connectionString` the `accepted`, `dialogOffersUri`, `scheme`,
  * `urlTls`, `paste` and `seedCheck`, and its `tls`, `readsTrustMaterial`, `dialog`, `hostUriSchemes`,
- * `credentialWarnings`, `fieldRules`, `hostHint`, `hostIdentity`, `import` and `connectBudgetMs`), are written in the
- * declaration itself: this script reads them from
- * the committed file of the engine in src/lib/db/engine-declarations, whatever directory `--out` names, with
+ * `credentialWarnings`, `fieldRules`, `hostHint`, `hostIdentity`, `import` and `connectBudgetMs`, and of `editor` its
+ * `commitKeyword`, `consentDeadline` and `fenceAliases`), are written in the declaration itself: this script reads them
+ * from the committed file of the engine in src/lib/db/engine-declarations, whatever directory `--out` names, with
  * `authoredMembersOf` (scripts/generate-engine-catalog.ts), which refuses by name a file that lacks one or whose `id`
  * is not its file name, and writes them back unchanged. Every other member is built from the tables. The engine
- * catalog, the connection tables, the connection forms and the connection strings (scripts/generate-engine-catalog.ts,
- * clauses M-70, M-71, M-72 and M-74) project the authored members, and `bun run engines:generate` runs that command's
- * `--write` first and its `--check` last: this script builds every provider through the factory, which builds only an
- * engine the catalog holds, and `--check` admits every declaration this script wrote, with the SDK validator's rules,
- * which refuse by name, among others, a dialog entry or a field rule for a field the engine does not take and a
- * placeable field with no placement. A new engine's declaration therefore starts as a copy of another engine's file
- * with its authored members written for the new engine; the catalog generator projects it, this script writes every
- * other member, and the catalog generator then admits it.
+ * catalog, the connection tables, the connection forms, the connection strings, and the execution UI and fence aliases
+ * (scripts/generate-engine-catalog.ts, clauses M-70, M-71, M-72, M-74 and M-75) project the authored members, and
+ * `bun run engines:generate` runs that command's `--write` first and its `--check` last: this script builds every
+ * provider through the factory, which builds only an engine the catalog holds, and `--check` admits every declaration
+ * this script wrote, with the SDK validator's rules, which refuse by name, among others, a dialog entry or a field rule
+ * for a field the engine does not take and a placeable field with no placement. A new engine's declaration therefore
+ * starts as a copy of another engine's file with its authored members written for the new engine; the catalog generator
+ * projects it, this script writes every other member, and the catalog generator then admits it.
  *
  * Each file is a `#/$defs/engineDeclaration` of the provider manifest schema
  * (packages/provider-sdk/src/manifest/manifest.schema.json): the engine's identity, its connection facts, its facets,
@@ -119,7 +119,7 @@
  * `metadataOnly`, one entry per operation in the capability's key order; and `inlineEditRefusedColumns` from
  * `inlineEditRefusedColumns`. The last two are null where the provider declares none.
  *
- * The editor facts come from `EXECUTION_UI`, the fence tag tables (`ALIAS_ENGINES` and `QUERY_FENCE_ALIASES`),
+ * The editor facts other than the authored commit keyword, consent deadline and fence aliases come from
  * `QUERY_DIALECTS`, the editor language tables (`EDITOR_LANGUAGES` and `DIALECT_EDITORS`) and each engine's
  * capabilities. The capabilities are read as Studio reads a provider it never
  * connects, `readProviderDeclarations` with the engine's census connection (tests/helpers/census-connection.ts), so the
@@ -129,8 +129,7 @@
  * one set where the generator runs, exported or in a `.env` file, never changes a declaration. The child loads each
  * provider module and logs one line per engine. The generator refuses by name, rather than write a declaration that
  * drops or misstates it: an explain format the provider's explain support contradicts, a dialect `QUERY_DIALECTS` has no row
- * for, a dialect row whose tab type is not the dialect's name, a dialect row no engine declares, and a fence alias that
- * is not a query fence tag.
+ * for, a dialect row whose tab type is not the dialect's name, and a dialect row no engine declares.
  *
  * The editor language is the engine's query language, the Monaco language of the tab type Studio's `resolveTabType`
  * gives its capabilities, read from that tab type's `DIALECT_EDITORS` row, and that language's accent and whether it is
@@ -210,8 +209,6 @@ import {
 import { EDITOR_LANGUAGES, type EditorLanguage } from "../src/lib/db/editor-language";
 import type { EditorLanguageContribution } from "../src/lib/db/editor-language/types";
 import { ENGINE_FACETS } from "../src/lib/db/engine-facets";
-import { EXECUTION_UI } from "../src/lib/db/execution-ui";
-import type { ExecutionUiSpec } from "../src/lib/db/execution-ui/types";
 import { MIGRATION_DDL } from "../src/lib/db/migration-ddl";
 import type { MigrationDdlSpec } from "../src/lib/db/migration-ddl/types";
 import { type DialectSpec, QUERY_DIALECTS, type QueryDialect } from "../src/lib/db/query-dialects";
@@ -225,7 +222,6 @@ import type { MaintenanceOperation, ProviderCapabilities, WritePath, WritePathRe
 import type { NonFiniteWord } from "../src/lib/non-finite";
 import { DIALECT_EDITORS, type DialectEditor } from "../src/lib/editor/dialect-editors";
 import { resolveTabType } from "../src/lib/editor/tab-language";
-import { ALIAS_ENGINES, QUERY_FENCE_ALIASES } from "../src/lib/sql/fence-tags";
 import type { DatabaseType, QueryTab } from "../src/lib/types";
 import { type AuthoredMembers, authoredMembersOf, ENGINE_DECLARATIONS_DIRECTORY } from "./generate-engine-catalog";
 
@@ -263,9 +259,6 @@ function fieldName(name: string, type: DatabaseType): FieldName {
 
 /** The tables an engine's editor facts are read from, a parameter so a test can hand the generator others. */
 export interface EditorTables {
-  readonly executionUi: Readonly<Record<DatabaseType, ExecutionUiSpec>>;
-  readonly aliasEngines: Readonly<Record<string, DatabaseType>>;
-  readonly queryAliases: ReadonlySet<string>;
   readonly dialects: Readonly<Partial<Record<QueryDialect, DialectSpec>>>;
   readonly languages: Readonly<Record<EditorLanguage, EditorLanguageContribution>>;
   readonly tabEditors: Readonly<Record<QueryTab["type"], DialectEditor>>;
@@ -273,9 +266,6 @@ export interface EditorTables {
 
 /** Today's tables of the editor facts. */
 export const EDITOR_TABLES: EditorTables = Object.freeze({
-  executionUi: EXECUTION_UI,
-  aliasEngines: ALIAS_ENGINES,
-  queryAliases: QUERY_FENCE_ALIASES,
   dialects: QUERY_DIALECTS,
   languages: EDITOR_LANGUAGES,
   tabEditors: DIALECT_EDITORS,
@@ -416,17 +406,16 @@ function buildEditorLanguage(
 }
 
 /**
- * One engine's editor facts: its `EXECUTION_UI` row member by member, the aliases `ALIAS_ENGINES` maps to it in that
- * record's order, and the explain format and the query dialect its provider declares before it connects. An explain
- * format the provider's explain support contradicts, and an alias that is not a query fence tag, are thrown errors
- * naming the engine.
+ * One engine's editor facts: its `authored` commit keyword, consent deadline and fence aliases as given, and the
+ * explain format and the query dialect its provider declares before it connects. An explain format the provider's
+ * explain support contradicts is a thrown error naming the engine.
  */
 export function buildEditor(
   type: DatabaseType,
   capabilities: ProviderCapabilities,
+  authored: AuthoredMembers["editor"],
   tables: EditorTables = EDITOR_TABLES,
 ): Editor {
-  const { commitKeyword, consentDeadline } = tables.executionUi[type];
   const { supportsExplain, explainFormat } = capabilities;
   if (supportsExplain && explainFormat === undefined) {
     throw new Error(`${type}: the provider supports explain but declares no explain format`);
@@ -434,17 +423,10 @@ export function buildEditor(
   if (!supportsExplain && explainFormat !== undefined) {
     throw new Error(`${type}: the provider declares an explain format but supports no explain`);
   }
-  const fenceAliases = Object.keys(tables.aliasEngines).filter((alias) => tables.aliasEngines[alias] === type);
-  for (const alias of fenceAliases) {
-    if (!tables.queryAliases.has(alias)) {
-      throw new Error(`${type}: the fence alias "${alias}" names the engine but is not a query fence tag`);
-    }
-  }
   return {
-    commitKeyword,
-    consentDeadline:
-      consentDeadline === null ? null : { chip: consentDeadline.chip, sentence: consentDeadline.sentence },
-    fenceAliases,
+    commitKeyword: authored.commitKeyword,
+    consentDeadline: authored.consentDeadline,
+    fenceAliases: authored.fenceAliases,
     explainFormat: explainFormat ?? null,
     dialect: buildDialect(type, capabilities.queryDialect, tables.dialects),
     language: buildEditorLanguage(type, capabilities, tables),
@@ -1257,7 +1239,7 @@ export function buildEngineDeclaration(
       agentReadings: [...facets.agentReadings],
     },
     agent: { statementLanguage: AGENT_STATEMENT_LANGUAGE[type], overlay: buildAgentOverlay(type) },
-    editor: buildEditor(type, capabilities),
+    editor: buildEditor(type, capabilities, authored.editor),
     sqlText: buildSqlText(type),
     sqlWriting: buildSqlWriting(type),
     migrationDdl: buildMigrationDdl(type),

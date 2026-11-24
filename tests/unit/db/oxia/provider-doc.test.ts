@@ -252,7 +252,6 @@ const BROWSER_SET: ReadonlySet<string> = new Set([
   "order.ts",
   "cursor.ts",
   "sql-writing.ts",
-  "execution-ui.ts",
   "engine-facets.ts",
   "migration-ddl.ts",
   "sql-grammar.ts",

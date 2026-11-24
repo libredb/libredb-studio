@@ -574,7 +574,10 @@ A route per node is a later change.
 ### Execution UI
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `cassandra` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
-Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/sql/cassandra/execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`cassandra.json`](../../src/lib/db/engine-declarations/cassandra.json)), projected into the generated execution UI record.
+The one fence tag that names it is its id, `cassandra`: its declaration's `editor.fenceAliases` is empty.
+A block tagged `cassandra` holds a CQL statement the editor can run.
+The generic tag `cql` holds a query and names no engine, for the reason `sql` names none: CQL is a language, and ScyllaDB speaks it too, so reading `cql` as written for Cassandra would put a claim in the model's mouth; that `cql` names no engine although every CQL server connects through `cassandra` is a known defect, [B86](../BACKLOG.md).
 
 ---
 

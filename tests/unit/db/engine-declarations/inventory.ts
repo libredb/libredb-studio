@@ -204,6 +204,11 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     destination: projected("connection.seedOnly"),
   },
   {
+    module: "src/lib/db/engine-catalog/editor.generated.ts",
+    name: "BUNDLED_EXECUTION_UI",
+    destination: projected("editor.commitKeyword and editor.consentDeadline"),
+  },
+  {
     module: "src/lib/db/engine-facets/index.ts",
     name: "ENGINE_FACETS",
     destination:
@@ -212,7 +217,8 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
   {
     module: "src/lib/db/execution-ui/index.ts",
     name: "EXECUTION_UI",
-    destination: "engine declaration: editor.commitKeyword and editor.consentDeadline",
+    destination:
+      "engine declaration: editor.commitKeyword and editor.consentDeadline, authored in each declaration and read from the generated execution UI record",
   },
   { module: "src/lib/db/graph-policy-profiles.ts", name: "GRAPH_POLICY_PROFILES", destination: STATEMENT_FAMILY },
   {
@@ -242,12 +248,6 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     module: "src/lib/seed/samples.ts",
     name: "SAMPLES",
     destination: "core-owned: the sample databases are Studio's own, whichever provider serves them",
-  },
-  {
-    module: "src/lib/sql/fence-tags.ts",
-    name: "ENGINE_FENCE_TAGS",
-    destination:
-      "engine declaration: id, every engine's id a fence tag naming it, with editor.fenceAliases naming its other tags",
   },
   {
     module: "src/lib/sql/read-query-forms.ts",

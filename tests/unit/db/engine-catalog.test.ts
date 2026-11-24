@@ -1,16 +1,16 @@
 /**
  * Studio's engine catalog, which engines it ships, where each lives and how long its open may take, its data-only
- * connection tables, its connection forms and its connection strings, projected from the engine declarations the
- * catalog generator admits (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72 and M-74).
+ * connection tables, its connection forms, its connection strings, and each engine's execution UI and fence aliases,
+ * projected from the engine declarations the catalog generator admits (docs/providers/CONTRACT.md, clauses M-70, M-71,
+ * M-72, M-74 and M-75).
  *
  * `scripts/generate-engine-catalog.ts` projects the committed declarations' authored members with `projectCatalog`,
- * `projectConnectionTables`, `projectConnectionForms` and `projectConnectionStrings`, renders the projections into
- * `src/lib/db/engine-catalog/catalog.generated.ts`, `connection.generated.ts`, `connection-flags.generated.ts`,
- * `connection-form.generated.ts` and `connection-string.generated.ts`, the modules Studio's readers read, and holds
- * each to
- * the set it admits through the SDK's digest-checked validator. This file holds the projections, the admission, the
- * generated modules' bytes, the readers that answer from them, and `bun run engines:generate` end to end on a scratch
- * copy of the sources it reads.
+ * `projectConnectionTables`, `projectConnectionForms`, `projectConnectionStrings` and `projectEditorFacts`, renders the
+ * projections into `src/lib/db/engine-catalog/catalog.generated.ts`, `connection.generated.ts`,
+ * `connection-flags.generated.ts`, `connection-form.generated.ts`, `connection-string.generated.ts` and
+ * `editor.generated.ts`, the modules Studio's readers read, and holds each to the set it admits through the SDK's
+ * digest-checked validator. This file holds the projections, the admission, the generated modules' bytes, the readers
+ * that answer from them, and `bun run engines:generate` end to end on a scratch copy of the sources it reads.
  */
 import { describe, expect, test } from "bun:test";
 import {
@@ -35,11 +35,13 @@ import {
   ENGINE_CONNECTION_MODULE,
   ENGINE_CONNECTION_STRING_MODULE,
   ENGINE_DECLARATIONS_DIRECTORY,
+  ENGINE_EDITOR_MODULE,
   renderCatalog,
   renderConnectionFlags,
   renderConnectionForms,
   renderConnectionStrings,
   renderConnectionTables,
+  renderEditorFacts,
 } from "../../../scripts/generate-engine-catalog";
 import { EXTERNAL_DATABASE_TYPES, isExternalDatabaseType, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { BUNDLED_CATALOG } from "@/lib/db/engine-catalog/catalog.generated";
@@ -56,6 +58,7 @@ import {
 } from "@/lib/db/engine-catalog/connection-flags.generated";
 import { BUNDLED_CONNECTION_FORMS } from "@/lib/db/engine-catalog/connection-form.generated";
 import { BUNDLED_CONNECTION_STRINGS } from "@/lib/db/engine-catalog/connection-string.generated";
+import { BUNDLED_EXECUTION_UI, BUNDLED_FENCE_ALIASES } from "@/lib/db/engine-catalog/editor.generated";
 import {
   type ConnectionFormEntry,
   type ConnectionForms,
@@ -65,6 +68,7 @@ import {
   projectConnectionForms,
   projectConnectionStrings,
   projectConnectionTables,
+  projectEditorFacts,
 } from "@/lib/db/engine-catalog/projection";
 import type { DatabaseType } from "@/lib/types";
 
@@ -171,6 +175,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     expect(() => projectConnectionTables(twice)).toThrow('The engine id "postgres" is declared twice.');
     expect(() => projectConnectionForms(twice)).toThrow('The engine id "postgres" is declared twice.');
     expect(() => projectConnectionStrings(twice)).toThrow('The engine id "postgres" is declared twice.');
+    expect(() => projectEditorFacts(twice)).toThrow('The engine id "postgres" is declared twice.');
   });
 
   test("the catalog reads only the members a declaration authors", () => {
@@ -437,6 +442,119 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     expect(differs((d) => d.location)).toBeGreaterThan(0);
   });
 
+  test("the execution UI holds one entry per declaration and the fence aliases one per alias, keyed in ascending id order whatever order they come in", () => {
+    const facts = projectEditorFacts([
+      admitted("sqlite"),
+      admitted("redis"),
+      admitted("postgres"),
+      admitted("bigquery"),
+    ]);
+
+    expect(Object.keys(facts)).toEqual(["executionUi", "fenceAliases"]);
+    expect(Object.keys(facts.executionUi)).toEqual(["bigquery", "postgres", "redis", "sqlite"]);
+    // Each entry holds the two execution UI members a declaration authors, in one order, as it states them.
+    for (const id of Object.keys(facts.executionUi)) {
+      const { editor } = admitted(id);
+      expect(facts.executionUi[id]).toEqual({
+        commitKeyword: editor.commitKeyword,
+        consentDeadline: editor.consentDeadline,
+      });
+      expect(Object.keys(facts.executionUi[id] ?? {})).toEqual(["commitKeyword", "consentDeadline"]);
+    }
+    expect(facts.executionUi.bigquery).toEqual({ commitKeyword: "COMMIT", consentDeadline: null });
+    expect(facts.executionUi.redis?.commitKeyword).toBe("EXEC");
+    expect(facts.executionUi.sqlite?.consentDeadline).toEqual(admitted("sqlite").editor.consentDeadline);
+    expect(Object.keys(facts.executionUi.sqlite?.consentDeadline ?? {})).toEqual(["chip", "sentence"]);
+    // One alias entry per declared alias, mapped to its engine: in ascending id order, then each declaration's order.
+    expect(facts.fenceAliases).toEqual({
+      postgresql: "postgres",
+      pgsql: "postgres",
+      psql: "postgres",
+      plpgsql: "postgres",
+      rediscli: "redis",
+      sqlite3: "sqlite",
+    });
+    expect(Object.keys(facts.fenceAliases)).toEqual([
+      ...admitted("postgres").editor.fenceAliases,
+      ...admitted("redis").editor.fenceAliases,
+      ...admitted("sqlite").editor.fenceAliases,
+    ]);
+    // An id sorts after the id it begins with, given in either order.
+    expect(Object.keys(projectEditorFacts([admitted("influxdb3"), admitted("influxdb")]).executionUi)).toEqual([
+      "influxdb",
+      "influxdb3",
+    ]);
+
+    // Frozen at every level, and a copy: no record of the declaration is handed out.
+    const frozen = (value: unknown): boolean =>
+      typeof value !== "object" || value === null || (Object.isFrozen(value) && Object.values(value).every(frozen));
+    expect(frozen(facts)).toBe(true);
+    expect(facts.executionUi.sqlite?.consentDeadline).not.toBe(admitted("sqlite").editor.consentDeadline);
+  });
+
+  test("the execution UI and the fence aliases read only the members a declaration authors", () => {
+    // Every member but the authored ones replaced with postgres's: the editor facts the generator writes first, before
+    // the declaration generator rewrites those members, are therefore already the final ones.
+    const postgres = admitted("postgres");
+    const replaced = ADMITTED.map(
+      (d): EngineDeclaration => ({
+        ...postgres,
+        id: d.id,
+        editor: {
+          ...postgres.editor,
+          commitKeyword: d.editor.commitKeyword,
+          consentDeadline: d.editor.consentDeadline,
+          fenceAliases: d.editor.fenceAliases,
+        },
+      }),
+    );
+
+    expect(projectEditorFacts(replaced)).toEqual(projectEditorFacts(ADMITTED));
+    // Vacuity: the replacement changed members the editor facts would read if they read them.
+    const differs = (read: (d: EngineDeclaration) => unknown) =>
+      replaced.filter((d, index) => JSON.stringify(read(d)) !== JSON.stringify(read(ADMITTED[index]))).length;
+    expect(differs((d) => d.editor.explainFormat)).toBeGreaterThan(0);
+    expect(differs((d) => d.editor.dialect)).toBeGreaterThan(0);
+    expect(differs((d) => d.editor.language)).toBeGreaterThan(0);
+    expect(differs((d) => d.displayName)).toBeGreaterThan(0);
+    expect(differs((d) => d.sqlText)).toBeGreaterThan(0);
+  });
+
+  test("an alias two declarations state, or one equal to another admitted engine id, is refused by name", () => {
+    const withAliases = (id: string, fenceAliases: readonly string[]): EngineDeclaration => {
+      const declaration = admitted(id);
+      return { ...declaration, editor: { ...declaration.editor, fenceAliases } };
+    };
+    const mysql = admitted("mysql");
+
+    // Two declarations state one alias: both engines are named, in id order, whatever order they come in.
+    for (const set of [
+      [mysql, withAliases("postgres", [...admitted("postgres").editor.fenceAliases, "mariadb"])],
+      [withAliases("postgres", ["mariadb"]), mysql],
+    ]) {
+      expect(() => projectEditorFacts(set)).toThrow(
+        'The fence alias "mariadb" is declared by both mysql and postgres.',
+      );
+    }
+    // One declaration states one alias twice: the engine and the alias are named, and the repetition is said as such.
+    expect(() => projectEditorFacts([mysql, withAliases("postgres", ["postgresql", "pgsql", "postgresql"])])).toThrow(
+      'The fence alias "postgresql" of postgres is stated twice by its declaration.',
+    );
+    // An alias that is another admitted declaration's engine id.
+    expect(() => projectEditorFacts([mysql, withAliases("postgres", ["mysql"])])).toThrow(
+      'The fence alias "mysql" of postgres is the engine id of another admitted declaration.',
+    );
+    expect(() => projectEditorFacts([withAliases("mysql", ["postgres"]), admitted("postgres")])).toThrow(
+      'The fence alias "postgres" of mysql is the engine id of another admitted declaration.',
+    );
+    // An alias equal to the declaration's own id, and a generic fence tag, are the validator's, per declaration.
+    expect(() => projectEditorFacts([withAliases("postgres", ["postgres"])])).not.toThrow();
+    expect(() => projectEditorFacts([withAliases("postgres", ["sql"])])).not.toThrow();
+    // An alias of an id outside the set names no admitted engine, and none of the committed declarations is refused.
+    expect(() => projectEditorFacts([withAliases("postgres", ["mysql"])])).not.toThrow();
+    expect(() => projectEditorFacts(ADMITTED)).not.toThrow();
+  });
+
   test("every committed declaration is admitted through the SDK's digest-checked validator before it is projected", () => {
     expect(ADMITTED.map((d) => d.id)).toEqual([...SHIPPED_DATABASE_TYPES]);
     expect(ADMITTED.length).toBe(SHIPPED_DATABASE_TYPES.length);
@@ -599,6 +717,32 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     expect(frozen(BUNDLED_CONNECTION_STRINGS)).toBe(true);
   });
 
+  test("the committed editor module is what the generator renders from the admitted declarations", () => {
+    const committed = readFileSync(path.join(ROOT, ENGINE_EDITOR_MODULE), "utf8");
+    const facts = projectEditorFacts(ADMITTED);
+
+    expect(committed).toBe(renderEditorFacts(facts));
+    expect(BUNDLED_EXECUTION_UI).toEqual(facts.executionUi);
+    expect(Object.keys(BUNDLED_EXECUTION_UI)).toEqual(Object.keys(facts.executionUi));
+    expect(Object.keys(BUNDLED_EXECUTION_UI)).toEqual([...SHIPPED_DATABASE_TYPES]);
+    expect<Readonly<Record<string, string>>>(BUNDLED_FENCE_ALIASES).toEqual(facts.fenceAliases);
+    expect(Object.keys(BUNDLED_FENCE_ALIASES)).toEqual(Object.keys(facts.fenceAliases));
+    expect(committed).toContain("bun run engines:generate");
+    expect([...committed.matchAll(/^export const (\w+)/gm)].map((match) => match[1])).toEqual([
+      "BUNDLED_EXECUTION_UI",
+      "BUNDLED_FENCE_ALIASES",
+    ]);
+    // Type imports only, so a reader of the module loads no other module through it.
+    const imports = [...committed.matchAll(/^import .*$/gm)].map((match) => match[0]);
+    expect(imports.length).toBeGreaterThan(0);
+    expect(imports.every((line) => line.startsWith("import type "))).toBe(true);
+    // Frozen at every level, as the projection answers it.
+    const frozen = (value: unknown): boolean =>
+      typeof value !== "object" || value === null || (Object.isFrozen(value) && Object.values(value).every(frozen));
+    expect(frozen(BUNDLED_EXECUTION_UI)).toBe(true);
+    expect(frozen(BUNDLED_FENCE_ALIASES)).toBe(true);
+  });
+
   test("the renderer writes a backslash, a character outside ASCII and a number as the formatter leaves them, and refuses a control character by name", () => {
     const tables = projectConnectionTables(ADMITTED);
     const refusal = (text: string) => ({ ...tables, refused: { ...tables.refused, qdrant: { user: text } } });
@@ -736,8 +880,9 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       const flags = path.join(dir, "connection-flags.generated.ts");
       const form = path.join(dir, "connection-form.generated.ts");
       const strings = path.join(dir, "connection-string.generated.ts");
+      const editor = path.join(dir, "editor.generated.ts");
       expect(written.stdout.toString()).toBe(
-        `Wrote ${catalog}\nWrote ${connection}\nWrote ${flags}\nWrote ${form}\nWrote ${strings}\n`,
+        `Wrote ${catalog}\nWrote ${connection}\nWrote ${flags}\nWrote ${form}\nWrote ${strings}\nWrote ${editor}\n`,
       );
       expect(readFileSync(connection, "utf8")).toBe(readFileSync(path.join(ROOT, ENGINE_CONNECTION_MODULE), "utf8"));
       expect(readFileSync(flags, "utf8")).toBe(readFileSync(path.join(ROOT, ENGINE_CONNECTION_FLAGS_MODULE), "utf8"));
@@ -745,7 +890,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       const current = run("--check", "--out", dir);
       expect(current.exitCode).toBe(0);
       expect(current.stdout.toString()).toBe(
-        `${catalog} is up to date\n${connection} is up to date\n${flags} is up to date\n${form} is up to date\n${strings} is up to date\n`,
+        `${catalog} is up to date\n${connection} is up to date\n${flags} is up to date\n${form} is up to date\n${strings} is up to date\n${editor} is up to date\n`,
       );
 
       const text = readFileSync(connection, "utf8");
@@ -838,6 +983,51 @@ describe("the engine catalog, projected from the admitted declarations", () => {
 
       expect(run("--write", "--out", dir).exitCode).toBe(0);
       expect(readFileSync(strings, "utf8")).toBe(text);
+      expect(run("--check", "--out", dir).exitCode).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    // Each run admits every declaration, a fraction of a second; well inside ten times that.
+  }, 20000);
+
+  test("--check names a stale editor module, and --write writes every projected module", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "engine-editor-module-"));
+    const run = (...args: string[]) =>
+      Bun.spawnSync([process.execPath, SCRIPT, ...args], { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
+    try {
+      expect(run("--write", "--out", dir).exitCode).toBe(0);
+      const editor = path.join(dir, "editor.generated.ts");
+      const text = readFileSync(editor, "utf8");
+      expect(text).toBe(readFileSync(path.join(ROOT, ENGINE_EDITOR_MODULE), "utf8"));
+      for (const generated of [
+        ENGINE_CATALOG_MODULE,
+        ENGINE_CONNECTION_MODULE,
+        ENGINE_CONNECTION_FLAGS_MODULE,
+        ENGINE_CONNECTION_FORM_MODULE,
+        ENGINE_CONNECTION_STRING_MODULE,
+      ]) {
+        expect(readFileSync(path.join(dir, path.basename(generated)), "utf8")).toBe(
+          readFileSync(path.join(ROOT, generated), "utf8"),
+        );
+      }
+
+      // Redis's commit keyword edited by hand in the generated module is named, and only that module.
+      writeFileSync(editor, text.replace('commitKeyword: "EXEC"', 'commitKeyword: "COMMIT"'));
+      const stale = run("--check", "--out", dir);
+      expect(stale.exitCode).toBe(1);
+      expect(stale.stderr.toString()).toBe(
+        `${editor} is not what the engine declarations project\nrun: bun run engines:generate\n`,
+      );
+
+      rmSync(editor);
+      const missing = run("--check", "--out", dir);
+      expect(missing.exitCode).toBe(1);
+      expect(missing.stderr.toString()).toBe(
+        `${editor} is not what the engine declarations project\nrun: bun run engines:generate\n`,
+      );
+
+      expect(run("--write", "--out", dir).exitCode).toBe(0);
+      expect(readFileSync(editor, "utf8")).toBe(text);
       expect(run("--check", "--out", dir).exitCode).toBe(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -1013,6 +1203,80 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       copy.remove();
     }
     // Copying the sources and the generator runs take a few seconds; well inside ten times that.
+  }, 60000);
+
+  test("bun run engines:generate regenerates an authored execution UI and fence alias change in one run", () => {
+    const copy = generatingCopy();
+    try {
+      const directory = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY);
+      const edit = (id: string, editor: (committed: EngineDeclaration["editor"]) => EngineDeclaration["editor"]) => {
+        const file = path.join(directory, `${id}.json`);
+        const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+        writeFileSync(file, `${JSON.stringify({ ...committed, editor: editor(committed.editor) }, null, 2)}\n`);
+      };
+      const sentence = "Edited in the declaration: a SQLite read past its timeout is killed.";
+      edit("redis", (editor) => ({ ...editor, commitKeyword: "MULTI" }));
+      edit("sqlite", (editor) => ({
+        ...editor,
+        consentDeadline: { chip: editor.consentDeadline?.chip ?? "", sentence },
+      }));
+      edit("postgres", (editor) => ({ ...editor, fenceAliases: [...editor.fenceAliases, "pgsql2"] }));
+
+      const run = copy.generate();
+      expect(run.stderr).not.toContain("refused");
+      expect(run.exitCode).toBe(0);
+
+      const regenerated = admittedDeclarations(directory);
+      const of = (id: string) => regenerated.find((d) => d.id === id);
+      expect(of("redis")?.editor.commitKeyword).toBe("MULTI");
+      expect(of("sqlite")?.editor.consentDeadline?.sentence).toBe(sentence);
+      expect(of("postgres")?.editor.fenceAliases).toEqual([...admitted("postgres").editor.fenceAliases, "pgsql2"]);
+      const editorModule = readFileSync(path.join(copy.root, ENGINE_EDITOR_MODULE), "utf8");
+      expect(editorModule).toBe(renderEditorFacts(projectEditorFacts(regenerated)));
+      expect(editorModule).toContain('pgsql2: "postgres"');
+      expect(editorModule).toContain('commitKeyword: "MULTI"');
+      for (const generated of [
+        ENGINE_CATALOG_MODULE,
+        ENGINE_CONNECTION_MODULE,
+        ENGINE_CONNECTION_FLAGS_MODULE,
+        ENGINE_CONNECTION_FORM_MODULE,
+        ENGINE_CONNECTION_STRING_MODULE,
+      ]) {
+        expect(readFileSync(path.join(copy.root, generated), "utf8")).toBe(
+          readFileSync(path.join(ROOT, generated), "utf8"),
+        );
+      }
+      // Every other declaration is the committed one, byte for byte.
+      for (const declaration of ADMITTED.filter((d) => !["postgres", "redis", "sqlite"].includes(d.id))) {
+        const name = `${declaration.id}.json`;
+        expect(readFileSync(path.join(directory, name), "utf8")).toBe(readFileSync(path.join(DIRECTORY, name), "utf8"));
+      }
+    } finally {
+      copy.remove();
+    }
+    // Copying the sources and the three generator runs take a few seconds; well inside ten times that.
+  }, 60000);
+
+  test("bun run engines:generate exits 1 naming the alias when two declarations state one fence alias", () => {
+    const copy = generatingCopy();
+    try {
+      const file = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY, "postgres.json");
+      const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+      const editor = { ...committed.editor, fenceAliases: [...committed.editor.fenceAliases, "mariadb"] };
+      writeFileSync(file, `${JSON.stringify({ ...committed, editor }, null, 2)}\n`);
+      const editorModule = path.join(copy.root, ENGINE_EDITOR_MODULE);
+      const before = readFileSync(editorModule, "utf8");
+
+      const refused = copy.generate();
+      expect(refused.exitCode).toBe(1);
+      expect(refused.stderr).toContain('The fence alias "mariadb" is declared by both mysql and postgres.');
+      // Refused before any module or declaration is written.
+      expect(readFileSync(editorModule, "utf8")).toBe(before);
+      expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ ...committed, editor });
+    } finally {
+      copy.remove();
+    }
+    // Copying the sources and the generator run take a few seconds; well inside ten times that.
   }, 60000);
 
   test("SHIPPED_DATABASE_TYPES is the catalog's engines in its order", () => {

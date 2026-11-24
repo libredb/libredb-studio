@@ -283,7 +283,10 @@ Its one seed-only field is `hostKeyFingerprint` (its declaration's `connection.s
 ### Execution UI
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `netconf` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
-Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/network/netconf/execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`netconf.json`](../../src/lib/db/engine-declarations/netconf.json)), projected into the generated execution UI record.
+The fence tags that name it are its id, `netconf`, and its declaration's `editor.fenceAliases`, `netconfrpc`.
+A block tagged `netconf` holds one JSON read request naming a datastore, a path and a limit, which the console runs as it is; the device's own language is XML and nothing here writes any.
+`netconfrpc` names the agent's NETCONF read request language, which only `netconf` runs.
 What a tree click and Generate Query write is `NETCONF_GENERATORS`, the `netconf` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/network/netconf/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 
 ## 5. Query interface

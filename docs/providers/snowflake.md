@@ -264,7 +264,10 @@ The checks are, in order: `host`, the account, by `checkSnowflakeAccount`; `user
 ### Execution UI
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `snowflake` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
-Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/sql/snowflake/execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`snowflake.json`](../../src/lib/db/engine-declarations/snowflake.json)), projected into the generated execution UI record.
+The one fence tag that names it is its id, `snowflake`: its declaration's `editor.fenceAliases` is empty.
+A block tagged `snowflake` holds one statement in Snowflake's SQL, sent as it is through the SQL API.
+No alias names it: `snowsql` names Snowflake's command-line client, not a dialect.
 
 ### Connect budget
 

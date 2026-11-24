@@ -8,29 +8,33 @@
  * src/lib/db/engine-catalog/connection-form.generated.ts, the connection forms (clause M-72), which only
  * src/lib/db/connection-form.ts reads, so no reader of the connection tables loads them; and
  * src/lib/db/engine-catalog/connection-string.generated.ts, the connection strings (clause M-74), which only
- * src/lib/db/connection-string/index.ts reads, so neither the paste parser nor the seed loader loads the forms.
+ * src/lib/db/connection-string/index.ts reads, so neither the paste parser nor the seed loader loads the forms; and
+ * src/lib/db/engine-catalog/editor.generated.ts, each engine's execution UI and the fence aliases (clause M-75), which
+ * src/lib/db/execution-ui/index.ts and src/lib/sql/fence-tags.ts read, so no connection reader loads them.
  *
  * Admission happens here, once for every module, in `--check`: every `.json` file of src/lib/db/engine-declarations
  * is parsed and admitted through the SDK's `compileManifestValidator`, which checks the SHA-256 of the schema's bytes
  * before it compiles them, and each module is held to the projection of the admitted set with `projectCatalog`,
- * `projectConnectionTables`, `projectConnectionForms` and `projectConnectionStrings`
+ * `projectConnectionTables`, `projectConnectionForms`, `projectConnectionStrings` and `projectEditorFacts`
  * (src/lib/db/engine-catalog/projection.ts). `--write` projects each file's authored members, `AUTHORED_MEMBERS`,
  * without admitting the whole file: the validator holds an authored member to members the declaration generator writes
  * (each host path field to `connection.seedOnly`), so a file whose authored members just changed is refused until that
  * generator has rewritten the rest. The command refuses, by name, an entry that is not a `.json` file, a file that is
  * not JSON, and a declaration whose `id` is not its file name; `--write` a file that lacks an authored member,
  * `--check` a declaration the schema refuses, with the validator's refusal sentences; the projections refuse two
- * declarations of one id. Studio's runtime reads no declaration file: the browser cannot compile the schema under
- * Studio's content security policy, which allows no `eval`, and the published library and the standalone server carry
- * no schema file, so every reader reads a generated module, which tests/unit/db/engine-catalog.test.ts holds byte for
- * byte to what this command renders.
+ * declarations of one id, and the editor facts a fence alias two declarations state or one equal to another
+ * declaration's engine id, so either mode exits 1 naming it before any module is written. Studio's runtime reads no
+ * declaration file: the browser cannot compile the schema under Studio's content security policy, which allows no
+ * `eval`, and the published library and the standalone server carry no schema file, so every reader reads a generated
+ * module, which tests/unit/db/engine-catalog.test.ts holds byte for byte to what this command renders.
  *
  * Each module holds frozen records keyed in ascending id order and typed as records over `DatabaseType`, so a member
- * of the union with no declaration fails the typecheck at the record. The connection modules are laid out as the
- * repository's formatter lays them out: a value that fits within the line width stays on one line, one that does not
- * breaks one element or member per line, and a member whose string does not fit puts the string on the next line. A
- * string is written in the formatter's quotes, a backslash doubled and a printable character outside ASCII as itself,
- * and a number is an integer written as its decimal text; a control character or another number is refused by name.
+ * of the union with no declaration fails the typecheck at the record. The connection and editor modules are laid out
+ * as the repository's formatter lays them out: a value that fits within the line width stays on one line, one that
+ * does not breaks one element or member per line, and a member whose string does not fit puts the string on the next
+ * line. A string is written in the formatter's quotes, a backslash doubled and a printable character outside ASCII as
+ * itself, and a number is an integer written as its decimal text; a control character or another number is refused by
+ * name.
  *
  * `bun run engines:generate` runs `--write` before scripts/generate-engine-declarations.ts and `--check` after it. The
  * declaration generator builds every provider through the factory, which builds only an engine the catalog holds, so
@@ -55,11 +59,13 @@ import {
   type ConnectionForms,
   type ConnectionStrings,
   type ConnectionTables,
+  type EditorFacts,
   type EngineCatalog,
   projectCatalog,
   projectConnectionForms,
   projectConnectionStrings,
   projectConnectionTables,
+  projectEditorFacts,
 } from "../src/lib/db/engine-catalog/projection";
 
 /** The declarations' directory in the repository. */
@@ -82,6 +88,12 @@ export const ENGINE_CONNECTION_FORM_MODULE = "src/lib/db/engine-catalog/connecti
  * src/lib/db/connection-string/index.ts reads.
  */
 export const ENGINE_CONNECTION_STRING_MODULE = "src/lib/db/engine-catalog/connection-string.generated.ts";
+
+/**
+ * The generated editor module in the repository: each engine's execution UI, which src/lib/db/execution-ui/index.ts
+ * reads, and the fence aliases, which src/lib/sql/fence-tags.ts reads.
+ */
+export const ENGINE_EDITOR_MODULE = "src/lib/db/engine-catalog/editor.generated.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
 const SCHEMA_FILE = path.join(REPO_ROOT, "packages/provider-sdk/src/manifest/manifest.schema.json");
@@ -124,10 +136,14 @@ export const AUTHORED_MEMBERS = [
   "connection.hostIdentity",
   "connection.import",
   "connection.connectBudgetMs",
+  "editor.commitKeyword",
+  "editor.consentDeadline",
+  "editor.fenceAliases",
 ] as const;
 
 type Connection = EngineDeclaration["connection"];
 type ConnectionStringOffer = Connection["connectionString"];
+type Editor = EngineDeclaration["editor"];
 
 /** One declaration's authored members, as `authoredMembersOf` reads them, nested as the declaration nests them. */
 export type AuthoredMembers = AuthoredDeclaration;
@@ -183,6 +199,11 @@ export function authoredMembersOf(value: unknown, file: string): AuthoredMembers
       hostIdentity: read("connection.hostIdentity") as Connection["hostIdentity"],
       import: read("connection.import") as Connection["import"],
       connectBudgetMs: read("connection.connectBudgetMs") as Connection["connectBudgetMs"],
+    },
+    editor: {
+      commitKeyword: read("editor.commitKeyword") as Editor["commitKeyword"],
+      consentDeadline: read("editor.consentDeadline") as Editor["consentDeadline"],
+      fenceAliases: read("editor.fenceAliases") as Editor["fenceAliases"],
     },
   };
   if (`${authored.id}.json` !== file) {
@@ -500,6 +521,32 @@ export function renderConnectionStrings(strings: ConnectionStrings): string {
   );
 }
 
+/**
+ * The text of the generated editor module for `facts`: a header, type imports only, and two frozen records, each
+ * engine's execution UI, read by src/lib/db/execution-ui/index.ts, and the fence aliases, read by
+ * src/lib/sql/fence-tags.ts.
+ */
+export function renderEditorFacts(facts: EditorFacts): string {
+  return [
+    ...HEADER,
+    'import type { DatabaseType } from "@/lib/types";',
+    'import type { ExecutionUiEntry } from "./projection";',
+    "",
+    ...renderedRecord(
+      "Each engine's execution UI, `editor.commitKeyword` and `editor.consentDeadline`, read by `EXECUTION_UI` (M-75).",
+      "export const BUNDLED_EXECUTION_UI: Readonly<Record<DatabaseType, ExecutionUiEntry>> =",
+      facts.executionUi,
+    ),
+    "",
+    ...renderedRecord(
+      "Each fence alias, `editor.fenceAliases`, mapped to its engine, read by `ALIAS_ENGINES` (M-75).",
+      "export const BUNDLED_FENCE_ALIASES: Readonly<Record<string, DatabaseType>> =",
+      facts.fenceAliases,
+    ),
+    "",
+  ].join("\n");
+}
+
 /** The current text of `file`, or null when it does not exist. */
 function textOf(file: string): string | null {
   try {
@@ -543,6 +590,7 @@ function main(argv: readonly string[]): number {
       file: fileOf(ENGINE_CONNECTION_STRING_MODULE),
       text: renderConnectionStrings(projectConnectionStrings(declarations)),
     },
+    { file: fileOf(ENGINE_EDITOR_MODULE), text: renderEditorFacts(projectEditorFacts(declarations)) },
   ];
 
   if (mode === "--check") {

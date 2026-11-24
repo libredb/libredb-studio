@@ -591,7 +591,10 @@ Stripping the prefix would invent a `trino://` form no Trino tool emits, so the 
 ### Execution UI
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `trino` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
-Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/sql/trino/execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`trino.json`](../../src/lib/db/engine-declarations/trino.json)), projected into the generated execution UI record.
+The one fence tag that names it is its id, `trino`: its declaration's `editor.fenceAliases` is empty.
+A block tagged `trino` holds a statement the editor sends straight to `POST /v1/statement`.
+No alias names it: `presto` is the tempting one and exactly the wrong one, because PrestoDB is a separate engine this product does not speak, and `fenceTagEngine` decides whether a plan's deliverable was written for this connection.
 
 ---
 

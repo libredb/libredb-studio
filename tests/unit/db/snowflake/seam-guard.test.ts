@@ -21,9 +21,8 @@
  *    `@/lib/types`, `@/lib/app-version`, `@/lib/logger`, `../sql-base`, `@/lib/db/sql-grammar/shared` (the SQL
  *    grammar contract's building blocks, for `sql-grammar.ts`), `@libredb/provider-sdk/sql` (the SDK's SQL grammar
  *    facts, for `sql-grammar.ts`), `jose`, `node:crypto` and `node:zlib`; types are
- *    free. `execution-ui.ts`, the engine's execution UI contract module, may also import values from
- *    `@/lib/db/execution-ui/shared`, its contract's shared building block, `migration-ddl.ts`, the engine's
- *    migration DDL contract module, from `@/lib/db/migration-ddl/*`, its contract's shared building blocks, and
+ *    free. `migration-ddl.ts`, the engine's migration DDL contract module, may also import values from
+ *    `@/lib/db/migration-ddl/*`, its contract's shared building blocks, and
  *    `sql-writing.ts` and its `typed-literals.ts` sibling, the engine's SQL writing contract modules, from
  *    `@/lib/db/sql-writing/*`, and `paste.ts`, the engine's connection string paste reader, from
  *    `@/lib/db/connection-string/shared`.
@@ -74,7 +73,6 @@ const OUTSIDE_VALUES = [
  * import as values (rule 7). No other file of this directory may.
  */
 const CONTRACT_VALUES: Readonly<Record<string, string>> = {
-  "execution-ui": "src/lib/db/execution-ui/shared.ts",
   "migration-ddl": "src/lib/db/migration-ddl/",
   "sql-writing": "src/lib/db/sql-writing/",
   "typed-literals": "src/lib/db/sql-writing/",
@@ -695,7 +693,6 @@ describe("planted violations fail by name", () => {
     ["errors.ts", "errors.ts", "const fix = (body: string) => `ALTER USER ADD KEY PAIR k PUBLIC_KEY = '${body}'`;\n"],
     ["index.ts", "index.ts", 'const sentence = "Set Warehouse on the connection to run statements.";\n'],
     ["errors.ts", "errors.ts", 'const sentence = "Snowflake refused POST /api/v2/statements before it ran.";\n'],
-    ["execution-ui.ts", "execution-ui.ts", 'import { SQL_COMMIT_KEYWORD } from "@/lib/db/execution-ui/shared";\n'],
   ])("%s (from %s) with %p passes", (as, from, line) => {
     expect(plant(as, from, line)).toEqual([]);
   });

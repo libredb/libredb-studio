@@ -93,7 +93,9 @@ The dialog offers no SSL / TLS panel: the transport is bare UDP, no file of the 
 ### Execution UI
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `snmp` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
-Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/network/snmp/execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`snmp.json`](../../src/lib/db/engine-declarations/snmp.json)), projected into the generated execution UI record.
+The fence tags that name it are its id, `snmp`, and its declaration's `editor.fenceAliases`, `snmpget`.
+`snmpget` names the agent's SNMP read command language, which only `snmp` runs.
 What a tree click and Generate Query write is `SNMP_GENERATORS`, the `snmp` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/network/snmp/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 
 ## 4. Refusals carry a reason a caller can branch on

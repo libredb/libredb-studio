@@ -223,7 +223,10 @@ A search that names no metric and no search parameter runs without the IndexDeta
 ### Execution UI
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `milvus` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
-Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/vector/milvus/execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`milvus.json`](../../src/lib/db/engine-declarations/milvus.json)), projected into the generated execution UI record.
+The fence tags that name it are its id, `milvus`, and its declaration's `editor.fenceAliases`, `milvusrpc`.
+A block tagged `milvus` holds one Milvus console request the editor runs as it is (vector-family spec 5.7), and `milvusrpc` names the agent's Milvus request language, which only `milvus` runs.
+`json` is a MongoDB document as often, and `http` and `rest` name no engine, so none of them names it: an alias that names the wrong engine is worse than a missing one, because `fenceTagEngine` decides whether a plan's deliverable was written for this connection.
 What a tree click and Generate Query write is `MILVUS_GENERATORS`, the `milvus` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/vector/milvus/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 Its editor language, `milvus`, is the row in `EDITOR_LANGUAGES` declared in [`editor-language.ts`](../../src/lib/db/providers/vector/milvus/editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
 

@@ -67,8 +67,6 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/db/editor-language/types.ts` | SDK /manifest | The editor language row contract; its Monaco types go with the browser catalog of phase 3. |
 | `src/lib/db/engine-facets/types.ts` | SDK /manifest | The engine facets row contract. |
 | `src/lib/db/errors.ts` | SDK /errors | The error classes a provider raises and core classifies by kind, the same for every provider. |
-| `src/lib/db/execution-ui/shared.ts` | SDK /manifest | A constant execution UI rows share. |
-| `src/lib/db/execution-ui/types.ts` | SDK /manifest | The execution UI row contract. |
 | `src/lib/db/graph-policy-profiles.ts` | core only | Core's table of graph policy profiles by type-id, which itself imports the neo4j profile; neo4j's editor language reads its own profile instead. |
 | `src/lib/db/graph/bolt/bolt-client.ts` | host service: Bolt transport | The one audited neo4j-driver-lite client opens sockets and reads trust files, I/O the host owns. |
 | `src/lib/db/graph/bolt/client.ts` | SDK /graph | The pure `GraphClient` interface and its error type, the graph layer's I/O seam. |
@@ -240,7 +238,6 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 | `src/lib/db/driver-errors/index.ts` | 7 driver error rows | PR 11 policy | manifest rows: the PR 9 schema, collected by the PR 11 projection |
 | `src/lib/db/editor-language/index.ts` | 15 editor language rows | PR 11 editor and SQL text | manifest rows: the PR 9 schema, collected by the PR 11 projection |
 | `src/lib/db/engine-facets/index.ts` | 43 engine facets rows | PR 11 policy | manifest rows: the PR 9 schema, collected by the PR 11 projection |
-| `src/lib/db/execution-ui/index.ts` | 43 execution UI rows | PR 11 editor and SQL text | manifest rows: the PR 9 schema, collected by the PR 11 projection |
 | `src/lib/db/factory.ts` | 42 provider entry modules, imported dynamically | PR 12 | providers loaded at runtime by the loader |
 | `src/lib/db/graph-policy-profiles.ts` | 1 neo4j policy profile | PR 8 cypher | the Cypher family, `src/lib/db/graph/cypher/` |
 | `src/lib/db/migration-ddl/index.ts` | 43 migration DDL rows | PR 11 editor and SQL text | manifest rows: the PR 9 schema, collected by the PR 11 projection |
@@ -287,7 +284,7 @@ A language slice may move an agent fact to PR 11 agent instead, changing its row
 No core file gains an import into a provider directory.
 `tests/unit/lib/db/provider-imports.test.ts` holds the tree to exactly the pairs of its allowlist: a new pair fails by name, and so does a listed pair the source no longer holds.
 Each slice deletes its pairs from the allowlist and its rows from the inward table in the same PR, so both only shrink.
-The one growth allowed before PR 11 and PR 12 land is a new type-id's row modules in the ten collector entries, the nine registry indexes and `src/lib/db/factory.ts`, added to the allowlist and counted here in the PR that adds the type-id.
+The one growth allowed before PR 11 and PR 12 land is a new type-id's row modules in the ten collector entries, the eight registry indexes and `src/lib/db/factory.ts`, added to the allowlist and counted here in the PR that adds the type-id.
 The connection string index takes a module only for a new engine whose declaration names a connection string function.
 
 A provider that imports a core module the outward table does not list fails the same test until the module gets a row and a destination here.

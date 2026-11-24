@@ -282,7 +282,10 @@ Link-local and instance metadata addresses are never dialled, whatever the varia
 ### Execution UI
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `kubernetes` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
-Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/platform/kubernetes/execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`kubernetes.json`](../../src/lib/db/engine-declarations/kubernetes.json)), projected into the generated execution UI record.
+The fence tags that name it are its id, `kubernetes`, and its declaration's `editor.fenceAliases`, `kubectl`.
+A block tagged `kubernetes` holds one statement of the kubectl subset the editor runs as it is, and `kubectl` spells the command the Kubernetes console speaks, which only `kubernetes` runs.
+No `yaml` or `sh` tag names it: neither names an engine.
 What a tree click and Generate Query write is `KUBECTL_GENERATORS`, the `kubectl` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/platform/kubernetes/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 Its editor language, `kubectl`, is the row in `EDITOR_LANGUAGES` declared in [`editor-language.ts`](../../src/lib/db/providers/platform/kubernetes/editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
 

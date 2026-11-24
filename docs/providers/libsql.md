@@ -582,7 +582,9 @@ It runs no seed load check.
 ### Execution UI
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `libsql` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
-Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/sql/libsql/execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`libsql.json`](../../src/lib/db/engine-declarations/libsql.json)), projected into the generated execution UI record.
+The fence tags that name it are its id, `libsql`, and its declaration's `editor.fenceAliases`, `turso`.
+A block tagged `libsql` holds SQLite's own dialect, the same tokenizer and statements, measured on sqld 0.24.33 (SQLite 3.47.0), and `turso` names it because that is the product name a model is likelier to write.
 
 ---
 

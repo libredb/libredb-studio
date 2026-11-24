@@ -143,7 +143,8 @@ Do not set `DB_HTTP_BLOCK_PRIVATE_HOSTS=true` on such a deployment: it blocks th
 ### Execution UI
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `bigquery` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
-Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/sql/bigquery/execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`bigquery.json`](../../src/lib/db/engine-declarations/bigquery.json)), projected into the generated execution UI record.
+The one fence tag that names it is its id, `bigquery`: its declaration's `editor.fenceAliases` is empty.
 
 ### Connect budget
 

@@ -154,11 +154,23 @@ export const REGISTRIES: readonly Listed[] = [
   },
   ...[
     ["src/lib/db/engine-facets/index.ts", "ENGINE_FACETS"],
-    ["src/lib/db/execution-ui/index.ts", "EXECUTION_UI"],
     ["src/lib/db/migration-ddl/index.ts", "MIGRATION_DDL"],
     ["src/lib/db/sql-grammar/index.ts", "SQL_GRAMMAR"],
     ["src/lib/db/sql-writing/index.ts", "SQL_WRITING"],
   ].map(([path, declaration]) => ({ path, declaration, count: 1, reason: CONTRACT })),
+  {
+    path: "src/lib/db/engine-catalog/editor.generated.ts",
+    declaration: "BUNDLED_EXECUTION_UI",
+    count: 1,
+    reason: "each engine's execution UI, generated from the declarations and compile-enforced over the type-id union",
+  },
+  {
+    path: "src/lib/db/execution-ui/index.ts",
+    declaration: "EXECUTION_UI",
+    count: 1,
+    reason:
+      "each engine's execution UI row, read from the generated execution UI record and typed over the type-id union",
+  },
   {
     path: "src/lib/db/connection-string/index.ts",
     declaration: "CONNECTION_STRING_PASTE_ORDER",
@@ -268,12 +280,6 @@ export const REGISTRIES: readonly Listed[] = [
     count: 4,
     reason:
       "the built-in sample databases, a core-owned Studio feature: one row per engine that ships a sample, in listing order",
-  },
-  {
-    path: "src/lib/sql/fence-tags.ts",
-    declaration: "ENGINE_FENCE_TAGS",
-    count: 1,
-    reason: "the total name registry of code fence tags",
   },
   {
     path: "src/lib/sql/read-query-forms.ts",
