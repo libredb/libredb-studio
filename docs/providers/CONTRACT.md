@@ -2198,12 +2198,15 @@ The turn is the host's and not the SDK pump's, since the pump is also the kit's 
 
 ### C-50 (normative): The legacy bridge serves today's providers as contract sessions
 
-The legacy bridge serves a provider of the legacy interface, `DatabaseProvider`, as one session of console execute, cancel, endScope and transaction, built per call by the caller's facade, so today's providers run through the host core's console calls, C-48.
+The legacy bridge serves a provider of the legacy interface, `DatabaseProvider`, as one session of console execute, cancel, endScope and transaction and of the object tree, built per call by the caller's facade, so today's providers run through the host core's console calls, C-48.
 Its execute honours `params` and `offset` for every engine, so each provider answers both as it always has, its own refusal of an offset included.
 It offers `console.cancel` exactly when the provider can cancel a run.
 It offers `console.endScope` exactly where the provider ends the transactions its query path left open, and its `endScope` runs the provider's `endOpenQueryTransaction` with the request's scope and answers its outcome; its execute hands the provider the request's scope and ends nothing itself.
 It offers `console.transaction` exactly when the provider holds a transaction session, the duck typing of begin, commit and rollback the transaction route has always read.
-It offers no `objects.tree`: the object routes and the VS Code backend still call a provider's tree methods themselves, until they move onto the host core.
+It offers `objects.tree` on every session, since every legacy provider holds the five tree members.
+Its tree call runs the provider's own member for the action with a fresh copy of each path and today's arguments: `listContainers` with one argument, the parent or `undefined` at the top level, `countObjects`, `listObjects`, `describeObject`, and `describeObjects` with the limit, `defaultSql` passed only when the request sends it.
+It answers the member's answer by reference in its action's form, never calls `forCatalog` and passes no read allowance, and a provider's error passes by reference.
+The agent's and MCP's tree reads, and the source, edit and key scan routes, still call the provider themselves until they move onto the host core.
 Its transaction call runs the provider's own method for the action, a begin with `requireReportedState` as the transaction route has always passed it, answering `stateReported` exactly when the provider answered a result, and `state` runs nothing.
 Every transaction answer's session state is the provider's `isInTransaction()` read after the call, so through the bridge a state is `in-transaction` or `not-in-transaction`, and the bridge keeps none between calls.
 A statement sent with `transaction` runs the provider's prepare, the probe row past the page and `queryInTransaction` with a new array of the request's params, with no run id, no scope and no transaction ender, since it runs on the transaction's own connection, and answers the session state read after it.
@@ -2219,7 +2222,11 @@ The page's row limit is set once execute answered: one past the page when the pr
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session honours params and offset, offers cancel only where the provider cancels, and endScope only where the provider ends its query path's transactions"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged endScope runs the provider's ender on the scope it is sent and answers its outcome, its failure by reference"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session offers the transaction facet exactly where the provider is a TransactionProvider"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session offers no objects tree facet, since the object routes and the VS Code backend still call the provider's tree methods themselves"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session offers objects.tree for every provider"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged tree call runs the provider's own member for each action with today's arguments, and answers its answer by reference"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged tree call never calls forCatalog and passes no read allowance"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged tree call whose member throws passes the error by reference"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a legacy tree member that writes the paths it receives changes nothing the host froze"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged begin, COMMIT, ROLLBACK and state read call the provider's methods and answer its state after each"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged begin hands the provider requireReportedState as the route always did, true only when asked"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged statement inside the transaction prepares, probes and runs queryInTransaction, with no run id, no scope and no ender, and answers the state after it"
@@ -2264,7 +2271,7 @@ A refused offset and refused params of a session that refuses a field arrive wit
 ### C-52 (normative): One host core per process
 
 A process holds one host core, created by `createHostCore` and installed under a registered symbol by the process's composition root, which the install names: the server's instrumentation and the VS Code backend's entry.
-The core holds plain functions, the console calls, and constructs no class, so a caller in any bundle of the process runs the core another bundle installed.
+The core holds plain functions, the console calls and the tree call, and constructs no class, so a caller in any bundle of the process runs the core another bundle installed.
 Its execute runs under a page budget the core creates for itself, C-53, so the process holds one page budget as it holds one core.
 The classes a caller tests with `instanceof` and the ports that read them stay the caller's, built per call, C-51.
 A call made before the core is installed fails by name, as a defect of how the process was composed, and nothing reaches the provider.
@@ -2273,7 +2280,7 @@ A second install from another composition root is refused by name, naming both r
 The library surface never reads the installed core, so an embedder composes nothing.
 The live check `tests/live/host-core-live.ts` holds the same rule against the built standalone server, in CI's "Host Core Live Check".
 
-- test `tests/unit/lib/provider-host/core/host-core.test.ts` "the host core holds the console calls on a page budget of its own, frozen, and nothing else"
+- test `tests/unit/lib/provider-host/core/host-core.test.ts` "the host core holds the console calls on a page budget of its own and the tree call, frozen, and nothing else"
 - test `tests/unit/lib/provider-host/instance.test.ts` "the host core is installed once per process, under a registered symbol"
 - test `tests/unit/lib/provider-host/instance.test.ts` "a second install from the same composition root keeps the first core, and throws nothing"
 - test `tests/unit/lib/provider-host/instance.test.ts` "a second install from another composition root is refused by name, naming both roots, and the first core stays"
@@ -2572,14 +2579,66 @@ The answer shapes are Studio's own object tree shapes, declared by the SDK and h
 ### C-62 (informative): A tree answer is read by reference
 
 In process the host reads a tree answer by reference and decides nothing on its values; what a caller reads of one stays the caller's.
+The caller facade of the object tree reads the member its action answers, and answers an answer without it as a defect of Studio's bridge, naming the action and the member, C-65, except a `describeMany` batch, which the bridge passes through by reference, so a batch without `details` is answered as the provider's answer without it.
 The host's reader of a native provider's tree answer, which checks that the form answers the action, arrives with the first native provider.
 
 ### C-63 (informative): A provider honours every member of a tree request
 
 A provider's `objects.tree` honours every member of the request its action names: it lists the containers under the `parent` it is sent, and it stops a `describeMany` read at the `limit` it is sent and says so in `truncated`, never at a cap of its own it does not state.
-No package implements `objects.tree` yet, and the legacy bridge offers it to no session, so nothing checks this of an implementation.
-Today's providers, whose tree methods the object routes and the VS Code backend call themselves, are held to the same members by `assertObjectSurface` in `tests/helpers/object-surface-conformance.ts`, which their integration tests run: its own tests "rejects a deep container whose LAST segment the provider never answered", "rejects a bounded read that stops short and says nothing" and "rejects an unbounded read that reports the caller's bound", in `tests/unit/db/object-surface-conformance.test.ts`, show it fails a provider that ignores `parent` or `limit`.
+No package implements `objects.tree` yet, and the legacy bridge offers it on every session and runs today's members, which the conformance helper holds, so nothing checks this of a package's implementation.
+Today's providers, whose tree methods the legacy bridge runs, are held to the same members by `assertObjectSurface` in `tests/helpers/object-surface-conformance.ts`, which their integration tests run: its own tests "rejects a deep container whose LAST segment the provider never answered", "rejects a bounded read that stops short and says nothing" and "rejects an unbounded read that reports the caller's bound", in `tests/unit/db/object-surface-conformance.test.ts`, show it fails a provider that ignores `parent` or `limit`.
 The host's reader of a native provider's tree answer, which arrives with the first native provider, or a case of the kit checks it, and neither exists yet.
+
+### C-64 (normative): The host's tree call
+
+`treeCall` checks the context with `checkCallStart`, C-27, and the facet with `checkObjectsFacet`, C-17, answering each refusal as a record without calling the provider.
+It freezes the context and the request in place, C-12, and waits with `awaitWithin` until the context's signal, C-28.
+It answers the session's answer by reference, C-62, a stop with its reason and `settled`, and a provider's error by reference.
+A failure after the stop reaches the caller's late handler once, and a later answer is dropped, so no promise the host stopped waiting for is left without a handler.
+A session that offers the facet with no function is a defect of the host's session, named.
+
+- test `tests/unit/lib/provider-host/core/objects.test.ts` "a tree call whose signal aborted or whose deadline passed is refused as a record, and the provider is never called"
+- test `tests/unit/lib/provider-host/core/objects.test.ts` "a tree call to a session without objects.tree is refused as a record before the call"
+- test `tests/unit/lib/provider-host/core/objects.test.ts` "a tree call answers the session's own answer, with the request and context frozen"
+- test `tests/unit/lib/provider-host/core/objects.test.ts` "an error the provider throws reaches the caller as the same object"
+- test `tests/unit/lib/provider-host/core/objects.test.ts` "a tree call the caller stops waiting for answers a stop at once, and its later failure reaches the late handler once"
+- test `tests/unit/lib/provider-host/core/objects.test.ts` "a tree answer that arrives after the stop is dropped, and settled resolves"
+- test `tests/unit/lib/provider-host/core/objects.test.ts` "a session that throws its own signal's reason is answered as a stop"
+- test `tests/unit/lib/provider-host/core/objects.test.ts` "a session that offers objects.tree with no tree function is a host defect, named"
+- test `tests/unit/lib/provider-host/core/objects-bounds.test.ts` "a tree call that never settles is stopped at the call's deadline"
+
+### C-65 (normative): The object tree on the host
+
+The six tree routes and the VS Code backend's tree calls, `selectStatement`'s describe among them, read every container listing, count, object listing and description through one caller facade and the host core's tree call, C-64, on the session the legacy bridge serves, C-50.
+Each read waits until its own deadline, the statement timeout plus 10 s from that read's start, and the caller's signal, the request's or the JSON-RPC request's cancellation.
+An inventory's and a search's walks take one deadline per read, not one per request, since a whole walk is a sum of round trips that grows with the server's distance.
+A read the caller left is answered at once as `QueryCancelledError`, outcome unknown, or not-sent when refused before the call, and one past its deadline as `StudioTimeoutRefusal` naming the read, the statement timeout and the slack.
+A read's later failure is logged by kind and code, never its text.
+The facade takes the provider its caller resolved and no catalog, so no catalog choice is honoured on this path, M-57.
+Each route's and handler's own checks and scrubs run where they ran.
+
+- test `tests/unit/lib/api/object-tree.test.ts` "each tree read is one host core tree call with a fresh request, on a deadline of the statement timeout plus ten seconds from its own start"
+- test `tests/unit/lib/api/object-tree.test.ts` "each tree read answers the provider's own answer by reference"
+- test `tests/unit/lib/api/object-tree.test.ts` "an error the provider raises reaches the caller as the same object"
+- test `tests/unit/lib/api/object-tree.test.ts` "a caller that leaves while the provider reads is answered QueryCancelledError at once, outcome unknown, and the read's later failure is logged by kind and code, never its text"
+- test `tests/unit/lib/api/object-tree.test.ts` "a caller already gone reads nothing and is answered QueryCancelledError, not-sent"
+- test `tests/unit/lib/api/object-tree.test.ts` "a tree read past its deadline answers StudioTimeoutRefusal naming the read, the statement timeout and the slack"
+- test `tests/unit/lib/api/object-tree.test.ts` "a tree read refused for any other reason is answered as a defect of Studio's bridge, named by its rule"
+- test `tests/unit/lib/api/object-tree.test.ts` "an answer without its action's member is answered as a defect of Studio's bridge, or of the provider for the batch the bridge passes through, naming the action and the member"
+- test `tests/unit/lib/api/object-tree.test.ts` "a tree read before the host core is installed fails by name and reaches no provider"
+- test `tests/unit/lib/api/object-tree-bounds.test.ts` "a tree read that never answers is stopped at its deadline, StudioTimeoutRefusal naming the read"
+- test `tests/unit/db/container-walk.test.ts` "the walk reads any container source, not only a provider"
+- test `tests/api/db-objects.test.ts` "a tree route whose request leaves while the provider reads answers 499 at once, outcome unknown"
+- test `tests/api/db-objects.test.ts` "a tree route whose request is already gone answers 499 not-sent and asks the provider nothing"
+- test `tests/api/db-objects.test.ts` "an inventory or a search whose request leaves between its reads sends no further read"
+- test `tests/api/db-objects.test.ts` "a tree route past its deadline answers 504 studio-timeout-refusal naming the read"
+- test `tests/api/db-objects.test.ts` "every read of an inventory, its container walk included, is a host core tree call with a deadline of its own"
+- test `tests/api/db-objects.test.ts` "a tree route reads no catalog, and its provider's forCatalog is never called"
+- test `vscode-extension/test/unit/backend-handlers.test.ts` "each tree call reads through the host core's tree call, the provider resolved as before"
+- test `vscode-extension/test/unit/backend-handlers.test.ts` "a tree call whose request is cancelled while the provider reads answers QUERY_CANCELLED at once, outcome unknown"
+- test `vscode-extension/test/unit/backend-handlers.test.ts` "a tree call whose request is already cancelled reads nothing and answers QUERY_CANCELLED, not-sent"
+- test `vscode-extension/test/unit/backend-handlers.test.ts` "a tree call past its deadline answers TIMEOUT_ERROR naming the read"
+- test `vscode-extension/test/unit/backend-handlers.test.ts` "the columns are read through the host core's tree call, under the request's cancellation"
 
 ## Not yet in this contract
 

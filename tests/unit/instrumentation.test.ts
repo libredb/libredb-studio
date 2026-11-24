@@ -426,7 +426,13 @@ describe("instrumentation register()", () => {
 
     expect(installedAtReseal).toEqual([false]);
     const core = hostCore();
-    expect(Object.keys(core).sort()).toEqual(["cancelCall", "endScopeCall", "executeCall", "transactionCall"]);
+    expect(Object.keys(core).sort()).toEqual([
+      "cancelCall",
+      "endScopeCall",
+      "executeCall",
+      "transactionCall",
+      "treeCall",
+    ]);
     expect(core.cancelCall).toBe(cancelCall);
     expect(core.endScopeCall).toBe(endScopeCall);
     expect(core.transactionCall).toBe(transactionCall);

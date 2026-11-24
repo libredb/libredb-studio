@@ -16,6 +16,7 @@ import {
   transactionCall,
 } from "@/lib/provider-host/core/console";
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
+import { treeCall } from "@/lib/provider-host/core/objects";
 
 /** Lets every callback already queued run: one turn of the event loop, never a timer an assertion waits on. */
 const turn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
@@ -68,11 +69,18 @@ function pageOf(record: ExecuteRecord): PageRecord {
 }
 
 describe("the host core instance", () => {
-  test("the host core holds the console calls on a page budget of its own, frozen, and nothing else", () => {
+  test("the host core holds the console calls on a page budget of its own and the tree call, frozen, and nothing else", () => {
     const core = createHostCore();
 
-    expect(Object.keys(core).sort()).toEqual(["cancelCall", "endScopeCall", "executeCall", "transactionCall"]);
+    expect(Object.keys(core).sort()).toEqual([
+      "cancelCall",
+      "endScopeCall",
+      "executeCall",
+      "transactionCall",
+      "treeCall",
+    ]);
     expect(core.cancelCall).toBe(cancelCall);
+    expect(core.treeCall).toBe(treeCall);
     expect(core.endScopeCall).toBe(endScopeCall);
     expect(core.transactionCall).toBe(transactionCall);
     expect(typeof core.executeCall).toBe("function");

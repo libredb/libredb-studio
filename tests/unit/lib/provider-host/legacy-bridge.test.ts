@@ -23,6 +23,12 @@ import {
   PAGE_MAX_BYTES,
   pumpPage,
   type ResultSource,
+  type TreeContainersRequest,
+  type TreeCountRequest,
+  type TreeDescribeManyRequest,
+  type TreeDescribeRequest,
+  type TreeListRequest,
+  type TreeRequest,
 } from "@libredb/provider-sdk/calls";
 import {
   type BeginTransactionResult,
@@ -147,7 +153,7 @@ describe("bridgedConsole", () => {
         endScope: "not-offered",
         transaction: "not-offered",
       },
-      objects: { tree: "not-offered" },
+      objects: { tree: "offered" },
     });
     expect(plain.session.calls.console.cancel).toBe("not-offered");
     expect(typeof cancelling.session.cancel).toBe("function");
@@ -162,14 +168,14 @@ describe("bridgedConsole", () => {
         endScope: "offered",
         transaction: "not-offered",
       },
-      objects: { tree: "not-offered" },
+      objects: { tree: "offered" },
     });
     expect(typeof ending.session.endScope).toBe("function");
     expect(Object.isFrozen(cancelling.session.calls)).toBe(true);
     expect(Object.isFrozen(cancelling.session.calls.console.execute.honours)).toBe(true);
   });
 
-  test("a bridged session offers no objects tree facet, since the object routes and the VS Code backend still call the provider's tree methods themselves", () => {
+  test("a bridged session offers objects.tree for every provider", () => {
     const sessions = [
       bridgedConsole(fake(resultOf([])), {}),
       bridgedConsole(fake(resultOf([]), { cancelQuery: mock(async () => true) }), {}),
@@ -178,12 +184,159 @@ describe("bridgedConsole", () => {
     ];
 
     for (const { session } of sessions) {
-      expect(session.calls.objects).toEqual({ tree: "not-offered" });
+      expect(session.calls.objects).toEqual({ tree: "offered" });
       expect(Object.isFrozen(session.calls.objects)).toBe(true);
-      expect(checkObjectsFacet(session.calls, "tree")).toEqual([
-        { rule: "facet-not-offered", pointer: "/objects/tree", name: "objects.tree" },
-      ]);
+      expect(checkObjectsFacet(session.calls, "tree")).toEqual([]);
+      expect(typeof session.tree).toBe("function");
     }
+  });
+
+  test("a bridged tree call runs the provider's own member for each action with today's arguments, and answers its answer by reference", async () => {
+    const containers = [{ path: ["app"], name: "app", level: 0 }];
+    const counts = { table: { count: 2 } };
+    const objects = [{ path: ["app", "orders"], name: "orders", kind: "table" }];
+    const detail = { path: ["app", "orders"], columns: [], indexes: [], foreignKeys: [] };
+    const batch = { details: [detail] };
+    const provider = Object.assign(fake(resultOf([])), {
+      listContainers: mock(async () => containers),
+      countObjects: mock(async () => counts),
+      listObjects: mock(async () => objects),
+      describeObject: mock(async () => detail),
+      describeObjects: mock(async () => batch),
+    });
+    const { session } = bridgedConsole(provider, {});
+    const tree = session.tree as NonNullable<typeof session.tree>;
+    const read = (request: TreeRequest) => tree(freezeData(request), contextOf());
+
+    const below = await read({ action: "containers", parent: ["app"] });
+    const top = await read({ action: "containers" });
+    const counted = await read({ action: "count", container: ["app"] });
+    const listed = await read({ action: "list", container: ["app"], kind: "table" });
+    const described = await read({ action: "describe", path: ["app", "orders"], kind: "table" });
+    const many = await read({ action: "describeMany", container: ["app"], kind: "table", limit: 3 });
+    const manySql = await read({
+      action: "describeMany",
+      container: ["app"],
+      kind: "table",
+      limit: 3,
+      defaultSql: true,
+    });
+
+    expect(callsOf(provider.listContainers)).toEqual([[["app"]], [undefined]]);
+    expect(callsOf(provider.listContainers).map((args) => args.length)).toEqual([1, 1]);
+    expect(callsOf(provider.countObjects)).toEqual([[["app"]]]);
+    expect(callsOf(provider.countObjects)[0]).toHaveLength(1);
+    expect(callsOf(provider.listObjects)).toEqual([[["app"], "table"]]);
+    expect(callsOf(provider.listObjects)[0]).toHaveLength(2);
+    expect(callsOf(provider.describeObject)).toEqual([[["app", "orders"], "table"]]);
+    expect(callsOf(provider.describeObject)[0]).toHaveLength(2);
+    expect(callsOf(provider.describeObjects)).toEqual([
+      [["app"], "table", 3],
+      [["app"], "table", 3, { defaultSql: true }],
+    ]);
+    expect(callsOf(provider.describeObjects).map((args) => args.length)).toEqual([3, 4]);
+    expect((below as { containers: unknown }).containers).toBe(containers);
+    expect((top as { containers: unknown }).containers).toBe(containers);
+    expect((counted as { counts: unknown }).counts).toBe(counts);
+    expect((listed as { objects: unknown }).objects).toBe(objects);
+    expect((described as { detail: unknown }).detail).toBe(detail);
+    expect(many).toBe(batch);
+    expect(manySql).toBe(batch);
+    expect(provider.query).not.toHaveBeenCalled();
+    expect(provider.prepareQuery).not.toHaveBeenCalled();
+  });
+
+  test("a bridged tree call never calls forCatalog and passes no read allowance", async () => {
+    const forCatalog = mock(async () => fake(resultOf([])));
+    const provider = Object.assign(fake(resultOf([])), { forCatalog });
+    const { session } = bridgedConsole(provider, {});
+    const tree = session.tree as NonNullable<typeof session.tree>;
+
+    await tree(freezeData({ action: "count", container: ["app"] }), contextOf());
+    await tree(freezeData({ action: "list", container: ["app"], kind: "table" }), contextOf());
+    await tree(freezeData({ action: "describeMany", container: ["app"], kind: "table", limit: 3 }), contextOf());
+
+    expect(forCatalog).not.toHaveBeenCalled();
+    // A read allowance would be the count's second argument, the listing's third or the batch's fourth.
+    expect(callsOf(provider.countObjects)[0]).toHaveLength(1);
+    expect(callsOf(provider.listObjects)[0]).toHaveLength(2);
+    expect(callsOf(provider.describeObjects)[0]).toHaveLength(3);
+  });
+
+  test("a bridged tree call whose member throws passes the error by reference", async () => {
+    const thrown = new Error(marker());
+    const provider = Object.assign(fake(resultOf([])), {
+      listObjects: mock(async () => {
+        throw thrown;
+      }),
+    });
+    const { session } = bridgedConsole(provider, {});
+    const tree = session.tree as NonNullable<typeof session.tree>;
+
+    const caught = await failure(() =>
+      tree(freezeData({ action: "list", container: ["app"], kind: "table" }), contextOf()),
+    );
+
+    expect(caught).toBe(thrown);
+  });
+
+  test("a legacy tree member that writes the paths it receives changes nothing the host froze", async () => {
+    const received: (readonly string[] | undefined)[] = [];
+    const writes = (path: string[] | undefined) => {
+      received.push(path);
+      path?.push(marker());
+      if (path !== undefined) path[0] = marker();
+    };
+    const provider = Object.assign(fake(resultOf([])), {
+      listContainers: mock(async (parent?: string[]) => {
+        writes(parent);
+        return [];
+      }),
+      countObjects: mock(async (container: string[]) => {
+        writes(container);
+        return {};
+      }),
+      listObjects: mock(async (container: string[]) => {
+        writes(container);
+        return [];
+      }),
+      describeObject: mock(async (path: string[]) => {
+        writes(path);
+        return { path: [], columns: [], indexes: [], foreignKeys: [] };
+      }),
+      describeObjects: mock(async (container: string[]) => {
+        writes(container);
+        return { details: [] };
+      }),
+    });
+    const { session } = bridgedConsole(provider, {});
+    const tree = session.tree as NonNullable<typeof session.tree>;
+    const requests: TreeRequest[] = [
+      freezeData({ action: "containers", parent: ["app"] }),
+      freezeData({ action: "count", container: ["app"] }),
+      freezeData({ action: "list", container: ["app"], kind: "table" }),
+      freezeData({ action: "describe", path: ["app", "orders"], kind: "table" }),
+      freezeData({ action: "describeMany", container: ["app"], kind: "table" }),
+    ];
+
+    for (const request of requests) {
+      // oxlint-disable-next-line no-await-in-loop -- one read at a time, so each member's received path is in order.
+      await tree(request, contextOf());
+    }
+
+    expect(requests).toEqual([
+      { action: "containers", parent: ["app"] },
+      { action: "count", container: ["app"] },
+      { action: "list", container: ["app"], kind: "table" },
+      { action: "describe", path: ["app", "orders"], kind: "table" },
+      { action: "describeMany", container: ["app"], kind: "table" },
+    ]);
+    expect(received).toHaveLength(5);
+    expect(received[0]).not.toBe((requests[0] as TreeContainersRequest).parent);
+    expect(received[1]).not.toBe((requests[1] as TreeCountRequest).container);
+    expect(received[2]).not.toBe((requests[2] as TreeListRequest).container);
+    expect(received[3]).not.toBe((requests[3] as TreeDescribeRequest).path);
+    expect(received[4]).not.toBe((requests[4] as TreeDescribeManyRequest).container);
   });
 
   test("a bridged session offers the transaction facet exactly where the provider is a TransactionProvider", () => {

@@ -413,8 +413,8 @@ describe("who wrote a refusal", () => {
 
 /**
  * The paths the census covers: the agent, the hand-over and MCP, and the core read path they share; every database
- * route, the object routes' shared handler, the fleet health check and the shared steps behind them (the editor's two
- * caller facades among them), the query events those routes record, the provider factory's log lines, and the VS Code
+ * route, the object routes' shared handler, the fleet health check and the shared steps behind them (the caller
+ * facades among them), the query events those routes record, the provider factory's log lines, and the VS Code
  * extension's backend child.
  */
 const PROVIDER_TEXT_PATHS = [
@@ -428,6 +428,7 @@ const PROVIDER_TEXT_PATHS = [
   join("src", "lib", "api", "object-route.ts"),
   join("src", "lib", "api", "editor-query.ts"),
   join("src", "lib", "api", "editor-transaction.ts"),
+  join("src", "lib", "api", "object-tree.ts"),
   join("src", "lib", "provider-host"),
   join("src", "lib", "api", "test-connection.ts"),
   join("src", "lib", "query-events"),
@@ -562,6 +563,13 @@ const SNAPSHOT_SENTENCE =
   "a snapshot's provider sentence: walkObjectInventory scrubbed it at the capture, scrubSnapshotSentences before a prompt";
 
 /**
+ * The reason the legacy bridge's tree reads are no crossing of their own: the bridge hands each answer by reference to
+ * the host core's tree call, and the tree's caller, a route or the VS Code backend, scrubs it where it always did.
+ */
+const LEGACY_TREE_ANSWER =
+  "a legacy tree answer carried by reference through the host core's tree call to its caller, which answers it through its core scrubs";
+
+/**
  * Every read of such a text on the three paths outside a recorded crossing, each with the reason it is not a
  * provider's text, or is one a crossing already scrubbed.
  */
@@ -601,6 +609,9 @@ const NOT_PROVIDER_TEXT: Readonly<Record<string, string>> = {
   [`${mcp("tools", "run-statement.ts")}: build: raw.warnings`]: "a result executeOpened scrubbed before resultOf",
   [`${providerHost("legacy-bridge.ts")}: answerOf: result.warnings`]:
     "a legacy result's warnings carried into the execute answer, which runEditorQuery never renders: it answers the legacy result through withScrubbedWarnings",
+  [`${providerHost("legacy-bridge.ts")}: legacyTree: provider.countObjects`]: LEGACY_TREE_ANSWER,
+  [`${providerHost("legacy-bridge.ts")}: legacyTree: provider.describeObject`]: LEGACY_TREE_ANSWER,
+  [`${providerHost("legacy-bridge.ts")}: legacyTree: provider.describeObjects`]: LEGACY_TREE_ANSWER,
   [`${join("src", "lib", "api", "editor-transaction.ts")}: readTransactionState: read.error.message`]:
     "the accessor's own sentence for a state read the host stopped waiting for or refused before the call, Studio's: no provider text reaches it",
   [`${providerHost("core", "console.ts")}: runExecute: answer.warnings`]:
@@ -648,7 +659,7 @@ const NOT_PROVIDER_TEXT: Readonly<Record<string, string>> = {
     "a description of which inspectTable answers only the index sentence, through engineMessage, which scrubs it",
   [`${objectRoute}: requireSourceReader: provider.readObjectSource`]:
     "the source reader, whose document the source route answers through scrubSourceDocument",
-  [`${childHandlers}: selectStatement: provider.describeObject`]:
+  [`${childHandlers}: selectStatement: tree.describeObject`]:
     "a description of which selectStatement reads only the columns, database content",
 };
 

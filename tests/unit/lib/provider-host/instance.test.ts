@@ -132,7 +132,7 @@ describe("one host core per process", () => {
       "src/instrumentation.ts",
       "vscode-extension/src/backend/main.ts",
     ]);
-    for (const name of ["console.ts", "page-budget.ts", "turns.ts"]) {
+    for (const name of ["console.ts", "objects.ts", "page-budget.ts", "turns.ts"]) {
       const outside = valueImportersOf(sources, `${CORE_DIRECTORY}${name}`).filter(
         (file) => !file.startsWith(CORE_DIRECTORY),
       );

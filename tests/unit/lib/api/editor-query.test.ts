@@ -939,6 +939,7 @@ describe("runEditorQuery on the host core", () => {
         cancelCall: real.cancelCall,
         endScopeCall: real.endScopeCall,
         transactionCall: real.transactionCall,
+        treeCall: real.treeCall,
       },
       "test",
     );
@@ -986,6 +987,7 @@ describe("runEditorQuery on the host core", () => {
         cancelCall: real.cancelCall,
         endScopeCall: real.endScopeCall,
         transactionCall: real.transactionCall,
+        treeCall: real.treeCall,
       },
       "test",
     );

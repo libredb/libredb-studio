@@ -14,8 +14,10 @@ import {
   resolveKinds,
   type ObjectInventory,
 } from "@/lib/api/object-route";
+import { objectTree } from "@/lib/api/object-tree";
 import {
   type ContainerEnumeration,
+  type ContainerSource,
   describeNamedContainers,
   enumerateContainers,
   kindsByContainer,
@@ -83,6 +85,13 @@ export const dynamic = "force-dynamic";
  * since a migration pastes the text and a snapshot must capture it when taken; every other reader
  * does not, and gets exactly the call it got before. It needs `includeColumns`, since the text is
  * carried on the columns, and asking for it alone is a caller mistake rather than a silent no-op.
+ *
+ * Every read of the inventory, each container listing of the walk, each object listing and each
+ * bulk read, is a host core tree call (`objectTree`, src/lib/api/object-tree.ts) under a deadline of
+ * its own, the statement timeout plus ten seconds from that read's start, and not one deadline for
+ * the request: the whole walk is a sum of round trips that grows with the server's distance, so one
+ * deadline for it would cut an inventory that answers. The request's signal ends the walk at its
+ * next read.
  */
 export async function POST(req: NextRequest) {
   return handleObjectRequest(req, "api/db/objects/inventory", async (provider, body, ctx): Promise<ObjectInventory> => {
@@ -100,11 +109,14 @@ export async function POST(req: NextRequest) {
     // holds is the provider's answer: a caller naming a cluster's cluster-scoped container must
     // not have its namespaced kinds listed there. See `namedEnumeration`.
     if (named === undefined) assertNotWholeServer(provider);
+    const tree = objectTree(provider, req.signal, ctx.route);
     const enumerated =
-      named === undefined ? await enumerateContainers(provider) : await namedEnumeration(provider, dedupePaths(named));
+      named === undefined
+        ? await enumerateContainers(tree)
+        : await namedEnumeration(provider, tree, dedupePaths(named));
     const containers = dedupePaths(enumerated.containers);
     const kindsOf = kindsByContainer(enumerated);
-    const listObjects = provider.listObjects.bind(provider);
+    const { listObjects } = tree;
 
     // Flattened to one loop so each limit is checked in one place. Nested loops would need a label
     // to leave both, and the outer check would otherwise re-enter for every later container.
@@ -137,7 +149,7 @@ export async function POST(req: NextRequest) {
         400,
       );
     }
-    const describeObjects = provider.describeObjects.bind(provider);
+    const { describeObjects } = tree;
 
     const objects: DatabaseObject[] = [];
     const details: ObjectDetail[] = [];
@@ -214,9 +226,11 @@ export async function POST(req: NextRequest) {
  * inapplicable pair with a sentence, and that refusal would end the whole inventory. So the caller is
  * told before any listing, in a sentence naming what it sent. The paths arrive deduplicated, and the
  * sentence echoes the first few of them and counts the rest, so a large body never comes back whole.
+ * The listings are read from `source`, the request's object tree, and counted from `provider`'s capabilities.
  */
 async function namedEnumeration(
   provider: DatabaseProvider,
+  source: ContainerSource,
   named: readonly (readonly string[])[],
 ): Promise<ContainerEnumeration> {
   const listings = namedContainerListings(provider, named);
@@ -227,7 +241,7 @@ async function namedEnumeration(
       400,
     );
   }
-  const { enumeration, unlisted } = await describeNamedContainers(provider, named);
+  const { enumeration, unlisted } = await describeNamedContainers(source, named);
   if (unlisted.length > 0) {
     const shown = unlisted.slice(0, UNLISTED_ECHO_LIMIT);
     const more = unlisted.length - shown.length;

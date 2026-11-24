@@ -7,6 +7,7 @@
 import { type CancellationToken, ErrorCodes, type MessageConnection, ResponseError } from "vscode-jsonrpc";
 import { cancelEditorRun, checkEditorQuery, openWithinCall, runEditorQuery } from "@/lib/api/editor-query";
 import { databaseErrorBody, internalErrorBody, withWithheldText } from "@/lib/api/error-body";
+import { objectTree } from "@/lib/api/object-tree";
 import { pageOptionError } from "@/lib/api/page-probe";
 import { gateRun, type RunGateAnswerBody, type RunGateRequest } from "@/lib/api/run-confirmation";
 import { runConfirmationIssuerForProcess } from "@/lib/api/run-confirmation-token";
@@ -112,16 +113,16 @@ export interface BackendHandlers {
   testConnection(params: unknown): Promise<TestConnectionResult>;
   openConnection(params: unknown): Promise<OpenResult>;
   closeConnection(params: unknown): Promise<null>;
-  listContainers(params: unknown): Promise<Container[]>;
-  countObjects(params: unknown): Promise<Record<string, KindCount>>;
-  listObjects(params: unknown): Promise<DatabaseObject[]>;
-  describeObject(params: unknown): Promise<ObjectDetail>;
+  listContainers(params: unknown, token: CancellationToken): Promise<readonly Container[]>;
+  countObjects(params: unknown, token: CancellationToken): Promise<Record<string, KindCount>>;
+  listObjects(params: unknown, token: CancellationToken): Promise<readonly DatabaseObject[]>;
+  describeObject(params: unknown, token: CancellationToken): Promise<ObjectDetail>;
   runQuery(params: unknown, token: CancellationToken): Promise<QueryPage>;
   cancelQuery(params: unknown, token: CancellationToken): Promise<CancelResult>;
   shutdown(): Promise<null>;
   listEngines(params: unknown): EngineCatalog;
   parsePastedConnection(params: unknown): PastedConnection;
-  selectStatement(params: unknown): Promise<SelectStatementResult>;
+  selectStatement(params: unknown, token: CancellationToken): Promise<SelectStatementResult>;
   runTarget(params: unknown): Promise<RunTargetResult>;
 }
 
@@ -209,6 +210,22 @@ function readConnectionParams(params: unknown): OpenRecord {
   // The other fields are the provider's to check, as they are behind the routes.
   const connection = { ...wire, createdAt } as unknown as DatabaseConnection;
   return { connection, posture: { allowExternalFileAccess } };
+}
+
+/**
+ * Runs `read` with a signal the request's cancellation aborts, as a dropped browser request is a route's caller going
+ * away: a token already cancelled aborts it at once, so the host core's tree call refuses the read before it is made.
+ * The token's listener is disposed once `read` answered or failed. The tree calls pass the signal to `objectTree`.
+ */
+async function underCancellation<T>(token: CancellationToken, read: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  const listener = token.onCancellationRequested(() => controller.abort());
+  if (token.isCancellationRequested) controller.abort();
+  try {
+    return await read(controller.signal);
+  } finally {
+    listener.dispose();
+  }
 }
 
 /**
@@ -369,47 +386,61 @@ export function createHandlers(
       });
     },
 
-    async listContainers(params) {
+    // The four tree calls read through the host core's tree call (`objectTree`), as the object routes do, each under
+    // its own deadline and the request's cancellation.
+    async listContainers(params, token) {
       const connectionId = connectionIdOf(params);
       const parent = fieldOf(params, "parent");
       const path = parent === undefined ? undefined : stringArray(parent, "parent");
       const record = openRecord(connectionId);
-      return await answeringFor(record.connection, async () => (await providerOf(record)).listContainers(path));
+      return await underCancellation(token, (signal) =>
+        answeringFor(record.connection, async () =>
+          objectTree(await providerOf(record), signal, METHODS.listContainers).listContainers(path),
+        ),
+      );
     },
 
-    async countObjects(params) {
+    async countObjects(params, token) {
       const connectionId = connectionIdOf(params);
       const container = stringArray(fieldOf(params, "container"), "container");
       const record = openRecord(connectionId);
       // The counts' `unavailable` and `sampledFrom` sentences are the provider's own words, answered through the
       // connection's scrub as the object routes answer them.
-      return await answeringFor(record.connection, async () =>
-        scrubKindCounts(
-          providerTextScrub(record.connection, "any"),
-          await (await providerOf(record)).countObjects(container),
+      return await underCancellation(token, (signal) =>
+        answeringFor(record.connection, async () =>
+          scrubKindCounts(
+            providerTextScrub(record.connection, "any"),
+            await objectTree(await providerOf(record), signal, METHODS.countObjects).countObjects(container),
+          ),
         ),
       );
     },
 
-    async listObjects(params) {
+    async listObjects(params, token) {
       const connectionId = connectionIdOf(params);
       const container = stringArray(fieldOf(params, "container"), "container");
       const kind = aString(fieldOf(params, "kind"), "kind");
       const record = openRecord(connectionId);
-      return await answeringFor(record.connection, async () => (await providerOf(record)).listObjects(container, kind));
+      return await underCancellation(token, (signal) =>
+        answeringFor(record.connection, async () =>
+          objectTree(await providerOf(record), signal, METHODS.listObjects).listObjects(container, kind),
+        ),
+      );
     },
 
-    async describeObject(params) {
+    async describeObject(params, token) {
       const connectionId = connectionIdOf(params);
       const path = stringArray(fieldOf(params, "path"), "path");
       const kind = aString(fieldOf(params, "kind"), "kind");
       const record = openRecord(connectionId);
       // The description's `indexes.unavailable` sentence is the provider's own words, answered through the
       // connection's scrub as the object routes answer it.
-      return await answeringFor(record.connection, async () =>
-        scrubObjectDetail(
-          providerTextScrub(record.connection, "any"),
-          await (await providerOf(record)).describeObject(path, kind),
+      return await underCancellation(token, (signal) =>
+        answeringFor(record.connection, async () =>
+          scrubObjectDetail(
+            providerTextScrub(record.connection, "any"),
+            await objectTree(await providerOf(record), signal, METHODS.describeObject).describeObject(path, kind),
+          ),
         ),
       );
     },
@@ -520,28 +551,32 @@ export function createHandlers(
     },
 
     // What the web's tree click writes (handleTableClick), with the columns read only where the engine declares a
-    // projection for a kind that has them (part 3, "Backend additions" 1).
-    async selectStatement(params) {
+    // projection for a kind that has them (part 3, "Backend additions" 1), through the host core's tree call under the
+    // request's cancellation.
+    async selectStatement(params, token) {
       const connectionId = connectionIdOf(params);
       const object = databaseObjectOf(fieldOf(params, "object"));
       const record = openRecord(connectionId);
-      return await answeringFor(record.connection, async () => {
-        const provider = await providerOf(record);
-        const capabilities = provider.getCapabilities();
-        let columns: readonly ColumnSchema[] | undefined;
-        if (capabilities.previewProjection !== undefined && kindHasColumns(findKind(capabilities, object.kind))) {
-          columns = (await provider.describeObject(object.path, object.kind)).columns;
-        }
-        try {
-          return {
-            statement: generateTableQuery(object.path, provider.type, capabilities, columns, {
-              readRanges: object.readRanges,
-            }),
-          };
-        } catch (error) {
-          throw refusal(500, "INTERNAL_ERROR", (error as Error).message);
-        }
-      });
+      return await underCancellation(token, (signal) =>
+        answeringFor(record.connection, async () => {
+          const provider = await providerOf(record);
+          const capabilities = provider.getCapabilities();
+          let columns: readonly ColumnSchema[] | undefined;
+          if (capabilities.previewProjection !== undefined && kindHasColumns(findKind(capabilities, object.kind))) {
+            const tree = objectTree(provider, signal, METHODS.selectStatement);
+            columns = (await tree.describeObject(object.path, object.kind)).columns;
+          }
+          try {
+            return {
+              statement: generateTableQuery(object.path, provider.type, capabilities, columns, {
+                readRanges: object.readRanges,
+              }),
+            };
+          } catch (error) {
+            throw refusal(500, "INTERNAL_ERROR", (error as Error).message);
+          }
+        }),
+      );
     },
 
     // The web editor's run target rule on the offsets the host's editor reports, through runnableTarget: a target with

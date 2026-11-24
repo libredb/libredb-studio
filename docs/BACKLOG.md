@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D660, U17 · 372
+- [Drivers and connections](#drivers-and-connections) — D1-D670, U17 · 373
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -4946,10 +4946,20 @@ A level that opens another database without `catalogSessions` is the provider's 
 The object routes and the VS Code backend's tree calls read on the editor's provider (`handleObjectRequest` in `src/lib/api/object-route.ts`), so a listing takes a connection from the pool the editor's statements run on.
 Measured on 2026-11-24 against `postgres:18-alpine` with Studio's default pool of 10: with every connection held by a running `SELECT pg_sleep(6)`, a listing answered after 5,503 ms, against 1 ms on an idle pool and 7 ms with one connection free; with `pg_sleep(3)` it answered after 2,503 ms.
 A statement that runs longer than the pool's acquire timeout, 60 seconds by default, leaves the tree read waiting until then.
+Since the tree reads moved onto the host core, a read waiting for a connection is answered at the connection's statement timeout plus 10 seconds when that comes first.
 Under governance each user's provider has a pool of 3 by default, so three running statements of one user hold that user's tree.
 The agent and MCP read the tree on a provider of their own and do not wait.
 
 **Done when:** a tree read on a pooled connection runs on a session of its own, apart from the editor's pool, except where Studio's record says the engine or the connection serves one session, and a test that holds every editor connection shows a listing answers at once.
+
+### D670. The VS Code backend's tree calls hand the provider container paths the object routes refuse
+
+The object routes check a container path before the provider is asked: `assertContainerDepth` refuses a `parent` deeper than the engine declares on `POST /api/db/objects/containers`, and `assertContainerAddress` refuses a `container` in a shape the engine does not declare on `counts`, `list` and `inventory` (both in `src/lib/api/object-route.ts`).
+The VS Code backend's `objects/containers`, `objects/counts` and `objects/list` (`createHandlers` in `vscode-extension/src/backend/handlers.ts`) check only that the path is a list of strings and hand it to the provider.
+So one path is refused with a 400 in Studio's words on one channel and answered by the provider on the other, with its own error or with an answer for a level the engine does not have.
+Both channels read the tree through one caller facade, but the checks run before it, in the route module, which the backend child does not import.
+
+**Done when:** both channels refuse the same container paths with the same sentence before the provider is asked, from one module both import, and a test per channel sends a too-deep `parent` and a container in an undeclared shape.
 
 ## Value interpolation
 

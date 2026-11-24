@@ -11,8 +11,16 @@
  * query path left open (`endsOpenQueryTransactions`), and its `endScope` runs the provider's `endOpenQueryTransaction`
  * with the request's scope and answers its outcome; `console.transaction` is offered exactly when the provider holds a
  * transaction session (`isTransactionProvider`). The bridge is the one caller of a provider's ender: the caller that
- * minted a run's scope ends it through the host core's endScope call (clause C-60). `objects.tree` is not offered: the
- * object routes and the VS Code backend still call a provider's tree methods themselves.
+ * minted a run's scope ends it through the host core's endScope call (clause C-60). `objects.tree` is offered on every
+ * session, since every legacy provider holds the five tree members.
+ *
+ * Its tree call runs the provider's own member for the action with today's arguments: `listContainers` with one
+ * argument, the parent or `undefined` at the top level, `countObjects`, `listObjects`, `describeObject`, and
+ * `describeObjects` with the limit, and `{ defaultSql: true }` as a fourth argument only when the request sends it.
+ * Each path is a fresh copy of the frozen request's array, so a legacy member may write what it receives. It answers
+ * the member's answer by reference in its action's form (`{ containers }`, `{ counts }`, `{ objects }`, `{ detail }`,
+ * or the batch itself), never calls `forCatalog` and passes no read allowance. A provider's error passes by reference.
+ * The facade that reads it is `objectTree` in src/lib/api/object-tree.ts.
  *
  * Its transaction call runs the provider's own method for the action: `beginTransaction` with `requireReportedState`
  * as the transaction route has always passed it, answering `stateReported` exactly when the provider answered a result,
@@ -59,6 +67,8 @@ import {
   sessionCalls,
   type TransactionAnswer,
   type TransactionRequest,
+  type TreeAnswer,
+  type TreeRequest,
   type Warning,
 } from "@libredb/provider-sdk/calls";
 import type { SessionState } from "@libredb/provider-sdk/errors";
@@ -74,6 +84,7 @@ import {
 } from "@/lib/db/types";
 import { noteAppendedBound } from "@/lib/db/utils/query-limiter";
 import type { ConsoleSession } from "@/lib/provider-host/core/console";
+import type { ObjectsSession } from "@/lib/provider-host/core/objects";
 import type { QueryResult, QueryWarning } from "@/lib/types";
 
 /**
@@ -94,7 +105,7 @@ export interface AnsweredRun {
 
 /** A bridged session, the run its execute fills, and the page limits read from that run. */
 export interface BridgedConsole {
-  readonly session: ConsoleSession;
+  readonly session: ConsoleSession & ObjectsSession;
   readonly run: LegacyRun;
   /**
    * What the execute that answered left, for the facade to answer from.
@@ -236,8 +247,31 @@ async function legacyTransaction(
 }
 
 /**
- * `provider` served as one session of console execute, cancel and transaction, its execute run with a copy of
- * `options`, the caller's own page options.
+ * Runs `request`'s action on `provider`'s own tree member with today's arguments, each path a fresh copy of the
+ * request's array, and answers the member's answer by reference in its action's form.
+ */
+async function legacyTree(provider: DatabaseProvider, request: TreeRequest): Promise<TreeAnswer> {
+  switch (request.action) {
+    case "containers":
+      return {
+        containers: await provider.listContainers(request.parent === undefined ? undefined : [...request.parent]),
+      };
+    case "count":
+      return { counts: await provider.countObjects([...request.container]) };
+    case "list":
+      return { objects: await provider.listObjects([...request.container], request.kind) };
+    case "describe":
+      return { detail: await provider.describeObject([...request.path], request.kind) };
+    case "describeMany":
+      return request.defaultSql === true
+        ? provider.describeObjects([...request.container], request.kind, request.limit, { defaultSql: true })
+        : provider.describeObjects([...request.container], request.kind, request.limit);
+  }
+}
+
+/**
+ * `provider` served as one session of console execute, cancel and transaction and of the object tree, its execute run
+ * with a copy of `options`, the caller's own page options.
  */
 export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepareOptions): BridgedConsole {
   const canceller: QueryCancelProvider | undefined = supportsQueryCancel(provider) ? provider : undefined;
@@ -289,7 +323,7 @@ export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepare
         endScope: ender === undefined ? "not-offered" : "offered",
         transaction: transactional === undefined ? "not-offered" : "offered",
       },
-      objects: { tree: "not-offered" },
+      objects: { tree: "offered" },
     },
     undefined,
   );
@@ -312,6 +346,7 @@ export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepare
     session: Object.freeze({
       calls,
       execute,
+      tree: (request: TreeRequest) => legacyTree(provider, request),
       ...(canceller === undefined
         ? {}
         : {

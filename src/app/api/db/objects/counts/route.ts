@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { assertContainerAddress, handleObjectRequest, requireStringArray } from "@/lib/api/object-route";
+import { objectTree } from "@/lib/api/object-tree";
 import { scrubKindCounts } from "@/lib/db/operations/provider-text";
 
 export const dynamic = "force-dynamic";
@@ -16,11 +17,17 @@ export const dynamic = "force-dynamic";
  * is a FLOOR rather than a total and the tree badges it with a trailing `+`. Collapsing any of
  * them into another here would be the defect this surface replaced, and the fourth is the one
  * most easily lost, because dropping `sampledFrom` leaves a number that still renders.
+ *
+ * The count is a host core tree call (`objectTree`, src/lib/api/object-tree.ts), under its own deadline and the
+ * request's signal.
  */
 export async function POST(req: NextRequest) {
   return handleObjectRequest(req, "api/db/objects/counts", async (provider, body, context) => {
     const container = requireStringArray(body, "container");
     assertContainerAddress(provider, "container", container);
-    return scrubKindCounts(context.scrub, await provider.countObjects(container));
+    return scrubKindCounts(
+      context.scrub,
+      await objectTree(provider, req.signal, context.route).countObjects(container),
+    );
   });
 }

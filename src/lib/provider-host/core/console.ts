@@ -45,7 +45,8 @@
  * Core answers plain records and passes a provider's errors by reference; it constructs no class a caller in another
  * bundle would test with `instanceof`, so the caller's accessor builds its own classes from the records. It imports only
  * the SDK's public subpaths other than `testing`, Node built-ins and its own files, and keeps no module state
- * (tests/unit/lib/provider-host/core-boundary.test.ts).
+ * (tests/unit/lib/provider-host/core-boundary.test.ts). The tree call (src/lib/provider-host/core/objects.ts) reads the
+ * same machinery, `refusedBefore`, `stoppedBy`, `lateFailure`, `settledOf` and `startCall`, exported from here.
  */
 import {
   awaitWithin,
@@ -173,17 +174,17 @@ const RECORD_RELEASED_TWICE =
 const EMPTY_PAGE: Page = Object.freeze({ rows: Object.freeze([]), bytes: 0, end: "done" });
 
 /** The record of a call refused before it was made, the signal's reason as its cause when the signal aborted. */
-function refusedBefore(refusals: readonly CallRefusal[], ctx: CallContext): RefusedRecord {
+export function refusedBefore(refusals: readonly CallRefusal[], ctx: CallContext): RefusedRecord {
   return { kind: "refused", called: false, refusals, ...(ctx.signal.aborted ? { cause: ctx.signal.reason } : {}) };
 }
 
 /** Whether `error` is the stop of the call `ctx`: its signal aborted, and `error` is that signal's reason. */
-function stoppedBy(ctx: CallContext, error: unknown): boolean {
+export function stoppedBy(ctx: CallContext, error: unknown): boolean {
   return ctx.signal.aborted && error === ctx.signal.reason;
 }
 
 /** A late handler that hands a failure after the wait on the call `ctx` ended to `port`, unless it is that call's stop. */
-function lateFailure(ctx: CallContext, port: (error: unknown) => void): (outcome: LateOutcome<unknown>) => void {
+export function lateFailure(ctx: CallContext, port: (error: unknown) => void): (outcome: LateOutcome<unknown>) => void {
   return (outcome) => {
     if (outcome.kind === "failed" && !stoppedBy(ctx, outcome.error)) port(outcome.error);
   };
@@ -246,7 +247,7 @@ function recordRelease(hold: PageHold): () => void {
 }
 
 /** Resolves once `call` has settled, answered or failed, and never rejects: a stopped record's `settled`. */
-function settledOf(call: Promise<unknown>): Promise<void> {
+export function settledOf(call: Promise<unknown>): Promise<void> {
   return call.then(
     () => undefined,
     () => undefined,
@@ -254,7 +255,7 @@ function settledOf(call: Promise<unknown>): Promise<void> {
 }
 
 /** Runs `call`, with a throw before it answers a promise read as its rejection. */
-function startCall<T>(call: () => Promise<T>): Promise<T> {
+export function startCall<T>(call: () => Promise<T>): Promise<T> {
   return new Promise<T>((resolve) => {
     resolve(call());
   });

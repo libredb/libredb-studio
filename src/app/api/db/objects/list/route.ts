@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { assertContainerAddress, handleObjectRequest, requireString, requireStringArray } from "@/lib/api/object-route";
+import { objectTree } from "@/lib/api/object-tree";
 
 export const dynamic = "force-dynamic";
 
@@ -10,12 +11,15 @@ export const dynamic = "force-dynamic";
  * provider owns the mapping from a kind id to a catalog and already refuses an unknown one with
  * the engine's own wording, and a second list of kind ids in this route would be a second place
  * for that mapping to drift.
+ *
+ * The listing is a host core tree call (`objectTree`, src/lib/api/object-tree.ts), under its own deadline and the
+ * request's signal.
  */
 export async function POST(req: NextRequest) {
-  return handleObjectRequest(req, "api/db/objects/list", async (provider, body) => {
+  return handleObjectRequest(req, "api/db/objects/list", async (provider, body, context) => {
     const container = requireStringArray(body, "container");
     const kind = requireString(body, "kind");
     assertContainerAddress(provider, "container", container);
-    return provider.listObjects(container, kind);
+    return objectTree(provider, req.signal, context.route).listObjects(container, kind);
   });
 }
