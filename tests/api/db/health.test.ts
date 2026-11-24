@@ -10,6 +10,7 @@ import {
   ConnectionError,
   AuthenticationError,
   PoolExhaustedError,
+  PermissionDeniedError,
   isDatabaseError,
   isConnectionError,
   isQueryError,
@@ -18,6 +19,7 @@ import {
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
+import type { HealthInfo } from "@/lib/db/types";
 
 // ─── Mock provider ──────────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -270,5 +272,91 @@ describe("POST /api/db/health: a body that is not a JSON object", () => {
     expect(res.status).toBe(400);
     expect(await parseResponseJSON(res)).toEqual({ error: "Invalid request body" });
     expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * What the health route answers today, at the provider's own `getHealth`, which the host core keeps when the route
+ * reads the session's health through the mandatory health call.
+ */
+describe("what the health route answers today, which the host core keeps", () => {
+  type Mocked = ReturnType<typeof mock>;
+
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetOrCreateProvider.mockImplementation(async () => mockProvider);
+    (mockProvider.getHealth as Mocked).mockClear();
+  });
+
+  const send = () =>
+    POST(createMockRequest("/api/db/health", { method: "POST", body: { connection: validConnection } }) as never);
+
+  test("the provider's health is read once, with no argument, and answered as it is, an unmeasured connection count left out", async () => {
+    const health: HealthInfo = {
+      databaseSize: crypto.randomUUID(),
+      cacheHitRatio: crypto.randomUUID(),
+      slowQueries: [{ query: crypto.randomUUID(), calls: 3, avgTime: "10 ms" }],
+      activeSessions: [
+        { pid: 4711, user: "app", database: "orders", state: "active", query: crypto.randomUUID(), duration: "1s" },
+      ],
+    };
+    (mockProvider.getHealth as Mocked).mockResolvedValueOnce(health);
+
+    const res = await send();
+
+    expect(res.status).toBe(200);
+    expect(await parseResponseJSON(res)).toEqual(health);
+    expect((mockProvider.getHealth as Mocked).mock.calls).toEqual([[]]);
+  });
+
+  test("a health read's Studio error answers by its class, with its code, kind and outcome", async () => {
+    const words = crypto.randomUUID();
+    const cases: [Error, number, Record<string, unknown>][] = [
+      [new QueryError(words, "postgres"), 400, { error: words, code: "QUERY_ERROR", kind: "query" }],
+      [
+        new ConnectionError(words, "postgres", "localhost", 5432),
+        503,
+        { error: words, code: "CONNECTION_ERROR", retryable: true, kind: "connection" },
+      ],
+      [
+        new TimeoutError(words, "postgres", 1000),
+        504,
+        {
+          error: "Query timed out. Please try a simpler query or increase timeout.",
+          code: "TIMEOUT_ERROR",
+          retryable: true,
+          kind: "timeout",
+        },
+      ],
+      [
+        new PoolExhaustedError(words, "postgres", 4),
+        503,
+        { error: words, code: "POOL_EXHAUSTED", retryable: true, kind: "pool-exhausted" },
+      ],
+      [
+        new PermissionDeniedError(words, "postgres"),
+        403,
+        { error: words, code: "PERMISSION_DENIED", kind: "permission" },
+      ],
+    ];
+
+    for (const [error, status, expected] of cases) {
+      (mockProvider.getHealth as Mocked).mockRejectedValueOnce(error);
+      // oxlint-disable-next-line no-await-in-loop -- one request at a time, so each answer is its own error's.
+      const res = await send();
+      expect([error.name, res.status]).toEqual([error.name, status]);
+      // oxlint-disable-next-line no-await-in-loop -- the answer of the request above.
+      expect(await parseResponseJSON(res)).toEqual({ ...expected, statusCode: status, outcome: "unknown" });
+    }
+  });
+
+  test("a health read's raw error answers 500 with its own words", async () => {
+    const words = crypto.randomUUID();
+    (mockProvider.getHealth as Mocked).mockRejectedValueOnce(new Error(words));
+
+    const res = await send();
+
+    expect(res.status).toBe(500);
+    expect(await parseResponseJSON(res)).toEqual({ error: words, code: "INTERNAL_ERROR", statusCode: 500 });
   });
 });
