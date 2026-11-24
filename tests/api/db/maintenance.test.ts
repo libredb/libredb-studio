@@ -18,6 +18,7 @@ import {
   TimeoutError,
   AuthenticationError,
   PoolExhaustedError,
+  PermissionDeniedError,
   isDatabaseError,
   isConnectionError,
   isQueryError,
@@ -26,6 +27,8 @@ import {
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
+import { TIMEOUT_SENTENCE } from "@/lib/api/error-body";
+import { errorKind } from "@/lib/db/error-record";
 
 // ─── Create mock objects ────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -1336,5 +1339,156 @@ describe("POST /api/db/maintenance", () => {
       expect(mockAdmitQueryExecution).not.toHaveBeenCalled();
       expect(recorded()).toEqual([]);
     });
+  });
+});
+
+describe("what the maintenance route answers today, which the host core keeps", () => {
+  /** Each Studio error class a provider raises, and the status, code and retry hint its answer carries. */
+  const STUDIO_ERRORS: readonly {
+    readonly name: string;
+    readonly raise: (text: string) => Error;
+    readonly status: number;
+    readonly code: string;
+    readonly retryable?: true;
+    readonly sentence?: string;
+  }[] = [
+    { name: "QueryError", raise: (text) => new QueryError(text, "postgres"), status: 400, code: "QUERY_ERROR" },
+    {
+      name: "ConnectionError",
+      raise: (text) => new ConnectionError(text, "postgres"),
+      status: 503,
+      code: "CONNECTION_ERROR",
+      retryable: true,
+    },
+    {
+      name: "TimeoutError",
+      raise: (text) => new TimeoutError(text, "postgres", 1000),
+      status: 504,
+      code: "TIMEOUT_ERROR",
+      retryable: true,
+      sentence: TIMEOUT_SENTENCE,
+    },
+    {
+      name: "PoolExhaustedError",
+      raise: (text) => new PoolExhaustedError(text, "postgres", 10),
+      status: 503,
+      code: "POOL_EXHAUSTED",
+      retryable: true,
+    },
+    {
+      name: "PermissionDeniedError",
+      raise: (text) => new PermissionDeniedError(text, "postgres"),
+      status: 403,
+      code: "PERMISSION_DENIED",
+    },
+  ];
+
+  const runMaintenance = mockProvider.runMaintenance as ReturnType<typeof mock>;
+
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetSession.mockImplementation(
+      async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+    );
+    mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
+    mockAdmitQueryExecution.mockReset();
+    runMaintenance.mockReset();
+    (mockProvider.getCapabilities as ReturnType<typeof mock>).mockImplementation(() => ({
+      queryLanguage: "sql",
+      supportsExplain: true,
+      supportsExternalQueryLimiting: true,
+      supportsMaintenance: true,
+      maintenanceOperations: ["vacuum", "analyze", "reindex", "kill"],
+      supportsConnectionString: true,
+      defaultPort: 5432,
+      schemaRefreshPattern: "(?:CREATE|ALTER|DROP|TRUNCATE)\\s",
+    }));
+  });
+
+  function post(body: Record<string, unknown>): Promise<Response> {
+    return POST(
+      createMockRequest("/api/db/maintenance", {
+        method: "POST",
+        body: { connection: validConnection, ...body },
+      }) as never,
+    );
+  }
+
+  test("a run's Studio error answers by its class, with its code, kind and outcome", async () => {
+    for (const studio of STUDIO_ERRORS) {
+      const text = `refused ${crypto.randomUUID()}`;
+      const error = studio.raise(text);
+      runMaintenance.mockImplementation(async () => {
+        throw error;
+      });
+
+      // oxlint-disable-next-line no-await-in-loop -- one request at a time, so each answer is its own error's.
+      const response = await post({ type: "vacuum", target: "users", container: "app" });
+      // oxlint-disable-next-line no-await-in-loop -- the answer of the request above.
+      const body = await parseResponseJSON<Record<string, unknown>>(response);
+
+      expect([studio.name, response.status]).toEqual([studio.name, studio.status]);
+      expect([studio.name, body]).toEqual([
+        studio.name,
+        {
+          error: studio.sentence ?? text,
+          code: studio.code,
+          statusCode: studio.status,
+          ...(studio.retryable === undefined ? {} : { retryable: true }),
+          kind: errorKind(error),
+          outcome: "unknown",
+        },
+      ]);
+    }
+  });
+
+  // The run route maps a provider's raw error with mapDatabaseError before it answers, so an error without a statement
+  // code answers as a DatabaseError, where the preview route, which maps nothing, answers INTERNAL_ERROR.
+  test("a run's error without a statement code answers 500 DATABASE_ERROR with its own words, kind database and outcome unknown", async () => {
+    const text = `socket ${crypto.randomUUID()}`;
+    runMaintenance.mockImplementation(async () => {
+      throw new Error(text);
+    });
+
+    const response = await post({ type: "vacuum", target: "users", container: "app" });
+    const body = await parseResponseJSON<Record<string, unknown>>(response);
+
+    expect(response.status).toBe(500);
+    expect(body).toEqual({
+      error: text,
+      code: "DATABASE_ERROR",
+      statusCode: 500,
+      kind: "database",
+      outcome: "unknown",
+    });
+  });
+
+  test("the provider is asked once with the operation, the target as it arrived and the container, and the answer is its result", async () => {
+    const result = {
+      success: true,
+      executionTime: 7,
+      message: `vacuumed ${crypto.randomUUID()}`,
+      rows: [{ section: "server", key: "uptime", value: 12 }],
+      fields: ["section", "key", "value"],
+    };
+    const calls: [Record<string, unknown>, unknown[]][] = [
+      [{ type: "vacuum", target: "users", container: "app" }, ["vacuum", "users", "app"]],
+      [{ type: "vacuum", target: "" }, ["vacuum", "", undefined]],
+      [{ type: "kill", target: "4711" }, ["kill", "4711", undefined]],
+    ];
+
+    for (const [body, args] of calls) {
+      runMaintenance.mockReset();
+      runMaintenance.mockImplementation(async () => result);
+
+      // oxlint-disable-next-line no-await-in-loop -- one request at a time, so each call is its own request's.
+      const response = await post(body);
+      // oxlint-disable-next-line no-await-in-loop -- the answer of the request above.
+      const answer = await parseResponseJSON<Record<string, unknown>>(response);
+
+      expect([body, response.status]).toEqual([body, 200]);
+      expect([body, runMaintenance.mock.calls]).toEqual([body, [args]]);
+      expect([body, answer]).toEqual([body, result]);
+    }
   });
 });
