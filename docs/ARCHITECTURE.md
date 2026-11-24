@@ -492,10 +492,11 @@ The library surface never reads the slot, so an embedder of the npm package comp
 
 Beside core, in the calling bundle, sit the two pieces that serve today's providers through it.
 `src/lib/provider-host/legacy-bridge.ts` serves a legacy `DatabaseProvider` as one session of console execute, cancel, endScope and transaction and of the object tree, its tree call running the provider's own tree member for each action (clause C-50), and `src/lib/provider-host/access.ts`, the accessor, builds Studio's error classes from the records core answers (clause C-51).
-The caller facades are `src/lib/api/editor-query.ts` and `src/lib/api/editor-transaction.ts`.
+The caller facades are `src/lib/api/editor-query.ts`, `src/lib/api/editor-transaction.ts` and `src/lib/api/object-tree.ts`.
 `runEditorQuery` and `cancelEditorRun` keep the shape `POST /api/db/query`, `POST /api/db/cancel` and the VS Code backend child's `query/run` and `query/cancel` have always called, and run each call through the bridge, core and the accessor under the call's deadline: the statement timeout plus 10 s for a statement, 10 s for a cancel.
 `runEditorQuery` mints the run's scope for a session that offers `console.endScope` and ends it through the bridge's `console.endScope` and core's `endScopeCall` after the run, under the 10 s cleanup deadline, never the run's own (clause C-60); `POST /api/db/multi-query` ends its script's scope through the same call, `endEditorScope`, so the bridge is the one caller of a provider's ender.
 The transaction facade serves `POST /api/db/transaction`: its begin, statement, COMMIT, ROLLBACK and state read run through the bridge's transaction session and core's transaction and execute calls under the deadlines of clause C-59, and answer the session state each call answered, never one kept between calls (clause C-58).
+The object tree's facade, `objectTree`, serves the six tree routes under `POST /api/db/objects/`: each container listing, count, object listing and description, the container walks of an inventory and a search included, is one call of core's tree call on the bridge's session, under its own deadline, the statement timeout plus 10 s from that read's start, and the request's signal (clause C-65).
 
 ## 5. Directory Structure
 

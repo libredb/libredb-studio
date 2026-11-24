@@ -2579,6 +2579,7 @@ The answer shapes are Studio's own object tree shapes, declared by the SDK and h
 ### C-62 (informative): A tree answer is read by reference
 
 In process the host reads a tree answer by reference and decides nothing on its values; what a caller reads of one stays the caller's.
+The caller facade of the object tree reads the member its action answers, and answers an answer without it as a defect of Studio's bridge, naming the action and the member, C-65, except a `describeMany` batch, which the bridge passes through by reference, so a batch without `details` is answered as the provider's answer without it.
 The host's reader of a native provider's tree answer, which checks that the form answers the action, arrives with the first native provider.
 
 ### C-63 (informative): A provider honours every member of a tree request
@@ -2605,6 +2606,34 @@ A session that offers the facet with no function is a defect of the host's sessi
 - test `tests/unit/lib/provider-host/core/objects.test.ts` "a session that throws its own signal's reason is answered as a stop"
 - test `tests/unit/lib/provider-host/core/objects.test.ts` "a session that offers objects.tree with no tree function is a host defect, named"
 - test `tests/unit/lib/provider-host/core/objects-bounds.test.ts` "a tree call that never settles is stopped at the call's deadline"
+
+### C-65 (normative): The object tree on the host
+
+The six tree routes read every container listing, count, object listing and description through one caller facade and the host core's tree call, C-64, on the session the legacy bridge serves, C-50.
+Each read waits until its own deadline, the statement timeout plus 10 s from that read's start, and the caller's signal, the request's.
+An inventory's and a search's walks take one deadline per read, not one per request, since a whole walk is a sum of round trips that grows with the server's distance.
+A read the caller left is answered at once as `QueryCancelledError`, outcome unknown, or not-sent when refused before the call, and one past its deadline as `StudioTimeoutRefusal` naming the read, the statement timeout and the slack.
+A read's later failure is logged by kind and code, never its text.
+The facade takes the provider its caller resolved and no catalog, so no catalog choice is honoured on this path, M-57.
+Each route's own checks and scrubs run where they ran.
+
+- test `tests/unit/lib/api/object-tree.test.ts` "each tree read is one host core tree call with a fresh request, on a deadline of the statement timeout plus ten seconds from its own start"
+- test `tests/unit/lib/api/object-tree.test.ts` "each tree read answers the provider's own answer by reference"
+- test `tests/unit/lib/api/object-tree.test.ts` "an error the provider raises reaches the caller as the same object"
+- test `tests/unit/lib/api/object-tree.test.ts` "a caller that leaves while the provider reads is answered QueryCancelledError at once, outcome unknown, and the read's later failure is logged by kind and code, never its text"
+- test `tests/unit/lib/api/object-tree.test.ts` "a caller already gone reads nothing and is answered QueryCancelledError, not-sent"
+- test `tests/unit/lib/api/object-tree.test.ts` "a tree read past its deadline answers StudioTimeoutRefusal naming the read, the statement timeout and the slack"
+- test `tests/unit/lib/api/object-tree.test.ts` "a tree read refused for any other reason is answered as a defect of Studio's bridge, named by its rule"
+- test `tests/unit/lib/api/object-tree.test.ts` "an answer without its action's member is answered as a defect of Studio's bridge, or of the provider for the batch the bridge passes through, naming the action and the member"
+- test `tests/unit/lib/api/object-tree.test.ts` "a tree read before the host core is installed fails by name and reaches no provider"
+- test `tests/unit/lib/api/object-tree-bounds.test.ts` "a tree read that never answers is stopped at its deadline, StudioTimeoutRefusal naming the read"
+- test `tests/unit/db/container-walk.test.ts` "the walk reads any container source, not only a provider"
+- test `tests/api/db-objects.test.ts` "a tree route whose request leaves while the provider reads answers 499 at once, outcome unknown"
+- test `tests/api/db-objects.test.ts` "a tree route whose request is already gone answers 499 not-sent and asks the provider nothing"
+- test `tests/api/db-objects.test.ts` "an inventory or a search whose request leaves between its reads sends no further read"
+- test `tests/api/db-objects.test.ts` "a tree route past its deadline answers 504 studio-timeout-refusal naming the read"
+- test `tests/api/db-objects.test.ts` "every read of an inventory, its container walk included, is a host core tree call with a deadline of its own"
+- test `tests/api/db-objects.test.ts` "a tree route reads no catalog, and its provider's forCatalog is never called"
 
 ## Not yet in this contract
 

@@ -413,8 +413,8 @@ describe("who wrote a refusal", () => {
 
 /**
  * The paths the census covers: the agent, the hand-over and MCP, and the core read path they share; every database
- * route, the object routes' shared handler, the fleet health check and the shared steps behind them (the editor's two
- * caller facades among them), the query events those routes record, the provider factory's log lines, and the VS Code
+ * route, the object routes' shared handler, the fleet health check and the shared steps behind them (the caller
+ * facades among them), the query events those routes record, the provider factory's log lines, and the VS Code
  * extension's backend child.
  */
 const PROVIDER_TEXT_PATHS = [
@@ -428,6 +428,7 @@ const PROVIDER_TEXT_PATHS = [
   join("src", "lib", "api", "object-route.ts"),
   join("src", "lib", "api", "editor-query.ts"),
   join("src", "lib", "api", "editor-transaction.ts"),
+  join("src", "lib", "api", "object-tree.ts"),
   join("src", "lib", "provider-host"),
   join("src", "lib", "api", "test-connection.ts"),
   join("src", "lib", "query-events"),

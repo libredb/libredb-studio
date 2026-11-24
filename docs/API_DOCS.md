@@ -1585,6 +1585,20 @@ A search is refused before its first listing when the container and kind pairs i
 The `code` tells this refusal apart from the plain `{ "error" }` 400 a missing `term` or a malformed `kinds` gets, and `limit` and `pairs` carry the bound and the count without the sentence.
 Naming fewer kinds brings the search under the bound; a search under it still answers every match.
 
+#### Deadlines and a caller that leaves on the tree reads
+
+Every read of `POST /api/db/objects/containers`, `counts`, `list`, `describe`, `search` and `inventory`, each container listing, count, object listing and description, waits at most the connection's statement timeout plus 10 seconds.
+Past that the route answers 504 `TIMEOUT_ERROR`, `kind: "studio-timeout-refusal"`, outcome `unknown`, with the read's sentence, for example "The object listing did not answer within the statement timeout of 60 seconds and 10 seconds more for the engine's own answer, so Studio stopped waiting for it."
+A request that leaves while a read runs is answered 499 `QUERY_CANCELLED` at once, outcome `unknown`, and the read goes on in the database; a request already gone when a read is to start is answered 499 `QUERY_CANCELLED`, outcome `not-sent`, and the read is never sent.
+An inventory or a search gives each read its own deadline rather than one for the whole request, since a whole walk is a sum of round trips that grows with the server's distance, and a request that leaves between two reads sends no further read.
+The connection's open is unchanged: these routes do not bound it by the request.
+
+| Condition | Status | Body |
+|-----------|--------|------|
+| a read with no answer at the statement timeout plus 10 s | `504` | `{ "error": "The object listing did not answer within the statement timeout of 60 seconds and 10 seconds more for the engine's own answer, so Studio stopped waiting for it.", "code": "TIMEOUT_ERROR", "kind": "studio-timeout-refusal", "outcome": "unknown", ... }` |
+| the request left while a read ran | `499` | `{ "code": "QUERY_CANCELLED", "kind": "cancelled", "outcome": "unknown", ... }` |
+| the request was gone before a read started | `499` | `{ "code": "QUERY_CANCELLED", "kind": "cancelled", "outcome": "not-sent", ... }` |
+
 #### POST /api/db/objects/describe
 
 Read the columns, indexes, foreign keys and (on PostgreSQL) exclusion constraints of ONE object.

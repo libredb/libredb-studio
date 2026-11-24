@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import {
   type ContainerEnumeration,
+  type ContainerSource,
   describeNamedContainers,
   enumerateContainers,
   namedContainerListings,
@@ -206,6 +207,30 @@ describe("the kinds a container walk carries", () => {
     });
     expect(await describeNamedContainers(provider, [[]])).toEqual({ enumeration: { containers: [[]] }, unlisted: [] });
     expect(asked).toEqual([]);
+  });
+
+  test("the walk reads any container source, not only a provider", async () => {
+    const levels: ContainerLevels = [{ id: "catalog", label: "Database", labelPlural: "Databases" }, NAMESPACE_LEVEL];
+    const answer = (parent?: readonly string[]): Container[] =>
+      parent === undefined
+        ? [{ path: ["db"], name: "db", level: 0 }]
+        : [{ path: [...parent, "app"], name: "app", level: 1, kinds: ["table"], isSessionDefault: true }];
+    const { provider, asked } = walked(levels, answer);
+    const read: (readonly string[] | undefined)[] = [];
+    // Two closures, as the object tree's caller facade holds them: no provider members, no `this`.
+    const source: ContainerSource = {
+      getCapabilities: () => ({ ...provider.getCapabilities() }),
+      listContainers: async (parent?: readonly string[]) => {
+        read.push(parent);
+        return answer(parent);
+      },
+    };
+
+    expect(await enumerateContainers(source)).toEqual(await enumerateContainers(provider));
+    expect(await describeNamedContainers(source, [["db", "app"]])).toEqual(
+      await describeNamedContainers(provider, [["db", "app"]]),
+    );
+    expect(read).toEqual(asked);
   });
 });
 

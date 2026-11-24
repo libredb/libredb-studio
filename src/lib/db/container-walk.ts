@@ -14,10 +14,23 @@
  * because the object surface was optional through the phase that landed it one provider at a time
  * and the route had to turn an absent method into a 501 naming the engine. The method is required
  * now, so there is no absence to report and no reason for this to know what an HTTP status is.
+ *
+ * It reads a `ContainerSource`: a provider is one, and so is the object tree's caller facade
+ * (`objectTree` in src/lib/api/object-tree.ts), through which the object routes read each listing
+ * as a host core tree call under a deadline of its own.
  */
 import { containerDepth } from "@/lib/db/object-kinds";
 import { pathKey } from "@/lib/db/object-path";
 import type { Container, DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
+
+/**
+ * What a walk reads: the engine's capabilities, for the depth, and its container listing. A
+ * `DatabaseProvider` is one; the object tree's caller facade is another.
+ */
+export interface ContainerSource {
+  getCapabilities(): ProviderCapabilities;
+  listContainers(parent?: readonly string[]): Promise<readonly Container[]>;
+}
 
 /**
  * What one walk of the container tree answered.
@@ -60,7 +73,7 @@ export interface ContainerEnumeration {
  * container at the deepest level is a provider defect, and it is answered as no default rather
  * than by picking one.
  */
-export async function enumerateContainers(provider: DatabaseProvider): Promise<ContainerEnumeration> {
+export async function enumerateContainers(provider: ContainerSource): Promise<ContainerEnumeration> {
   const depth = containerDepth(provider.getCapabilities());
   if (depth === 0) return { containers: [[]], defaultContainer: [] };
 
@@ -127,7 +140,7 @@ export interface NamedContainers {
  * or none on an engine it does not ask.
  */
 function namedParents(
-  provider: DatabaseProvider,
+  provider: ContainerSource,
   named: readonly (readonly string[])[],
 ): readonly (readonly string[])[] {
   const capabilities = provider.getCapabilities();
@@ -162,7 +175,7 @@ export function namedContainerListings(provider: DatabaseProvider, named: readon
  * first with `namedContainerListings` and refuses a body that would issue too many.
  */
 export async function describeNamedContainers(
-  provider: DatabaseProvider,
+  provider: ContainerSource,
   named: readonly (readonly string[])[],
 ): Promise<NamedContainers> {
   const parents = namedParents(provider, named);

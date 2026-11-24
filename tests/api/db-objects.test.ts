@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
@@ -59,6 +59,12 @@ import {
   isAuthenticationError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import type { CallContext } from "@libredb/provider-sdk/calls";
+import { EXECUTE_SLACK_MS } from "@/lib/api/editor-query";
+import { waitedSeconds } from "@/lib/db/errors";
+import { DEFAULT_QUERY_TIMEOUT } from "@/lib/db/types";
+import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
 import { ALLOWS_PRIVATE_HOSTS } from "../helpers/egress-decisions";
 
 // NOTE: the mocks below are inline rather than in a shared helper, and the request is built by
@@ -128,6 +134,10 @@ mock.module("@/lib/db", () => ({
   mapDatabaseError,
   BaseDatabaseProvider: class {},
 }));
+
+// The tree routes read the process's host core (src/lib/provider-host/instance.ts), so this file composes its own.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 const containersRoute = await import("@/app/api/db/objects/containers/route");
 const countsRoute = await import("@/app/api/db/objects/counts/route");
@@ -3431,5 +3441,296 @@ describe("what the tree routes answer today, which the host core keeps", () => {
       kind: errorKind(new TimeoutError(text, "postgres", 1000)),
       outcome: "unknown",
     });
+  });
+});
+
+describe("the tree routes on the host core", () => {
+  /** One single-read tree route: its handler, its path, its body, the provider member it reaches and its read's noun. */
+  interface SingleRead {
+    readonly name: string;
+    readonly route: { POST: (req: never) => Promise<Response> };
+    readonly body: Record<string, unknown>;
+    readonly member: "listContainers" | "countObjects" | "listObjects" | "describeObject";
+    readonly noun: string;
+  }
+  const SINGLE_READS: readonly SingleRead[] = [
+    { name: "containers", route: containersRoute, body: {}, member: "listContainers", noun: "The container listing" },
+    {
+      name: "counts",
+      route: countsRoute,
+      body: { container: ["app"] },
+      member: "countObjects",
+      noun: "The object count",
+    },
+    {
+      name: "list",
+      route: listRoute,
+      body: { container: ["app"], kind: "table" },
+      member: "listObjects",
+      noun: "The object listing",
+    },
+    {
+      name: "describe",
+      route: describeRoute,
+      body: { path: ["app", "orders"], kind: "table" },
+      member: "describeObject",
+      noun: "The object description",
+    },
+  ];
+
+  /** `route` posted with the connection, its own body and `signal`, as a request whose caller can leave. */
+  function postWith(
+    route: SingleRead["route"],
+    name: string,
+    body: Record<string, unknown>,
+    signal: AbortSignal = new AbortController().signal,
+  ): Promise<Response> {
+    const request = new Request(`http://localhost:3000/api/db/objects/${name}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ connection, ...body }),
+      signal,
+    });
+    return route.POST(request as never);
+  }
+
+  /** A provider member that signals when it is reached and answers only when the test settles it. */
+  function heldMember<T>() {
+    const answer = Promise.withResolvers<T>();
+    const reached = Promise.withResolvers<void>();
+    const member = mock(() => {
+      reached.resolve();
+      return answer.promise;
+    });
+    return { answer, reached: reached.promise, member };
+  }
+
+  /** D5's sentence for `noun` at Studio's default statement timeout, the mock connection's. */
+  const deadlineSentence = (noun: string) =>
+    `${noun} did not answer within the statement timeout of ${waitedSeconds(DEFAULT_QUERY_TIMEOUT)} and ${waitedSeconds(EXECUTE_SLACK_MS)} more for the engine's own answer, so Studio stopped waiting for it.`;
+
+  /** Runs `body` with `make(real)` installed in place of the real host core, then puts the real one back. */
+  async function withCore<T>(make: (real: HostCore) => HostCore, body: () => Promise<T>): Promise<T> {
+    const real = hostCore();
+    forgetHostCore();
+    installHostCore(make(real), "test");
+    try {
+      return await body();
+    } finally {
+      forgetHostCore();
+      installHostCore(real, "test");
+    }
+  }
+
+  test("a tree route whose request leaves while the provider reads answers 499 at once, outcome unknown", async () => {
+    for (const tree of SINGLE_READS) {
+      const held = heldMember<never>();
+      activeProvider = objectProvider({ [tree.member]: held.member });
+      const caller = new AbortController();
+
+      const answering = postWith(tree.route, tree.name, tree.body, caller.signal);
+      // oxlint-disable-next-line no-await-in-loop -- one request at a time, so each answer is its own provider's.
+      await held.reached;
+      caller.abort(new DOMException("The request went away.", "AbortError"));
+      // oxlint-disable-next-line no-await-in-loop -- the answer of the request above, before its member settles.
+      const response = await answering;
+      // oxlint-disable-next-line no-await-in-loop -- the answer of the request above.
+      const body = await parseResponseJSON<Record<string, unknown>>(response);
+      held.answer.reject(new Error(randomUUID()));
+      // oxlint-disable-next-line no-await-in-loop -- the member settles after the answer, with a plain await.
+      await held.answer.promise.catch(() => undefined);
+
+      expect([tree.name, response.status]).toEqual([tree.name, 499]);
+      expect([tree.name, body]).toMatchObject([
+        tree.name,
+        { code: "QUERY_CANCELLED", kind: "cancelled", outcome: "unknown" },
+      ]);
+    }
+  });
+
+  test("a tree route whose request is already gone answers 499 not-sent and asks the provider nothing", async () => {
+    for (const tree of SINGLE_READS) {
+      const member = mock(async () => {
+        throw new Error("a request already gone reached the provider");
+      });
+      activeProvider = objectProvider({ [tree.member]: member });
+      const caller = new AbortController();
+      caller.abort(new DOMException("The request went away.", "AbortError"));
+
+      // oxlint-disable-next-line no-await-in-loop -- one request at a time, so each answer is its own provider's.
+      const response = await postWith(tree.route, tree.name, tree.body, caller.signal);
+      // oxlint-disable-next-line no-await-in-loop -- the answer of the request above.
+      const body = await parseResponseJSON<Record<string, unknown>>(response);
+
+      expect([tree.name, response.status]).toEqual([tree.name, 499]);
+      expect([tree.name, body]).toMatchObject([
+        tree.name,
+        { code: "QUERY_CANCELLED", kind: "cancelled", outcome: "not-sent" },
+      ]);
+      expect([tree.name, member.mock.calls.length]).toEqual([tree.name, 0]);
+    }
+    // The route's own checks still run first: a body with no container is the caller's mistake, a 400.
+    const gone = new AbortController();
+    gone.abort(new DOMException("The request went away.", "AbortError"));
+    const refused = await postWith(countsRoute, "counts", {}, gone.signal);
+    expect(refused.status).toBe(400);
+  });
+
+  test("an inventory or a search whose request leaves between its reads sends no further read", async () => {
+    for (const [route, name, body] of [
+      [inventoryRoute, "inventory", { includeColumns: true }],
+      [searchRoute, "search", { term: "orders" }],
+    ] as const) {
+      const second = heldMember<DatabaseObject[]>();
+      const listObjects = mock(async (container: readonly string[], kind: string) => {
+        if (listObjects.mock.calls.length === 2) return second.member();
+        return [object([...container, "orders"], kind)];
+      });
+      const describeObjects = mock(async () => ({ details: [] }));
+      activeProvider = objectProvider({
+        listContainers: mock(async () => [
+          { path: ["app"], name: "app", level: 0 },
+          { path: ["ops"], name: "ops", level: 0 },
+        ]),
+        listObjects,
+        describeObjects,
+      });
+      const caller = new AbortController();
+
+      const answering = postWith(route, name, body, caller.signal);
+      // oxlint-disable-next-line no-await-in-loop -- one walk at a time, so each call log is its own route's.
+      await second.reached;
+      caller.abort(new DOMException("The request went away.", "AbortError"));
+      // oxlint-disable-next-line no-await-in-loop -- the answer of the walk above.
+      const response = await answering;
+      second.answer.resolve([object(["app", "orders"], "view")]);
+      // oxlint-disable-next-line no-await-in-loop -- the held listing settles after the answer, with a plain await.
+      await second.answer.promise;
+
+      expect([name, response.status]).toEqual([name, 499]);
+      expect([name, listObjects.mock.calls.length]).toEqual([name, 2]);
+      // The inventory described the first pair's object before the second listing, and nothing after it.
+      expect([name, describeObjects.mock.calls.length]).toEqual([name, name === "inventory" ? 1 : 0]);
+    }
+  });
+
+  test("a tree route past its deadline answers 504 studio-timeout-refusal naming the read", async () => {
+    const stopAt = (action: string) => (real: HostCore) => ({
+      ...real,
+      treeCall: (async (session, request, ctx, ports) =>
+        request.action === action
+          ? {
+              kind: "stopped",
+              reason: new DOMException("The call's deadline has passed.", "TimeoutError"),
+              settled: Promise.resolve(),
+            }
+          : real.treeCall(session, request, ctx, ports)) satisfies HostCore["treeCall"],
+    });
+    const actions: Record<SingleRead["name"], string> = {
+      containers: "containers",
+      counts: "count",
+      list: "list",
+      describe: "describe",
+    };
+    const answers: [string, Response, string][] = [];
+    for (const tree of SINGLE_READS) {
+      activeProvider = objectProvider();
+      // oxlint-disable-next-line no-await-in-loop -- one request at a time, so each answer is its own core's.
+      const response = await withCore(stopAt(actions[tree.name] as string), () =>
+        postWith(tree.route, tree.name, tree.body),
+      );
+      answers.push([tree.name, response, tree.noun]);
+    }
+    activeProvider = objectProvider({ listContainers: mock(async () => [{ path: ["app"], name: "app", level: 0 }]) });
+    const inventory = await withCore(stopAt("list"), () => postWith(inventoryRoute, "inventory", {}));
+    answers.push(["inventory", inventory, "The object listing"]);
+
+    for (const [name, response, noun] of answers) {
+      // oxlint-disable-next-line no-await-in-loop -- each answer's body, read in order.
+      const body = await parseResponseJSON<Record<string, unknown>>(response);
+      expect([name, response.status]).toEqual([name, 504]);
+      expect([name, body]).toMatchObject([
+        name,
+        {
+          error: deadlineSentence(noun),
+          code: "TIMEOUT_ERROR",
+          kind: "studio-timeout-refusal",
+          outcome: "unknown",
+        },
+      ]);
+    }
+  });
+
+  test("every read of an inventory, its container walk included, is a host core tree call with a deadline of its own", async () => {
+    activeProvider = objectProvider({
+      listContainers: mock(async () => [
+        { path: ["app"], name: "app", level: 0 },
+        { path: ["ops"], name: "ops", level: 0 },
+      ]),
+      listObjects: mock(async (container: readonly string[], kind: string) =>
+        container[0] === "app" ? [object([...container, `${kind}s`], kind)] : [],
+      ),
+      describeObjects: mock(async () => ({ details: [] })),
+    });
+    const calls: { readonly action: string; readonly ctx: CallContext }[] = [];
+    const before = Date.now();
+    const response = await withCore(
+      (real) => ({
+        ...real,
+        treeCall: (session, request, ctx, ports) => {
+          calls.push({ action: request.action, ctx });
+          return real.treeCall(session, request, ctx, ports);
+        },
+      }),
+      () => postWith(inventoryRoute, "inventory", { includeColumns: true }),
+    );
+    const after = Date.now();
+
+    expect(response.status).toBe(200);
+    expect(calls.map(({ action }) => action)).toEqual([
+      "containers",
+      "list",
+      "describeMany",
+      "list",
+      "describeMany",
+      "list",
+      "list",
+    ]);
+    const slack = DEFAULT_QUERY_TIMEOUT + EXECUTE_SLACK_MS;
+    expect(new Set(calls.map(({ ctx }) => ctx)).size).toBe(calls.length);
+    for (const { ctx } of calls) {
+      expect(ctx.deadline).toBeGreaterThanOrEqual(before + slack);
+      expect(ctx.deadline).toBeLessThanOrEqual(after + slack);
+    }
+    const deadlines = calls.map(({ ctx }) => ctx.deadline);
+    expect(deadlines).toEqual([...deadlines].sort((a, b) => a - b));
+  });
+
+  test("a tree route reads no catalog, and its provider's forCatalog is never called", async () => {
+    const forCatalog = mock(async () => {
+      throw new Error("a tree route asked for another catalog");
+    });
+    const posts: [string, SingleRead["route"], Record<string, unknown>][] = [
+      ...SINGLE_READS.map((tree): [string, SingleRead["route"], Record<string, unknown>] => [
+        tree.name,
+        tree.route,
+        tree.body,
+      ]),
+      ["search", searchRoute, { term: "orders" }],
+      ["inventory", inventoryRoute, { includeColumns: true }],
+    ];
+    const statuses: [string, number][] = [];
+    for (const [name, route, body] of posts) {
+      activeProvider = Object.assign(
+        objectProvider({ listContainers: mock(async () => [{ path: ["app"], name: "app", level: 0 }]) }),
+        { forCatalog },
+      );
+      // oxlint-disable-next-line no-await-in-loop -- one request at a time, so each answer is its own provider's.
+      const response = await postWith(route, name, { ...body, catalog: `other_${randomUUID()}` });
+      statuses.push([name, response.status]);
+    }
+
+    expect(statuses).toEqual(posts.map(([name]) => [name, 200]));
+    expect(forCatalog).not.toHaveBeenCalled();
   });
 });
