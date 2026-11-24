@@ -209,7 +209,7 @@ A declaration is not a full manifest: the runtime and compatibility segments des
 
 - test `tests/unit/db/engine-declarations.test.ts` "the directory holds exactly one declaration per shipped type-id"
 - test `tests/unit/db/engine-declarations.test.ts` "each declaration is what the generator builds from its authored members and Studio's tables"
-- test `tests/unit/db/engine-declarations.test.ts` "the authored members are the catalog's, the data-only connection members, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, and the SQL text's members but its redaction"
+- test `tests/unit/db/engine-declarations.test.ts` "the authored members are the catalog's, the data-only connection members, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, and the SQL writing segment"
 - test `tests/unit/db/engine-declarations.test.ts` "a declaration's authored members are its committed file's, and every other member is the tables'"
 - test `tests/unit/db/engine-declarations.test.ts` "a committed declaration lacking an authored member, or naming another id than its file, is refused by name"
 - test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate regenerates an authored connection.fields and connection.dialog change in one run: a placeable field added and a placed one removed"
@@ -409,7 +409,7 @@ Both tables look a name up through one helper, `src/lib/db/function-table.ts`, s
 - test `tests/unit/db/engine-declarations.test.ts` "every function a connection string row holds is named by its engine's declaration"
 - test `tests/unit/db/engine-declarations.test.ts` "every function a grammar row holds is, through the census's own resolver, the very slot its declaration names"
 - test `tests/unit/db/engine-declarations.test.ts` "every function a grammar row holds is named by its engine's declaration"
-- test `tests/unit/db/engine-declarations.test.ts` "every name an SQL writing declaration states is its member's slot, and resolves through the census's slot table to the very function the engine's own module exports there"
+- test `tests/unit/db/engine-declarations.test.ts` "every name an SQL writing declaration states is its member's slot, and Studio's SQL writing function table binds it there to the function the engine's row runs"
 - test `tests/unit/db/engine-declarations.test.ts` "every function an SQL writing row holds is named at its slot by its engine's declaration, and no slot the row leaves empty is named"
 - test `tests/unit/db/engine-declarations.test.ts` "every name a migration DDL declaration states is its member's slot, and resolves through the census's slot table to the very function the engine's own module exports there"
 - test `tests/unit/db/engine-declarations.test.ts` "every function a migration DDL row holds is named at its slot by its engine's declaration, and no slot the row leaves empty is named"
@@ -1599,7 +1599,6 @@ Studio's census holds every member of every declaration to the engine's row, and
 - test `tests/unit/db/engine-declarations.test.ts` "sqlWriting.inlineEdit is the row's, each type name set in its order and float64 as all where every key is"
 - test `tests/unit/db/engine-declarations.test.ts` "sqlWriting.export states the row's DDL types, standing-alone names, bare spellings, non-finite literals and insert form"
 - test `tests/unit/db/engine-declarations.test.ts` "every member of an SQL writing row has its member in the declaration"
-- test `tests/unit/db/engine-declarations.test.ts` "the generator refuses, by name, an SQL writing member it has no place for"
 
 ### S-12 (normative): The type names an inline edit and an export read
 
@@ -1617,7 +1616,8 @@ A map keyed by type name is a list, the bare spellings as entries and the bare t
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "a type name under two families, or a bare spelling named twice, is refused as type-name-duplicate at the later"
 - test `tests/unit/db/engine-declarations.test.ts` "sqlWriting.inlineEdit is the row's, each type name set in its order and float64 as all where every key is"
 - test `tests/unit/db/engine-declarations.test.ts` "sqlWriting.export states the row's DDL types, standing-alone names, bare spellings, non-finite literals and insert form"
-- test `tests/unit/db/engine-declarations/sql-writing-replay.test.ts` "every engine's SQL writing row, rebuilt from its declaration with each function resolved by its slot, renders the engine's golden output"
+- test `tests/unit/db/sql-writing/golden.test.ts` "SQL writing golden output"
+- test `tests/unit/db/sql-writing/compose.test.ts` "each row is its declaration's SQL writing composed with Studio's SQL writing function table"
 
 ### S-13 (normative): Text an export writes from a declaration stays on its line
 
@@ -1650,10 +1650,9 @@ The validator counts that group without running the declared pattern, so a wrapp
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "a wrapper pattern that does not capture exactly one group is refused as wrapper-group-count"
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "a wrapper pattern that backtracks without end on the empty string is still counted at once"
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's SQL writing facts are held to the rules the schema cannot state, at pointers into it"
-- test `tests/unit/db/engine-declarations.test.ts` "the generator refuses, by name, a type pattern whose flags the contract does not allow"
-- test `tests/unit/db/engine-declarations.test.ts` "the generator refuses, by name, a bare type family outside the inferred kinds"
 - test `tests/unit/db/engine-declarations.test.ts` "sqlWriting.export.typeVocabulary is the row's, its bare type families grouped by kind and each pattern by its source and flags"
-- test `tests/unit/db/engine-declarations/sql-writing-replay.test.ts` "every engine's SQL writing row, rebuilt from its declaration with each function resolved by its slot, renders the engine's golden output"
+- test `tests/unit/db/sql-writing/golden.test.ts` "SQL writing golden output"
+- test `tests/unit/db/sql-writing/compose.test.ts` "each row is its declaration's SQL writing composed with Studio's SQL writing function table"
 
 ### S-15 (informative): How a host runs a type pattern
 

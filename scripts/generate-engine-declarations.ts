@@ -8,20 +8,20 @@
  * `fields`, `defaults`, `seedOnly`, `refused`, of its `connectionString` the `accepted`, `dialogOffersUri`, `scheme`,
  * `urlTls`, `paste` and `seedCheck`, and its `tls`, `readsTrustMaterial`, `dialog`, `hostUriSchemes`,
  * `credentialWarnings`, `fieldRules`, `hostHint`, `hostIdentity`, `import` and `connectBudgetMs`, of `editor` its
- * `commitKeyword`, `consentDeadline`, `fenceAliases`, `dialect` and `language`, and of `sqlText` its `readsSqlText`,
- * `grammar`, `updateTarget` and `completion`), are written in the declaration itself: this script reads them
- * from the committed file of the engine in src/lib/db/engine-declarations, whatever directory `--out` names, with
- * `authoredMembersOf` (scripts/generate-engine-catalog.ts), which refuses by name a file that lacks one or whose `id`
- * is not its file name, and writes them back unchanged. Every other member is built from the tables. The engine
- * catalog, the connection tables, the connection forms, the connection strings, the execution UI and fence aliases, the
- * query dialects, tab type editors and editor languages, and the SQL text (scripts/generate-engine-catalog.ts, clauses
- * M-70, M-71, M-72, M-74, M-75, M-77 and M-78) project the authored members, and
- * `bun run engines:generate` runs that command's `--write` first and its `--check` last: this script builds every
- * provider through the factory, which builds only an engine the catalog holds, and `--check` admits every declaration
- * this script wrote, with the SDK validator's rules, which refuse by name, among others, a dialog entry or a field rule
- * for a field the engine does not take and a placeable field with no placement. A new engine's declaration therefore
- * starts as a copy of another engine's file with its authored members written for the new engine; the catalog generator
- * projects it, this script writes every other member, and the catalog generator then admits it.
+ * `commitKeyword`, `consentDeadline`, `fenceAliases`, `dialect` and `language`, of `sqlText` its `readsSqlText`,
+ * `grammar`, `updateTarget` and `completion`, and the whole `sqlWriting`), are written in the declaration itself: this
+ * script reads them from the committed file of the engine in src/lib/db/engine-declarations, whatever directory `--out`
+ * names, with `authoredMembersOf` (scripts/generate-engine-catalog.ts), which refuses by name a file that lacks one or
+ * whose `id` is not its file name, and writes them back unchanged. Every other member is built from the tables. The
+ * engine catalog, the connection tables, the connection forms, the connection strings, the execution UI and fence
+ * aliases, the query dialects, tab type editors and editor languages, the SQL text and the SQL writing
+ * (scripts/generate-engine-catalog.ts, clauses M-70, M-71, M-72, M-74, M-75, M-77, M-78 and M-79) project the authored
+ * members, and `bun run engines:generate` runs that command's `--write` first and its `--check` last: this script
+ * builds every provider through the factory, which builds only an engine the catalog holds, and `--check` admits every
+ * declaration this script wrote, with the SDK validator's rules, which refuse by name, among others, a dialog entry or
+ * a field rule for a field the engine does not take and a placeable field with no placement. A new engine's declaration
+ * therefore starts as a copy of another engine's file with its authored members written for the new engine; the
+ * catalog generator projects it, this script writes every other member, and the catalog generator then admits it.
  *
  * Each file is a `#/$defs/engineDeclaration` of the provider manifest schema
  * (packages/provider-sdk/src/manifest/manifest.schema.json): the engine's identity, its connection facts, its facets,
@@ -57,15 +57,14 @@
  * of it, `SQL_TEXT_REDACTION` (src/lib/db/sql-grammar/redaction.ts), a command redaction's reader named
  * `redactionReader`.
  *
- * The SQL writing facts come from the engine's row in `SQL_WRITING`, member by member with the row's names and nesting,
- * a hook the row leaves out written null. Each function is named by its slot: `escapeLiteral`, `unescapeLiteral`,
+ * The SQL writing, `sqlWriting`, is authored as a whole and written back as the committed file states it; the catalog
+ * generator projects it into src/lib/db/engine-catalog/sql-writing.generated.ts, from which Studio composes each
+ * engine's SQL writing row (clause M-79). Each function is named by its slot: `escapeLiteral`, `unescapeLiteral`,
  * `quoteIdentifier`, `placeholder`, `temporalLiteral`, `insertDocuments`, `boundEdit`, `binaryLiteral`,
  * `rewriteDeclared`, `declareFromSample`, `typedLiteral`, `columnWriters` and `createTableKeyClause` for the create
- * table key's clause. A type name set is written as an array in its iteration order, `all` as itself, each type pattern
- * as its source and flags, and the two records keyed by type name as lists: the bare spellings as `{ name, spelling }`
- * entries in the record's key order, and the bare type families as six lists keyed by kind, each in the record's key
- * order. The generator refuses by name a member of the row it has no place for, a type pattern whose flags are not
- * none, i, u or iu, and a bare type family that is not an inferred kind.
+ * table key's clause, each bound by Studio's SQL writing function table in src/lib/db/sql-writing/index.ts. Each type
+ * pattern is its source and flags, which the schema holds to none, i, u or iu and the validator to a pattern that
+ * compiles with one capturing group where it is a wrapper, and the bare type families are six lists keyed by kind.
  *
  * The migration DDL facts come from the engine's row in `MIGRATION_DDL`, in the row's form: refused, with its refusal
  * line, its null transaction wrapper and its reasons, or written, member by member with the row's names and nesting.
@@ -162,10 +161,7 @@ import type {
   Safeguards,
   SqlDialect,
   SqlGenerators,
-  SqlWriting,
   StatisticsReading,
-  TypeFamilies,
-  TypePattern,
   WritePathEvidence,
 } from "@libredb/provider-sdk/manifest";
 import { AGENT_STATEMENT_LANGUAGE } from "../src/lib/agent/agent-manifest";
@@ -204,10 +200,7 @@ import type { MigrationDdlSpec } from "../src/lib/db/migration-ddl/types";
 import { SQL_ENGINE_GENERATORS } from "../src/lib/db/query-generators";
 import type { SqlEngineGenerators } from "../src/lib/db/query-generators/types";
 import { SQL_TEXT_REDACTION } from "../src/lib/db/sql-grammar/redaction";
-import { SQL_WRITING } from "../src/lib/db/sql-writing";
-import type { InferredKind, SqlWritingSpec } from "../src/lib/db/sql-writing/types";
 import type { MaintenanceOperation, ProviderCapabilities, WritePath, WritePathReach } from "../src/lib/db/types";
-import type { NonFiniteWord } from "../src/lib/non-finite";
 import type { DatabaseType } from "../src/lib/types";
 import { type AuthoredMembers, authoredMembersOf, ENGINE_DECLARATIONS_DIRECTORY } from "./generate-engine-catalog";
 
@@ -326,167 +319,8 @@ export function buildEditor(
   };
 }
 
-/** The members of each part of a SQL writing row the declaration places: a key a part's list lacks would be dropped. */
-const SQL_WRITING_MEMBERS = {
-  spec: [
-    "escapeLiteral",
-    "unescapeLiteral",
-    "quoteIdentifier",
-    "placeholder",
-    "temporalLiteral",
-    "inlineEdit",
-    "export",
-    "insertDocuments",
-  ],
-  inlineEdit: ["instantTypeNames", "exactDecimalTypeNames", "float64TypeNames", "boundEdit"],
-  export: [
-    "ddlTypes",
-    "standsAlone",
-    "bareSpelling",
-    "typeVocabulary",
-    "binaryLiteral",
-    "nonFinite",
-    "insertForm",
-    "rewriteDeclared",
-    "declareFromSample",
-    "typedLiteral",
-    "columnWriters",
-    "createTableKey",
-  ],
-  typeVocabulary: ["bareTypeFamily", "floatType", "exactNumericType", "numericWrapper"],
-  createTableKey: ["note", "clause"],
-} as const satisfies Readonly<Record<string, readonly string[]>>;
-
-/** The inferred kinds, in the order of the schema's `ddlTypeSpellings` and `typeFamilies`. */
-const INFERRED_KINDS: readonly InferredKind[] = ["text", "integer", "numeric", "boolean", "timestamp", "binary"];
-
-/** NaN and the infinities, in the order of the schema's `nonFiniteLiterals`. */
-const NON_FINITE_WORDS: readonly NonFiniteWord[] = ["NaN", "Infinity", "-Infinity"];
-
-/** The flags a type pattern may carry. */
+/** The flags a profile type pattern may carry. */
 const TYPE_PATTERN_FLAGS: readonly string[] = ["", "i", "u", "iu"];
-
-/**
- * Throws an error naming the engine and the member where `part`, at the dotted path `at` of a SQL writing row, has a
- * key the declaration does not write. The keys are read with `Object.keys`, so a key a spread carried in is read too.
- */
-function refuseUnplacedSqlWritingMembers(
-  type: DatabaseType,
-  part: object,
-  at: string,
-  members: readonly string[],
-): void {
-  for (const key of Object.keys(part)) {
-    if (!members.includes(key)) {
-      throw new Error(`${type}: the SQL writing member "${at}${key}" has no place in the engine declaration`);
-    }
-  }
-}
-
-/** A type pattern as the contract's, or a thrown error naming the member where its flags are not none, i, u or iu. */
-function typePattern(pattern: RegExp, member: string, type: DatabaseType): TypePattern {
-  const { source, flags } = pattern;
-  if (!TYPE_PATTERN_FLAGS.includes(flags)) {
-    throw new Error(
-      `${type}: the type pattern "${member}" has flags "${flags}"; the provider contract allows none, i, u or iu`,
-    );
-  }
-  return { source, flags: flags as TypePattern["flags"] };
-}
-
-/**
- * The bare type families as six lists keyed by kind, in the schema's kind order, each in the record's key order, or a
- * thrown error naming the name whose family is not an inferred kind.
- */
-function typeFamilies(family: Readonly<Record<string, InferredKind>>, type: DatabaseType): TypeFamilies {
-  for (const [name, kind] of Object.entries(family)) {
-    if (!INFERRED_KINDS.includes(kind)) {
-      throw new Error(
-        `${type}: the bare type "${name}" has the family "${kind}", which is not an inferred kind of the provider contract`,
-      );
-    }
-  }
-  const namesOf = (kind: InferredKind) =>
-    Object.entries(family)
-      .filter(([, of]) => of === kind)
-      .map(([name]) => name);
-  return {
-    text: namesOf("text"),
-    integer: namesOf("integer"),
-    numeric: namesOf("numeric"),
-    boolean: namesOf("boolean"),
-    timestamp: namesOf("timestamp"),
-    binary: namesOf("binary"),
-  };
-}
-
-/**
- * One engine's SQL writing facts, read from its row in `SQL_WRITING` (a parameter, so a test can hand the generator
- * another row), member by member in the order of the schema's `sqlWriting`: each function named by the slot it fills
- * where the row holds one and null where it holds none, each type name set as an array in its iteration order, the
- * DDL types and the bare type families by kind, the bare spellings as entries in the record's key order, the non-finite
- * literals by word, and each type pattern as its source and flags. A member the declaration has no place for, a type
- * pattern whose flags are not none, i, u or iu, and a bare type family that is not an inferred kind are thrown errors
- * naming the engine.
- */
-export function buildSqlWriting(type: DatabaseType, spec: SqlWritingSpec = SQL_WRITING[type]): SqlWriting {
-  const { inlineEdit, export: facts } = spec;
-  const { typeVocabulary: vocabulary, createTableKey } = facts;
-  refuseUnplacedSqlWritingMembers(type, spec, "", SQL_WRITING_MEMBERS.spec);
-  refuseUnplacedSqlWritingMembers(type, inlineEdit, "inlineEdit.", SQL_WRITING_MEMBERS.inlineEdit);
-  refuseUnplacedSqlWritingMembers(type, facts, "export.", SQL_WRITING_MEMBERS.export);
-  refuseUnplacedSqlWritingMembers(type, facts.ddlTypes, "export.ddlTypes.", INFERRED_KINDS);
-  refuseUnplacedSqlWritingMembers(type, facts.nonFinite, "export.nonFinite.", NON_FINITE_WORDS);
-  refuseUnplacedSqlWritingMembers(type, vocabulary, "export.typeVocabulary.", SQL_WRITING_MEMBERS.typeVocabulary);
-  if (createTableKey !== undefined) {
-    refuseUnplacedSqlWritingMembers(type, createTableKey, "export.createTableKey.", SQL_WRITING_MEMBERS.createTableKey);
-  }
-  return {
-    escapeLiteral: "escapeLiteral",
-    unescapeLiteral: "unescapeLiteral",
-    quoteIdentifier: "quoteIdentifier",
-    placeholder: spec.placeholder === null ? null : "placeholder",
-    temporalLiteral: spec.temporalLiteral === null ? null : "temporalLiteral",
-    inlineEdit: {
-      instantTypeNames: [...inlineEdit.instantTypeNames],
-      exactDecimalTypeNames: [...inlineEdit.exactDecimalTypeNames],
-      float64TypeNames: inlineEdit.float64TypeNames === "all" ? "all" : [...inlineEdit.float64TypeNames],
-      boundEdit: inlineEdit.boundEdit === undefined ? null : "boundEdit",
-    },
-    export: {
-      ddlTypes: {
-        text: facts.ddlTypes.text,
-        integer: facts.ddlTypes.integer,
-        numeric: facts.ddlTypes.numeric,
-        boolean: facts.ddlTypes.boolean,
-        timestamp: facts.ddlTypes.timestamp,
-        binary: facts.ddlTypes.binary,
-      },
-      standsAlone: [...facts.standsAlone],
-      bareSpelling: Object.entries(facts.bareSpelling).map(([name, spelling]) => ({ name, spelling })),
-      typeVocabulary: {
-        bareTypeFamily: typeFamilies(vocabulary.bareTypeFamily, type),
-        floatType: typePattern(vocabulary.floatType, "floatType", type),
-        exactNumericType: typePattern(vocabulary.exactNumericType, "exactNumericType", type),
-        numericWrapper: typePattern(vocabulary.numericWrapper, "numericWrapper", type),
-      },
-      binaryLiteral: "binaryLiteral",
-      nonFinite: {
-        NaN: facts.nonFinite.NaN,
-        Infinity: facts.nonFinite.Infinity,
-        "-Infinity": facts.nonFinite["-Infinity"],
-      },
-      insertForm: facts.insertForm,
-      rewriteDeclared: facts.rewriteDeclared === undefined ? null : "rewriteDeclared",
-      declareFromSample: facts.declareFromSample === undefined ? null : "declareFromSample",
-      typedLiteral: facts.typedLiteral === undefined ? null : "typedLiteral",
-      columnWriters: facts.columnWriters === undefined ? null : "columnWriters",
-      createTableKey:
-        createTableKey === undefined ? null : { note: createTableKey.note, clause: "createTableKeyClause" },
-    },
-    insertDocuments: spec.insertDocuments === undefined ? null : "insertDocuments",
-  };
-}
 
 /** The members of each part of a migration DDL row the declaration places: a key a part's list lacks would be dropped. */
 const MIGRATION_DDL_MEMBERS = {
@@ -949,7 +783,7 @@ export function buildEngineDeclaration(
       updateTarget: authored.sqlText.updateTarget,
       completion: authored.sqlText.completion,
     },
-    sqlWriting: buildSqlWriting(type),
+    sqlWriting: authored.sqlWriting,
     migrationDdl: buildMigrationDdl(type),
     sqlGenerators: buildSqlGenerators(type),
     policy: {

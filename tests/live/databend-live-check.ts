@@ -837,7 +837,7 @@ async function cloudWarehouseChecks(): Promise<void> {
 // The every-type export replay [X01]
 // ============================================================================
 
-/** The columns of `every_type` whose type `DATABEND_SQL_WRITING.export.typedLiteral` writes (design 7.2): the rest throw. */
+/** The columns of `every_type` whose type Databend's `export.typedLiteral` writes (design 7.2): the rest throw. */
 const WRITABLE_COLUMNS = [
   "id",
   "i8",

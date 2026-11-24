@@ -5614,9 +5614,9 @@ describe("SQL export of a SQLite result (#273)", () => {
  * The REAL row was the one case that did NOT close on that date, and the reason was
  * entirely inside the hook: the float64 set it read then omitted `real`, because
  * PostgreSQL's and Trino's `real` is 32 bits wide even though SQLite's is 64. The table is
- * that measurement and is not current for REAL: SQLite's own module
- * (`src/lib/db/providers/sql/sqlite-sql-writing.ts`) now declares
- * `inlineEdit.float64TypeNames: "all"`, measured there, so the hook reads a fractional
+ * that measurement and is not current for REAL: SQLite's declaration
+ * (`src/lib/db/engine-declarations/sqlite.json`) now states
+ * `sqlWriting.inlineEdit.float64TypeNames: "all"`, measured in its provider document, so the hook reads a fractional
  * value in any SQLite column as the 8-byte double the file holds.
  */
 describe("what the row editor reads off a SQLite result (#273)", () => {

@@ -98,9 +98,9 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/db/redaction/metadata-only.ts` | SDK /redaction | Pure projection helpers for the metadata-only answer mode. |
 | `src/lib/db/sql-grammar/shared.ts` | SDK /manifest | The redaction placeholder a command redaction reader writes. |
 | `src/lib/db/sql-grammar/types.ts` | SDK /manifest | The types of the SQL grammar functions a declaration names. |
-| `src/lib/db/sql-writing/export-shared.ts` | SDK /manifest | Pure helpers the export forms of a SQL writing row share. |
-| `src/lib/db/sql-writing/shared.ts` | SDK /manifest | The literal, identifier and placeholder forms more than one SQL writing row spells alike. |
-| `src/lib/db/sql-writing/types.ts` | SDK /manifest | The SQL writing row contract. |
+| `src/lib/db/sql-writing/export-shared.ts` | SDK /manifest | Pure helpers the export forms share, which Studio's SQL writing function table binds and an engine's own SQL writing function reads. |
+| `src/lib/db/sql-writing/shared.ts` | SDK /manifest | The literal, identifier and placeholder building blocks Studio's SQL writing function table binds and an engine's own SQL writing function reads. |
+| `src/lib/db/sql-writing/types.ts` | SDK /manifest | The types of the SQL writing row and of the SQL writing functions a declaration names. |
 | `src/lib/db/types.ts` | SDK /types | The provider interface types, capabilities, results and schema shapes; the core-only types it also declares stay behind when PR 9 splits it. |
 | `src/lib/db/utils/admitted-file.ts` | host service: file admission | The file the host's factory admitted, read from what the host passed. |
 | `src/lib/db/utils/bounded-limiter.ts` | host service: run registry | Process-wide in-flight bounds and the run registry a provider cancels by. |
@@ -152,7 +152,7 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/logger.ts` | host service: logging | The process logger, with its level filtering and the logged-text scrub. |
 | `src/lib/monitoring-cache-ratio.ts` | SDK /monitoring | Pure display text for a cache hit ratio. |
 | `src/lib/sql/grammar.ts` | core only | `resolveSqlGrammar` and `readsSqlText` read core's SQL grammar registry, so a provider reads its own grammar row instead; the `SqlGrammar` type and the default grammar are SDK /sql's since the split. |
-| `src/lib/sql/identifier.ts` | core only | `quoteIdentifier` reads core's SQL writing registry by type-id; a provider quotes through its own SQL writing row. |
+| `src/lib/sql/identifier.ts` | core only | `quoteIdentifier` reads core's SQL writing registry by type-id; a provider quotes through its engine's SQL writing row. |
 | `src/lib/sql/leading-keyword.ts` | SDK /sql | A pure reader that takes the grammar as an argument; it reaches no provider module, which the guard holds. |
 | `src/lib/sql/mssql-read-only-refusals.ts` | SDK /errors | The openings of the cut-value, serialised-result and time refusals the mssql provider raises as the classes of those error kinds, pure text; the provider imports only the openings, and core reads the module's two too-large answers through `read-only-refusals.ts`. |
 | `src/lib/sql/operative-keyword.ts` | SDK /sql | A pure reader that takes the grammar as an argument; it reaches no provider module, which the guard holds. |
@@ -160,7 +160,7 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/sql/spans.ts` | SDK /sql | A pure reader that takes the grammar as an argument; it reaches no provider module, which the guard holds. |
 | `src/lib/sql/statement-end.ts` | SDK /sql | A pure reader that takes the grammar as an argument; it reaches no provider module, which the guard holds. |
 | `src/lib/sql/statement-splitter.ts` | SDK /sql | A pure reader that takes the grammar as an argument; it reaches no provider module, which the guard holds. |
-| `src/lib/sql/values.ts` | core only | `quoteLiteral` and `unquoteLiteral` read core's SQL writing registry by type-id; a provider spells literals through its own SQL writing row. |
+| `src/lib/sql/values.ts` | core only | `quoteLiteral` and `unquoteLiteral` read core's SQL writing registry by type-id; a provider spells literals through its engine's SQL writing row. |
 | `src/lib/sql/words.ts` | SDK /sql | A pure reader that takes the grammar as an argument; it reaches no provider module, which the guard holds. |
 | `src/lib/types.ts` | SDK /types | The connection record and result types a provider reads and returns; the core-only types it also declares stay behind when PR 9 splits it. |
 
@@ -262,7 +262,7 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 | `src/lib/db/operations/sparkplugread-admission.ts` | 1 statement reader module | PR 8 sparkplugread | the sparkplugread family, `src/lib/languages/sparkplugread/` |
 | `src/lib/db/query-generators/index.ts` | 27 query generator rows | PR 11 editor and SQL text | manifest rows: the PR 9 schema, collected by the PR 11 projection |
 | `src/lib/db/sql-grammar/index.ts` | 3 SQL grammar function modules, bound by Studio's grammar function table to the names the declarations give | mongodb native PR, postgres native PR, redis native PR | each engine's provider package, which decides where its browser-side functions run (M-32) |
-| `src/lib/db/sql-writing/index.ts` | 43 SQL writing rows | PR 11 editor and SQL text | manifest rows: the PR 9 schema, collected by the PR 11 projection |
+| `src/lib/db/sql-writing/index.ts` | 13 SQL writing function modules, bound by Studio's SQL writing function table to the names the declarations give | cassandra native PR, clickhouse native PR, databend native PR, duckdb native PR, mongodb native PR, mssql native PR, oracle native PR, postgres native PR, snowflake native PR, spark native PR, trino native PR | each engine's provider package, which decides where its browser-side functions run (M-32) |
 | `src/lib/explain/firestore-explain.ts` | 1 firestore console parser | PR 8 fsquery | the fsquery family, `src/lib/languages/fsquery/` |
 | `src/lib/kubernetes/kubeconfig-import.ts` | 1 kubernetes limits module | kubernetes native PR | moves with the kubernetes provider package as its connection importer |
 
@@ -284,8 +284,8 @@ A language slice may move an agent fact to PR 11 agent instead, changing its row
 No core file gains an import into a provider directory.
 `tests/unit/lib/db/provider-imports.test.ts` holds the tree to exactly the pairs of its allowlist: a new pair fails by name, and so does a listed pair the source no longer holds.
 Each slice deletes its pairs from the allowlist and its rows from the inward table in the same PR, so both only shrink.
-The one growth allowed before PR 11 and PR 12 land is a new type-id's row modules in the ten collector entries, the eight registry indexes and `src/lib/db/factory.ts`, added to the allowlist and counted here in the PR that adds the type-id.
-The connection string index takes a module only for a new engine whose declaration names a connection string function.
+The one growth allowed before PR 11 and PR 12 land is a new type-id's row modules in the ten collector entries, the seven registry indexes and `src/lib/db/factory.ts`, added to the allowlist and counted here in the PR that adds the type-id.
+The connection string index takes a module only for a new engine whose declaration names a connection string function, and the SQL writing index only for one whose declaration names an SQL writing function of its own.
 
 A provider that imports a core module the outward table does not list fails the same test until the module gets a row and a destination here.
 The same test holds the outward rows whose destination is SDK /sql: the value imports of each such module reach no provider module, so the readers it names can move into the SDK without bringing a provider row with them.

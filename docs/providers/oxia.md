@@ -88,7 +88,6 @@ The command language's modules (its numbers, the lexer, the command table, the g
 | `labels.ts` | The labels, the statement language and the key order in words | browser |
 | `engine-facets.ts` | The engine's facets row: no monitoring panel is offered | browser |
 | `generators.ts` | The commands Generate Command writes | browser |
-| `sql-writing.ts` | The SQL writing row, the inert standard answer no generator calls | browser |
 | `src/lib/languages/oxiacli/destructive.ts` | The engine's row of the confirmation gate's vocabulary, which `src/lib/db/destructive-commands.ts` collects | browser |
 | `editor-syntax.ts` | The editor's `oxia` Monaco language over the console's lexer | browser |
 | `editor-language.ts` | The engine's editor language code: the `oxia` language, no completion, no formatter | browser |
@@ -696,14 +695,14 @@ Every capability is written, since the base's defaults are SQL's:
 
 ### 9.1 SQL writing
 
-[`oxia/sql-writing.ts`](../../src/lib/db/providers/keyvalue/oxia/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+The `sqlWriting` segment of [`engine-declarations/oxia.json`](../../src/lib/db/engine-declarations/oxia.json) declares how a generated statement spells a literal, a name and a bind for this engine, and Studio composes it into this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), each function it names bound by Studio's SQL writing function table, `SQL_WRITING_FUNCTIONS`; the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look the row up.
 A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
 A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
 There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
 No generator calls `quoteLiteral` for Oxia: the command table's own quoting writes every word (O10), so the row is the inert answer etcd's is.
-Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+Inline row editing reads a key column's kind through the declaration's `inlineEdit`, whose `instantTypeNames`, `float64TypeNames` and `exactDecimalTypeNames` are the same words as the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES`, and binds every edit as typed.
 
-The module's `export` field writes a result export's CREATE TABLE and INSERT from the shared building blocks alone: `STANDARD_DDL_TYPES` for the column types, `NOTHING_STANDS_ALONE` and `NO_BARE_SPELLING`, so every bare declared name is re-spelled from its family, `NULL_NON_FINITE` for NaN and the infinities, and `binaryStandardHex` for a binary cell (`X'0102'`).
+The declaration's `export` writes a result export's CREATE TABLE and INSERT from the shared words alone: `ddlTypes` the same spellings as `STANDARD_DDL_TYPES`, `standsAlone` and `bareSpelling` empty, as `NOTHING_STANDS_ALONE` and `NO_BARE_SPELLING` are, so every bare declared name is re-spelled from its family, `nonFinite` NULL for NaN and the infinities, as `NULL_NON_FINITE` writes them, and `binaryStandardHex` for a binary cell (`X'0102'`).
 The engine declares `queryLanguage: "json"`, so no SQL statement is ever built for it to read, and a file exported from it is meant to run somewhere else: every bare name in it is re-spelled portably rather than kept as one engine's private word.
 
 ## 10. Error handling

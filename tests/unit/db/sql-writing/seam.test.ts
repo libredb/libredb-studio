@@ -3,21 +3,24 @@ import { readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import ts from "typescript";
 import { SQL_WRITING } from "@/lib/db/sql-writing";
-import { ENGINE_MODULES, ROOT, TYPED_LITERAL_MODULES, type EngineModule } from "./engine-modules";
+import { ENGINE_MODULES, REGISTRY_INDEX, ROOT, TYPED_LITERAL_MODULES, type EngineModule } from "./engine-modules";
 
 /**
- * The seam between one engine's SQL writing module and every other one (spec 5.3).
+ * The seam between one engine's SQL writing functions and every other engine's (spec 5.3).
  *
- * An engine module imports the contract's `types.ts`, `shared.ts` and the engine-neutral
- * export leaf `export-shared.ts` (spec 5.3 [T1]), plus the sibling its typed writer lives in
- * when that is large (spec 5.3), and nothing else, so no module can reach
- * another engine's rules or the registry that holds them all; a type
- * import of `@/lib/types` is allowed because it emits no code. A sibling is held to the
- * same rule and is imported under `src/` by its owner only. The registry imports each
- * engine module once, and the two named specs stay the registry's own. Every module, every
- * sibling and the export leaf also load first in a fresh process without a
- * `ReferenceError` (Review Focus 4), which is what a typed writer or provider importing
- * one directly would do. The export path itself imports no engine's module (spec 5.4).
+ * Each engine's SQL writing row is composed from its declaration, and the registry imports
+ * only the modules that hold a function Studio's SQL writing function table binds for one
+ * engine: the typed writer siblings and the five modules that hold an engine's own function.
+ * Such a module imports the contract's `types.ts`, `shared.ts` and the engine-neutral export
+ * leaf `export-shared.ts` (spec 5.3 [T1]), plus its engine's typed writer sibling, and
+ * nothing else, so no module can reach another engine's functions or the registry that binds
+ * them all; a type import of `@/lib/types` is allowed because it emits no code. A sibling is
+ * held to the same rule and is imported under `src/` by the SQL writing index and its
+ * engine's own function module only. The registry imports each module once, and the named
+ * spec stays the registry's own. Every module, every sibling and the export leaf also load
+ * first in a fresh process without a `ReferenceError` (Review Focus 4), which is what a
+ * typed writer or provider importing one directly would do. The export path itself imports
+ * no engine's module (spec 5.4).
  *
  * Imports are read off the TypeScript AST: static imports and exports, `import("x")` and
  * `require("x")` with a literal specifier.
@@ -67,11 +70,11 @@ function importsOf(file: string, text = readFileSync(file, "utf8")): ImportRef[]
   return refs;
 }
 
-/** `src/lib/db/providers/sql/mysql-sql-writing.ts` as the alias `@/lib/db/providers/sql/mysql-sql-writing`. */
+/** `src/lib/db/providers/sql/mssql-sql-writing.ts` as the alias `@/lib/db/providers/sql/mssql-sql-writing`. */
 const aliasOf = (repoPath: string): string => `@/${repoPath.replace(/^src\//, "").replace(/\.ts$/, "")}`;
 
 /**
- * The specifiers an engine module may reach its own typed writer sibling by (spec 5.3):
+ * The specifiers a module may reach its engine's typed writer sibling by (spec 5.3):
  * `./typed-literals` beside a `<id>/sql-writing.ts`, `./<id>-typed-literals` beside an
  * `<id>-sql-writing.ts`, or the sibling's alias. An engine with no sibling has none.
  */
@@ -184,16 +187,33 @@ describe("SQL writing seam", () => {
     ).toEqual(["@/lib/export/result-export"]);
   });
 
-  test("the modules on disk are the registry's rows", () => {
-    expect(ENGINE_MODULES.map(({ id }) => id).sort()).toEqual(Object.keys(SQL_WRITING).sort());
+  test("the registry imports the function modules of exactly the engines that hold a SQL writing function of their own", () => {
+    expect(ENGINE_MODULES.map(({ repoPath }) => repoPath)).toEqual([
+      "src/lib/db/providers/document/mongodb/sql-writing.ts",
+      "src/lib/db/providers/sql/cassandra/sql-writing.ts",
+      "src/lib/db/providers/sql/cassandra/typed-literals.ts",
+      "src/lib/db/providers/sql/clickhouse/typed-literals.ts",
+      "src/lib/db/providers/sql/databend/typed-literals.ts",
+      "src/lib/db/providers/sql/duckdb/typed-literals.ts",
+      "src/lib/db/providers/sql/mssql-sql-writing.ts",
+      "src/lib/db/providers/sql/oracle-sql-writing.ts",
+      "src/lib/db/providers/sql/postgres-typed-literals.ts",
+      "src/lib/db/providers/sql/snowflake/sql-writing.ts",
+      "src/lib/db/providers/sql/snowflake/typed-literals.ts",
+      "src/lib/db/providers/sql/spark/typed-literals.ts",
+      "src/lib/db/providers/sql/trino/typed-literals.ts",
+    ]);
+    const engines = [...new Set(ENGINE_MODULES.map(({ id }) => id))].sort();
+    expect(engines).toHaveLength(11);
+    expect(engines.every((id) => Object.hasOwn(SQL_WRITING, id))).toBe(true);
   });
 
   for (const engine of ENGINE_MODULES) {
-    test(`${engine.id}: imports only the contract's types and shared building blocks`, () => {
+    test(`${engine.repoPath}: imports only the contract's types and shared building blocks`, () => {
       expect({
-        id: engine.id,
+        path: engine.repoPath,
         forbidden: forbiddenImports(engine.absPath, undefined, ownTypedLiterals(engine)),
-      }).toEqual({ id: engine.id, forbidden: [] });
+      }).toEqual({ path: engine.repoPath, forbidden: [] });
     });
   }
 
@@ -218,9 +238,18 @@ describe("SQL writing seam", () => {
       });
     });
 
-    test(`${sibling.repoPath}: is imported under src/ by ${sibling.ownerId}'s module only`, () => {
-      const owners = ENGINE_MODULES.filter(({ id }) => id === sibling.ownerId).map(({ repoPath }) => repoPath);
-      expect(importersOf(sibling.absPath)).toEqual(owners);
+    test(`${sibling.repoPath}: is imported under src/ by the SQL writing index and ${sibling.ownerId}'s own function module only`, () => {
+      const allowed = [
+        REGISTRY_INDEX.slice(ROOT.length + 1)
+          .split("\\")
+          .join("/"),
+        ...ENGINE_MODULES.filter(({ id, absPath }) => id === sibling.ownerId && absPath !== sibling.absPath).map(
+          ({ repoPath }) => repoPath,
+        ),
+      ];
+      const importers = importersOf(sibling.absPath);
+      expect(importers).toContain(allowed[0]);
+      expect(importers.filter((file) => !allowed.includes(file))).toEqual([]);
     });
   }
 
@@ -246,47 +275,46 @@ describe("SQL writing seam", () => {
       ({ specifier }) => specifier,
     );
     for (const engine of ENGINE_MODULES) {
-      expect({ id: engine.id, count: specifiers.filter((s) => s === aliasOf(engine.repoPath)).length }).toEqual({
-        id: engine.id,
-        count: 1,
-      });
+      expect({ path: engine.repoPath, count: specifiers.filter((s) => s === aliasOf(engine.repoPath)).length }).toEqual(
+        { path: engine.repoPath, count: 1 },
+      );
     }
   });
 
   test("a planted cross-engine import is caught", () => {
-    const mysql = ENGINE_MODULES.find(({ id }) => id === "mysql");
-    if (mysql === undefined) throw new Error("mysql module not found");
-    const planted = `import { POSTGRES_SQL_WRITING } from "@/lib/db/providers/sql/postgres-sql-writing";\n${readFileSync(mysql.absPath, "utf8")}`;
-    expect(forbiddenImports(mysql.absPath, planted)).toEqual(["@/lib/db/providers/sql/postgres-sql-writing"]);
-    expect(forbiddenImports(mysql.absPath, `import { SQL_WRITING } from "@/lib/db/sql-writing";\n`)).toEqual([
+    const mssql = ENGINE_MODULES.find(({ id }) => id === "mssql");
+    if (mssql === undefined) throw new Error("mssql module not found");
+    const planted = `import { ORACLE_BOUND_EDIT } from "@/lib/db/providers/sql/oracle-sql-writing";\n${readFileSync(mssql.absPath, "utf8")}`;
+    expect(forbiddenImports(mssql.absPath, planted)).toEqual(["@/lib/db/providers/sql/oracle-sql-writing"]);
+    expect(forbiddenImports(mssql.absPath, `import { SQL_WRITING } from "@/lib/db/sql-writing";\n`)).toEqual([
       "@/lib/db/sql-writing",
     ]);
-    expect(forbiddenImports(mysql.absPath, `export * from "@/lib/sql/values";\n`)).toEqual(["@/lib/sql/values"]);
-    expect(forbiddenImports(mysql.absPath, `const v = await import("@/lib/sql/identifier");\n`)).toEqual([
+    expect(forbiddenImports(mssql.absPath, `export * from "@/lib/sql/values";\n`)).toEqual(["@/lib/sql/values"]);
+    expect(forbiddenImports(mssql.absPath, `const v = await import("@/lib/sql/identifier");\n`)).toEqual([
       "@/lib/sql/identifier",
     ]);
-    expect(forbiddenImports(mysql.absPath, `import { type X, Y } from "@/lib/types";\n`)).toEqual(["@/lib/types"]);
-    expect(forbiddenImports(mysql.absPath, `import type { DatabaseType } from "@/lib/types";\n`)).toEqual([]);
+    expect(forbiddenImports(mssql.absPath, `import { type X, Y } from "@/lib/types";\n`)).toEqual(["@/lib/types"]);
+    expect(forbiddenImports(mssql.absPath, `import type { DatabaseType } from "@/lib/types";\n`)).toEqual([]);
     // Only the engine's own sibling is allowed: another engine's typed writer is not.
     expect(
       forbiddenImports(
-        mysql.absPath,
+        mssql.absPath,
         `import { postgresLiteral } from "./postgres-typed-literals";\n`,
-        ownTypedLiterals(mysql),
+        ownTypedLiterals(mssql),
       ),
     ).toEqual(["./postgres-typed-literals"]);
     expect(
       forbiddenImports(
-        mysql.absPath,
+        mssql.absPath,
         `import { postgresLiteral } from "@/lib/db/providers/sql/postgres-typed-literals";\n`,
-        ownTypedLiterals(mysql),
+        ownTypedLiterals(mssql),
       ),
     ).toEqual(["@/lib/db/providers/sql/postgres-typed-literals"]);
     expect(
       forbiddenImports(
-        mysql.absPath,
+        mssql.absPath,
         `import { buildResultExport } from "@/lib/export/result-export";\n`,
-        ownTypedLiterals(mysql),
+        ownTypedLiterals(mssql),
       ),
     ).toEqual(["@/lib/export/result-export"]);
     const cassandra = ENGINE_MODULES.find(({ id }) => id === "cassandra");
@@ -303,10 +331,10 @@ describe("SQL writing seam", () => {
   test("an importer is found by either spelling of the sibling", () => {
     const sibling = TYPED_LITERAL_MODULES.find(({ ownerId }) => ownerId === "postgres");
     if (sibling === undefined) throw new Error("postgres typed writer sibling not found");
-    const mysql = join(SRC, "lib", "db", "providers", "sql", "mysql-sql-writing.ts");
-    expect(resolvedPath(mysql, "./postgres-typed-literals")).toBe(sibling.absPath);
-    expect(resolvedPath(mysql, "@/lib/db/providers/sql/postgres-typed-literals")).toBe(sibling.absPath);
-    expect(resolvedPath(mysql, "typescript")).toBeUndefined();
+    const mssql = join(SRC, "lib", "db", "providers", "sql", "mssql-sql-writing.ts");
+    expect(resolvedPath(mssql, "./postgres-typed-literals")).toBe(sibling.absPath);
+    expect(resolvedPath(mssql, "@/lib/db/providers/sql/postgres-typed-literals")).toBe(sibling.absPath);
+    expect(resolvedPath(mssql, "typescript")).toBeUndefined();
   });
 
   // Spec 5.4: the inline editor reads its key column kinds and bound edits from the registry,
@@ -324,8 +352,10 @@ describe("SQL writing seam", () => {
   });
 
   const loadsFirst = [
-    ...ENGINE_MODULES.map(({ id, absPath }) => ({ id, absPath })),
-    ...TYPED_LITERAL_MODULES.map(({ repoPath, absPath }) => ({ id: repoPath, absPath })),
+    ...ENGINE_MODULES.map(({ repoPath, absPath }) => ({ id: repoPath, absPath })),
+    ...TYPED_LITERAL_MODULES.filter(({ absPath }) => !ENGINE_MODULES.some((engine) => engine.absPath === absPath)).map(
+      ({ repoPath, absPath }) => ({ id: repoPath, absPath }),
+    ),
     { id: EXPORT_LEAF.slice(ROOT.length + 1), absPath: EXPORT_LEAF },
   ];
   for (const { id, absPath } of loadsFirst) {

@@ -155,7 +155,6 @@ export const REGISTRIES: readonly Listed[] = [
   ...[
     ["src/lib/db/engine-facets/index.ts", "ENGINE_FACETS"],
     ["src/lib/db/migration-ddl/index.ts", "MIGRATION_DDL"],
-    ["src/lib/db/sql-writing/index.ts", "SQL_WRITING"],
   ].map(([path, declaration]) => ({ path, declaration, count: 1, reason: CONTRACT })),
   {
     path: "src/lib/db/engine-catalog/sql-text.generated.ts",
@@ -168,6 +167,18 @@ export const REGISTRIES: readonly Listed[] = [
     declaration: "SQL_GRAMMAR",
     count: 2,
     reason: "each engine's SQL grammar row, composed from the generated SQL text and typed over the type-id union",
+  },
+  {
+    path: "src/lib/db/engine-catalog/sql-writing.generated.ts",
+    declaration: "BUNDLED_SQL_WRITING",
+    count: 1,
+    reason: "each engine's SQL writing, generated from the declarations and compile-enforced over the type-id union",
+  },
+  {
+    path: "src/lib/db/sql-writing/index.ts",
+    declaration: "SQL_WRITING",
+    count: 2,
+    reason: "each engine's SQL writing row, composed from the generated SQL writing and typed over the type-id union",
   },
   {
     path: "src/lib/db/sql-grammar/redaction.ts",
@@ -232,6 +243,13 @@ export const REGISTRIES: readonly Listed[] = [
     count: 1,
     reason:
       "the type of Studio's function tables, which bind each function a declaration names to Studio's own, per engine",
+  },
+  {
+    path: "src/lib/db/function-table.ts",
+    declaration: "slotFunctionTable",
+    count: 1,
+    reason:
+      "the builder of one slot kind of a function table, from the engines that fill the slot, each mapped to Studio's own function",
   },
   { path: "src/lib/db/connection-form.ts", declaration: "CONNECTION_PICKER_ORDER", count: 1, reason: DISPLAY_ORDER },
   {

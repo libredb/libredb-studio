@@ -1414,7 +1414,8 @@ A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES`
 
 ### 9.4 SQL writing
 
-[`duckdb/sql-writing.ts`](../../src/lib/db/providers/sql/duckdb/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+The `sqlWriting` segment of [`engine-declarations/duckdb.json`](../../src/lib/db/engine-declarations/duckdb.json) declares how a generated statement spells a literal, a name and a bind for this engine, and Studio composes it into this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), each function it names bound by Studio's SQL writing function table, `SQL_WRITING_FUNCTIONS`; the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look the row up.
+The table binds this engine's own functions from the modules beside its provider: [`duckdb/typed-literals.ts`](../../src/lib/db/providers/sql/duckdb/typed-literals.ts), `duckdbLiteral`.
 A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
 A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
 A bind is spelled by `placeholderQuestion`, as `?` at every position.
@@ -1423,15 +1424,15 @@ The name quote is measured on v1.5.5 too: `"quoted identifier"` works, and `[…
 DuckDB binds both forms, measured on v1.5.5: `runAndReadAll("SELECT ?::INTEGER AS a, ?::VARCHAR AS b", [7, "x"])` and `runAndReadAll("SELECT $1::INTEGER AS a", [9])` each answer, so `?` is a choice rather than a reading.
 `$` is overloaded in this dialect: `$tag$…$tag$` is a dollar-quoted string literal (measured), so a `$1` written into a generated statement sits one character away from a form the readers have to tell apart, while `?` has no second meaning anywhere in DuckDB's grammar.
 `?` also matches the positional order the driver binds by, which is the array's, not the digit's.
-Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+Inline row editing reads a key column's kind through the declaration's `inlineEdit`, whose `instantTypeNames`, `float64TypeNames` and `exactDecimalTypeNames` are the same words as the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES`, and binds every edit as typed.
 
-The module's `export` field writes a result export's column types from `STANDARD_DDL_TYPES`.
+The declaration's `export` writes a result export's column types through `ddlTypes`, the same spellings as `STANDARD_DDL_TYPES`.
 Each name in `standsAlone` was measured on DuckDB v1.5.5, one `CREATE TABLE probe (c <name>)` per name read back out of `duckdb_columns().data_type`, and resolved to an unnarrowed type: the seven text spellings to `VARCHAR`, the four byte ones to `BLOB`, the four moment ones to `TIMESTAMP` (and `TIMESTAMP WITH TIME ZONE` to itself).
 `numeric` and `decimal` are the absences that matter: DuckDB accepts both and stores `DECIMAL(18,3)`, which rounds away every value past the third decimal, so they are re-spelled from their family.
 A binary cell is written by `binaryUnhex`, not the standard hex: measured on v1.5.5, `SELECT typeof(X'0102')` answers `VARCHAR` and `SELECT X'0102'` answers the five characters `x0102`, while `unhex('0102deadbeef')` answers a real `BLOB` that reads back as `hex(payload)` = `0102DEADBEEF` with `octet_length(payload)` 6, `unhex('')` inserts the zero-length blob, and `0x0102` is a parser error.
-`nonFinite` is `QUOTED_WORD_NON_FINITE`, which writes the quoted words `'NaN'`, `'Infinity'` and `'-Infinity'`, which DuckDB read back into `DOUBLE` and `FLOAT` when replayed (2026-10-04).
+`nonFinite` writes the quoted words `'NaN'`, `'Infinity'` and `'-Infinity'`, which DuckDB read back into `DOUBLE` and `FLOAT` when replayed (2026-10-04).
 `typedLiteral` writes intervals, maps, structs and the other cells whose JSON form DuckDB refuses, from the engine's own [`duckdb/typed-literals.ts`](../../src/lib/db/providers/sql/duckdb/typed-literals.ts).
-`NO_BARE_SPELLING` completes it.
+`bareSpelling` is empty, as `NO_BARE_SPELLING` is.
 
 
 

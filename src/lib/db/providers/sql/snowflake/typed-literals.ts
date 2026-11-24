@@ -149,6 +149,6 @@ function snowflakeValue(value: unknown, declared: string, scalar: ScalarLiteral)
   return undefined;
 }
 
-/** Every declared cell but bytes, which the generic writer spells with `SNOWFLAKE_SQL_WRITING.export.binaryLiteral`. */
+/** Every declared cell but bytes, which the generic writer spells with the engine's `export.binaryLiteral`. */
 export const snowflakeLiteral: TypedWriter = (value, declared, scalar) =>
   declared === undefined || asBytes(value) !== undefined ? undefined : snowflakeValue(value, declared, scalar);

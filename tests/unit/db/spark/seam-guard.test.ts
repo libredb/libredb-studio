@@ -55,7 +55,7 @@ const CONTRACT_REGISTRIES: Readonly<Record<string, string>> = {
   "src/lib/db/connection-string/index.ts": `${SPARK}/connection-string`,
   "src/lib/db/engine-facets/index.ts": `${SPARK}/engine-facets`,
   "src/lib/db/migration-ddl/index.ts": `${SPARK}/migration-ddl`,
-  "src/lib/db/sql-writing/index.ts": `${SPARK}/sql-writing`,
+  "src/lib/db/sql-writing/index.ts": `${SPARK}/typed-literals`,
 };
 /** The one module under src/lib/db/providers/ outside the directory a Spark file may import. */
 const SQL_BASE = "src/lib/db/providers/sql/sql-base";
@@ -349,9 +349,9 @@ describe("isolation", () => {
     ]);
   });
 
-  test("the SQL writing registry may import the Spark SQL writing row, and not another contract's", () => {
+  test("the SQL writing registry may import the Spark typed literal writer, and not another contract's", () => {
     const registry = "src/lib/db/sql-writing/index.ts";
-    const own = 'import { SPARK_SQL_WRITING } from "@/lib/db/providers/sql/spark/sql-writing";\n';
+    const own = 'import { sparkLiteral } from "@/lib/db/providers/sql/spark/typed-literals";\n';
     expect(outsideImportFindings(replaced(SOURCES, registry, own))).toEqual([]);
     const other = 'import { SPARK_MIGRATION_DDL } from "@/lib/db/providers/sql/spark/migration-ddl";\n';
     expect(outsideImportFindings(replaced(SOURCES, registry, other))).toEqual([

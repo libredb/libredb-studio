@@ -5,8 +5,8 @@ import path from "node:path";
 const ROOT = path.resolve(import.meta.dir, "../../..");
 
 /**
- * The generated connection tables, the generated editor record and the generated query editor records: frozen
- * literals and type imports only, so loading one loads nothing else.
+ * The generated connection tables, the generated editor record, the generated query editor records and the generated
+ * SQL text and SQL writing records: frozen literals and type imports only, so loading one loads nothing else.
  */
 const GENERATED_MODULES = [
   "src/lib/db/engine-catalog/connection.generated.ts",
@@ -15,6 +15,8 @@ const GENERATED_MODULES = [
   "src/lib/db/engine-catalog/connection-string.generated.ts",
   "src/lib/db/engine-catalog/editor.generated.ts",
   "src/lib/db/engine-catalog/query-editor.generated.ts",
+  "src/lib/db/engine-catalog/sql-text.generated.ts",
+  "src/lib/db/engine-catalog/sql-writing.generated.ts",
 ] as const;
 
 /**

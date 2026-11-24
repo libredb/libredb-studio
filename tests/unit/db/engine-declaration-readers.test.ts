@@ -113,6 +113,12 @@ const SQL_TEXT_MEMBERS = [
   "sqlText.completion",
 ] as const;
 
+/**
+ * The SQL writing segment the SQL writing is projected from, M-79: an authored member, M-15, holding no claim, each
+ * function a name bound only to Studio's own function for that engine.
+ */
+const SQL_WRITING_MEMBERS = ["sqlWriting"] as const;
+
 /** Every module of Studio's source that reads a declaration or a projection of the declarations. */
 const DECLARATION_READERS: readonly DeclarationReader[] = [
   {
@@ -202,9 +208,10 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
       ...FENCE_ALIAS_MEMBERS,
       ...QUERY_EDITOR_MEMBERS,
       ...SQL_TEXT_MEMBERS,
+      ...SQL_WRITING_MEMBERS,
     ],
     reason:
-      "projects the admitted declarations into the engine catalog, the connection tables, the connection forms, the connection strings, the execution UI and fence aliases, the query dialects, tab type editors and editor languages, and the SQL text",
+      "projects the admitted declarations into the engine catalog, the connection tables, the connection forms, the connection strings, the execution UI and fence aliases, the query dialects, tab type editors and editor languages, the SQL text and the SQL writing",
   },
   {
     path: "src/lib/db/engine-catalog/query-editor.generated.ts",
@@ -216,6 +223,11 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
     path: "src/lib/db/engine-catalog/sql-text.generated.ts",
     members: SQL_TEXT_MEMBERS,
     reason: "each engine's SQL text, generated from the admitted declarations",
+  },
+  {
+    path: "src/lib/db/engine-catalog/sql-writing.generated.ts",
+    members: SQL_WRITING_MEMBERS,
+    reason: "each engine's SQL writing, generated from the admitted declarations",
   },
   {
     path: "src/lib/db/execution-ui/index.ts",
@@ -232,6 +244,12 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
     members: SQL_TEXT_MEMBERS,
     reason:
       "each engine's SQL grammar row, composed from the generated SQL text, Studio's hand-written redaction record and Studio's grammar function table, which binds each named function",
+  },
+  {
+    path: "src/lib/db/sql-writing/index.ts",
+    members: SQL_WRITING_MEMBERS,
+    reason:
+      "each engine's SQL writing row, composed from the generated SQL writing and Studio's SQL writing function table, which binds each named function",
   },
   {
     path: "src/lib/editor/dialect-editors.ts",

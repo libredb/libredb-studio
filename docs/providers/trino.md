@@ -1789,7 +1789,8 @@ what Trino has instead is the coordinator's own bounded history ([§7](#7-monito
 
 ### SQL writing
 
-[`trino/sql-writing.ts`](../../src/lib/db/providers/sql/trino/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+The `sqlWriting` segment of [`engine-declarations/trino.json`](../../src/lib/db/engine-declarations/trino.json) declares how a generated statement spells a literal, a name and a bind for this engine, and Studio composes it into this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), each function it names bound by Studio's SQL writing function table, `SQL_WRITING_FUNCTIONS`; the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look the row up.
+The table binds this engine's own functions from the modules beside its provider: [`trino/typed-literals.ts`](../../src/lib/db/providers/sql/trino/typed-literals.ts), `trinoLiteral`.
 A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
 A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
 There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
@@ -1798,15 +1799,15 @@ Trino spells its backslash escapes in the separate `U&'fo\\+0000F6'` form, exact
 The name quote is measured on 476: `SELECT "nationkey" FROM tpch.sf1.nation LIMIT 1` returns the column, `SELECT 1 AS "a""b"` names it `a"b`, and a backtick is refused in the engine's own words, "backquoted identifiers are not supported; use double quotes to quote identifiers".
 Trino does bind, through `PREPARE`/`EXECUTE` plus an `X-Trino-Prepared-Statement` header, but the provider's transport seam carries the statement alone, so `TrinoProvider.query()` refuses a non-empty params array outright.
 Emitting `?` would build a statement whose placeholder the provider then declines to fill.
-Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+Inline row editing reads a key column's kind through the declaration's `inlineEdit`, whose `instantTypeNames`, `float64TypeNames` and `exactDecimalTypeNames` are the same words as the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES`, and binds every edit as typed.
 
-The module's `export` field spells a result export's column types through `ddlTypes`, the standard spelling with `VARCHAR` for text and `VARBINARY` for a binary column: `text` is `Unknown type 'text'` on Trino 476, and `DOUBLE PRECISION`, `BIGINT`, `BOOLEAN` and `TIMESTAMP` are all accepted as they are (`DOUBLE PRECISION` is stored as `double`, measured).
+The declaration's `export` spells a result export's column types through `ddlTypes`, the standard spelling with `VARCHAR` for text and `VARBINARY` for a binary column: `text` is `Unknown type 'text'` on Trino 476, and `DOUBLE PRECISION`, `BIGINT`, `BOOLEAN` and `TIMESTAMP` are all accepted as they are (`DOUBLE PRECISION` is stored as `double`, measured).
 Each name in `standsAlone` was measured, one `CREATE TABLE probe (c <name>)` per name on Trino 476, read back out of `information_schema.columns`, and is listed only because Trino both accepted it and stored it unnarrowed.
 Trino's `char` and `decimal` are absent, stored as `char(1)` and `decimal(38,0)`.
 Trino is why a bare name cannot simply be re-spelled whenever the target is unmeasured: its own `varchar` is legal and unbounded, and would have become a `TEXT` it answers `Unknown type 'text'` to.
 A binary cell is written by `binaryStandardHex`: measured on 476, `SELECT typeof(X'0102')` answers `varbinary`, `to_hex(X'0102deadbeef')` answers `0102DEADBEEF`, `length(X'')` answers 0, and the whole generated pair replays into the memory connector.
 `typedLiteral` writes the cells whose generic form Trino refuses, from the engine's own [`trino/typed-literals.ts`](../../src/lib/db/providers/sql/trino/typed-literals.ts).
-`NO_BARE_SPELLING` and `NULL_NON_FINITE` complete it.
+`bareSpelling` is empty and `nonFinite` writes NULL for NaN and the infinities, as `NO_BARE_SPELLING` and `NULL_NON_FINITE` do.
 
 ---
 

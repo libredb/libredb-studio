@@ -872,7 +872,8 @@ Load rows with `INSERT` or `COPY INTO` in the editor instead.
 
 ### SQL writing
 
-[`databend/sql-writing.ts`](../../src/lib/db/providers/sql/databend/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+The `sqlWriting` segment of [`engine-declarations/databend.json`](../../src/lib/db/engine-declarations/databend.json) declares how a generated statement spells a literal, a name and a bind for this engine, and Studio composes it into this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), each function it names bound by Studio's SQL writing function table, `SQL_WRITING_FUNCTIONS`; the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look the row up.
+The table binds this engine's own functions from the modules beside its provider: [`databend/typed-literals.ts`](../../src/lib/db/providers/sql/databend/typed-literals.ts), `databendLiteral`.
 A literal is written by `literalDoubleAndBackslash` and read back by `unquoteDoubleAndBackslash`: the quote is doubled and a backslash escapes, so the backslash is doubled first.
 A name is quoted by `identifierBacktickDoubled`: a backtick name with an inner backtick doubled and a backslash as data.
 There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
@@ -881,12 +882,12 @@ The live round trip of the escaping corpus, `INSERT ... VALUES` included, passed
 Databend reads a backtick name in all five of its `sql_dialect`s, the default PostgreSQL one included, and a doubled backtick is the only escape inside it: the lexer rule has no backslash form, so `x\` is the name `x\`.
 Measured on the pinned image (probe L4): names holding a backtick, a backslash, a quote, `;`, `--`, a newline or a NUL round-trip byte-equal through CREATE TABLE, INSERT and SELECT under both dialects.
 A bare name would be folded to lower case there, which is why the provider quotes every name rather than only the ones that need it.
-Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+Inline row editing reads a key column's kind through the declaration's `inlineEdit`, whose `instantTypeNames`, `float64TypeNames` and `exactDecimalTypeNames` are the same words as the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES`, and binds every edit as typed.
 
-The module's `export` field spells a result export's column types through `ddlTypes`: `VARCHAR`, `DOUBLE` and `BINARY` are Databend's measured spellings (design 7.2, X01), created by M08a on the pinned image and read back by M08c as `String`, `Float64` and `Binary`, unbounded.
+The declaration's `export` spells a result export's column types through `ddlTypes`: `VARCHAR`, `DOUBLE` and `BINARY` are Databend's measured spellings (design 7.2, X01), created by M08a on the pinned image and read back by M08c as `String`, `Float64` and `Binary`, unbounded.
 The standard `TEXT`, `DOUBLE PRECISION` and `BLOB` were not measured there; `BIGINT`, `BOOLEAN` and `TIMESTAMP` were, as they are.
 `standsAlone` holds `varchar`, `timestamp` and `binary`, each created by M08a and read back by M08c unbounded (`String`, `Timestamp` with microseconds, `Binary`); every other bare name is re-spelled from its family.
-`NO_BARE_SPELLING`, because Databend's `Timestamp` keeps microseconds without a precision and its `Decimal` always carries its own, so no bare name it reports narrows the value its INSERT writes back.
+`bareSpelling` is empty, as `NO_BARE_SPELLING` is, because Databend's `Timestamp` keeps microseconds without a precision and its `Decimal` always carries its own, so no bare name it reports narrows the value its INSERT writes back.
 A binary cell is written by `binaryUnhex`, not the standard `X'…'`: Databend reads a quoted string into BINARY through `binary_input_format`, utf-8 by default, and M08b inserted `unhex('00ff10')` on the pinned image, which M08c read back as the three bytes `00FF10`.
 `nonFinite` writes `'NaN'::FLOAT`, `'inf'::DOUBLE` and `'-inf'::FLOAT`, which M08b inserted into Databend's `FLOAT` and `DOUBLE` columns and read back as NaN, Infinity and -Infinity.
 `typedLiteral` writes the cells whose generic form Databend refuses, from the engine's own [`databend/typed-literals.ts`](../../src/lib/db/providers/sql/databend/typed-literals.ts); there is no `rewriteDeclared`, since a declared type is written as the query schema spells it (`Nullable(Array(Int32 NULL))`) and the provider's every-type replay is what proves or refutes that spelling.

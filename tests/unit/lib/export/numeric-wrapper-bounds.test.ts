@@ -5,7 +5,8 @@
  * The schema admits any one-group pattern as an engine's `numericWrapper`, so the CSV writer cannot strip it while it
  * merely matches: a capture as long as the type, `^(.*)$`, matches its own capture forever, and a group that can be
  * absent answers no type at all. Each child plants such a wrapper on clickhouse, as a declaration states it: through a
- * stub of ClickHouse's SQL writing row, the shipped row with its numeric wrapper replaced. Without the bound the first
+ * stub of the generated SQL writing the rows are composed from, the shipped record with clickhouse's numeric wrapper
+ * replaced by a source and no flags. Without the bound the first
  * case turns the loop until the spawn timeout kills the child within seconds, and the second throws a TypeError on the
  * absent capture, so each case fails by its exit. The child holds a referenced interval, so it cannot exit early
  * (tests/helpers/bounded-node-child.ts).
@@ -29,16 +30,21 @@ const SOURCE = path.join(import.meta.dir, "..", "..", "..", "..", "src");
 /** What a `Float64` column holding `-Infinity` exports as when no wrapper matches its type. */
 const NUMERIC_COLUMN_CSV = "x\n-Infinity";
 
-/** A stub of ClickHouse's SQL writing row: the shipped row with `source` as its numeric wrapper, no flags. */
+/** A stub of the generated SQL writing: the shipped record with `source` as clickhouse's numeric wrapper, no flags. */
 function plantedClickhouse(source: string): string {
-  const shipped = path.join(SOURCE, "lib", "db", "providers", "sql", "clickhouse", "sql-writing.ts");
+  const shipped = path.join(SOURCE, "lib", "db", "engine-catalog", "sql-writing.generated.ts");
+  const wrapper = JSON.stringify({ source, flags: "" });
   return [
-    `import { CLICKHOUSE_SQL_WRITING as SHIPPED } from ${JSON.stringify(shipped)};`,
-    "export const CLICKHOUSE_SQL_WRITING = {",
+    `import { BUNDLED_SQL_WRITING as SHIPPED } from ${JSON.stringify(shipped)};`,
+    "const clickhouse = SHIPPED.clickhouse;",
+    "export const BUNDLED_SQL_WRITING = {",
     "  ...SHIPPED,",
-    "  export: {",
-    "    ...SHIPPED.export,",
-    `    typeVocabulary: { ...SHIPPED.export.typeVocabulary, numericWrapper: new RegExp(${JSON.stringify(source)}) },`,
+    "  clickhouse: {",
+    "    ...clickhouse,",
+    "    export: {",
+    "      ...clickhouse.export,",
+    `      typeVocabulary: { ...clickhouse.export.typeVocabulary, numericWrapper: ${wrapper} },`,
+    "    },",
     "  },",
     "};",
     "",
@@ -60,7 +66,7 @@ function childPlanting(label: string, source: string): BoundedChild {
       }).content,
     heapLimitMiB: 256,
     timeoutMs: 10_000,
-    stubs: [{ specifier: "@/lib/db/providers/sql/clickhouse/sql-writing", source: plantedClickhouse(source) }],
+    stubs: [{ specifier: "@/lib/db/engine-catalog/sql-writing.generated", source: plantedClickhouse(source) }],
   });
 }
 

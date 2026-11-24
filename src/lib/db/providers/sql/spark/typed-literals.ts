@@ -12,7 +12,7 @@ import type { TypedWriter } from "@/lib/db/sql-writing/types";
  * Spark's typed literals for the texts the Spark provider's decoder writes: a date, a timestamp with
  * its `+00:00`, a timestamp without a zone and a time, each checked against that text before it is quoted, so a cell
  * in another form is refused rather than left to Spark's string casts. Strings, booleans, plain numbers and bytes
- * are the generic writer's (`SPARK_SQL_WRITING.escapeLiteral`, `SPARK_SQL_WRITING.export.binaryLiteral`).
+ * are the generic writer's (the engine's `escapeLiteral` and `export.binaryLiteral`).
  */
 const SPARK_TEMPORAL: ReadonlyArray<{ readonly declared: RegExp; readonly keyword: string; readonly shape: RegExp }> = [
   { declared: /^date$/, keyword: "DATE", shape: /^[+-]?\d{4,}-\d{2}-\d{2}$/ },
@@ -125,6 +125,6 @@ function sparkValue(value: unknown, declared: string): string | undefined {
   return undefined;
 }
 
-/** Every declared cell but bytes, which the generic writer spells with `SPARK_SQL_WRITING.export.binaryLiteral`. */
+/** Every declared cell but bytes, which the generic writer spells with the engine's `export.binaryLiteral`. */
 export const sparkLiteral: TypedWriter = (value, declared) =>
   declared === undefined || asBytes(value) !== undefined ? undefined : sparkValue(value, declared);

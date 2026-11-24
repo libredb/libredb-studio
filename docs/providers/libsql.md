@@ -1166,23 +1166,25 @@ No slow-query sentence is declared: the Queries panel is not offered, so nothing
 
 ### SQL writing
 
-[`libsql/sql-writing.ts`](../../src/lib/db/providers/sql/libsql/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+The `sqlWriting` segment of [`engine-declarations/libsql.json`](../../src/lib/db/engine-declarations/libsql.json) declares how a generated statement spells a literal, a name and a bind for this engine, and Studio composes it into this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), each function it names bound by Studio's SQL writing function table, `SQL_WRITING_FUNCTIONS`; the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look the row up.
 A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
 A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
 There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
 Measured on sqld 0.24.33: `SELECT 'it''s'` answers `it's`, and a backslash has no special meaning, the same standard doubling SQLite defines.
 libSQL shares only this grammar with SQLite, through the shared building blocks, and not SQLite's row: SQLite binds `?`, and libSQL's row has no placeholder.
-Inline row editing reads a key column's kind through the module's own `inlineEdit`, because libSQL embeds SQLite and SQLite's type words name an affinity and not a storage width.
-`instantTypeNames` is the empty `NO_INSTANT_TYPE_NAMES`: a `DATE`, `DATETIME` or `TIMESTAMP` column holds the text or integer somebody put in it, and that value is its own identity.
+Inline row editing reads a key column's kind through the declaration's own `inlineEdit`, because libSQL embeds SQLite and SQLite's type words name an affinity and not a storage width.
+`instantTypeNames` is empty: a `DATE`, `DATETIME` or `TIMESTAMP` column holds the text or integer somebody put in it, and that value is its own identity.
 Measured 2026-09-19 on libSQL server v0.24.33 over its HTTP pipeline and on bun:sqlite (Bun 1.4.0), `zz_<decl>(k <decl> PRIMARY KEY, note TEXT)` for each of the three declarations against `'2024-01-15'`, `'2026-01-01 10:00:00.123'`, `'2026-01-01T07:00:00.123Z'` and the epoch 1705276800, 24 combinations: every value came back unchanged, `WHERE k IN (?)` matched one group holding one row, and the `UPDATE` changed exactly one row, libSQL identical to bun:sqlite on all twelve of its own.
-`float64TypeNames` is `EVERY_TYPE_IS_FLOAT64`, `"all"`: SQLite has one float width, so `REAL`, `FLOAT`, `DOUBLE` and `DOUBLE PRECISION` are four spellings of one 8-byte double.
+No other engine states it, as the [SQLite](sqlite.md) section measures on PostgreSQL and MySQL.
+`float64TypeNames` is `"all"`: SQLite has one float width, so `REAL`, `FLOAT`, `DOUBLE` and `DOUBLE PRECISION` are four spellings of one 8-byte double.
 Measured 2026-09-18 on libSQL server v0.24.33 and bun:sqlite, `zz_real(r REAL, f FLOAT, d DOUBLE, dp DOUBLE PRECISION)` answered `real` to `typeof()` for all four, read 0.30000000000000004 back identical, and `WHERE r = 1.5`, `WHERE f = 0.1`, `WHERE d = 0.30000000000000004` and `WHERE dp = 0.1` each matched exactly one row on both.
-`exactDecimalTypeNames` is the empty `NO_EXACT_DECIMAL_TYPE_NAMES`: SQLite has no decimal type, so `DECIMAL(20,4)` takes NUMERIC affinity and stores an integer or an 8-byte double.
+`exactDecimalTypeNames` is empty: SQLite has no decimal type, so `DECIMAL(20,4)` takes NUMERIC affinity and stores an integer or an 8-byte double.
 That was measured 2026-09-19 on bun:sqlite only ([SQLite](sqlite.md)): `WHERE k = 1234567890123456.8` matched one row, its own; libSQL states it because it embeds the same engine and reports the same `sqlite3_column_decltype` declarations.
 Every edit is bound as typed.
 
-The module's `export` field writes a result export's column types from `STANDARD_DDL_TYPES`, NaN and the infinities as NULL through `NULL_NON_FINITE`, no re-spelling through `NO_BARE_SPELLING`, and a binary cell through `binaryStandardHex` (`X'0102'`).
-`standsAlone` is the SQLite list, `VERBATIM_DECLARED_TYPES_STAND_ALONE`, held by name for the same measured reason: libSQL is SQLite 3.47.0, and `pragma_table_info` there answers the declared spelling verbatim too (measured on sqld 0.24.33).
+The declaration's `export` writes a result export's column types through `ddlTypes`, the same spellings as `STANDARD_DDL_TYPES`, NaN and the infinities as NULL through `nonFinite`, as `NULL_NON_FINITE` does, no re-spelling through an empty `bareSpelling`, as `NO_BARE_SPELLING` is, and a binary cell through `binaryStandardHex` (`X'0102'`).
+Measured over Hrana on sqld 0.24.33: `SELECT hex(X'0102deadbeef')` answers `0102DEADBEEF`, `typeof(X'')` answers `blob` and `length(X'')` answers 0, the same readings as SQLite's, taken again rather than assumed.
+`standsAlone` is the SQLite list, every bare type name of `BARE_TYPE_FAMILY` but the four the affinity narrows, for the same measured reason: libSQL is SQLite 3.47.0, and `pragma_table_info` there answers the declared spelling verbatim too (measured on sqld 0.24.33).
 
 ---
 

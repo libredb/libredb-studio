@@ -4,8 +4,8 @@
  * the typed-literal grammars read a declared type with.
  *
  * A leaf one level above `./shared`: it imports that module, the non-finite words and
- * types, and nothing from the export path or any registry, so an engine module can import
- * it first in a fresh process (spec 5.3).
+ * types, and nothing from the export path or any registry, so an engine's own SQL writing
+ * module can import it first in a fresh process (spec 5.3).
  */
 import { isNonFiniteWord, nonFiniteWord, type NonFiniteWord } from "@/lib/non-finite";
 import { literalBackslash } from "./shared";

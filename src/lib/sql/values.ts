@@ -2,15 +2,16 @@ import { sqlWritingFor } from "@/lib/db/sql-writing";
 import type { DatabaseType } from "@/lib/types";
 
 /**
- * Literals and binds for a dialect, read from the engine's own module.
+ * Literals and binds for a dialect, read from the engine's SQL writing row.
  *
  * Each engine declares how it escapes a string literal, which placeholder its driver binds
- * and how it spells a date, in the `SqlWritingSpec` beside its provider; the measurements
- * that justify each answer live there. `SQL_WRITING` in `src/lib/db/sql-writing/index.ts`
- * is the total record of those modules, so a new provider cannot be added without
- * TypeScript demanding an answer, because the silent wrong answer is exactly the defect
- * this file exists to close (issue #290). The functions below are the stable surface every
- * caller reads.
+ * and how it spells a date in the `sqlWriting` segment of its engine declaration, each
+ * function by the name Studio's SQL writing function table binds; the measurements that
+ * justify each answer live in its provider document. `SQL_WRITING` in
+ * `src/lib/db/sql-writing/index.ts` is the total record of the rows composed from those
+ * declarations, so a new provider cannot be added without TypeScript demanding an answer,
+ * because the silent wrong answer is exactly the defect this file exists to close (issue
+ * #290). The functions below are the stable surface every caller reads.
  */
 
 /**

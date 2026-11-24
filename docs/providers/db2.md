@@ -259,20 +259,20 @@ The provider bounds a transaction statement with it instead, section 7.4.
 
 ### SQL writing
 
-[`db2/sql-writing.ts`](../../src/lib/db/providers/sql/db2/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+The `sqlWriting` segment of [`engine-declarations/db2.json`](../../src/lib/db/engine-declarations/db2.json) declares how a generated statement spells a literal, a name and a bind for this engine, and Studio composes it into this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), each function it names bound by Studio's SQL writing function table, `SQL_WRITING_FUNCTIONS`; the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look the row up.
 A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
 A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
 A bind is spelled by `placeholderQuestion`, as `?` at every position.
 Measured on Db2 LUW 12.1.0.0 through db2-node 1.0.22 (#786), both directions: `VALUES 'O''Brien'` answers `O'Brien`, and `VALUES 'a\b'` answers the three characters `a\b` with `LENGTH` 3, so a backslash is data.
 db2-node binds a params array against `?`, measured on the same server (#786).
-Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+Inline row editing reads a key column's kind through the declaration's `inlineEdit`, whose `instantTypeNames`, `float64TypeNames` and `exactDecimalTypeNames` are the same words as the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES`, and binds every edit as typed.
 
-The module's `export` field spells a result export's column types through `ddlTypes`, the standard spelling with `CLOB` for text: Db2 has no TEXT, and measured on 12.1.0.0, `CREATE TABLE ... (c TEXT)` is SQL0204N `"TEXT" is an undefined name`, while BIGINT, DOUBLE PRECISION, BOOLEAN, TIMESTAMP and BLOB are whole types.
+The declaration's `export` spells a result export's column types through `ddlTypes`, the standard spelling with `CLOB` for text: Db2 has no TEXT, and measured on 12.1.0.0, `CREATE TABLE ... (c TEXT)` is SQL0204N `"TEXT" is an undefined name`, while BIGINT, DOUBLE PRECISION, BOOLEAN, TIMESTAMP and BLOB are whole types.
 `CLOB` is the unbounded character type, chosen over a VARCHAR whose bound a cell could pass (#786).
-No name was measured standing alone on Db2 in its first version (#786), so it holds `NOTHING_STANDS_ALONE` and every bare name is re-spelled from its family.
+No name was measured standing alone on Db2 in its first version (#786), so its `standsAlone` is empty, as `NOTHING_STANDS_ALONE` is, and every bare name is re-spelled from its family.
 A binary cell is written by `binaryBinaryHex`, `BX'0102'`: measured on Db2 LUW 12.1.0.0 (#786), `INSERT … VALUES (X'0102deadbeef')` into a `BLOB` or a `VARBINARY` column is SQL0408N, "a value is not compatible with the data type of its assignment target", because `X'…'` is a character string here.
 `BX'0102deadbeef'` goes into `BLOB`, `VARBINARY` and `VARCHAR FOR BIT DATA` alike, reading back as `HEX(…)` = `0102DEADBEEF`, and `BX''` inserts the zero-length value into all three.
-`NO_BARE_SPELLING` and `NULL_NON_FINITE` complete it.
+`bareSpelling` is empty and `nonFinite` writes NULL for NaN and the infinities, as `NO_BARE_SPELLING` and `NULL_NON_FINITE` do.
 
 ## 6. Object surface
 

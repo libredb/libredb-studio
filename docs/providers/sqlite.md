@@ -1436,29 +1436,33 @@ sends no target, so `runMaintenance('reindex')` here runs a bare `REINDEX`
 
 ### SQL writing
 
-[`sql/sqlite-sql-writing.ts`](../../src/lib/db/providers/sql/sqlite-sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+The `sqlWriting` segment of [`engine-declarations/sqlite.json`](../../src/lib/db/engine-declarations/sqlite.json) declares how a generated statement spells a literal, a name and a bind for this engine, and Studio composes it into this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), each function it names bound by Studio's SQL writing function table, `SQL_WRITING_FUNCTIONS`; the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look the row up.
 A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
 A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
 A bind is spelled by `placeholderQuestion`, as `?` at every position.
 The SQLite drivers take `?`.
-Inline row editing reads a key column's kind through the module's own `inlineEdit`, because SQLite's type words name an affinity and not a storage width.
-`instantTypeNames` is the empty `NO_INSTANT_TYPE_NAMES`: SQLite has no date type, so a `DATE`, `DATETIME` or `TIMESTAMP` column holds the text or integer somebody put in it, and that value is its own identity.
+Inline row editing reads a key column's kind through the declaration's own `inlineEdit`, because SQLite's type words name an affinity and not a storage width.
+`instantTypeNames` is empty: SQLite has no date type, so a `DATE`, `DATETIME` or `TIMESTAMP` column holds the text or integer somebody put in it, and that value is its own identity.
 Measured 2026-09-19 on bun:sqlite (Bun 1.4.0) and libSQL server v0.24.33, `zz_<decl>(k <decl> PRIMARY KEY, note TEXT)` for each of the three declarations against `'2024-01-15'`, `'2026-01-01 10:00:00.123'`, `'2026-01-01T07:00:00.123Z'` and the epoch 1705276800, 24 combinations: every value came back unchanged, `WHERE k IN (?)` matched one group holding one row, and the `UPDATE` changed exactly one row.
-`float64TypeNames` is `EVERY_TYPE_IS_FLOAT64`, `"all"`: SQLite has one float width, so `REAL`, `FLOAT`, `DOUBLE` and `DOUBLE PRECISION` are four spellings of one 8-byte double.
+No other engine states this, and the closed side is the safe side: measured the same day, PostgreSQL 16.15 `zz_m1_ts(ts_id timestamp PRIMARY KEY)` holding 10:00:00.123456 and .654321 answered zero rows for the `'2026-01-01T07:00:00.123Z'` the browser holds and zero for `'2026-01-01 10:00:00.123'`, with both rows still in the table, and MySQL 8.4.11 `zz_m1_dt(d_id DATETIME(6) PRIMARY KEY)` answered zero for both, so those engines store something the value in front of the editor is only a rendering of, and keep the refusal.
+A `Date` is refused on every engine, SQLite included, because `String(date)` is a rendering whatever holds it: the driver never produces one, so it can only come from the host application the embeddable shell runs inside.
+`float64TypeNames` is `"all"`: SQLite has one float width, so `REAL`, `FLOAT`, `DOUBLE` and `DOUBLE PRECISION` are four spellings of one 8-byte double.
 Measured 2026-09-18 on the same two engines, `zz_real(r REAL, f FLOAT, d DOUBLE, dp DOUBLE PRECISION)` answered `real` to `typeof()` for all four, read 0.30000000000000004 back identical, and `WHERE r = 1.5`, `WHERE f = 0.1`, `WHERE d = 0.30000000000000004` and `WHERE dp = 0.1` each matched exactly one row.
+No other engine states this, each measured rather than assumed: PostgreSQL 16.15 spells `real` and `float4` both `real` through `pg`, both `pg_column_size` 4, and `0.1::real::float8` is 0.10000000149011612, a different number to the double 0.1; a MySQL 8.4.11 row holding 0.1 in a `FLOAT` and a `DOUBLE` answered `f = 0.1` false and `d = 0.1` true; DuckDB's `REAL` and `FLOAT` are one 32-bit type, handed over as 0.10000000149011612, and `r::DOUBLE = 0.1` is false; Trino was not reachable to measure, so it keeps the refusal.
 Every declaration and not only `real` and `float`: measured 2026-09-19 on bun:sqlite, a `DATE` column holding the julian day 2460324.75, and `REAL`, `INTEGER`, `TEXT`, `BLOB`, undeclared and `NUMERIC` columns, each matched one row, its own, on the value it handed back.
-`exactDecimalTypeNames` is the empty `NO_EXACT_DECIMAL_TYPE_NAMES`: SQLite has no decimal type, so `DECIMAL(20,4)` takes NUMERIC affinity and stores an integer or an 8-byte double.
-Measured 2026-09-19 on bun:sqlite (Bun 1.4.0), `zz(k DECIMAL(20,4), n NUMERIC(20,4))`: `typeof()` answered `real` for both, 1234567890123456.7891 came back as 1234567890123456.8, which is what the file holds, and `WHERE k = 1234567890123456.8` matched one row, its own.
+Reading only the words `real` and `float` refused the rest of them: a `DATE` column holding a julian day is nine digits, which the length rule reads as a possible 32-bit float, and the sentence it showed was the one this fact exists to say is false on SQLite.
+`exactDecimalTypeNames` is empty: SQLite has no decimal type, so `DECIMAL(20,4)` takes NUMERIC affinity and stores an integer or an 8-byte double.
+Measured 2026-09-19 on bun:sqlite (Bun 1.4.0), `zz(k DECIMAL(20,4), n NUMERIC(20,4))`: `pragma_table_info` reported both declarations back verbatim, `typeof()` answered `real` for both, 1234567890123456.7891 came back as 1234567890123456.8, which is what the file holds, and `WHERE k = 1234567890123456.8` matched one row, its own.
 Every edit is bound as typed.
 
-The module's `export` field writes a result export's column types from `STANDARD_DDL_TYPES`, SQLite's column types being advisory affinities anyway.
-Each name in `standsAlone`, the shared `VERBATIM_DECLARED_TYPES_STAND_ALONE`, was measured, one `CREATE TABLE probe (c <name>)` per name on SQLite through `bun:sqlite`, read back out of `pragma_table_info`, and is listed only because SQLite both accepted it and stored it unnarrowed.
+The declaration's `export` writes a result export's column types through `ddlTypes`, the same spellings as `STANDARD_DDL_TYPES`, SQLite's column types being advisory affinities anyway.
+Each name in `standsAlone`, every bare type name of `BARE_TYPE_FAMILY` but the four the affinity narrows, was measured, one `CREATE TABLE probe (c <name>)` per name on SQLite through `bun:sqlite`, read back out of `pragma_table_info`, and is listed only because SQLite both accepted it and stored it unnarrowed.
 SQLite keeps a declared type as the exact string it was given (`pragma_table_info` answers `varchar2` for `varchar2`), so the spelling the source engine used is the one that survives.
 SQLite's `enum`, `uniqueidentifier` and `rowid` are absent: SQLite parses any type name, so the narrowing is in the affinity, and these three match none of its keywords, so the column is NUMERIC and `INSERT INTO p (c) VALUES ('007')` reads back as the integer 7 (measured), where the same insert into `varchar2` reads back as the text `007`.
 `set` is not in SQLite's grammar as a type name at all (`near "set": syntax error`).
 A binary cell is written by `binaryStandardHex`: measured through `bun:sqlite`, `select hex(X'0102deadbeef')` answers `0102DEADBEEF`, and `typeof(X'')` answers `blob` with `length(X'')` 0.
 `nonFinite` writes the infinities as `9e999` and `-9e999` and NaN as NULL: replayed (2026-10-04), SQLite reads `9e999` and `-9e999` as its infinities in a `REAL` column, where a quoted `'Infinity'` is stored as TEXT, and it has no NaN at all (it stores one as NULL).
-`NO_BARE_SPELLING` completes it.
+`bareSpelling` is empty, as `NO_BARE_SPELLING` is.
 
 ---
 
