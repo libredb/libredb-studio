@@ -1219,6 +1219,8 @@ Removing an engine's declaration gives exactly the execution UI and fence aliase
 - test `tests/unit/db/engine-declarations.test.ts` "a committed declaration lacking an authored member, or naming another id than its file, is refused by name"
 - test `tests/unit/db/engine-declarations.test.ts` "ALIAS_ENGINES and QUERY_FENCE_ALIASES are the declarations' aliases and the schema's generic fence tags"
 - test `tests/unit/db/engine-declaration-readers.test.ts` "no listed reader reads a claim, so a declared claim reaches a gate only through Studio's review record"
+- test `tests/unit/db/engine-projections-removal.test.ts` "the execution UI and the fence aliases built with the fixture engine hold its entries, and with it removed are exactly a fresh build from the remaining set and the committed module"
+- test `tests/unit/db/engine-projections-removal.test.ts` "the execution UI and the fence aliases are the same whatever order the declarations are admitted in"
 
 ## Values
 

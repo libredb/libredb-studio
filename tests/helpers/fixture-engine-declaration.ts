@@ -1,7 +1,7 @@
 import type { EngineDeclaration } from "@libredb/provider-sdk/manifest";
 
 /**
- * The fixture engine of the removal tests (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72 and M-74): `base`
+ * The fixture engine of the removal tests (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72, M-74 and M-75): `base`
  * declared as `acmefoo`, the id the FND-1 tests give a stored connection of an engine no provider serves, named "Acme
  * Foo", with a connect budget of 90 s.
  *
@@ -13,7 +13,9 @@ import type { EngineDeclaration } from "@libredb/provider-sdk/manifest";
  * function in its connection form: no host hint, host identity or import, and no field rule with a check, and none in
  * its connection string: no scheme, URL TLS reader, paste or seed check, whatever `base` names, so neither of Studio's
  * function tables holds anything for it and both its form and its connection string compose; a test that needs a named
- * function names one on a copy.
+ * function names one on a copy. Its editor commits with `APPLY`, has a consent deadline naming Acme Foo and one fence
+ * alias of its own, `acmefooql`, so its execution UI entry is one no shipped engine has and it restates none of
+ * `base`'s aliases, which the fence alias projection would refuse as declared twice (clause M-75).
  */
 export function fixtureEngineDeclaration(base: EngineDeclaration): EngineDeclaration {
   return {
@@ -47,6 +49,16 @@ export function fixtureEngineDeclaration(base: EngineDeclaration): EngineDeclara
       hostHint: null,
       hostIdentity: null,
       import: null,
+    },
+    editor: {
+      ...base.editor,
+      commitKeyword: "APPLY",
+      consentDeadline: {
+        chip: "Acme Foo: stopped at its deadline",
+        sentence:
+          "On Acme Foo a read that runs past its deadline is stopped by the server, which keeps no partial result.",
+      },
+      fenceAliases: ["acmefooql"],
     },
   };
 }
