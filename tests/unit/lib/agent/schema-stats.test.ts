@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
 import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
 import { composeCatalogRead, composeStatisticsAvailabilityProbe } from "@/lib/agent/composed-sql";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
@@ -23,6 +23,12 @@ import { admitComposedStatement, agentQueryReadSqlInput } from "@/lib/db/operati
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
 import { TABLE_LABELS } from "../../../fixtures/provider-labels";
 import type { DatabaseConnection, DatabaseType, QueryResult } from "@/lib/types";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The agent's statements run through the host core's read-only execute, so this file installs one for its runs.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /**
  * The run's estimated statistics: reading them, and saying honestly what they are

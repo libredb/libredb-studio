@@ -3826,7 +3826,7 @@ export class MySQLProvider extends SQLBaseProvider {
         throw new RowBudgetRefusal(rowBudgetSentence(rows.length, budget.maxResultRows), "mysql", sql);
       }
       // Measured as the row is served, keyed by its column names (`mysqlResultSet`), which is the measure core
-      // re-checks the answer with (`runReadOnlyStatement`), so the stream stops where that re-check would refuse.
+      // re-checks the answer with (`holdReadOnlyRows`), so the stream stops where that re-check would refuse.
       names ??= uniqueFieldNames((fields ?? []).map((field) => field.name));
       const [served] = keyRowsByPosition(names, [row as unknown[]], "mysql", sql);
       bytes += measureRowBytes(served);

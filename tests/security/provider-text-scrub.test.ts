@@ -10,7 +10,7 @@
  *
  * The password is generated at run time, so no source line holds one.
  */
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { foldLedgerEntries } from "@/components/agent/timeline";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
 import { createErrorResponse } from "@/lib/api/errors";
@@ -52,6 +52,12 @@ import { type EvalRun, openEvalRun } from "../isolated/fixtures/agent-eval-harne
 import { answersProse, callsTool } from "../isolated/fixtures/agent-scripted-model";
 import { RunReadQueryInputSchema, runReadQuery } from "../helpers/run-read-query";
 import { fakeTextScrub, pinMcpTestEnvironment, resetMcpTestState } from "../helpers/mcp-fixtures";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The agent's statements run through the host core's read-only execute, so this file installs one for its runs.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 pinMcpTestEnvironment();
 

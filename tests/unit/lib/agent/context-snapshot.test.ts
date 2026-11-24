@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import {
   AGENT_CONTEXT_PACK_MAX_CHARS,
   captureContextSnapshot,
@@ -80,6 +80,12 @@ import type {
   IndexSchema,
   QueryResult,
 } from "@/lib/types";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The agent's statements run through the host core's read-only execute, so this file installs one for its runs.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The provider that relays every inventory this file packs. */
 const RELAYED_BY = providerAuthor("postgres");

@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -6,6 +6,12 @@ import type { AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
 import type { DatabaseProvider } from "@/lib/db/types";
 import type { DatabaseType, QueryResult } from "@/lib/types";
 import * as DUCKDB from "@/lib/agent/languages/sql/engines/duckdb";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The agent's statements run through the host core's read-only execute, so this file installs one for its runs.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /**
  * An engine overlay's override reaches every consumer of the member it overrides (#1821).

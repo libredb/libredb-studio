@@ -82,6 +82,7 @@ import {
   RowBudgetRefusal,
   SerialisedResultRefusal,
   StudioByteBudgetRefusal,
+  StudioProfileRefusal,
   StudioRowBudgetRefusal,
   StudioTimeBudgetRefusal,
   TimeBudgetRefusal,
@@ -100,7 +101,7 @@ import { typeIdRefusal, unknownTypeSentence } from "@/lib/db/type-id";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
 import { TABLE_LABELS } from "../../../fixtures/provider-labels";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
-import type { MonitoringPanelRequest } from "@libredb/provider-sdk/calls";
+import type { ExecuteRequest, MonitoringPanelRequest } from "@libredb/provider-sdk/calls";
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
 
@@ -3820,6 +3821,68 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
     h.acquireProvider.mockImplementation(async () => ({}) as unknown as DatabaseProvider);
 
     await expect(runReadQueryTool(h.context, { sql: "SELECT 1" })).rejects.toThrow(/read-only/i);
+  });
+
+  test("a statement runs through the host core's read-only execute on a read-only statement session, never the provider's plain query", async () => {
+    const h = harness();
+    const query = mock(async () => queryResult());
+    h.acquireProvider.mockImplementation(
+      async () => ({ queryReadOnly: h.queryReadOnly, query }) as unknown as DatabaseProvider,
+    );
+    const executes: { readonly readOnlyStatements: boolean; readonly request: ExecuteRequest }[] = [];
+    const real = hostCore();
+    const recording: HostCore = {
+      ...real,
+      executeCall: (session, request, ctx, limits, ports) => {
+        executes.push({ readOnlyStatements: session.readOnlyStatements, request });
+        return real.executeCall(session, request, ctx, limits, ports);
+      },
+    };
+    forgetHostCore();
+    installHostCore(recording, "test");
+    try {
+      const model = await runReadQueryTool(h.context, { sql: "SELECT id FROM orders" });
+      const grounding = await readStatementForGrounding(h.context, { sql: "SELECT 1", label: "grounding" });
+
+      expect([model.kind, grounding.kind]).toEqual(["completed", "completed"]);
+    } finally {
+      forgetHostCore();
+      installHostCore(real, "test");
+    }
+
+    expect(executes.map(({ readOnlyStatements, request }) => [readOnlyStatements, request.statement])).toEqual([
+      [true, "SELECT id FROM orders"],
+      [true, "SELECT 1"],
+    ]);
+    const budgets = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets;
+    for (const { request } of executes) {
+      expect(request.page).toEqual({ unlimited: true });
+      expect(request.readOnly).toEqual({
+        budget: { maxRows: budgets.maxResultRows, maxBytes: budgets.maxResultBytes },
+      });
+    }
+    expect(h.queryReadOnly).toHaveBeenCalledTimes(2);
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  test("an acquired provider without a read-only path is refused by the host at the session's open, and the run propagates it", async () => {
+    const h = harness();
+    const query = mock(async () => queryResult());
+    h.acquireProvider.mockImplementation(async () => ({ query }) as unknown as DatabaseProvider);
+    let thrown: unknown;
+    try {
+      await runReadQueryTool(h.context, { sql: "SELECT 1" });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(StudioProfileRefusal);
+    expect((thrown as StudioProfileRefusal).reasonCode).toBe("PROFILE_UNSUPPORTED_BY_PROVIDER");
+    expect((thrown as Error).message).toBe(
+      'Provider type "postgres" implements no read-only statement path (queryReadOnly)',
+    );
+    expect(query).not.toHaveBeenCalled();
+    expect(h.repairs.attemptsUsed).toBe(0);
   });
 });
 

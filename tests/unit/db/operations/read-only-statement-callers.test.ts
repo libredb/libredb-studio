@@ -7,12 +7,12 @@ import ts from "typescript";
  * The protected read path has one core caller.
  *
  * A provider's `queryReadOnly` is the read-only statement path the agent, the hand-over replay and MCP run statements
- * on, and `runReadOnlyStatement` (`src/lib/db/operations/read-only-statement.ts`) is the one core function that holds
- * its answer to the budget handed out; the legacy bridge's read-only statement session (`bridgedReadOnlyStatements`)
- * is the host core's reader of the same path. A third caller would be a path where the caps are only the provider's
- * claim, so outside provider code no module reads the method except to test that it exists (`typeof`), and those two
- * are the exceptions. Any read counts, not only a call: a read is how a call, a `.bind`, a `.call`, an
- * `.apply` or an alias begins.
+ * on. MCP reaches it through `runReadOnlyStatement` (`src/lib/db/operations/read-only-statement.ts`), and the agent and
+ * the hand-over through the host core's read-only execute (`runReadOnlyExecute`, src/lib/api/read-only-execute.ts),
+ * whose session the legacy bridge serves (`bridgedReadOnlyStatements`); each holds the answer to the budget handed out.
+ * A third caller would be a path where the caps are only the provider's claim, so outside provider code no module
+ * reads the method except to test that it exists (`typeof`), and those two are the exceptions. Any read counts, not
+ * only a call: a read is how a call, a `.bind`, a `.call`, an `.apply` or an alias begins.
  *
  * The agent's other budgeted reads, the catalog read `readCatalogReadOnly` and the cluster readings `readClusterUsage`
  * and `readWorkloadProfile`, are held the same way: each is read once outside provider code, in the one agent function
@@ -33,6 +33,8 @@ const CORE_CALLER = join("src", "lib", "db", "operations", "read-only-statement.
 /** The legacy bridge, whose read-only statement session is the host core's reader of a provider's read-only path. */
 const BRIDGE = join("src", "lib", "provider-host", "legacy-bridge.ts");
 const BRIDGE_SESSION = "bridgedReadOnlyStatements";
+/** The read-only execute facade, which reads the review record before it opens that session. */
+const EXECUTE_FACADE = join("src", "lib", "api", "read-only-execute.ts");
 const AGENT_AND_MCP_SOURCES = [
   join("src", "lib", "agent"),
   join("src", "lib", "mcp"),
@@ -534,7 +536,6 @@ const REVIEW_GATE = "assertStatementsReviewed";
 const FACTORY = join("src", "lib", "db", "factory.ts");
 const KNOWN_PRESENCE_TESTS: readonly string[] = [
   `${join("src", "app", "api", "agent", "runs", "[runId]", "handover", "route.ts")} in POST`,
-  `${join("src", "lib", "agent", "tools.ts")} in runStatement`,
   `${FACTORY} in openProfiledProvider`,
   `${CORE_CALLER} in read`,
   `${join("src", "lib", "mcp", "tools", "run-statement.ts")} in executeOpened`,
@@ -638,6 +639,15 @@ describe("the review record gates the protected read path", () => {
       profiledCacheKey: "gated",
       createSSHTunnel: "gated",
       createDatabaseProvider: "gated",
+    });
+  });
+
+  test("runReadOnlyExecute reads the review record before it reads the budget, the host core or the provider", () => {
+    const body = declaredFunction(EXECUTE_FACADE, "runReadOnlyExecute");
+    expect(gatedBefore(body, REVIEW_GATE, ["assertReadOnlyBudget", "hostCore", BRIDGE_SESSION])).toEqual({
+      assertReadOnlyBudget: "gated",
+      hostCore: "gated",
+      [BRIDGE_SESSION]: "gated",
     });
   });
 

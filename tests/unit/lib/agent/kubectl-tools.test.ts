@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { z } from "zod";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
@@ -33,6 +33,12 @@ import type {
 import type { AgentRunEvent } from "@/lib/agent/types";
 import type { QueryResult } from "@/lib/types";
 import { kubernetesConnection } from "../../../helpers/kubernetes-connection";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The agent's statements run through the host core's read-only execute, so this file installs one for its runs.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /**
  * `run_read_query` on a kubectl run: its argument is `statement`, a line the reader refuses is answered with the

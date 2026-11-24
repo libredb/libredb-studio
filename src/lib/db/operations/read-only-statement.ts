@@ -1,15 +1,20 @@
 /**
- * The one core call of a provider's read-only statement path (`DatabaseProvider.queryReadOnly`), and of the other
- * provider reads the agent hands the same budget.
+ * MCP's core call of a provider's read-only statement path (`DatabaseProvider.queryReadOnly`), the one core call of
+ * the other provider reads the agent hands the same budget, and the one row and byte hold of both and of the host
+ * core's read-only execute.
  *
- * The agent's statement path, the editor's hand-over replay and every MCP statement tool reach a provider's
- * `queryReadOnly` through `runReadOnlyStatement` and nothing else, which `tests/unit/db/operations/read-only-statement-callers.test.ts`
- * holds. Each provider already refuses a result past the row or byte budget it is handed, and bounds the statement by
- * the budget's timeout as its engine allows; this function holds the provider's answer to the same budget again, so
- * the caps are Studio's and not only a claim each provider makes. The agent's other budgeted reads, its catalog read
- * on an engine whose catalog is not a composed statement (`readCatalogReadOnly`) and the two cluster readings
- * (`readClusterUsage`, `readWorkloadProfile`), go through `runReadOnlyReading`, the same check over the rows the caller
- * serves from an answer that is not a `QueryResult`, and the same test holds each to its one agent caller;
+ * Every MCP statement tool reaches a provider's `queryReadOnly` through `runReadOnlyStatement`; the agent's statement
+ * path and the editor's hand-over replay reach it through the host core's read-only execute (`runReadOnlyExecute` in
+ * src/lib/api/read-only-execute.ts, on the legacy bridge's read-only statement session), and no other module reads it,
+ * which `tests/unit/db/operations/read-only-statement-callers.test.ts` holds. `holdReadOnlyRows` is the row and byte
+ * check below, which `runReadOnlyReading` and the host core's read-only execute both read, so the measure, the order
+ * and the sentences are one; the time below is MCP's and the readings', since the host core's execute stops at its
+ * own deadline. Each provider already refuses a result past the row or byte budget it is handed, and bounds the
+ * statement by the budget's timeout as its engine allows; this function holds the provider's answer to the same budget
+ * again, so the caps are Studio's and not only a claim each provider makes. The agent's other budgeted reads, its
+ * catalog read on an engine whose catalog is not a composed statement (`readCatalogReadOnly`) and the two cluster
+ * readings (`readClusterUsage`, `readWorkloadProfile`), go through `runReadOnlyReading`, the same check over the rows
+ * the caller serves from an answer that is not a `QueryResult`, and the same test holds each to its one agent caller;
  * `runReadOnlyStatement` is that function over `queryReadOnly`:
  *
  * - **Rows.** An answer with more rows than `maxResultRows` is refused in the row sentence every provider raises
@@ -55,7 +60,8 @@
  * is made and nothing is held. The gate keys on the connection type the caller declares (`type`), not on the provider
  * handed over, so it holds whatever acquirer handed the provider over only while every caller declares the type of
  * the connection that provider was acquired for, which every caller does today. This is the one choke point every
- * agent, hand-over and MCP read-only statement passes, beside the acquisition's own reading of the record. The one
+ * MCP read-only statement passes, beside the acquisition's own reading of the record, and the host core's read-only
+ * execute reads it first too, for every agent and hand-over statement. The one
  * composed statement that does not pass it is plan mode's statistics read on an engine whose catalog read is not a
  * composed statement (`readStatisticsForGrounding` under `agent-operations`, through `query()`), which stays on
  * reviewed engines only because its composer belongs to an engine overlay, an overlay needs a statement language, and
@@ -184,18 +190,54 @@ export async function runReadOnlyReading<T>(call: ReadOnlyReadingCall<T>): Promi
   const answered = call.read();
   call.holdUntilSettled?.(answered);
   const answer = call.wait === "statement-timeout" ? await withinStatementTimeout(answered, call) : await answered;
-  const rows = call.servedRows(answer);
+  holdReadOnlyRows(call.servedRows(answer), {
+    type,
+    statement,
+    maxRows,
+    maxBytes: budget.maxResultBytes,
+    ...(call.refuseRows === undefined ? {} : { refuseRows: call.refuseRows }),
+    ...(call.refuseBytes === undefined ? {} : { refuseBytes: call.refuseBytes }),
+  });
+  return answer;
+}
+
+/** What `holdReadOnlyRows` holds served rows to, and the refusals it raises past each bound. */
+export interface ReadOnlyRowsHold {
+  /** The connection's type, named in a shared refusal. */
+  readonly type: DatabaseType;
+  /** The statement, or a reading's label, named in a shared refusal. */
+  readonly statement: string;
+  /** As `ReadOnlyReadingCall.maxRows`: `null` holds the rows to the byte budget only. */
+  readonly maxRows: number | null;
+  readonly maxBytes: number;
+  /** As `ReadOnlyReadingCall.refuseRows`. */
+  readonly refuseRows?: (rows: number, allowed: number) => Error;
+  /** As `ReadOnlyReadingCall.refuseBytes`. */
+  readonly refuseBytes?: (bytes: number, allowed: number) => Error;
+}
+
+/**
+ * Holds `rows`, the rows a read serves, to `hold`: more rows than `maxRows` are refused in the row sentence, and the
+ * UTF-8 JSON bytes of each row are summed (`measureRowBytes`), stopping at the row that carries the sum past
+ * `maxBytes`, which is refused in the byte sentence; a row after that one is never serialised. The one hold of
+ * `runReadOnlyReading` and of the agent's and the hand-over's read-only execute (`runReadOnlyExecute`), so the measure,
+ * the order and the sentences are one.
+ *
+ * @throws {StudioRowBudgetRefusal} Past the rows, unless `refuseRows` raises its own.
+ * @throws {StudioByteBudgetRefusal} Past the bytes, unless `refuseBytes` raises its own.
+ */
+export function holdReadOnlyRows(rows: readonly Record<string, unknown>[], hold: ReadOnlyRowsHold): void {
+  const { type, statement, maxRows, maxBytes } = hold;
   if (maxRows !== null && rows.length > maxRows) {
-    throw (call.refuseRows ?? sharedRowRefusal(type, statement))(rows.length, maxRows);
+    throw (hold.refuseRows ?? sharedRowRefusal(type, statement))(rows.length, maxRows);
   }
   let bytes = 0;
   for (const row of rows) {
     bytes += measureRowBytes(row);
-    if (bytes > budget.maxResultBytes) {
-      throw (call.refuseBytes ?? sharedByteRefusal(type, statement))(bytes, budget.maxResultBytes);
+    if (bytes > maxBytes) {
+      throw (hold.refuseBytes ?? sharedByteRefusal(type, statement))(bytes, maxBytes);
     }
   }
-  return answer;
 }
 
 function sharedRowRefusal(type: DatabaseType, statement: string): (rows: number, allowed: number) => Error {

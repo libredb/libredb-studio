@@ -10,9 +10,9 @@
  * shortcut. The one `provider.query()` is `readStatisticsForGrounding` under the
  * operations profile, which sends a statement it composes itself, and only after the
  * statement guard admits it as `sql.query.read`'s input contract would. Every
- * `queryReadOnly` call goes through `runReadOnlyStatement`
- * (`src/lib/db/operations/read-only-statement.ts`), which holds the provider's answer to
- * the row, byte and time budget this layer handed out.
+ * statement goes through `runReadOnlyExecute` (`src/lib/api/read-only-execute.ts`), the
+ * host core's read-only execute, which holds the provider's answer to the row, byte and
+ * time budget this layer handed out.
  *
  * Four properties are load-bearing, and each is asserted rather than asserted-in-prose:
  *
@@ -66,7 +66,8 @@
 
 import { AGENT_READING_PANELS, type HealthInfo, type MonitoringPanelRequest } from "@libredb/provider-sdk/calls";
 import { z } from "zod";
-import { type GrantedRead, readGrantedHealth, readGrantedPanel } from "@/lib/api/provider-monitoring";
+import { driveCaller, type GrantedRead, readGrantedHealth, readGrantedPanel } from "@/lib/api/provider-monitoring";
+import { runReadOnlyExecute } from "@/lib/api/read-only-execute";
 import { type AuditReason, emitAuditEvent } from "@/lib/audit";
 import type { PanelMember } from "@/lib/db/engine-facets/monitoring";
 import type { ExecutionProfile } from "@/lib/db/factory";
@@ -110,7 +111,6 @@ import {
 } from "@/lib/db/operations/execution";
 import type { ExecutionActor, ExecutionPolicy, PolicyDenyCode, TargetScope } from "@/lib/db/operations/policy";
 import type { OperationRegistry } from "@/lib/db/operations/registry";
-import { runReadOnlyStatement } from "@/lib/db/operations/read-only-statement";
 import {
   admitComposedStatement,
   agentQueryReadSqlInput,
@@ -1511,10 +1511,23 @@ function isStatementFailure(error: unknown): error is DatabaseError {
  * open a pool for every denied call, which is exactly what the spy-provider
  * invariant exists to forbid.
  *
- * The statement goes through `runReadOnlyStatement`, which refuses an answer past the
- * run's row or byte budget and stops waiting at its statement timeout, in the sentences
- * the providers raise, so an over-budget answer is a repairable database error that
- * reaches neither a row mapper nor the model.
+ * The statement goes through `runReadOnlyExecute`, the host core's read-only execute on a
+ * read-only statement session, which refuses an answer past the run's row or byte budget and
+ * stops waiting at its statement timeout, in the sentences the providers raise, so an
+ * over-budget answer is a repairable database error that reaches neither a row mapper nor the
+ * model. The session's open is the one never-fallback check: a provider without
+ * `queryReadOnly` is refused there with `StudioProfileRefusal` `PROFILE_UNSUPPORTED_BY_PROVIDER`,
+ * the acquisition's own refusal, so reaching it means the injected acquirer is not the profile
+ * seam, a server fault that propagates and is never a model-visible outcome. The sibling fault,
+ * a provider that has `queryReadOnly` but was not opened under the profile, is detected inside
+ * the provider (`postgres.ts`, `sqlite.ts` both throw when the read-only execution context is
+ * absent), which lands at the query phase and becomes a repairable database error; it is
+ * unreachable through `acquireExecutionProfileProvider`, which sets that context for the
+ * profile it was asked for.
+ *
+ * The drive has no signal of its own, so the statement's caller is a signal that never aborts,
+ * made for this call (`driveCaller`): a statement that ended is its deadline's, never the caller
+ * leaving.
  */
 async function runStatement(
   context: AgentToolContext,
@@ -1526,20 +1539,6 @@ async function runStatement(
   mode?: ReadOnlyStatementMode,
 ): Promise<QueryResult> {
   const provider = await context.acquireProvider(context.connection, AGENT_EXECUTION_PROFILE);
-  if (typeof provider.queryReadOnly !== "function") {
-    // Not a refusal: `acquireExecutionProfileProvider` already refuses such a
-    // provider, so reaching here means the injected acquirer is not the profile
-    // seam. That is a server fault and must be loud, never a model-visible outcome.
-    //
-    // Only the MISSING method is caught this loudly. The sibling fault — a provider
-    // that has `queryReadOnly` but was not opened under the profile — is detected
-    // inside the provider (`postgres.ts`, `sqlite.ts` both throw when the read-only
-    // execution context is absent), which lands at the query phase and therefore
-    // becomes a repairable database error that costs an attempt. Unreachable through
-    // `acquireExecutionProfileProvider`, which sets that context for the profile it
-    // was asked for, so it is a note rather than a second guard.
-    throw new Error("agent tool layer: the acquired provider exposes no read-only execution path");
-  }
   const sql = (validatedInput as Readonly<Record<string, string>>)[argument];
   // Set immediately before the statement leaves, and never reset. This flag is the
   // whole phase discriminator: anything that threw while we were still connecting
@@ -1548,19 +1547,22 @@ async function runStatement(
   // separates a wrong agent credential from `permission denied for table secrets`
   // without inspecting message text.
   phase.statementSent = true;
-  // Through the one core call of the read-only path, which holds the provider's answer to the rows, bytes and time
-  // this run handed out, so an over-budget answer is refused before any of it is mapped or rendered. The provider's
-  // call keeps this execution counted until it settles, also when the time refusal answered the run first.
-  return runReadOnlyStatement(provider, {
+  // Through the host core's read-only execute, which holds the provider's answer to the rows, bytes and time this run
+  // handed out, so an over-budget answer is refused before any of it is mapped or rendered. A stopped call keeps this
+  // execution counted until it settles, also when the time refusal answered the run first.
+  return runReadOnlyExecute(provider, {
     type: context.connection.type,
-    scrub: providerTextScrub(context.connection, "profiled"),
     statement: sql,
     budget: readOnlyBudgetFor(context, budget),
-    mode,
-    wait: "statement-timeout",
+    ...(mode === undefined ? {} : { mode }),
+    caller: driveCaller(),
+    route: AGENT_STATEMENT_ROUTE,
     holdUntilSettled,
   });
 }
+
+/** The route a statement's late failure is logged under. */
+const AGENT_STATEMENT_ROUTE = "agent/statement";
 
 /**
  * Runs one canonical operation for this run, with every gate in front of it.
@@ -2624,7 +2626,7 @@ export async function readCatalogForGrounding(
  * For a provider call that takes no budget of its own, so what this bounds is THE RUN and not the database: the call
  * is not cancelled, and this run simply stops waiting for it. `work` is handed to `holdUntilSettled` first, so the
  * run's `maxConcurrentExecutions` counts it until the provider's call settles, as it counts a read-only statement
- * (`runReadOnlyStatement`), and the run's next call and its end wait for it.
+ * (`runReadOnlyExecute`), and the run's next call and its end wait for it.
  */
 async function withinGrantedTime<T>(
   work: Promise<T>,
