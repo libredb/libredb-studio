@@ -11,6 +11,11 @@
  * (`openStopError`) is `QueryCancelledError` when the caller left and `StudioTimeoutRefusal` with the caller's sentence
  * otherwise, both `not-sent`, since no statement was sent.
  *
+ * A caller whose time refusal is its own, the agent's read-only execute, reads the records through a `BudgetView`
+ * (`budgetStopError`, `budgetRefusalError`): the caller leaving is `QueryCancelledError` as above, and a call its
+ * deadline ended, at any wait of the run, is the view's own time refusal, built fresh for the call; every other refusal
+ * answers as `refusalError` answers it.
+ *
  * Every other refusal is a defect of Studio's own bridge, which honours every request field and is sent a scope only
  * where it offers `console.endScope`, so no provider can cause one: a plain `Error` naming each refusal's sentence, answered 500. Two rows of the host's mapping
  * wait for the first session that refuses a request field, a native provider: a refused offset as
@@ -35,26 +40,42 @@ export interface CallerView {
   readonly deadlineSentence: string;
 }
 
-/** Whether `reason` is the caller's own: its signal aborted with exactly this reason. */
-function callerLeft(reason: unknown, view: CallerView): boolean {
-  return view.caller.aborted && reason === view.caller.reason;
+/**
+ * What the accessor reads of a call whose time refusal is the caller's own (clause C-51): the caller's signal, and the
+ * error a call its deadline ended answers, built fresh for each call, whatever wait the stop ended.
+ */
+export interface BudgetView {
+  /** The caller's own signal: a refusal or a stop with its reason is the caller leaving. */
+  readonly caller: AbortSignal;
+  /** The caller's own refusal of a call its deadline ended. */
+  readonly timeRefusal: () => Error;
+}
+
+/** Whether `reason` is the caller's own: `caller` aborted with exactly this reason. */
+function callerLeft(reason: unknown, caller: AbortSignal): boolean {
+  return caller.aborted && reason === caller.reason;
 }
 
 function hasRule(refusals: readonly CallRefusal[], rule: CallRefusal["rule"]): boolean {
   return refusals.some((refusal) => refusal.rule === rule);
 }
 
-/** The class a call that ended with the caller gone, or at its deadline, answers. */
-function endedError(left: boolean, view: CallerView): QueryCancelledError | StudioTimeoutRefusal {
-  return left ? new QueryCancelledError(QUERY_CANCELLED_SENTENCE) : new StudioTimeoutRefusal(view.deadlineSentence);
+/** The error a call that ended answers: `QueryCancelledError` with the caller gone, otherwise `timeRefusal()`. */
+function endedError<E extends Error>(left: boolean, timeRefusal: () => E): QueryCancelledError | E {
+  return left ? new QueryCancelledError(QUERY_CANCELLED_SENTENCE) : timeRefusal();
 }
 
-/** The error a refused record answers, this bundle's class. */
-export function refusalError(record: RefusedRecord, view: CallerView): Error {
+/** The `StudioTimeoutRefusal` a call `view` reads answers at its deadline, with the caller's sentence. */
+function timeoutOf(view: CallerView): () => StudioTimeoutRefusal {
+  return () => new StudioTimeoutRefusal(view.deadlineSentence);
+}
+
+/** The error a refused record answers, `timeRefusal()` when its deadline or a signal not the caller's ended it. */
+function refusalOf(record: RefusedRecord, caller: AbortSignal, timeRefusal: () => Error): Error {
   const { refusals } = record;
   if (hasRule(refusals, "call-signal-aborted") || hasRule(refusals, "call-deadline-passed")) {
-    const left = hasRule(refusals, "call-signal-aborted") && callerLeft(record.cause, view);
-    const error = endedError(left, view);
+    const left = hasRule(refusals, "call-signal-aborted") && callerLeft(record.cause, caller);
+    const error = endedError(left, timeRefusal);
     if (!record.called) markNotSent(error);
     return error;
   }
@@ -67,9 +88,30 @@ export function refusalError(record: RefusedRecord, view: CallerView): Error {
   return new Error(`${HOST_DEFECT_PREFIX} ${refusals.map((refusal) => callRefusalSentence(refusal)).join(" ")}`);
 }
 
+/** The error a refused record answers, this bundle's class. */
+export function refusalError(record: RefusedRecord, view: CallerView): Error {
+  return refusalOf(record, view.caller, timeoutOf(view));
+}
+
 /** The error a stopped record answers, this bundle's class, outcome unknown: the statement may have run. */
 export function stopError(reason: unknown, view: CallerView): QueryCancelledError | StudioTimeoutRefusal {
-  return endedError(callerLeft(reason, view), view);
+  return endedError(callerLeft(reason, view.caller), timeoutOf(view));
+}
+
+/**
+ * The error a refused record answers under a budget view: as `refusalError`, except that a call its deadline ended, or
+ * a signal not the caller's, answers the view's own time refusal.
+ */
+export function budgetRefusalError(record: RefusedRecord, view: BudgetView): Error {
+  return refusalOf(record, view.caller, view.timeRefusal);
+}
+
+/**
+ * The error a stopped record answers under a budget view, outcome unknown: `QueryCancelledError` when the reason is
+ * the caller's own, otherwise the view's own time refusal, by reference, whatever wait the stop ended.
+ */
+export function budgetStopError(reason: unknown, view: BudgetView): Error {
+  return endedError(callerLeft(reason, view.caller), view.timeRefusal);
 }
 
 /**
@@ -78,7 +120,7 @@ export function stopError(reason: unknown, view: CallerView): QueryCancelledErro
  * sentence, which names the open's allowance. Both are outcome not-sent: the provider was never handed the statement.
  */
 export function openStopError(reason: unknown, view: CallerView): QueryCancelledError | StudioTimeoutRefusal {
-  const error = endedError(callerLeft(reason, view), view);
+  const error = endedError(callerLeft(reason, view.caller), timeoutOf(view));
   markNotSent(error);
   return error;
 }

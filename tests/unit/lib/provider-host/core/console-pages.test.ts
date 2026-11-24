@@ -116,6 +116,7 @@ function sessionOf(results: readonly ResultSource[]): ConsoleSession {
       maintenance: { run: "not-offered", preview: "not-offered" },
       monitoring: { panel: "not-offered", poolStats: "not-offered" },
     },
+    readOnlyStatements: false,
     execute: async (): Promise<ExecuteAnswer> => ({ results, warnings: [], executionTimeMs: 1, pageApplied: true }),
   };
 }
@@ -372,6 +373,7 @@ describe("the console execute under the page budget", () => {
         maintenance: { run: "not-offered", preview: "not-offered" },
         monitoring: { panel: "not-offered", poolStats: "not-offered" },
       },
+      readOnlyStatements: false,
       execute: async (): Promise<ExecuteAnswer> => ({
         results: [read.source],
         warnings: [],

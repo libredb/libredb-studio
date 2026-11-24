@@ -13,10 +13,18 @@ import {
   DatabaseError,
   QueryCancelledError,
   StudioByteBudgetRefusal,
+  StudioTimeBudgetRefusal,
   StudioTimeoutRefusal,
   TimeoutError,
 } from "@/lib/db/errors";
-import { HOST_DEFECT_PREFIX, refusalError, stopError } from "@/lib/provider-host/access";
+import {
+  type BudgetView,
+  budgetRefusalError,
+  budgetStopError,
+  HOST_DEFECT_PREFIX,
+  refusalError,
+  stopError,
+} from "@/lib/provider-host/access";
 import type { RefusedRecord } from "@/lib/provider-host/core/console";
 
 const deadlineSentence = `The statement did not answer within ${randomUUID()}.`;
@@ -110,6 +118,56 @@ describe("the accessor", () => {
       expect(errorKind(error)).toBe("internal");
     }
     expect(others).toHaveLength(CALL_REFUSAL_RULES.length - 3);
+  });
+
+  test("a budget view's stop or refused start is QueryCancelledError when the caller left, and otherwise the caller's own time refusal", () => {
+    const reason = new Error(randomUUID());
+    const timeout = new DOMException(randomUUID(), "TimeoutError");
+    const built: Error[] = [];
+    const timeRefusal = () => {
+      const error = new StudioTimeBudgetRefusal(`Read-only execution exceeded the time budget: ${randomUUID()}`);
+      built.push(error);
+      return error;
+    };
+    const left: BudgetView = { caller: callerOf(reason), timeRefusal };
+    const still: BudgetView = { caller: callerOf(), timeRefusal };
+
+    const cancelledStop = budgetStopError(reason, left);
+    const timedStop = budgetStopError(timeout, still);
+    const otherReason = budgetStopError(timeout, left);
+    const cancelledStart = budgetRefusalError(refused([SIGNAL], false, reason), left);
+    const passedStart = budgetRefusalError(refused([DEADLINE], false), still);
+    const timedStart = budgetRefusalError(refused([DEADLINE, SIGNAL], false, timeout), left);
+
+    for (const error of [cancelledStop, cancelledStart]) {
+      expect(error).toBeInstanceOf(QueryCancelledError);
+      expect(error.message).toBe("The query was cancelled.");
+    }
+    expect(errorOutcome(cancelledStop)).toBe("unknown");
+    expect(errorOutcome(cancelledStart)).toBe("not-sent");
+    expect([timedStop, otherReason, passedStart, timedStart]).toEqual(built);
+    expect(timedStop).toBe(built[0] as Error);
+    expect(otherReason).toBe(built[1] as Error);
+    for (const error of [timedStop, otherReason, passedStart, timedStart]) {
+      expect(error).toBeInstanceOf(StudioTimeBudgetRefusal);
+    }
+    expect([timedStop, otherReason].map(errorOutcome)).toEqual(["unknown", "unknown"]);
+    expect([passedStart, timedStart].map(errorOutcome)).toEqual(["not-sent", "not-sent"]);
+
+    const overPage = budgetRefusalError(
+      refused([{ rule: "row-over-page", pointer: "/rows/0", limit: 33554432, size: 40000000 }], true),
+      still,
+    );
+    expect(overPage).toBeInstanceOf(StudioByteBudgetRefusal);
+    expect(overPage.message).toBe(
+      "A row of the result is 40000000 bytes, over the 33554432 bytes one page of a result may hold, so Studio answers no page of it.",
+    );
+    expect(errorOutcome(overPage)).toBe("unknown");
+    const missing: CallRefusal = { rule: "request-read-only-missing", pointer: "/readOnly" };
+    const defect = budgetRefusalError(refused([missing], false), still);
+    expect(defect.name).toBe("Error");
+    expect(defect.message).toBe(`${HOST_DEFECT_PREFIX} ${callRefusalSentence(missing)}`);
+    expect(built).toHaveLength(4);
   });
 
   test("every class the accessor builds is the calling bundle's own", () => {

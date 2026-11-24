@@ -56,6 +56,7 @@ function runOn(core: HostCore, source: ResultSource): Promise<ExecuteRecord> {
       maintenance: { run: "not-offered", preview: "not-offered" },
       monitoring: { panel: "not-offered", poolStats: "not-offered" },
     },
+    readOnlyStatements: false,
     execute: async () => ({ results: [source], warnings: [], executionTimeMs: 1, pageApplied: true }),
   };
   return core.executeCall(

@@ -1,12 +1,14 @@
 /**
- * The host's console calls (docs/providers/CONTRACT.md, clauses C-48, C-28, C-47, C-57 and C-58), part of the provider
- * host core.
+ * The host's console calls (docs/providers/CONTRACT.md, clauses C-48, C-28, C-47, C-57, C-58 and C-78), part of the
+ * provider host core.
  *
  * `executeCall`, `cancelCall`, `endScopeCall` and `transactionCall` make one console call on a session and answer a
  * record of how it ended. Each call is checked before it is made: `checkCallStart` refuses a call whose deadline passed or whose signal
- * aborted, then `checkExecuteRequest` refuses a request field the session does not honour, or `checkConsoleFacet` a
- * facet it does not offer. Each refusal is answered as a record, `called` false, and the provider is never called. Then the context and
- * the request are frozen in place, `freezeContext` and `freezeData`, so the caller builds both fresh for each call.
+ * aborted, then `checkExecuteRequest` refuses a request field the session does not honour and `checkReadOnlyRequest`
+ * a read-only execute to a session not opened for read-only statements or a plain one to a session that is (clause
+ * C-78), or `checkConsoleFacet` a facet it does not offer. Each refusal is answered as a record, `called` false, and
+ * the provider is never called. Then the context and the request are frozen in place, `freezeContext` and `freezeData`,
+ * so the caller builds both fresh for each call.
  *
  * The call is waited for with `awaitWithin` until the context's signal. An execute's run is the provider's execute,
  * then the first result pumped by the SDK's `pumpPage` within the limits `pumpLimits` sets from the answer, with a
@@ -58,6 +60,7 @@ import {
   checkCallStart,
   checkConsoleFacet,
   checkExecuteRequest,
+  checkReadOnlyRequest,
   checkTransactionAnswer,
   checkTransactionStatement,
   cleanupContext,
@@ -81,9 +84,18 @@ import type { Calls } from "@libredb/provider-sdk/manifest";
 import { type PageBudget, type PageHold, withLargePageSlot } from "./page-budget";
 import { withTurns } from "./turns";
 
-/** One session as the host core calls it: its calls, and its console functions with the handle already bound. */
+/**
+ * One session as the host core calls it: its calls, whether it is a read-only statement session, and its console
+ * functions with the handle already bound.
+ */
 export interface ConsoleSession {
   readonly calls: Calls;
+  /**
+   * Whether the session was opened under the read-only policy to be sent statements, its open policy's `readOnly` and
+   * `sendsStatements` both true: such a session takes only read-only executes, and no other session takes one
+   * (clause C-78). Required, so every session states it.
+   */
+  readonly readOnlyStatements: boolean;
   execute(request: ExecuteRequest, ctx: CallContext): Promise<ExecuteAnswer>;
   cancel?(request: CancelRequest, ctx: CallContext): Promise<CancelAnswer>;
   endScope?(request: EndScopeRequest, ctx: CallContext): Promise<EndScopeAnswer>;
@@ -429,6 +441,8 @@ async function executeCall(
   if (start.length > 0) return refusedBefore(start, ctx);
   const fields = checkExecuteRequest(session.calls, request);
   if (fields.length > 0) return refusedBefore(fields, ctx);
+  const policy = checkReadOnlyRequest(session.readOnlyStatements, request);
+  if (policy.length > 0) return refusedBefore(policy, ctx);
   freezeContext(ctx);
   freezeData(request);
   const hold: PageHold = { waiting: false };

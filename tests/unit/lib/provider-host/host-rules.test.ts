@@ -4,7 +4,7 @@
  * src/lib/api/editor-transaction.ts), the legacy bridge and the host core together: no statement starts once the call's
  * signal aborted, a cancel answers what the engine did, an engine that cannot cancel is called for nothing, every
  * provider promise the host abandons keeps a rejection handler, and a failure's outcome says whether the statement can
- * have reached the database.
+ * have reached the database; and the protected read path is never left for the plain one (E21-K8, clause C-39).
  *
  * Every provider is a fake the test drives through promises it settles itself; no assertion follows a timer. A
  * `process.on("unhandledRejection")` counter, registered for the file, must read zero after every abandoned promise
@@ -26,7 +26,9 @@ import { createPageBudget, LARGE_PAGE_SLOTS } from "@/lib/provider-host/core/pag
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
 import { createMockProvider } from "../../../helpers/mock-provider";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
-import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
+import { bridgedReadOnlyStatements } from "@/lib/provider-host/legacy-bridge";
+import { StudioProfileRefusal } from "@/lib/db/errors";
 
 // The editor query reads the process's host core (src/lib/provider-host/instance.ts), so this file composes its own.
 beforeAll(() => installHostCore(createHostCore(), "test"));
@@ -147,6 +149,50 @@ describe("E21-K10: cancellation and abandonment", () => {
   });
 });
 
+describe("E21-K8: the protected read path", () => {
+  test("the host never falls back from the protected read path to the plain one: a read-only statement session without queryReadOnly is refused at its open, a plain statement on one is refused before the call, and query() is never called", async () => {
+    const without = Object.assign(createMockProvider({ config: connection }), {
+      query: mock(async () => resultOf(1)),
+      prepareQuery: mock(() => ({ query: "SELECT 1", wasLimited: false, limit: 1, offset: 0 })),
+    });
+    let refused: unknown;
+    try {
+      bridgedReadOnlyStatements(without, { type: "postgres", statementTimeoutMs: 1_000 });
+    } catch (error) {
+      refused = error;
+    }
+
+    expect(refused).toBeInstanceOf(StudioProfileRefusal);
+    expect((refused as StudioProfileRefusal).reasonCode).toBe("PROFILE_UNSUPPORTED_BY_PROVIDER");
+    expect(without.query).not.toHaveBeenCalled();
+    expect(without.prepareQuery).not.toHaveBeenCalled();
+
+    const queryReadOnly = mock(async () => resultOf(1));
+    const withPath = Object.assign(createMockProvider({ config: connection }), {
+      query: mock(async () => resultOf(1)),
+      prepareQuery: mock(() => ({ query: "SELECT 1", wasLimited: false, limit: 1, offset: 0 })),
+      queryReadOnly,
+    });
+    const bridged = bridgedReadOnlyStatements(withPath, { type: "postgres", statementTimeoutMs: 1_000 });
+    const record = await hostCore().executeCall(
+      bridged.session,
+      { statement: `SELECT ${marker()}`, page: { unlimited: true } },
+      { deadline: Date.now() + 60_000, signal: new AbortController().signal, env: envReader([], () => undefined) },
+      bridged.pumpLimits,
+      { late: () => {}, cancelFailed: () => {} },
+    );
+
+    expect(record).toEqual({
+      kind: "refused",
+      called: false,
+      refusals: [{ rule: "request-read-only-missing", pointer: "/readOnly" }],
+    });
+    expect(queryReadOnly).not.toHaveBeenCalled();
+    expect(withPath.query).not.toHaveBeenCalled();
+    expect(withPath.prepareQuery).not.toHaveBeenCalled();
+  });
+});
+
 describe("E21-K16: abandoned promises", () => {
   test("every provider promise the host abandons keeps a rejection handler", async () => {
     const warned = Promise.withResolvers<void>();
@@ -191,6 +237,7 @@ describe("E21-K16: abandoned promises", () => {
             maintenance: { run: "not-offered", preview: "not-offered" },
             monitoring: { panel: "not-offered", poolStats: "not-offered" },
           },
+          readOnlyStatements: false,
           execute: () => {
             executeStarted.resolve();
             return answer.promise;

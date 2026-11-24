@@ -8,9 +8,10 @@ import ts from "typescript";
  *
  * A provider's `queryReadOnly` is the read-only statement path the agent, the hand-over replay and MCP run statements
  * on, and `runReadOnlyStatement` (`src/lib/db/operations/read-only-statement.ts`) is the one core function that holds
- * its answer to the budget handed out. A second core caller would be a path where the caps are only the provider's
- * claim, so outside provider code no module reads the method except to test that it exists (`typeof`), and that
- * function is the one exception. Any read counts, not only a call: a read is how a call, a `.bind`, a `.call`, an
+ * its answer to the budget handed out; the legacy bridge's read-only statement session (`bridgedReadOnlyStatements`)
+ * is the host core's reader of the same path. A third caller would be a path where the caps are only the provider's
+ * claim, so outside provider code no module reads the method except to test that it exists (`typeof`), and those two
+ * are the exceptions. Any read counts, not only a call: a read is how a call, a `.bind`, a `.call`, an
  * `.apply` or an alias begins.
  *
  * The agent's other budgeted reads, the catalog read `readCatalogReadOnly` and the cluster readings `readClusterUsage`
@@ -29,6 +30,9 @@ const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const SOURCE_ROOTS = ["src", join("vscode-extension", "src")];
 const PROVIDER_CODE = join("src", "lib", "db", "providers") + sep;
 const CORE_CALLER = join("src", "lib", "db", "operations", "read-only-statement.ts");
+/** The legacy bridge, whose read-only statement session is the host core's reader of a provider's read-only path. */
+const BRIDGE = join("src", "lib", "provider-host", "legacy-bridge.ts");
+const BRIDGE_SESSION = "bridgedReadOnlyStatements";
 const AGENT_AND_MCP_SOURCES = [
   join("src", "lib", "agent"),
   join("src", "lib", "mcp"),
@@ -305,18 +309,22 @@ describe("the protected read path", () => {
     ]);
   });
 
-  test("no module outside the providers calls queryReadOnly except runReadOnlyStatement", () => {
+  test("no module outside the providers calls queryReadOnly except runReadOnlyStatement and the legacy bridge's read-only statement session", () => {
     const outside = SOURCE_ROOTS.flatMap(sourceFiles).filter(
-      (file) => !file.startsWith(PROVIDER_CODE) && file !== CORE_CALLER,
+      (file) => !file.startsWith(PROVIDER_CODE) && file !== CORE_CALLER && file !== BRIDGE,
     );
     expect(outside.length).toBeGreaterThan(0);
     const uses = outside.flatMap((file) => queryReadOnlyUses(file, readFileSync(join(ROOT, file), "utf8")));
     expect(uses.map(label)).toEqual([]);
-    // The one caller is still there, so the rule above is not vacuous: inside `runReadOnlyStatement`, in the read it
-    // hands `runReadOnlyReading`.
+    // Both readers are still there, so the rule above is not vacuous: inside `runReadOnlyStatement`, in the read it
+    // hands `runReadOnlyReading`, and inside the bridge's read-only statement session, its one bound read.
     const core = queryReadOnlyUses(CORE_CALLER, readFileSync(join(ROOT, CORE_CALLER), "utf8"));
     expect(core.map((use) => `${use.file} in ${use.functions.at(-1)}`)).toEqual([
       `${CORE_CALLER} in runReadOnlyStatement`,
+    ]);
+    const bridge = queryReadOnlyUses(BRIDGE, readFileSync(join(ROOT, BRIDGE), "utf8"));
+    expect(bridge.map((use) => [`${use.file} in ${use.functions.at(-1)}`, use.called])).toEqual([
+      [`${BRIDGE} in ${BRIDGE_SESSION}`, true],
     ]);
   }, 60_000);
 
@@ -530,6 +538,7 @@ const KNOWN_PRESENCE_TESTS: readonly string[] = [
   `${FACTORY} in openProfiledProvider`,
   `${CORE_CALLER} in read`,
   `${join("src", "lib", "mcp", "tools", "run-statement.ts")} in executeOpened`,
+  `${BRIDGE} in ${BRIDGE_SESSION}`,
 ];
 /** The presence tests that return their refusal as a value: MCP's statement tool answers every refusal that way. */
 const RETURNED_REFUSALS: readonly string[] = [

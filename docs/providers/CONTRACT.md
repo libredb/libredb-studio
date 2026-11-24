@@ -2358,10 +2358,12 @@ The verdict is one of the members of `ConfirmationVerdict`, and a reader that th
 ### C-39 (normative): A protected read path is a precondition of agent and MCP statements
 
 A provider without `queryReadOnly` is refused for agent and MCP statements before it is connected, and the plain query path is never the fallback.
+The host holds the same rule on its own side: the legacy bridge's read-only statement session over a provider without `queryReadOnly` is refused at its open by name, before anything is called, and the host core refuses a plain execute on a read-only statement session before the call, C-78, so `query()` is never called on that path.
 
 - test `tests/integration/mcp/run-read-query.test.ts` "without queryReadOnly is refused, and query() is never the fallback"
 - test `tests/isolated/factory.test.ts` "refuses %s on an engine on the review record whose provider implements no read-only statement path, before connecting it, and query() is never the fallback"
 - test `tests/api/agent/handover.test.ts` "refuses to replay on an engine the review record does not list, naming it, and never calls queryReadOnly"
+- test `tests/unit/lib/provider-host/host-rules.test.ts` "the host never falls back from the protected read path to the plain one: a read-only statement session without queryReadOnly is refused at its open, a plain statement on one is refused before the call, and query() is never called"
 
 ### C-40 (normative): One provider kind, and no named provider method
 
@@ -2478,7 +2480,7 @@ The memory transport closes the session of an open answer it refuses under such 
 ### C-48 (normative): The host's console calls
 
 The host core makes each console call through `executeCall`, `cancelCall`, `endScopeCall` or `transactionCall`, which answer a record of how the call ended and pass a provider's error by reference.
-Before the call it checks the context with `checkCallStart`, C-27, and the request with `checkExecuteRequest`, C-9, or the facet with `checkConsoleFacet`, C-17, and answers each refusal as a record, the signal's reason as its cause when the signal aborted, without calling the provider.
+Before the call it checks the context with `checkCallStart`, C-27, and the request with `checkExecuteRequest`, C-9, and with `checkReadOnlyRequest` against whether the session is a read-only statement session, C-78, or the facet with `checkConsoleFacet`, C-17, and answers each refusal as a record, the signal's reason as its cause when the signal aborted, without calling the provider.
 It then freezes the context and the request in place, C-12, and waits for the call with `awaitWithin` until the context's signal, C-28.
 An execute's run pumps the first result with `pumpPage` within the limits the caller sets from the execute answer, C-15, under the core's page budget, C-53, closes every other result once, and answers a refusal the pump throws as a record.
 A call is stopped exactly when its signal aborted and the wait rejected with that signal's reason, so a provider that throws its own signal's reason is stopped too, and the stop is answered as a record with that reason.
@@ -2494,6 +2496,7 @@ Core constructs no error class a caller tests with `instanceof`: the caller buil
 
 - test `tests/unit/lib/provider-host/core/console.test.ts` "a call whose signal aborted or whose deadline passed is refused as a record, and the provider is never called"
 - test `tests/unit/lib/provider-host/core/console.test.ts` "a request field the session does not honour is refused as a record before the call"
+- test `tests/unit/lib/provider-host/core/console.test.ts` "a read-only execute is refused before the call on a session not opened for read-only statements, and a plain execute on one that is"
 - test `tests/unit/lib/provider-host/core/console.test.ts` "a row no page can hold is refused as a record, and the source is closed once"
 - test `tests/unit/lib/provider-host/core/console.test.ts` "an error the provider throws reaches the caller as the same object, and every source is closed once"
 - test `tests/unit/lib/provider-host/core/console.test.ts` "a wait the caller's signal ends answers a stop at once and sends the run's cancel with a context of its own"
@@ -2570,7 +2573,16 @@ A source reads each row positionally under the result's columns in its value cod
 Which cells the codec refuses is read before encoding, the codec's domain read as the codec reads it, so no codec error is thrown per row, and every error measuring a row throws passes by reference.
 A key a row holds outside its columns is answered and not measured.
 The page's row limit is set once execute answered: one past the page when the provider applied the page, otherwise every row the provider returned, at least one.
+That session is no read-only statement session: it serves the editor's and the operations profile's sessions, none of which is sent read-only statements.
+A provider's read-only statement path is served as a read-only statement session of its own, C-78, built per call by its facade over a provider acquired under a profile whose open policy has both `readOnly` and `sendsStatements`.
+Its open refuses a provider without `queryReadOnly` by name, in the words the execution-profile acquisition uses, and calls nothing, C-39.
+Its calls offer execute alone, honouring `readOnly`.
+Its execute runs `queryReadOnly` with the statement, a fresh budget of the open's statement timeout and billed-read allowance, by reference, and the request's rows and bytes, and the request's mode, and never the prepare, the probe or the plain query.
+It answers one source per result set, the main rows first, its page not applied, and its page's row limit is every row the provider returned, at least one, within one page.
 
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a read-only statement session runs the provider's queryReadOnly with the request's rows, bytes and mode and the open's timeout and read allowance, and never its plain query"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a read-only statement session over a provider without queryReadOnly is refused at its open by name, and nothing is called"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the bridge's console session is no read-only statement session, and the read-only one offers nothing but execute"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session honours params and offset, offers cancel only where the provider cancels, and endScope only where the provider ends its query path's transactions"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged endScope runs the provider's ender on the scope it is sent and answers its outcome, its failure by reference"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session offers the transaction facet exactly where the provider is a TransactionProvider"
@@ -2620,12 +2632,14 @@ A refusal before the call was made answers outcome not-sent, E-5; once the provi
 A call's wait for its provider's open that ended answers `QueryCancelledError` when its reason is the caller's own and `StudioTimeoutRefusal` naming the open otherwise, both outcome not-sent, since no statement was sent; any other failure of the open passes as the same object.
 Every other refusal is a defect of Studio's own bridge, which honours every request field and is sent a scope only where it offers `console.endScope`: a plain error naming each refusal's sentence.
 A refused offset and refused params of a session that refuses a field arrive with the first such session.
+A caller whose time refusal is its own reads the records through a budget view: a refusal or a stop whose reason is the caller's own is `QueryCancelledError` as above, a refusal of a passed deadline or of any other aborted signal, and any other stop, whatever wait it ended, is the caller's own time refusal, built fresh for the call, and every other refusal answers as above.
 
 - test `tests/unit/lib/provider-host/access.test.ts` "a call the caller left is answered as QueryCancelledError, not-sent before the call and unknown after it"
 - test `tests/unit/lib/provider-host/access.test.ts` "a call past its deadline is answered as StudioTimeoutRefusal, not-sent before the call and unknown after it"
 - test `tests/unit/lib/provider-host/access.test.ts` "a row no page can hold is answered as StudioByteBudgetRefusal, outcome unknown"
 - test `tests/unit/lib/provider-host/access.test.ts` "any other refusal is a host defect named by its rule"
 - test `tests/unit/lib/provider-host/access.test.ts` "every class the accessor builds is the calling bundle's own"
+- test `tests/unit/lib/provider-host/access.test.ts` "a budget view's stop or refused start is QueryCancelledError when the caller left, and otherwise the caller's own time refusal"
 - test `tests/unit/lib/api/editor-query.test.ts` "the open allowance is the engine's connect budget"
 - test `tests/unit/lib/api/editor-query.test.ts` "an open is handed the call's own wait, which the caller's leaving or the allowance ends"
 - test `tests/unit/lib/api/editor-query.test.ts` "an open the caller left answers QueryCancelledError, not-sent"
@@ -3358,6 +3372,7 @@ A provider answers within the budget's rows and bytes or refuses, and never trun
 A read-only statement session is a session whose open policy has both `readOnly` and `sendsStatements`.
 The host holds every execute to its session's read-only policy with `checkReadOnlyRequest` before the call: a read-only execute to a session that is not one is refused `request-read-only-not-opened`, and an execute without `readOnly` to one that is is refused `request-read-only-missing`, so the plain path is never the fallback on such a session.
 Both refusals name the pointer `/readOnly` and never a value of the request.
+The host core keeps whether each session is a read-only statement session with the session and refuses both as records before the call, C-48.
 The memory transport keeps the policy its session was opened under and refuses both before any frame, and its frame reads `readOnly` as a closed shape of a budget of two numbers and an optional mode of the vocabulary.
 `readOnly` is also the name of the open policy's flag: the request reuses the word because the request is the read-only execute.
 The billed-read allowance a run spends stays with the host: it is a ledger charged as each request is sent, which no frame carries, so a provider of an engine that bills every read is handed none through the contract and refuses every statement, as its own rule refuses a budget that carries none.
@@ -3372,6 +3387,7 @@ The billed-read allowance a run spends stays with the host: it is a ledger charg
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a read-only execute crosses to a session opened for read-only statements, and every other pairing is refused before any frame"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a read-only execute to a session whose module does not honour readOnly is refused by the field before any frame"
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "a read-only execute's budget and mode are read as a closed shape"
+- test `tests/unit/lib/provider-host/core/console.test.ts` "a read-only execute is refused before the call on a session not opened for read-only statements, and a plain execute on one that is"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's read-only statement surface has a place in the console calls or with the host"
 
 ## Not yet in this contract
@@ -3470,3 +3486,5 @@ Against this contract's earlier text:
 - An engine's agent reading is refused only where its package does not offer the call that serves it, C-4, where every reading was refused as having no call, so `engine-facet-without-call` left the definition rules; a reading whose monitoring panel its engine does not offer is refused, M-76.
 - Each engine's query dialect row, its tabs' editor language and that language's accent are a projection of the declarations, M-15 and M-77, where Studio kept a table of dialect rows, a table of tab type languages and an accent beside each language's code.
 - Console execute carries a read-only execute, `readOnly`, its rows, bytes and mode, sent only to a session opened under the read-only policy to be sent statements, which takes no other execute, C-78, where the contract's execute carried no read budget, no mode and no read-only session.
+- The host core holds every execute to its session's read-only policy, and the legacy bridge serves a provider's read-only statement path as a read-only statement session refused at its open where the provider has none, C-39, C-48 and C-50, where the host had no read-only session.
+- A caller whose time refusal is its own reads the host's records through a budget view, C-51, where every call ended at its deadline answered `StudioTimeoutRefusal`.

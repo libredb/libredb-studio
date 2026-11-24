@@ -1,6 +1,7 @@
 /**
  * The host core's console calls (src/lib/provider-host/core/console.ts; docs/providers/CONTRACT.md, clauses C-48 and
- * C-28): each call is checked before it is made and refused as a record, runs on a context and request frozen in place,
+ * C-28): each call is checked before it is made, an execute held to its session's read-only policy too (clause C-78),
+ * and refused as a record, runs on a context and request frozen in place,
  * is waited for until the call's signal, has its first result pumped and every other result closed, and a stop sends
  * the run's cancel under a cleanup context of its own while the abandoned run keeps its handler.
  *
@@ -49,7 +50,9 @@ const HOUR = 3_600_000;
 const marker = (): string => randomUUID();
 
 /** A session's calls: both request fields honoured unless told otherwise, cancel offered unless told otherwise. */
-function callsOf(options: { readonly honours?: ("params" | "offset")[]; readonly cancel?: boolean } = {}): Calls {
+function callsOf(
+  options: { readonly honours?: ("params" | "offset" | "readOnly")[]; readonly cancel?: boolean } = {},
+): Calls {
   return {
     console: {
       execute: { honours: options.honours ?? ["params", "offset"] },
@@ -137,6 +140,7 @@ function sessionOf(
   const cancel = options.cancel ?? (async () => ({ cancelled: true }));
   const session: ConsoleSession = {
     calls: options.calls ?? callsOf(),
+    readOnlyStatements: false,
     execute: (request, ctx) => {
       executes.push({ request, ctx });
       executeCalled.resolve();
@@ -172,7 +176,7 @@ function held<T>() {
 describe("executeCall", () => {
   test("a call whose signal aborted or whose deadline passed is refused as a record, and the provider is never called", async () => {
     const execute = mock(async () => answerOf([]));
-    const session: ConsoleSession = { calls: callsOf(), execute };
+    const session: ConsoleSession = { calls: callsOf(), readOnlyStatements: false, execute };
     const controller = new AbortController();
     const reason = new Error(marker());
     controller.abort(reason);
@@ -204,7 +208,7 @@ describe("executeCall", () => {
 
   test("a request field the session does not honour is refused as a record before the call", async () => {
     const execute = mock(async () => answerOf([]));
-    const session: ConsoleSession = { calls: callsOf({ honours: [] }), execute };
+    const session: ConsoleSession = { calls: callsOf({ honours: [] }), readOnlyStatements: false, execute };
     const { ports } = portsOf();
 
     const params = await executeCall(session, requestOf({ params: [1] }), contextOf(), () => LIMITS, ports);
@@ -233,6 +237,42 @@ describe("executeCall", () => {
       refusals: [{ rule: "request-scope-not-offered", pointer: "/scope" }],
     });
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  test("a read-only execute is refused before the call on a session not opened for read-only statements, and a plain execute on one that is", async () => {
+    const execute = mock(async () => answerOf([counted([[1]]).source]));
+    const readOnlyCalls = callsOf({ honours: ["params", "offset", "readOnly"] });
+    const statements: ConsoleSession = { calls: readOnlyCalls, readOnlyStatements: true, execute };
+    const plainSession: ConsoleSession = { calls: readOnlyCalls, readOnlyStatements: false, execute };
+    const readOnly = { budget: { maxRows: 200, maxBytes: 262144 }, mode: "estimate-plan" as const };
+    const { ports } = portsOf();
+
+    const plain = await executeCall(statements, requestOf(), contextOf(), () => LIMITS, ports);
+    const notOpened = await executeCall(plainSession, requestOf({ readOnly }), contextOf(), () => LIMITS, ports);
+
+    expect(plain).toEqual({
+      kind: "refused",
+      called: false,
+      refusals: [{ rule: "request-read-only-missing", pointer: "/readOnly" }],
+    });
+    expect(notOpened).toEqual({
+      kind: "refused",
+      called: false,
+      refusals: [{ rule: "request-read-only-not-opened", pointer: "/readOnly" }],
+    });
+    expect(execute).not.toHaveBeenCalled();
+
+    const sent = requestOf({ page: { unlimited: true }, readOnly });
+    const answered = await executeCall(statements, sent, contextOf(), () => LIMITS, ports);
+
+    expect(answered.kind).toBe("page");
+    if (answered.kind === "page") answered.release();
+    expect(execute).toHaveBeenCalledTimes(1);
+    const [received] = execute.mock.calls[0] as unknown as [ExecuteRequest];
+    expect(received).toBe(sent);
+    expect(received.readOnly).toBe(readOnly);
+    expect(Object.isFrozen(received.readOnly)).toBe(true);
+    expect(Object.isFrozen(received.readOnly?.budget)).toBe(true);
   });
 
   test("every call gets a fresh context and request, frozen at every depth", async () => {
@@ -766,7 +806,11 @@ describe("cancelCall", () => {
       },
     });
     const { ports } = portsOf();
-    const missing: ConsoleSession = { calls: callsOf(), execute: async () => answerOf([]) };
+    const missing: ConsoleSession = {
+      calls: callsOf(),
+      readOnlyStatements: false,
+      execute: async () => answerOf([]),
+    };
 
     const caught = await failure(() => cancelCall(fx.session, { runId: marker() }, contextOf(), ports));
     const defect = await failure(() => cancelCall(missing, { runId: marker() }, contextOf(), ports));
