@@ -16,12 +16,13 @@
  *   closing quote stands behind a backslash that some sessions read as an escape, runs to the end of the text, so
  *   nothing after its opening quote is kept under either reading.
  * - A MongoDB command is the JSON document the provider parses, and a Redis command is the one command
- *   `readRedisCommandText()` reads for the provider; each engine's module carries its reader.
+ *   `readRedisCommandText()` reads for the provider; each engine's reader is bound by the SQL grammar's function
+ *   table.
  * - Every other engine, and a SQL engine with no grammar of its own, keeps nothing: its statement is stored as
  *   `?`, because a reader guessing where a literal ends can store the literal.
  *
  * Which of the three an engine is, and the quote it writes a name with, is its `redaction` fact in the registry
- * (`src/lib/db/sql-grammar/`).
+ * (`src/lib/db/sql-grammar/`), read from Studio's record of the claim, `SQL_TEXT_REDACTION`.
  *
  * The userinfo of a URI is masked in both modes by the rule the audit log applies to its fields
  * (`redactUriCredentials()` in `src/lib/audit.ts`). The cases are pinned in

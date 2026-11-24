@@ -88,7 +88,6 @@ import {
   buildEngineDeclaration,
   buildMigrationDdl,
   buildSqlGenerators,
-  buildSqlText,
   buildSqlWriting,
   CAPABILITY_READ_ENVIRONMENT,
   declarationDirectoryProblems,
@@ -182,6 +181,7 @@ import { MONITORING_PANELS } from "@/lib/db/engine-facets/types";
 import { CURATED_OPERATION_KINDS } from "@/lib/db/operations/descriptors";
 import { refusedFieldRefusal } from "@/lib/db/provider-connection";
 import { SQL_GRAMMAR } from "@/lib/db/sql-grammar";
+import { SQL_TEXT_REDACTION } from "@/lib/db/sql-grammar/redaction";
 import type { CompletionQuoting, SqlGrammarSpec, SqlRedaction, UpdateTargetGrammar } from "@/lib/db/sql-grammar/types";
 import { EDITOR_LANGUAGES, type EditorLanguage } from "@/lib/db/editor-language";
 import type { EditorLanguageContribution } from "@/lib/db/editor-language/types";
@@ -197,9 +197,9 @@ import type {
   InlineEditSpec,
   SqlWritingSpec,
 } from "@/lib/db/sql-writing/types";
-import { MONGODB_SQL_GRAMMAR } from "@/lib/db/providers/document/mongodb/sql-grammar";
-import { REDIS_SQL_GRAMMAR } from "@/lib/db/providers/keyvalue/redis-sql-grammar";
-import { POSTGRES_SQL_GRAMMAR } from "@/lib/db/providers/sql/postgres-sql-grammar";
+import { MONGODB_REDACTION_READER } from "@/lib/db/providers/document/mongodb/sql-grammar";
+import { REDIS_REDACTION_READER } from "@/lib/db/providers/keyvalue/redis-sql-grammar";
+import { POSTGRES_FORMAT_SEGMENT, POSTGRES_READ_QUOTED_QUALIFIER } from "@/lib/db/providers/sql/postgres-sql-grammar";
 import { type DialectSpec, QUERY_DIALECTS, type QueryDialect } from "@/lib/db/query-dialects";
 import { COUCHBASE_PASTE_READER } from "@/lib/db/providers/document/couchbase/connection-string";
 import { MONGODB_PASTE_READER } from "@/lib/db/providers/document/mongodb/connection-string";
@@ -375,7 +375,7 @@ const NAMED_FUNCTIONS: Readonly<Partial<Record<DatabaseType, Readonly<Record<str
   libsql: { pasteReader: LIBSQL_PASTE_READER },
   mongodb: {
     pasteReader: MONGODB_PASTE_READER,
-    redactionReader: commandReader(MONGODB_SQL_GRAMMAR.redaction),
+    redactionReader: MONGODB_REDACTION_READER,
   },
   mssql: { urlTls: MSSQL_URL_TLS, pasteReader: MSSQL_PASTE_READER },
   mysql: { urlTls: MYSQL_URL_TLS, pasteReader: MYSQL_PASTE_READER },
@@ -384,10 +384,10 @@ const NAMED_FUNCTIONS: Readonly<Partial<Record<DatabaseType, Readonly<Record<str
   postgres: {
     urlTls: POSTGRES_URL_TLS,
     pasteReader: POSTGRES_PASTE_READER,
-    formatSegment: POSTGRES_SQL_GRAMMAR.completion.formatSegment,
-    readQuotedQualifier: POSTGRES_SQL_GRAMMAR.completion.readQuotedQualifier,
+    formatSegment: POSTGRES_FORMAT_SEGMENT,
+    readQuotedQualifier: POSTGRES_READ_QUOTED_QUALIFIER,
   },
-  redis: { pasteReader: REDIS_PASTE_READER, redactionReader: commandReader(REDIS_SQL_GRAMMAR.redaction) },
+  redis: { pasteReader: REDIS_PASTE_READER, redactionReader: REDIS_REDACTION_READER },
   spark: { pasteReader: SPARK_PASTE_READER },
 };
 
@@ -998,7 +998,7 @@ describe("the committed declarations", () => {
     expect(stale).toEqual([]);
   });
 
-  test("the authored members are the catalog's, the data-only connection members, the connection form's, the connection string's and the editor's commit keyword, consent deadline, fence aliases, dialect and language", () => {
+  test("the authored members are the catalog's, the data-only connection members, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, and the SQL text's members but its redaction", () => {
     expect([...AUTHORED_MEMBERS]).toEqual([
       "id",
       "displayName",
@@ -1028,6 +1028,10 @@ describe("the committed declarations", () => {
       "editor.fenceAliases",
       "editor.dialect",
       "editor.language",
+      "sqlText.readsSqlText",
+      "sqlText.grammar",
+      "sqlText.updateTarget",
+      "sqlText.completion",
     ]);
     const bigquery = declared("bigquery");
     expect(authored("bigquery")).toEqual({
@@ -1065,6 +1069,18 @@ describe("the committed declarations", () => {
         dialect: null,
         language: { queryLanguage: "sql", monacoId: "sql", accent: "border-hue-blue/40", console: false },
       },
+      sqlText: {
+        readsSqlText: true,
+        grammar: bigquery.sqlText.grammar,
+        updateTarget: bigquery.sqlText.updateTarget,
+        completion: { formatSegment: null, readQuotedQualifier: null },
+      },
+    });
+    // The redaction is a claim, so it is no authored member: the generator writes it from Studio's record.
+    expect(Object.keys(authored("mongodb").sqlText)).toEqual(["readsSqlText", "grammar", "updateTarget", "completion"]);
+    expect(authored("postgres").sqlText.completion).toEqual({
+      formatSegment: "formatSegment",
+      readQuotedQualifier: "readQuotedQualifier",
     });
     expect(authored("snowflake").connection.fieldRules).toEqual(declared("snowflake").connection.fieldRules);
     expect(authored("snowflake").connection.hostHint).toBe("hostHint");
@@ -1133,16 +1149,30 @@ describe("the committed declarations", () => {
       fenceAliases: ["pgedited"],
       language: { ...committed.editor.language, accent: "border-hue-orange/40" },
     };
+    const sqlText = {
+      ...committed.sqlText,
+      grammar: { ...committed.sqlText.grammar, nonNumericRowBounds: ["ALL", "NONE"] },
+      updateTarget: { ...committed.sqlText.updateTarget, extraQueryOpeners: ["RETURNING"] },
+    };
     const edited = {
       ...committed,
       displayName: "Edited by hand",
       location: "embedded",
       connection: { ...connection, sshTunnel: { offered: false, refusal: "Edited by hand." } },
       editor: { ...editor, explainFormat: null },
+      sqlText: { ...sqlText, redaction: { kind: "none" } },
     };
     const built = buildEngineDeclaration("postgres", CAPABILITIES.postgres, authoredMembersOf(edited, "postgres.json"));
 
-    expect(built).toEqual({ ...committed, displayName: "Edited by hand", location: "embedded", connection, editor });
+    // The SQL text's authored members are kept, and its redaction, a claim, is rewritten from Studio's record.
+    expect(built).toEqual({
+      ...committed,
+      displayName: "Edited by hand",
+      location: "embedded",
+      connection,
+      editor,
+      sqlText,
+    });
     // The editor's authored members come from the declaration alone: the generator reads no execution UI, fence, dialect
     // or editor language table, so a dialect row or an accent edited by hand is kept.
     const kafka = declared("kafka");
@@ -1212,6 +1242,15 @@ describe("the committed declarations", () => {
     expect(() => authoredMembersOf(without(committed, "editor"), "bigquery.json")).toThrow(
       "bigquery.json lacks its authored member editor.commitKeyword",
     );
+    for (const member of ["readsSqlText", "grammar", "updateTarget", "completion"] as const) {
+      expect(() =>
+        authoredMembersOf({ ...committed, sqlText: without(committed.sqlText, member) }, "bigquery.json"),
+      ).toThrow(`bigquery.json lacks its authored member sqlText.${member}`);
+    }
+    // A declaration lacking its redaction is no authored member short: the generator writes it from Studio's record.
+    expect(() =>
+      authoredMembersOf({ ...committed, sqlText: without(committed.sqlText, "redaction") }, "bigquery.json"),
+    ).not.toThrow();
     for (const value of [null, [], "bigquery", { ...committed, connection: null }]) {
       expect(() => authoredMembersOf(value, "bigquery.json")).toThrow("bigquery.json lacks its authored member");
     }
@@ -1265,57 +1304,6 @@ describe("the committed declarations", () => {
     expect(() => buildEditor("postgres", CAPABILITIES.postgres, json)).toThrow(
       "postgres: the declaration states the query language json, and its provider declares sql",
     );
-  });
-
-  test("the generator refuses, by name, a SQL grammar member it has no place for", () => {
-    const key = `k${crypto.randomUUID().replaceAll("-", "")}`;
-    const row = SQL_GRAMMAR.kafka;
-    const planted: [SqlGrammarSpec, string][] = [
-      [{ ...row, grammar: { ...row.grammar, [key]: true } }, `grammar.${key}`],
-      [
-        { ...row, grammar: { ...row.grammar, script: { ...row.grammar.script, [key]: true } } },
-        `grammar.script.${key}`,
-      ],
-      [{ ...row, [key]: true }, key],
-      [{ ...row, redaction: { ...row.redaction, [key]: true } }, `redaction.${key}`],
-      [{ ...row, updateTarget: { ...row.updateTarget, [key]: true } }, `updateTarget.${key}`],
-      [{ ...row, completion: { ...row.completion, [key]: null } }, `completion.${key}`],
-      [
-        { ...row, grammar: { ...row.grammar, completionWords: { keywords: [], functions: [], [key]: true } } },
-        `grammar.completionWords.${key}`,
-      ],
-      [
-        { ...row, grammar: { ...row.grammar, confirmFormsWhen: [{ form: ["REPLACE"], when: "ON", [key]: true }] } },
-        `grammar.confirmFormsWhen.0.${key}`,
-      ],
-    ];
-
-    expect(() => buildSqlText("kafka", row)).not.toThrow();
-    for (const [spec, member] of planted) {
-      expect(() => buildSqlText("kafka", spec)).toThrow(
-        `kafka: the SQL grammar member "${member}" has no place in the engine declaration`,
-      );
-    }
-  });
-
-  test("the generator refuses, by name, a trailing limit clause whose flags the contract does not allow", () => {
-    const row = SQL_GRAMMAR.cassandra;
-    const clauses = (flags: string) => [...row.grammar.trailingLimitClauses, new RegExp("\\s+X\\s*$", flags)];
-    const index = row.grammar.trailingLimitClauses.length;
-
-    for (const flags of ["g", "", "im", "iy"]) {
-      const spec: SqlGrammarSpec = { ...row, grammar: { ...row.grammar, trailingLimitClauses: clauses(flags) } };
-
-      expect(() => buildSqlText("cassandra", spec)).toThrow(
-        `cassandra: trailing limit clause ${index} has flags "${flags}"; the provider contract allows i or iu`,
-      );
-    }
-    const unicode: SqlGrammarSpec = { ...row, grammar: { ...row.grammar, trailingLimitClauses: clauses("iu") } };
-
-    expect(buildSqlText("cassandra", unicode).grammar.trailingLimitClauses[index]).toEqual({
-      source: "\\s+X\\s*$",
-      flags: "iu",
-    });
   });
 
   test("the generator refuses, by name, an SQL writing member it has no place for", () => {
@@ -1805,7 +1793,7 @@ const SEGMENT_CLAIM_RECORDS: Readonly<Record<string, SegmentClaimRecord>> = {
   },
   "sqlText.redaction": {
     request: (d) => d.sqlText.redaction,
-    record: (type) => declaredRedaction(SQL_GRAMMAR[type].redaction),
+    record: (type) => SQL_TEXT_REDACTION[type],
   },
   "agent.overlay.dialect.catalogRead.commandShaped": {
     request: (d) => d.agent.overlay?.dialect?.catalogRead?.commandShaped ?? false,

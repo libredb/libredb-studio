@@ -19,7 +19,7 @@ const limited = (sql: string) => applyQueryLimit(sql, 500, 0, {}, "druid");
 
 describe("the Druid SQL grammar", () => {
   test("is its own row, not the compatibility default, and its text is SQL", () => {
-    expect(grammar).not.toBe(DEFAULT_SQL_GRAMMAR);
+    expect(grammar).not.toEqual(DEFAULT_SQL_GRAMMAR);
     expect(readsSqlText("druid")).toBe(true);
   });
 
@@ -129,7 +129,7 @@ describe("the Druid SQL grammar", () => {
   test("a script keeps the default: one statement per cut and no procedural body", () => {
     // `SELECT 1 AS a; SELECT 2 AS b` is 400 "Only SET statements can appear before the final statement in a
     // statement list", and Druid SQL has no routine or block with a body.
-    expect(grammar.script).toBe(DEFAULT_SQL_GRAMMAR.script);
+    expect(grammar.script).toEqual(DEFAULT_SQL_GRAMMAR.script);
   });
 
   test("the unsafe-statement check reads what Druid reads", () => {

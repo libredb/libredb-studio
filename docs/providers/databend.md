@@ -512,7 +512,7 @@ Databend's backslash escapes are a fact of the grammar row (`backslashAlwaysEsca
 
 ### 5.3 The Databend grammar
 
-The statement splitter, the row limiter, the confirmation gate, the guard and the EXPLAIN screen read text under one grammar row, `DATABEND_GRAMMAR` in `src/lib/db/providers/sql/databend/sql-grammar.ts`.
+The statement splitter, the row limiter, the confirmation gate, the guard and the EXPLAIN screen read text under one grammar row, composed from the `sqlText.grammar` of `src/lib/db/engine-declarations/databend.json`.
 
 | Field | Value | Why |
 |---|---|---|
@@ -660,8 +660,8 @@ The resuming sentence of section 4.4 and the slot wait above are no statement's 
 
 ### 5.9 SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/databend/sql-grammar.ts`](../../src/lib/db/providers/sql/databend/sql-grammar.ts), the `databend` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
-Its grammar is `DATABEND_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/databend.json`](../../src/lib/db/engine-declarations/databend.json), from which the `databend` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
+Its grammar is the declaration's `sqlText.grammar`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
 Every fact was read off the server's own lexer (`src/query/ast/src/parser/token.rs`) and parser, since there is no driver package to ask; [§5.3](#53-the-databend-grammar) describes the five readings the statement guard refuses instead.
 `#` is code: `#`, `#>`, `#>>` and `#-` are operator tokens, and the only comment forms are `--` and the block form.
 `[` is a subscript and an array literal, and names are quoted with `"` or a backtick.

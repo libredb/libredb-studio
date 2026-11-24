@@ -633,7 +633,7 @@ the pool. Bind parameters use Oracle's `:1`-style placeholders.
 Native errors are normalised through `mapDatabaseError()` (see [§11](#11-error-handling)).
 
 **PL/SQL from the editor (#1312).** The grammar's `script` fact for this dialect
-(`src/lib/db/providers/sql/oracle-sql-grammar.ts`) makes the editor's statement reader treat a PL/SQL unit as ONE statement:
+(`src/lib/db/engine-declarations/oracle.json`) makes the editor's statement reader treat a PL/SQL unit as ONE statement:
 an anonymous block that starts with `DECLARE` or `BEGIN`, and `CREATE [OR REPLACE]
 [EDITIONABLE | NONEDITIONABLE] PROCEDURE | FUNCTION | PACKAGE [BODY] | TRIGGER | TYPE BODY`. The unit
 is read to the `END` that closes its outermost block, and the `;` after that `END` is kept, because
@@ -1153,12 +1153,12 @@ survive an export, because it did not survive the driver.**
 
 ### 5.6 SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/oracle-sql-grammar.ts`](../../src/lib/db/providers/sql/oracle-sql-grammar.ts), the `oracle` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
-Its grammar is `ORACLE_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/oracle.json`](../../src/lib/db/engine-declarations/oracle.json), from which the `oracle` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
+Its grammar is the declaration's `sqlText.grammar`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
 `#` is an identifier character and comments open on `--` and `/*` only, from node-oracledb's own SQL tokenizer (`lib/thin/statement.js`).
 Alternate quoting is on, and Oracle is the only row with it: the same tokenizer's `_parseQstring` opens a q-string at a `'` after `q` or `Q`, `nq'...'` included, with `[ ] { } ( ) < >` as paired delimiters, as Oracle's SQL Language Reference (checked 2026-08-05) gives it.
 Block comments are flat: the tokenizer stops at the first `*/`, and the PL/SQL Language Reference says one multiline comment cannot contain another.
-`//` is code, probed 2026-08-25 on Oracle Free through sqlplus: `SELECT 1 AS a // note FROM dual` is ORA-00923.
+`//` is code, probed 2026-08-25 on Oracle Free through sqlplus: `SELECT 1 AS a // note FROM dual` is ORA-00923, "FROM keyword not found where expected", with the caret under the slashes, so nothing on that line is hidden.
 A PL/SQL unit is one statement, ended by SQL*Plus's `/` line: measured on 26ai Free 23.26.3, a procedure cut at its inner `;` was stored INVALID with PLS-00103, and the unit is refused without the `;` after its `END`, so the splitter keeps that one.
 `[...]` is not established and stays at the fail-safe default.
 The update-target reader takes `MINUS` as a set operator here alone, since it is an ordinary column name on every other engine.

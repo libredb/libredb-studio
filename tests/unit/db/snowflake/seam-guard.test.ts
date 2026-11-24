@@ -18,10 +18,8 @@
  *    or literals, appear only in `statements.ts`, `rows.ts` and `decode.ts`.
  * 7. A value is imported from outside this directory only from `@/lib/db/http/*`, `@/lib/db/errors`,
  *    `@/lib/db/types`, `@/lib/db/utils/*`, `@/lib/db/object-kinds`, `@/lib/db/inventory-bounds`, `@/lib/sql/*`,
- *    `@/lib/types`, `@/lib/app-version`, `@/lib/logger`, `../sql-base`, `@/lib/db/sql-grammar/shared` (the SQL
- *    grammar contract's building blocks, for `sql-grammar.ts`), `@libredb/provider-sdk/sql` (the SDK's SQL grammar
- *    facts, for `sql-grammar.ts`), `jose`, `node:crypto` and `node:zlib`; types are
- *    free. `migration-ddl.ts`, the engine's migration DDL contract module, may also import values from
+ *    `@/lib/types`, `@/lib/app-version`, `@/lib/logger`, `../sql-base`, `jose`, `node:crypto` and `node:zlib`; types
+ *    are free. `migration-ddl.ts`, the engine's migration DDL contract module, may also import values from
  *    `@/lib/db/migration-ddl/*`, its contract's shared building blocks, and
  *    `sql-writing.ts` and its `typed-literals.ts` sibling, the engine's SQL writing contract modules, from
  *    `@/lib/db/sql-writing/*`, and `paste.ts`, the engine's connection string paste reader, from
@@ -66,7 +64,6 @@ const OUTSIDE_VALUES = [
   "src/lib/app-version.ts",
   "src/lib/logger.ts",
   SQL_BASE,
-  "src/lib/db/sql-grammar/shared.ts",
 ];
 /**
  * The per-engine contract modules, each with the contract module or directory whose shared building blocks it may
@@ -78,8 +75,7 @@ const CONTRACT_VALUES: Readonly<Record<string, string>> = {
   "typed-literals": "src/lib/db/sql-writing/",
   paste: "src/lib/db/connection-string/shared.ts",
 };
-// `@libredb/provider-sdk/sql`: the SDK's SQL grammar facts, the grammar row's compatibility default.
-const PACKAGE_VALUES = new Set(["jose", "@libredb/provider-sdk/sql"]);
+const PACKAGE_VALUES = new Set(["jose"]);
 const BUILTIN_VALUES = new Set(["node:crypto", "node:zlib"]);
 const SOCKET_FACTORIES = ["createNodeTransport", "createNodeByteTransport"];
 const SOCKET_FILES = new Set(["transport", "index"]);

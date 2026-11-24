@@ -96,8 +96,8 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/db/read-allowance.ts` | host service: run bounds | The billed-read allowance is a ledger of one agent run or MCP call, which the host owns. |
 | `src/lib/db/read-only-budget.ts` | SDK /calls | The read-only call's budget check, the row, byte and time refusal openings and sentences, and the result byte measures, pure; every family's `queryReadOnly` reads it, so it sits in core beside the types and errors it reads rather than in the SQL family module, and the SDK's calls subpath already holds a result's byte budgets and row measure. |
 | `src/lib/db/redaction/metadata-only.ts` | SDK /redaction | Pure projection helpers for the metadata-only answer mode. |
-| `src/lib/db/sql-grammar/shared.ts` | SDK /manifest | Shared grammar values a SQL grammar row composes. |
-| `src/lib/db/sql-grammar/types.ts` | SDK /manifest | The SQL grammar row contract. |
+| `src/lib/db/sql-grammar/shared.ts` | SDK /manifest | The redaction placeholder a command redaction reader writes. |
+| `src/lib/db/sql-grammar/types.ts` | SDK /manifest | The types of the SQL grammar functions a declaration names. |
 | `src/lib/db/sql-writing/export-shared.ts` | SDK /manifest | Pure helpers the export forms of a SQL writing row share. |
 | `src/lib/db/sql-writing/shared.ts` | SDK /manifest | The literal, identifier and placeholder forms more than one SQL writing row spells alike. |
 | `src/lib/db/sql-writing/types.ts` | SDK /manifest | The SQL writing row contract. |
@@ -261,7 +261,7 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 | `src/lib/db/operations/snmpget-admission.ts` | 1 statement reader module | PR 8 snmpget | the snmpget family, `src/lib/languages/snmpget/` |
 | `src/lib/db/operations/sparkplugread-admission.ts` | 1 statement reader module | PR 8 sparkplugread | the sparkplugread family, `src/lib/languages/sparkplugread/` |
 | `src/lib/db/query-generators/index.ts` | 27 query generator rows | PR 11 editor and SQL text | manifest rows: the PR 9 schema, collected by the PR 11 projection |
-| `src/lib/db/sql-grammar/index.ts` | 43 SQL grammar rows | PR 11 editor and SQL text | manifest rows: the PR 9 schema, collected by the PR 11 projection |
+| `src/lib/db/sql-grammar/index.ts` | 3 SQL grammar function modules, bound by Studio's grammar function table to the names the declarations give | mongodb native PR, postgres native PR, redis native PR | each engine's provider package, which decides where its browser-side functions run (M-32) |
 | `src/lib/db/sql-writing/index.ts` | 43 SQL writing rows | PR 11 editor and SQL text | manifest rows: the PR 9 schema, collected by the PR 11 projection |
 | `src/lib/explain/firestore-explain.ts` | 1 firestore console parser | PR 8 fsquery | the fsquery family, `src/lib/languages/fsquery/` |
 | `src/lib/kubernetes/kubeconfig-import.ts` | 1 kubernetes limits module | kubernetes native PR | moves with the kubernetes provider package as its connection importer |

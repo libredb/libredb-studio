@@ -23,8 +23,8 @@ import {
 import type { AgentEngineServerOverlay, AgentLanguageGrounding, SqlServerDialect } from "../../pack";
 
 /**
- * A name as SQL++ quotes one: in backticks, a backtick inside doubled (`sql-grammar.ts` beside the provider). A
- * double-quoted run is a string literal in SQL++, not a name, so the standard identifier quote cannot name a
+ * A name as SQL++ quotes one: in backticks, a backtick inside doubled (the couchbase declaration's `sqlText.grammar`).
+ * A double-quoted run is a string literal in SQL++, not a name, so the standard identifier quote cannot name a
  * collection here.
  */
 const backticked = (name: string): string => `\`${name.replaceAll("`", "``")}\``;

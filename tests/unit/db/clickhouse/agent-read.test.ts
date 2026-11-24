@@ -13,8 +13,8 @@ import {
   readAgentAnswer,
   rowOverflowRefusal,
 } from "@/lib/db/providers/sql/clickhouse/agent-read";
-import { CLICKHOUSE_SQL_GRAMMAR } from "@/lib/db/providers/sql/clickhouse/sql-grammar";
 import type { ClickHouseQueryResult } from "@/lib/db/providers/sql/clickhouse/transport";
+import { SQL_GRAMMAR } from "@/lib/db/sql-grammar";
 import { DEFAULT_SQL_GRAMMAR } from "@libredb/provider-sdk/sql";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 
@@ -120,7 +120,7 @@ describe("assertNoRemoteTableFunction", () => {
   // The fence reads with ClickHouse's grammar: `//` opens a line comment there and is code under the default grammar,
   // so a call written after one is hidden only from the right reader.
   test("reads with the ClickHouse grammar row, not the default one", () => {
-    expect(GRAMMAR).toBe(CLICKHOUSE_SQL_GRAMMAR.grammar);
+    expect(GRAMMAR).toBe(SQL_GRAMMAR.clickhouse.grammar);
     const sql = "SELECT 1 // remote('h', t)\n";
     expect(() => assertNoRemoteTableFunction(sql, GRAMMAR)).not.toThrow();
     expect(() => assertNoRemoteTableFunction(sql, DEFAULT_SQL_GRAMMAR)).toThrow(QueryError);

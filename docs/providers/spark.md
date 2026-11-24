@@ -313,12 +313,13 @@ A dropped connection reads `The connection to Spark dropped while the statement 
 
 ### 5.1 SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/spark/sql-grammar.ts`](../../src/lib/db/providers/sql/spark/sql-grammar.ts), the `spark` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
-Its grammar is `SPARK_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/spark.json`](../../src/lib/db/engine-declarations/spark.json), from which the `spark` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
+Its grammar is the declaration's `sqlText.grammar`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
 The lexical facts are read off Spark's lexer and parser at tag v4.2.0 (`SqlBaseLexer.g4`, `SqlBaseParser.g4`), and the comment facts were measured on Spark 4.2.0.
 `#` is no token outside a literal, `[` is a subscript (`arr[0]`, `m['k']`), names are quoted with backticks, and `/` is division with no `//` comment.
 Block comments nest at every level, and `/*+` opens a hint Spark lexes as code that opens no level inside a comment (both measured on 4.2.0).
 A backslash escapes inside `'...'` and `"..."` under every setting, and `r'C:\'` is a raw literal that takes none.
+A tagged run is a string literal, as the default reads it: Spark 4.2 lexes `$$...$$` and `$tag$...$tag$` as one string, and 4.1 refuses a `$` outside a literal.
 A backslash right before a line feed continues a `--` comment, and a lone carriage return ends one as a line feed does; the reader follows both.
 Other engines read that carriage return as comment text, and one connection type can reach servers that disagree, so a text whose `--` comment holds one with code after it is treated as ambiguous here as everywhere: the confirmation gate asks and the row limiter leaves it unbounded ([which dialect the readers are reading](../editor/query-optimization.md#which-dialect-the-readers-are-reading)).
 Three readings the shared reader does not follow: a backslash before a line feed continues a literal, Unicode spaces count as white space, and an unquoted address (`a://b`) is one token; the provider refuses the last two before any call.

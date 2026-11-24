@@ -161,11 +161,17 @@ const MAX_TRAILING_CLAUSES = 64;
 
 const anchoredClauses = new WeakMap<RegExp, RegExp>();
 
-/** A declared clause pattern anchored behind a non-space, compiled once per pattern. */
+/**
+ * A declared clause pattern anchored as a whole, behind a character that is not whitespace and at the statement's end,
+ * compiled once per pattern. The whole pattern is grouped, so a source with a top-level alternative is anchored at both
+ * ends too: anchoring its first alternative alone would try every later one from each position of a whitespace run, in
+ * time quadratic in the run's length, and an earlier alternative that does not end in `\s*$` would match in the middle
+ * of a statement and strip the text after it (docs/providers/CONTRACT.md, clause S-6).
+ */
 function clausePattern(clause: RegExp): RegExp {
   let anchored = anchoredClauses.get(clause);
   if (anchored === undefined) {
-    anchored = new RegExp(`(?<!\\s)${clause.source}`, clause.flags);
+    anchored = new RegExp(`(?<!\\s)(?:${clause.source})$`, clause.flags);
     anchoredClauses.set(clause, anchored);
   }
   return anchored;

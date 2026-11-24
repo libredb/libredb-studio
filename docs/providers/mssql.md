@@ -415,7 +415,7 @@ did, and carries every set in `resultSets` (#1312). `POST /api/db/query` and `PO
 multi-statement route reads it to show a batch's last set, empty or not (#2286).
 
 **The editor sends a T-SQL batch whole.** The grammar's `script` fact for this dialect makes the unit
-of one request the batch between `GO` lines (`src/lib/db/providers/sql/mssql-sql-grammar.ts`), so `DECLARE @x INT = 5;
+of one request the batch between `GO` lines (`src/lib/db/engine-declarations/mssql.json`), so `DECLARE @x INT = 5;
 SELECT @x * 2` reaches the server as one request and answers 10, a `#temp` table created in a batch is
 there for the batch's next statement, and `CREATE PROCEDURE … AS BEGIN …; …; END` is created as written.
 A line holding only `GO` (any case, optionally followed by a `--` comment) separates batches and is
@@ -579,8 +579,8 @@ Two cells read back differently, both lost by the driver before the export sees 
 
 ### 5.6 SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/mssql-sql-grammar.ts`](../../src/lib/db/providers/sql/mssql-sql-grammar.ts), the `mssql` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
-Its grammar is `MSSQL_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/mssql.json`](../../src/lib/db/engine-declarations/mssql.json), from which the `mssql` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
+Its grammar is the declaration's `sqlText.grammar`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
 `#name` and `##name` are temp tables, ordinary T-SQL, so `#` is code; `[name]` is a delimited identifier with a doubled `]` inside, which this repository's own quoter emits for the dialect.
 Block comments nest, per "Slash Star (Block Comment) (Transact-SQL)" on learn.microsoft.com (checked 2026-08-05), the row the report on #300 got wrong.
 `//` is code, probed 2026-08-25 on 2022 through sqlcmd: `SELECT 1 AS a // note` is Msg 102, "Incorrect syntax near '/'".

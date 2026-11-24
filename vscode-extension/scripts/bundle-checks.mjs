@@ -115,10 +115,17 @@ const SQL_GRAMMAR_INDEX = "src/lib/db/sql-grammar/index.ts";
 const PROVIDERS_DIR = "src/lib/db/providers/";
 /** The root's workspace packages (packages/README.md): provider code staged out of src/lib/db, held to the same rules. */
 const PACKAGES_DIR = "packages/";
+/**
+ * The SDK's SQL grammar entry, `@libredb/provider-sdk/sql`: the contract's own grammar type and compatibility default,
+ * which Studio's SQL readers import, so the webview reaches it through them and never through provider code. Each
+ * engine's grammar is its declaration's, composed by the sql-grammar index (docs/providers/CONTRACT.md, clause M-78),
+ * so no row imports it.
+ */
+const SDK_SQL_DIR = "packages/provider-sdk/src/sql/";
 
-/** A provider file, under src/lib/db/providers/ or in a workspace package. */
+/** A provider file, under src/lib/db/providers/ or in a workspace package other than the SDK's SQL grammar entry. */
 function isProviderCode(path) {
-  return path.startsWith(PROVIDERS_DIR) || path.startsWith(PACKAGES_DIR);
+  return path.startsWith(PROVIDERS_DIR) || (path.startsWith(PACKAGES_DIR) && !path.startsWith(SDK_SQL_DIR));
 }
 
 /**

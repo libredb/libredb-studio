@@ -409,7 +409,7 @@ The confirmation gate reads a Milvus request with the provider's own guard, so w
 
 ### 5.8 SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/vector/milvus/sql-grammar.ts`](../../src/lib/db/providers/vector/milvus/sql-grammar.ts), the `milvus` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/milvus.json`](../../src/lib/db/engine-declarations/milvus.json), from which the `milvus` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
 `readsSqlText` is `false`: `milvus` takes one Milvus console request, a `POST /v2/vectordb/<route>` line and one JSON body, whose strings escape with a backslash and whose filter is a Milvus expression the server parses; the provider extends `BaseDatabaseProvider` and parses the text itself.
 The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/vector/milvus/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.

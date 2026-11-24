@@ -1,14 +1,16 @@
 /**
  * Studio's engine catalog, which engines it ships, where each lives and how long its open may take, its data-only
- * connection tables, its connection forms, its connection strings, and each engine's execution UI and fence aliases,
- * projected from the engine declarations the catalog generator admits (docs/providers/CONTRACT.md, clauses M-70, M-71,
- * M-72, M-74 and M-75).
+ * connection tables, its connection forms, its connection strings, each engine's execution UI and fence aliases, its
+ * query dialects, tab type editors and editor languages, and each engine's SQL text, projected from the engine
+ * declarations the catalog generator admits (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72, M-74, M-75, M-77
+ * and M-78).
  *
  * `scripts/generate-engine-catalog.ts` projects the committed declarations' authored members with `projectCatalog`,
- * `projectConnectionTables`, `projectConnectionForms`, `projectConnectionStrings` and `projectEditorFacts`, renders the
- * projections into `src/lib/db/engine-catalog/catalog.generated.ts`, `connection.generated.ts`,
- * `connection-flags.generated.ts`, `connection-form.generated.ts`, `connection-string.generated.ts` and
- * `editor.generated.ts`, the modules Studio's readers read, and holds each to the set it admits through the SDK's
+ * `projectConnectionTables`, `projectConnectionForms`, `projectConnectionStrings`, `projectEditorFacts`,
+ * `projectQueryEditorFacts` and `projectSqlText`, renders the projections into
+ * `src/lib/db/engine-catalog/catalog.generated.ts`, `connection.generated.ts`, `connection-flags.generated.ts`,
+ * `connection-form.generated.ts`, `connection-string.generated.ts`, `editor.generated.ts`, `query-editor.generated.ts`
+ * and `sql-text.generated.ts`, the modules Studio's readers read, and holds each to the set it admits through the SDK's
  * digest-checked validator. This file holds the projections, the admission, the generated modules' bytes, the readers
  * that answer from them, and `bun run engines:generate` end to end on a scratch copy of the sources it reads.
  */
@@ -37,6 +39,7 @@ import {
   ENGINE_DECLARATIONS_DIRECTORY,
   ENGINE_EDITOR_MODULE,
   ENGINE_QUERY_EDITOR_MODULE,
+  ENGINE_SQL_TEXT_MODULE,
   renderCatalog,
   renderConnectionFlags,
   renderConnectionForms,
@@ -44,6 +47,7 @@ import {
   renderConnectionTables,
   renderEditorFacts,
   renderQueryEditorFacts,
+  renderSqlText,
 } from "../../../scripts/generate-engine-catalog";
 import { EXTERNAL_DATABASE_TYPES, isExternalDatabaseType, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { BUNDLED_CATALOG } from "@/lib/db/engine-catalog/catalog.generated";
@@ -66,6 +70,7 @@ import {
   BUNDLED_EDITOR_LANGUAGES,
   BUNDLED_QUERY_DIALECTS,
 } from "@/lib/db/engine-catalog/query-editor.generated";
+import { BUNDLED_SQL_TEXT } from "@/lib/db/engine-catalog/sql-text.generated";
 import {
   type ConnectionFormEntry,
   type ConnectionForms,
@@ -77,6 +82,7 @@ import {
   projectConnectionTables,
   projectEditorFacts,
   projectQueryEditorFacts,
+  projectSqlText,
 } from "@/lib/db/engine-catalog/projection";
 import type { DatabaseType } from "@/lib/types";
 
@@ -728,6 +734,69 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     expect(() => projectQueryEditorFacts(ADMITTED)).not.toThrow();
   });
 
+  test("projectSqlText answers each declaration's SQL text but its redaction, frozen, in ascending id order", () => {
+    const set = ["postgres", "mongodb", "snowflake", "cassandra"].map(admitted);
+    const texts = projectSqlText(set);
+
+    expect(Object.keys(texts)).toEqual(["cassandra", "mongodb", "postgres", "snowflake"]);
+    for (const declaration of set) {
+      const { readsSqlText, grammar, updateTarget, completion } = declaration.sqlText;
+      expect(texts[declaration.id]).toEqual({ readsSqlText, grammar, updateTarget, completion });
+      // Each member in one order, the redaction never among them: it is a claim, kept in Studio's record.
+      expect(Object.keys(texts[declaration.id] ?? {})).toEqual([
+        "readsSqlText",
+        "grammar",
+        "updateTarget",
+        "completion",
+      ]);
+      // The grammar in the declaration's member order.
+      expect(Object.keys(texts[declaration.id]?.grammar ?? {})).toEqual(Object.keys(grammar));
+    }
+    // The same answer for the set reversed, and for every committed declaration in any order.
+    expect(JSON.stringify(projectSqlText([...set].reverse()))).toBe(JSON.stringify(texts));
+    expect(JSON.stringify(projectSqlText([...ADMITTED].reverse()))).toBe(JSON.stringify(projectSqlText(ADMITTED)));
+    // Frozen at every level, and a copy: mutating the input after the call changes nothing.
+    const frozen = (value: unknown): boolean =>
+      typeof value !== "object" || value === null || (Object.isFrozen(value) && Object.values(value).every(frozen));
+    expect(frozen(texts)).toBe(true);
+    const postgres = structuredClone(admitted("postgres"));
+    const copied = projectSqlText([postgres]);
+    (postgres.sqlText.grammar.nonNumericRowBounds as string[]).push("NONE");
+    expect(copied.postgres?.grammar.nonNumericRowBounds).toEqual(["ALL"]);
+    // Two declarations of one id are refused by name.
+    expect(() => projectSqlText([admitted("postgres"), admitted("postgres")])).toThrow(
+      'The engine id "postgres" is declared twice.',
+    );
+  });
+
+  test("the SQL text reads only the members a declaration authors", () => {
+    // Every member but the authored ones replaced with postgres's, its redaction included: the SQL text the generator
+    // writes first, before the declaration generator rewrites those members, is therefore already the final one.
+    const postgres = admitted("postgres");
+    const replaced = ADMITTED.map(
+      (d): EngineDeclaration => ({
+        ...postgres,
+        id: d.id,
+        sqlText: {
+          readsSqlText: d.sqlText.readsSqlText,
+          grammar: d.sqlText.grammar,
+          redaction: postgres.sqlText.redaction,
+          updateTarget: d.sqlText.updateTarget,
+          completion: d.sqlText.completion,
+        },
+      }),
+    );
+
+    expect(projectSqlText(replaced)).toEqual(projectSqlText(ADMITTED));
+    // Vacuity: the replacement changed members the SQL text would read if it read them.
+    const differs = (read: (d: EngineDeclaration) => unknown) =>
+      replaced.filter((d, index) => JSON.stringify(read(d)) !== JSON.stringify(read(ADMITTED[index]))).length;
+    expect(differs((d) => d.sqlText.redaction)).toBeGreaterThan(0);
+    expect(differs((d) => d.sqlWriting)).toBeGreaterThan(0);
+    expect(differs((d) => d.editor)).toBeGreaterThan(0);
+    expect(differs((d) => d.policy)).toBeGreaterThan(0);
+  });
+
   test("every committed declaration is admitted through the SDK's digest-checked validator before it is projected", () => {
     expect(ADMITTED.map((d) => d.id)).toEqual([...SHIPPED_DATABASE_TYPES]);
     expect(ADMITTED.length).toBe(SHIPPED_DATABASE_TYPES.length);
@@ -950,6 +1019,27 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     expect(frozen(BUNDLED_EDITOR_LANGUAGES)).toBe(true);
   });
 
+  test("the committed SQL text module is what the generator renders from the admitted declarations", () => {
+    const committed = readFileSync(path.join(ROOT, ENGINE_SQL_TEXT_MODULE), "utf8");
+    const texts = projectSqlText(ADMITTED);
+
+    expect(committed).toBe(renderSqlText(texts));
+    expect<unknown>(BUNDLED_SQL_TEXT).toEqual(texts);
+    expect(Object.keys(BUNDLED_SQL_TEXT)).toEqual([...SHIPPED_DATABASE_TYPES]);
+    expect(committed).toContain("bun run engines:generate");
+    expect([...committed.matchAll(/^export const (\w+)/gm)].map((match) => match[1])).toEqual(["BUNDLED_SQL_TEXT"]);
+    // A clause's source is written in the formatter's quotes, its backslashes doubled.
+    expect(committed).toContain(String.raw`source: "\\s+ALLOW\\s+FILTERING\\s*$"`);
+    // Type imports only, so a reader of the module loads no other module through it.
+    const imports = [...committed.matchAll(/^import .*$/gm)].map((match) => match[0]);
+    expect(imports.length).toBeGreaterThan(0);
+    expect(imports.every((line) => line.startsWith("import type "))).toBe(true);
+    // Frozen at every level, as the projection answers it.
+    const frozen = (value: unknown): boolean =>
+      typeof value !== "object" || value === null || (Object.isFrozen(value) && Object.values(value).every(frozen));
+    expect(frozen(BUNDLED_SQL_TEXT)).toBe(true);
+  });
+
   test("the renderer writes a backslash, a character outside ASCII and a number as the formatter leaves them, and refuses a control character by name", () => {
     const tables = projectConnectionTables(ADMITTED);
     const refusal = (text: string) => ({ ...tables, refused: { ...tables.refused, qdrant: { user: text } } });
@@ -1093,8 +1183,9 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       const strings = path.join(dir, "connection-string.generated.ts");
       const editor = path.join(dir, "editor.generated.ts");
       const queryEditor = path.join(dir, "query-editor.generated.ts");
+      const sqlText = path.join(dir, "sql-text.generated.ts");
       expect(written.stdout.toString()).toBe(
-        `Wrote ${catalog}\nWrote ${connection}\nWrote ${flags}\nWrote ${form}\nWrote ${strings}\nWrote ${editor}\nWrote ${queryEditor}\n`,
+        `Wrote ${catalog}\nWrote ${connection}\nWrote ${flags}\nWrote ${form}\nWrote ${strings}\nWrote ${editor}\nWrote ${queryEditor}\nWrote ${sqlText}\n`,
       );
       expect(readFileSync(connection, "utf8")).toBe(readFileSync(path.join(ROOT, ENGINE_CONNECTION_MODULE), "utf8"));
       expect(readFileSync(flags, "utf8")).toBe(readFileSync(path.join(ROOT, ENGINE_CONNECTION_FLAGS_MODULE), "utf8"));
@@ -1102,7 +1193,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       const current = run("--check", "--out", dir);
       expect(current.exitCode).toBe(0);
       expect(current.stdout.toString()).toBe(
-        `${catalog} is up to date\n${connection} is up to date\n${flags} is up to date\n${form} is up to date\n${strings} is up to date\n${editor} is up to date\n${queryEditor} is up to date\n`,
+        `${catalog} is up to date\n${connection} is up to date\n${flags} is up to date\n${form} is up to date\n${strings} is up to date\n${editor} is up to date\n${queryEditor} is up to date\n${sqlText} is up to date\n`,
       );
 
       const text = readFileSync(connection, "utf8");
@@ -1218,6 +1309,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
         ENGINE_CONNECTION_FORM_MODULE,
         ENGINE_CONNECTION_STRING_MODULE,
         ENGINE_QUERY_EDITOR_MODULE,
+        ENGINE_SQL_TEXT_MODULE,
       ]) {
         expect(readFileSync(path.join(dir, path.basename(generated)), "utf8")).toBe(
           readFileSync(path.join(ROOT, generated), "utf8"),
@@ -1259,6 +1351,24 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       );
       expect(run("--write", "--out", dir).exitCode).toBe(0);
       expect(readFileSync(queryEditor, "utf8")).toBe(queryEditorText);
+      expect(run("--check", "--out", dir).exitCode).toBe(0);
+
+      // Trino's readsSqlText edited by hand in the generated SQL text module is named, and only that module.
+      const sqlText = path.join(dir, "sql-text.generated.ts");
+      const sqlTextText = readFileSync(sqlText, "utf8");
+      const trinoEntry = /^ {2}trino: Object\.freeze\(\{$[\s\S]*?^ {2}\}\),$/m.exec(sqlTextText)?.[0] ?? "";
+      expect(trinoEntry).toContain("readsSqlText: true,");
+      writeFileSync(
+        sqlText,
+        sqlTextText.replace(trinoEntry, trinoEntry.replace("readsSqlText: true,", "readsSqlText: false,")),
+      );
+      const staleSqlText = run("--check", "--out", dir);
+      expect(staleSqlText.exitCode).toBe(1);
+      expect(staleSqlText.stderr.toString()).toBe(
+        `${sqlText} is not what the engine declarations project\nrun: bun run engines:generate\n`,
+      );
+      expect(run("--write", "--out", dir).exitCode).toBe(0);
+      expect(readFileSync(sqlText, "utf8")).toBe(sqlTextText);
       expect(run("--check", "--out", dir).exitCode).toBe(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -1593,6 +1703,86 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       copy.remove();
     }
     // Copying the sources and the generator run take a few seconds; well inside ten times that.
+  }, 60000);
+
+  test("bun run engines:generate regenerates an authored SQL text change in one run", () => {
+    const copy = generatingCopy();
+    try {
+      const directory = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY);
+      const edit = (id: string, sqlText: (committed: EngineDeclaration["sqlText"]) => EngineDeclaration["sqlText"]) => {
+        const file = path.join(directory, `${id}.json`);
+        const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+        const edited = { ...committed, sqlText: sqlText(committed.sqlText) };
+        writeFileSync(file, `${JSON.stringify(edited, null, 2)}\n`);
+        return edited;
+      };
+      const postgres = edit("postgres", (sqlText) => ({
+        ...sqlText,
+        grammar: { ...sqlText.grammar, nonNumericRowBounds: [...sqlText.grammar.nonNumericRowBounds, "NONE"] },
+      }));
+      const mysql = edit("mysql", (sqlText) => ({
+        ...sqlText,
+        updateTarget: {
+          ...sqlText.updateTarget,
+          extraQueryOpeners: [...sqlText.updateTarget.extraQueryOpeners, "RETURNING"],
+        },
+      }));
+
+      const run = copy.generate();
+      expect(run.stderr).not.toContain("refused");
+      expect(run.exitCode).toBe(0);
+
+      const regenerated = admittedDeclarations(directory);
+      const of = (id: string) => regenerated.find((d) => d.id === id);
+      // The declaration generator writes the authored members back unchanged.
+      expect(of("postgres")).toEqual(postgres);
+      expect(of("mysql")).toEqual(mysql);
+      const sqlTextModule = readFileSync(path.join(copy.root, ENGINE_SQL_TEXT_MODULE), "utf8");
+      expect(sqlTextModule).toBe(renderSqlText(projectSqlText(regenerated)));
+      expect(projectSqlText(regenerated).postgres?.grammar.nonNumericRowBounds).toEqual(["ALL", "NONE"]);
+      expect(projectSqlText(regenerated).mysql?.updateTarget.extraQueryOpeners).toContain("RETURNING");
+      for (const generated of [
+        ENGINE_CATALOG_MODULE,
+        ENGINE_CONNECTION_MODULE,
+        ENGINE_CONNECTION_FLAGS_MODULE,
+        ENGINE_CONNECTION_FORM_MODULE,
+        ENGINE_CONNECTION_STRING_MODULE,
+        ENGINE_EDITOR_MODULE,
+        ENGINE_QUERY_EDITOR_MODULE,
+      ]) {
+        expect(readFileSync(path.join(copy.root, generated), "utf8")).toBe(
+          readFileSync(path.join(ROOT, generated), "utf8"),
+        );
+      }
+      // Every other declaration is the committed one, byte for byte.
+      for (const declaration of ADMITTED.filter((d) => !["mysql", "postgres"].includes(d.id))) {
+        const name = `${declaration.id}.json`;
+        expect(readFileSync(path.join(directory, name), "utf8")).toBe(readFileSync(path.join(DIRECTORY, name), "utf8"));
+      }
+    } finally {
+      copy.remove();
+    }
+    // Copying the sources and the three generator runs take a few seconds; well inside ten times that.
+  }, 60000);
+
+  test("bun run engines:generate exits 1 naming the function when a declaration names a SQL grammar function Studio holds none for", () => {
+    const copy = generatingCopy();
+    try {
+      const file = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY, "mysql.json");
+      const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+      const sqlText = {
+        ...committed.sqlText,
+        completion: { ...committed.sqlText.completion, formatSegment: "formatSegment" },
+      };
+      writeFileSync(file, `${JSON.stringify({ ...committed, sqlText }, null, 2)}\n`);
+
+      const refused = copy.generate();
+      expect(refused.exitCode).toBe(1);
+      expect(refused.stderr).toContain('mysql names the function "formatSegment", which Studio holds no function for.');
+    } finally {
+      copy.remove();
+    }
+    // Copying the sources and the generator runs take a few seconds; well inside ten times that.
   }, 60000);
 
   test("SHIPPED_DATABASE_TYPES is the catalog's engines in its order", () => {

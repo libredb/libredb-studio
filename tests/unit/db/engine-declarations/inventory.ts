@@ -209,6 +209,11 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     destination: projected("editor.commitKeyword and editor.consentDeadline"),
   },
   {
+    module: "src/lib/db/engine-catalog/sql-text.generated.ts",
+    name: "BUNDLED_SQL_TEXT",
+    destination: projected("sqlText.readsSqlText, sqlText.grammar, sqlText.updateTarget and sqlText.completion"),
+  },
+  {
     module: "src/lib/db/engine-facets/index.ts",
     name: "ENGINE_FACETS",
     destination:
@@ -236,7 +241,12 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     module: "src/lib/db/sql-grammar/index.ts",
     name: "SQL_GRAMMAR",
     destination:
-      "engine declaration: sqlText, its grammar with each trailing limit clause by its source and flags, redaction, updateTarget and completion, each function named by the slot it fills, with sqlText.redaction the engine's request, which this table grants as Studio's review record of the claim",
+      "engine declaration: sqlText.readsSqlText, sqlText.grammar, sqlText.updateTarget and sqlText.completion, authored in each declaration and composed with Studio's grammar function table, its redaction read from SQL_TEXT_REDACTION",
+  },
+  {
+    module: "src/lib/db/sql-grammar/redaction.ts",
+    name: "SQL_TEXT_REDACTION",
+    destination: claim("sqlText.redaction"),
   },
   {
     module: "src/lib/db/sql-writing/index.ts",

@@ -693,8 +693,8 @@ caller shape-checks for the method and this provider does not answer it.
 
 ### 5.6 SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/document/couchbase/sql-grammar.ts`](../../src/lib/db/providers/document/couchbase/sql-grammar.ts), the `couchbase` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
-Its grammar is `COUCHBASE_GRAMMAR`.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/couchbase.json`](../../src/lib/db/engine-declarations/couchbase.json), from which the `couchbase` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
+Its grammar is the declaration's `sqlText.grammar`.
 Every fact was read off the query service's own lexer (`parser/n1ql/n1ql.nex` in couchbase/query, the 8.0 branch) and the SQL++ language reference (Identifiers, Literals, the LIMIT and OFFSET clauses and the `n1ql.ebnf` and `dql.ebnf` grammar they include), and each was probed on 2026-10-28 on `couchbase:community-8.0.2` over `POST /query/service`, the endpoint the provider sends on:
 
 | Fact | Reading | Probe |

@@ -4,14 +4,13 @@
  * Among the files this guard holds (GRPC_SEAM_HOLDINGS.spark.held: the provider directory, its generator, its unit
  * tests, helpers and live harnesses, which tests/unit/db/etcd/seam-guard.test.ts hands over), each import list below is
  * held exactly, so a stray importer fails by name and a named file that stops importing fails too: who imports
- * @grpc/grpc-js, who imports @grpc/proto-loader, who imports the generated descriptor, who names its file, who
- * imports the generator, and which provider files import the shared transport under src/lib/db/grpc/ (the registry
- * row's transportImporters, which the shared guard's G5 holds too). Two isolation rules hold over the repository: no
- * Spark file imports a module under src/lib/db/providers/ outside its directory but the base class ../sql-base, and no
- * file under src/ outside the directory but the factory, the connection-string parser and the SQL grammar registry
- * imports a Spark module, except that a per-engine contract's registry imports the one Spark module that declares
- * that contract.
- * Every rule is proven both ways: the real sources pass it and a planted file fails it by name.
+ * @grpc/grpc-js, who imports @grpc/proto-loader, who imports the generated descriptor, who names its file, who imports
+ * the generator, and which provider files import the shared transport under src/lib/db/grpc/ (the registry row's
+ * transportImporters, which the shared guard's G5 holds too). Two isolation rules hold over the repository: no Spark
+ * file imports a module under src/lib/db/providers/ outside its directory but the base class ../sql-base, and no file
+ * under src/ outside the directory but the factory and the connection-string parser imports a Spark module, except that
+ * a per-engine contract's registry imports the one Spark module that declares that contract. Every rule is proven both
+ * ways: the real sources pass it and a planted file fails it by name.
  *
  * The pure modules (PURE_MODULES) import no I/O, no logger and no transport, and write nothing to the console
  * at all; that rule is proven both ways too, and so is the allowlist rule: grpc-client.ts names no
@@ -50,7 +49,7 @@ const GENERATOR_IMPORTERS: readonly string[] = [DESCRIPTOR_TEST, HARNESS];
 /** The provider files that import src/lib/db/grpc/, type-only imports included, as the shared guard's G5 counts them. */
 const TRANSPORT_IMPORTERS: readonly string[] = [`${SPARK}/connection-options.ts`, ADAPTER];
 /** The only files under src/ outside the provider directory that may import a Spark module. */
-const OUTSIDE_IMPORTERS_ALLOWED: readonly string[] = ["src/lib/db/factory.ts", "src/lib/db/sql-grammar/index.ts"];
+const OUTSIDE_IMPORTERS_ALLOWED: readonly string[] = ["src/lib/db/factory.ts"];
 /** Each per-engine contract's registry, with the one Spark module, the engine's declaration, it may import. */
 const CONTRACT_REGISTRIES: Readonly<Record<string, string>> = {
   "src/lib/db/connection-string/index.ts": `${SPARK}/connection-string`,

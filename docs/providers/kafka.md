@@ -445,7 +445,7 @@ None: `supportsExplain` is `false`, and the plan view is not offered.
 
 ### 5.7 SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/stream/kafka/sql-grammar.ts`](../../src/lib/db/providers/stream/kafka/sql-grammar.ts), the `kafka` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/kafka.json`](../../src/lib/db/engine-declarations/kafka.json), from which the `kafka` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
 `readsSqlText` is `false`: `kafka` takes a JSON read request (#1088), one object naming a topic and where to read it from, whose strings escape with a backslash as a MongoDB document's do; the provider extends `BaseDatabaseProvider` and parses the text itself.
 The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/kafkaread/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.

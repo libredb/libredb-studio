@@ -16,7 +16,7 @@ const limited = (sql: string) => applyQueryLimit(sql, 500, 0, {}, "spark").sql;
 
 describe("the Spark grammar", () => {
   test("is its own row, not the compatibility default, and its text is SQL", () => {
-    expect(grammar).not.toBe(DEFAULT_SQL_GRAMMAR);
+    expect(grammar).not.toEqual(DEFAULT_SQL_GRAMMAR);
     expect(readsSqlText("spark")).toBe(true);
   });
 
@@ -96,7 +96,7 @@ describe("the Spark grammar", () => {
   });
 
   test("one statement per unit, and BEGIN is the leading keyword of a block the provider refuses", () => {
-    expect(grammar.script).toBe(DEFAULT_SQL_GRAMMAR.script);
+    expect(grammar.script).toEqual(DEFAULT_SQL_GRAMMAR.script);
     expect(readLeadingKeyword("BEGIN SELECT 1; END", grammar)?.keyword).toBe("BEGIN");
     // A BEGIN block holding raw strings still reads BEGIN, and a hint before BEGIN is code, so no keyword leads.
     expect(readLeadingKeyword("BEGIN SELECT r'\\'; DROP TABLE t; SELECT '\\''; END", grammar)?.keyword).toBe("BEGIN");

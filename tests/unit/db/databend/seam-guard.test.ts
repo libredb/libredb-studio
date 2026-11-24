@@ -4,32 +4,26 @@
  * editing this list.
  *
  * 1. No file imports a module under `src/lib/db/providers/` outside this directory, with one exception: `index.ts`
- *    extends `SQLBaseProvider` from `../sql-base` (design 2.1).
- * 2. Only `http-transport.ts` imports `createNodeTransport`, the one socket path, and nothing imports `node:http`,
- *    `node:https` or reaches `fetch` itself.
- * 3. No file outside `routes.ts` holds a string literal whose whole value starts with `/v1/`; a sentence that names a
- *    path inside longer text is not a path literal.
- * 4. Only `connection-options.ts` imports `nodeTlsMaterial` or `plaintextSecretRefusal`.
- * 5. Only `connection-options.ts`, `session.ts` and `http-transport.ts` hold a string literal that starts with an
- *    `x-databend-` header name, in any case.
- * 6. `index.ts` holds no `system.` SQL: every statement it sends comes from `objects.ts` or `introspect.ts`.
- * 7. A value is imported from outside this directory only from `@/lib/db/http/*`, `@/lib/db/errors`,
- *    `@/lib/db/utils/*`, `@/lib/sql/*`, `@/lib/types`, the base classes, `@/lib/db/object-kinds`,
- *    `@/lib/app-version` (I15), `@/lib/db/sql-grammar/shared` (the SQL grammar contract's building blocks, for
- *    `sql-grammar.ts`), `@libredb/provider-sdk/sql` (the SDK's SQL grammar facts, for `sql-grammar.ts`) and the
- *    runtime's `node:crypto`; types are free. The SSH tunnel's route comes from core under
- *    `TUNNEL_ROUTE`, read through `requireTunnelRoute` of `@/lib/db/utils/require-tunnel-route`, so no value of
- *    `@/lib/db/connection-fingerprint` is allowed: this directory frames no route of its own (FND-2 slice 5b).
- *    `migration-ddl.ts`, the engine's migration DDL contract module, may also import values from
- *    `@/lib/db/migration-ddl/*`, its contract's shared building blocks, and
- *    `sql-writing.ts` and its `typed-literals.ts` sibling, the engine's SQL writing contract modules, from
- *    `@/lib/db/sql-writing/*`, and `paste.ts`, the engine's connection string paste reader, from
- *    `@/lib/db/connection-string/shared`.
- * 8. Every value export has an importer other than its own file, so nothing is exported only for a test [12 #15].
- *    An importer is a module under `src/`, or `tests/unit/db/databend/provider-doc.test.ts`, which reads back what
- *    `docs/providers/databend.md` quotes (design section 10); no other test file counts. The doc test reaches only
- *    the names it imports, so a namespace import of it reaches none. A type is part of the contract of the values
- *    that use it, so only values are held.
+ * extends `SQLBaseProvider` from `../sql-base` (design 2.1). 2. Only `http-transport.ts` imports `createNodeTransport`,
+ * the one socket path, and nothing imports `node:http`,    `node:https` or reaches `fetch` itself. 3. No file outside
+ * `routes.ts` holds a string literal whose whole value starts with `/v1/`; a sentence that names a    path inside
+ * longer text is not a path literal. 4. Only `connection-options.ts` imports `nodeTlsMaterial` or
+ * `plaintextSecretRefusal`. 5. Only `connection-options.ts`, `session.ts` and `http-transport.ts` hold a string literal
+ * that starts with an    `x-databend-` header name, in any case. 6. `index.ts` holds no `system.` SQL: every statement
+ * it sends comes from `objects.ts` or `introspect.ts`. 7. A value is imported from outside this directory only from
+ * `@/lib/db/http/*`, `@/lib/db/errors`,    `@/lib/db/utils/*`, `@/lib/sql/*`, `@/lib/types`, the base classes,
+ * `@/lib/db/object-kinds`,    `@/lib/app-version` (I15) and the runtime's `node:crypto`; types are free. The SSH
+ * tunnel's route comes from core under    `TUNNEL_ROUTE`, read through `requireTunnelRoute` of
+ * `@/lib/db/utils/require-tunnel-route`, so no value of    `@/lib/db/connection-fingerprint` is allowed: this directory
+ * frames no route of its own (FND-2 slice 5b).    `migration-ddl.ts`, the engine's migration DDL contract module, may
+ * also import values from    `@/lib/db/migration-ddl/*`, its contract's shared building blocks, and    `sql-writing.ts`
+ * and its `typed-literals.ts` sibling, the engine's SQL writing contract modules, from    `@/lib/db/sql-writing/*`, and
+ * `paste.ts`, the engine's connection string paste reader, from    `@/lib/db/connection-string/shared`. 8. Every value
+ * export has an importer other than its own file, so nothing is exported only for a test [12 #15].    An importer is a
+ * module under `src/`, or `tests/unit/db/databend/provider-doc.test.ts`, which reads back what
+ * `docs/providers/databend.md` quotes (design section 10); no other test file counts. The doc test reaches only    the
+ * names it imports, so a namespace import of it reaches none. A type is part of the contract of the values    that use
+ * it, so only values are held.
  *
  * Rules 1 and 2 count a type-only import too: they keep modules apart, not values. Module names are resolved as
  * TypeScript resolves them, so an alias counts; a planted module that does not exist yet resolves by its spelling.
@@ -59,9 +53,6 @@ const OUTSIDE_VALUES = [
   SQL_BASE,
   "src/lib/db/object-kinds.ts",
   "src/lib/app-version.ts",
-  "src/lib/db/sql-grammar/shared.ts",
-  // The SDK's SQL grammar facts (`@libredb/provider-sdk/sql`): the grammar row's compatibility default.
-  "packages/provider-sdk/src/sql/",
 ];
 /**
  * The per-engine contract modules, each with the contract module or directory whose shared building blocks it may

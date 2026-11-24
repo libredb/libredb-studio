@@ -1,7 +1,7 @@
 /**
  * Removing an engine's declaration from the admitted set gives exactly what a fresh build from the remaining set gives,
  * in every projection Studio makes of the declarations (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72, M-74,
- * M-75 and M-77).
+ * M-75, M-77 and M-78).
  *
  * A fixture engine, `acmefoo` (tests/helpers/fixture-engine-declaration.ts), is added to the committed declarations and
  * removed again; each projection built without it must equal a fresh build from the committed set and the committed
@@ -21,6 +21,7 @@ import {
   ENGINE_CONNECTION_STRING_MODULE,
   ENGINE_EDITOR_MODULE,
   ENGINE_QUERY_EDITOR_MODULE,
+  ENGINE_SQL_TEXT_MODULE,
   renderCatalog,
   renderConnectionFlags,
   renderConnectionForms,
@@ -28,6 +29,7 @@ import {
   renderConnectionTables,
   renderEditorFacts,
   renderQueryEditorFacts,
+  renderSqlText,
 } from "../../../scripts/generate-engine-catalog";
 import { defaultConnection, savedConnectionNotice, shownConnection } from "@/lib/connection-availability";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
@@ -43,7 +45,10 @@ import {
   projectConnectionTables,
   projectEditorFacts,
   projectQueryEditorFacts,
+  projectSqlText,
+  type SqlTextEntry,
 } from "@/lib/db/engine-catalog/projection";
+import { composeSqlGrammar, SQL_GRAMMAR_FUNCTIONS, sqlGrammarFor } from "@/lib/db/sql-grammar";
 import { unknownTypeSentence } from "@/lib/db/type-id";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { fixtureEngineDeclaration } from "../../helpers/fixture-engine-declaration";
@@ -271,6 +276,48 @@ describe("each projection of the admitted declarations, built with and without a
       expect(Object.keys(facts.queryDialects)).toEqual(Object.keys(built.queryDialects));
       expect(Object.keys(facts.dialectEditors)).toEqual(Object.keys(built.dialectEditors));
       expect(Object.keys(facts.editorLanguages)).toEqual(Object.keys(built.editorLanguages));
+    }
+  });
+
+  test("the SQL text built with the fixture engine holds its entry, and with it removed is exactly a fresh build from the remaining set and the committed module", () => {
+    const shipped = projectSqlText(ADMITTED);
+    const withFixture = projectSqlText([...ADMITTED, FIXTURE]);
+    const entry = withFixture.acmefoo as SqlTextEntry;
+    // The fixture names no grammar function, whatever its base names: PostgreSQL names both completion readers.
+    expect(entry.completion).toEqual({ formatSegment: null, readQuotedQualifier: null });
+    expect(POSTGRES.sqlText.completion.formatSegment).not.toBeNull();
+    // Its own trailing clause after its base's, so its entry is one no shipped engine has.
+    expect(entry.grammar.trailingLimitClauses.at(-1)).toEqual({
+      source: String.raw`\s+WITH\s+ACME\s+HINT\s*$`,
+      flags: "i",
+    });
+    expect(Object.values(shipped)).not.toContainEqual(entry);
+    expect(Object.keys(withFixture)).toHaveLength(ADMITTED.length + 1);
+    // Its row composes with Studio's grammar function table, which holds nothing for it, and the redaction it is given,
+    // since the record has no row for it.
+    const row = composeSqlGrammar(FIXTURE.id as DatabaseType, entry, { kind: "none" }, SQL_GRAMMAR_FUNCTIONS);
+    expect(row.redaction).toEqual({ kind: "none" });
+    expect(row.grammar.trailingLimitClauses.at(-1)?.test("SELECT 1 WITH ACME HINT")).toBe(true);
+    expect(row.completion).toEqual({ formatSegment: null, readQuotedQualifier: null });
+
+    const removed = projectSqlText([...ADMITTED, FIXTURE].filter((d) => d.id !== FIXTURE.id));
+    expect(removed).toEqual(shipped);
+    expect(Object.hasOwn(removed, FIXTURE.id)).toBe(false);
+    expect(Object.keys(removed)).toEqual([...SHIPPED_DATABASE_TYPES]);
+    expect(renderSqlText(removed)).toBe(readFileSync(path.join(ROOT, ENGINE_SQL_TEXT_MODULE), "utf8"));
+    // Nothing is kept on purpose: the grammar composed from the committed module refuses the fixture's id by name.
+    expect(() => sqlGrammarFor(FIXTURE.id)).toThrow(unknownTypeSentence(FIXTURE.id));
+  });
+
+  test("the SQL text is the same whatever order the declarations are admitted in", () => {
+    const set = [...ADMITTED, FIXTURE];
+    const built = projectSqlText(set);
+
+    for (const order of [[...set].reverse(), shuffled(set)]) {
+      const texts = projectSqlText(order);
+      expect(texts).toEqual(built);
+      expect(Object.keys(texts)).toEqual(Object.keys(built));
+      expect(JSON.stringify(texts)).toBe(JSON.stringify(built));
     }
   });
 

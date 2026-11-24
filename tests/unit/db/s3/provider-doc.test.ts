@@ -688,7 +688,6 @@ const BROWSER_SET: ReadonlySet<string> = new Set([
   "shapes.ts",
   "headers.ts",
   "labels.ts",
-  "sql-grammar.ts",
   "editor-syntax.ts",
   "editor-completions.ts",
   "editor-language.ts",

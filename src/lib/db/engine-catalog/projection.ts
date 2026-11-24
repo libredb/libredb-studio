@@ -1,7 +1,8 @@
 /**
  * Studio's engine catalog, its data-only connection tables, its connection forms, its connection strings, each
- * engine's execution UI and fence aliases, and its query dialects, tab type editors and editor languages as projections
- * of a set of admitted engine declarations (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72, M-74, M-75 and M-77).
+ * engine's execution UI and fence aliases, its query dialects, tab type editors and editor languages, and each engine's
+ * SQL text as projections of a set of admitted engine declarations (docs/providers/CONTRACT.md, clauses M-70, M-71,
+ * M-72, M-74, M-75, M-77 and M-78).
  *
  * The catalog answers which engines Studio ships, whether each is an engine the user already runs (`external`) or the
  * store Studio carries with it (`embedded`), and how long the host waits for an open of each: one entry per declaration,
@@ -38,8 +39,17 @@
  * different accent or console are refused by name, naming both engines, before any entry is built. The dialect, tab
  * type and Monaco language vocabularies are closed, so the SDK's validator refuses a value outside them.
  *
+ * The SQL text answers, per engine, whether its statement text is SQL, its grammar facts, its update target words and
+ * the names of its completion readers (`sqlText.readsSqlText`, `grammar`, `updateTarget` and `completion`), each as the
+ * declaration states it: a clause as its source and flags, each word list a list, each function as its name, which
+ * src/lib/db/sql-grammar/index.ts binds to Studio's own function when it composes each engine's grammar row. Its
+ * `sqlText.redaction` is a claim, so it is never projected: src/lib/db/sql-grammar/redaction.ts is Studio's record of
+ * it.
+ *
  * Every member a projection reads is one a declaration authors (scripts/generate-engine-catalog.ts,
- * `AUTHORED_MEMBERS`), so none reads anything the declaration generator writes, and none of them is a claim. Each
+ * `AUTHORED_MEMBERS`), so none reads anything the declaration generator writes, and none of them is a claim but the
+ * confirmation gate's two, `sqlText.readsSqlText` and an exempt form of the grammar, which the gate counts only where
+ * Studio's review record lists them (docs/providers/CONTRACT.md, clause S-8). Each
  * takes `AuthoredDeclaration`, those members alone: an admitted `EngineDeclaration` is one, and so are the authored
  * members the catalog generator's `--write` reads from a file whose generated members are not yet rewritten.
  *
@@ -50,8 +60,8 @@
  *
  * `scripts/generate-engine-catalog.ts` projects the committed declarations' authored members here and renders the
  * results into `catalog.generated.ts`, `connection.generated.ts`, `connection-flags.generated.ts`,
- * `connection-form.generated.ts`, `connection-string.generated.ts`, `editor.generated.ts` and
- * `query-editor.generated.ts`, the modules Studio's readers read, and holds
+ * `connection-form.generated.ts`, `connection-string.generated.ts`, `editor.generated.ts`,
+ * `query-editor.generated.ts` and `sql-text.generated.ts`, the modules Studio's readers read, and holds
  * each module to the projection of the set it admits through the SDK's validator. A loader that admits a provider
  * package at run time projects its set through these same functions.
  */
@@ -67,6 +77,7 @@ import type {
   MonacoLanguageId,
   QueryDialect,
   QueryLanguage,
+  SqlText,
 } from "@libredb/provider-sdk/manifest";
 
 type Connection = EngineDeclaration["connection"];
@@ -108,7 +119,22 @@ export interface AuthoredDeclaration {
     readonly dialect: Editor["dialect"];
     readonly language: Editor["language"];
   };
+  readonly sqlText: SqlTextEntry;
 }
+
+/**
+ * One engine's SQL text as its declaration authors it: every member of the SDK's `SqlText` but its `redaction`, which
+ * is a claim. A clause is its source and flags, each word list a list and each function its name.
+ */
+export interface SqlTextEntry {
+  readonly readsSqlText: SqlText["readsSqlText"];
+  readonly grammar: SqlText["grammar"];
+  readonly updateTarget: SqlText["updateTarget"];
+  readonly completion: SqlText["completion"];
+}
+
+/** The SQL text: one frozen entry per engine id, keyed in ascending code-unit order of the ids. */
+export type SqlTexts = Readonly<Record<string, SqlTextEntry>>;
 
 /** One engine's catalog entry: where the engine lives and its connect budget, null for the host's default. */
 export interface CatalogEntry {
@@ -521,4 +547,23 @@ export function projectQueryEditorFacts(declarations: readonly AuthoredDeclarati
     dialectEditors: inKeyOrder(valuesOf(editors)),
     editorLanguages: inKeyOrder(valuesOf(languages)),
   });
+}
+
+/**
+ * The SQL text of `declarations`, each entry read from `sqlText.readsSqlText`, `grammar`, `updateTarget` and
+ * `completion`, members every declaration authors, the grammar in the declaration's own member order. No entry holds
+ * the declaration's `sqlText.redaction`: it is a claim, and Studio's record of it is
+ * src/lib/db/sql-grammar/redaction.ts.
+ *
+ * @throws {Error} When two declarations state the same `id`, naming it.
+ */
+export function projectSqlText(declarations: readonly AuthoredDeclaration[]): SqlTexts {
+  return recordOf(inIdOrder(declarations), ({ sqlText }) =>
+    frozenCopy<SqlTextEntry>({
+      readsSqlText: sqlText.readsSqlText,
+      grammar: sqlText.grammar,
+      updateTarget: sqlText.updateTarget,
+      completion: sqlText.completion,
+    }),
+  );
 }

@@ -1001,8 +1001,8 @@ Druid's planner publishes none.
 
 ### 5.7 SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/druid/sql-grammar.ts`](../../src/lib/db/providers/sql/druid/sql-grammar.ts), the `druid` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
-Its grammar is `DRUID_GRAMMAR`.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/druid.json`](../../src/lib/db/engine-declarations/druid.json), from which the `druid` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
+Its grammar is the declaration's `sqlText.grammar`.
 Druid SQL is parsed by Apache Calcite 1.37 (`calcite.version` in Druid's `pom.xml`), from the `Parser.jj` Druid generates in `sql/src/main/codegen/templates/` at the `druid-37.0.0` tag, and `DruidSqlParser.PARSER_CONFIG` sets `Quoting.DOUBLE_QUOTE`, so the lexer runs in its `DQID` state: `"…"` quotes a name, and neither `[` nor a backtick does.
 Every fact was read off that lexer and grammar, and each was probed on 2026-10-28 on `apache/druid:37.0.0` over `POST /druid/v2/sql` on the Router, the endpoint the provider sends on:
 
@@ -2135,7 +2135,7 @@ The operations profile sends no statement, so it opens without the check and pla
 ### 15.3 The statement path
 
 Only one statement whose first keyword is `SELECT` or `WITH` is sent, refused before anything is sent otherwise (`druidAgentStatementRefusal`), because a `SET` before a statement would select another engine and replace the request's query id.
-The text is read with the Druid SQL grammar row ([`sql-grammar.ts`](../../src/lib/db/providers/sql/druid/sql-grammar.ts)): `--`, `//` and block comments and whitespace skipped, string literals and double-quoted names opaque, a hint and an array's brackets read as code, and a code semicolon ending the statement with only comments and whitespace after it.
+The text is read with the Druid SQL grammar row ([`druid.json`](../../src/lib/db/engine-declarations/druid.json)): `--`, `//` and block comments and whitespace skipped, string literals and double-quoted names opaque, a hint and an array's brackets read as code, and a code semicolon ending the statement with only comments and whitespace after it.
 Capture 02 measures each reading against the server: block comments do not nest, a `--` and a `//` comment end at a line feed and at a lone carriage return but not at a form feed, U+2028 or U+0085, the server runs `SELECT 1 AS a;;` and refuses a second statement unless every statement before the last is a `SET`, and `$` is a letter in a name.
 Two readings a reader can differ on are refused before the walk: a carriage return inside a `--` or `//` comment with more text after it, and a `$$` run, which the span reader reads as a string and Druid as a name.
 Text ending inside a comment, a string or a name is refused; that includes a plain literal ending in a backslash, which Druid closes (`'a\'` answers `a\`) and the reader cannot place, and an `E'...'` literal with an escaped quote.

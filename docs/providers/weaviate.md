@@ -268,7 +268,7 @@ Every route is a read, so nothing asks for confirmation; the browser runs the sa
 
 ### 5.9 SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/vector/weaviate/sql-grammar.ts`](../../src/lib/db/providers/vector/weaviate/sql-grammar.ts), the `weaviate` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/weaviate.json`](../../src/lib/db/engine-declarations/weaviate.json), from which the `weaviate` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
 `readsSqlText` is `false`: `weaviate` takes one Weaviate console request, a `METHOD /v1/path` line and one JSON body, whose strings escape with a backslash and where `//` opens a comment outside a string; the provider parses it with the shared console parser.
 The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/weaviateapi/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.

@@ -29,7 +29,7 @@ silence. A second place that decides when a walk is over is a second place that 
 
 ### 1.1 SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/network/snmp/sql-grammar.ts`](../../src/lib/db/providers/network/snmp/sql-grammar.ts), the `snmp` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/snmp.json`](../../src/lib/db/engine-declarations/snmp.json), from which the `snmp` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
 `readsSqlText` is `false`: the console takes one of the four commands `get`, `next`, `walk` and `table`, which the provider parses before the socket is touched, so no span of it is SQL.
 The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/snmpget/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.

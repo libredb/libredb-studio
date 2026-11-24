@@ -447,6 +447,14 @@ describe("webviewViolations", () => {
     ]);
   });
 
+  it("keeps the SDK's SQL grammar entry, which Studio's SQL readers import, and refuses any other SDK file no row reaches", () => {
+    const sdkSql = ["../packages/provider-sdk/src/sql/index.ts", "../packages/provider-sdk/src/sql/grammar.ts"];
+    assert.deepEqual(webviewViolations(webview(sdkSql), wd), []);
+    assert.deepEqual(webviewViolations(webview(["../packages/provider-sdk/src/manifest/index.ts"]), wd), [
+      "packages/provider-sdk/src/manifest/index.ts: the webview bundles a provider file that no sql-grammar row reaches",
+    ]);
+  });
+
   it("keeps a package file a sql-grammar row reaches, through a provider file or another package file", () => {
     const viaProvider = "../packages/planted/src/grammar.ts";
     const viaPackage = "../packages/planted/src/keywords.ts";

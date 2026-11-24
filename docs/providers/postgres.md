@@ -1638,7 +1638,7 @@ and, **only for `SELECT`/CTE-`SELECT` queries that don't already have a `LIMIT`*
   annotated `SELECT` classified as an unknown statement type and returned **every** row while the
   UI badge reported it as not limited (#275).
 - The statement's characters are read under **PostgreSQL's** grammar, which the provider passes down
-  from its own `type` ([`postgres-sql-grammar.ts`](../../src/lib/db/providers/sql/postgres-sql-grammar.ts)). PostgreSQL has exactly two
+  from its own `type` ([`postgres.json`](../../src/lib/db/engine-declarations/postgres.json)). PostgreSQL has exactly two
   comment forms, `--` and `/* … */`; `#` is an operator character (`#>` and `#>>` walk a jsonb path,
   `#-` deletes one, `##` is geometric, `#` is integer XOR). The shared reader used to approximate
   that with "a comment unless the next character makes an operator", which kept everyday jsonb queries
@@ -1913,7 +1913,7 @@ Before this, the same file stopped at its first row with `ERROR: malformed array
 
 The editor's confirmation gate asks before the shared destructive keywords, `MERGE` among them ([query-optimization.md](../editor/query-optimization.md#destructive-statement-confirmation)).
 On this dialect it also asks before a `DO` block, whatever the block does: the block's code is a literal, `$$ ... $$` or `'...'`, which the gate does not read.
-The grammar row's `confirmCodeForms` names `DO` followed by a body and `DO LANGUAGE` ([`postgres-sql-grammar.ts`](../../src/lib/db/providers/sql/postgres-sql-grammar.ts)), so the `DO` of `INSERT ... ON CONFLICT DO NOTHING` and of `CREATE RULE ... DO INSTEAD`, which a word follows, does not ask.
+The declaration's `sqlText.grammar.confirmCodeForms` names `DO` followed by a body and `DO LANGUAGE` ([`postgres.json`](../../src/lib/db/engine-declarations/postgres.json)), so the `DO` of `INSERT ... ON CONFLICT DO NOTHING` and of `CREATE RULE ... DO INSTEAD`, which a word follows, does not ask.
 `explainExecutesWithAnalyze` is set, because `EXPLAIN ANALYZE` (and `EXPLAIN (ANALYZE, …)`) runs the explained statement: the gate strips the option and asks about what remains when `ANALYZE` is on. A plain `EXPLAIN` only plans, and so does `ANALYZE` set to a boolean false (`false`, `off`, `no`, `0` and their accepted prefixes) or to an integer literal of value 0 (`0x0`, `0b0`, `0o0`, `0_0`). A nonzero literal (`0x1`, `0b1`, `0o1`, `0_1`) executes, so it asks.
 CockroachDB shares this type id and this grammar.
 
@@ -1921,15 +1921,20 @@ CockroachDB shares this type id and this grammar.
 
 ### 5.9 SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/postgres-sql-grammar.ts`](../../src/lib/db/providers/sql/postgres-sql-grammar.ts), the `postgres` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
-Its grammar is `POSTGRES_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/postgres.json`](../../src/lib/db/engine-declarations/postgres.json), from which the `postgres` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
+Its grammar is the declaration's `sqlText.grammar`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
 `#` is an operator character (`#>`, `#>>` and `#-` walk or delete a jsonb path), and the only comment forms are `--` and the block form.
 Block comments nest, per the PostgreSQL manual (4.1.5 Comments, checked 2026-08-05).
 `[...]` is a subscript and array constructors nest (manual 4.2.3 and 4.2.12), established from the manual because the undeterminable reading prompted on `ARRAY[[1,2],[3,4]]` and `j['a]b']`, everyday reads in this dialect.
-`//` is code on 18, and the most explicit of the refusals: `SELECT 1 // 2` is "operator does not exist: integer // integer", so `//` is an operator name here.
+`//` is code on 18, and the most explicit of the refusals: `SELECT 1 // 2` is "operator does not exist: integer // integer", so `//` is an operator name here, and `SELECT 1 AS a // note` is "syntax error at or near \"//\"".
+A script keeps the default, established: a routine body is a literal (`$$ ... $$` or `'...'`), which the span reader already holds whole, so no `;` inside one is code.
 The row bound goes before Materialize's `AS OF [AT LEAST] <t>`, which shares this type id (E2E pass of 2026-10-03/04, #1398): `SELECT * FROM ui_mv AS OF AT LEAST 0` with the bound appended is `Expected end of statement, found LIMIT`, and with the bound before the clause it returns rows.
-The row bound also goes before a locking clause, which PostgreSQL's SELECT grammar takes on either side of it (`for_locking_clause opt_select_limit` and `select_limit opt_for_locking_clause`, gram.y): the four strengths `FOR UPDATE`, `FOR NO KEY UPDATE`, `FOR SHARE` and `FOR KEY SHARE`, each optionally `OF tbl[, tbl]` with double-quoted names, `NOWAIT` or `SKIP LOCKED`, are stripped and re-attached after the injected bound, and a bound that already stands before one is respected rather than doubled past it (#1964). CockroachDB shares this type id and this grammar.
+The timestamp is a number or a single-quoted literal, the forms the clause's own grammar documents, so `AS of` as an alias (its next word is a name) and an `AS OF` inside a subquery (a `)` follows the timestamp) never match; PostgreSQL and RisingWave share this row and have no such clause, and a statement of theirs ending in these words is one the server refuses bound or unbound.
+The row bound also goes before a locking clause, which PostgreSQL's SELECT grammar takes on either side of it (`for_locking_clause opt_select_limit` and `select_limit opt_for_locking_clause`, gram.y): the four strengths `FOR UPDATE`, `FOR NO KEY UPDATE`, `FOR SHARE` and `FOR KEY SHARE`, each optionally `OF tbl[, tbl]` with double-quoted names, `NOWAIT` or `SKIP LOCKED`, are stripped and re-attached after the injected bound, and a bound that already stands before one is respected rather than doubled past it (#1964).
+Each pass strips one clause from the end backward, so a chain such as `FOR UPDATE OF t1 FOR SHARE OF t2` keeps its order, and `NOWAIT` and `SKIP LOCKED` are options of the clause rather than clauses of their own.
+A name in the `OF` list is a bare token, which may carry a `$` after its first character, or a double-quoted name; the bare token excludes quotes, brackets, commas and `)`, so a literal or a quoted name that merely ends in the clause words (`WHERE note = "x FOR UPDATE OF t"`) and a locking clause inside a subquery are never the statement's own tail, and a dollar-quoted body ending in them (`SELECT $$x FOR UPDATE OF t$$`) is held whole by the span reader, so the bound lands after the closing `$$`. CockroachDB shares this type id and this grammar.
 Completion quotes a catalog name by PostgreSQL's `quote_ident` rule, with the keyword set taken from PostgreSQL 18's `kwlist.h`: a name stays bare only when it is lower case and not a keyword other than an unreserved one, and a qualifier written in double quotes before the dot is read back with its doubled quotes undone.
+The two completion readers are `POSTGRES_FORMAT_SEGMENT` and `POSTGRES_READ_QUOTED_QUALIFIER` in [`src/lib/db/providers/sql/postgres-sql-grammar.ts`](../../src/lib/db/providers/sql/postgres-sql-grammar.ts), the functions the declaration names at `sqlText.completion` and Studio's grammar function table binds.
 Only PostgreSQL completions introduce quoted table names; every other dialect quotes through the connection's capabilities.
 `explainExecutesWithAnalyze` is `true`: `EXPLAIN ANALYZE` executes, and the confirmation gate reads the explained statement ([§5.8](#58-the-confirmation-gate)).
 `readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.

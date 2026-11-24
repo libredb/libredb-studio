@@ -298,14 +298,14 @@ const FIRST_KEYWORD = /^(?:select|with)(?![\w$@:])/i;
  * it (capture 03), a SET SESSION or USE would change the session, and CALL, EXECUTE and PREPARE run what the text does
  * not show, so only a SELECT is sent.
  *
- * The text is walked with the shared span reader under Trino's registered grammar row (`sql-grammar.ts`), so `--` and
- * block comments and whitespace are skipped, string literals and double-quoted names are opaque, and `#` and `//` are
- * code, as Trino reads them. The first code character must open SELECT or WITH; a code semicolon ends the statement,
- * and only comments and whitespace may follow it. Text that ends inside a comment, string or quoted name cannot be
- * bounded and is refused. A carriage return inside a `--` comment with more text after it is refused, since readers
- * differ on whether it ends the comment, and so is a `$$` run, which the span reader reads as a string and Trino does
- * not. A statement that names the system catalog is refused too (`namesSystemCatalog`): the read-only access control
- * lets any user read every other user's query text in `system.runtime.queries`.
+ * The text is walked with the shared span reader under Trino's registered grammar row (`resolveSqlGrammar`), so `--`
+ * and block comments and whitespace are skipped, string literals and double-quoted names are opaque, and `#` and `//`
+ * are code, as Trino reads them. The first code character must open SELECT or WITH; a code semicolon ends the
+ * statement, and only comments and whitespace may follow it. Text that ends inside a comment, string or quoted name
+ * cannot be bounded and is refused. A carriage return inside a `--` comment with more text after it is refused, since
+ * readers differ on whether it ends the comment, and so is a `$$` run, which the span reader reads as a string and
+ * Trino does not. A statement that names the system catalog is refused too (`namesSystemCatalog`): the read-only
+ * access control lets any user read every other user's query text in `system.runtime.queries`.
  */
 export function trinoAgentStatementRefusal(sql: string): string | null {
   const grammar = resolveSqlGrammar("trino");

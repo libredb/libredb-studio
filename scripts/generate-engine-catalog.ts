@@ -14,13 +14,15 @@
  * src/lib/db/engine-catalog/query-editor.generated.ts, the query dialects, the tab type editors and the editor languages
  * (clause M-77), which src/lib/db/query-dialects.ts, src/lib/editor/dialect-editors.ts and
  * src/lib/db/editor-language/index.ts read, so neither the server routes that read a dialect row nor the execution UI's
- * readers load another's records.
+ * readers load another's records; and src/lib/db/engine-catalog/sql-text.generated.ts, each engine's SQL text (clause
+ * M-78), which only src/lib/db/sql-grammar/index.ts reads, so no other module's readers load its grammar data.
  *
  * Admission happens here, once for every module, in `--check`: every `.json` file of src/lib/db/engine-declarations
  * is parsed and admitted through the SDK's `compileManifestValidator`, which checks the SHA-256 of the schema's bytes
  * before it compiles them, and each module is held to the projection of the admitted set with `projectCatalog`,
- * `projectConnectionTables`, `projectConnectionForms`, `projectConnectionStrings`, `projectEditorFacts` and
- * `projectQueryEditorFacts` (src/lib/db/engine-catalog/projection.ts). `--write` projects each file's authored members, `AUTHORED_MEMBERS`,
+ * `projectConnectionTables`, `projectConnectionForms`, `projectConnectionStrings`, `projectEditorFacts`,
+ * `projectQueryEditorFacts` and `projectSqlText` (src/lib/db/engine-catalog/projection.ts). `--write` projects each
+ * file's authored members, `AUTHORED_MEMBERS`,
  * without admitting the whole file: the validator holds an authored member to members the declaration generator writes
  * (each host path field to `connection.seedOnly`), so a file whose authored members just changed is refused until that
  * generator has rewritten the rest. The command refuses, by name, an entry that is not a `.json` file, a file that is
@@ -49,8 +51,8 @@
  * validator's refusal sentences when the authored members leave the declaration inconsistent, such as a placeable field
  * with no placement in the authored dialog, or when they and Studio's tables still disagree, such as a host path field
  * Studio's record lists that the authored seed-only fields no longer hold. A function name Studio holds no function for
- * fails the run earlier, at the declaration generator: it loads the connection form and the connection string index,
- * which compose every engine from the modules `--write` just wrote and refuse such a name by name.
+ * fails the run earlier, at the declaration generator: it loads the connection form, the connection string index and
+ * the SQL grammar, which compose every engine from the modules `--write` just wrote and refuse such a name by name.
  *
  * Run: bun scripts/generate-engine-catalog.ts --write | --check [--out <directory>]
  * --write writes every module, --check exits 1 naming each module that is missing or is not what the declarations
@@ -68,12 +70,14 @@ import {
   type EditorFacts,
   type EngineCatalog,
   type QueryEditorFacts,
+  type SqlTexts,
   projectCatalog,
   projectConnectionForms,
   projectConnectionStrings,
   projectConnectionTables,
   projectEditorFacts,
   projectQueryEditorFacts,
+  projectSqlText,
 } from "../src/lib/db/engine-catalog/projection";
 
 /** The declarations' directory in the repository. */
@@ -109,6 +113,11 @@ export const ENGINE_EDITOR_MODULE = "src/lib/db/engine-catalog/editor.generated.
  * src/lib/db/editor-language/index.ts reads.
  */
 export const ENGINE_QUERY_EDITOR_MODULE = "src/lib/db/engine-catalog/query-editor.generated.ts";
+
+/**
+ * The generated SQL text module in the repository: each engine's SQL text, which src/lib/db/sql-grammar/index.ts reads.
+ */
+export const ENGINE_SQL_TEXT_MODULE = "src/lib/db/engine-catalog/sql-text.generated.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
 const SCHEMA_FILE = path.join(REPO_ROOT, "packages/provider-sdk/src/manifest/manifest.schema.json");
@@ -156,11 +165,16 @@ export const AUTHORED_MEMBERS = [
   "editor.fenceAliases",
   "editor.dialect",
   "editor.language",
+  "sqlText.readsSqlText",
+  "sqlText.grammar",
+  "sqlText.updateTarget",
+  "sqlText.completion",
 ] as const;
 
 type Connection = EngineDeclaration["connection"];
 type ConnectionStringOffer = Connection["connectionString"];
 type Editor = EngineDeclaration["editor"];
+type SqlText = EngineDeclaration["sqlText"];
 
 /** One declaration's authored members, as `authoredMembersOf` reads them, nested as the declaration nests them. */
 export type AuthoredMembers = AuthoredDeclaration;
@@ -223,6 +237,12 @@ export function authoredMembersOf(value: unknown, file: string): AuthoredMembers
       fenceAliases: read("editor.fenceAliases") as Editor["fenceAliases"],
       dialect: read("editor.dialect") as Editor["dialect"],
       language: read("editor.language") as Editor["language"],
+    },
+    sqlText: {
+      readsSqlText: read("sqlText.readsSqlText") as boolean,
+      grammar: read("sqlText.grammar") as SqlText["grammar"],
+      updateTarget: read("sqlText.updateTarget") as SqlText["updateTarget"],
+      completion: read("sqlText.completion") as SqlText["completion"],
     },
   };
   if (`${authored.id}.json` !== file) {
@@ -603,6 +623,19 @@ export function renderQueryEditorFacts(facts: QueryEditorFacts): string {
   ].join("\n");
 }
 
+/**
+ * The text of the generated SQL text module for `texts`: a header, type imports only, and one frozen record, read by
+ * src/lib/db/sql-grammar/index.ts.
+ */
+export function renderSqlText(texts: SqlTexts): string {
+  return renderedEntryModule(
+    "SqlTextEntry",
+    "Each engine's SQL text but its redaction, a claim, read by `SQL_GRAMMAR` (docs/providers/CONTRACT.md, M-78).",
+    "export const BUNDLED_SQL_TEXT",
+    texts,
+  );
+}
+
 /** The current text of `file`, or null when it does not exist. */
 function textOf(file: string): string | null {
   try {
@@ -651,6 +684,7 @@ function main(argv: readonly string[]): number {
       file: fileOf(ENGINE_QUERY_EDITOR_MODULE),
       text: renderQueryEditorFacts(projectQueryEditorFacts(declarations)),
     },
+    { file: fileOf(ENGINE_SQL_TEXT_MODULE), text: renderSqlText(projectSqlText(declarations)) },
   ];
 
   if (mode === "--check") {

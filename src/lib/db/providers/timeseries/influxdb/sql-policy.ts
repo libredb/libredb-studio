@@ -6,8 +6,8 @@
  * SQL write form on the query route) and the closed route table is the second; this policy is the
  * defence in depth before both, so a refused text is never sent.
  *
- * Every reader below runs under `resolveSqlGrammar("influxdb3")`, the measured DataFusion grammar of
- * `influxdb3-sql-grammar.ts` beside this file, so this module, the statement splitter, the row limiter and the
+ * Every reader below runs under `resolveSqlGrammar("influxdb3")`, the measured DataFusion grammar the
+ * influxdb3 declaration states at `sqlText.grammar`, so this module, the statement splitter, the row limiter and the
  * confirmation gate cannot disagree about where a comment or a literal ends. It reads the leading
  * keyword itself rather than through `src/lib/explain/select-prefix.ts`, whose vocabulary is the
  * EXPLAIN wrapper's and not this type's.

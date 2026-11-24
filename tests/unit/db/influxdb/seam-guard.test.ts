@@ -18,9 +18,8 @@
  * 6. Each layer value-imports only what contract section 1 lets it (types are free): `connection-options.ts` may take
  *    the value `TUNNEL_FAR_END` from `@/lib/types` (the Qdrant shape, architect amendment from T09), and a file of no
  *    layer fails, so a new file is placed in one on purpose. The browser and InfluxQL server layers
- *    may take values from the influxql family module, which holds the lexer and the policy they read. The two SQL
- *    grammar modules (engine contract spec 5.3) are a layer of their own, which value-imports only the contract's
- *    building blocks under `src/lib/db/sql-grammar/` and the SDK's SQL grammar facts (`@libredb/provider-sdk/sql`).
+ *    may take values from the influxql family module, which holds the lexer and the policy they read. Each type-id's
+ *    SQL grammar is its declaration's (docs/providers/CONTRACT.md, clause M-78), so no module here declares one.
  *    Each type-id's migration DDL module (`<type-id>-migration-ddl.ts`) is a contract layer of its own: it may
  *    import values only from `@/lib/db/migration-ddl/*`, its contract's shared building blocks, and from none of
  *    this directory's modules.
@@ -60,7 +59,6 @@ const BROWSER = [
   "influxql-editor-language",
 ];
 const INFLUXQL_SERVER = ["influxql-results", "influxql-objects", "influxql-provider", "influxql-agent-read"];
-const GRAMMAR = ["influxdb-sql-grammar", "influxdb3-sql-grammar"];
 /** Each type-id's declaration of a per-engine contract, which reads its contract and nothing of this directory. */
 const CONTRACT = [
   "influxdb-migration-ddl",
@@ -76,7 +74,7 @@ const WRITING = ["influxdb-sql-writing", "influxdb3-sql-writing"];
  */
 const FAMILY = ["lexer", "policy", "destructive", "agent-statement"];
 
-type Layer = "connection" | "browser" | "influxql-server" | "sql" | "grammar" | "contract" | "writing" | "family";
+type Layer = "connection" | "browser" | "influxql-server" | "sql" | "contract" | "writing" | "family";
 
 const canonical = (path: string): string => realpathSync.native(path).split("\\").join("/");
 const relative = (path: string): string => path.slice(canonical(ROOT).length + 1);
@@ -90,7 +88,6 @@ function layerOf(file: string): Layer | undefined {
   if (SHARED.includes(name) || name === "index") return "connection";
   if (BROWSER.includes(name)) return "browser";
   if (INFLUXQL_SERVER.includes(name)) return "influxql-server";
-  if (GRAMMAR.includes(name)) return "grammar";
   if (WRITING.includes(name)) return "writing";
   if (name.startsWith("sql-")) return "sql";
   if (CONTRACT.includes(name)) return "contract";
@@ -147,8 +144,6 @@ const OUTSIDE_VALUES: Readonly<Record<Layer, readonly string[]>> = {
     "src/lib/db/read-only-budget.ts",
     "src/lib/db/write-reach.ts",
   ],
-  // The grammar row reads the registry's contract and the SDK's SQL grammar facts (`@libredb/provider-sdk/sql`).
-  grammar: ["src/lib/db/sql-grammar/", "packages/provider-sdk/src/sql/"],
   contract: ["src/lib/db/migration-ddl/"],
   writing: ["src/lib/db/sql-writing/"],
   family: [`${FAMILY_DIR}/`],
@@ -167,7 +162,6 @@ function insideAllowed(file: string, layer: Layer, target: string): boolean {
       return shared || name.startsWith("influxql-");
     case "sql":
       return shared || name.startsWith("sql-");
-    case "grammar":
     case "contract":
     case "writing":
     case "family":

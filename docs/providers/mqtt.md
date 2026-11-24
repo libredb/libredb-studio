@@ -366,7 +366,7 @@ requires a number and there is no count a broker publishes.
 
 ### 5.1 SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/keyvalue/mqtt/sql-grammar.ts`](../../src/lib/db/providers/keyvalue/mqtt/sql-grammar.ts), the `mqtt` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/mqtt.json`](../../src/lib/db/engine-declarations/mqtt.json), from which the `mqtt` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
 `readsSqlText` is `false`: there is no query console in this version ([§2.1](#21-where-it-sits)), the Keys panel is the surface, so no statement text of this engine is SQL.
 The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/mqttread/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.

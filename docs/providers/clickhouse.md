@@ -466,7 +466,7 @@ favour not rewriting: rewriting wrongly turns a working statement into a syntax 
 it alone at worst returns more rows than the page size.
 
 Both the detection and the inherited limiter read the statement under **ClickHouse's** grammar, which
-this provider passes down from its own `type` ([`sql-grammar.ts`](../../src/lib/db/providers/sql/clickhouse/sql-grammar.ts)).
+this provider passes down from its own `type` ([`clickhouse.json`](../../src/lib/db/engine-declarations/clickhouse.json)).
 ClickHouse's syntax reference lists `#` and `#!` beside `--` as single-line comment forms, and the
 shared reader used to guess PostgreSQL's rule instead — a hash followed by `>`, `-` or `#` is an
 operator — so a comment written that way was read as SQL, and an ordinary one at the end of a
@@ -883,10 +883,10 @@ used to kill another session's statement by guessing its id.
 
 ### 5.5 SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/clickhouse/sql-grammar.ts`](../../src/lib/db/providers/sql/clickhouse/sql-grammar.ts), the `clickhouse` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
-Its grammar is `CLICKHOUSE_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/clickhouse.json`](../../src/lib/db/engine-declarations/clickhouse.json), from which the `clickhouse` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
+Its grammar is the declaration's `sqlText.grammar`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
 `#` and `#!` open a line comment beside `--`, and `[...]` is an array literal or a subscript that nests, both from the ClickHouse SQL syntax reference (checked 2026-08-05), since ClickHouse is reached over HTTP and has no driver artifact to check them against.
-That `[...]` is not a name quote is corroborated inside this repository: `identifier.ts` quotes this dialect's names with `"..."`.
+Both halves are corroborated inside this repository: that `[...]` is an array literal by the provider suite's own live-verified fixture (`WITH [1, 2, 3] AS arr SELECT arrayJoin(arr)`), and that it is not a name quote by `identifier.ts`, which quotes this dialect's names with `"..."`; the nesting half rests on the reference alone.
 Block comments nest, as the same reference states with a nested example.
 `//` is a line comment, the one fact established by probe, on 26.7.1 over HTTP: `SELECT 1 AS a // note; SELECT 999` answers 1 with no error, while two statements are otherwise refused as multi-statements, so the `;` was hidden, and `SELECT 1 AS a // note` followed by `, 2 AS b` on the next line answers two columns, so the run ends at the newline.
 Read as code, `SELECT number FROM numbers(1000) // note` was bounded as `... // note LIMIT 5` and returned 1000 rows while reporting `wasLimited: true`; with the fact carried it is `... LIMIT 5 // note` and returns 5 (both measured).

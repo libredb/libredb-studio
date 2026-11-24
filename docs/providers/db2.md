@@ -450,8 +450,8 @@ An import writes its values as literals, so K24 does not reach it.
 
 ### 7.6 SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/db2/sql-grammar.ts`](../../src/lib/db/providers/sql/db2/sql-grammar.ts), the `db2` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
-Its grammar is `DB2_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/db2.json`](../../src/lib/db/engine-declarations/db2.json), from which the `db2` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
+Its grammar is the declaration's `sqlText.grammar`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
 Every fact was probed on 2026-10-03 on DB2/LINUXX8664 12.1.0.0 through db2-node 1.0.22, the driver the provider sends statements with (#786).
 `#` is code: `SELECT 1 AS a FROM SYSIBM.SYSDUMMY1 # note` and `SELECT 1 # 2 AS a FROM SYSIBM.SYSDUMMY1` are both SQLCODE -104 at the `#`.
 `[` is not established: `SELECT 1 AS [a] FROM SYSIBM.SYSDUMMY1` is SQLCODE -104, so it is no name quote, but SQL PL writes an array element as `a[1]` and no subscript reading was measured in plain SQL, so the fail-safe default stays.

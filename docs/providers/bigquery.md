@@ -226,13 +226,15 @@ In a project with datasets in several regions, set `location` to the region you 
 
 ### 5.4 SQL grammar
 
-The statement reader that decides where a statement ends, whether a keyword is real and whether a run needs a confirmation prompt has a BigQuery grammar (`BIGQUERY_GRAMMAR` in [`src/lib/db/providers/sql/bigquery/sql-grammar.ts`](../../src/lib/db/providers/sql/bigquery/sql-grammar.ts), the `bigquery` row of the SQL grammar registry in `src/lib/db/sql-grammar/`), every fact of it measured with `jobs.query` dry runs on 2026-10-11:
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/bigquery.json`](../../src/lib/db/engine-declarations/bigquery.json), from which the `bigquery` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
+Its grammar is the declaration's `sqlText.grammar`, the BigQuery grammar the statement reader that decides where a statement ends, whether a keyword is real and whether a run needs a confirmation prompt reads, every fact of it measured with `jobs.query` dry runs on 2026-10-11:
 
-- `#` and `--` start a line comment, `//` does not, and `/* … */` does not nest.
-- A backslash escapes the next character in `'…'` and `"…"`; a doubled quote is not an escape (BigQuery answers "concatenated string literals must be separated by whitespace or comments").
-- `'''…'''` and `"""…"""` are string literals that may hold lone quotes, semicolons and line feeds, so a `DROP` or a `;` inside one is text and no longer raises a confirmation prompt.
+- `#` and `--` start a line comment, `//` does not, and `/* … */` does not nest: `SELECT 1 # x` and `SELECT 1 #> 2` both validate, `SELECT 1 // x` is `Unexpected "/"`, and `SELECT /* a /* b */ 1` validates while the same text with a trailing `*/` is `Unexpected "/"`.
+- A backslash escapes the next character in `'…'` and `"…"`; a doubled quote is not an escape (BigQuery answers "concatenated string literals must be separated by whitespace or comments"): `'it\'s'` and `"it\"s"` validate, and a backslash before a line feed is "Illegal escaped newline".
+- `'''…'''` and `"""…"""` are string literals that may hold lone quotes, semicolons and line feeds (`'''a'b''c'''`, `"""a"b""c"""` and a triple with a line feed inside all validate), so a `DROP` or a `;` inside one is text and no longer raises a confirmation prompt.
 - A backslash escapes a backtick inside a backtick name (`` `a\`b` `` is one name), and a doubled backtick is a syntax error, so a `;` hidden behind an escaped backtick is split the way BigQuery runs it (`backtickBackslashEscapes`).
-- `[…]` is an array literal or a subscript, never a name.
+- `[…]` is an array literal or a subscript, never a name: `SELECT [1,2][OFFSET(0)]` validates, and `SELECT 1 AS [a]` is `Unexpected "["`.
+- There is no alternate quoting: `SELECT q'{a}'` is a syntax error, the `q` an identifier and `'{a}'` a stray string.
 
 A script (`BEGIN … END`) is not split: the shared splitter does not model it.
 

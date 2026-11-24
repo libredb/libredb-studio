@@ -74,7 +74,7 @@ describe("resolveSqlGrammar", () => {
   // They keep today's reading, which costs them nothing they had.
 
   test.each<DatabaseType>(["libredb", "mongodb", "redis"])("%s is left at the compatibility default", (type) => {
-    expect(resolveSqlGrammar(type)).toBe(DEFAULT_SQL_GRAMMAR);
+    expect(resolveSqlGrammar(type)).toEqual(DEFAULT_SQL_GRAMMAR);
   });
 
   test("a call that names no dialect gets the compatibility default", () => {
@@ -387,17 +387,17 @@ const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
   sqlite: "established",
   // Re-measured over Hrana rather than inherited from the row above: all four facts
   // answered the same way on sqld 0.24.33 (#, brackets, nesting, q'…'), which is why
-  // the registry shares SQLite's grammar object.
+  // its declaration states SQLite's grammar facts.
   libsql: "established",
   // Five facts probed 2026-08-27 against DuckDB v1.5.5 through `@duckdb/node-api`,
   // and NOT inherited from either neighbour: the SQLite row's `[…]` reading is wrong
-  // here (a list literal, not a name quote) and the PostgreSQL object is not shared
-  // even though the five values coincide. See DUCKDB_GRAMMAR in `providers/sql/duckdb/sql-grammar.ts` for the
+  // here (a list literal, not a name quote) and DuckDB's declaration states its own
+  // facts even though the five values coincide. See the SQL grammar section of docs/providers/duckdb.md for the
   // statement behind each one.
   duckdb: "established",
   oracle: "established",
   // Probed 2026-10-03 on Db2 LUW 12.1.0.0 through db2-node 1.0.22 (#786); see the db2 block above
-  // and DB2_GRAMMAR in `providers/sql/db2/sql-grammar.ts` for the statement behind each fact.
+  // and the SQL grammar section of docs/providers/db2.md for the statement behind each fact.
   db2: "established",
   mssql: "established",
   clickhouse: "established",
@@ -410,22 +410,22 @@ const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
   elasticsearch: "established",
   opensearch: "established",
   // Established the same way, and for the same reason: the coordinator IS the source.
-  // Probed 2026-08-20 against Trino 476 - see the TRINO_GRAMMAR comments in
-  // `grammar.ts` for the statement behind each of the four facts.
+  // Probed 2026-08-20 against Trino 476 - see the SQL grammar section of
+  // docs/providers/trino.md for the statement behind each of the four facts.
   trino: "established",
   // All four facts probed 2026-08-20 against Apache Cassandra 5.0.9 over the native
-  // protocol, before any provider code existed. See CASSANDRA_GRAMMAR in
-  // `grammar.ts` for the statement behind each one - and for the fifth fact this
+  // protocol, before any provider code existed. See the SQL grammar section of
+  // docs/providers/cassandra.md for the statement behind each one - and for the fifth fact this
   // record cannot hold: CQL has a THIRD comment form, `//`, and a line comment there
   // must be closed by a newline (at end of input it is a syntax error), which the
   // provider's own `prepareQuery` handles because no field here can express it.
   cassandra: "established",
   // Read off the SQL++ lexer (`n1ql.nex`) and probed 2026-10-28 on Couchbase Server 8.0.2 Community over
-  // `POST /query/service`; see the couchbase block below and COUCHBASE_GRAMMAR in
-  // `providers/document/couchbase/sql-grammar.ts` for the statement behind each fact.
+  // `POST /query/service`; see the couchbase block below and the SQL grammar section of
+  // docs/providers/couchbase.md for the statement behind each fact.
   couchbase: "established",
   // Read off Druid's Calcite parser (`Parser.jj` at druid-37.0.0) and probed 2026-10-28 on apache/druid:37.0.0 over
-  // `POST /druid/v2/sql`; see DRUID_GRAMMAR in `providers/sql/druid/sql-grammar.ts` and `druid-grammar.test.ts` for
+  // `POST /druid/v2/sql`; see the SQL grammar section of docs/providers/druid.md and `druid-grammar.test.ts` for
   // the statement behind each fact.
   druid: "established",
   libredb: "default",
@@ -448,13 +448,14 @@ const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
   // InfluxQL, not SQL: the provider's own lexer reads it, so no SQL grammar is established for it, and none is read.
   influxdb: "default",
   // Five facts probed on InfluxDB 3.12.0 Core through `POST /api/v3/query_sql`, the route the provider
-  // sends on; see the influxdb3 block below and DATAFUSION_GRAMMAR in `influxdb3-sql-grammar.ts` for the statement
-  // behind each one.
+  // sends on; see the influxdb3 block below and the SQL grammar section of docs/providers/influxdb3.md for the
+  // statement behind each one.
   influxdb3: "established",
   // One `oxia client` read command, not SQL (SB2-4.3): no SQL grammar is established for it, and none is read.
   oxia: "default",
   // Read off Databend's own lexer (`token.rs`) and parser, and the trailing clause measured on the pinned image (L3);
-  // see the databend block below and DATABEND_GRAMMAR in `providers/sql/databend/sql-grammar.ts` for the source behind each fact.
+  // see the databend block below and the SQL grammar section of docs/providers/databend.md for the source behind
+  // each fact.
   databend: "established",
   bigquery: "established",
   // The Snowflake grammar row lands with the gate and the explain format, which flip this to established.
@@ -561,7 +562,7 @@ describe("databend", () => {
   const grammar = resolveSqlGrammar("databend");
 
   test("is a row of its own, not the compatibility default", () => {
-    expect(grammar).not.toBe(DEFAULT_SQL_GRAMMAR);
+    expect(grammar).not.toEqual(DEFAULT_SQL_GRAMMAR);
   });
 
   test("`#` is code: the lexer has `#`, `#>`, `#>>` and `#-` as operator tokens and no `#` comment", () => {
@@ -588,7 +589,7 @@ describe("databend", () => {
   });
 
   test("a script keeps the default: bodies are `$$` literals", () => {
-    expect(grammar.script).toBe(DEFAULT_SQL_GRAMMAR.script);
+    expect(grammar.script).toEqual(DEFAULT_SQL_GRAMMAR.script);
   });
 
   test("a trailing `FORMAT <name>` follows the row bound", () => {
@@ -634,7 +635,7 @@ describe("script", () => {
   test.each<DatabaseType>(["postgres", "mysql", "db2", "duckdb", "clickhouse", "trino", "cassandra", "influxdb3"])(
     "%s keeps the default: every code `;` ends a statement",
     (type) => {
-      expect(resolveSqlGrammar(type).script).toBe(DEFAULT_SQL_GRAMMAR.script);
+      expect(resolveSqlGrammar(type).script).toEqual(DEFAULT_SQL_GRAMMAR.script);
     },
   );
 });
@@ -756,7 +757,7 @@ describe("the reader facts Spark's row declares", () => {
 
 describe("every database type has a recorded grammar decision", () => {
   test.each(Object.entries(GRAMMAR_COVERAGE))("%s is %s", (type, expected) => {
-    const isDefault = resolveSqlGrammar(type as DatabaseType) === DEFAULT_SQL_GRAMMAR;
+    const isDefault = Bun.deepEquals(resolveSqlGrammar(type as DatabaseType), DEFAULT_SQL_GRAMMAR);
 
     expect(isDefault ? "default" : "established").toBe(expected);
   });
