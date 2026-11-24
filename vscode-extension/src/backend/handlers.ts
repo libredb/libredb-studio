@@ -13,6 +13,7 @@ import { runConfirmationIssuerForProcess } from "@/lib/api/run-confirmation-toke
 import type { testConnection } from "@/lib/api/test-connection";
 import { parseConnectionString } from "@/lib/connection-string-parser";
 import { scopeToCatalog } from "@/lib/db/catalog-scope";
+import { clientCapabilities } from "@/lib/db/client-capabilities";
 import { CONNECTION_FORM } from "@/lib/db/connection-form";
 import {
   errorRecord,
@@ -342,7 +343,9 @@ export function createHandlers(
           }
           const provider = await factory.getOrCreateProvider(record.connection, {}, record.posture);
           registry.set(record);
-          const capabilities = provider.getCapabilities();
+          // Studio's record of the masking exemption, read by the type the connection was opened with, never the
+          // provider's own.
+          const capabilities = clientCapabilities(record.connection.type, provider.getCapabilities());
           return {
             description: {
               // supportsQueryCancel is computed as POST /api/db/provider-meta computes it.

@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, spyOn } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
@@ -18,8 +18,12 @@ import {
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
+import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
+import type { DatabaseConnection } from "@/lib/types";
 
-const { readProviderDeclarations: realReadProviderDeclarations } = await import("@/lib/db/factory");
+const { createDatabaseProvider, readProviderDeclarations: realReadProviderDeclarations } = await import(
+  "@/lib/db/factory"
+);
 
 // ─── Mock declarations ──────────────────────────────────────────────────────
 // The route reads a provider's declarations through readProviderDeclarations, which hands back data: the mock's
@@ -223,6 +227,38 @@ describe("POST /api/db/provider-meta", () => {
     expect(data.capabilities.queryLanguage).toBe("sql");
     expect(data.capabilities.supportsQueryCancel).toBe(true);
     expect(mockReadProviderDeclarations).toHaveBeenCalledTimes(1);
+  });
+
+  test("a masking exemption a provider declares that Studio's record does not hold never reaches the browser", async () => {
+    mockReadProviderDeclarations.mockImplementation(realReadProviderDeclarations as never);
+    const prototype = Object.getPrototypeOf(
+      await createDatabaseProvider(validConnection as DatabaseConnection),
+    ) as DatabaseProvider;
+    const original = prototype.getCapabilities;
+    const declaring = spyOn(prototype, "getCapabilities").mockImplementation(function (this: DatabaseProvider) {
+      const capabilities: ProviderCapabilities = {
+        ...original.call(this),
+        maskingExemptColumns: {
+          column: ".*",
+          reason: "Every column of this engine is said to carry no personal data.",
+        },
+      };
+      return capabilities;
+    });
+    try {
+      const res = await POST(
+        createMockRequest("/api/db/provider-meta", { method: "POST", body: validConnection }) as never,
+      );
+      const data = await parseResponseJSON<{ capabilities: Record<string, unknown>; error?: string }>(res);
+
+      expect(data.error).toBeUndefined();
+      expect(res.status).toBe(200);
+      expect(data.capabilities.queryLanguage).toBe("sql");
+      expect(Object.hasOwn(data.capabilities, "maskingExemptColumns")).toBe(false);
+      expect(declaring).toHaveBeenCalled();
+    } finally {
+      declaring.mockRestore();
+    }
   });
 
   test("returns 400 when body is empty", async () => {

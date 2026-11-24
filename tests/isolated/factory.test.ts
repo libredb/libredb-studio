@@ -49,7 +49,7 @@ import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import { createCanonicalOperationRegistry, sqlExplainAnalyzeDescriptor } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
-import type { AgentCredentialForm, DatabaseProvider, QueryResult } from "@/lib/db/types";
+import type { AgentCredentialForm, DatabaseProvider, ProviderCapabilities, QueryResult } from "@/lib/db/types";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative as relativePath } from "node:path";
@@ -69,7 +69,7 @@ import {
   UnknownProviderError,
 } from "@/lib/db/errors";
 import { ABSENT_TYPE_SENTENCE, unknownTypeSentence } from "@/lib/db/type-id";
-import { READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { MASKING_EXEMPT_COLUMNS, READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { summarizeWriteReach } from "@/lib/db/write-reach";
 import { secretForms } from "@/lib/db/utils/server-text";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
@@ -88,6 +88,7 @@ import { CassandraTransportError } from "@/lib/db/providers/sql/cassandra/transp
 import { CouchbaseError } from "@/lib/db/providers/document/couchbase/transport";
 import { DruidTransportError } from "@/lib/db/providers/sql/druid/transport";
 import { TrinoTransportError } from "@/lib/db/providers/sql/trino/transport";
+import { CENSUS_CONNECTION } from "../helpers/census-connection";
 import { NEO4J_FIXTURES, recordedGraphClient } from "../helpers/neo4j-fixtures";
 import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../helpers/outside-the-union";
 import { markersReachableFrom } from "../helpers/reachable-markers";
@@ -6791,6 +6792,49 @@ describe("core decides the SSH tunnel before it dials (FND-2 slice 5)", () => {
 
     expect(seen).toBe(off);
     expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+  });
+});
+
+describe("the masking exemption a client is handed", () => {
+  const WIDE_REASON = "Every column of this engine is said to carry no personal data.";
+
+  /** Spies `getCapabilities` on the prototype of `conn`'s provider so the built provider declares `exemption`. */
+  async function declaringExemption(
+    conn: DatabaseConnection,
+    exemption: ProviderCapabilities["maskingExemptColumns"],
+  ): Promise<{ mockRestore(): void }> {
+    const prototype = Object.getPrototypeOf(await createDatabaseProvider(conn)) as DatabaseProvider;
+    const original = prototype.getCapabilities;
+    return spyOn(prototype, "getCapabilities").mockImplementation(function (this: DatabaseProvider) {
+      const capabilities: ProviderCapabilities = { ...original.call(this) };
+      if (exemption === undefined) delete capabilities.maskingExemptColumns;
+      else capabilities.maskingExemptColumns = exemption;
+      return capabilities;
+    });
+  }
+
+  test("a masking exemption a provider declares that Studio's record does not hold is never read: readProviderDeclarations answers none", async () => {
+    const conn = makeConnection("postgres", { id: "pg-declares-exemption" });
+    const capabilities = await declaringExemption(conn, { column: ".*", reason: WIDE_REASON });
+    try {
+      const declarations = await readProviderDeclarations(conn);
+
+      expect(Object.hasOwn(declarations.capabilities, "maskingExemptColumns")).toBe(false);
+    } finally {
+      capabilities.mockRestore();
+    }
+  });
+
+  test("the masking exemption Studio's record holds is read when the provider declares none: Modbus answers its address column", async () => {
+    const conn = CENSUS_CONNECTION.modbus;
+    const capabilities = await declaringExemption(conn, undefined);
+    try {
+      const declarations = await readProviderDeclarations(conn);
+
+      expect(declarations.capabilities.maskingExemptColumns).toEqual(MASKING_EXEMPT_COLUMNS.modbus!);
+    } finally {
+      capabilities.mockRestore();
+    }
   });
 });
 
