@@ -1523,10 +1523,14 @@ So a provider moves onto the contract without a behaviour change.
 A provider is built from the connection's fields and from the marks core sets beside them under symbol keys: the tunnel's far end and route, the literal seed-file mark, the file core admitted and the host paths core admitted.
 A census over Studio's own types holds this, one record over the connection's fields and one over its marks, and the shapes the open context shares with Studio, the TLS settings, the egress decision, the trust material, the pool settings, the tunnel's far end and the admitted host paths, are each mutually assignable with Studio's own.
 The census covers today's transaction surface too, the transaction methods the transaction route calls, begin's options and result and the arguments of a statement inside the transaction, each placed on the transaction facet's actions, its request and answer, or console execute, C-57.
+It covers today's object tree surface, the five provider members that list containers and objects, count them and describe them, each placed on an action of `objects.tree` and each argument on a member of that action's request, except the billed-read allowance, which stays with the host, C-61.
+The tree's answer shapes, the container, the object and its read range, the kind count, the column, index, foreign key and exclusion constraint and the object's detail and its batch, are each mutually assignable with Studio's own and have its keys, and each answer form's member is Studio's answer, a list compared by its items, since Studio's lists are mutable and the SDK's are not.
 
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every input a provider is built with has a place in the open context or a reason it stays with the host"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's console answer and request has a place in the console calls"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's transaction surface has a place in the console calls"
+- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's object tree surface has a place in the objects calls"
+- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "the object tree's answers are Studio's own shapes"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "the context's shared shapes are Studio's own"
 
 ### C-8 (informative): A provider never ignores a request field it does not honour

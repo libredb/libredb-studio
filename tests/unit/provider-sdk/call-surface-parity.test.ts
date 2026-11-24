@@ -1,7 +1,8 @@
 /**
- * Every input a provider is built with today, and every member of today's console request and answer and of today's
- * transaction surface, has a place in the provider contract's calls, or a stated reason it stays with the host
- * (docs/providers/CONTRACT.md, clause C-7). So a provider moves onto the contract without a behaviour change.
+ * Every input a provider is built with today, and every member of today's console request and answer, of today's
+ * transaction surface and of today's object tree surface, has a place in the provider contract's calls, or a stated
+ * reason it stays with the host (docs/providers/CONTRACT.md, clause C-7). So a provider moves onto the contract without
+ * a behaviour change.
  *
  * A provider is built from the connection's fields and from the marks core sets beside them under symbol keys: the
  * tunnel's far end and route, the literal seed-file mark (`ProviderConnection` in src/lib/db/provider-connection.ts),
@@ -19,11 +20,22 @@ import path from "node:path";
 import type {
   CancelAnswer,
   Column,
+  ColumnSchema as SdkColumnSchema,
   ConsoleFacet,
+  Container as SdkContainer,
+  DatabaseObject as SdkDatabaseObject,
   EgressDecision as SdkEgressDecision,
   EndScopeAnswer,
+  ExclusionConstraintSchema as SdkExclusionConstraintSchema,
   ExecuteAnswer,
   ExecuteRequest,
+  ForeignKeySchema as SdkForeignKeySchema,
+  IndexSchema as SdkIndexSchema,
+  KindCount as SdkKindCount,
+  ObjectDetail as SdkObjectDetail,
+  ObjectDetailBatch as SdkObjectDetailBatch,
+  ObjectReadRange as SdkObjectReadRange,
+  ObjectsFacet,
   OpenContext,
   OpenPolicy,
   PoolSettings,
@@ -32,6 +44,12 @@ import type {
   TransactionAction,
   TransactionAnswer,
   TransactionRequest,
+  TreeAction,
+  TreeContainersAnswer,
+  TreeCountAnswer,
+  TreeDescribeAnswer,
+  TreeListAnswer,
+  TreeRequest,
   TrustMaterial as SdkTrustMaterial,
   TunnelFarEnd as SdkTunnelFarEnd,
   VectorColumnShape,
@@ -43,8 +61,16 @@ import type { QueryCancelProvider } from "@/lib/db/query-cancel";
 import type {
   BeginTransactionOptions,
   BeginTransactionResult,
+  Container,
+  DatabaseObject,
   DatabaseProvider,
+  DescribeObjectsOptions,
   EgressDecision,
+  KindCount,
+  ObjectDetail,
+  ObjectDetailBatch,
+  ObjectReadOptions,
+  ObjectReadRange,
   OpenQueryTransactionOutcome,
   PoolConfig,
   PreparedQuery,
@@ -56,7 +82,11 @@ import type {
 } from "@/lib/db/types";
 import type { VectorColumn } from "@/lib/db/vector/types";
 import type {
+  ColumnSchema,
   DatabaseConnection,
+  ExclusionConstraintSchema,
+  ForeignKeySchema,
+  IndexSchema,
   QueryResult,
   QueryResultSet,
   QueryWarning,
@@ -103,6 +133,20 @@ type ConsolePlacement =
     }
   | { readonly where: "transaction-request"; readonly member: keyof BeginRequest; readonly note?: string }
   | { readonly where: "transaction-answer"; readonly member: keyof TransactionAnswer; readonly note?: string }
+  | HostOnly;
+
+/** A member of today's object tree surface, as the objects calls carry it. */
+type TreePlacement =
+  | { readonly where: "objects-call"; readonly call: ObjectsFacet; readonly action: TreeAction }
+  | {
+      readonly [Action in TreeAction]: {
+        readonly where: "tree-request";
+        readonly action: Action;
+        readonly member: Exclude<keyof Extract<TreeRequest, { readonly action: Action }>, "action">;
+        readonly note?: string;
+      };
+    }[TreeAction]
+  | { readonly where: "options"; readonly census: "ObjectReadOptions" | "DescribeObjectsOptions" }
   | HostOnly;
 
 /** The transaction request that opens a transaction, the one that carries begin's options. */
@@ -338,11 +382,92 @@ const QUERY_IN_TRANSACTION_ARGUMENT_CENSUS = {
 const QUERY_IN_TRANSACTION_ARGUMENT_COUNT: Required<Parameters<TransactionProvider["queryInTransaction"]>>["length"] =
   2;
 
+/**
+ * Today's object tree surface: the five provider members the object routes, the VS Code backend's tree calls and the
+ * inventory read. `Pick` fails typecheck when one of them is renamed or removed.
+ */
+type ObjectTreeProvider = Pick<
+  DatabaseProvider,
+  "listContainers" | "countObjects" | "listObjects" | "describeObject" | "describeObjects"
+>;
+
+const TREE_MEMBER_CENSUS = {
+  listContainers: { where: "objects-call", call: "tree", action: "containers" },
+  countObjects: { where: "objects-call", call: "tree", action: "count" },
+  listObjects: { where: "objects-call", call: "tree", action: "list" },
+  describeObject: { where: "objects-call", call: "tree", action: "describe" },
+  describeObjects: { where: "objects-call", call: "tree", action: "describeMany" },
+} as const satisfies { readonly [K in keyof ObjectTreeProvider]: TreePlacement };
+
+/** Each member's arguments, in order, each placed. */
+const LIST_CONTAINERS_ARGUMENT_CENSUS = {
+  parent: { where: "tree-request", action: "containers", member: "parent", note: "absent means the top level" },
+} as const satisfies Record<string, TreePlacement>;
+
+const COUNT_OBJECTS_ARGUMENT_CENSUS = {
+  container: { where: "tree-request", action: "count", member: "container" },
+  options: { where: "options", census: "ObjectReadOptions" },
+} as const satisfies Record<string, TreePlacement>;
+
+const LIST_OBJECTS_ARGUMENT_CENSUS = {
+  container: { where: "tree-request", action: "list", member: "container" },
+  kind: { where: "tree-request", action: "list", member: "kind" },
+  options: { where: "options", census: "ObjectReadOptions" },
+} as const satisfies Record<string, TreePlacement>;
+
+const DESCRIBE_OBJECT_ARGUMENT_CENSUS = {
+  path: { where: "tree-request", action: "describe", member: "path" },
+  kind: { where: "tree-request", action: "describe", member: "kind" },
+} as const satisfies Record<string, TreePlacement>;
+
+const DESCRIBE_OBJECTS_ARGUMENT_CENSUS = {
+  container: { where: "tree-request", action: "describeMany", member: "container" },
+  kind: { where: "tree-request", action: "describeMany", member: "kind" },
+  limit: { where: "tree-request", action: "describeMany", member: "limit", note: "absent means unbounded" },
+  options: { where: "options", census: "DescribeObjectsOptions" },
+} as const satisfies Record<string, TreePlacement>;
+
+/** Each member's argument count, held to its census's length by the test. */
+const TREE_ARGUMENT_COUNTS: { readonly [K in keyof ObjectTreeProvider]: number } = {
+  listContainers: 1 satisfies Required<Parameters<ObjectTreeProvider["listContainers"]>>["length"],
+  countObjects: 2 satisfies Required<Parameters<ObjectTreeProvider["countObjects"]>>["length"],
+  listObjects: 3 satisfies Required<Parameters<ObjectTreeProvider["listObjects"]>>["length"],
+  describeObject: 2 satisfies Required<Parameters<ObjectTreeProvider["describeObject"]>>["length"],
+  describeObjects: 4 satisfies Required<Parameters<ObjectTreeProvider["describeObjects"]>>["length"],
+};
+
+/** Why the billed-read allowance stays with the host. */
+const READ_ALLOWANCE_REASON =
+  "The billed-read allowance is the per-run ledger of the agent and MCP, which read the tree on the profiled cache; the object routes and the VS Code backend never pass one, and it moves with the agent surface.";
+
+const OBJECT_READ_OPTIONS_CENSUS = {
+  readAllowance: { where: "host", reason: READ_ALLOWANCE_REASON },
+} as const satisfies { readonly [K in keyof Required<ObjectReadOptions>]: TreePlacement };
+
+const DESCRIBE_OBJECTS_OPTIONS_CENSUS = {
+  defaultSql: {
+    where: "tree-request",
+    action: "describeMany",
+    member: "defaultSql",
+    note: "sent only as true, since a caller asks for the SQL text or does not",
+  },
+  readAllowance: { where: "host", reason: READ_ALLOWANCE_REASON },
+} as const satisfies { readonly [K in keyof Required<DescribeObjectsOptions>]: TreePlacement };
+
 type Mutual<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 
+/** Whether two record types have the same keys, optional ones included, which `Mutual` alone does not hold. */
+type SameKeys<A, B> = Mutual<keyof Required<A>, keyof Required<B>>;
+
+/** One answer form's list, element by element: a Studio list is a mutable array, the SDK's a readonly one. */
+type Element<List> = List extends readonly (infer Item)[] ? Item : never;
+
 /** Every placement of every census, by census name and key. */
-function placements(): [string, string, InputPlacement | ConsolePlacement | ConnectionField][] {
-  const censuses: Record<string, Record<PropertyKey, InputPlacement | ConsolePlacement | ConnectionField>> = {
+function placements(): [string, string, InputPlacement | ConsolePlacement | ConnectionField | TreePlacement][] {
+  const censuses: Record<
+    string,
+    Record<PropertyKey, InputPlacement | ConsolePlacement | ConnectionField | TreePlacement>
+  > = {
     DatabaseConnection: CONNECTION_CENSUS,
     "connection marks": MARK_CENSUS,
     ProviderOptions: OPTIONS_CENSUS,
@@ -357,6 +482,14 @@ function placements(): [string, string, InputPlacement | ConsolePlacement | Conn
     BeginTransactionOptions: BEGIN_OPTIONS_CENSUS,
     BeginTransactionResult: BEGIN_RESULT_CENSUS,
     "queryInTransaction arguments": QUERY_IN_TRANSACTION_ARGUMENT_CENSUS,
+    tree: TREE_MEMBER_CENSUS,
+    "listContainers arguments": LIST_CONTAINERS_ARGUMENT_CENSUS,
+    "countObjects arguments": COUNT_OBJECTS_ARGUMENT_CENSUS,
+    "listObjects arguments": LIST_OBJECTS_ARGUMENT_CENSUS,
+    "describeObject arguments": DESCRIBE_OBJECT_ARGUMENT_CENSUS,
+    "describeObjects arguments": DESCRIBE_OBJECTS_ARGUMENT_CENSUS,
+    ObjectReadOptions: OBJECT_READ_OPTIONS_CENSUS,
+    DescribeObjectsOptions: DESCRIBE_OBJECTS_OPTIONS_CENSUS,
   };
   return Object.entries(censuses).flatMap(([census, entries]) =>
     Reflect.ownKeys(entries).map((key): [string, string, (typeof entries)[PropertyKey]] => [
@@ -438,6 +571,131 @@ describe("the call surface census", () => {
       "queryInTransaction arguments.params",
     ]);
     expect(transaction.filter(([, , placement]) => placement.where === "host")).toEqual([]);
+  });
+
+  test("every member of today's object tree surface has a place in the objects calls", () => {
+    const argumentCensuses: { readonly [K in keyof ObjectTreeProvider]: Record<string, TreePlacement> } = {
+      listContainers: LIST_CONTAINERS_ARGUMENT_CENSUS,
+      countObjects: COUNT_OBJECTS_ARGUMENT_CENSUS,
+      listObjects: LIST_OBJECTS_ARGUMENT_CENSUS,
+      describeObject: DESCRIBE_OBJECT_ARGUMENT_CENSUS,
+      describeObjects: DESCRIBE_OBJECTS_ARGUMENT_CENSUS,
+    };
+    const tree = placements().filter(([census]) => census === "tree");
+
+    expect(Object.keys(TREE_MEMBER_CENSUS)).toEqual([
+      "listContainers",
+      "countObjects",
+      "listObjects",
+      "describeObject",
+      "describeObjects",
+    ]);
+    expect(tree.map(([, , placement]) => ("action" in placement ? placement.action : placement.where))).toEqual([
+      "containers",
+      "count",
+      "list",
+      "describe",
+      "describeMany",
+    ]);
+    expect(Object.entries(argumentCensuses).map(([member, census]) => [member, Object.keys(census).length])).toEqual(
+      Object.entries(TREE_ARGUMENT_COUNTS),
+    );
+    expect(Object.values(argumentCensuses).flatMap((census) => Object.keys(census))).toEqual([
+      "parent",
+      "container",
+      "options",
+      "container",
+      "kind",
+      "options",
+      "path",
+      "kind",
+      "container",
+      "kind",
+      "limit",
+      "options",
+    ]);
+    for (const [member, census] of Object.entries(argumentCensuses)) {
+      const action = TREE_MEMBER_CENSUS[member as keyof ObjectTreeProvider].action;
+      for (const placement of Object.values(census)) {
+        if (placement.where === "tree-request") expect([member, placement.action]).toEqual([member, action]);
+      }
+    }
+    expect(OBJECT_READ_OPTIONS_CENSUS.readAllowance.where).toBe("host");
+    expect(DESCRIBE_OBJECTS_OPTIONS_CENSUS.readAllowance.where).toBe("host");
+    expect(DESCRIBE_OBJECTS_OPTIONS_CENSUS.defaultSql.member).toBe("defaultSql");
+  });
+
+  test("the object tree's answers are Studio's own shapes", () => {
+    const parity: [
+      Mutual<SdkContainer, Container>,
+      Mutual<SdkObjectReadRange, ObjectReadRange>,
+      Mutual<SdkDatabaseObject, DatabaseObject>,
+      Mutual<SdkKindCount, KindCount>,
+      Mutual<SdkColumnSchema, ColumnSchema>,
+      Mutual<SdkIndexSchema, IndexSchema>,
+      Mutual<SdkForeignKeySchema, ForeignKeySchema>,
+      Mutual<SdkExclusionConstraintSchema, ExclusionConstraintSchema>,
+      Mutual<SdkObjectDetail, ObjectDetail>,
+      Mutual<SdkObjectDetailBatch, ObjectDetailBatch>,
+    ] = [true, true, true, true, true, true, true, true, true, true];
+    const keys: [
+      SameKeys<SdkContainer, Container>,
+      SameKeys<SdkDatabaseObject, DatabaseObject>,
+      SameKeys<SdkColumnSchema, ColumnSchema>,
+      SameKeys<SdkIndexSchema, IndexSchema>,
+      SameKeys<SdkForeignKeySchema, ForeignKeySchema>,
+      SameKeys<SdkExclusionConstraintSchema, ExclusionConstraintSchema>,
+      SameKeys<SdkObjectDetail, ObjectDetail>,
+      SameKeys<SdkObjectDetailBatch, ObjectDetailBatch>,
+    ] = [true, true, true, true, true, true, true, true];
+    const answers: [
+      Mutual<
+        Element<TreeContainersAnswer["containers"]>,
+        Element<Awaited<ReturnType<ObjectTreeProvider["listContainers"]>>>
+      >,
+      Mutual<TreeCountAnswer["counts"], Awaited<ReturnType<ObjectTreeProvider["countObjects"]>>>,
+      Mutual<Element<TreeListAnswer["objects"]>, Element<Awaited<ReturnType<ObjectTreeProvider["listObjects"]>>>>,
+      Mutual<TreeDescribeAnswer["detail"], Awaited<ReturnType<ObjectTreeProvider["describeObject"]>>>,
+      Mutual<SdkObjectDetailBatch, Awaited<ReturnType<ObjectTreeProvider["describeObjects"]>>>,
+    ] = [true, true, true, true, true];
+
+    // A sample of each answer crosses both ways, Studio's mutable lists into the SDK's readonly ones and back by element.
+    const containers: Container[] = [{ path: ["public"], name: "public", level: 0, kinds: ["table"] }];
+    const counts: Record<string, KindCount> = {
+      table: { count: 2 },
+      view: { count: 1, sampledFrom: "one 1,000-key SCAN walk" },
+      index: { unavailable: "permission denied" },
+    };
+    const objects: DatabaseObject[] = [
+      { path: ["public", "orders"], name: "orders", kind: "table", readRanges: [{ prefix: "orders/" }] },
+    ];
+    const detail: ObjectDetail = {
+      path: ["public", "orders"],
+      columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+      indexes: [{ name: "orders_pkey", columns: ["id"], unique: true }],
+      foreignKeys: [{ columnName: "id", referencedTable: "customers", referencedColumn: "id" }],
+      exclusionConstraints: [{ name: "no_overlap", definition: "EXCLUDE USING gist (during WITH &&)" }],
+    };
+    const batch: ObjectDetailBatch = { details: [detail], truncated: { limit: 1, reason: "bounded" } };
+    const sdkAnswers: [
+      TreeContainersAnswer,
+      TreeCountAnswer,
+      TreeListAnswer,
+      TreeDescribeAnswer,
+      SdkObjectDetailBatch,
+    ] = [{ containers }, { counts }, { objects }, { detail }, batch];
+    const back: [Container[], Record<string, KindCount>, DatabaseObject[], ObjectDetail, ObjectDetailBatch] = [
+      sdkAnswers[0].containers.map((item): Container => item),
+      sdkAnswers[1].counts,
+      sdkAnswers[2].objects.map((item): DatabaseObject => item),
+      sdkAnswers[3].detail,
+      sdkAnswers[4],
+    ];
+
+    expect(parity).toEqual([true, true, true, true, true, true, true, true, true, true]);
+    expect(keys).toEqual([true, true, true, true, true, true, true, true]);
+    expect(answers).toEqual([true, true, true, true, true]);
+    expect(back).toEqual([containers, counts, objects, detail, batch]);
   });
 
   test("the context's shared shapes are Studio's own", () => {
