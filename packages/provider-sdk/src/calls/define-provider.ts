@@ -6,18 +6,19 @@
  * Pointer into the record. The loader runs it on the entry's default export, so a record another copy of the SDK built
  * is checked by the host's copy.
  *
- * The check reads only what the calls need: the two contracts, the manifest's `calls` segment, each engine's facets and
- * the implementation's functions. Validating the manifest against the schema is the loader's, which holds the schema
- * bytes; a manifest is typed `unknown` here and read defensively, because a JSON import's type is wider than the
- * manifest's and a cast would hide a mismatch. Every key the check reads is read as an own data property, by its
- * descriptor: a method a class instance inherits is not read, and a getter is never called but refused, so the
- * functions checked are the functions the host calls. No refusal carries a value of the manifest or the
- * implementation; a contract is named only when it has the form `MAJOR.MINOR`.
+ * The check reads only what the calls need: the two contracts, the manifest's `calls` segment, its console facets and
+ * its object facets, each engine's facets and the implementation's functions. Validating the manifest against the
+ * schema is the loader's, which holds the schema bytes; a manifest is typed `unknown` here and read defensively,
+ * because a JSON import's type is wider than the manifest's and a cast would hide a mismatch. Every key the check reads
+ * is read as an own data property, by its descriptor: a method a class instance inherits is not read, and a getter is
+ * never called but refused, so the functions checked are the functions the host calls. No refusal carries a value of
+ * the manifest or the implementation; a contract is named only when it has the form `MAJOR.MINOR`.
  */
 import { type Fields, fieldsOf, isPlainRecord, type OwnRead, readOwn, token, valueOf } from "./records";
 import {
   CONSOLE_FACETS,
   EXECUTE_REQUEST_FIELDS,
+  OBJECTS_FACETS,
   PROVIDER_CONTRACT,
   type ProviderImpl,
   type ProviderModule,
@@ -30,6 +31,7 @@ export const DEFINITION_REFUSAL_RULES = Object.freeze([
   "manifest-unreadable",
   "property-not-data",
   "impl-key-unknown",
+  "impl-segment-not-a-record",
   "call-missing",
   "facet-undeclared",
   "facet-unimplemented",
@@ -43,9 +45,12 @@ export interface DefinitionRefusal {
   readonly rule: DefinitionRefusalRule;
   /** A JSON Pointer into the record; the empty string is the record itself. */
   readonly pointer: string;
-  /** The key, for a record or implementation key the contract does not define, or a record key that is missing. */
+  /**
+   * The key, for a record or implementation key the contract does not define, a record key that is missing, or an
+   * implementation segment that is not a record.
+   */
   readonly key?: string;
-  /** The call or facet, by its contract name, such as `console.cancel`. */
+  /** The call or facet, by its contract name, such as `console.cancel` or `objects.tree`. */
   readonly name?: string;
   /** The contract a record or manifest names, when it has the form `MAJOR.MINOR`. */
   readonly contract?: string;
@@ -63,7 +68,7 @@ export class ProviderDefinitionError extends Error {
 }
 
 const RECORD_KEYS: readonly string[] = Object.freeze(["contract", "manifest", "impl"]);
-const IMPL_KEYS: readonly string[] = Object.freeze(["open", "close", "console"]);
+const IMPL_KEYS: readonly string[] = Object.freeze(["open", "close", "console", "objects"]);
 const CONSOLE_KEYS: readonly string[] = Object.freeze(["execute", ...CONSOLE_FACETS]);
 const OFFERS: readonly unknown[] = Object.freeze(["offered", "not-offered"]);
 const REQUEST_FIELDS: readonly unknown[] = EXECUTE_REQUEST_FIELDS;
@@ -142,26 +147,47 @@ function readHonours(execute: Fields, refusals: DefinitionRefusal[]): void {
   }
 }
 
+/** A facet's offer, by its contract name such as `console.cancel`: `true` when offered, `false` when not. */
+type Offers = Partial<Record<string, boolean>>;
+
 /**
- * The manifest's console facet offers, each `true` when offered, `false` when not, and absent when it cannot be read,
- * with a refusal for every key the check reads that is missing, of the wrong type or an accessor.
+ * The offers of `facets` in `segment`, the manifest's `calls.<segment>`, each recorded under its contract name, with a
+ * refusal for every offer that is missing, of the wrong type or an accessor.
  */
-function readCalls(manifest: Fields, refusals: DefinitionRefusal[]): Partial<Record<string, boolean>> {
-  const offers: Partial<Record<string, boolean>> = {};
+function readOffers(
+  segment: Fields,
+  name: string,
+  facets: readonly string[],
+  offers: Offers,
+  refusals: DefinitionRefusal[],
+): void {
+  for (const facet of facets) {
+    const pointer = `/manifest/calls/${name}/${facet}`;
+    const read = own(segment, facet, pointer, refusals);
+    if (read.kind === "accessor") continue;
+    const offer = valueOf(read);
+    if (OFFERS.includes(offer)) offers[`${name}.${facet}`] = offer === "offered";
+    else refusals.push({ rule: "manifest-unreadable", pointer });
+  }
+}
+
+/**
+ * The manifest's console and object facet offers, by contract name, each `true` when offered, `false` when not, and
+ * absent when it cannot be read, with a refusal for every key the check reads that is missing, of the wrong type or an
+ * accessor.
+ */
+function readCalls(manifest: Fields, refusals: DefinitionRefusal[]): Offers {
+  const offers: Offers = {};
   const calls = manifestRecord(manifest, "calls", "/manifest/calls", refusals);
   if (calls === undefined) return offers;
   const consoleCalls = manifestRecord(calls, "console", "/manifest/calls/console", refusals);
-  if (consoleCalls === undefined) return offers;
-  const execute = manifestRecord(consoleCalls, "execute", "/manifest/calls/console/execute", refusals);
-  if (execute !== undefined) readHonours(execute, refusals);
-  for (const facet of CONSOLE_FACETS) {
-    const pointer = `/manifest/calls/console/${facet}`;
-    const read = own(consoleCalls, facet, pointer, refusals);
-    if (read.kind === "accessor") continue;
-    const offer = valueOf(read);
-    if (OFFERS.includes(offer)) offers[facet] = offer === "offered";
-    else refusals.push({ rule: "manifest-unreadable", pointer });
+  if (consoleCalls !== undefined) {
+    const execute = manifestRecord(consoleCalls, "execute", "/manifest/calls/console/execute", refusals);
+    if (execute !== undefined) readHonours(execute, refusals);
+    readOffers(consoleCalls, "console", CONSOLE_FACETS, offers, refusals);
   }
+  const objectsCalls = manifestRecord(calls, "objects", "/manifest/calls/objects", refusals);
+  if (objectsCalls !== undefined) readOffers(objectsCalls, "objects", OBJECTS_FACETS, offers, refusals);
   return offers;
 }
 
@@ -221,8 +247,62 @@ function readEngines(manifest: Fields, refusals: DefinitionRefusal[]): void {
   }
 }
 
+/**
+ * The refusals of `facets` under `segmentImpl`, the implementation's `<segment>`, against the offers the manifest
+ * declares: an offered facet with no function of its own, and a key for one declared not-offered.
+ */
+function readFacetImpls(
+  segmentImpl: Fields | undefined,
+  segment: string,
+  facets: readonly string[],
+  offers: Offers,
+  refusals: DefinitionRefusal[],
+): void {
+  for (const facet of facets) {
+    const name = `${segment}.${facet}`;
+    const offered = offers[name];
+    const pointer = `/impl/${segment}/${facet}`;
+    const read = own(segmentImpl, facet, pointer, refusals);
+    if (read.kind === "accessor") continue;
+    if (offered === true && typeof valueOf(read) !== "function") {
+      refusals.push({ rule: "facet-unimplemented", pointer, name });
+    } else if (offered === false && read.kind === "data") {
+      refusals.push({ rule: "facet-undeclared", pointer, name });
+    }
+  }
+}
+
+/**
+ * The implementation's `<segment>` read as a record, with an `impl-key-unknown` refusal for each key not in `keys`.
+ * A segment that is present and not a record, such as `null`, a string or an array, is refused by name as
+ * `impl-segment-not-a-record`, and like an accessor nothing under it is read; an absent one, or one that is
+ * `undefined`, reads as a record of no key.
+ */
+function segmentOf(
+  impl: Fields | undefined,
+  segment: string,
+  keys: readonly string[],
+  refusals: DefinitionRefusal[],
+): { readonly unread: true } | { readonly unread: false; readonly fields: Fields | undefined } {
+  const pointer = `/impl/${segment}`;
+  const read = own(impl, segment, pointer, refusals);
+  if (read.kind === "accessor") return { unread: true };
+  const value = valueOf(read);
+  const fields = fieldsOf(value);
+  if (value !== undefined && fields === undefined) {
+    refusals.push({ rule: "impl-segment-not-a-record", pointer, key: segment });
+    return { unread: true };
+  }
+  for (const key of Object.keys(fields ?? {})) {
+    if (!keys.includes(key)) {
+      refusals.push({ rule: "impl-key-unknown", pointer: `/impl/${segment}/${token(key)}`, key });
+    }
+  }
+  return { unread: false, fields };
+}
+
 /** The refusals of the implementation against the facets the manifest offers. */
-function readImpl(value: unknown, offers: Partial<Record<string, boolean>>, refusals: DefinitionRefusal[]): void {
+function readImpl(value: unknown, offers: Offers, refusals: DefinitionRefusal[]): void {
   const impl = fieldsOf(value);
   for (const key of Object.keys(impl ?? {})) {
     if (!IMPL_KEYS.includes(key)) refusals.push({ rule: "impl-key-unknown", pointer: `/impl/${token(key)}`, key });
@@ -234,30 +314,17 @@ function readImpl(value: unknown, offers: Partial<Record<string, boolean>>, refu
       refusals.push({ rule: "call-missing", pointer, name: call });
     }
   }
-  const consoleRead = own(impl, "console", "/impl/console", refusals);
-  if (consoleRead.kind === "accessor") return;
-  const consoleImpl = fieldsOf(valueOf(consoleRead));
-  for (const key of Object.keys(consoleImpl ?? {})) {
-    if (!CONSOLE_KEYS.includes(key)) {
-      refusals.push({ rule: "impl-key-unknown", pointer: `/impl/console/${token(key)}`, key });
+  const consoleSegment = segmentOf(impl, "console", CONSOLE_KEYS, refusals);
+  if (!consoleSegment.unread) {
+    const consoleImpl = consoleSegment.fields;
+    const execute = own(consoleImpl, "execute", "/impl/console/execute", refusals);
+    if (execute.kind !== "accessor" && typeof valueOf(execute) !== "function") {
+      refusals.push({ rule: "call-missing", pointer: "/impl/console/execute", name: "console.execute" });
     }
+    readFacetImpls(consoleImpl, "console", CONSOLE_FACETS, offers, refusals);
   }
-  const execute = own(consoleImpl, "execute", "/impl/console/execute", refusals);
-  if (execute.kind !== "accessor" && typeof valueOf(execute) !== "function") {
-    refusals.push({ rule: "call-missing", pointer: "/impl/console/execute", name: "console.execute" });
-  }
-  for (const facet of CONSOLE_FACETS) {
-    const offered = offers[facet];
-    const pointer = `/impl/console/${facet}`;
-    const name = `console.${facet}`;
-    const read = own(consoleImpl, facet, pointer, refusals);
-    if (read.kind === "accessor") continue;
-    if (offered === true && typeof valueOf(read) !== "function") {
-      refusals.push({ rule: "facet-unimplemented", pointer, name });
-    } else if (offered === false && read.kind === "data") {
-      refusals.push({ rule: "facet-undeclared", pointer, name });
-    }
-  }
+  const objectsSegment = segmentOf(impl, "objects", OBJECTS_FACETS, refusals);
+  if (!objectsSegment.unread) readFacetImpls(objectsSegment.fields, "objects", OBJECTS_FACETS, offers, refusals);
 }
 
 /**
@@ -315,8 +382,8 @@ function deepFreeze<T>(value: T): T {
  *
  * The record is frozen. Its manifest is a deep-frozen `structuredClone` of the one passed, so freezing never touches
  * the package's own object, which an import may share; a manifest holding a value JSON cannot hold, such as a function,
- * makes the clone throw its `DataCloneError`. The implementation and its `console` are frozen in place, so the
- * functions the check read are the ones the host calls.
+ * makes the clone throw its `DataCloneError`. The implementation, its `console` and its `objects`, where it has one,
+ * are frozen in place, so the functions the check read are the ones the host calls.
  *
  * @throws {ProviderDefinitionError} With every refusal `checkProviderModule` answers, before anything is cloned or
  * frozen.
@@ -326,6 +393,7 @@ export function defineProvider<Handle>(manifest: unknown, impl: ProviderImpl<Han
   if (refusals.length > 0) throw new ProviderDefinitionError(refusals);
   const copy = deepFreeze(structuredClone(manifest));
   Object.freeze(impl.console);
+  if (impl.objects !== undefined) Object.freeze(impl.objects);
   return Object.freeze({ contract: PROVIDER_CONTRACT, manifest: copy, impl: Object.freeze(impl) });
 }
 
@@ -350,14 +418,16 @@ export function definitionRefusalSentence(refusal: DefinitionRefusal): string {
       return `The manifest value at ${at}, which defining a provider reads, is missing or not of the type the provider contract defines there.`;
     case "impl-key-unknown":
       return `The implementation has the key ${key} at ${at}, for which the provider contract defines no call.`;
+    case "impl-segment-not-a-record":
+      return `The implementation segment ${key} at ${at} is not a record of its calls, an object that is not an array, so nothing under it was read.`;
     case "call-missing":
       return `The implementation has no function of its own at ${at} for a mandatory call${name}.`;
     case "property-not-data":
       return `The value at ${at} is an accessor, whose getter was not called, where the provider contract reads only a data property.`;
     case "facet-undeclared":
-      return `The implementation has the key${name} at ${at}, a console facet the manifest declares not-offered.`;
+      return `The implementation has the key${name} at ${at}, a facet the manifest declares not-offered.`;
     case "facet-unimplemented":
-      return `The manifest offers the console facet${name}, for which the implementation has no function of its own at ${at}.`;
+      return `The manifest offers the facet${name}, for which the implementation has no function of its own at ${at}.`;
     case "engine-facet-without-call":
       return `The engine facet at ${at} is offered, and this provider contract has no call that serves it yet.`;
   }

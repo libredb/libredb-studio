@@ -18,7 +18,7 @@ export const CALL_REFUSAL_RULES = Object.freeze([
   "request-transaction-not-offered",
   /** A `scope` on a statement sent inside a transaction, which runs on the transaction's session; into the request. */
   "request-scope-in-transaction",
-  /** A console facet the session's calls do not offer; the pointer is into the calls, `name` the facet's call name. */
+  /** A facet the session's calls do not offer; the pointer is into the calls, `name` the facet's call name. */
   "facet-not-offered",
   /** A key a refinement cannot have; the pointer is into the refinement, `name` the key. */
   "refinement-key-unknown",
@@ -105,7 +105,7 @@ export function callRefusalSentence(refusal: CallRefusal): string {
     case "request-scope-in-transaction":
       return `The request carries a scope at ${at} on a statement sent inside a transaction, which runs on the transaction's own session, so the call was not made.`;
     case "facet-not-offered":
-      return `The session does not offer the console facet ${name} at ${at}, so the call was not made.`;
+      return `The session does not offer the facet ${name} at ${at}, so the call was not made.`;
     case "refinement-key-unknown":
       return `The refinement open answered has the key ${name} at ${at}, which a refinement cannot have.`;
     case "refinement-unreadable":

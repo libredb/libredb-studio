@@ -14,6 +14,7 @@ import path from "node:path";
 import {
   BATCH_MAX_BYTES,
   type CallContext,
+  checkObjectsFacet,
   encodedRowBytes,
   envReader,
   type ExecuteAnswer,
@@ -146,6 +147,7 @@ describe("bridgedConsole", () => {
         endScope: "not-offered",
         transaction: "not-offered",
       },
+      objects: { tree: "not-offered" },
     });
     expect(plain.session.calls.console.cancel).toBe("not-offered");
     expect(typeof cancelling.session.cancel).toBe("function");
@@ -160,10 +162,28 @@ describe("bridgedConsole", () => {
         endScope: "offered",
         transaction: "not-offered",
       },
+      objects: { tree: "not-offered" },
     });
     expect(typeof ending.session.endScope).toBe("function");
     expect(Object.isFrozen(cancelling.session.calls)).toBe(true);
     expect(Object.isFrozen(cancelling.session.calls.console.execute.honours)).toBe(true);
+  });
+
+  test("a bridged session offers no objects tree facet, since the object routes and the VS Code backend still call the provider's tree methods themselves", () => {
+    const sessions = [
+      bridgedConsole(fake(resultOf([])), {}),
+      bridgedConsole(fake(resultOf([]), { cancelQuery: mock(async () => true) }), {}),
+      bridgedConsole(fake(resultOf([]), { endOpenQueryTransaction: mock(async () => "none") }), {}),
+      bridgedConsole(transactionalFake().provider, {}),
+    ];
+
+    for (const { session } of sessions) {
+      expect(session.calls.objects).toEqual({ tree: "not-offered" });
+      expect(Object.isFrozen(session.calls.objects)).toBe(true);
+      expect(checkObjectsFacet(session.calls, "tree")).toEqual([
+        { rule: "facet-not-offered", pointer: "/objects/tree", name: "objects.tree" },
+      ]);
+    }
   });
 
   test("a bridged session offers the transaction facet exactly where the provider is a TransactionProvider", () => {

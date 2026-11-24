@@ -158,7 +158,7 @@ describe("checkProviderModule", () => {
     expect(checkProviderModule(changed)).toEqual([expected]);
     expect(checkProviderModule(undefinedKey)).toEqual([expected]);
     expect(definitionRefusalSentence(expected)).toBe(
-      'The implementation has the key console.endScope at "/impl/console/endScope", a console facet the manifest declares not-offered.',
+      'The implementation has the key console.endScope at "/impl/console/endScope", a facet the manifest declares not-offered.',
     );
   });
 
@@ -175,6 +175,54 @@ describe("checkProviderModule", () => {
     expect(checkProviderModule(record((r) => (r.impl = implemented)))).toEqual([
       refusal("facet-undeclared", "/impl/console/transaction", { name }),
     ]);
+  });
+
+  test("the objects tree facet is declared and implemented both ways, like every console facet", () => {
+    const tree = async () => ({ containers: [] });
+    const offered = manifest((m) => (m.calls.objects.tree = "offered"));
+    const implemented = impl((i) => (i.objects = { tree }));
+    const name = "objects.tree";
+    const defined = defineProvider(offered, implemented);
+
+    expect(defined.impl.objects?.tree).toBe(tree);
+    expect(Object.isFrozen(defined.impl.objects)).toBe(true);
+    expect(checkProviderModule(record((r) => (r.manifest = offered)))).toEqual([
+      refusal("facet-unimplemented", "/impl/objects/tree", { name }),
+    ]);
+    expect(
+      checkProviderModule(
+        record((r) => {
+          r.manifest = offered;
+          r.impl.objects = { tree: "tree" };
+        }),
+      ),
+    ).toEqual([refusal("facet-unimplemented", "/impl/objects/tree", { name })]);
+    expect(
+      checkProviderModule(
+        record((r) => {
+          r.manifest = offered;
+          r.impl.objects = {};
+        }),
+      ),
+    ).toEqual([refusal("facet-unimplemented", "/impl/objects/tree", { name })]);
+    expect(checkProviderModule(record((r) => (r.impl = implemented)))).toEqual([
+      refusal("facet-undeclared", "/impl/objects/tree", { name }),
+    ]);
+    expect(checkProviderModule(record((r) => (r.impl.objects = { tree: undefined })))).toEqual([
+      refusal("facet-undeclared", "/impl/objects/tree", { name }),
+    ]);
+    expect(checkProviderModule(record((r) => (r.impl.objects = {})))).toEqual([]);
+    expect(
+      Object.isFrozen(
+        defineProvider(
+          manifest(),
+          impl((i) => (i.objects = {})),
+        ).impl.objects,
+      ),
+    ).toBe(true);
+    expect(definitionRefusalSentence(refusal("facet-unimplemented", "/impl/objects/tree", { name }))).toBe(
+      'The manifest offers the facet objects.tree, for which the implementation has no function of its own at "/impl/objects/tree".',
+    );
   });
 
   test("an honours item that is no request field, or one listed twice, is refused as manifest-unreadable", () => {
@@ -296,6 +344,16 @@ describe("checkProviderModule", () => {
       [(r) => accessor(r.impl, "console"), "/impl/console"],
       [(r) => accessor(r.impl.console, "cancel"), "/impl/console/cancel"],
       [(r) => accessor(r.impl.console, "execute"), "/impl/console/execute"],
+      [(r) => accessor(r.impl, "objects"), "/impl/objects"],
+      [
+        (r) => {
+          r.impl.objects = {};
+          accessor(r.impl.objects, "tree");
+        },
+        "/impl/objects/tree",
+      ],
+      [(r) => accessor(r.manifest.calls, "objects"), "/manifest/calls/objects"],
+      [(r) => accessor(r.manifest.calls.objects, "tree"), "/manifest/calls/objects/tree"],
       [(r) => accessor(r.manifest, "calls"), "/manifest/calls"],
       [(r) => accessor(r.manifest.calls.console.execute, "honours"), "/manifest/calls/console/execute/honours"],
       [(r) => accessor(r.manifest.calls.console.execute.honours, "0"), "/manifest/calls/console/execute/honours/0"],
@@ -357,6 +415,34 @@ describe("checkProviderModule", () => {
     ]);
   });
 
+  test("a calls segment of the implementation that is not a record is refused as impl-segment-not-a-record, and nothing under it is read", () => {
+    const offered = manifest((m) => (m.calls.objects.tree = "offered"));
+    for (const segment of ["console", "objects"]) {
+      for (const shape of [null, "calls", [async () => ({})]]) {
+        const pointer = `/impl/${segment}`;
+        const expected = [refusal("impl-segment-not-a-record", pointer, { key: segment })];
+
+        expect(checkProviderModule(record((r) => (r.impl[segment] = shape)))).toEqual(expected);
+        expect(
+          checkProviderModule(
+            record((r) => {
+              r.manifest = offered;
+              r.impl[segment] = shape;
+            }),
+          ),
+        ).toEqual(
+          segment === "objects"
+            ? expected
+            : [...expected, refusal("facet-unimplemented", "/impl/objects/tree", { name: "objects.tree" })],
+        );
+      }
+    }
+    expect(checkProviderModule(record((r) => (r.impl.objects = undefined)))).toEqual([]);
+    expect(definitionRefusalSentence(refusal("impl-segment-not-a-record", "/impl/objects", { key: "objects" }))).toBe(
+      'The implementation segment "objects" at "/impl/objects" is not a record of its calls, an object that is not an array, so nothing under it was read.',
+    );
+  });
+
   test("a call inherited from a prototype is not read, so a class instance is refused as call-missing", () => {
     class Implementation {
       async open() {
@@ -376,11 +462,13 @@ describe("checkProviderModule", () => {
     const changed = record((r) => {
       r.impl.health = async () => ({});
       r.impl.console.explain = async () => ({});
+      r.impl.objects = { source: async () => ({}) };
     });
 
     expect(checkProviderModule(changed)).toEqual([
       refusal("impl-key-unknown", "/impl/health", { key: "health" }),
       refusal("impl-key-unknown", "/impl/console/explain", { key: "explain" }),
+      refusal("impl-key-unknown", "/impl/objects/source", { key: "source" }),
     ]);
   });
 
@@ -431,6 +519,10 @@ describe("checkProviderModule", () => {
       [(r) => (r.manifest.calls.console.execute.honours = "params"), "/manifest/calls/console/execute/honours"],
       [(r) => (r.manifest.calls.console.cancel = true), "/manifest/calls/console/cancel"],
       [(r) => delete r.manifest.calls.console.endScope, "/manifest/calls/console/endScope"],
+      [(r) => delete r.manifest.calls.objects, "/manifest/calls/objects"],
+      [(r) => (r.manifest.calls.objects = "tree"), "/manifest/calls/objects"],
+      [(r) => (r.manifest.calls.objects.tree = "maybe"), "/manifest/calls/objects/tree"],
+      [(r) => delete r.manifest.calls.objects.tree, "/manifest/calls/objects/tree"],
       [(r) => (r.manifest.engines = { exampledb: {} }), "/manifest/engines"],
       [(r) => (r.manifest.engines[0] = null), "/manifest/engines/0"],
       [(r) => delete r.manifest.engines[0].facets, "/manifest/engines/0/facets"],

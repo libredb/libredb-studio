@@ -49,6 +49,7 @@ function runCase(deps: ChildDeps, name: string): ChildReport {
         endScope: "offered",
         transaction: "offered",
       },
+      objects: { tree: "offered" },
     };
     const refine = { calls: { console: { execute: { honours: longest } } } };
     return { name, refusals: deps.checkRefinement(declared as never, refine) };

@@ -38,6 +38,8 @@ import {
   rowsSource,
   type TransactionAnswer,
   type TransactionRequest,
+  type TreeAnswer,
+  type TreeRequest,
 } from "@libredb/provider-sdk/calls";
 import { FrameRefusalError, type ServedFrame, type ServedHandle, serve } from "@libredb/provider-sdk/testing";
 import { ValueCodecError } from "@libredb/provider-sdk/values";
@@ -72,6 +74,7 @@ function fixture(
     readonly cancel?: boolean;
     readonly endScope?: boolean;
     readonly transaction?: boolean;
+    readonly tree?: boolean;
     readonly honours?: string[];
   } = {},
 ): Fixture {
@@ -80,6 +83,7 @@ function fixture(
   manifest.calls.console.cancel = options.cancel === false ? "not-offered" : "offered";
   manifest.calls.console.endScope = options.endScope === false ? "not-offered" : "offered";
   manifest.calls.console.transaction = options.transaction === false ? "not-offered" : "offered";
+  manifest.calls.objects.tree = options.tree === false ? "not-offered" : "offered";
   manifest.engines[0].facets.monitoring.overview = "not-offered";
   const seen: Seen[] = [];
   const handle: ProviderHandle = { marker: marker() };
@@ -105,6 +109,7 @@ function fixture(
     cancel: () => ({ cancelled: true }),
     endScope: () => ({ openTransaction: "none" }),
     transaction: () => ({ sessionState: "in-transaction" }),
+    tree: () => ({ containers: [] }),
   };
   const impl: Json = {
     open: async (ctx: OpenContext) => {
@@ -138,6 +143,14 @@ function fixture(
     impl.console.transaction = async (h: unknown, request: unknown, ctx: CallContext) => {
       seen.push({ call: "console.transaction", handle: h, request, ctx });
       return answers.transaction();
+    };
+  }
+  if (options.tree !== false) {
+    impl.objects = {
+      tree: async (h: unknown, request: unknown, ctx: CallContext) => {
+        seen.push({ call: "objects.tree", handle: h, request, ctx });
+        return answers.tree();
+      },
     };
   }
   return { module: defineProvider(manifest, impl as ProviderImpl<unknown>), seen, handle, answers };
@@ -662,6 +675,100 @@ describe("serve", () => {
     ]);
     expect([notServed.frames.length, narrowed.frames.length]).toEqual(before);
     expect(declaredNot.seen.map((item) => item.call)).toEqual(["open"]);
+    expect(withdrawn.seen.map((item) => item.call)).toEqual(["open"]);
+  });
+
+  test("a served tree call crosses each action's request and answer as frames, and the provider receives decoded frozen copies", async () => {
+    const fx = fixture();
+    const { impl, frames } = served(fx);
+    const opened = await impl.open(openContext());
+    const before = frames.length;
+    const container = [marker()];
+    const path = [...container, marker()];
+    const detail = {
+      path,
+      columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true, defaultValue: marker() }],
+      indexes: [{ name: marker(), columns: ["id"], unique: true }],
+      foreignKeys: [{ columnName: "id", referencedTable: marker(), referencedColumn: "id" }],
+    };
+    const calls: [TreeRequest, TreeAnswer][] = [
+      [{ action: "containers" }, { containers: [{ path: container, name: marker(), level: 0, kinds: ["table"] }] }],
+      [{ action: "containers", parent: container }, { containers: [] }],
+      [{ action: "count", container }, { counts: { table: { count: 2 }, view: { unavailable: marker() } } }],
+      [
+        { action: "list", container, kind: "table" },
+        { objects: [{ path, name: marker(), kind: "table", readRanges: [{ prefix: marker() }] }] },
+      ],
+      [{ action: "describe", path, kind: "table" }, { detail: { ...detail, indexes: { unavailable: marker() } } }],
+      [
+        { action: "describeMany", container, kind: "table", limit: 1, defaultSql: true },
+        { details: [detail], truncated: { limit: 1, reason: marker() } },
+      ],
+    ];
+    const received: unknown[] = [];
+
+    for (const [sent, answer] of calls) {
+      fx.answers.tree = () => answer;
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each frame pair and answer is its own call's.
+      const got = await impl.objects?.tree?.(opened.handle, sent, callContext());
+      expect(got).toEqual(answer);
+      expect(got).not.toBe(answer);
+      received.push(got);
+    }
+    const seen = fx.seen.slice(1);
+
+    expect(received.length).toBe(calls.length);
+    expect(frames.slice(before).map((frame) => `${frame.direction} ${frame.call}`)).toEqual(
+      calls.flatMap(() => ["to-provider objects.tree", "to-host objects.tree"]),
+    );
+    expect(seen.map((item) => item.call)).toEqual(calls.map(() => "objects.tree"));
+    for (const [index, item] of seen.entries()) {
+      const sent = (calls[index] as [TreeRequest, TreeAnswer])[0];
+      expect(item.handle).toBe(fx.handle);
+      expect(item.request).toEqual(sent);
+      expect(item.request).not.toBe(sent);
+      expect(deepFrozen(item.request)).toBe(true);
+      expect(Object.isFrozen(item.ctx)).toBe(true);
+    }
+
+    fx.answers.tree = () => ({ containers: [], objects: [] });
+    const twoForms = await failure(async () =>
+      impl.objects?.tree?.(opened.handle, { action: "containers" }, callContext()),
+    );
+    expect((twoForms as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-value-unreadable", call: "objects.tree", part: "answer", pointer: "" },
+    ]);
+    const unknownAction = await failure(async () =>
+      impl.objects?.tree?.(opened.handle, { action: "search" } as unknown as TreeRequest, callContext()),
+    );
+    expect((unknownAction as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-value-unreadable", call: "objects.tree", part: "request", pointer: "/action" },
+    ]);
+    expect(fx.seen.length).toBe(calls.length + 2);
+  });
+
+  test("a tree call on a session without objects.tree is refused before any frame", async () => {
+    const declaredNot = fixture({ tree: false });
+    const withdrawn = fixture();
+    withdrawn.answers.open = () => ({
+      handle: withdrawn.handle,
+      refine: { calls: { objects: { tree: "not-offered" } } },
+    });
+    const notServed = served(declaredNot);
+    const narrowed = served(withdrawn);
+    const narrowedSession = await narrowed.impl.open(openContext());
+    const before = narrowed.frames.length;
+
+    const refused = await failure(async () =>
+      narrowed.impl.objects?.tree?.(narrowedSession.handle, { action: "containers" }, callContext()),
+    );
+
+    expect(notServed.impl.objects?.tree).toBeUndefined();
+    expect(refused).toBeInstanceOf(CallRefusalError);
+    expect((refused as CallRefusalError).refusals).toEqual([
+      { rule: "facet-not-offered", pointer: "/objects/tree", name: "objects.tree" },
+    ]);
+    expect(narrowed.frames.length).toBe(before);
     expect(withdrawn.seen.map((item) => item.call)).toEqual(["open"]);
   });
 
@@ -1283,7 +1390,7 @@ describe("serve", () => {
 
   test("the served implementation is an implementation of the module's manifest, with the module's facets", () => {
     const both = fixture();
-    const neither = fixture({ cancel: false, endScope: false, transaction: false });
+    const neither = fixture({ cancel: false, endScope: false, transaction: false, tree: false });
     const servedBoth = serve(both.module);
     const servedNeither = serve(neither.module);
 
@@ -1291,7 +1398,10 @@ describe("serve", () => {
     expect(checkProviderModule(defineProvider(neither.module.manifest, servedNeither))).toEqual([]);
     expect(Object.keys(servedBoth.console).sort()).toEqual(["cancel", "endScope", "execute", "transaction"]);
     expect(Object.keys(servedNeither.console)).toEqual(["execute"]);
+    expect(Object.keys(servedBoth.objects ?? {})).toEqual(["tree"]);
+    expect(Object.keys(servedNeither.objects ?? {})).toEqual([]);
     expect(Object.isFrozen(servedBoth)).toBe(true);
     expect(Object.isFrozen(servedBoth.console)).toBe(true);
+    expect(Object.isFrozen(servedBoth.objects)).toBe(true);
   });
 });

@@ -5,7 +5,8 @@
  * Each case holds a request to the session's calls, the manifest's `calls` or the narrowed ones a refinement leaves,
  * and asserts the exact refusal list: a pointer into the request, the field's name, and never a value of the request.
  * A statement sent inside a transaction goes only to a session that offers `console.transaction`, and never with a
- * scope.
+ * scope. A console facet call goes only to a session that offers the facet, and an object facet call only to one that
+ * offers the object facet (clause C-17).
  */
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
@@ -16,6 +17,7 @@ import {
   callRefusalSentence,
   checkConsoleFacet,
   checkExecuteRequest,
+  checkObjectsFacet,
   type ExecuteRequest,
   sessionCalls,
 } from "@libredb/provider-sdk/calls";
@@ -24,6 +26,7 @@ import type { Calls } from "@libredb/provider-sdk/manifest";
 /** The calls of a package that honours nothing and offers no facet. */
 const NOTHING: Calls = {
   console: { execute: { honours: [] }, cancel: "not-offered", endScope: "not-offered", transaction: "not-offered" },
+  objects: { tree: "not-offered" },
 };
 
 /** The calls of a package that honours every field and offers every facet. */
@@ -34,6 +37,7 @@ const EVERYTHING: Calls = {
     endScope: "offered",
     transaction: "offered",
   },
+  objects: { tree: "offered" },
 };
 
 const statement = `select ${randomUUID()}`;
@@ -125,7 +129,7 @@ describe("checkConsoleFacet", () => {
     expect(checkConsoleFacet(declaredOnly, "endScope")).toEqual([endScope]);
     expect(checkConsoleFacet(narrowed, "endScope")).toEqual([endScope]);
     expect(callRefusalSentence(cancel)).toBe(
-      'The session does not offer the console facet "console.cancel" at "/console/cancel", so the call was not made.',
+      'The session does not offer the facet "console.cancel" at "/console/cancel", so the call was not made.',
     );
   });
 
@@ -141,7 +145,7 @@ describe("checkConsoleFacet", () => {
     expect(checkConsoleFacet(withdrawn, "transaction")).toEqual([transaction]);
     expect(checkConsoleFacet(EVERYTHING, "transaction")).toEqual([]);
     expect(callRefusalSentence(transaction)).toBe(
-      'The session does not offer the console facet "console.transaction" at "/console/transaction", so the call was not made.',
+      'The session does not offer the facet "console.transaction" at "/console/transaction", so the call was not made.',
     );
   });
 
@@ -151,6 +155,28 @@ describe("checkConsoleFacet", () => {
     expect(checkConsoleFacet(EVERYTHING, "cancel")).toEqual([]);
     expect(checkConsoleFacet(EVERYTHING, "endScope")).toEqual([]);
     expect(checkConsoleFacet(narrowed, "cancel")).toEqual([]);
+  });
+});
+
+describe("checkObjectsFacet", () => {
+  test("the objects tree facet is refused by name to a session that does not offer it", () => {
+    const withdrawn = sessionCalls(EVERYTHING, { calls: { objects: { tree: "not-offered" } } });
+    const tree: CallRefusal = { rule: "facet-not-offered", pointer: "/objects/tree", name: "objects.tree" };
+
+    expect(checkObjectsFacet(NOTHING, "tree")).toEqual([tree]);
+    expect(checkObjectsFacet(sessionCalls(NOTHING, undefined), "tree")).toEqual([tree]);
+    expect(checkObjectsFacet(withdrawn, "tree")).toEqual([tree]);
+    expect(callRefusalSentence(tree)).toBe(
+      'The session does not offer the facet "objects.tree" at "/objects/tree", so the call was not made.',
+    );
+  });
+
+  test("a session that offers objects.tree is called", () => {
+    const consoleNarrowed = sessionCalls(EVERYTHING, { calls: { console: { cancel: "not-offered" } } });
+
+    expect(checkObjectsFacet(EVERYTHING, "tree")).toEqual([]);
+    expect(checkObjectsFacet(sessionCalls(EVERYTHING, undefined), "tree")).toEqual([]);
+    expect(checkObjectsFacet(consoleNarrowed, "tree")).toEqual([]);
   });
 });
 

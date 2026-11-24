@@ -187,6 +187,7 @@ describe("E21-K16: abandoned promises", () => {
               endScope: "not-offered",
               transaction: "not-offered",
             },
+            objects: { tree: "not-offered" },
           },
           execute: () => {
             executeStarted.resolve();

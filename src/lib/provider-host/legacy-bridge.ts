@@ -11,7 +11,8 @@
  * query path left open (`endsOpenQueryTransactions`), and its `endScope` runs the provider's `endOpenQueryTransaction`
  * with the request's scope and answers its outcome; `console.transaction` is offered exactly when the provider holds a
  * transaction session (`isTransactionProvider`). The bridge is the one caller of a provider's ender: the caller that
- * minted a run's scope ends it through the host core's endScope call (clause C-60).
+ * minted a run's scope ends it through the host core's endScope call (clause C-60). `objects.tree` is not offered: the
+ * object routes and the VS Code backend still call a provider's tree methods themselves.
  *
  * Its transaction call runs the provider's own method for the action: `beginTransaction` with `requireReportedState`
  * as the transaction route has always passed it, answering `stateReported` exactly when the provider answered a result,
@@ -288,6 +289,7 @@ export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepare
         endScope: ender === undefined ? "not-offered" : "offered",
         transaction: transactional === undefined ? "not-offered" : "offered",
       },
+      objects: { tree: "not-offered" },
     },
     undefined,
   );
