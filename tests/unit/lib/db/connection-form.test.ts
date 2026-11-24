@@ -13,15 +13,31 @@ import { DB_UI_CONFIG } from "@/lib/db-ui-config";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import * as form from "@/lib/db/connection-form";
 import { DEFAULT_CONNECTION_TYPE } from "@/lib/db/default-connection-type";
+import type { EngineDeclaration } from "@libredb/provider-sdk/manifest";
+import { admittedDeclarations } from "../../../../scripts/generate-engine-catalog";
+import { CONNECTION_FORM_URI_MODE } from "@/lib/db/compatibility";
+import { CONNECTION_FIELDS } from "@/lib/db/connection-fields";
 import {
   CONNECTION_FORM,
+  CONNECTION_FORM_FUNCTIONS,
   CONNECTION_PICKER_ORDER,
+  type ConnectionFieldRule,
+  type ConnectionFormFunctions,
+  composeConnectionForm,
   connectionFieldHint,
   connectionFieldPlaceholder,
   connectionFieldPlacement,
   offersSslPanel,
 } from "@/lib/db/connection-form";
+import { CREDENTIAL_WARNINGS } from "@/lib/db/credential-warnings";
+import { type ConnectionFormEntry, projectConnectionForms } from "@/lib/db/engine-catalog/projection";
+import {
+  snowflakeAccountRefusal,
+  snowflakeHostHint,
+  snowflakeHostIdentity,
+} from "@/lib/db/providers/sql/snowflake/account-host";
 import type { DatabaseType } from "@/lib/types";
+import { fixtureEngineDeclaration } from "../../../helpers/fixture-engine-declaration";
 import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../../../helpers/outside-the-union";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
@@ -378,5 +394,220 @@ describe("CONNECTION_PICKER_ORDER", () => {
       "mssql",
       "mongodb",
     ]);
+  });
+});
+
+describe("CONNECTION_FORM, composed from each engine's declaration and Studio's function table", () => {
+  const ADMITTED: readonly EngineDeclaration[] = admittedDeclarations();
+  const FORMS = projectConnectionForms(ADMITTED);
+  const declared = (type: DatabaseType): EngineDeclaration => {
+    const declaration = ADMITTED.find((d) => d.id === type);
+    if (declaration === undefined) throw new Error(`no declaration of ${type}`);
+    return declaration;
+  };
+  const formOf = (type: DatabaseType): ConnectionFormEntry => FORMS[type] as ConnectionFormEntry;
+  /** A dialog list as a record keyed by field in list order, or undefined where the list is empty. */
+  const recordOf = <Entry extends { readonly field: string }, Value>(
+    list: readonly Entry[],
+    read: (entry: Entry) => Value,
+  ): Record<string, Value> | undefined =>
+    list.length === 0 ? undefined : Object.fromEntries(list.map((entry) => [entry.field, read(entry)]));
+  const sorted = (keys: readonly string[]) => [...keys].sort();
+
+  test("each entry is its declaration's form members composed with Studio's function table", async () => {
+    const differing: string[] = [];
+    for (const type of EVERY_TYPE) {
+      const entry = CONNECTION_FORM[type];
+      const { displayName, connection } = declared(type);
+      const { dialog } = connection;
+      const checks = CONNECTION_FORM_FUNCTIONS.checks[type] ?? {};
+      const expected = {
+        label: displayName,
+        defaultPort: connection.defaults.port === undefined ? "" : String(connection.defaults.port),
+        defaultHost: connection.defaults.host,
+        showConnectionStringToggle: connection.connectionString.dialogOffersUri,
+        dialogOrder: dialog.order ?? undefined,
+        fieldLabels: recordOf(dialog.labels, ({ text }) => text),
+        fieldHints: recordOf(dialog.hints, ({ text }) => text),
+        fieldPlaceholders: recordOf(dialog.placeholders, ({ text }) => text),
+        fieldPlacement: recordOf(dialog.placement, ({ where }) => where),
+        hostHint:
+          connection.hostHint === null ? undefined : CONNECTION_FORM_FUNCTIONS.hostHints[type]?.[connection.hostHint],
+        hostIdentity:
+          connection.hostIdentity === null
+            ? undefined
+            : CONNECTION_FORM_FUNCTIONS.hostIdentities[type]?.[connection.hostIdentity],
+        fieldOptions: recordOf(dialog.options, ({ choices }) => choices),
+        fieldShownWhen: recordOf(dialog.shownWhen, ({ when }) => when),
+        fieldDefaults: recordOf(dialog.absentValues, ({ value }) => value),
+        showSslPanel: connection.tls === "not-offered" ? false : undefined,
+        hostAcceptsUri: connection.hostUriSchemes.length === 0 ? undefined : connection.hostUriSchemes,
+      };
+      const rules = recordOf(connection.fieldRules, (rule) => rule);
+      const { connectionFields, credentialWarnings, fieldRules, connectionImport, ...rest } = entry;
+      const restExpected = Object.fromEntries(Object.entries(expected).filter(([, value]) => value !== undefined));
+      // Every member equal, each per-field record keyed in the declaration's field order, and no member beyond them.
+      const same =
+        JSON.stringify(Object.keys(rest)) === JSON.stringify(Object.keys(restExpected)) &&
+        JSON.stringify(rest) === JSON.stringify(restExpected) &&
+        rest.hostHint === expected.hostHint &&
+        rest.hostIdentity === expected.hostIdentity &&
+        connectionFields === CONNECTION_FIELDS[type] &&
+        credentialWarnings === CREDENTIAL_WARNINGS[type] &&
+        typeof Object.getOwnPropertyDescriptor(entry, "credentialWarnings")?.get === "function" &&
+        entry.showConnectionStringToggle === CONNECTION_FORM_URI_MODE[type] &&
+        JSON.stringify(Object.keys(fieldRules ?? {})) === JSON.stringify(Object.keys(rules ?? {})) &&
+        Object.entries(rules ?? {}).every(([field, rule]) => {
+          const held: ConnectionFieldRule | undefined = fieldRules?.[field as keyof typeof fieldRules];
+          return (
+            held !== undefined &&
+            held.required === (rule.required ?? undefined) &&
+            (rule.format === null
+              ? held.format === undefined
+              : held.format?.pattern.source === rule.format.pattern.source &&
+                held.format.pattern.flags === rule.format.pattern.flags &&
+                held.format.sentence === rule.format.sentence) &&
+            JSON.stringify(held.charRange) === JSON.stringify(rule.charRange ?? undefined) &&
+            held.check === (rule.check === null ? undefined : checks[rule.check])
+          );
+        }) &&
+        (connection.import === null
+          ? connectionImport === undefined
+          : connectionImport?.label === connection.import.label &&
+            connectionImport.load === CONNECTION_FORM_FUNCTIONS.importers[type]?.[connection.import.importer]);
+      if (!same) differing.push(type);
+    }
+
+    expect(differing).toEqual([]);
+    // Every function is Studio's own, by identity, at its slot.
+    expect(CONNECTION_FORM.snowflake.fieldRules?.host?.check).toBe(snowflakeAccountRefusal);
+    expect(CONNECTION_FORM.snowflake.hostHint).toBe(snowflakeHostHint);
+    expect(CONNECTION_FORM.snowflake.hostIdentity).toBe(snowflakeHostIdentity);
+    const load = CONNECTION_FORM.kubernetes.connectionImport?.load;
+    expect(load).toBeDefined();
+    expect(await load?.()).toBe((await import("@/lib/kubernetes/kubeconfig-import")).importKubeconfig);
+    // A pattern is compiled once, so every read answers the same RegExp.
+    expect(CONNECTION_FORM.s3.fieldRules?.user?.format?.pattern).toBe(
+      CONNECTION_FORM.s3.fieldRules?.user?.format?.pattern,
+    );
+    expect(CONNECTION_FORM.s3.fieldRules?.user?.format?.pattern).toBeInstanceOf(RegExp);
+    // The record, each entry and each of its records are frozen; the declaration's lists are not handed out.
+    expect(Object.isFrozen(CONNECTION_FORM)).toBe(true);
+    expect(EVERY_TYPE.every((type) => Object.isFrozen(CONNECTION_FORM[type]))).toBe(true);
+    expect(Object.isFrozen(CONNECTION_FORM.snowflake.fieldShownWhen)).toBe(true);
+    expect(Object.isFrozen(CONNECTION_FORM.snowflake.fieldRules?.host)).toBe(true);
+  });
+
+  test("a declaration naming a function Studio holds none for is refused by name when its form is composed", () => {
+    const postgres = declared("postgres");
+    const fixture = fixtureEngineDeclaration(postgres);
+    const naming = { ...fixture, connection: { ...fixture.connection, hostHint: "hostHint" } };
+    const fixtureForm = projectConnectionForms([naming]).acmefoo as ConnectionFormEntry;
+
+    expect(() => composeConnectionForm("acmefoo" as DatabaseType, fixtureForm, CONNECTION_FORM_FUNCTIONS)).toThrow(
+      'acmefoo names the function "hostHint", which Studio holds no function for.',
+    );
+    // The fixture as committed names none, so it composes.
+    const plain = projectConnectionForms([fixture]).acmefoo as ConnectionFormEntry;
+    expect(composeConnectionForm("acmefoo" as DatabaseType, plain, CONNECTION_FORM_FUNCTIONS).label).toBe("Acme Foo");
+
+    // Snowflake's account check renamed: no default, no skipped slot.
+    const snowflake = formOf("snowflake");
+    const renamed: ConnectionFormEntry = {
+      ...snowflake,
+      fieldRules: snowflake.fieldRules.map((rule) => (rule.check === null ? rule : { ...rule, check: "hostCheckV2" })),
+    };
+    expect(() => composeConnectionForm("snowflake", renamed, CONNECTION_FORM_FUNCTIONS)).toThrow(
+      'snowflake names the function "hostCheckV2", which Studio holds no function for.',
+    );
+    // An engine whose table holds nothing at all names the engine and the name.
+    const empty: ConnectionFormFunctions = { checks: {}, hostHints: {}, hostIdentities: {}, importers: {} };
+    expect(() => composeConnectionForm("kubernetes", formOf("kubernetes"), empty)).toThrow(
+      'kubernetes names the function "importer", which Studio holds no function for.',
+    );
+    expect(() => composeConnectionForm("snowflake", snowflake, empty)).toThrow(
+      'snowflake names the function "hostCheck", which Studio holds no function for.',
+    );
+    // A table holding only what the declarations name composes every engine.
+    for (const type of EVERY_TYPE) {
+      expect(() => composeConnectionForm(type, formOf(type), CONNECTION_FORM_FUNCTIONS)).not.toThrow();
+    }
+  });
+
+  test("a name Studio holds only for another slot is refused by name", () => {
+    const snowflake = formOf("snowflake");
+    const kubernetes = formOf("kubernetes");
+
+    for (const [type, entry, name] of [
+      ["snowflake", { ...snowflake, hostIdentity: "hostHint" }, "hostHint"],
+      ["snowflake", { ...snowflake, hostHint: "hostIdentity" }, "hostIdentity"],
+      [
+        "snowflake",
+        {
+          ...snowflake,
+          fieldRules: snowflake.fieldRules.map(({ field, required, format, charRange, check }) => ({
+            field,
+            required,
+            format,
+            charRange,
+            check: check === null ? null : "hostHint",
+          })),
+        },
+        "hostHint",
+      ],
+      ["kubernetes", { ...kubernetes, import: { label: "Import kubeconfig", importer: "hostCheck" } }, "hostCheck"],
+      ["kubernetes", { ...kubernetes, hostHint: "importer" }, "importer"],
+    ] as const satisfies readonly (readonly [DatabaseType, ConnectionFormEntry, string])[]) {
+      expect(() => composeConnectionForm(type, entry, CONNECTION_FORM_FUNCTIONS)).toThrow(
+        `${type} names the function "${name}", which Studio holds no function for.`,
+      );
+    }
+  });
+
+  test("a form entry for a field the connection dialog does not draw is refused by name when its form is composed", () => {
+    const opcua = formOf("opcua");
+    // A seed-only field, which the SDK's validator refuses in a dialog entry of an admitted declaration.
+    const entries: readonly ConnectionFormEntry[] = [
+      { ...opcua, dialog: { ...opcua.dialog, hints: [{ field: "clientCertificatePath", text: "A path." }] } },
+      { ...opcua, dialog: { ...opcua.dialog, order: ["host", "clientCertificatePath"] } },
+      {
+        ...opcua,
+        dialog: {
+          ...opcua.dialog,
+          shownWhen: [{ field: "host", when: { field: "clientCertificatePath", equals: "x" } }],
+        },
+      },
+      {
+        ...opcua,
+        fieldRules: [
+          { field: "clientCertificatePath", required: "Enter it.", format: null, charRange: null, check: null },
+        ],
+      },
+    ];
+
+    for (const entry of entries) {
+      expect(() => composeConnectionForm("opcua", entry, CONNECTION_FORM_FUNCTIONS)).toThrow(
+        "opcua declares a connection form entry for clientCertificatePath, which Studio's connection dialog does not draw.",
+      );
+    }
+  });
+
+  test("Studio's function table holds exactly the functions the committed declarations name, each at its own slot", () => {
+    const named = (read: (d: EngineDeclaration) => readonly (string | null)[]) =>
+      Object.fromEntries(
+        ADMITTED.flatMap((d) => {
+          const names = read(d).filter((name): name is string => name !== null);
+          return names.length === 0 ? [] : [[d.id, sorted(names)]];
+        }),
+      );
+    const held = (table: Readonly<Partial<Record<DatabaseType, Readonly<Record<string, unknown>>>>>) =>
+      Object.fromEntries(Object.entries(table).map(([type, slots]) => [type, sorted(Object.keys(slots ?? {}))]));
+
+    expect(held(CONNECTION_FORM_FUNCTIONS.checks)).toEqual(named((d) => d.connection.fieldRules.map((r) => r.check)));
+    expect(held(CONNECTION_FORM_FUNCTIONS.hostHints)).toEqual(named((d) => [d.connection.hostHint]));
+    expect(held(CONNECTION_FORM_FUNCTIONS.hostIdentities)).toEqual(named((d) => [d.connection.hostIdentity]));
+    expect(held(CONNECTION_FORM_FUNCTIONS.importers)).toEqual(named((d) => [d.connection.import?.importer ?? null]));
+    expect(Object.isFrozen(CONNECTION_FORM_FUNCTIONS)).toBe(true);
+    expect(Object.values(CONNECTION_FORM_FUNCTIONS).every((table) => Object.isFrozen(table))).toBe(true);
   });
 });

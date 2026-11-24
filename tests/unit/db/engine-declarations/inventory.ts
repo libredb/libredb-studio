@@ -125,7 +125,7 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     module: "src/lib/db/connection-form.ts",
     name: "CONNECTION_FORM",
     destination:
-      "engine declaration: displayName, connection.defaults, connection.tls, connection.dialog, connection.hostUriSchemes, connection.credentialWarnings, connection.fieldRules, connection.hostHint, connection.hostIdentity and connection.import, each function named by the slot it fills",
+      "engine declaration: displayName, connection.defaults, connection.tls, connection.dialog, connection.hostUriSchemes, connection.credentialWarnings, connection.fieldRules, connection.hostHint, connection.hostIdentity and connection.import, authored in each declaration and composed from the generated connection forms, each named function bound by Studio's function table",
   },
   {
     module: "src/lib/db/connection-string/index.ts",
@@ -168,6 +168,13 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     module: CONNECTION_FLAGS_MODULE,
     name: "BUNDLED_READS_TRUST_MATERIAL",
     destination: projected("connection.readsTrustMaterial"),
+  },
+  {
+    module: "src/lib/db/engine-catalog/connection-form.generated.ts",
+    name: "BUNDLED_CONNECTION_FORMS",
+    destination: projected(
+      "displayName, connection.defaults, connection.tls, connection.dialog, connection.hostUriSchemes, connection.fieldRules, connection.hostHint, connection.hostIdentity and connection.import",
+    ),
   },
   {
     module: CONNECTION_MODULE,

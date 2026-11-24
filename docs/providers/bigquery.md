@@ -54,7 +54,9 @@
 | `location`       | Location                                 | No       | Where jobs run, e.g. `EU`, `US`, `europe-west3`. Empty means detected ([§5.3](#53-job-location))                                                                |
 
 Host and port are not shown: the connection form draws them only for engines that declare them.
-The SSL / TLS and SSH tunnel panels are not shown either: every request is HTTPS to `googleapis.com` checked against the system trust store, so an SSL mode would be read by nothing (`showSslPanel: false`), and a tunnel would forward one address of the several the provider reaches (the API, the token endpoint, the metadata server).
+The dialog draws the credential first and the location beside the project, as it always has.
+The credential's placeholder is short enough for the box at phone width, since the full text measured 446 px in a 448 px box at 1440 px, so what an empty box means is said in the hint under it.
+The SSL / TLS and SSH tunnel panels are not shown either: every request is HTTPS to `googleapis.com` checked against the system trust store, so an SSL mode would be read by nothing (its declaration states `connection.tls` `not-offered`), and a tunnel would forward one address of the several the provider reaches (the API, the token endpoint, the metadata server).
 The SSH panel follows BigQuery's row of `SSH_TUNNEL_REFUSAL`, and Studio refuses a BigQuery connection whose tunnel is on, from a seed or the API, before it dials anything ([SSH tunnels](./README.md#ssh-tunnels-bastion-host-key-verification)).
 
 ### 3.2 Credentials

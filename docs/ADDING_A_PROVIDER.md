@@ -554,29 +554,32 @@ Such a provider never reads `STORAGE_SQLITE_PATH` and never imports `src/lib/dat
 
 ## Step 4: Add UI Configuration
 
-**Files:** `src/lib/db/connection-form.ts` and `src/lib/db-ui-config.ts`
+**Files:** `src/lib/db/engine-declarations/<type-id>.json` and `src/lib/db-ui-config.ts`
 
-The label, the default port, the fields and every optional declaration go into the type's entry of `CONNECTION_FORM` in `src/lib/db/connection-form.ts`, a UI-free module that imports no React, icon or component:
+The label, the default port, the fields and every optional dialog declaration are authored in the engine's declaration: its `displayName`, and of its `connection` the `fields`, `defaults`, `tls`, `dialog`, `hostUriSchemes`, `fieldRules`, `hostHint`, `hostIdentity` and `import` (`docs/providers/CONTRACT.md`, M-15 and M-72).
+`bun run engines:generate` projects them into `src/lib/db/engine-catalog/connection-form.generated.ts`, and `CONNECTION_FORM` in `src/lib/db/connection-form.ts`, a UI-free module that imports no React, icon or component, composes the type's entry from that projection:
 
-```typescript
-export const CONNECTION_FORM: { [T in DatabaseType]: /* ... */ } = {
-  // ... existing entries ...
-
-  cockroachdb: {
-    label: 'CockroachDB',                   // Display name in ConnectionModal
-    defaultPort: '26257',                   // Default port for host/port form
-    showConnectionStringToggle: true,        // Show "Connection String" tab in modal
-    connectionFields: CONNECTION_FIELDS.cockroachdb, // The declaration's connection.fields, projected
-  },
-};
+```json
+"displayName": "CockroachDB",
+"connection": {
+  "fields": ["host", "port", "user", "password", "database", "connectionString"],
+  "defaults": { "port": 26257 },
+  "tls": "offered",
+  "dialog": {
+    "order": null,
+    "labels": [],
+    "hints": [{ "field": "host", "text": "A node of the cluster, or its load balancer." }],
 ```
+
+A declaration names a function and never carries one.
+Where it names a check, a Host hint, a Host identity or an importer, add the function Studio's source holds for it to `CONNECTION_FORM_FUNCTIONS` in `src/lib/db/connection-form.ts`, under the engine and the name, at its slot kind; a name the table does not hold is refused by name when the form is composed, so every importer of the module fails until it is added.
 
 The icon and the colour go into the type's entry of `DB_UI_CONFIG` in `src/lib/db-ui-config.ts`, which adds them to the form entry:
 
 ```typescript
 import { /* existing imports */, Hexagon } from 'lucide-react';
 
-export const DB_UI_CONFIG: { [T in DatabaseType]: /* ... */ } = {
+export const DB_UI_CONFIG: Readonly<Record<DatabaseType, DatabaseUIConfig>> = {
   // ... existing entries ...
   cockroachdb: branded(CONNECTION_FORM.cockroachdb, Hexagon, 'text-indigo-400'), // A Lucide icon, a colour class
 };
@@ -604,8 +607,8 @@ export const CONNECTION_PICKER_ORDER: readonly DatabaseType[] = Object.freeze([
 
 That's it. The ConnectionModal reads `getDBConfig(type)` for everything else — port, form fields, connection string toggle — automatically.
 
-Two optional declarations on the type's `CONNECTION_FORM` entry change what the dialog does with the Host box and the credential.
-`hostAcceptsUri: ["http", "https"]` lets a user paste a whole address such as `https://host:443` into Host, for an engine whose own documentation writes its endpoint that way.
+Two optional declarations in the engine's declaration change what the dialog does with the Host box and the credential.
+`"hostUriSchemes": ["http", "https"]`, which the entry reads as `hostAcceptsUri`, lets a user paste a whole address such as `https://host:443` into Host, for an engine whose own documentation writes its endpoint that way.
 The dialog splits it into Host and Port, keeps an explicit port such as 443 or 80 as typed, takes 80 or 443 when the address names none, and never lowers the SSL mode: `https://` raises a disabled mode to `verify-system`.
 An address with a user name or password, a path, a query string or a fragment is refused, naming the part to remove.
 The connection-string box is a different reader and keeps reading `http://` and `https://` as ClickHouse, so the provider doc points users to the Host box.
@@ -616,15 +619,15 @@ The dialog draws a `pair` or `jwt` warning beside the password before Test Conne
 The seed loader refuses a `readOnly: true` seed whose literal credential matches a `pair` entry, or that has no password where the type declares `no-secret`, and the provider runs `readOnlySeedRefusal` on a seed connection once its references resolve, before it dials.
 Add a test that the real record declares each entry you add.
 
-`connectionImport`, a third optional declaration, offers an import in the dialog: a `label` for its action and a `load` that resolves to the parser, a function from the pasted text to `{ contexts, refusals }` (`src/lib/connection-import.ts`).
+`connection.import`, a third optional declaration, offers an import in the dialog: a `label` for its action and an `importer` name, which Studio's function table binds to a `load` that resolves to the parser, a function from the pasted text to `{ contexts, refusals }` (`src/lib/connection-import.ts`); the entry reads it as `connectionImport`.
 The dialog loads the parser only when the import opens, offers it only for a new connection, and fills the form from the entry the user picks through `applyImported`, which refuses an entry that names a field the type does not take or an SSL / TLS setting the dialog does not draw for the type and mode, and never takes the consent to send a password without TLS.
 The import keeps the user's choices about how to connect (read-only, the object scan and the query timeout) and resets every server-scoped field before it fills.
 The parser runs in the browser: it imports no `node:` module and no provider, never throws, and never keeps or prints a parser error, which can quote a credential.
 A declaring type is listed in `DECLARING` in `tests/unit/lib/connection-import-declaration.test.ts`.
 
-A secret your provider cannot sign in without is a `fieldRules` entry with `required` on a field the storage classification (`src/lib/storage/secret-fields.ts`) calls secret.
+A secret your provider cannot sign in without is a `connection.fieldRules` entry with `required` on a field the storage classification (`src/lib/storage/secret-fields.ts`) calls secret.
 Its sentence names the field as the dialog labels it, and `tests/unit/lib/db-ui-config.test.ts` pins the set of such declarations.
-Where it depends on another field, declare `fieldShownWhen`, and declare the other field's `fieldDefaults`: the value your provider reads when that field is absent.
+Where it depends on another field, declare a `connection.dialog.shownWhen` entry, and the other field's `connection.dialog.absentValues` entry: the value your provider reads when that field is absent.
 A value that is absent, not text or only whitespace is blank: the dialog refuses it before Test connection and Save, `createDatabaseProvider` refuses it before your provider is built, and your provider keeps its own refusal for a provider built directly.
 
 ## Step 5: Install the Driver
@@ -983,7 +986,7 @@ Every field and what it controls:
 | `supportsMaintenance` | `boolean` | Whether maintenance API accepts requests for this provider |
 | `maintenanceOperations` | `MaintenanceOperation[]` | Which global cards and per-table buttons the admin Operations tab renders. `/api/db/maintenance` rejects anything not in this list, so a surface that ignored it could only offer a control answering HTTP 400. Both row menus read it too, through `maintenanceControl()` (#496): a per-row maintenance item is offered only for an operation declared here, and not where its `maintenanceOperationSpecs` entry sets `perEntity: false`. Both offer such an item to an admin only, and the schema explorer also withholds it from a derived grouping (`tablesAreDerivedGroupings`) |
 | `supportsConnectionString` | `boolean` | Used for future connection validation logic |
-| `defaultPort` | `number \| null` | Informational; actual UI port comes from `connection-form.ts` |
+| `defaultPort` | `number \| null` | Informational; actual UI port comes from the declaration's `connection.defaults` |
 | `schemaRefreshPattern` | `string` | Regex to detect write/DDL queries that should trigger schema reload |
 
 ### ProviderLabels
@@ -1165,7 +1168,7 @@ The integration points, all of which need an entry. This is the list the Strateg
 - [ ] `src/lib/db/providers/<family>/<type-id>.ts` (or a directory) — **new:** the provider class
 - [ ] `docs/providers/<type-id>.md` and `tests/integration/db/<type-id>-provider.test.ts`: **new:** the other two legs of the provider triad, which `tests/unit/db/provider-triad.test.ts` requires for every type-id
 - [ ] `src/lib/db/factory.ts` — add a `case` with a **dynamic** import
-- [ ] `src/lib/db/connection-form.ts`: the type's `CONNECTION_FORM` entry, with its label, default port and fields
+- [ ] The declaration's `displayName`, `connection.defaults` and `connection.tls`, which `CONNECTION_FORM` in `src/lib/db/connection-form.ts` composes into the type's entry, with its label, default port and SSL panel; a function the declaration names needs its row in `CONNECTION_FORM_FUNCTIONS` there
 - [ ] `src/lib/db-ui-config.ts`: the icon and colour, as `branded(CONNECTION_FORM.<type>, <Icon>, "<colour>")`
 - [ ] The declaration's `connection.fields`, which `CONNECTION_FIELDS` in `src/lib/db/connection-fields.ts` reads and the entry's `connectionFields` takes by reference, its `connection.seedOnly`, `SEED_ONLY_FIELDS`'s row, which is `null` unless only this engine's provider reads a field, and its `connection.refused`, `REFUSED_CONNECTION_FIELDS`'s row, which names each field the engine does not take and refuses by name with the sentence it is refused with, empty for most engines (core refuses a connection that sets one before the build, so the provider never reads it, and the engine's provider doc quotes each sentence); each is authored in the declaration (see its item below), and `tests/unit/lib/db/provider-field-census.test.ts` fails on a provider module that reads a connection field the engine does not declare.
       A field outside Studio's connection field vocabulary fails the typecheck at `CONNECTION_FIELDS`.
@@ -1176,8 +1179,8 @@ The integration points, all of which need an entry. This is the list the Strateg
 - [ ] `src/lib/db/providers/<family>/<type-id>/engine-facets.ts` (or `<type-id>-engine-facets.ts` beside a flat provider file): **new:** the type's `EngineFacets`, stating each of the seven monitoring panels `"offered"` where its read asks the engine, now or from what the engine said at connect, and `"not-offered"` where it would answer a stub empty, a constant or a refusal, its `maintenance` operations, equal to the provider's `maintenanceOperations` before connect (`tests/isolated/maintenance-facets-census.test.ts`), and its `agentReadings`, the curated `inspect_operations` kinds of the offered panels whose reads the agent handle answers plus `health` unless the agent handle withholds it, measured on the agent handle; add its row to `ENGINE_FACETS` in `src/lib/db/engine-facets/index.ts`, its expectations to `EXPECTED_OFFERED` and `EXPECTED_AGENT_READINGS` in `tests/unit/db/engine-facets/census.test.ts`, and the `Engine facets` subsection, with its `Maintenance operations offered:` and `Agent readings offered:` lines, to its provider doc
 - [ ] `src/lib/db/connection-form.ts`: **append** to `CONNECTION_PICKER_ORDER` (do not retype the array)
 - [ ] `src/lib/db/engine-declarations/<type-id>.json`: **authored, then generated**.
-      Start it as a copy of another engine's declaration and write its authored members for the new engine: `id`, the type-id; `location`, `external` for an engine the user already runs (a server, or a file of theirs such as SQLite's) and `embedded` only for a store Studio carries with it; and of `connection` its `fields`, `seedOnly`, `refused`, `connectionString.accepted` and `connectionString.dialogOffersUri`, `readsTrustMaterial`, `credentialWarnings`, and `connectBudgetMs`, null unless the engine's own connect bound needs a longer budget (`docs/providers/CONTRACT.md`, M-15 and M-51).
-      Then run `bun run engines:generate` once the type's rows exist and its provider builds from its census connection (`tests/helpers/census-connection.ts`): it projects the declaration's authored members into the engine catalog and the connection tables, `src/lib/db/engine-catalog/catalog.generated.ts`, `connection.generated.ts` and `connection-flags.generated.ts`, writes every other member from the rows, and then admits the written declaration, exiting 1 with the validator's refusal where a row and an authored member disagree, such as a placeable field in `connection.fields` the form gives no placement; commit all four.
+      Start it as a copy of another engine's declaration and write its authored members for the new engine: `id`, the type-id; `displayName`, the label the dialog and every list draw; `location`, `external` for an engine the user already runs (a server, or a file of theirs such as SQLite's) and `embedded` only for a store Studio carries with it; and of `connection` its `fields`, `defaults`, `seedOnly`, `refused`, `connectionString.accepted` and `connectionString.dialogOffersUri`, `tls`, `readsTrustMaterial`, `dialog`, `hostUriSchemes`, `credentialWarnings`, `fieldRules`, `hostHint`, `hostIdentity`, `import`, and `connectBudgetMs`, null unless the engine's own connect bound needs a longer budget (`docs/providers/CONTRACT.md`, M-15, M-51 and M-72).
+      Then run `bun run engines:generate` once the type's rows exist and its provider builds from its census connection (`tests/helpers/census-connection.ts`): it projects the declaration's authored members into the engine catalog, the connection tables and the connection forms, `src/lib/db/engine-catalog/catalog.generated.ts`, `connection.generated.ts`, `connection-flags.generated.ts` and `connection-form.generated.ts`, writes every other member from the rows, and then admits the written declaration, exiting 1 with the validator's refusal where the authored members disagree among themselves or with a row, such as a placeable field in `connection.fields` the authored dialog gives no placement; commit all five.
       The catalog is where the shipped engine count and the external count come from, so the count in `README.md` and `docs/BRAND_MESSAGING.md` moves in the same PR.
       Until the declaration exists the compiler refuses the new member of `DatabaseType` at the generated catalog record, which names the record rather than the missing file.
       `tests/unit/db/engine-declarations.test.ts` fails on a shipped type-id with no declaration, on a declaration that differs from its authored members and its rows, and on one the provider manifest schema refuses, and `tests/unit/db/engine-catalog.test.ts` on a catalog or connection module that differs from the declarations (docs/providers/CONTRACT.md, clauses M-15, M-70 and M-71).
@@ -1271,7 +1274,7 @@ Those three reach code and tests only; the four prose greps of the published blo
 - [ ] `src/lib/seed/credential-resolver.ts`: `RESOLVABLE_FIELDS`, when the field is a credential or an address a deployment keeps out of the seed file; a name such as a SASL mechanism is neither, and takes a literal.
 - [ ] `src/lib/db/provider-cache-key.ts`: `credentialDigest`, a hand-kept list of every field that changes who a connection authenticates as, so two connections that differ only in that field never share a cached provider.
 - [ ] `docs/API_DOCS.md`: the `DatabaseConnection` block, which `tests/unit/api-docs-types.test.ts` compares with the interface as an ordered list of field names, so the field goes in at the same position in both.
-- [ ] `src/lib/db/connection-form.ts`: `fieldOptions`, when the field is a choice the dialog renders as a select.
+- [ ] The declaration's `connection.dialog.options`, when the field is a choice the dialog renders as a select; the entry reads it as `fieldOptions`.
 
 **For agent mode (#1821):**
 
@@ -1320,13 +1323,13 @@ Those three reach code and tests only; the four prose greps of the published blo
       A new member is not neutral: a reader written `=== "json"` sends it into its SQL branch and one written `!== "sql"` into its MongoDB branch, so every reader needs an explicit arm or a test pinning that its branch is right.
       `grep -rn queryLanguage src` is not the whole population: `src/components/agent/AnswerCard.tsx` reads it through `editorLanguageForTabType`.
       `docs/providers/prometheus.md` section 3.1 is the worked case.
-- [ ] `src/lib/db/connection-form.ts`: `fieldLabels`, `fieldHints` and `fieldPlaceholders`, when a connection field needs its own label, hint or placeholder.
-- [ ] `src/lib/db/connection-form.ts`: `fieldPlacement`, required when the type's `CONNECTION_FIELDS` row takes one of the `PLACEABLE_FIELDS` (`authSource`, `localDataCenter`, `serviceName`, `instanceName`), saying for each whether the dialog draws it `"open"` or `"advanced"`; the entry does not compile until it says, and a type that takes none of them declares none.
+- [ ] The declaration's `connection.dialog.labels`, `hints` and `placeholders`, when a connection field needs its own label, hint or placeholder; the entry reads them as `fieldLabels`, `fieldHints` and `fieldPlaceholders`.
+- [ ] The declaration's `connection.dialog.placement`, required when the type's `connection.fields` take one of the `PLACEABLE_FIELDS` (`authSource`, `localDataCenter`, `serviceName`, `instanceName`), saying for each whether the dialog draws it `"open"` or `"advanced"`; `bun run engines:generate` refuses the declaration with the validator's `placement-missing` sentence until it says, and a type that takes none of them declares none.
       Declare them there rather than testing the type id in `src/components/ConnectionModal.tsx`, which reads every label, placeholder and hint from `DatabaseUIConfig`.
-- [ ] `src/lib/db/connection-form.ts`: `dialogOrder`, only when the dialog must draw the type's fields in an order other than its `CONNECTION_FIELDS` row, which stays the order the VS Code extension prompts in.
-- [ ] `src/lib/db/connection-form.ts`: `hostAcceptsUri`, when the engine's documentation gives its endpoint as an `http://` or `https://` address; and the declaration's `connection.credentialWarnings`, the type's row of `CREDENTIAL_WARNINGS` in `src/lib/db/credential-warnings.ts`, which the entry's `credentialWarnings` reads by reference, when the engine ships a default credential, accepts no secret, or takes a token whose claims say how far it reaches.
+- [ ] The declaration's `connection.dialog.order`, only when the dialog must draw the type's fields in an order other than its `connection.fields`, which stays the order the VS Code extension prompts in.
+- [ ] The declaration's `connection.hostUriSchemes`, when the engine's documentation gives its endpoint as an `http://` or `https://` address; and its `connection.credentialWarnings`, the type's row of `CREDENTIAL_WARNINGS` in `src/lib/db/credential-warnings.ts`, which the entry's `credentialWarnings` reads by reference, when the engine ships a default credential, accepts no secret, or takes a token whose claims say how far it reaches.
       Each needs a test that the real record declares it, and a declared `pair` or `no-secret` entry needs the provider's own `readOnlySeedRefusal` check in `connect()` for a seed connection.
-- [ ] `src/lib/db/connection-form.ts`: `connectionImport`, when users keep this engine's connections in a file of their own, such as a client configuration file.
+- [ ] The declaration's `connection.import`, when users keep this engine's connections in a file of their own, such as a client configuration file, with its importer's loader added to `CONNECTION_FORM_FUNCTIONS` in `src/lib/db/connection-form.ts`.
       Its parser module stays browser-side, and the type joins `DECLARING` in `tests/unit/lib/connection-import-declaration.test.ts`.
 
 **Published where a human reads it, and this is the block with the fewest gates.** `readme:check`

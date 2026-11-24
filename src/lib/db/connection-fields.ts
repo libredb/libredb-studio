@@ -476,13 +476,10 @@ export function savedFieldValue(field: BodyConnectionField, value: string): stri
   }
 }
 
-/** The connection fields one type takes, as a union of literals. */
-export type ConnectionFieldOf<T extends DatabaseType> = (typeof BUNDLED_CONNECTION_FIELDS)[T][number];
-
 /**
  * Each type's connection fields, in the order the connection dialog draws them unless the entry says otherwise: each
- * engine's `connection.fields`, projected from its declaration. The generated record keeps each row's literals, so the
- * compiler can ask what a given type takes, and a declared field outside `ConnectionField` fails the typecheck here.
+ * engine's `connection.fields`, projected from its declaration. The generated record keeps each row's literals, so a
+ * declared field outside `ConnectionField` fails the typecheck here.
  */
 export const CONNECTION_FIELDS: Readonly<Record<DatabaseType, readonly ConnectionField[]>> = BUNDLED_CONNECTION_FIELDS;
 

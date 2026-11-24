@@ -8,6 +8,7 @@ const ROOT = path.resolve(import.meta.dir, "../../..");
 const GENERATED_CONNECTION_TABLES = [
   "src/lib/db/engine-catalog/connection.generated.ts",
   "src/lib/db/engine-catalog/connection-flags.generated.ts",
+  "src/lib/db/engine-catalog/connection-form.generated.ts",
 ] as const;
 
 /**

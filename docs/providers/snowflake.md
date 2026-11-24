@@ -53,6 +53,8 @@ The connection is the account; the tree's two container levels are database and 
 ### 2.1 Fields
 
 The dialog shows no port field, no SSL panel and no SSH tunnel.
+The Account box opens empty when Snowflake is chosen after another engine, rather than holding that engine's host, and its placeholder is the identifier alone, `myorg-myaccount`, since the URL form was cut at `snowflakecomputing.c` at 1440 px; the hint names the URL form.
+User, Database and Schema show no example, because a name such as `user` or `default` reads as a value already typed, and each box's hint says what it takes.
 
 | Label | Field | Required | Hint |
 | --- | --- | --- | --- |

@@ -124,6 +124,12 @@ export const REGISTRIES: readonly Listed[] = [
         "a data-only connection table, generated from the declarations and compile-enforced over the type-id union",
     }),
   ),
+  {
+    path: "src/lib/db/engine-catalog/connection-form.generated.ts",
+    declaration: "BUNDLED_CONNECTION_FORMS",
+    count: 1,
+    reason: "the connection forms, generated from the declarations and compile-enforced over the type-id union",
+  },
   ...["BUNDLED_READS_TRUST_MATERIAL", "BUNDLED_CONNECTION_STRING_ACCEPTED", "BUNDLED_DIALOG_OFFERS_URI"].map(
     (declaration) => ({
       path: "src/lib/db/engine-catalog/connection-flags.generated.ts",
@@ -174,8 +180,16 @@ export const REGISTRIES: readonly Listed[] = [
   {
     path: "src/lib/db/connection-form.ts",
     declaration: "CONNECTION_FORM",
+    count: 2,
+    reason:
+      "each engine's UI-free connection form row, composed from the generated connection forms and typed over the type-id union",
+  },
+  {
+    path: "src/lib/db/connection-form.ts",
+    declaration: "ConnectionFormFunctionTable",
     count: 1,
-    reason: "each engine's UI-free connection form row, compile-enforced over the type-id union",
+    reason:
+      "the type of Studio's function table, which binds each function a declaration names to Studio's own, per engine",
   },
   { path: "src/lib/db/connection-form.ts", declaration: "CONNECTION_PICKER_ORDER", count: 1, reason: DISPLAY_ORDER },
   {

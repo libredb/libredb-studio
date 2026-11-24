@@ -161,7 +161,7 @@ On the agent path the same rule is a sentence every answer carries (section 14.3
 
 ### 4.1 Configuration fields
 
-Host, Port, and Group. The group is one `group_id`, or empty for every group: a group is a level of
+Host, Port, and Group. Port defaults to 1883, the IANA port for MQTT, which Sparkplug runs over; 8883 is its TLS port. The group is one `group_id`, or empty for every group: a group is a level of
 the topic and not a thing on the broker that can be subscribed to on its own, so an empty field reads
 every group under `spBv1.0`.
 

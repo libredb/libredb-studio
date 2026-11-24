@@ -11,6 +11,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { runPool, separatingGroups } from "../isolation-children";
 import { FORM_KEYS } from "./fixtures";
 
@@ -83,7 +84,7 @@ const golden = (key: string): string => readFileSync(join(GOLDEN_DIR, `${key}.tx
 
 describe("one engine's connection fields cannot reach another engine's form", () => {
   test("one form per shipped type id", () => {
-    expect(FORM_KEYS.length).toBe(43);
+    expect([...FORM_KEYS].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
   });
 
   test("the groups replace every engine while holding every other engine real", () => {

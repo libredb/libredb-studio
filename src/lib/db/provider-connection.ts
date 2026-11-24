@@ -38,11 +38,15 @@ export const PROVIDER_CORE_FIELDS = Object.freeze([
 
 /**
  * The connection fields a provider of `type` receives (FND-2 slice 6, docs/SECURITY.md control 3.41), composed from
- * the contract rows that declare them, each read through `typeIdRow`:
- * 1. `CONNECTION_FIELDS`, the fields its connection dialog draws;
- * 2. the fields of its `SEED_ONLY_FIELDS` row, the fields only its provider reads and only a seed names;
- * 3. `connectionString` where `CONNECTION_STRING_ACCEPTED` answers true, the URI a seed or an embedder may hand it;
- * 4. `ssl` where the dialog offers the TLS panel (`offersSslPanel` in ./connection-form);
+ * the contract rows that declare them, each read through `typeIdRow`. The first four are projections of the engine's
+ * declaration (docs/providers/CONTRACT.md, clauses M-71 and M-72), the fifth is Studio's own review record of the
+ * engine's tunnel claim, and the sixth is Studio's:
+ * 1. `CONNECTION_FIELDS`, the fields its connection dialog draws, its `connection.fields`;
+ * 2. the fields of its `SEED_ONLY_FIELDS` row, the fields only its provider reads and only a seed names, its
+ *    `connection.seedOnly`;
+ * 3. `connectionString` where `CONNECTION_STRING_ACCEPTED` answers true, the URI a seed or an embedder may hand it, its
+ *    `connection.connectionString.accepted`;
+ * 4. `ssl` where the dialog offers the TLS panel (`offersSslPanel` in ./connection-form), its `connection.tls`;
  * 5. `host` and `port` where the engine takes an SSH tunnel (`SSH_TUNNEL_REFUSAL` is null), because core writes the
  *    tunnel's local endpoint there;
  * 6. `PROVIDER_CORE_FIELDS`, Studio's own fields every provider receives.

@@ -378,7 +378,8 @@ function compiled(source: string, flags: string): RegExp | null {
  * The rules of an engine's field rules and Host text readers the schema cannot state, at pointers under `at`. A rule
  * names a field the engine takes, at most one rule per field, and states at least one check; its pattern compiles with
  * its flags, and its character range does not end before it starts. A Host text reader is named only on an engine that
- * takes a host field. Where a rule is repeated, the first is the one the dialog reads.
+ * takes a host field. A repeated rule is refused, at the second and every later rule for the field, so no reader
+ * meets two rules for one field.
  */
 function fieldRuleRefusals(connection: EngineDeclaration["connection"], at: string): SchemaRefusal[] {
   const refusals: SchemaRefusal[] = [];

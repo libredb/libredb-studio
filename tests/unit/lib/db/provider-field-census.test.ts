@@ -22,6 +22,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import ts from "typescript";
+import type { EngineDeclaration } from "@libredb/provider-sdk/manifest";
 import { CONNECTION_STRING_ACCEPTED, SHIPPED_DATABASE_TYPES, SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
 import { CONNECTION_FIELDS, REFUSED_CONNECTION_FIELDS, SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
 import { offersSslPanel } from "@/lib/db/connection-form";
@@ -411,6 +412,34 @@ describe("a provider module reads only the connection fields its engine declares
     }
     expect([...PROVIDER_CORE_FIELDS]).toEqual(["id", "name", "type", "queryTimeout", "readOnly", "managed", "seedId"]);
     expect(Object.isFrozen(PROVIDER_CORE_FIELDS)).toBe(true);
+  });
+
+  test("providerFields composes each engine's declared connection fields, seed-only fields, accepted connection string and TLS offer, and Studio's tunnel record", () => {
+    // Read from the committed declaration files themselves, not from any projection of them, so a term that read a
+    // hand table instead of its engine's declaration differs here for the engines where the two disagree.
+    const differing = SHIPPED_DATABASE_TYPES.flatMap((type) => {
+      const { connection } = JSON.parse(
+        readFileSync(join(ROOT, "src/lib/db/engine-declarations", `${type}.json`), "utf8"),
+      ) as EngineDeclaration;
+      const expected = [
+        ...new Set<string>([
+          ...connection.fields,
+          ...(connection.seedOnly?.fields ?? []),
+          ...(connection.connectionString.accepted ? ["connectionString"] : []),
+          ...(connection.tls === "offered" ? ["ssl"] : []),
+          ...(SSH_TUNNEL_REFUSAL[type] === null ? ["host", "port"] : []),
+          ...PROVIDER_CORE_FIELDS,
+        ]),
+      ];
+      return JSON.stringify(providerFields(type)) === JSON.stringify(expected) ? [] : [type];
+    });
+
+    expect(differing).toEqual([]);
+    // Vacuity: the TLS term is not offered everywhere, nor the connection string term.
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => !providerFields(type).includes("ssl")).length).toBeGreaterThan(0);
+    expect(
+      SHIPPED_DATABASE_TYPES.filter((type) => !providerFields(type).includes("connectionString")).length,
+    ).toBeGreaterThan(0);
   });
 
   test("no engine receives a field its engine refuses", () => {

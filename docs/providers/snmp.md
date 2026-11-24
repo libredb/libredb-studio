@@ -81,6 +81,11 @@ SNMP can make.
 Reaching past this machine with a community needs the operator's explicit consent, the same
 `allowInsecureAuth` the rest of the repository uses.
 
+The dialog draws four fields: Host, Port, the community in the password box, and that consent, without which the provider refuses an agent off this machine.
+Port defaults to 161, the agent port RFC 3417 section 3.2 names; 162 is the trap port, and an agent there answers no Get.
+The Host box is labelled Host, since the dialog's own "Host & Instance" names a SQL Server instance, which an agent does not have.
+The dialog offers no SSL / TLS panel: the transport is bare UDP, no file of the provider reads a TLS setting, and SNMPv3's security is its own USM, inside the message.
+
 ### Connection string
 
 `snmp` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/network/snmp/connection-string.ts)).

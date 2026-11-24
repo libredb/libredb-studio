@@ -738,8 +738,8 @@ This is a declared boundary, not a default: `endOpenQueryTransaction` is optiona
 
 ### 4.1 Configuration fields
 
-The form offers exactly four fields (`connectionFields` under `CONNECTION_FORM.druid`,
-[`connection-form.ts`](../../src/lib/db/connection-form.ts)): `host`, `port`, `user`, `password`.
+The form offers exactly four fields (`connection.fields` in its declaration,
+[`druid.json`](../../src/lib/db/engine-declarations/druid.json)): `host`, `port`, `user`, `password`.
 
 | Field | Required | Notes |
 |---|---|---|
@@ -2081,7 +2081,7 @@ The refusal reason it prints, verbatim:
 - Base class: [`src/lib/db/base-provider.ts`](../../src/lib/db/base-provider.ts)
 - Interface & DTOs: [`src/lib/db/types.ts`](../../src/lib/db/types.ts)
 - Errors: [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts)
-- Connection form config: [`src/lib/db/connection-form.ts`](../../src/lib/db/connection-form.ts)
+- Connection form config: [`src/lib/db/engine-declarations/druid.json`](../../src/lib/db/engine-declarations/druid.json), composed by [`src/lib/db/connection-form.ts`](../../src/lib/db/connection-form.ts)
 - Local cluster: [`database-compose.yml`](../../database-compose.yml) (`--profile druid`)
 - Tests: [`tests/integration/db/druid-provider.test.ts`](../../tests/integration/db/druid-provider.test.ts) · [`tests/unit/db/druid/`](../../tests/unit/db/druid/) · [`tests/unit/lib/explain/druid-native.test.ts`](../../tests/unit/lib/explain/druid-native.test.ts)
 - API contract: [`docs/API_DOCS.md`](../API_DOCS.md)

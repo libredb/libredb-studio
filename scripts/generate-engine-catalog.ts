@@ -1,19 +1,20 @@
 #!/usr/bin/env bun
 /**
  * Writes Studio's projections of the committed engine declarations: src/lib/db/engine-catalog/catalog.generated.ts,
- * the engine catalog (docs/providers/CONTRACT.md, clause M-70), and the data-only connection tables (clause M-71), in
+ * the engine catalog (docs/providers/CONTRACT.md, clause M-70); the data-only connection tables (clause M-71), in
  * two modules: src/lib/db/engine-catalog/connection.generated.ts, the fields, seed-only fields, refused fields and
  * credential warnings, and src/lib/db/engine-catalog/connection-flags.generated.ts, the three yes or no answers
- * src/lib/db/compatibility.ts reads, so that module's readers load the three records and never the other four.
+ * src/lib/db/compatibility.ts reads, so that module's readers load the three records and never the other four; and
+ * src/lib/db/engine-catalog/connection-form.generated.ts, the connection forms (clause M-72), which only
+ * src/lib/db/connection-form.ts reads, so no reader of the connection tables loads them.
  *
  * Admission happens here, once for every module, in `--check`: every `.json` file of src/lib/db/engine-declarations
  * is parsed and admitted through the SDK's `compileManifestValidator`, which checks the SHA-256 of the schema's bytes
- * before it compiles them, and each module is held to the projection of the admitted set with `projectCatalog` and
- * `projectConnectionTables` (src/lib/db/engine-catalog/projection.ts). `--write` projects each file's authored members,
- * `AUTHORED_MEMBERS`, without admitting the whole file: the validator holds the authored members to members the
- * declaration generator writes (each dialog entry to `connection.fields`, each host path field to
- * `connection.seedOnly`), so a file whose authored members just changed is refused until that generator has rewritten
- * the rest. The command refuses,
+ * before it compiles them, and each module is held to the projection of the admitted set with `projectCatalog`,
+ * `projectConnectionTables` and `projectConnectionForms` (src/lib/db/engine-catalog/projection.ts). `--write` projects
+ * each file's authored members, `AUTHORED_MEMBERS`, without admitting the whole file: the validator holds an authored
+ * member to members the declaration generator writes (each host path field to `connection.seedOnly`), so a file whose
+ * authored members just changed is refused until that generator has rewritten the rest. The command refuses,
  * by name, an entry that is not a `.json` file, a file that is not JSON, and a declaration whose `id` is not its file
  * name; `--write` a file that lacks an authored member, `--check` a declaration the schema refuses, with the
  * validator's refusal sentences; the projections refuse two declarations of one id. Studio's runtime reads no
@@ -22,16 +23,19 @@
  * module, which tests/unit/db/engine-catalog.test.ts holds byte for byte to what this command renders.
  *
  * Each module holds frozen records keyed in ascending id order and typed as records over `DatabaseType`, so a member
- * of the union with no declaration fails the typecheck at the record. The two connection modules are laid out as the
+ * of the union with no declaration fails the typecheck at the record. The connection modules are laid out as the
  * repository's formatter lays them out: a value that fits within the line width stays on one line, one that does not
- * breaks one element or member per line, and a member whose string does not fit puts the string on the next line.
+ * breaks one element or member per line, and a member whose string does not fit puts the string on the next line. A
+ * string is written in the formatter's quotes, a backslash doubled and a printable character outside ASCII as itself,
+ * and a number is an integer written as its decimal text; a control character or another number is refused by name.
  *
  * `bun run engines:generate` runs `--write` before scripts/generate-engine-declarations.ts and `--check` after it. The
- * declaration generator builds every provider through the factory, which builds only an engine the catalog holds, and
- * checks each dialog entry and field rule against the projected connection fields, so the projections come first; both
- * read only the members a declaration authors, which the declaration generator writes back unchanged, so one run is
- * exact; and `--check` then admits the whole written set, so the run exits 1 with the validator's refusal sentences
- * when the authored members and Studio's tables still disagree.
+ * declaration generator builds every provider through the factory, which builds only an engine the catalog holds, so
+ * the projections come first; they read only the members a declaration authors, which the declaration generator writes
+ * back unchanged, so one run is exact; and `--check` then admits the whole written set, so the run exits 1 with the
+ * validator's refusal sentences when the authored members leave the declaration inconsistent, such as a placeable field
+ * with no placement in the authored dialog, or when they and Studio's tables still disagree, such as a host path field
+ * Studio's record lists that the authored seed-only fields no longer hold.
  *
  * Run: bun scripts/generate-engine-catalog.ts --write | --check [--out <directory>]
  * --write writes every module, --check exits 1 naming each module that is missing or is not what the declarations
@@ -43,9 +47,11 @@ import path from "node:path";
 import { compileManifestValidator, type EngineDeclaration, refusalSentence } from "@libredb/provider-sdk/manifest";
 import {
   type AuthoredDeclaration,
+  type ConnectionForms,
   type ConnectionTables,
   type EngineCatalog,
   projectCatalog,
+  projectConnectionForms,
   projectConnectionTables,
 } from "../src/lib/db/engine-catalog/projection";
 
@@ -60,6 +66,9 @@ export const ENGINE_CONNECTION_MODULE = "src/lib/db/engine-catalog/connection.ge
 
 /** The generated connection flags module in the repository: the connection tables src/lib/db/compatibility.ts reads. */
 export const ENGINE_CONNECTION_FLAGS_MODULE = "src/lib/db/engine-catalog/connection-flags.generated.ts";
+
+/** The generated connection form module in the repository: the connection forms src/lib/db/connection-form.ts reads. */
+export const ENGINE_CONNECTION_FORM_MODULE = "src/lib/db/engine-catalog/connection-form.generated.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
 const SCHEMA_FILE = path.join(REPO_ROOT, "packages/provider-sdk/src/manifest/manifest.schema.json");
@@ -80,14 +89,23 @@ const SHORT_KEY_WIDTH = 5;
 /** The members a declaration authors, as dotted paths: read from its committed file, never built from a table. */
 export const AUTHORED_MEMBERS = [
   "id",
+  "displayName",
   "location",
   "connection.fields",
+  "connection.defaults",
   "connection.seedOnly",
   "connection.refused",
   "connection.connectionString.accepted",
   "connection.connectionString.dialogOffersUri",
+  "connection.tls",
   "connection.readsTrustMaterial",
+  "connection.dialog",
+  "connection.hostUriSchemes",
   "connection.credentialWarnings",
+  "connection.fieldRules",
+  "connection.hostHint",
+  "connection.hostIdentity",
+  "connection.import",
   "connection.connectBudgetMs",
 ] as const;
 
@@ -122,17 +140,26 @@ export function authoredMembersOf(value: unknown, file: string): AuthoredMembers
   };
   const authored: AuthoredMembers = {
     id: read("id") as string,
+    displayName: read("displayName") as string,
     location: read("location") as EngineDeclaration["location"],
     connection: {
       fields: read("connection.fields") as Connection["fields"],
+      defaults: read("connection.defaults") as Connection["defaults"],
       seedOnly: read("connection.seedOnly") as Connection["seedOnly"],
       refused: read("connection.refused") as Connection["refused"],
       connectionString: {
         accepted: read("connection.connectionString.accepted") as boolean,
         dialogOffersUri: read("connection.connectionString.dialogOffersUri") as boolean,
       },
+      tls: read("connection.tls") as Connection["tls"],
       readsTrustMaterial: read("connection.readsTrustMaterial") as boolean,
+      dialog: read("connection.dialog") as Connection["dialog"],
+      hostUriSchemes: read("connection.hostUriSchemes") as Connection["hostUriSchemes"],
       credentialWarnings: read("connection.credentialWarnings") as Connection["credentialWarnings"],
+      fieldRules: read("connection.fieldRules") as Connection["fieldRules"],
+      hostHint: read("connection.hostHint") as Connection["hostHint"],
+      hostIdentity: read("connection.hostIdentity") as Connection["hostIdentity"],
+      import: read("connection.import") as Connection["import"],
       connectBudgetMs: read("connection.connectBudgetMs") as Connection["connectBudgetMs"],
     },
   };
@@ -225,21 +252,31 @@ export function renderCatalog(catalog: EngineCatalog): string {
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 
 /**
+ * A character the module does not write as itself: a control character, below U+0020 and U+007F to U+009F; the line
+ * and paragraph separators U+2028 and U+2029; the soft hyphen U+00AD; a zero-width character, U+200B to U+200D and
+ * U+FEFF; and a lone surrogate. Each is invisible or breaks a line where it is read, and the formatter may spell its
+ * escape otherwise.
+ */
+const UNQUOTED_CHARACTER = /[\x00-\x1f\x7f-\x9f\u00ad\u200b-\u200d\u2028\u2029\ufeff]|\p{Cs}/u;
+
+/**
  * `text` as a string literal in the formatter's quotes: double quotes, unless the text holds more double quotes than
- * single ones, as the one projection refusal that quotes `{id}` and `{type}` does.
+ * single ones, as the one projection refusal that quotes `{id}` and `{type}` does. A backslash is written doubled and
+ * the quote escaped, and a printable character outside ASCII, such as an ellipsis, is written as itself: spellings
+ * the formatter leaves as they are.
  *
- * @throws {Error} For a text holding a backslash, a control character or a character outside ASCII, which none of the
- * declarations' sentences holds and whose spelling the formatter may change.
+ * @throws {Error} For a text holding a character `UNQUOTED_CHARACTER` names, which no declaration's text holds.
  */
 function quoted(text: string): string {
-  if (/[^\x20-\x7e]|\\/.test(text)) {
+  if (UNQUOTED_CHARACTER.test(text)) {
     throw new Error(
       `The connection module cannot write ${JSON.stringify(text)}: it holds a character it does not quote`,
     );
   }
+  const escaped = text.replaceAll("\\", "\\\\");
   const doubles = text.split('"').length - 1;
   const singles = text.split("'").length - 1;
-  return doubles > singles ? `'${text.replaceAll("'", "\\'")}'` : `"${text.replaceAll('"', '\\"')}"`;
+  return doubles > singles ? `'${escaped.replaceAll("'", "\\'")}'` : `"${escaped.replaceAll('"', '\\"')}"`;
 }
 
 /** `key` as a record member, written bare. */
@@ -254,14 +291,15 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 }
 
 /**
- * `value` on one line: a list or a record frozen, a list `as const` so each element keeps its literal type.
+ * `value` on one line: a list or a record frozen, a list `as const` so each element keeps its literal type, and an
+ * integer as its decimal text.
  *
- * @throws {Error} For a value that is not a string, a boolean, null, a list or a record of them, which no member the
- * connection tables read holds.
+ * @throws {Error} For a value that is not a string, an integer, a boolean, null, a list or a record of them, which no
+ * member the connection modules read holds.
  */
 function flat(value: unknown): string {
   if (typeof value === "string") return quoted(value);
-  if (typeof value === "boolean" || value === null) return String(value);
+  if (typeof value === "boolean" || value === null || Number.isSafeInteger(value)) return String(value);
   if (Array.isArray(value)) return `Object.freeze([${value.map(flat).join(", ")}] as const)`;
   if (!isRecord(value)) throw new Error(`The connection module cannot write ${String(value)}`);
   const members = Object.entries(value).map(([key, member]) => `${memberKey(key)}: ${flat(member)}`);
@@ -276,7 +314,9 @@ function flat(value: unknown): string {
  */
 function laidOut(value: unknown, indent: number, head: string, tail: string, key?: string): string[] {
   const line = `${head}${flat(value)}${tail}`;
-  if (line.length <= LINE_WIDTH || typeof value === "boolean" || value === null) return [line];
+  if (line.length <= LINE_WIDTH || typeof value === "boolean" || typeof value === "number" || value === null) {
+    return [line];
+  }
   const inner = " ".repeat(indent + 2);
   if (typeof value === "string") {
     return key === undefined || key.length < SHORT_KEY_WIDTH
@@ -392,6 +432,25 @@ export function renderConnectionFlags(tables: ConnectionTables): string {
   ].join("\n");
 }
 
+/**
+ * The text of the generated connection form module for `forms`: a header, type imports only, and one frozen record,
+ * read by src/lib/db/connection-form.ts.
+ */
+export function renderConnectionForms(forms: ConnectionForms): string {
+  return [
+    ...HEADER,
+    'import type { DatabaseType } from "@/lib/types";',
+    'import type { ConnectionFormEntry } from "./projection";',
+    "",
+    ...renderedRecord(
+      "Each engine's connection form, its display name and connection dialog members, read by `CONNECTION_FORM` (M-72).",
+      "export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionFormEntry>> =",
+      forms,
+    ),
+    "",
+  ].join("\n");
+}
+
 /** The current text of `file`, or null when it does not exist. */
 function textOf(file: string): string | null {
   try {
@@ -430,6 +489,7 @@ function main(argv: readonly string[]): number {
     { file: fileOf(ENGINE_CATALOG_MODULE), text: renderCatalog(projectCatalog(declarations)) },
     { file: fileOf(ENGINE_CONNECTION_MODULE), text: renderConnectionTables(tables) },
     { file: fileOf(ENGINE_CONNECTION_FLAGS_MODULE), text: renderConnectionFlags(tables) },
+    { file: fileOf(ENGINE_CONNECTION_FORM_MODULE), text: renderConnectionForms(projectConnectionForms(declarations)) },
   ];
 
   if (mode === "--check") {

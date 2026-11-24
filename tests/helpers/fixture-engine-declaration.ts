@@ -9,7 +9,9 @@ import type { EngineDeclaration } from "@libredb/provider-sdk/manifest";
  * mode in its dialog, refuses `schema` by name and warns about a connection with no secret, so its catalog entry and
  * its connection rows are ones no shipped engine has. Adding it to the admitted set adds exactly those rows, and
  * removing it again is visible in every projection that read it. It carries no credential value: its one warning is
- * `no-secret`.
+ * `no-secret`. It names no function in its connection form: no host hint, host identity or import, and no field rule
+ * with a check, so Studio's function table holds nothing for it and its form composes; a test that needs a named
+ * function names one on a copy.
  */
 export function fixtureEngineDeclaration(base: EngineDeclaration): EngineDeclaration {
   return {
@@ -31,6 +33,10 @@ export function fixtureEngineDeclaration(base: EngineDeclaration): EngineDeclara
         },
       ],
       connectBudgetMs: 90_000,
+      fieldRules: base.connection.fieldRules.map((rule) => ({ ...rule, check: null })),
+      hostHint: null,
+      hostIdentity: null,
+      import: null,
     },
   };
 }

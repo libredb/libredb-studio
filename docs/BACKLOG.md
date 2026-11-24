@@ -4811,13 +4811,13 @@ Found 2026-11-22 when the run routes started to classify every run on the server
 
 ### D494. SQLite, DuckDB and LibreDB declare TLS settings their providers never read
 
-A provider receives the TLS settings (`ssl`) where its form entry offers the TLS panel (`offersSslPanel` in `src/lib/db/connection-form.ts`, read by `providerFields` in `src/lib/db/provider-connection.ts`).
-The form entries of SQLite, DuckDB and LibreDB leave `showSslPanel` unset, so their declaration takes `ssl`, while the connection dialog hides the panel for a file-based engine and none of the three providers reads the field.
+A provider receives the TLS settings (`ssl`) where its declaration offers TLS (`connection.tls`, read through `offersSslPanel` in `src/lib/db/connection-form.ts` by `providerFields` in `src/lib/db/provider-connection.ts`).
+The declarations of SQLite, DuckDB and LibreDB state `connection.tls` `offered`, so their providers take `ssl`, while the connection dialog hides the panel for a file-based engine and none of the three providers reads the field.
 The census of the fields provider modules read (`tests/unit/lib/db/provider-field-census.test.ts`) names the three by hand, as declared fields no module reads.
 
 Found 2026-11-23 while planning FND-2 slice 6.
 
-**Done when:** the three form entries declare `showSslPanel: false`, the dialog's rendering of the three is unchanged, and the census's list of declared fields no module reads is empty.
+**Done when:** the three declarations state `connection.tls` `not-offered`, the dialog's rendering of the three is unchanged, and the census's list of declared fields no module reads is empty.
 
 ### D495. A refusal the provider factory's entry points raise before the build answers outcome unknown
 
@@ -6658,9 +6658,9 @@ Found 2026-10-12 in a browser pass of the RabbitMQ provider, reproduced with scr
 ### U124. Firestore's Database ID box carries a sentence about Create Table and SHOW SCHEMAS
 
 The connection dialog draws one fixed sentence under the schema box for every engine that takes the field and declares no schema placeholder (the `note` of the `schema` row of `CONNECTION_FIELD_DESCRIPTORS` in `src/lib/db/connection-fields.ts`, drawn by `src/components/ConnectionFieldControl.tsx`): "Used for unqualified table names in queries and Create Table. Leave empty to qualify names yourself. Run SHOW SCHEMAS to list the catalog's schemas."
-It was written for Trino, and the box is also Firestore's "Database ID" (the `firestore` entry of `CONNECTION_FORM` in `src/lib/db/connection-form.ts`), where the provider declares no `createTable` (`src/lib/db/providers/document/firestore/index.ts`) and there is no `SHOW SCHEMAS`.
+It was written for Trino, and the box is also Firestore's "Database ID" (`connection.dialog.labels` in `src/lib/db/engine-declarations/firestore.json`), where the provider declares no `createTable` (`src/lib/db/providers/document/firestore/index.ts`) and there is no `SHOW SCHEMAS`.
 So a Firestore user reads, under the engine's own hint ("Empty for the (default) database"), advice about table names and a statement the engine does not have.
-BigQuery's "Default dataset" box (the `bigquery` entry of `CONNECTION_FORM` in `src/lib/db/connection-form.ts`) takes the same sentence, and whether it holds there is not measured.
+BigQuery's "Default dataset" box (`connection.dialog.labels` in `src/lib/db/engine-declarations/bigquery.json`) takes the same sentence, and whether it holds there is not measured.
 The sentence is the dialog's own words in the shared descriptor table, not an engine declaration: an engine entry drops it only by declaring a schema placeholder (Snowflake declares an empty one, Spark its own), which is a side effect rather than a statement that the sentence does not apply, and cannot replace it the way `fieldHints` does.
 
 Found 2026-10-12 while reading the connection dialog for a new provider.
@@ -6819,7 +6819,7 @@ A window narrowed by a vertical scrollbar (1265 wide) wraps more of the hero and
 ### U140. The connection dialog's field census leaves six shipped types out
 
 The docblock of the "declared connection-field copy (#1085)" block in `tests/components/ConnectionModal.test.tsx` says its `SHIPPED` table holds "every shipped type", but the table has no row for BigQuery, Snowflake, Neo4j, MQTT, Firestore or OPC UA, six of the thirty-seven in `SHIPPED_DATABASE_TYPES` (counted 2026-10-14 on `main` at 59cdfd09b, where #1759 added Apache Spark's row).
-The same docblock calls Prometheus and Kafka "the shipped entries that declare either" label or hint, while `src/lib/db/connection-form.ts` now declares field copy for libSQL, Db2, etcd, Neo4j, Milvus, Qdrant, InfluxDB and InfluxDB 3 as well.
+The same docblock calls Prometheus and Kafka "the shipped entries that declare either" label or hint, while the engine declarations under `src/lib/db/engine-declarations` now declare field copy for libSQL, Db2, etcd, Neo4j, Milvus, Qdrant, InfluxDB and InfluxDB 3 as well.
 So a change to the labels or hints of those six types reaches no census row.
 
 Found 2026-10-13 while building the Apache Spark provider (#1759); pre-existing.
@@ -6882,7 +6882,7 @@ Found 2026-10-18 while designing #1822.
 
 ### U147. The ClickHouse connection-URI box shows a MongoDB example
 
-The `clickhouse` entry of `CONNECTION_FORM` in `src/lib/db/connection-form.ts` declares `fieldPlaceholders.connectionString` as `mongodb://localhost:27017/mydb  or  mongodb+srv://...`, so a ClickHouse dialog switched to its connection string mode offers a MongoDB URI as the example.
+The `clickhouse` declaration, `src/lib/db/engine-declarations/clickhouse.json`, declares the `connectionString` entry of `connection.dialog.placeholders` as `mongodb://localhost:27017/mydb  or  mongodb+srv://...`, so a ClickHouse dialog switched to its connection string mode offers a MongoDB URI as the example.
 That is the dialog's old fall-through for every toggle engine that was not Couchbase or libSQL, moved onto the declaration unchanged so the engine contract refactor changed no rendered text; `tests/unit/db/connection-form/golden/clickhouse.txt` and `tests/unit/lib/db-ui-config-placement.test.ts` pin it.
 The schemes the parser reads for ClickHouse are `clickhouse://`, `http://` and `https://`.
 

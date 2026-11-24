@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
+import type { EngineDeclaration } from "@libredb/provider-sdk/manifest";
 import {
   connectionFieldHint,
   connectionFieldLabel,
@@ -1723,6 +1724,32 @@ describe("the Snowflake entry", () => {
       createdAt: new Date(0),
       ...fields,
     }) as DatabaseConnection;
+
+  test("Snowflake's declared rule sentences and Sign-in absent value are the account module's own", () => {
+    // The declaration holds a copy of each sentence and of the absent value, since a declaration is data; each copy
+    // must be the account module's own words, which connect() refuses with.
+    const declaration = JSON.parse(
+      readFileSync(path.join(import.meta.dir, "../../../src/lib/db/engine-declarations/snowflake.json"), "utf8"),
+    ) as EngineDeclaration;
+    const required = Object.fromEntries(
+      declaration.connection.fieldRules.map(({ field, required }) => [field, required]),
+    );
+
+    expect(required).toEqual({
+      host: SNOWFLAKE_FIELD_SENTENCES.accountEmpty,
+      user: SNOWFLAKE_FIELD_SENTENCES.userEmpty,
+      privateKey: SNOWFLAKE_FIELD_SENTENCES.keyEmpty,
+      password: SNOWFLAKE_FIELD_SENTENCES.tokenEmpty,
+      role: SNOWFLAKE_FIELD_SENTENCES.roleEmpty,
+    });
+    expect(declaration.connection.dialog.absentValues).toEqual([
+      { field: "authMethod", value: SNOWFLAKE_SIGN_IN_DEFAULT },
+    ]);
+    expect(snowflake.fieldDefaults).toEqual({ authMethod: SNOWFLAKE_SIGN_IN_DEFAULT });
+    expect(
+      Object.fromEntries(Object.entries(SNOWFLAKE_FIELD_RULES).map(([field, rule]) => [field, rule?.required ?? null])),
+    ).toEqual(required);
+  });
 
   test("declares its icon, hue, fields, labels, the method select, placeholders and hints, and no panel", () => {
     expect(snowflake).toMatchObject({
