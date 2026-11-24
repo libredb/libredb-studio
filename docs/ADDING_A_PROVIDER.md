@@ -557,14 +557,15 @@ Such a provider never reads `STORAGE_SQLITE_PATH` and never imports `src/lib/dat
 **Files:** `src/lib/db/engine-declarations/<type-id>.json` and `src/lib/db-ui-config.ts`
 
 The label, the default port, the fields and every optional dialog declaration are authored in the engine's declaration: its `displayName`, and of its `connection` the `fields`, `defaults`, `tls`, `dialog`, `hostUriSchemes`, `fieldRules`, `hostHint`, `hostIdentity` and `import` (`docs/providers/CONTRACT.md`, M-15 and M-72).
-`bun run engines:generate` projects them into `src/lib/db/engine-catalog/connection-form.generated.ts`, and `CONNECTION_FORM` in `src/lib/db/connection-form.ts`, a UI-free module that imports no React, icon or component, composes the type's entry from that projection:
+`bun run engines:generate` projects them into `src/lib/db/engine-catalog/connection-form.generated.ts`, and `CONNECTION_FORM` in `src/lib/db/connection-form.ts`, a UI-free module that imports no React, icon or component, composes the type's entry from that projection.
+`connection.tls.modes` lists the TLS modes the provider takes, in the order of the schema's `tlsMode`, and none where the engine offers no TLS, which hides the SSL / TLS panel (`docs/providers/CONTRACT.md`, M-73):
 
 ```json
 "displayName": "CockroachDB",
 "connection": {
   "fields": ["host", "port", "user", "password", "database", "connectionString"],
   "defaults": { "port": 26257 },
-  "tls": "offered",
+  "tls": { "modes": ["disable", "require", "verify-system", "verify-ca", "verify-full"] },
   "dialog": {
     "order": null,
     "labels": [],
@@ -1173,7 +1174,7 @@ The integration points, all of which need an entry. This is the list the Strateg
 - [ ] `src/lib/db/providers/<family>/<type-id>.ts` (or a directory) — **new:** the provider class
 - [ ] `docs/providers/<type-id>.md` and `tests/integration/db/<type-id>-provider.test.ts`: **new:** the other two legs of the provider triad, which `tests/unit/db/provider-triad.test.ts` requires for every type-id
 - [ ] `src/lib/db/factory.ts` — add a `case` with a **dynamic** import
-- [ ] The declaration's `displayName`, `connection.defaults` and `connection.tls`, which `CONNECTION_FORM` in `src/lib/db/connection-form.ts` composes into the type's entry, with its label, default port and SSL panel; a function the declaration names needs its row in `CONNECTION_FORM_FUNCTIONS` there
+- [ ] The declaration's `displayName`, `connection.defaults` and `connection.tls`, the TLS modes its provider takes, none where it offers no TLS, which `CONNECTION_FORM` in `src/lib/db/connection-form.ts` composes into the type's entry, with its label, default port and SSL panel; a function the declaration names needs its row in `CONNECTION_FORM_FUNCTIONS` there
 - [ ] `src/lib/db-ui-config.ts`: the icon and colour, as `branded(CONNECTION_FORM.<type>, <Icon>, "<colour>")`
 - [ ] The declaration's `connection.fields`, which `CONNECTION_FIELDS` in `src/lib/db/connection-fields.ts` reads and the entry's `connectionFields` takes by reference, its `connection.seedOnly`, `SEED_ONLY_FIELDS`'s row, which is `null` unless only this engine's provider reads a field, and its `connection.refused`, `REFUSED_CONNECTION_FIELDS`'s row, which names each field the engine does not take and refuses by name with the sentence it is refused with, empty for most engines (core refuses a connection that sets one before the build, so the provider never reads it, and the engine's provider doc quotes each sentence); each is authored in the declaration (see its item below), and `tests/unit/lib/db/provider-field-census.test.ts` fails on a provider module that reads a connection field the engine does not declare.
       A field outside Studio's connection field vocabulary fails the typecheck at `CONNECTION_FIELDS`.

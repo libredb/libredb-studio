@@ -1103,9 +1103,9 @@ Each engine's connection form, what its connection dialog draws apart from its i
 It is the projection of each admitted declaration's `displayName` and, of its `connection`, the `defaults`, `tls`, `dialog`, `hostUriSchemes`, `fieldRules`, `hostHint`, `hostIdentity` and `import`, members it authors, M-15.
 The projection, `projectConnectionForms` in `src/lib/db/engine-catalog/projection.ts`, reads only those members, holds one entry per id in ascending id order, each member as the declaration states it, a pattern as its source and flags and a function as its name, frozen at every level, and is a pure function of the set; two declarations of one id are refused by name.
 It is rendered by the command M-70 names, from the same authored members and held by the same admission, into `src/lib/db/engine-catalog/connection-form.generated.ts`, held byte for byte to what the command renders and typed as a record over `DatabaseType`, which only `src/lib/db/connection-form.ts` reads.
-`composeConnectionForm` reads each entry into the form the dialog, the factory's required secret check, `providerFields` and the VS Code extension read: each per-field list as a record keyed in field order, each pattern compiled once, and each named function bound through Studio's function table, M-31.
+`composeConnectionForm` reads each entry into the form the dialog, the factory's required secret check, `providerFields` and the VS Code extension read: each per-field list as a record keyed in field order, each pattern compiled once, each named function bound through Studio's function table, M-31, and the SSL / TLS panel offered where the engine lists a TLS mode, M-73.
 A named function is bound to the function Studio's own source holds for that engine at that slot, and a name Studio holds no function for, at that slot, is refused by name when the form is composed, with no default; the forms are composed when the module loads.
-None of these members is a claim, M-52: each is presentation, or a field rule or condition that only adds a refusal to the ones core makes, or the engine's TLS offer, which hands its provider the connection's own settings, or an identity reader Studio's own source holds.
+None of these members is a claim, M-52: each is presentation, or a field rule or condition that only adds a refusal to the ones core makes, or the TLS modes the engine takes, M-73, which hand its provider the connection's own settings, or an identity reader Studio's own source holds.
 Removing an engine's declaration gives exactly the forms a fresh build from the remaining set gives.
 
 - test `tests/unit/db/engine-catalog.test.ts` "the connection forms hold one entry per declaration, keyed in ascending id order whatever order they come in"
@@ -1127,6 +1127,28 @@ Removing an engine's declaration gives exactly the forms a fresh build from the 
 - test `tests/unit/db/engine-declaration-readers.test.ts` "no listed reader reads a claim, so a declared claim reaches a gate only through Studio's review record"
 - test `tests/unit/db/engine-projections-removal.test.ts` "the connection forms built with the fixture engine hold its entry, and with it removed are exactly a fresh build from the remaining set and the committed module"
 - test `tests/unit/db/engine-projections-removal.test.ts` "the connection forms are the same whatever order the declarations are admitted in"
+
+### M-73 (normative): An engine's TLS modes are data of its declaration
+
+A declaration states in `connection.tls.modes` the TLS modes its engine's provider takes, each once and in the order of the schema's `tlsMode`, and none where the engine offers no TLS, so no surface draws the SSL / TLS panel for it and its provider receives no TLS settings.
+Each mode means what Studio's published `SSLMode` in `src/lib/types.ts` says, the same on every engine that lists it, so core never maps one engine's modes onto another's.
+A mode outside the vocabulary, a repeated mode and a mode listed after one the vocabulary orders after it are each refused by name, at the mode's own pointer, and a TLS offer stated as a word rather than a list of modes is refused as the wrong type.
+The SDK's TLS settings read the same vocabulary: `TlsSettings.mode` is the generated `TlsMode`, which a census holds equal to `SSLMode` in both directions and in its order.
+Each of Studio's surfaces that offers a mode offers every mode of the vocabulary today, and every shipped engine that lists any lists them all, which a census holds.
+
+- schema `/$defs/tlsMode`
+- schema `/$defs/tlsOffer`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "TLS modes in the provider contract's order, %s, are admitted"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a TLS mode outside the provider contract's modes is refused as value-not-allowed at its own pointer"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a TLS mode listed twice is refused as duplicate at the second"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a TLS mode listed after one the provider contract orders after it is refused as tls-mode-order, at each such mode"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a TLS mode out of order is refused in one sentence naming its pointer and no mode"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a TLS offer stated as the word %s is refused as wrong-type"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a TLS offer with no modes member is refused as missing-key, and one with another member as unknown-key"
+- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "the manifest's TLS modes are Studio's published SSL modes, in its order"
+- test `tests/unit/db/engine-declarations.test.ts` "connection.tls lists TLS modes exactly where the dialog offers the SSL panel"
+- test `tests/unit/lib/db/provider-field-census.test.ts` "every engine that lists TLS modes lists each of the provider contract's modes, in its order, and an engine lists none exactly where the dialog offers no SSL / TLS panel"
+- test `tests/unit/db/engine-projections-removal.test.ts` "the connection forms built with the fixture engine hold its entry, and with it removed are exactly a fresh build from the remaining set and the committed module"
 
 ## Values
 
@@ -3126,3 +3148,4 @@ Against this contract's earlier text:
 - Health is a mandatory call, C-3 and C-72, where the calls chapter left it out.
 - A kill runs on the connection's metadata session where the host's session capacity class is several, C-66 and C-70, where it ran on the editor's.
 - One core module evaluates the field rules for the connection dialog and for the test-connection path Test Connection and Save post to, and a field holding null holds no value, M-33, where only the dialog evaluated them and null was a value.
+- An engine's TLS offer lists the TLS modes the engine takes, M-73, where it was a word offering every mode of Studio's or none.

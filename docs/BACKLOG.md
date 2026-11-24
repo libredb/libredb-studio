@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D770, U17 · 377
+- [Drivers and connections](#drivers-and-connections) — D1-D790, U17 · 378
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -387,6 +387,10 @@ Amended 2026-10-03 again: the mapping now exists five times, the fifth in the Mi
 Amended 2026-10-04: the two gRPC copies are one, `readGrpcTlsPanel` and `grpcTlsIdentity` in `src/lib/db/grpc/tls.ts` with the credentials in `src/lib/db/grpc/credentials.ts`, which etcd and Milvus both take, so the mapping exists four times: Couchbase's, Prometheus's, Kafka's and the shared gRPC one, beside `nodeTlsMaterial`; a new gRPC provider takes the shared one, and the done-when below, which is about the HTTP providers, is unchanged.
 
 Amended 2026-10-30: the Couchbase agent path (`agentQuery` and `whoami` in `src/lib/db/providers/document/couchbase/http-transport.ts`) goes through `createNodeTransport` for the caller's signal and byte cap; the editor's query and management paths keep their `fetch` and TLS request function, and moving those stays open under this entry.
+
+Amended 2026-11-24: each engine's declaration now lists the TLS modes its provider takes (`connection.tls.modes`, docs/providers/CONTRACT.md M-73), and the six engines this entry names, ClickHouse, Druid, Elasticsearch, OpenSearch, Trino and libSQL, list all five of Studio's modes, although their providers give `require`, `verify-ca` and `verify-full` the meaning of `verify-system`.
+Narrowing their lists to the modes they honour would refuse stored connections, seeds and the paste results of ClickHouse's `https://` and libSQL's `libsql://` addresses, which load today, so the lists stay whole.
+The fix this entry asks for, the panel honoured over `node:https`, makes those lists right as they stand, and the done-when below is unchanged.
 
 `ssl.caCert`, `ssl.clientCert`, `ssl.clientKey` and `ssl.rejectUnauthorized` reach the
 driver on every provider that uses one. On the providers that speak HTTP through global
@@ -4811,13 +4815,13 @@ Found 2026-11-22 when the run routes started to classify every run on the server
 
 ### D494. SQLite, DuckDB and LibreDB declare TLS settings their providers never read
 
-A provider receives the TLS settings (`ssl`) where its declaration offers TLS (`connection.tls`, read through `offersSslPanel` in `src/lib/db/connection-form.ts` by `providerFields` in `src/lib/db/provider-connection.ts`).
-The declarations of SQLite, DuckDB and LibreDB state `connection.tls` `offered`, so their providers take `ssl`, while the connection dialog hides the panel for a file-based engine and none of the three providers reads the field.
+A provider receives the TLS settings (`ssl`) where its declaration lists a TLS mode (`connection.tls.modes`, read through `offersSslPanel` in `src/lib/db/connection-form.ts` by `providerFields` in `src/lib/db/provider-connection.ts`).
+The declarations of SQLite, DuckDB and LibreDB list every TLS mode in `connection.tls.modes`, so their providers take `ssl`, while the connection dialog hides the panel for a file-based engine and none of the three providers reads the field.
 The census of the fields provider modules read (`tests/unit/lib/db/provider-field-census.test.ts`) names the three by hand, as declared fields no module reads.
 
 Found 2026-11-23 while planning FND-2 slice 6.
 
-**Done when:** the three declarations state `connection.tls` `not-offered`, the dialog's rendering of the three is unchanged, and the census's list of declared fields no module reads is empty.
+**Done when:** the three declarations list no TLS mode in `connection.tls.modes`, the dialog's rendering of the three is unchanged, and the census's list of declared fields no module reads is empty.
 
 ### D495. A refusal the provider factory's entry points raise before the build answers outcome unknown
 
@@ -4993,6 +4997,17 @@ So one owner's metadata session on such a connection can hold up to seventeen co
 The open question is whether the metadata session's catalog sessions should be sized like its own pool of two, which would bring that bound down to twelve.
 
 **Done when:** either a catalog session opened from the metadata session takes the metadata session's pool size, with C-66 and the PostgreSQL doc stating the new bound, or the pools of three are kept with the reason recorded in C-66; either way a factory test pins the connections a metadata session on a server-level connection can hold.
+
+### D790. A TLS mode outside Studio's reaches a provider through the API and storage
+
+A connection's `ssl.mode` is checked against Studio's modes by the connection dialog, the import, the seed schema and the VS Code profile, but not by the test-connection route, the storage writes or any other route.
+Measured 2026-11-24 by building each engine's provider with the mode `prefer` and connecting: 17 providers refuse it by name before any socket (those reading the panel through `nodeTlsMaterial`, `readGrpcTlsPanel`, Neo4j's reader and Kafka's), and 16 read it as TLS of their own reading without a word, since each reads anything but `disable` as TLS.
+The engine's declaration now lists the modes it takes (`connection.tls.modes`, docs/providers/CONTRACT.md M-73), so the check has its data.
+Not a security boundary: each of the 16 either verifies or reads the mode as one the user could have chosen.
+
+Found 2026-11-24 while moving each engine's TLS modes into its declaration.
+
+**Done when:** core refuses, by name and before any tunnel or provider build, a connection whose `ssl.mode` is not one its engine's declaration lists, on every path that builds a provider from a caller's connection, with a test over every engine and a mode outside its list.
 
 ## Value interpolation
 
