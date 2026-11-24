@@ -11,9 +11,10 @@
  * renders the projections into `src/lib/db/engine-catalog/catalog.generated.ts`, `connection.generated.ts`,
  * `connection-flags.generated.ts`, `connection-form.generated.ts`, `connection-string.generated.ts`,
  * `editor.generated.ts`, `query-editor.generated.ts`, `sql-text.generated.ts`, `sql-writing.generated.ts`,
- * `migration-ddl.generated.ts` and `sql-generators.generated.ts`, the modules Studio's readers read, and holds each to the set it admits through the SDK's digest-checked validator. This file holds the projections, the admission, the generated
- * modules' bytes, the readers that answer from them, and `bun run engines:generate` end to end on a scratch copy of the
- * sources it reads.
+ * `migration-ddl.generated.ts` and `sql-generators.generated.ts`, the modules Studio's readers read, and holds each to
+ * the set it admits through the SDK's digest-checked validator. This file holds the projections, the admission, the
+ * generated modules' bytes, the readers that answer from them, and `bun run engines:generate` end to end on a scratch
+ * copy of the sources it reads.
  */
 import { describe, expect, test } from "bun:test";
 import {
@@ -1663,7 +1664,8 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       expect(readFileSync(sqlWriting, "utf8")).toBe(sqlWritingText);
       expect(run("--check", "--out", dir).exitCode).toBe(0);
 
-      // MySQL's transaction wrapper edited by hand in the generated migration DDL module is named, and only that module.
+      // MySQL's transaction wrapper edited by hand in the generated migration DDL module is named, and only that
+      // module.
       const migrationDdl = path.join(dir, "migration-ddl.generated.ts");
       const migrationDdlText = readFileSync(migrationDdl, "utf8");
       const mysqlDdl = /^ {2}mysql: Object\.freeze\(\{$[\s\S]*?^ {2}\}\),$/m.exec(migrationDdlText)?.[0] ?? "";

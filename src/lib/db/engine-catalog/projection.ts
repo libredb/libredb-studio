@@ -77,9 +77,9 @@
  *
  * `scripts/generate-engine-catalog.ts` projects the committed declarations' authored members here and renders the
  * results into `catalog.generated.ts`, `connection.generated.ts`, `connection-flags.generated.ts`,
- * `connection-form.generated.ts`, `connection-string.generated.ts`, `editor.generated.ts`,
- * `query-editor.generated.ts`, `sql-text.generated.ts`, `sql-writing.generated.ts`, `migration-ddl.generated.ts` and
- * `sql-generators.generated.ts`, the modules Studio's readers read, and holds each module to the projection of the set it admits through the SDK's
+ * `connection-form.generated.ts`, `connection-string.generated.ts`, `editor.generated.ts`, `query-editor.generated.ts`,
+ * `sql-text.generated.ts`, `sql-writing.generated.ts`, `migration-ddl.generated.ts` and `sql-generators.generated.ts`,
+ * the modules Studio's readers read, and holds each module to the projection of the set it admits through the SDK's
  * validator. A loader that admits a provider package at run time projects its set through these same functions.
  */
 import type {
@@ -169,9 +169,9 @@ export type SqlWritingEntry = SqlWriting;
 export type SqlWritings = Readonly<Record<string, SqlWritingEntry>>;
 
 /**
- * One engine's migration DDL as its declaration authors it, the SDK's `MigrationDdl`: refused, with its refusal line and
- * reasons, or written, with its transaction wrapper, its CREATE TABLE form, each statement writer as its name and its
- * reasons.
+ * One engine's migration DDL as its declaration authors it, the SDK's `MigrationDdl`: refused, with its refusal line
+ * and reasons, or written, with its transaction wrapper, its CREATE TABLE form, each statement writer as its name and
+ * its reasons.
  */
 export type MigrationDdlEntry = MigrationDdl;
 

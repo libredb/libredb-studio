@@ -394,7 +394,8 @@ describe("each projection of the admitted declarations, built with and without a
     expect(Object.hasOwn(removed, FIXTURE.id)).toBe(false);
     expect(Object.keys(removed)).toEqual([...SHIPPED_DATABASE_TYPES]);
     expect(renderMigrationDdl(removed)).toBe(readFileSync(path.join(ROOT, ENGINE_MIGRATION_DDL_MODULE), "utf8"));
-    // Nothing is kept on purpose: the migration DDL composed from the committed module refuses the fixture's id by name.
+    // Nothing is kept on purpose: the migration DDL composed from the committed module refuses the fixture's id by
+    // name.
     expect(() => migrationDdlFor(FIXTURE.id)).toThrow(unknownTypeSentence(FIXTURE.id));
   });
 

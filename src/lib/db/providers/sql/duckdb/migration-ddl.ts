@@ -1,7 +1,7 @@
 /**
- * DuckDB's own migration DDL functions, each bound by Studio's migration DDL function table
- * (`MIGRATION_DDL_FUNCTIONS` in src/lib/db/migration-ddl/index.ts) at the slot its name gives: DuckDB declares a foreign
- * key ONLY as a `CREATE TABLE` table constraint.
+ * DuckDB's own migration DDL functions, each bound by Studio's migration DDL function table (`MIGRATION_DDL_FUNCTIONS`
+ * in src/lib/db/migration-ddl/index.ts) at the slot its name gives: DuckDB declares a foreign key ONLY as a `CREATE
+ * TABLE` table constraint.
  *
  * Measured on DuckDB v1.5.5, both arms. The table constraint is accepted and readable back - `CREATE TABLE "users"
  * (..., PRIMARY KEY ("id"), FOREIGN KEY ("dept_id") REFERENCES "departments"("id"))` lands, and

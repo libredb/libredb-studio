@@ -56,7 +56,10 @@ function sharedFields(spec: MigrationDdlSpec): string[] {
 /** The declaration of `id`, as its provider document links it. */
 const declarationOf = (id: string): string => `src/lib/db/engine-declarations/${id}.json`;
 
-/** What one document gets wrong about its engine's migration DDL, each as a sentence naming the type id; [] when nothing. */
+/**
+ * What one document gets wrong about its engine's migration DDL, each as a sentence naming the type id; [] when
+ * nothing.
+ */
 function sectionViolations(
   id: string,
   spec: MigrationDdlSpec,

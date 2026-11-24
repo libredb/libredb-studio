@@ -1,8 +1,8 @@
 /**
  * Databend's own migration DDL functions, each bound by Studio's migration DDL function table
- * (`MIGRATION_DDL_FUNCTIONS` in src/lib/db/migration-ddl/index.ts) at the slot its name gives. Its constraints are CHECK
- * only, so it declares no foreign key, its CREATE TABLE declines the primary key in a comment after the statement, and
- * its index and column changes are declined in words.
+ * (`MIGRATION_DDL_FUNCTIONS` in src/lib/db/migration-ddl/index.ts) at the slot its name gives. Its constraints are
+ * CHECK only, so it declares no foreign key, its CREATE TABLE declines the primary key in a comment after the
+ * statement, and its index and column changes are declined in words.
  */
 import { commentName, NO_FOREIGN_KEY_CONSTRAINT } from "@/lib/db/migration-ddl/shared";
 import type { TableDdlWritten, WrittenCreateTable } from "@/lib/db/migration-ddl/types";

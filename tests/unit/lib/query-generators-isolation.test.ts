@@ -3,9 +3,9 @@
  * engine writes reaches it through the registry in `src/lib/db/query-generators/index.ts`, a dialect's or a language's
  * row declared beside its provider and keyed by what the declaration says, its query dialect or its query language, or
  * an SQL engine's own forms keyed by the connection's type id, composed from the engine's declaration with Studio's SQL
- * generator function table (docs/providers/CONTRACT.md, clause M-81). The dispatcher imports no provider module, no string
- * or identifier in it names an engine, a dialect or a language other than SQL, and it reads no declaration's port.
- * MongoDB's JSON documents are the `json` language's row.
+ * generator function table (docs/providers/CONTRACT.md, clause M-81). The dispatcher imports no provider module, no
+ * string or identifier in it names an engine, a dialect or a language other than SQL, and it reads no declaration's
+ * port. MongoDB's JSON documents are the `json` language's row.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";

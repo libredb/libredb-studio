@@ -38,9 +38,10 @@ export function boundFunction<Bound>(id: DatabaseType, table: FunctionTable<Boun
  *
  * Studio's declarations name each SQL writing, migration DDL and SQL generator function by the slot it fills
  * (docs/providers/CONTRACT.md, clause M-31), so those three tables build each of their slot kinds here from the engines
- * that fill the slot. The helper invents no binding: the compose tests of each, tests/unit/db/sql-writing/compose.test.ts,
- * tests/unit/db/migration-ddl/compose.test.ts and tests/unit/lib/query-generators-compose.test.ts, hold each table to
- * exactly the names the committed declarations give.
+ * that fill the slot. The helper invents no binding: the compose tests of each,
+ * tests/unit/db/sql-writing/compose.test.ts, tests/unit/db/migration-ddl/compose.test.ts and
+ * tests/unit/lib/query-generators-compose.test.ts, hold each table to exactly the names the committed declarations
+ * give.
  */
 export function slotFunctionTable<Bound>(
   name: string,
