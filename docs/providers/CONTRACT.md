@@ -1222,6 +1222,19 @@ Removing an engine's declaration gives exactly the execution UI and fence aliase
 - test `tests/unit/db/engine-projections-removal.test.ts` "the execution UI and the fence aliases built with the fixture engine hold its entries, and with it removed are exactly a fresh build from the remaining set and the committed module"
 - test `tests/unit/db/engine-projections-removal.test.ts` "the execution UI and the fence aliases are the same whatever order the declarations are admitted in"
 
+### M-76 (normative): An agent reading's panel is offered
+
+An engine lists in `facets.agentReadings` a reading read through a monitoring panel, as `AGENT_READING_PANELS` names it, only where its `facets.monitoring` offers that panel, since the host refuses every panel call for a panel the session's engine does not offer, C-71.
+A reading whose panel the engine does not offer is refused as `agent-reading-panel-not-offered`, at the reading's own pointer, in a sentence naming that pointer and no value.
+`health`, which the mandatory health call serves, is admitted whatever the panels.
+Every engine Studio ships satisfies the rule, which its census holds.
+
+- schema `/$defs/agentReading`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an agent reading whose monitoring panel the engine does not offer is refused as agent-reading-panel-not-offered"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "the health reading and a reading whose panel the engine offers are admitted"
+- test `tests/unit/db/engine-declarations.test.ts` "each declaration is admitted by the schema's engine declaration and its rules"
+- test `tests/unit/db/engine-facets/census.test.ts` "every agent reading is the kind of a panel the row offers, or health"
+
 ## Values
 
 A value crosses a JSON boundary, between a provider and the host or between two of the host's own hops, in one form: the value codec of `@libredb/provider-sdk/values`.
@@ -1780,7 +1793,8 @@ Of a maintenance spec the check reads only whether it previews; every other rule
 A package may offer either maintenance facet with no engine listing an operation: the host never calls it without one.
 An engine's offered monitoring panel is admitted only where the package offers `monitoring.panel`, and is otherwise refused by name as `engine-facet-call-not-offered`, naming `monitoring.panel`.
 A package may offer either monitoring facet with no engine offering a panel: the host never asks a panel its session's engine does not offer, C-71, and pool statistics describe the session's own pool.
-An agent reading, for which this contract has no call yet, is refused when it is offered.
+An engine's agent reading is admitted only where the package offers the call that serves it, which `AGENT_READING_PANELS` names: a reading read through a monitoring panel only where it offers `monitoring.panel`, and is otherwise refused by name as `engine-facet-call-not-offered`, naming `monitoring.panel`; `health`, which the mandatory health call serves, on every package.
+Of an agent reading the check reads only which call serves it; a reading outside the vocabulary, and a reading whose panel its engine does not offer, are the validator's, M-76.
 
 - schema `/$defs/consoleCalls`
 - schema `/$defs/objectsCalls`
@@ -1795,11 +1809,14 @@ An agent reading, for which this contract has no call yet, is refused when it is
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a maintenance spec that previews is admitted where the package offers maintenance.preview, and refused by name where it does not"
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "the monitoring facets are declared and implemented both ways, like every console facet"
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an engine's offered monitoring panel is admitted where the package offers monitoring.panel, and refused by name as engine-facet-call-not-offered where it does not"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an engine facet this contract has no call for is refused as engine-facet-without-call"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an agent reading is admitted where the call that serves it is offered: a panel reading where the package offers monitoring.panel, and health on every package"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a panel reading is refused by name as engine-facet-call-not-offered, naming monitoring.panel, where the package does not offer it"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "no definition check answers engine-facet-without-call, which left the vocabulary with the agent readings' calls"
 - test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the console facets and execute's request fields are the schema's"
 - test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the objects facets are the schema's"
 - test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the maintenance facets are the schema's"
 - test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the monitoring facets are the schema's"
+- test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "each agent reading names the monitoring panel that serves it, or none for health"
 
 ### C-5 (normative): A package declares the request fields its execute honours
 
@@ -3342,3 +3359,4 @@ Against this contract's earlier text:
 - An engine's TLS offer lists the TLS modes the engine takes, M-73, where it was a word offering every mode of Studio's or none.
 - Each engine's connection string is a projection of the declarations, M-15 and M-74, each named function bound by Studio's connection string function table, where each engine kept a row beside its provider.
 - Each engine's commit keyword, consent deadline and fence aliases are a projection of the declarations, M-15 and M-75, where each engine kept an execution UI row beside its provider and Studio kept one table of fence tags.
+- An engine's agent reading is refused only where its package does not offer the call that serves it, C-4, where every reading was refused as having no call, so `engine-facet-without-call` left the definition rules; a reading whose monitoring panel its engine does not offer is refused, M-76.

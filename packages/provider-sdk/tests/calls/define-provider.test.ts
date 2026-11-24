@@ -496,17 +496,18 @@ describe("checkProviderModule", () => {
             ],
       );
     }
-    // The agent readings, for which the contract has no call yet, stay refused beside the panels.
+    // A panel reading of the agent is refused beside the panels where monitoring.panel is not offered, and admitted
+    // where it is.
     expect(
       checkProviderModule(offering("not-offered", false, (m) => (m.engines[0].facets.agentReadings = ["sessions"]))),
     ).toEqual([
       refusal("engine-facet-call-not-offered", `${pointer}/overview`, { name }),
       refusal("engine-facet-call-not-offered", `${pointer}/tables`, { name }),
-      refusal("engine-facet-without-call", "/manifest/engines/0/facets/agentReadings/0"),
+      refusal("engine-facet-call-not-offered", "/manifest/engines/0/facets/agentReadings/0", { name }),
     ]);
     expect(
       checkProviderModule(offering("offered", true, (m) => (m.engines[0].facets.agentReadings = ["sessions"]))),
-    ).toEqual([refusal("engine-facet-without-call", "/manifest/engines/0/facets/agentReadings/0")]);
+    ).toEqual([]);
     // An offered monitoring.panel that no engine's panel uses, and an offered monitoring.poolStats, are admitted.
     expect(
       checkProviderModule(
@@ -649,12 +650,14 @@ describe("checkProviderModule", () => {
       });
 
       expect(items).toHaveLength(longest);
+      // The base manifest offers neither maintenance.run nor monitoring.panel, so every operation and every panel
+      // reading is refused by name, and health, which the mandatory health call serves, is not.
+      const named = list === "maintenance" ? "maintenance.run" : "monitoring.panel";
       expect(checkProviderModule(record((r) => (r.manifest.engines[0].facets[list] = items)))).toEqual(
-        items.map((_, index) =>
-          list === "maintenance"
-            ? refusal("engine-facet-call-not-offered", `${pointer}/${index}`, { name: "maintenance.run" })
-            : refusal("engine-facet-without-call", `${pointer}/${index}`),
-        ),
+        items
+          .map((item, index) => ({ item, index }))
+          .filter(({ item }) => item !== "health")
+          .map(({ index }) => refusal("engine-facet-call-not-offered", `${pointer}/${index}`, { name: named })),
       );
       expect(checkProviderModule(record((r) => (r.manifest.engines[0].facets[list] = planted)))).toEqual([
         refusal("manifest-unreadable", pointer),
@@ -871,27 +874,68 @@ describe("checkProviderModule", () => {
     ]);
   });
 
-  test("an engine facet this contract has no call for is refused as engine-facet-without-call", () => {
+  test("an agent reading is admitted where the call that serves it is offered: a panel reading where the package offers monitoring.panel, and health on every package", () => {
+    const panel = async () => ({ activeSessions: [] });
+    const readings = ["sessions", "table-stats", "health"];
+    const offering = record((r) => {
+      r.manifest.calls.monitoring.panel = "offered";
+      r.manifest.engines[0].facets.monitoring.activeSessions = "offered";
+      r.manifest.engines[0].facets.monitoring.tables = "offered";
+      r.manifest.engines[0].facets.agentReadings = readings;
+      r.impl.monitoring = { panel };
+    });
+
+    expect(checkProviderModule(offering)).toEqual([]);
+    expect((defineProvider(offering.manifest, offering.impl).manifest as Json).engines[0].facets.agentReadings).toEqual(
+      readings,
+    );
+    expect(checkProviderModule(record((r) => (r.manifest.engines[0].facets.agentReadings = ["health"])))).toEqual([]);
+  });
+
+  test("a panel reading is refused by name as engine-facet-call-not-offered, naming monitoring.panel, where the package does not offer it", () => {
+    const pointer = "/manifest/engines/0/facets/agentReadings";
+    const name = "monitoring.panel";
     const changed = record((r) => {
-      r.manifest.engines[0].facets.maintenance = ["vacuum", "analyze"];
-      r.manifest.engines[0].facets.agentReadings = ["sessions"];
+      r.manifest.engines[0].facets.maintenance = ["vacuum"];
+      r.manifest.engines[0].facets.agentReadings = ["sessions", "health", "storage"];
     });
 
     expect(checkProviderModule(changed)).toEqual([
       refusal("engine-facet-call-not-offered", "/manifest/engines/0/facets/maintenance/0", { name: "maintenance.run" }),
-      refusal("engine-facet-call-not-offered", "/manifest/engines/0/facets/maintenance/1", { name: "maintenance.run" }),
-      refusal("engine-facet-without-call", "/manifest/engines/0/facets/agentReadings/0"),
+      refusal("engine-facet-call-not-offered", `${pointer}/0`, { name }),
+      refusal("engine-facet-call-not-offered", `${pointer}/2`, { name }),
     ]);
+    // An item outside the readings vocabulary is the validator's: the check refuses nothing for it.
+    expect(
+      checkProviderModule(record((r) => (r.manifest.engines[0].facets.agentReadings = ["toString", "__proto__", 7]))),
+    ).toEqual([]);
+    // An offer that cannot be read is refused at the offer alone: the readings are not refused again for it.
     expect(
       checkProviderModule(
         record((r) => {
+          r.manifest.calls.monitoring.panel = "maybe";
           r.manifest.engines[0].facets.agentReadings = ["sessions"];
-          r.manifest.calls.maintenance.run = "offered";
-          r.impl.maintenance = { run: async () => ({ success: true, executionTime: 0, message: "" }) };
-          r.manifest.engines[0].facets.maintenance = ["vacuum"];
         }),
       ),
-    ).toEqual([refusal("engine-facet-without-call", "/manifest/engines/0/facets/agentReadings/0")]);
+    ).toEqual([refusal("manifest-unreadable", "/manifest/calls/monitoring/panel")]);
+    // An item the check reads that is an accessor is refused as property-not-data, and its getter is never called.
+    let reads = 0;
+    const planted = Object.defineProperty(["health"], "0", {
+      enumerable: true,
+      get() {
+        reads += 1;
+        return "sessions";
+      },
+    });
+    expect(checkProviderModule(record((r) => (r.manifest.engines[0].facets.agentReadings = planted)))).toEqual([
+      refusal("property-not-data", `${pointer}/0`),
+    ]);
+    expect(reads).toBe(0);
+  });
+
+  test("no definition check answers engine-facet-without-call, which left the vocabulary with the agent readings' calls", () => {
+    expect<readonly string[]>(DEFINITION_REFUSAL_RULES).not.toContain("engine-facet-without-call");
+    expect(DEFINITION_REFUSAL_RULES).toContain("engine-facet-call-not-offered");
   });
 
   test("a manifest or record built against another contract is refused as contract-not-served", () => {

@@ -10,8 +10,9 @@
  * object facets, its maintenance facets and its monitoring facets, each engine's facets, of each maintenance spec only
  * whether it previews, and the implementation's functions. An engine's maintenance operation is admitted only where the
  * manifest offers `maintenance.run`, a spec that previews only where it offers `maintenance.preview`, and an offered
- * monitoring panel only where it offers `monitoring.panel`; an agent reading, for which the contract has no call yet,
- * is refused when offered. Validating the manifest against the schema is the loader's, which holds the schema bytes; a
+ * monitoring panel only where it offers `monitoring.panel`, and an agent reading only where the call that serves it is
+ * offered: a panel reading where it offers `monitoring.panel`, and health always, since the health call is mandatory.
+ * Validating the manifest against the schema is the loader's, which holds the schema bytes; a
  * manifest is typed `unknown` here and read defensively, because a JSON import's type is wider than the manifest's and
  * a cast would hide a mismatch. Every key the check reads is read as an own data property, by its descriptor: a method
  * a class instance inherits is not read, and a getter is never called but refused, so the functions checked are the
@@ -20,6 +21,7 @@
  */
 import { type Fields, fieldsOf, isPlainRecord, type OwnRead, readOwn, token, valueOf } from "./records";
 import {
+  AGENT_READING_PANELS,
   CONSOLE_FACETS,
   EXECUTE_REQUEST_FIELDS,
   MAINTENANCE_FACETS,
@@ -41,7 +43,6 @@ export const DEFINITION_REFUSAL_RULES = Object.freeze([
   "call-missing",
   "facet-undeclared",
   "facet-unimplemented",
-  "engine-facet-without-call",
   "engine-facet-call-not-offered",
 ] as const);
 
@@ -293,12 +294,28 @@ function readMaintenanceSpecs(facets: Fields, at: string, offers: Offers, refusa
   }
 }
 
-/** The refusals of an engine's agent readings, each refused when listed: this contract has no call for them yet. */
-function readAgentReadings(facets: Fields, at: string, refusals: DefinitionRefusal[]): void {
+/**
+ * The refusals of an engine's agent readings: a panel reading, one `AGENT_READING_PANELS` names a panel for, is refused
+ * by name as `engine-facet-call-not-offered` where the manifest declares `monitoring.panel` not-offered, and `health`,
+ * which the mandatory health call serves, is never refused. An offer that could not be read refuses nothing more here,
+ * since its own refusal names it; an item outside the readings vocabulary is the validator's.
+ */
+function readAgentReadings(facets: Fields, at: string, offers: Offers, refusals: DefinitionRefusal[]): void {
   const pointer = `${at}/facets/agentReadings`;
   const items = facetList(facets, "agentReadings", pointer, refusals);
-  for (let item = 0; item < (items?.length ?? 0); item += 1) {
-    refusals.push({ rule: "engine-facet-without-call", pointer: `${pointer}/${item}` });
+  if (items === undefined || offers["monitoring.panel"] !== false) return;
+  for (let index = 0; index < items.length; index += 1) {
+    const read = own(items, String(index), `${pointer}/${index}`, refusals);
+    if (read.kind === "accessor") continue;
+    const reading = valueOf(read);
+    const isReading = typeof reading === "string" && Object.hasOwn(AGENT_READING_PANELS, reading);
+    if (isReading && AGENT_READING_PANELS[reading as keyof typeof AGENT_READING_PANELS] !== null) {
+      refusals.push({
+        rule: "engine-facet-call-not-offered",
+        pointer: `${pointer}/${index}`,
+        name: "monitoring.panel",
+      });
+    }
   }
 }
 
@@ -312,7 +329,7 @@ function readFacets(engine: Fields, at: string, offers: Offers, refusals: Defini
   readMonitoring(facets, at, offers, refusals);
   readMaintenance(facets, at, offers, refusals);
   readMaintenanceSpecs(facets, at, offers, refusals);
-  readAgentReadings(facets, at, refusals);
+  readAgentReadings(facets, at, offers, refusals);
 }
 
 /**
@@ -528,8 +545,6 @@ export function definitionRefusalSentence(refusal: DefinitionRefusal): string {
       return `The implementation has the key${name} at ${at}, a facet the manifest declares not-offered.`;
     case "facet-unimplemented":
       return `The manifest offers the facet${name}, for which the implementation has no function of its own at ${at}.`;
-    case "engine-facet-without-call":
-      return `The engine facet at ${at} is offered, and this provider contract has no call that serves it yet.`;
     case "engine-facet-call-not-offered":
       return `The engine facet at ${at} is offered, and the manifest does not offer the call${name} that serves it.`;
   }

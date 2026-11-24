@@ -15,6 +15,7 @@
  */
 import { createHash } from "node:crypto";
 import Ajv2020, { type ErrorObject, type ValidateFunction } from "ajv/dist/2020";
+import { AGENT_READING_PANELS } from "../calls/types";
 import {
   type AgentCredentialForm,
   type AgentCredentialFormClaim,
@@ -98,6 +99,7 @@ export const SCHEMA_REFUSAL_RULES = Object.freeze([
   "maintenance-typed-confirmation-unasked",
   "maintenance-typed-target-unasked",
   "maintenance-preview-unplaced",
+  "agent-reading-panel-not-offered",
   "agent-overlay-missing",
   "agent-overlay-unspoken",
   "agent-dialect-missing",
@@ -709,6 +711,24 @@ function maintenanceRuleRefusals(engine: EngineDeclaration, at: string): SchemaR
 }
 
 /**
+ * The rule of an engine's agent readings the schema cannot state, at pointers under `at`: a reading read through a
+ * monitoring panel, as `AGENT_READING_PANELS` names it, is listed only where the engine offers that panel, since the
+ * host refuses every panel call for a panel the engine does not offer; `health`, which the health call serves, is
+ * admitted whatever the panels.
+ */
+function agentReadingRuleRefusals(engine: EngineDeclaration, at: string): SchemaRefusal[] {
+  const { monitoring, agentReadings } = engine.facets;
+  const refusals: SchemaRefusal[] = [];
+  agentReadings.forEach((reading, index) => {
+    const panel = AGENT_READING_PANELS[reading];
+    if (panel !== null && monitoring[panel] !== "offered") {
+      refusals.push(schemaRefusal("agent-reading-panel-not-offered", `${at}/facets/agentReadings/${index}`));
+    }
+  });
+  return refusals;
+}
+
+/**
  * The statement language whose family has members bound to its dialect, so the only one whose engines state a dialect
  * in their agent overlay. A second family that gains dialect members is a contract change.
  */
@@ -786,8 +806,8 @@ function agentOverlayRuleRefusals(engine: EngineDeclaration, at: string): Schema
 }
 
 /**
- * The rules of one engine's connection, editor, SQL text, SQL writing facts, maintenance specs, agent overlay, claims
- * and safeguards the schema cannot state, at pointers under `at`.
+ * The rules of one engine's connection, editor, SQL text, SQL writing facts, maintenance specs, agent readings, agent
+ * overlay, claims and safeguards the schema cannot state, at pointers under `at`.
  */
 function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies: FieldVocabularies): SchemaRefusal[] {
   const seedOnlyNames = vocabularies.seedOnly;
@@ -821,6 +841,7 @@ function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies:
   refusals.push(...clausePatternRefusals(engine, at));
   refusals.push(...sqlWritingRuleRefusals(engine, at, vocabularies));
   refusals.push(...maintenanceRuleRefusals(engine, at));
+  refusals.push(...agentReadingRuleRefusals(engine, at));
   refusals.push(...agentOverlayRuleRefusals(engine, at));
   refusals.push(...claimRuleRefusals(engine, at));
   refusals.push(...safeguardRuleRefusals(engine, at));
@@ -1090,6 +1111,8 @@ export function refusalSentence(refusal: ManifestRefusal): string {
       return `The typed target at ${at} is admitted only on a spec placed on a row alone: only that spec's operation is sent from its objects' rows alone, whose dialog asks for the object's own name.`;
     case "maintenance-preview-unplaced":
       return `The maintenance preview at ${at} is declared for a spec no per-row control shows it on.`;
+    case "agent-reading-panel-not-offered":
+      return `The agent reading at ${at} is read through a monitoring panel the engine does not offer.`;
     case "agent-overlay-missing":
       return `The agent overlay at ${at} is null for an engine that speaks a statement language, whose overlay the provider contract requires.`;
     case "agent-overlay-unspoken":

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { AGENT_READING_PANELS } from "@libredb/provider-sdk/calls";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { ENGINE_FACETS, engineFacetsFor } from "@/lib/db/engine-facets";
 import { MONITORING_PANELS, type MonitoringPanel } from "@/lib/db/engine-facets/types";
@@ -197,16 +198,6 @@ const EXPECTED_AGENT_READINGS: Readonly<Record<DatabaseType, readonly CuratedOpe
   weaviate: VECTOR_READINGS,
 };
 
-/** The monitoring panel whose read answers each curated reading; `health` is the mandatory core and has none. */
-const PANEL_OF_READING: Readonly<Record<CuratedOperationKind, MonitoringPanel | null>> = {
-  sessions: "activeSessions",
-  "slow-queries": "slowQueries",
-  "table-stats": "tables",
-  "index-stats": "indexes",
-  storage: "storage",
-  health: null,
-};
-
 const offeredBy = (id: DatabaseType): MonitoringPanel[] =>
   MONITORING_PANELS.filter((panel) => ENGINE_FACETS[id].monitoring[panel] === "offered");
 
@@ -249,7 +240,7 @@ describe("engine facets registry census", () => {
     const stray = ALL.flatMap((id) =>
       ENGINE_FACETS[id].agentReadings
         .filter((kind) => {
-          const panel = PANEL_OF_READING[kind];
+          const panel = AGENT_READING_PANELS[kind];
           return panel !== null && ENGINE_FACETS[id].monitoring[panel] !== "offered";
         })
         .map((kind) => `${id} ${kind}`),

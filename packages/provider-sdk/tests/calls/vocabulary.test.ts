@@ -6,12 +6,15 @@
  * holds the object facets `$defs/objectsCalls` declares, and `TREE_ACTIONS` names the actions an `objects.tree` request
  * may carry (clause C-61). `MAINTENANCE_FACETS` holds the maintenance facets `$defs/maintenanceCalls` declares, and
  * `MAINTENANCE_OPERATIONS` the operations `$defs/maintenanceOperation` names (clause C-67). `MONITORING_FACETS` holds
- * the monitoring facets `$defs/monitoringCalls` declares (clause C-71).
+ * the monitoring facets `$defs/monitoringCalls` declares (clause C-71), and `AGENT_READING_PANELS` names, for each
+ * agent reading `$defs/agentReading` names, the monitoring panel of `$defs/monitoringPanels` that serves it, or none
+ * for health, which the health call serves (clause C-4).
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
+  AGENT_READING_PANELS,
   CONSOLE_FACETS,
   EXECUTE_REQUEST_FIELDS,
   MAINTENANCE_FACETS,
@@ -77,5 +80,24 @@ describe("the call vocabularies", () => {
     );
     expect<readonly string[]>([...MONITORING_FACETS]).toEqual(["panel", "poolStats"]);
     expect(Object.isFrozen(MONITORING_FACETS)).toBe(true);
+  });
+
+  test("each agent reading names the monitoring panel that serves it, or none for health", () => {
+    const panels = Object.keys(SCHEMA.$defs.monitoringPanels?.properties ?? {});
+
+    expect(Object.keys(AGENT_READING_PANELS)).toEqual((SCHEMA.$defs.agentReading?.enum ?? []).map(String));
+    for (const [reading, panel] of Object.entries(AGENT_READING_PANELS)) {
+      if (reading === "health") expect(panel).toBeNull();
+      else expect(panels).toContain(String(panel));
+    }
+    expect(AGENT_READING_PANELS).toEqual({
+      sessions: "activeSessions",
+      "slow-queries": "slowQueries",
+      "table-stats": "tables",
+      "index-stats": "indexes",
+      storage: "storage",
+      health: null,
+    });
+    expect(Object.isFrozen(AGENT_READING_PANELS)).toBe(true);
   });
 });
