@@ -370,7 +370,7 @@
           "$ref": "#/$defs/connectionStringOffer"
         },
         "tls": {
-          "$ref": "#/$defs/facetOffer"
+          "$ref": "#/$defs/tlsOffer"
         },
         "readsTrustMaterial": {
           "description": "Whether the engine's provider is handed the CA certificates of the file NODE_EXTRA_CA_CERTS names, as data: true where its TLS library does not read Node.js's trust store, so the variable never reaches it on its own. Not a claim: no gate reads it, the certificates are the operator's public ones, and a provider that needs them and does not ask fails to verify, never verifies less.",
@@ -1049,6 +1049,27 @@
         }
       },
       "required": ["reader", "catchAll", "formats"],
+      "additionalProperties": false
+    },
+    "tlsMode": {
+      "description": "A TLS mode a connection asks for. Each means what Studio's published SSLMode type says, the same on every engine that lists it, so no engine's modes are mapped onto another's. An engine lists its modes in this order.",
+      "type": "string",
+      "enum": ["disable", "require", "verify-system", "verify-ca", "verify-full"]
+    },
+    "tlsOffer": {
+      "description": "The TLS modes the engine's provider takes.",
+      "type": "object",
+      "properties": {
+        "modes": {
+          "description": "The modes, each once and in the order of tlsMode; empty where the engine offers no TLS, so no surface draws the TLS panel for it and its provider receives no TLS settings.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tlsMode"
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": ["modes"],
       "additionalProperties": false
     },
     "facetOffer": {

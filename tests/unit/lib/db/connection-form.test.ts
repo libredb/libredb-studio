@@ -451,7 +451,7 @@ describe("CONNECTION_FORM, composed from each engine's declaration and Studio's 
         fieldOptions: recordOf(dialog.options, ({ choices }) => choices),
         fieldShownWhen: recordOf(dialog.shownWhen, ({ when }) => when),
         fieldDefaults: recordOf(dialog.absentValues, ({ value }) => value),
-        showSslPanel: connection.tls === "not-offered" ? false : undefined,
+        showSslPanel: connection.tls.modes.length === 0 ? false : undefined,
         hostAcceptsUri: connection.hostUriSchemes.length === 0 ? undefined : connection.hostUriSchemes,
       };
       const rules = recordOf(connection.fieldRules, (rule) => rule);

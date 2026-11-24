@@ -426,7 +426,7 @@ describe("a provider module reads only the connection fields its engine declares
           ...connection.fields,
           ...(connection.seedOnly?.fields ?? []),
           ...(connection.connectionString.accepted ? ["connectionString"] : []),
-          ...(connection.tls === "offered" ? ["ssl"] : []),
+          ...(connection.tls.modes.length > 0 ? ["ssl"] : []),
           ...(SSH_TUNNEL_REFUSAL[type] === null ? ["host", "port"] : []),
           ...PROVIDER_CORE_FIELDS,
         ]),

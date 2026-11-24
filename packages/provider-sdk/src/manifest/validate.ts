@@ -28,6 +28,7 @@ import {
   type ProviderManifest,
   type SqlDialect,
   type StatementLanguage,
+  type TlsMode,
   type TypeFamilies,
   type WritePaths,
   type WriteReachClaim,
@@ -74,6 +75,7 @@ export const SCHEMA_REFUSAL_RULES = Object.freeze([
   "host-reader-without-host",
   "scheme-without-paste",
   "url-tls-without-paste",
+  "tls-mode-order",
   "fence-alias-engine-id",
   "fence-alias-duplicate",
   "fence-alias-generic",
@@ -240,7 +242,7 @@ export function refusalsOf(errors: readonly AjvError[]): SchemaRefusal[] {
 
 /**
  * The vocabularies of the schema the rules read: the seed-only, placeable and select field names, the generic fence
- * tags, and the kinds of a bare type family in the schema's order.
+ * tags, the kinds of a bare type family in the schema's order, and the TLS modes in the schema's order.
  */
 interface FieldVocabularies {
   readonly seedOnly: ReadonlySet<string>;
@@ -249,6 +251,8 @@ interface FieldVocabularies {
   readonly genericFenceTags: ReadonlySet<string>;
   /** The inferred kinds of a bare type family, in the order of the schema's `typeFamilies`. */
   readonly typeFamilyKinds: readonly (keyof TypeFamilies)[];
+  /** The TLS modes, in the order of the schema's `tlsMode`. */
+  readonly tlsModes: readonly TlsMode[];
 }
 
 /**
@@ -484,6 +488,26 @@ function connectionStringRuleRefusals(connection: EngineDeclaration["connection"
   if (connectionString.paste !== null) return refusals;
   if (connectionString.scheme !== null) refusals.push(schemaRefusal("scheme-without-paste", `${pointer}/scheme`));
   if (connectionString.urlTls !== null) refusals.push(schemaRefusal("url-tls-without-paste", `${pointer}/urlTls`));
+  return refusals;
+}
+
+/**
+ * The rule of an engine's TLS modes the schema cannot state, at pointers under `at`: the modes are listed in the order
+ * of the schema's `tlsMode`, so each mode is refused where a mode listed before it comes later in that order. Every
+ * mode is one of the vocabulary's, which the schema has already checked.
+ */
+function tlsModeRuleRefusals(
+  connection: EngineDeclaration["connection"],
+  at: string,
+  order: readonly TlsMode[],
+): SchemaRefusal[] {
+  const refusals: SchemaRefusal[] = [];
+  let highest = -1;
+  connection.tls.modes.forEach((mode, index) => {
+    const rank = order.indexOf(mode);
+    if (rank < highest) refusals.push(schemaRefusal("tls-mode-order", `${at}/connection/tls/modes/${index}`));
+    highest = Math.max(highest, rank);
+  });
   return refusals;
 }
 
@@ -792,6 +816,7 @@ function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies:
   refusals.push(...hostAndWarningRuleRefusals(connection, at));
   refusals.push(...fieldRuleRefusals(connection, at));
   refusals.push(...connectionStringRuleRefusals(connection, at));
+  refusals.push(...tlsModeRuleRefusals(connection, at, vocabularies.tlsModes));
   refusals.push(...editorRuleRefusals(engine, at, vocabularies));
   refusals.push(...clausePatternRefusals(engine, at));
   refusals.push(...sqlWritingRuleRefusals(engine, at, vocabularies));
@@ -876,6 +901,7 @@ interface ServedSchema {
     readonly selectFieldName: { readonly enum: readonly string[] };
     readonly genericFenceTag: { readonly enum: readonly string[] };
     readonly typeFamilies: { readonly properties: Readonly<Record<keyof TypeFamilies, unknown>> };
+    readonly tlsMode: { readonly enum: readonly TlsMode[] };
   };
 }
 
@@ -905,6 +931,7 @@ export function compileManifestValidator(schemaBytes: Uint8Array): ManifestValid
     select: new Set(schema.$defs.selectFieldName.enum),
     genericFenceTags: new Set(schema.$defs.genericFenceTag.enum),
     typeFamilyKinds: Object.keys(schema.$defs.typeFamilies.properties) as (keyof TypeFamilies)[],
+    tlsModes: schema.$defs.tlsMode.enum,
   };
 
   return {
@@ -1017,6 +1044,8 @@ export function refusalSentence(refusal: ManifestRefusal): string {
       return `The scheme at ${at} is declared for an engine whose connection string names no paste reader.`;
     case "url-tls-without-paste":
       return `The URL TLS reader at ${at} is named for an engine whose connection string names no paste reader.`;
+    case "tls-mode-order":
+      return `The TLS mode at ${at} is listed after a mode the provider contract orders after it.`;
     case "fence-alias-engine-id":
       return `The fence alias at ${at} is the id of an engine of the manifest, which is already a fence tag naming that engine.`;
     case "fence-alias-duplicate":
