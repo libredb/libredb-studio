@@ -1147,6 +1147,7 @@ Each of Studio's surfaces that offers a mode offers every mode of the vocabulary
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "a TLS offer with no modes member is refused as missing-key, and one with another member as unknown-key"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "the manifest's TLS modes are Studio's published SSL modes, in its order"
 - test `tests/unit/db/engine-declarations.test.ts` "connection.tls lists TLS modes exactly where the dialog offers the SSL panel"
+- test `tests/unit/lib/db/connection-form.test.ts` "a composed form offers the SSL / TLS panel exactly where its engine lists any TLS mode, one or several"
 - test `tests/unit/lib/db/provider-field-census.test.ts` "every engine that lists TLS modes lists each of the provider contract's modes, in its order, and an engine lists none exactly where the dialog offers no SSL / TLS panel"
 - test `tests/unit/db/engine-projections-removal.test.ts` "the connection forms built with the fixture engine hold its entry, and with it removed are exactly a fresh build from the remaining set and the committed module"
 

@@ -14,7 +14,7 @@ import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import * as form from "@/lib/db/connection-form";
 import * as fieldRules from "@/lib/db/connection-field-rules";
 import { DEFAULT_CONNECTION_TYPE } from "@/lib/db/default-connection-type";
-import type { EngineDeclaration } from "@libredb/provider-sdk/manifest";
+import type { EngineDeclaration, TlsMode } from "@libredb/provider-sdk/manifest";
 import { admittedDeclarations } from "../../../../scripts/generate-engine-catalog";
 import { CONNECTION_FORM_URI_MODE } from "@/lib/db/compatibility";
 import { CONNECTION_FIELDS } from "@/lib/db/connection-fields";
@@ -543,6 +543,20 @@ describe("CONNECTION_FORM, composed from each engine's declaration and Studio's 
     for (const type of EVERY_TYPE) {
       expect(() => composeConnectionForm(type, formOf(type), CONNECTION_FORM_FUNCTIONS)).not.toThrow();
     }
+  });
+
+  test("a composed form offers the SSL / TLS panel exactly where its engine lists any TLS mode, one or several", () => {
+    const fixture = fixtureEngineDeclaration(declared("postgres"));
+    const panelOf = (modes: readonly TlsMode[]) => {
+      const listing = { ...fixture, connection: { ...fixture.connection, tls: { modes } } };
+      const entry = projectConnectionForms([listing]).acmefoo as ConnectionFormEntry;
+      return composeConnectionForm("acmefoo" as DatabaseType, entry, CONNECTION_FORM_FUNCTIONS).showSslPanel;
+    };
+
+    expect(panelOf([])).toBe(false);
+    expect(panelOf(["verify-full"])).toBeUndefined();
+    expect(panelOf(["verify-system", "verify-full"])).toBeUndefined();
+    expect(panelOf(["disable", "require", "verify-system", "verify-ca", "verify-full"])).toBeUndefined();
   });
 
   test("a name Studio holds only for another slot is refused by name", () => {
