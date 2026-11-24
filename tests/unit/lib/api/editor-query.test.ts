@@ -1367,7 +1367,6 @@ describe("the core's import closure stays free of Next", () => {
         "src/lib/provider-host/legacy-bridge.ts",
       ]),
     );
-    expect(closure.modules).not.toContain("src/lib/api/abort-cancel.ts");
     // The facade reads the process's host core and holds no copy of the core's calls (clause C-52).
     expect(closure.modules).not.toContain("src/lib/provider-host/core/console.ts");
     expect(closure.modules).not.toContain("src/lib/provider-host/core/turns.ts");

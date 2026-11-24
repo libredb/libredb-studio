@@ -215,8 +215,9 @@ const CANCELLED_SENTENCE = "The query was cancelled.";
  * that reuses its own id meets `DuplicateRunError`.
  *
  * A run's signal aborts at its deadline or at its cancel, whichever comes first. `POST /api/db/query` and
- * `POST /api/db/multi-query` cancel the run they bound when their request is aborted (`src/lib/api/abort-cancel.ts`);
- * a run begun by any other caller and abandoned ends at its deadline.
+ * `POST /api/db/multi-query` cancel the run they bound when their request is aborted, through the host core's stopped
+ * execute (docs/providers/CONTRACT.md, clause C-48); a run begun by any other caller and abandoned ends at its
+ * deadline.
  */
 export function createRunRegistry(): RunRegistry {
   const runs = new Map<string, AbortController>();

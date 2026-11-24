@@ -1,13 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { INVALID_REQUEST_BODY, readJsonObject } from "@/lib/api/json-object-body";
 import { getOrCreateProvider } from "@/lib/db";
-import { splitExecutionUnits, unitIsModuleBody, type ExecutionUnit } from "@/lib/sql/statement-splitter";
+import { splitExecutionUnits, type ExecutionUnit } from "@/lib/sql/statement-splitter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
-import { isSelectQuery, noteAppendedBound } from "@/lib/db/utils/query-limiter";
 import { createErrorResponse } from "@/lib/api/errors";
-import { bridgeAbortToCancel } from "@/lib/api/abort-cancel";
 import { pageOptionError } from "@/lib/api/page-probe";
-import { supportsQueryCancel } from "@/lib/db/query-cancel";
 import { QueryCancelledError } from "@/lib/db/errors";
 import {
   type ProviderTextScrub,
@@ -20,12 +17,11 @@ import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
 import { consoleTextByteLimit } from "@/lib/db/destructive-commands";
-import type { DatabaseType, QueryResult, QueryWarning } from "@/lib/types";
-import { newQueryCallScope } from "@/lib/db/types";
-import { endEditorScope } from "@/lib/api/editor-query";
-import type { DatabaseProvider, OpenQueryTransactionOutcome } from "@/lib/db/types";
+import type { DatabaseConnection, QueryResult, QueryWarning } from "@/lib/types";
+import { openWithinCall, queryTimeoutError } from "@/lib/api/editor-query";
+import { type EditorScript, openEditorScript } from "@/lib/api/editor-script";
+import type { OpenQueryTransactionOutcome } from "@/lib/db/types";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
-import type { DatabaseConnection } from "@/lib/types";
 import { admitQueryExecution } from "@/lib/query-events/admission";
 import { gateRun } from "@/lib/api/run-confirmation";
 import { runConfirmationIssuerForSession } from "@/lib/api/run-confirmation-token";
@@ -76,38 +72,6 @@ function carriedChannels(source: Pick<StatementResult, "warnings" | "columnTypes
 }
 
 /**
- * Run one statement of the script and describe the outcome, including the error
- * when it failed — the loop decides what to do about it.
- *
- * Extracted from `POST` rather than inlined: with the two channels added, the
- * handler carried the whole per-statement dance (limiter decision, execution,
- * error shaping) inside its own control flow and crossed the cognitive-complexity
- * bar (PR #308 review).
- */
-/**
- * The text the script's LAST unit is sent as: its last statement bounded when that statement
- * is a read, and everything else as written.
- *
- * A unit of several statements is a T-SQL batch sent as one request (#1312). Its last
- * statement is bounded and spliced back in place, so `SELECT 1; SELECT * FROM big` is as
- * bounded as it was when the two were separate requests - unless the batch is a module
- * definition (`CREATE PROCEDURE … AS …`), whose last statement is part of the body the
- * server stores, where a `TOP` would change the procedure rather than the result.
- */
-function boundedText(
-  provider: DatabaseProvider,
-  unit: ExecutionUnit,
-  dialect: DatabaseType,
-  options: Record<string, unknown>,
-): string {
-  const tail = unit.statements[unit.statements.length - 1];
-  if (!isSelectQuery(tail.sql, dialect)) return unit.sql;
-  if (unit.statements.length > 1 && unitIsModuleBody(unit, resolveSqlGrammar(dialect))) return unit.sql;
-  const { query } = provider.prepareQuery(tail.sql, options);
-  return unit.sql.slice(0, tail.start - unit.start) + query + unit.sql.slice(tail.end - unit.start);
-}
-
-/**
  * What a unit's result shows. A batch that produced several result sets shows the last one,
  * empty or not (#2286) - the same rule a script's statements follow since #2271, so a plain
  * `SELECT * FROM a; SELECT * FROM b` shows what it showed when the two were separate
@@ -149,15 +113,16 @@ function statementError(scrub: ProviderTextScrub, error: unknown): string {
   return answered instanceof Error ? answered.message : "Unknown error";
 }
 
+/**
+ * Run one unit of the script through the editor's script facade and describe the outcome, including the error when it
+ * failed: the loop decides what to do about it. The unit's text, and the bound the last one is sent with, are the
+ * facade's to send (`openEditorScript`, src/lib/api/editor-script.ts); its answer is built here, from the provider's
+ * result by reference, before the facade releases the unit's page.
+ */
 async function runStatement(
-  provider: DatabaseProvider,
+  script: EditorScript,
   stmt: ExecutionUnit,
   index: number,
-  isLast: boolean,
-  dialect: DatabaseType,
-  options: Record<string, unknown>,
-  scope: string,
-  queryId: string | undefined,
   events: UnitEvents,
   scrub: ProviderTextScrub,
 ): Promise<StatementResult> {
@@ -172,30 +137,10 @@ async function runStatement(
     correlationId: events.correlationId,
   };
   const identity = { index, sql: stmt.sql, startLine: stmt.startLine };
-  let sent = stmt.sql;
 
-  try {
-    // For the last statement that is a SELECT, apply limit. "Last statement
-    // only" is this route's own policy; whether the statement IS a SELECT is
-    // not — that reading is shared, and this route used to re-derive it with
-    // `/^\s*SELECT\b/i`. `splitStatements` keeps each statement's leading
-    // comments, so an annotated final SELECT failed that pattern and reached
-    // the engine unprepared, which is the unbounded read the shared classifier
-    // was made comment-tolerant to close (#281, #275). The shared reading also
-    // types a `WITH` by the keyword its CTE list operates (#287), so a
-    // read-only CTE is bounded here and a data-modifying one is not.
-    const query = isLast ? boundedText(provider, stmt, dialect, options) : stmt.sql;
-    sent = query;
-
-    // Every statement of the script runs under the SAME scope, which is what lets the
-    // `finally` below end a transaction any of them left open — including one opened by a
-    // statement whose own client is not the last one the script borrowed (D87). No params
-    // here; the request's `queryId` is bound to each unit in turn, so at most one run is
-    // registered under it at a time.
-    const result = await provider.query(query, undefined, queryId, scope);
+  const outcome = await script.runUnit(index, (result: QueryResult): StatementResult => {
     const { columnTypes, ...shown } = shownSet(result, stmt);
     recordExecutedUnit(events.request, { ...unit, ended: { rowCount: shown.rowCount } });
-
     return {
       ...identity,
       status: "success",
@@ -207,28 +152,106 @@ async function runStatement(
       // A warning field that holds a credential of the connection is withheld; the main result reuses these.
       ...carriedChannels({ warnings: withScrubbedWarnings(scrub, result).warnings, columnTypes }),
     };
-  } catch (error) {
-    // The last statement's bound, when an error names it, is said to be Studio's (`noteAppendedBound`).
-    noteAppendedBound(error, stmt.sql, sent);
-    recordExecutedUnit(events.request, { ...unit, ended: { error } });
-    return {
-      ...identity,
-      status: "error",
-      executionTime: Math.round(performance.now() - startTime),
-      error: statementError(scrub, error),
-    };
+  });
+  if (outcome.kind === "answered") return outcome.value;
+  // The last statement's bound, when an error names it, was already said to be Studio's by the facade.
+  recordExecutedUnit(events.request, { ...unit, ended: { error: outcome.error } });
+  return {
+    ...identity,
+    status: "error",
+    executionTime: Math.round(performance.now() - startTime),
+    error: statementError(scrub, outcome.error),
+  };
+}
+
+/** What a script's run answers: every unit's outcome, their summed time, and what became of its transaction. */
+interface ScriptRun {
+  readonly results: StatementResult[];
+  readonly totalExecutionTime: number;
+  readonly openTransaction: OpenQueryTransactionOutcome;
+}
+
+/**
+ * Runs the script's units in order, stopping at the first that fails or once the request has left, and ends its scope
+ * once after the last unit it ran.
+ *
+ * MAY A SCRIPT LEAVE A TRANSACTION OPEN? No, and the finally below is the answer.
+ *
+ * The provider this route borrows is cached per `connection.id` for the whole
+ * process (`getOrCreateProvider`), so a transaction that outlives the request does
+ * not belong to the person who opened it any more: it belongs to whoever borrows
+ * the handle next. Measured 2026-09-13 through this route: `BEGIN; CREATE TABLE ...;
+ * SELECT * FROM <missing>` broke out of the loop below and the transaction stayed
+ * open. On PostgreSQL 17 the next request, a DIFFERENT user on POST /api/db/query,
+ * answered HTTP 500 "current transaction is aborted, commands ignored until end of
+ * transaction block", and so did POST /api/db/maintenance eight minutes later; on
+ * SQLite and DuckDB the same script cost the next user's write silently.
+ *
+ * So the transaction ends here, whether the script failed or ran clean, and the
+ * response says what became of it: a user who wrote BEGIN with no COMMIT is told.
+ * It is a finally and not a line after the loop because the loop must not be able to
+ * leave by any path that skips this.
+ *
+ * WHOSE transaction it ends is now named rather than hoped for: the provider is cached
+ * per connection id and shared by every concurrent request on that stored connection,
+ * and until D87 this call reached whichever client anybody had recorded last, measured
+ * rolling a concurrent script's and an interactive session's work away. The script's
+ * scope is this request's own, minted by the facade when the script opened and sent with
+ * every unit, and nothing it did not run on can be ended here.
+ *
+ * It ends through the host: the facade's `end` sends the scope to the legacy bridge's
+ * `console.endScope` through the host core's endScope call, under a cleanup context of
+ * its own that the request's leaving does not end, and waits for it at most 10 s
+ * (docs/providers/CONTRACT.md, clauses C-60 and C-83). After a unit Studio stopped
+ * waiting for, it ends once that unit's call settled, in the background, and the script
+ * is answered with no `openTransaction`. A provider that ends nothing of its query path
+ * is not offered the facet, is sent no scope, and is asked nothing.
+ *
+ * What it is NOT: a guard on the word BEGIN. The same shape arrives from a BEGIN
+ * inside a statement the splitter cannot see through, so the leak is the missing
+ * rollback and not the keyword. And it is not an unconditional ROLLBACK either:
+ * measured on bun:sqlite 1.4.2 and DuckDB v1.5.5, a rollback with no transaction
+ * active raises, so the provider is asked rather than told.
+ */
+async function runScript(
+  script: EditorScript,
+  units: readonly ExecutionUnit[],
+  events: UnitEvents,
+  scrub: ProviderTextScrub,
+  signal: AbortSignal,
+): Promise<ScriptRun> {
+  const results: StatementResult[] = [];
+  let totalExecutionTime = 0;
+  let openTransaction: OpenQueryTransactionOutcome = "none";
+  try {
+    for (const [index, unit] of units.entries()) {
+      if (index > 0 && signal.aborted) break;
+      // Each unit runs after the one before it settled.
+      // oxlint-disable-next-line no-await-in-loop -- a script's order is its meaning.
+      const outcome = await runStatement(script, unit, index, events, scrub);
+      totalExecutionTime += outcome.executionTime;
+      results.push(outcome);
+      // Stop execution on error
+      if (outcome.status === "error") break;
+    }
+  } finally {
+    const ended = await script.end();
+    if (ended.offered) openTransaction = ended.openTransaction;
   }
+  return { results, totalExecutionTime, openTransaction };
 }
 
 /**
  * Run a script, one execution unit at a time, and answer every unit's outcome.
  *
- * A dropped request stops the script: once `request.signal` aborts, no further unit starts, and the unit in flight is
- * cancelled once through `bridgeAbortToCancel`. The request's one `queryId` is bound to each unit in turn, and a unit
- * ends before the next begins, so at most one run is registered under it at a time; that is also the id Stop posts to
- * `POST /api/db/cancel`. A cancel is idempotent: a second cancel of one id answers the run's end as the first did.
+ * Each unit runs through the host core's console execute under its own deadline and the request's signal
+ * (`openEditorScript`, src/lib/api/editor-script.ts; docs/providers/CONTRACT.md, clause C-83). A dropped request stops
+ * the script: the unit in flight is answered at once as cancelled, the core sends its run's cancel once, and no further
+ * unit starts. The request's one `queryId` is bound to each unit in turn, and a unit ends before the next begins, so at
+ * most one run is registered under it at a time; that is also the id Stop posts to `POST /api/db/cancel`. A cancel is
+ * idempotent: a second cancel of one id answers the run's end as the first did.
  *
- * The bridge cancels only the id this request bound, so it needs no owner check. `POST /api/db/cancel` keeps its
+ * The core cancels only the id this request bound, so it needs no owner check. `POST /api/db/cancel` keeps its
  * no-owner-check rule because a run id is a client-chosen value scoped to one provider instance, and adding an owner
  * to the run registry would change every cancel-capable engine.
  */
@@ -275,6 +298,12 @@ export async function POST(req: NextRequest) {
     const optionError = pageOptionError(options);
     if (optionError !== null) {
       return NextResponse.json({ error: optionError }, { status: 400 });
+    }
+    // The connection's statement timeout, which every unit's deadline is computed from, held to the query route's
+    // rule before anything is split or acquired.
+    const timeoutError = queryTimeoutError(connection.queryTimeout);
+    if (timeoutError !== null) {
+      return NextResponse.json({ error: timeoutError }, { status: 400 });
     }
 
     // A type that declares a console text bound runs one statement per request. The SQL splitter below would turn
@@ -328,79 +357,30 @@ export async function POST(req: NextRequest) {
     // Core's scrub of the providers this connection builds, over every provider text the script answers.
     const scrub = providerTextScrub(connection, "any");
 
-    const provider = await editorProvider(guard.session, connection, requestCatalog(body));
+    // The open is waited for within its engine's connect budget and while the request stays (`openWithinCall`): a
+    // request that leaves while its connection opens is answered at once, and an open past its budget answers 504.
+    const provider = await openWithinCall(req.signal, connection.type, (wait) =>
+      editorProvider(guard.session, connection, requestCatalog(body), wait),
+    );
     // A request already gone, before or while the provider was acquired, starts nothing.
     if (req.signal.aborted) throw new QueryCancelledError("The query was cancelled.");
-    const bound = supportsQueryCancel(provider) ? queryId : undefined;
-    const release = bridgeAbortToCancel(req.signal, provider, bound, "api/db/multi-query");
-    const results: StatementResult[] = [];
-    let totalExecutionTime = 0;
-    let openTransaction: OpenQueryTransactionOutcome = "none";
-    // This request's own name for everything it runs, minted here and passed to every
-    // statement and to the ender, so that the transaction ended below is one THIS script
-    // left open and never another caller's (D87).
-    const scope = newQueryCallScope();
-
-    // MAY A SCRIPT LEAVE A TRANSACTION OPEN? No, and this finally is the answer.
-    //
-    // The provider this route borrows is cached per `connection.id` for the whole
-    // process (`getOrCreateProvider`), so a transaction that outlives the request does
-    // not belong to the person who opened it any more — it belongs to whoever borrows
-    // the handle next. Measured 2026-09-13 through this route: `BEGIN; CREATE TABLE ...;
-    // SELECT * FROM <missing>` broke out of the loop below and the transaction stayed
-    // open. On PostgreSQL 17 the next request, a DIFFERENT user on POST /api/db/query,
-    // answered HTTP 500 "current transaction is aborted, commands ignored until end of
-    // transaction block", and so did POST /api/db/maintenance eight minutes later; on
-    // SQLite and DuckDB the same script cost the next user's write silently.
-    //
-    // So the transaction ends here, whether the script failed or ran clean, and the
-    // response says what became of it — a user who wrote BEGIN with no COMMIT is told.
-    // It is a finally and not a line after the loop because the loop must not be able to
-    // leave by any path that skips this.
-    //
-    // WHOSE transaction it ends is now named rather than hoped for: the provider is cached
-    // per connection id and shared by every concurrent request on that stored connection,
-    // and until D87 this call reached whichever client anybody had recorded last — measured
-    // rolling a concurrent script's and an interactive session's work away. The `scope`
-    // above is this request's own, and nothing it did not run on can be ended here.
-    //
-    // It ends through the host: `endEditorScope` sends the scope to the legacy bridge's
-    // `console.endScope` through the host core's endScope call, under a cleanup context of
-    // its own that the request's leaving does not end, and waits for it at most 10 s
-    // (docs/providers/CONTRACT.md, clause C-60). A provider that ends nothing of its query
-    // path is not offered the facet and is asked nothing.
-    //
-    // What it is NOT: a guard on the word BEGIN. The same shape arrives from a BEGIN
-    // inside a statement the splitter cannot see through, so the leak is the missing
-    // rollback and not the keyword. And it is not an unconditional ROLLBACK either:
-    // measured on bun:sqlite 1.4.2 and DuckDB v1.5.5, a rollback with no transaction
-    // active raises, so the provider is asked rather than told.
-    try {
-      for (let i = 0; i < statements.length; i++) {
-        if (i > 0 && req.signal.aborted) break;
-        const outcome = await runStatement(
-          provider,
-          statements[i],
-          i,
-          i === statements.length - 1,
-          connection.type,
-          options,
-          scope,
-          bound,
-          unitEvents,
-          scrub,
-        );
-        totalExecutionTime += outcome.executionTime;
-        results.push(outcome);
-
-        // Stop execution on error
-        if (outcome.status === "error") break;
-      }
-    } finally {
-      release();
-      const ended = await endEditorScope(provider, scope, req.signal, "api/db/multi-query");
-      if (ended.offered) openTransaction = ended.openTransaction;
-    }
+    // The host core is read here, after the open and before any unit, outside every unit's own answer, so a script
+    // run before the core is installed fails by name and sends nothing.
+    const script = openEditorScript(provider, {
+      units: statements,
+      dialect: connection.type,
+      options,
+      ...(queryId === undefined ? {} : { queryId }),
+      signal: req.signal,
+      route: "api/db/multi-query",
+    });
+    const { results, totalExecutionTime, openTransaction } = await runScript(
+      script,
+      statements,
+      unitEvents,
+      scrub,
+      req.signal,
+    );
 
     // Return the last successful result as the main result (for ResultsGrid). A statement
     // that succeeded with no rows - an empty SELECT or a write - is the script's own

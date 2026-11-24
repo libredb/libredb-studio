@@ -90,6 +90,14 @@ function validQueryTimeout(value: unknown): boolean {
 }
 
 /**
+ * Why a connection's statement timeout `value` is refused, or null when the host can wait on it. Read by
+ * `checkEditorQuery` and by `POST /api/db/multi-query`, whose units each wait on it.
+ */
+export function queryTimeoutError(value: unknown): string | null {
+  return validQueryTimeout(value) ? null : QUERY_TIMEOUT_REFUSAL;
+}
+
+/**
  * Why this request is refused, or null when no check refuses it: the page bounds first, then the connection's
  * statement timeout, then the console text bound of a connection type that declares one. Null does not mean the
  * request can run: only a type with a text bound has its statement held to a string here, so a new caller checks that
@@ -99,7 +107,8 @@ function validQueryTimeout(value: unknown): boolean {
 export function checkEditorQuery(request: EditorQueryRequest): EditorQueryRefusal | null {
   const optionError = pageOptionError(request.options);
   if (optionError !== null) return { status: 400, error: optionError };
-  if (!validQueryTimeout(request.queryTimeout)) return { status: 400, error: QUERY_TIMEOUT_REFUSAL };
+  const timeoutError = queryTimeoutError(request.queryTimeout);
+  if (timeoutError !== null) return { status: 400, error: timeoutError };
 
   // A connection type that declares a console text bound is held to it here, before the bound parameters, the
   // provider and the statement cache are reached, so an oversize text opens no socket. The answer names the size
@@ -270,6 +279,9 @@ export function callContext(deadline: number, caller: AbortSignal): CallContext 
  * The run's scope is the facade's: it mints one for a session that offers `console.endScope`, sends it with the execute,
  * and ends it through the core's endScope call after the run, under the cleanup deadline (see the D74 and D87 note
  * above `runEditorQuery`).
+ *
+ * A script of `POST /api/db/multi-query` runs its units through a facade of its own, `openEditorScript` in
+ * src/lib/api/editor-script.ts (clause C-83), which reads this module's deadline, views, ports and scope end.
  */
 
 /** How the accessor reads an execute's records: the view of the call, and the view of a stop by the wait it ended. */
@@ -414,7 +426,7 @@ const END_SCOPE_DEADLINE_SENTENCE = `Ending the transaction this request may hav
  * waiting for it, or the end of a stopped run's scope that failed or was stopped, by its kind and code and never its
  * text, which can carry a server's words.
  */
-function lateScopeEnd(route: string): (failure: unknown) => void {
+export function lateScopeEnd(route: string): (failure: unknown) => void {
   return (failure) =>
     logger.warn("Ending the transaction a run Studio stopped waiting for may have left open failed", {
       route,
@@ -554,30 +566,22 @@ export async function cancelEditorRun(
   throw refusalError(record, view);
 }
 
-/** What the end of a script's scope answers: the provider ends nothing of its query path, or the end's outcome. */
-export type EditorScopeEnd =
-  | { readonly offered: false }
-  | { readonly offered: true; readonly openTransaction: EndScopeAnswer["openTransaction"] };
-
 /**
- * Ends `scope`, which a caller minted and sent with every statement it ran on `provider` itself, through the bridge's
+ * Ends `scope`, which the script facade (`openEditorScript`, src/lib/api/editor-script.ts) minted for a provider whose
+ * session offers `console.endScope` and sent with every unit it ran on `provider`, through the bridge's
  * `console.endScope` and the host core's endScope call, under a cleanup context of its own that `caller`'s leaving does
- * not end (docs/providers/CONTRACT.md, clause C-60). A provider that ends nothing of its query path is answered
- * `offered: false`, the core's refusal of the facet, as `cancelEditorRun` answers one that cannot cancel.
+ * not end (docs/providers/CONTRACT.md, clause C-60), and answers the end's outcome.
  *
  * @throws The provider's error by reference; `StudioTimeoutRefusal` naming the end when its cleanup deadline stopped
- * it, outcome unknown; a host defect for any other refusal.
+ * it, outcome unknown; a host defect for a refusal, the facet's included, since a scope is minted only where the facet
+ * is offered.
  */
 export async function endEditorScope(
   provider: DatabaseProvider,
   scope: string,
   caller: AbortSignal,
   route: string,
-): Promise<EditorScopeEnd> {
+): Promise<EndScopeAnswer["openTransaction"]> {
   const core = hostCore();
-  const record = await endScopeRecord(core, bridgedConsole(provider, {}).session, scope, route);
-  if (record.kind === "refused" && record.refusals.some((refusal) => refusal.rule === "facet-not-offered")) {
-    return { offered: false };
-  }
-  return { offered: true, openTransaction: endedScope(record, caller) };
+  return endedScope(await endScopeRecord(core, bridgedConsole(provider, {}).session, scope, route), caller);
 }
