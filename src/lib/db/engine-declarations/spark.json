@@ -128,7 +128,7 @@
         "required": null,
         "format": {
           "pattern": {
-            "source": "^[^.\\p{Cc}]{1,255}$",
+            "source": "^\\s*(?:[^.\\p{Cc}\\s](?:[^.\\p{Cc}]{0,253}[^.\\p{Cc}\\s])?\\s*)?$",
             "flags": "u"
           },
           "sentence": "Catalog takes one catalog name without dots, as spark.sql.catalog.<name> names it. Nothing was sent."
@@ -141,7 +141,7 @@
         "required": null,
         "format": {
           "pattern": {
-            "source": "^(?:[A-Za-z_][A-Za-z0-9_]*|`(?:[^`]|``)+`)(?:\\.(?:[A-Za-z_][A-Za-z0-9_]*|`(?:[^`]|``)+`)){0,7}$",
+            "source": "^\\s*$|^(?:[A-Za-z_][A-Za-z0-9_]*|`(?:[^`]|``)+`)(?:\\.(?:[A-Za-z_][A-Za-z0-9_]*|`(?:[^`]|``)+`)){0,7}$",
             "flags": ""
           },
           "sentence": "Namespace takes a Spark SQL namespace: parts joined by dots, each a letter or _ followed by letters, digits or _, or written in backticks with a backtick doubled; at most 8 parts. Nothing was sent."

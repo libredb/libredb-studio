@@ -55,8 +55,6 @@ export {
   connectionFieldLabel,
   connectionFieldPlaceholder,
   connectionFieldPlacement,
-  connectionFieldRefusal,
-  connectionFieldShown,
   DATABEND_FIELD_HINTS,
   DATABEND_FIELD_RULES,
   KUBERNETES_FIELD_HINTS,
@@ -73,6 +71,8 @@ export {
   SPARK_FIELD_HINTS,
   SPARK_FIELD_RULES,
 } from "@/lib/db/connection-form";
+// The dialog's field rule evaluators are the shared core module's own, which the test-connection path reads too.
+export { connectionFieldRefusal, connectionFieldShown } from "@/lib/db/connection-field-rules";
 
 // DB brand icons share the same interface as LucideIcon (className + SVG props)
 export type DBIcon = LucideIcon | React.FC<React.SVGAttributes<SVGSVGElement> & { className?: string }>;

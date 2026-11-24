@@ -36,7 +36,7 @@ import {
   type DatabaseUIConfig,
 } from "@/lib/db-ui-config";
 import { SHIPPED_DATABASE_TYPES, SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
-import { requiredSecretRefusal } from "@/lib/db/connection-form";
+import { requiredSecretRefusal } from "@/lib/db/connection-field-rules";
 import { UnknownProviderError } from "@/lib/db/errors";
 import { SHOWCASE_DATABASE_ORDER, SHOWCASE_RANK, listShowcaseDatabases } from "@/lib/db-showcase";
 import { readAmqpPort, readPathPrefix } from "@/lib/db/providers/stream/rabbitmq/connection-options";
@@ -74,12 +74,8 @@ import {
   snowflakeHostHint,
 } from "@/lib/db/providers/sql/snowflake/account-host";
 import { CONNECTION_FIELDS as FIELD_CLASS } from "@/lib/storage/secret-fields";
-import { SPARK_FIELD_SENTENCES } from "@/lib/db/providers/sql/spark/connection-options";
-import {
-  SPARK_CATALOG_PATTERN,
-  SPARK_NAMESPACE_PATTERN,
-  SPARK_TOKEN_PATTERN,
-} from "@/lib/db/providers/sql/spark/namespace";
+import { buildSparkConnectionOptions, SPARK_FIELD_SENTENCES } from "@/lib/db/providers/sql/spark/connection-options";
+import { SPARK_NAMESPACE_PATTERN, SPARK_TOKEN_PATTERN } from "@/lib/db/providers/sql/spark/namespace";
 import { CREDENTIAL_WARNINGS } from "@/lib/db/credential-warnings";
 import { declareHostUri } from "../../helpers/synthetic-host-uri";
 import { PROVIDER_DIRECTORY_MAP, providerDirectoryFiles } from "../../helpers/provider-directory-map";
@@ -1283,7 +1279,18 @@ describe("declared field rules (Databend design 6.3)", () => {
         providerSentence({ database }),
       );
     }
-    for (const namespaces of ["default", "default, shop", " default ,shop ", "default Shop", "default,shop_1"]) {
+    // Text of only white space or commas is no list on the provider's side, so the rule takes it too.
+    for (const namespaces of [
+      "default",
+      "default, shop",
+      " default ,shop ",
+      "default Shop",
+      "default,shop_1",
+      " ",
+      ",",
+      " , ",
+      "\t",
+    ]) {
       expect(connectionFieldRefusal(getDBConfig("kubernetes"), kubernetes({ namespaces }))).toBe(
         providerSentence({ namespaces }),
       );
@@ -2108,22 +2115,57 @@ describe("the Apache Spark entry", () => {
     }
   });
 
-  test("SPARK_FIELD_RULES holds copies of the provider's patterns and sentences, since the dialog cannot import the provider", () => {
+  test("SPARK_FIELD_RULES take what the provider takes, in its sentences: Token its pattern, Namespace its pattern or only white space", () => {
     expect(Object.keys(SPARK_FIELD_RULES)).toStrictEqual(["host", "password", "database", "schema"]);
     expect(SPARK_FIELD_RULES.host).toStrictEqual({ required: SPARK_FIELD_SENTENCES.hostEmpty });
+    // The provider reads a Namespace of only white space as none, so the rule takes it before the provider's pattern.
     const copies = [
-      ["password", SPARK_TOKEN_PATTERN, SPARK_FIELD_SENTENCES.tokenCharacters],
-      ["database", SPARK_CATALOG_PATTERN, SPARK_FIELD_SENTENCES.catalogFormat],
-      ["schema", SPARK_NAMESPACE_PATTERN, SPARK_FIELD_SENTENCES.namespaceFormat],
+      ["password", SPARK_TOKEN_PATTERN.source, SPARK_TOKEN_PATTERN.flags, SPARK_FIELD_SENTENCES.tokenCharacters],
+      [
+        "schema",
+        `^\\s*$|${SPARK_NAMESPACE_PATTERN.source}`,
+        SPARK_NAMESPACE_PATTERN.flags,
+        SPARK_FIELD_SENTENCES.namespaceFormat,
+      ],
     ] as const;
-    for (const [field, pattern, sentence] of copies) {
-      // Only a format: a blank Token, Catalog or Namespace is none on the provider's side, so no copy may require it.
+    for (const [field, source, flags, sentence] of copies) {
+      // Only a format: a blank Token, Catalog or Namespace is none on the provider's side, so no rule may require it.
       expect(Object.keys(SPARK_FIELD_RULES[field] ?? {})).toStrictEqual(["format"]);
       const rule = SPARK_FIELD_RULES[field]?.format;
-      expect(rule?.pattern.source).toBe(pattern.source);
-      expect(rule?.pattern.flags).toBe(pattern.flags);
-      expect(rule?.sentence).toBe(sentence);
+      expect({ field, source: rule?.pattern.source, flags: rule?.pattern.flags, sentence: rule?.sentence }).toEqual({
+        field,
+        source,
+        flags,
+        sentence,
+      });
     }
+    expect(Object.keys(SPARK_FIELD_RULES.database ?? {})).toStrictEqual(["format"]);
+    expect(SPARK_FIELD_RULES.database?.format?.sentence).toBe(SPARK_FIELD_SENTENCES.catalogFormat);
+  });
+
+  test("Spark's Catalog rule takes exactly the texts the provider takes once trimmed", () => {
+    const providerSentence = (database: string): string | undefined => {
+      try {
+        buildSparkConnectionOptions(connection({ database }), { queryTimeout: 30_000 });
+        return undefined;
+      } catch (error) {
+        return (error as Error).message;
+      }
+    };
+    // Every text of up to three characters over an alphabet of the characters the two readings could disagree on,
+    // plus the lengths at the limit with padding at either end.
+    const alphabet = ["a", "_", ".", " ", "\t", "\n", "\u00a0", "\u0001", "\u200b", "\u00e9", "`"];
+    const texts: string[] = [""];
+    for (let length = 1; length <= 3; length++) {
+      for (const text of texts.filter((t) => t.length === length - 1)) {
+        for (const character of alphabet) texts.push(text + character);
+      }
+    }
+    texts.push("x".repeat(255), "x".repeat(256), ` ${"x".repeat(255)} `, `\t${"x".repeat(255)}\n`, "a\t", "\ta");
+    const disagreements = texts.filter(
+      (database) => connectionFieldRefusal(spark, connection({ database })) !== providerSentence(database),
+    );
+    expect(disagreements).toEqual([]);
   });
 });
 

@@ -78,7 +78,8 @@ The dialog draws these fields in this order, and Paste URL beside them.
 | Namespace | `schema` | empty: the catalog's current namespace | `The namespace in that catalog, written as in Spark SQL: parts joined by dots, a part with other characters in backticks. Empty: the catalog's current namespace.` | `Namespace takes a Spark SQL namespace: parts joined by dots, each a letter or _ followed by letters, digits or _, or written in backticks with a backtick doubled; at most 8 parts. Nothing was sent.` |
 
 Every refusal is raised before any socket opens, and none repeats the value it refuses.
-A Catalog that is not blank is trimmed before it is checked, because Spark looks the name up literally in `SET CATALOG`; Host and Namespace are checked and used as written.
+A Catalog or a Namespace of only white space is blank on every path: the dialog, Test Connection and opening the connection in the editor all read it as empty.
+A Catalog that is not blank is trimmed before it is checked, a tab or a line feed at its ends included, because Spark looks the name up literally in `SET CATALOG`; Host and Namespace are checked and used as written.
 
 There is no User field: every Studio request uses one fixed Spark Connect identity ([section 10](#10-security)), and Token is the credential.
 A seed or an API call that sets `user`, whatever its value but empty, is refused before the provider is built with `Apache Spark connections take no user: every Studio request uses one fixed Spark Connect user id, and Token is the credential. Clear User. Nothing was sent.`, so the provider never receives it.

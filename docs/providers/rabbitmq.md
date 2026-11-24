@@ -100,6 +100,10 @@ Studio sends the broker GET requests and stream reads only, never a publish or a
 | SSL / TLS | SSL / TLS | One setting for both endpoints: `disable` is `http` and `amqp`, any other mode `https` and `amqps`; one CA set, so paste both CAs if AMQPS and HTTPS use different ones |
 | `allowInsecureAuth` | Send the password without TLS | Drawn only while SSL mode is `disable` |
 
+The dialog's AMQP port and Path prefix rules run again on the test-connection path that Test Connection and Save post to, so both answer a refused Path prefix with the dialog's one sentence, which names every shape it takes.
+Opening a stored connection in the editor answers the provider's own sentence instead, which names the exact shape it refused; both refuse the same values, and neither sends anything.
+An AMQP port or Path prefix holding null is empty on every path.
+
 `database`, `namespaces` and `tlsServerName` are not offered: virtual hosts are discovered, and the TLS identity is always the host.
 A record from a seed or the API that sets one, whatever its value but empty, is refused before the provider is built, naming the field, so the provider never receives it:
 

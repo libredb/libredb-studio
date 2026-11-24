@@ -55,7 +55,7 @@ import {
 } from "./compatibility";
 import { assertStatementsReviewed } from "./statement-review";
 import { clientCapabilities } from "./client-capabilities";
-import { requiredSecretRefusal } from "./connection-form";
+import { requiredSecretRefusal } from "./connection-field-rules";
 import { type ProviderTextScrub, providerTextScrub, withholdProviderError } from "./operations/provider-text";
 import { AGENT_CREDENTIAL_FORM, REFUSED_CONNECTION_FIELDS } from "./connection-fields";
 import { assertDatabaseType, typeIdRow } from "./type-id";
@@ -383,7 +383,7 @@ export async function readProviderDeclarations(
 
 /**
  * Refuse a connection to be built to connect when its engine's form entry declares a required secret that it shows and
- * leaves blank (`requiredSecretRefusal` in ./connection-form), with the entry's own sentence, which names the field as
+ * leaves blank (`requiredSecretRefusal` in ./connection-field-rules), with the entry's own sentence, which names the field as
  * the dialog labels it. Read on the copy the provider would receive, so an agent credential core substituted is the
  * one read. It names no type id: the declaration is the entry's. The refusal answers `outcome` `not-sent`, as every
  * refusal raised while a provider is built does (`buildPhase` in ./errors).

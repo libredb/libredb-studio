@@ -42,10 +42,7 @@ import {
   snowflakeHostIdentity,
 } from "@/lib/db/providers/sql/snowflake/account-host";
 import { typeIdRow } from "@/lib/db/type-id";
-// The storage classification, aliased because this module's own `CONNECTION_FIELDS` is the field lists: whether a
-// field is a credential is answered there once, for storage, the VS Code prompts and a required secret's blank rule.
-import { CONNECTION_FIELDS as FIELD_CLASS } from "@/lib/storage/secret-fields";
-import type { DatabaseConnection, DatabaseType } from "@/lib/types";
+import type { DatabaseType } from "@/lib/types";
 
 /** What the connection dialog reads for one engine, apart from the icon and colour `DB_UI_CONFIG` adds. */
 export interface ConnectionFormSpec {
@@ -110,9 +107,11 @@ export interface ConnectionFormSpec {
   hostIdentity?: (host: string) => string;
   /**
    * The checks the connection dialog runs on a field before Test Connection and Save send anything, each refusal a
-   * sentence that names the field and never repeats its value. Read through `connectionFieldRefusal`. The provider
-   * runs the same checks again at connect, because a seed or an API call never passes the dialog; this declaration
-   * says them before a request is made.
+   * sentence that names the field and never repeats its value. Read through `connectionFieldRefusal` in
+   * ./connection-field-rules, the one module that evaluates them, in the dialog and again on the test-connection path
+   * Test Connection and Save post to, before a tunnel opens or a provider is built. The provider runs the same checks
+   * again at connect, because a seed opened in the editor or an API call never passes either; so each rule takes every
+   * value the provider takes.
    */
   fieldRules?: Partial<Record<ConnectionField, ConnectionFieldRule>>;
   /**
@@ -126,10 +125,11 @@ export interface ConnectionFormSpec {
   fieldOptions?: Partial<Record<ConnectionField, readonly { readonly value: string; readonly label: string }[]>>;
   /**
    * A field the connection dialog draws only while another field holds one value, such as Snowflake's private key,
-   * drawn only while Sign-in is Key pair. Read through `connectionFieldShown`: the dialog draws such a field only
-   * while the condition holds, `buildConnection` writes it only then, and `connectionFieldRefusal` checks its rules
-   * only then, so a hidden field is neither saved nor required. A controlling field the connection leaves absent reads
-   * as its `fieldDefaults` value. Absent means every field the engine takes is drawn.
+   * drawn only while Sign-in is Key pair. Read through `connectionFieldShown` in ./connection-field-rules: the dialog
+   * draws such a field only while the condition holds, `buildConnection` writes it only then, and
+   * `connectionFieldRefusal` checks its rules only then, so a hidden field is neither saved nor required. A
+   * controlling field the connection leaves absent reads as its `fieldDefaults` value. Absent means every field the
+   * engine takes is drawn.
    */
   fieldShownWhen?: Partial<Record<ConnectionField, { readonly field: ConnectionField; readonly equals: string }>>;
   /**
@@ -171,11 +171,12 @@ export interface ConnectionFormSpec {
 /** A check the connection dialog runs on one field before Test Connection and Save (`fieldRules`). */
 export interface ConnectionFieldRule {
   /**
-   * The refusal of a blank field; absent, a blank field passes. A field is blank when the dialog wrote no value for it
-   * or an empty one; a field the storage classification (`CONNECTION_FIELDS` in src/lib/storage/secret-fields.ts)
-   * calls `secret` is blank, as its provider reads it, also when the value is not text or holds only whitespace. Such a
-   * required secret, while `connectionFieldShown` shows it, is also refused by core, with this sentence, before the
-   * provider is built (`requiredSecretRefusal`), so the sentence names the field as the dialog labels it.
+   * The refusal of a blank field; absent, a blank field passes. A field is blank when it holds no value, being absent
+   * or null, or an empty one; a field the storage classification (`CONNECTION_FIELDS` in
+   * src/lib/storage/secret-fields.ts) calls `secret` is blank, as its provider reads it, also when the value is not
+   * text or holds only whitespace. Such a required secret, while `connectionFieldShown` shows it, is also refused by
+   * core, with this sentence, before the provider is built (`requiredSecretRefusal` in ./connection-field-rules), so
+   * the sentence names the field as the dialog labels it.
    */
   readonly required?: string;
   /** A field that is not blank must match `pattern` whole, or `sentence` is the refusal. */
@@ -450,9 +451,11 @@ export const SPARK_FIELD_HINTS: Readonly<Partial<Record<ConnectionField, string>
 
 /**
  * Apache Spark's form checks, in the provider's own sentences, as its declaration states them. The provider's modules
- * are server code the dialog may not import, so the three patterns and the four sentences are copies of the exports of
- * src/lib/db/providers/sql/spark/namespace.ts and connection-options.ts, and tests/unit/lib/db-ui-config.test.ts
- * holds each copy to the provider's.
+ * are server code the dialog may not import, so each rule takes exactly what the provider's reading in
+ * src/lib/db/providers/sql/spark/namespace.ts and connection-options.ts takes: Token is a copy of its pattern,
+ * Namespace is only white space (which the provider reads as none) or its pattern, and Catalog is its pattern read on
+ * the trimmed text, so a Catalog of only white space is none and a padded one, a tab or a line feed at its ends
+ * included, is the trimmed name. tests/unit/lib/db-ui-config.test.ts holds each rule and sentence to the provider's.
  */
 export const SPARK_FIELD_RULES: Readonly<Partial<Record<ConnectionField, ConnectionFieldRule>>> = declaredMember(
   "spark",
@@ -478,10 +481,11 @@ export const S3_FIELD_HINTS: Readonly<Partial<Record<ConnectionField, string>>> 
 
 /**
  * Kubernetes' form checks, in the provider's own sentences, as its declaration states them. The provider module is
- * server code the dialog cannot import, so each pattern is a copy of its rule, and tests/unit/lib/db-ui-config.test.ts
- * holds each copy and sentence to the provider's. The API path, the TLS server name and the token are checked by the
- * provider at Test Connection, and so is the count of the Namespaces list (at most 1,000), which a pattern does not
- * hold.
+ * server code the dialog cannot import, so each pattern states its rule, and tests/unit/lib/db-ui-config.test.ts
+ * holds each pattern and sentence to the provider's: Default namespace is a copy of the provider's label pattern, and
+ * Namespaces takes a list of labels or text of only white space and commas, which the provider reads as no list. The
+ * API path, the TLS server name and the token are checked by the provider at Test Connection, and so is the count of
+ * the Namespaces list (at most 1,000), which a pattern does not hold.
  */
 export const KUBERNETES_FIELD_RULES: Readonly<Partial<Record<ConnectionField, ConnectionFieldRule>>> = declaredMember(
   "kubernetes",
@@ -501,8 +505,8 @@ export const KUBERNETES_FIELD_HINTS: Readonly<Partial<Record<ConnectionField, st
  * RabbitMQ's form checks, in the provider's own sentences, as its declaration states them. The provider module is
  * server code the dialog cannot import, so each pattern is a copy of `readAmqpPort` and `readPathPrefix` in
  * src/lib/db/providers/stream/rabbitmq/connection-options.ts, and tests/unit/lib/db-ui-config.test.ts holds each copy
- * to the provider's rule over the same values. The provider names the exact Path prefix shape it refuses; the dialog's
- * one pattern names all of them at once.
+ * to the provider's rule over the same values. A field holding null holds no value, as the provider reads it. The
+ * provider names the exact Path prefix shape it refuses; the dialog's one pattern names all of them at once.
  */
 export const RABBITMQ_FIELD_RULES: Readonly<Partial<Record<ConnectionField, ConnectionFieldRule>>> = declaredMember(
   "rabbitmq",
@@ -627,86 +631,6 @@ export function connectionFieldPlacement(config: ConnectionFormSpec, field: Plac
   const placement = config.fieldPlacement?.[field];
   if (placement === undefined) throw new Error(`${config.label} declares no placement for ${field}`);
   return placement;
-}
-
-/**
- * Whether the dialog draws a field the engine takes, by the engine's `fieldShownWhen`: true when the field has no
- * condition, else whether the controlling field holds the declared value. A controlling field left absent (undefined
- * or null) reads as its declared `fieldDefaults` value, the one the provider reads, so Snowflake's absent Sign-in
- * reads as Key pair.
- */
-export function connectionFieldShown(
-  config: ConnectionFormSpec,
-  field: ConnectionField,
-  connection: Partial<Record<ConnectionField, unknown>>,
-): boolean {
-  const condition = config.fieldShownWhen?.[field];
-  if (condition === undefined) return true;
-  const value = connection[condition.field] ?? config.fieldDefaults?.[condition.field];
-  return value !== undefined && String(value) === condition.equals;
-}
-
-/**
- * Whether `value` is blank for the `required` rule of `field`: for a field the storage classification calls `secret`,
- * a value that is not text or holds only whitespace, as the provider reads a secret it cannot sign in without; for any
- * other field, no value or an empty one, as the dialog writes it.
- */
-function blankForRequired(field: ConnectionField, value: unknown): boolean {
-  if (FIELD_CLASS[field] === "secret") return typeof value !== "string" || value.trim() === "";
-  return value === undefined || value === "";
-}
-
-/**
- * The first refusal of the engine's `fieldRules` for a connection as the dialog built it, or `undefined` when every
- * declared check passes. The fields are checked in `connectionFields` order, so the dialog names the first box to fix.
- * A `required` field is refused when it is blank (`ConnectionFieldRule.required`); any other check skips a field the
- * dialog wrote no value for, or an empty one. A field `connectionFieldShown` hides is not checked, since the dialog
- * neither draws nor writes it.
- */
-export function connectionFieldRefusal(config: ConnectionFormSpec, connection: DatabaseConnection): string | undefined {
-  const values = connection as Partial<Record<ConnectionField, unknown>>;
-  for (const field of config.connectionFields) {
-    const rule = config.fieldRules?.[field];
-    if (rule === undefined) continue;
-    if (!connectionFieldShown(config, field, values)) continue;
-    const value = values[field];
-    if (rule.required !== undefined && blankForRequired(field, value)) return rule.required;
-    if (value === undefined || value === "") continue;
-    if (rule.format !== undefined && !rule.format.pattern.test(String(value))) return rule.format.sentence;
-    if (
-      rule.charRange !== undefined &&
-      (String(value).length < rule.charRange.min || String(value).length > rule.charRange.max)
-    ) {
-      return rule.charRange.sentence;
-    }
-    const checked = rule.check?.(String(value));
-    if (checked !== undefined) return checked;
-  }
-  return undefined;
-}
-
-/**
- * The sentence of the first required secret the engine's form entry declares that `connection` shows and leaves blank,
- * or `undefined` when there is none: a `fieldRules` entry with `required` on a field the storage classification calls
- * `secret`, shown by `connectionFieldShown` (an absent controlling field read as its `fieldDefaults` value), and blank
- * as `connectionFieldRefusal` reads it, not text or only whitespace. The fields are read in `connectionFields` order,
- * and only these: every other rule is the dialog's and the provider's. Core reads it before it builds a provider to
- * connect (`createDatabaseProvider` in ./factory), so a provider is never built without a secret its engine declares
- * it cannot sign in without. The entry is read through `typeIdRow` (FND-1), so a type outside the `DatabaseType` union
- * is refused by name.
- *
- * @throws {UnknownProviderError} When `type` is absent, not text, or names no provider.
- */
-export function requiredSecretRefusal(type: DatabaseType, connection: DatabaseConnection): string | undefined {
-  const config = typeIdRow(CONNECTION_FORM, type);
-  const values = connection as Partial<Record<ConnectionField, unknown>>;
-  for (const field of config.connectionFields) {
-    const required = config.fieldRules?.[field]?.required;
-    if (required === undefined || FIELD_CLASS[field] !== "secret") continue;
-    if (!connectionFieldShown(config, field, values)) continue;
-    if (blankForRequired(field, values[field])) return required;
-  }
-  return undefined;
 }
 
 /**

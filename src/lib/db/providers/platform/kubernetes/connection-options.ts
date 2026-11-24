@@ -143,8 +143,10 @@ export function apiPathRefusal(value: string): string | undefined {
 }
 
 /**
- * The namespace list's entries, or the refusal sentence; the dialog's rule is a pinned copy of this pattern. The
- * count is checked here alone: the tree lists at most 1,000 namespaces, so a longer list is refused, never cut.
+ * The namespace list's entries, or the refusal sentence. A text of only white space and commas has no entries, which
+ * `namespacesOf` reads as no list. The dialog's rule takes exactly the texts this reading does not refuse for their
+ * shape, a text of no entries included, and tests/unit/lib/db-ui-config.test.ts holds the two to each other. The count
+ * is checked here alone: the tree lists at most 1,000 namespaces, so a longer list is refused, never cut.
  */
 export function parseNamespaceList(value: string): readonly string[] | { readonly refusal: string } {
   const entries = value.split(/[\s,]+/).filter((entry) => entry !== "");

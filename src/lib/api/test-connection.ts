@@ -6,7 +6,8 @@ import {
 } from "@/lib/db/factory";
 import { deadlineSignal } from "@libredb/provider-sdk/calls";
 import { connectBudgetFor } from "@/lib/db/connect-budget";
-import { ConnectionError, connectPhase, waitedSeconds } from "@/lib/db/errors";
+import { fieldRuleRefusal } from "@/lib/db/connection-field-rules";
+import { ConnectionError, connectPhase, DatabaseConfigError, markNotSent, waitedSeconds } from "@/lib/db/errors";
 import {
   type ProviderTextScrub,
   providerTextScrub,
@@ -26,6 +27,8 @@ import type { DatabaseConnection, QueryWarning } from "@/lib/types";
  * `connection/test` runs the same steps. Each caller keeps what only it has: the route its session
  * guard, `resolveConnection` and the execution context it derives from the session; and each
  * classifies a rejection itself, since a failed connect rejects with the provider's own error.
+ * Both refuse first what the connection dialog refuses, through the same field rule module
+ * (`fieldRuleRefusal` in src/lib/db/connection-field-rules.ts).
  */
 
 /** The caution shown in place of a provider's Test Connection checks that rejected. */
@@ -95,6 +98,13 @@ function testDeadlineSentence(budgetMs: number): string {
 /**
  * Connects to `connection` once, reads its health and closes it, never caching the provider.
  *
+ * First, before the budget starts, a tunnel opens or anything is built, `connection` is read by its engine's field
+ * rules (`fieldRuleRefusal` in src/lib/db/connection-field-rules.ts), the module the connection dialog refuses with
+ * before Test Connection and Save post here: a refusal rejects with a `DatabaseConfigError` carrying the rule's
+ * sentence, marked `not-sent`, so this path refuses exactly the connections the dialog refuses, with the same sentence,
+ * and answers as a provider's own refusal does (docs/providers/CONTRACT.md, clause M-33). A type outside the
+ * `DatabaseType` union is refused by name there.
+ *
  * `execution` is the DuckDB editor file-access posture the caller derived (non-admin DuckDB file
  * access): it opens any handle built here with the right posture and keeps this from borrowing a
  * handle of the other posture below. `route` is the label the rejected-checks log line carries.
@@ -120,6 +130,12 @@ export async function testConnection(
   now: number = Date.now(),
 ): Promise<TestConnectionAnswer> {
   const scrub = providerTextScrub(connection, "any");
+  const refusal = fieldRuleRefusal(connection.type, connection);
+  if (refusal !== undefined) {
+    const refused = new DatabaseConfigError(refusal, connection.type);
+    markNotSent(refused);
+    throw refused;
+  }
   const budget = connectBudgetFor(connection.type);
   const deadline = deadlineSignal(now + budget);
   let late: ConnectionError | undefined;
