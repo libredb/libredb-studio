@@ -136,7 +136,7 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
       (request) => readPanel(this, request),
       engineFacetsFor(this.type).monitoring,
       options,
-      (error) => this.mapError(error, undefined),
+      (error) => this.mapError(error),
     );
   }
 
