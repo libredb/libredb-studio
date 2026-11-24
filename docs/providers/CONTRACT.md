@@ -2691,7 +2691,7 @@ Its tree call runs the provider's own member for the action with a fresh copy of
 It answers the member's answer by reference in its action's form, never calls `forCatalog`, and a provider's error passes by reference.
 A top-level `containers` read of a provider that answers the inventory's configuration question, `inventoryNeedsConfiguration`, a function on the provider or its prototype, asks it first: a reason answers no container and the reason as `needsConfiguration` without listing, C-61, and no reason lists as before; below the top level, and for a provider without the member, the read lists as before.
 The bridge's session takes a host-side input a tree request does not carry, the billed-read allowance: a session built with one hands a fresh options object holding it by reference as the trailing argument of `countObjects`, `listObjects` and `describeObjects`, beside `defaultSql` where the request sends it, and a session built without one passes today's arguments.
-inspect_schema's tree reads, and the source, edit and key scan routes, still call the provider themselves until they move onto the host core; the agent's grounding walk, C-80, and the MCP database choice's listing, C-82, read through it.
+The source, edit and key scan routes still call the provider themselves until they move onto the host core; the agent's grounding walk, C-80, and MCP's schema reads, C-82, read through it.
 Its transaction call runs the provider's own method for the action, a begin with `requireReportedState` as the transaction route has always passed it, answering `stateReported` exactly when the provider answered a result, and `state` runs nothing.
 Every transaction answer's session state is the provider's `isInTransaction()` read after the call, so through the bridge a state is `in-transaction` or `not-in-transaction`, and the bridge keeps none between calls.
 A statement sent with `transaction` runs the provider's prepare, the probe row past the page and `queryInTransaction` with a new array of the request's params, with no run id, no scope and no transaction ender, since it runs on the transaction's own connection, and answers the session state read after it.
@@ -3646,7 +3646,7 @@ A provider without `queryReadOnly` is refused at the session's open, C-39, answe
 A statement that fails after MCP stopped waiting for it is logged under `/api/mcp` by kind and code, never its text, and a later answer is not logged.
 A value the host's page cannot carry, refused by the value codec as the host measures the rows, refuses the answer by the codec's sentence behind the notice naming the provider, as a value outside the codec in the answer's own rows does.
 An answer over 1 MiB in the host's measure waits for the host's large-page slot, C-53, within the call's deadline.
-inspect_schema's tree reads and the SQL arm's paging through the provider's `prepareQuery`, which sends nothing, still call the provider directly; the database choice's listing runs through the host core's tree call, C-82.
+Only the SQL arm's paging through the provider's `prepareQuery`, which sends nothing, still calls the provider directly; the database choice's listing and inspect_schema's tree reads run through the host core's tree call, C-82.
 
 - test `tests/unit/mcp/read-query-limits.test.ts` "hands the acquisition the call's wait, ended by the request leaving or the call's deadline"
 - test `tests/unit/mcp/read-query-limits.test.ts` "answers cancelled or timeout without acquiring when the request has left or the deadline has passed"
@@ -3674,8 +3674,9 @@ inspect_schema's tree reads and the SQL arm's paging through the provider's `pre
 
 ### C-82 (normative): MCP's schema reads on the host
 
-The database choice's listing on a connection that reaches every database, a call of inspect_schema or of a statement tool that names no database, is one host core tree call, C-64, through the within-call tree facade, on a session the legacy bridge serves for the tree, C-50.
-The tree holds the MCP call's one deadline, the call's start plus `timeout_ms`, and one signal that aborts at it or when the request leaves.
+inspect_schema reads the host core before anything else, so a call made before its install throws by name, writes no audit record, resolves no connection and opens nothing.
+Every container listing, every relation listing, each relation kind its own read, and every description of inspect_schema, and the database choice's listing on a connection that reaches every database, is one host core tree call, C-64, through the within-call tree facade, on a session the legacy bridge serves for the tree, C-50, one per provider the call reads.
+Each tree holds the MCP call's one deadline, the call's start plus `timeout_ms`, and one signal that aborts at it or when the request leaves.
 Each read's context is fresh and carries that deadline, that signal and the empty environment, never a credential, and its request is a fresh copy with copies of the caller's arrays; the session carries no read allowance.
 A read the request left answers the cancel at once.
 A read the deadline stopped, or a read refused at its start because the deadline passed, answers the timeout, through a time refusal only MCP's own tree reads build, so a provider's own timeout or cancel error stays its failure and is answered as the engine's.
@@ -3701,6 +3702,13 @@ The catalog session the database choice opens for a named database, the provider
 - test `tests/integration/mcp/run-read-query.test.ts` "a client that leaves while the databases are listed is answered cancelled at once"
 - test `tests/integration/mcp/inspect-schema.test.ts` "a database listing held past the deadline is the timeout, through the host core"
 - test `tests/integration/mcp/inspect-schema.test.ts` "a database choice held past the deadline is the timeout, and no session listing starts"
+- test `tests/integration/mcp/inspect-schema.test.ts` "inspect_schema called before the host core is installed throws by name, writes no audit record and opens nothing"
+- test `tests/integration/mcp/inspect-schema.test.ts` "every container listing, relation listing and description is one host core tree call under the call's one deadline and the request's signal"
+- test `tests/integration/mcp/inspect-schema.test.ts` "a description that fails after the deadline is logged by its action, kind and code, never its text"
+- test `tests/integration/mcp/inspect-schema.test.ts` "a top-level listing that says the inventory needs configuration is read as no container, and its sentence is never answered"
+- test `tests/integration/mcp/inspect-schema.test.ts` "a cancel during a held step is answered at once as mcp_cancelled, and nothing after it starts"
+- test `tests/unit/mcp/schema-reads-census.test.ts` "no MCP module calls a provider's tree member: the schema reads go through the host core's tree call"
+- test `tests/unit/mcp/schema-reads-census.test.ts` "objectTreeWithinCall is called only by MCP's object tree, and that only by the database choice and inspect_schema"
 
 ## Not yet in this contract
 
@@ -3818,4 +3826,6 @@ Against this contract's earlier text:
 - Each engine's migration DDL is a projection of its declaration, M-15 and M-80, its functions bound by Studio's own table, where each engine kept a migration DDL row beside its provider.
 - Each SQL engine's generator forms are a projection of its declaration, M-15 and M-81, its functions bound by Studio's own table, where each engine kept a generator row beside its provider.
 - The MCP database choice's listing runs through the host core's tree call under the call's deadline and its request's signal, C-82, where it called the provider's `listContainers`; a listing that fails after MCP stopped waiting is logged by kind and code, where it was dropped silently.
+- inspect_schema's container listings, relation listings and descriptions run through the host core's tree call under the call's deadline and its request's signal, C-82, where they called the provider's members under MCP's own race; a read that fails after MCP stopped waiting is logged by kind and code, where it was dropped silently.
 - A statement tool's database listing on a connection that reaches every database ends at `timeout_ms` and when the client leaves, answered as the timeout or the cancel, C-82, where it waited for the listing with no bound.
+- inspect_schema reads the host core before anything else, C-82, so a call made before its install throws by name with no audit record.
