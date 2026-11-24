@@ -667,6 +667,59 @@ describe("object reads", () => {
     await answeredAs(handlers.listObjects({ connectionId: "c1", container: ["app"], kind: "table" }), denied);
   });
 
+  it("each tree call answers a provider's Studio error and a raw error as toResponseError answers them with the connection's scrub", async () => {
+    const raises: readonly ((text: string) => Error)[] = [
+      (text) => new QueryError(text, "postgres"),
+      (text) => new ConnectionError(text, "postgres"),
+      (text) => new TimeoutError(text, "postgres", 1000),
+      (text) => new Error(text),
+    ];
+    for (const raise of raises) {
+      const failure = raise(`refused ${crypto.randomUUID()}`);
+      const rejects = async () => {
+        throw failure;
+      };
+      // oxlint-disable-next-line no-await-in-loop -- one open at a time, so each call reaches its own provider.
+      const { handlers } = await opened({
+        listContainers: rejects,
+        countObjects: rejects,
+        listObjects: rejects,
+        describeObject: rejects,
+      });
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each answer is its own call's.
+      await answeredAs(handlers.listContainers({ connectionId: "c1" }), failure);
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each answer is its own call's.
+      await answeredAs(handlers.countObjects({ connectionId: "c1", container: ["app", "public"] }), failure);
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each answer is its own call's.
+      await answeredAs(
+        handlers.listObjects({ connectionId: "c1", container: ["app", "public"], kind: "table" }),
+        failure,
+      );
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each answer is its own call's.
+      await answeredAs(
+        handlers.describeObject({ connectionId: "c1", path: ["app", "public", "orders"], kind: "table" }),
+        failure,
+      );
+    }
+  });
+
+  it("each tree call answers the provider's own answer: the containers, the objects and a detail whose indexes are a list as the same object, the counts as an equal copy through the scrub", async () => {
+    const { handlers } = await opened();
+
+    assert.equal(await handlers.listContainers({ connectionId: "c1" }), CONTAINERS);
+    assert.equal(
+      await handlers.listObjects({ connectionId: "c1", container: ["app", "public"], kind: "table" }),
+      OBJECTS,
+    );
+    assert.equal(
+      await handlers.describeObject({ connectionId: "c1", path: ["app", "public", "orders"], kind: "table" }),
+      DETAIL,
+    );
+    const counted = await handlers.countObjects({ connectionId: "c1", container: ["app", "public"] });
+    assert.deepEqual(counted, COUNTS);
+    assert.notEqual(counted, COUNTS);
+  });
+
   it("answers a provider error's SQLSTATE in data", async () => {
     const missing = new QueryError('relation "app" does not exist', "postgres");
     missing.sqlstate = "42P01";
