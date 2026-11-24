@@ -79,6 +79,36 @@
       "analyze",
       "optimize"
     ],
+    "maintenanceSpecs": [
+      {
+        "operation": "analyze",
+        "label": "Run Statistics",
+        "perEntity": true,
+        "global": false,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": [
+          "table",
+          "materialized_query_table"
+        ]
+      },
+      {
+        "operation": "optimize",
+        "label": "Reorganize Table",
+        "perEntity": true,
+        "global": false,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": [
+          "table",
+          "materialized_query_table"
+        ]
+      }
+    ],
     "agentReadings": [
       "table-stats",
       "health"

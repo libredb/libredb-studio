@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "21ba88431b1b29fc4d39d1b8b396bd7fd4af4de0cc7da6e43c864db1aa070515";
+export const MANIFEST_SCHEMA_SHA256 = "80097541a868368133346d7e30c74b11942e513ac8c78eb3f50a5de4db3eb73c";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -478,6 +478,8 @@ export interface Facets {
   readonly monitoring: MonitoringPanels;
   /** The maintenance operations the engine offers before Studio connects, each once, so at most as many as the operations there are. */
   readonly maintenance: readonly MaintenanceOperation[];
+  /** How each maintenance operation the engine offers is placed, worded and confirmed: one spec for each operation the maintenance list names and for no other, so at most as many as the operations there are. The provider's own statements of its target grammar and wording, never claims: the maintenance routes read the placements only to refuse a request in a form the provider says it does not take, and a typed confirmation only adds a step to the confirmations Studio asks itself. */
+  readonly maintenanceSpecs: readonly MaintenanceSpec[];
   /** The curated operational readings agent mode is offered on the engine, each once, so at most as many as the readings there are. */
   readonly agentReadings: readonly AgentReading[];
 }
@@ -505,6 +507,32 @@ export type MaintenanceOperation =
   | "disarm"
   | "load"
   | "release";
+
+/** One maintenance operation's spec: where its controls are placed, the words they show, the confirmation and preview they ask and the object kinds they run on. A spec places its operation on a row, over the whole database or both; only kill's places it nowhere, since its target is a session the session list names. */
+export interface MaintenanceSpec {
+  readonly operation: MaintenanceOperation;
+  /** The engine's own wording for a control that runs the operation. */
+  readonly label: string;
+  /** Whether the operation runs on one object a row names: a table, a collection, a keyspace. */
+  readonly perEntity: boolean;
+  /** Whether the operation runs with no target, over the whole database. */
+  readonly global: boolean;
+  /** The heading of the operation's own whole-database card, which the card draws with the label on its button and the description as its body; null where the operation stays on the Operations tab's own cards. */
+  readonly title: string | null;
+  /** The body of the operation's card, of its typed dialog and of its per-row dialog; null where the operation states none. */
+  readonly description: string | null;
+  readonly confirmation: MaintenanceConfirmation;
+  /** Whether a per-row control shows the provider's preview of the operation before it offers the confirm button. */
+  readonly preview: boolean;
+  /** The object kinds a per-row control offers the operation on, each once; null where it runs on every relation kind, which no empty list states. */
+  readonly kinds: readonly ObjectKindId[] | null;
+}
+
+/** How a control of the operation is confirmed before it sends anything, beyond the confirmations Studio asks itself. typed: the operation's whole-database card asks for the connection's name, typed exactly. typed-target: a per-row control asks for its object's own name, typed exactly. null where the spec asks neither. */
+export type MaintenanceConfirmation = "typed" | "typed-target" | null;
+
+/** An object kind, by the id Studio's object model gives it. */
+export type ObjectKindId = string;
 
 export type AgentReading = "sessions" | "slow-queries" | "table-stats" | "index-stats" | "storage" | "health";
 

@@ -103,6 +103,30 @@
       "load",
       "release"
     ],
+    "maintenanceSpecs": [
+      {
+        "operation": "load",
+        "label": "Load",
+        "perEntity": true,
+        "global": false,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": true,
+        "kinds": null
+      },
+      {
+        "operation": "release",
+        "label": "Release",
+        "perEntity": true,
+        "global": false,
+        "title": null,
+        "description": "Every other client's search and query on this collection then fails with code 101 until it is loaded again.",
+        "confirmation": "typed-target",
+        "preview": true,
+        "kinds": null
+      }
+    ],
     "agentReadings": [
       "table-stats",
       "index-stats",

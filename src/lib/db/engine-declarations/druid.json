@@ -63,6 +63,7 @@
       "storage": "offered"
     },
     "maintenance": [],
+    "maintenanceSpecs": [],
     "agentReadings": [
       "sessions",
       "table-stats",

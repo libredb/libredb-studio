@@ -72,6 +72,19 @@
     "maintenance": [
       "analyze"
     ],
+    "maintenanceSpecs": [
+      {
+        "operation": "analyze",
+        "label": "Server Info",
+        "perEntity": false,
+        "global": true,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      }
+    ],
     "agentReadings": [
       "sessions",
       "slow-queries",

@@ -884,6 +884,59 @@ A request at M-55's restrictive values meets this rule only where the write path
 Whether a request resumes compute the engine bills for, `resumesBilledCompute`, is the provider's answer for each connection, read from the built provider for that connection.
 Its loose value spends the operator's compute, which none of the boundaries a claim protects is, and the answer depends on the connection, so it is no claim and no member states it, as M-49 leaves a measured explain format to the connected provider.
 
+### M-64 (normative): An engine's maintenance specs
+
+`facets.maintenanceSpecs` holds one spec for each operation `facets.maintenance` lists, and no other.
+A spec states the operation it names, the label its controls show, whether it runs on one object a row names, whether it runs over the whole database, a card's title and description or null, the typed confirmation it asks or null, whether a per-row control previews it, and the object kinds a per-row control offers it on, or null for every relation kind.
+A list of entries that each name their operation states what Studio's capabilities state as a map keyed by operation.
+For every engine Studio ships, the census reads each spec back to the provider's own declaration before it connects, and Studio's maintenance gate answers from the declaration what it answers from the provider.
+No member of a spec is a claim, M-52: the maintenance routes read the placements only to refuse a request in a form the provider says it does not take, every maintenance request is an administrator's, and a typed confirmation only adds a step to the confirmations Studio asks itself, whole-database runs and session kills included, so no value skips one.
+The maintenance list is no claim either: the routes read it to refuse, before any provider is built, an operation the engine does not offer.
+
+- schema `/$defs/maintenanceSpec`
+- schema `/$defs/facets/properties/maintenanceSpecs`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a maintenance spec whose label, title or description is empty or past its bound is refused as out-of-range"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a maintenance spec for an operation the maintenance facet does not list is refused as maintenance-spec-unlisted"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a maintenance operation given two specs is refused as maintenance-spec-duplicate, at the later one"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a listed maintenance operation with no spec is refused as maintenance-spec-missing, at the operation"
+- test `tests/unit/db/engine-declarations.test.ts` "facets.maintenanceSpecs is its provider's own maintenance specs, one for each operation its facet lists, in the facet's order"
+- test `tests/unit/db/engine-declarations.test.ts` "maintenanceControl and declaredEntityOperations answer from each declaration what they answer from its provider, for every operation, placement and kind"
+- test `tests/unit/db/engine-declarations.test.ts` "each declaration's maintenance specs hold exactly Studio's spec members and the operation they name"
+- test `tests/unit/db/engine-declarations.test.ts` "a provider's maintenance spec missing for a listed operation, or given for an unlisted one, is refused by name, by the generator and by the census"
+- test `tests/api/db/maintenance.test.ts` "non-admin user returns 403"
+- test `tests/components/admin/OperationsTab.test.tsx` "confirming sends exactly one request for the whole database"
+- test `tests/components/admin/OperationsTab.test.tsx` "kill button opens confirmation dialog"
+
+### M-65 (normative): Where a spec places its operation, its confirmation and its preview
+
+A spec places its operation on a row, over the whole database or both.
+Only `kill`'s places it nowhere, since its target is a session the session list names, and the maintenance route passes such a request to the provider as it arrives.
+A typed confirmation, the connection's name, is asked only on a whole-database card.
+A spec may declare one only where it places its operation over the whole database alone, with a title and a description.
+A typed target, the object's own name, is asked only on a row.
+A spec may declare one only where it places its operation on a row alone.
+A preview is shown only on a row.
+A confirmation is admitted only where at least one control sends the operation and every control that sends it asks the confirmation: a typed confirmation where the operation's one control is its declared card, whose typed dialog takes the title as its heading and the description as its body, and a typed target where its only controls are on its objects' rows.
+A preview is admitted only where a row shows it.
+
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a maintenance spec that places its operation nowhere is refused as maintenance-spec-unplaced, and kill's is admitted"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a typed confirmation is admitted only on a spec placed over the whole database alone, with a title and a description, and refused elsewhere as maintenance-typed-confirmation-unasked"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a typed target is admitted only on a spec placed on a row alone, and refused elsewhere as maintenance-typed-target-unasked"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a maintenance preview no per-row control shows is refused as maintenance-preview-unplaced"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's maintenance specs are held to their rules, at pointers into it"
+- test `tests/api/db/maintenance.test.ts` "an operation that takes no target refuses a request that names one"
+- test `tests/api/db/maintenance.test.ts` "an operation that requires a target refuses a request without one"
+- test `tests/api/db/maintenance.test.ts` "kill keeps its session-id target, which neither placement describes"
+- test `tests/components/admin/OperationsTab.test.tsx` "a typed-target control sends nothing until the row's own name is typed exactly, then sends once"
+- test `tests/components/admin/OperationsTab.test.tsx` "a whole-database card with a typed confirmation still asks for the connection's name, not a row's"
+
+### M-66 (informative): The maintenance a connected server accepts
+
+A provider whose engine family's servers accept different maintenance may measure at connect which placements its server accepts and narrow its declaration for that connection.
+A refused placement is withdrawn, an operation left with none leaves the list, and nothing is added or widened, so every label, confirmation and preview stays as declared.
+The maintenance routes after connect, and the Operations and Tables tabs through the monitoring answer, read the connected provider's narrowed declaration.
+The declaration states the maintenance before any connection, and no member states a connection's narrowing, as M-63 leaves billed compute to the connected provider.
+
 ## Values
 
 A value crosses a JSON boundary, between a provider and the host or between two of the host's own hops, in one form: the value codec of `@libredb/provider-sdk/values`.
@@ -2399,7 +2452,7 @@ Only the legacy bridge calls a provider's `endOpenQueryTransaction`.
 
 These chapters are added by the changes that bring their enforcers:
 
-- The machine redaction a provider declares once built, with the object model; the maintenance specs; the agent overlay; and presentation (an icon and a colour).
+- The machine redaction a provider declares once built and the object kinds a maintenance spec names, with the object model; the agent overlay; and presentation (an icon and a colour).
 - The API report of each SDK entry.
 
 ## Change notes
@@ -2450,6 +2503,8 @@ Against the manifest sketch the design started from:
 - A masking exemption matches whole column names only, M-59.
 - The write paths, the metadata-only answer and the inline edit refusal a provider declares are facts of a `safeguards` segment read back to the provider, and the write reach request is the paths' summary, M-60 to M-62.
 - Billed compute is answered per connection and stated by no member, M-63.
+- Each maintenance operation's spec is an entry naming its operation, and every operation the maintenance list names has one, M-64.
+- A maintenance spec's placements, confirmation and preview are the provider's statements, never claims, and only kill is placed nowhere, M-64 and M-65.
 - Transactions are one console facet, `transaction`, whose request names its action, and a statement inside a transaction is console execute sent with `transaction`; the sketch named four wire methods and a separate `session/state` read, C-57.
 
 Against this contract's earlier text:

@@ -165,6 +165,9 @@ export interface MaintenanceResult {
  * names one table and vacuums the database). An operation whose target is a session or
  * query id - every engine's `kill` - is `false` for both: the Sessions panel supplies
  * that id, and no table or global control can.
+ *
+ * The engine declaration states each spec at `facets.maintenanceSpecs`, one per listed operation, and the census reads
+ * it back to this declaration (docs/providers/CONTRACT.md, clause M-64).
  */
 export interface MaintenanceOperationSpec {
   /** This engine's own wording for a control that runs the operation. */
@@ -377,6 +380,9 @@ export type MaintenanceDeclaration = Pick<ProviderCapabilities, "maintenanceOper
  * An operation the measurement does not name keeps its declaration: `kill` takes a session id and
  * no probe here can ask about it. `measured` undefined is "not measured", the unconnected provider
  * `POST /api/db/provider-meta` reads, and answers the declaration unchanged.
+ *
+ * A connection's narrowing is the provider's answer for that connection, which no member of the engine declaration
+ * states (docs/providers/CONTRACT.md, clause M-66).
  */
 export function narrowMaintenance(
   declared: Required<MaintenanceDeclaration>,

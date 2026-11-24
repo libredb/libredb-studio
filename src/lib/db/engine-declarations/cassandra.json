@@ -90,6 +90,7 @@
       "storage": "not-offered"
     },
     "maintenance": [],
+    "maintenanceSpecs": [],
     "agentReadings": [
       "sessions",
       "health"

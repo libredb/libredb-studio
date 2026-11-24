@@ -102,6 +102,7 @@
       "storage": "offered"
     },
     "maintenance": [],
+    "maintenanceSpecs": [],
     "agentReadings": [
       "sessions",
       "slow-queries",

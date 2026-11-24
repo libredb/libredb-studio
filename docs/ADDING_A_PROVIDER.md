@@ -422,6 +422,7 @@ An operation that runs on one object, and that an admin should see described bef
 
 - Add it to `maintenanceOperations`, and give it a `maintenanceOperationSpecs` entry with `perEntity: true` and `global: false`.
   An operation outside the six of `MaintenanceType` then gets a control of its own on the Operations tab, the monitoring Tables tab and both row menus, after their own controls, in declaration order, under the spec's `label` and a generic icon; `declaredEntityOperations()` in `src/lib/db/types.ts` is its one reader.
+  Every operation in `maintenanceOperations` needs a `maintenanceOperationSpecs` entry, the source of the declaration's `facets.maintenanceSpecs`, so run `bun run engines:generate` after changing one and commit the regenerated declaration (`docs/providers/CONTRACT.md`, M-64); the validator refuses a spec that places its operation nowhere, other than `kill`'s, and a confirmation or preview declared outside the placements M-65 admits it on.
 - `confirmation: "typed-target"` makes that control ask for the object's own name, typed exactly and case-sensitively, before it sends anything.
   `tests/unit/db/maintenance-confirmation-capability.test.ts` holds such a spec to `perEntity: true` and `global: false`.
 - `preview: true` makes the control's dialog read `POST /api/db/maintenance/preview` and show the answer before it offers the confirm button.

@@ -87,6 +87,52 @@
       "optimize",
       "kill"
     ],
+    "maintenanceSpecs": [
+      {
+        "operation": "analyze",
+        "label": "Update Statistics",
+        "perEntity": true,
+        "global": true,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      },
+      {
+        "operation": "check",
+        "label": "Check Database",
+        "perEntity": false,
+        "global": true,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      },
+      {
+        "operation": "optimize",
+        "label": "Rebuild Indexes",
+        "perEntity": true,
+        "global": true,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      },
+      {
+        "operation": "kill",
+        "label": "Kill Session",
+        "perEntity": false,
+        "global": false,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      }
+    ],
     "agentReadings": [
       "sessions",
       "slow-queries",

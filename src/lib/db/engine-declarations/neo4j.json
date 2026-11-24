@@ -69,6 +69,7 @@
       "storage": "not-offered"
     },
     "maintenance": [],
+    "maintenanceSpecs": [],
     "agentReadings": [
       "sessions",
       "table-stats",

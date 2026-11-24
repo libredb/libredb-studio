@@ -75,6 +75,52 @@
       "reindex",
       "kill"
     ],
+    "maintenanceSpecs": [
+      {
+        "operation": "vacuum",
+        "label": "Vacuum Table",
+        "perEntity": true,
+        "global": true,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      },
+      {
+        "operation": "analyze",
+        "label": "Analyze Table",
+        "perEntity": true,
+        "global": true,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      },
+      {
+        "operation": "reindex",
+        "label": "Reindex Table",
+        "perEntity": true,
+        "global": true,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      },
+      {
+        "operation": "kill",
+        "label": "Terminate Backend",
+        "perEntity": false,
+        "global": false,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      }
+    ],
     "agentReadings": [
       "sessions",
       "slow-queries",

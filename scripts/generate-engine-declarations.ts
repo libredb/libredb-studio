@@ -80,6 +80,12 @@
  * row, the user and password together, is written `pair`, and `maskingExemptColumns` from `MASKING_EXEMPT_COLUMNS`
  * (clauses M-58 and M-59).
  *
+ * The facets come from the engine's `ENGINE_FACETS` row, except the maintenance specs, which are the provider's own
+ * statements and come from its capabilities' `maintenanceOperationSpecs` (clause M-64): one per operation of the row's
+ * maintenance list, in that order, a title, description, confirmation or kinds the provider leaves out written null and
+ * a preview it leaves out written false. The generator refuses by name a listed operation with no spec and a spec for an
+ * operation the list does not name.
+ *
  * The safeguards are no claims but the provider's own statements of what its code does, so they come from its
  * capabilities, read as the editor facts are (clause M-60): `writePaths` from `writeReach`, path by path in the order
  * of `WRITE_PATHS` (`src/lib/db/write-reach.ts`) with a proof the provider names none of written null, and every path
@@ -128,6 +134,7 @@ import type {
   FieldName,
   FieldRule,
   GrammarFacts,
+  MaintenanceSpec,
   MigrationDdl,
   NameQuote,
   PlaceableFieldName,
@@ -195,7 +202,7 @@ import { SQL_GRAMMAR } from "../src/lib/db/sql-grammar";
 import type { SqlGrammarSpec, SqlRedaction } from "../src/lib/db/sql-grammar/types";
 import { SQL_WRITING } from "../src/lib/db/sql-writing";
 import type { InferredKind, SqlWritingSpec } from "../src/lib/db/sql-writing/types";
-import type { ProviderCapabilities, WritePath, WritePathReach } from "../src/lib/db/types";
+import type { MaintenanceOperation, ProviderCapabilities, WritePath, WritePathReach } from "../src/lib/db/types";
 import type { NonFiniteWord } from "../src/lib/non-finite";
 import { DIALECT_EDITORS, type DialectEditor } from "../src/lib/editor/dialect-editors";
 import { resolveTabType } from "../src/lib/editor/tab-language";
@@ -1132,6 +1139,40 @@ function buildSafeguards(type: DatabaseType, capabilities: ProviderCapabilities)
   };
 }
 
+/**
+ * One engine's maintenance specs, read from its provider's capabilities: one per operation of the engine's
+ * `ENGINE_FACETS` maintenance list, in that order, each member the provider leaves out written at the reading Studio
+ * gives that absence, null for a title, a description, a confirmation and the kinds, and false for a preview. A listed
+ * operation with no spec and a spec for an operation the list does not name are each refused by name, never dropped or
+ * defaulted.
+ */
+function buildMaintenanceSpecs(type: DatabaseType, capabilities: ProviderCapabilities): MaintenanceSpec[] {
+  const listed = ENGINE_FACETS[type].maintenance;
+  const specs = capabilities.maintenanceOperationSpecs ?? {};
+  for (const operation of Object.keys(specs) as MaintenanceOperation[]) {
+    if (!listed.includes(operation)) {
+      throw new Error(
+        `${type}: the provider declares a maintenance spec for ${operation}, which its engine's maintenance facet does not list`,
+      );
+    }
+  }
+  return listed.map((operation) => {
+    const spec = specs[operation];
+    if (spec === undefined) throw new Error(`${type}: the provider declares no maintenance spec for ${operation}`);
+    return {
+      operation,
+      label: spec.label,
+      perEntity: spec.perEntity,
+      global: spec.global,
+      title: spec.title ?? null,
+      description: spec.description ?? null,
+      confirmation: spec.confirmation ?? null,
+      preview: spec.preview === true,
+      kinds: spec.kinds === undefined ? null : [...spec.kinds],
+    };
+  });
+}
+
 /** The engine's masking exemption, `MASKING_EXEMPT_COLUMNS`'s row as its column pattern and reason, or null. */
 function maskingExemption(type: DatabaseType): EngineDeclaration["policy"]["maskingExemptColumns"] {
   const row = MASKING_EXEMPT_COLUMNS[type];
@@ -1202,6 +1243,7 @@ export function buildEngineDeclaration(type: DatabaseType, capabilities: Provide
         storage: facets.monitoring.storage,
       },
       maintenance: [...facets.maintenance],
+      maintenanceSpecs: buildMaintenanceSpecs(type, capabilities),
       agentReadings: [...facets.agentReadings],
     },
     agent: { statementLanguage: AGENT_STATEMENT_LANGUAGE[type] },

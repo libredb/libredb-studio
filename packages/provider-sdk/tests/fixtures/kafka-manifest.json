@@ -91,6 +91,7 @@
           "storage": "offered"
         },
         "maintenance": [],
+        "maintenanceSpecs": [],
         "agentReadings": ["table-stats", "storage"]
       },
       "agent": {

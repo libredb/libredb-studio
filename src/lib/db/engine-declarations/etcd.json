@@ -80,6 +80,41 @@
       "defragment",
       "disarm"
     ],
+    "maintenanceSpecs": [
+      {
+        "operation": "compact",
+        "label": "Compact history",
+        "perEntity": false,
+        "global": true,
+        "title": "Compact history",
+        "description": "Removes every revision before the current one. History reads before it fail, and a watch from an older revision is cancelled.",
+        "confirmation": "typed",
+        "preview": false,
+        "kinds": null
+      },
+      {
+        "operation": "defragment",
+        "label": "Defragment",
+        "perEntity": false,
+        "global": true,
+        "title": "Defragment the member",
+        "description": "Rebuilds the database file of the member this connection reaches, and only that member. That member blocks reads and writes while it runs.",
+        "confirmation": "typed",
+        "preview": false,
+        "kinds": null
+      },
+      {
+        "operation": "disarm",
+        "label": "Disarm alarms",
+        "perEntity": false,
+        "global": true,
+        "title": "Disarm alarms",
+        "description": "Clears every raised alarm. Defragment every member that alarm list names first: a NOSPACE alarm comes back on the next write if the database is still over its quota.",
+        "confirmation": "typed",
+        "preview": false,
+        "kinds": null
+      }
+    ],
     "agentReadings": [
       "storage",
       "health"

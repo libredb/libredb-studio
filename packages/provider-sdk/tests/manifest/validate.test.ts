@@ -352,6 +352,57 @@ function inlineEditRefusal(type: string): Json {
   return { type, reason: "Large object columns are refused, since a cell shows only part of one." };
 }
 
+/** The facets of the fixture's one engine. */
+const facetsOf = (m: Json): Json => m.engines[0].facets;
+
+/** The maintenance specs of the fixture's one engine. */
+const maintenanceSpecsOf = (m: Json): Json[] => m.engines[0].facets.maintenanceSpecs;
+
+/** The pointer of the fixture's one engine's maintenance specs. */
+const MAINTENANCE_SPECS = "/engines/0/facets/maintenanceSpecs";
+
+/** A maintenance spec for `operation`, labelled `label` and placed as stated, with every optional member at its absence. */
+function maintenanceSpec(operation: string, label: string, perEntity: boolean, global: boolean, rest: Json = {}): Json {
+  return {
+    operation,
+    label,
+    perEntity,
+    global,
+    title: null,
+    description: null,
+    confirmation: null,
+    preview: false,
+    kinds: null,
+    ...rest,
+  };
+}
+
+/**
+ * The fixture's one engine offering five maintenance operations, each with a spec of one shipped shape, in the list's
+ * order: both placements (vacuum), the whole database only (check), one row only with its kinds, a typed target, a
+ * description and a preview (release), a whole-database card with its title, description and typed confirmation
+ * (compact), and placed nowhere (kill).
+ */
+function withMaintenance(m: Json): void {
+  facetsOf(m).maintenance = ["vacuum", "check", "release", "compact", "kill"];
+  facetsOf(m).maintenanceSpecs = [
+    maintenanceSpec("vacuum", "Vacuum", true, true),
+    maintenanceSpec("check", "Check Database", false, true),
+    maintenanceSpec("release", "Release", true, false, {
+      description: "Releases the collection from memory, so a search on it fails until it is loaded again.",
+      confirmation: "typed-target",
+      preview: true,
+      kinds: ["collection", "materialized_query_table", "file-format"],
+    }),
+    maintenanceSpec("compact", "Compact", false, true, {
+      title: "Compact Revisions",
+      description: "Discards every revision older than the current one.",
+      confirmation: "typed",
+    }),
+    maintenanceSpec("kill", "Kill", false, false),
+  ];
+}
+
 /** A refusal sentence a test states as an engine's denied file access refusal. */
 const DENIED_FILE_ACCESS_REFUSAL =
   "Kafka connections require an administrator because this client cannot confine file access.";
@@ -759,6 +810,16 @@ describe("schema refusals", () => {
       "agentCredentialRequired",
     ]),
     ...missingRows("connection", connectionOf, "/engines/0/connection", ["readsTrustMaterial"]),
+    ...missingRows("facets", facetsOf, "/engines/0/facets", ["maintenanceSpecs"]),
+    ...missingRows(
+      "facets.maintenanceSpecs[0]",
+      (m) => {
+        withMaintenance(m);
+        return maintenanceSpecsOf(m)[0] as Json;
+      },
+      `${MAINTENANCE_SPECS}/0`,
+      ["operation", "label", "perEntity", "global", "title", "description", "confirmation", "preview", "kinds"],
+    ),
   ])("a missing %s is refused as missing-key", (_name, change, pointer, key) => {
     expect(refusalsFor(manifest(change))).toEqual([refusal("missing-key", pointer, key)]);
   });
@@ -2164,6 +2225,108 @@ describe("schema refusals", () => {
     expect(refusalsFor(trust)).toEqual([refusal("unknown-key", POLICY, "readsTrustMaterial")]);
   });
 
+  test("every shipped shape of a maintenance spec is admitted", () => {
+    const shaped = manifest(withMaintenance);
+    const kafka = kafkaManifest();
+    withMaintenance(kafka);
+
+    expect(refusalsFor(shaped)).toEqual([]);
+    expect(validator.validateEngine(shaped.engines[0]).admitted).toBe(true);
+    expect(refusalsFor(kafka)).toEqual([]);
+    expect(refusalsFor(manifest())).toEqual([]);
+    expect(refusalsFor(kafkaManifest())).toEqual([]);
+  });
+
+  test("a maintenance spec whose label, title or description is empty or past its bound is refused as out-of-range", () => {
+    for (const [member, index, bound] of [
+      ["label", 0, 128],
+      ["title", 3, 128],
+      ["description", 3, 2000],
+    ] as const) {
+      for (const text of ["", "x".repeat(bound + 1)]) {
+        const changed = manifest((m) => {
+          withMaintenance(m);
+          maintenanceSpecsOf(m)[index][member] = text;
+        });
+
+        expect(refusalsFor(changed)).toEqual([refusal("out-of-range", `${MAINTENANCE_SPECS}/${index}/${member}`)]);
+      }
+      const longest = manifest((m) => {
+        withMaintenance(m);
+        maintenanceSpecsOf(m)[index][member] = "x".repeat(bound);
+      });
+
+      expect(refusalsFor(longest)).toEqual([]);
+    }
+  });
+
+  test("a maintenance spec's operation or confirmation outside its vocabulary is refused as value-not-allowed", () => {
+    const operation = manifest((m) => {
+      withMaintenance(m);
+      maintenanceSpecsOf(m)[0].operation = "truncate";
+    });
+
+    expect(refusalsFor(operation)).toEqual([refusal("value-not-allowed", `${MAINTENANCE_SPECS}/0/operation`)]);
+    for (const confirmation of ["typed-name", "TYPED"]) {
+      const changed = manifest((m) => {
+        withMaintenance(m);
+        maintenanceSpecsOf(m)[3].confirmation = confirmation;
+      });
+
+      expect(refusalsFor(changed)).toEqual([refusal("value-not-allowed", `${MAINTENANCE_SPECS}/3/confirmation`)]);
+    }
+  });
+
+  test("a maintenance spec member that is not of its type is refused as wrong-type", () => {
+    for (const [member, value] of [
+      ["perEntity", "yes"],
+      ["preview", null],
+      ["kinds", "table"],
+    ] as const) {
+      const changed = manifest((m) => {
+        withMaintenance(m);
+        maintenanceSpecsOf(m)[2][member] = value;
+      });
+
+      expect(refusalsFor(changed)).toEqual([refusal("wrong-type", `${MAINTENANCE_SPECS}/2/${member}`)]);
+    }
+  });
+
+  test("an object kind a maintenance spec names outside its pattern is refused as pattern-mismatch, an empty kind list as too-few and a repeated kind as duplicate", () => {
+    const KINDS = `${MAINTENANCE_SPECS}/2/kinds`;
+    const withKinds = (kinds: unknown[]) =>
+      manifest((m) => {
+        withMaintenance(m);
+        maintenanceSpecsOf(m)[2].kinds = kinds;
+      });
+
+    for (const kind of ["Table", "1table", "table kind"]) {
+      expect(refusalsFor(withKinds([kind]))).toEqual([refusal("pattern-mismatch", `${KINDS}/0`)]);
+    }
+    expect(refusalsFor(withKinds([]))).toEqual([refusal("too-few", KINDS)]);
+    expect(refusalsFor(withKinds(["table", "table"]))).toEqual([refusal("duplicate", `${KINDS}/1`)]);
+  });
+
+  test("a maintenance spec member Studio's spec has none of is refused as unknown-key", () => {
+    for (const key of ["destructive", "confirmed"]) {
+      const changed = manifest((m) => {
+        withMaintenance(m);
+        maintenanceSpecsOf(m)[1][key] = true;
+      });
+
+      expect(refusalsFor(changed)).toEqual([refusal("unknown-key", `${MAINTENANCE_SPECS}/1`, key)]);
+    }
+  });
+
+  test("more maintenance specs than there are operations are refused as too-many", () => {
+    const changed = manifest((m) => {
+      withMaintenance(m);
+      facetsOf(m).maintenanceSpecs = Array.from({ length: 12 }, () => maintenanceSpec("vacuum", "Vacuum", true, true));
+    });
+
+    expect(refusalsFor(changed)).toEqual([refusal("too-many", MAINTENANCE_SPECS)]);
+  });
+
   test("several failures are each refused, ordered by pointer", () => {
     const changed = manifest((m) => {
       m.bogus = true;
@@ -2899,6 +3062,87 @@ describe("rules the schema cannot state", () => {
     expect(refusalsFor(shared)).toEqual([]);
   });
 
+  /** The fixture's one engine offering maintenance in every shipped shape, then changed by `change`. */
+  const maintained = (change: (m: Json) => void) =>
+    manifest((m) => {
+      withMaintenance(m);
+      change(m);
+    });
+
+  /** The spec at `index` of the fixture's one engine, with `members` assigned over it. */
+  const respec = (index: number, members: Json) => (m: Json) => Object.assign(maintenanceSpecsOf(m)[index], members);
+
+  test("a maintenance spec for an operation the maintenance facet does not list is refused as maintenance-spec-unlisted", () => {
+    const changed = maintained((m) => (facetsOf(m).maintenance = ["vacuum", "check", "compact", "kill"]));
+
+    expect(refusalsFor(changed)).toEqual([refusal("maintenance-spec-unlisted", `${MAINTENANCE_SPECS}/2/operation`)]);
+  });
+
+  test("a maintenance operation given two specs is refused as maintenance-spec-duplicate, at the later one", () => {
+    const changed = maintained((m) =>
+      maintenanceSpecsOf(m).push(maintenanceSpec("vacuum", "Vacuum Again", true, true)),
+    );
+
+    expect(refusalsFor(changed)).toEqual([refusal("maintenance-spec-duplicate", `${MAINTENANCE_SPECS}/5/operation`)]);
+  });
+
+  test("a listed maintenance operation with no spec is refused as maintenance-spec-missing, at the operation", () => {
+    const changed = maintained((m) => maintenanceSpecsOf(m).splice(1, 1));
+
+    expect(refusalsFor(changed)).toEqual([refusal("maintenance-spec-missing", "/engines/0/facets/maintenance/1")]);
+  });
+
+  test("a maintenance spec that places its operation nowhere is refused as maintenance-spec-unplaced, and kill's is admitted", () => {
+    const changed = maintained(respec(0, { perEntity: false, global: false }));
+
+    const kill = maintained(() => {});
+
+    expect(refusalsFor(changed)).toEqual([refusal("maintenance-spec-unplaced", `${MAINTENANCE_SPECS}/0`)]);
+    expect(maintenanceSpecsOf(kill)[4]).toMatchObject({ operation: "kill", perEntity: false, global: false });
+    expect(refusalsFor(kill)).toEqual([]);
+  });
+
+  test("a typed confirmation is admitted only on a spec placed over the whole database alone, with a title and a description, and refused elsewhere as maintenance-typed-confirmation-unasked", () => {
+    const at = `${MAINTENANCE_SPECS}/3/confirmation`;
+
+    for (const members of [{ perEntity: true }, { title: null }, { description: null }]) {
+      expect(refusalsFor(maintained(respec(3, members)))).toEqual([
+        refusal("maintenance-typed-confirmation-unasked", at),
+      ]);
+    }
+    expect(refusalsFor(maintained(respec(3, { global: false })))).toEqual([
+      refusal("maintenance-spec-unplaced", `${MAINTENANCE_SPECS}/3`),
+      refusal("maintenance-typed-confirmation-unasked", at),
+    ]);
+    expect(refusalsFor(maintained(respec(4, { confirmation: "typed" })))).toEqual([
+      refusal("maintenance-typed-confirmation-unasked", `${MAINTENANCE_SPECS}/4/confirmation`),
+    ]);
+  });
+
+  test("a typed target is admitted only on a spec placed on a row alone, and refused elsewhere as maintenance-typed-target-unasked", () => {
+    const at = `${MAINTENANCE_SPECS}/2`;
+
+    expect(refusalsFor(maintained(respec(2, { global: true })))).toEqual([
+      refusal("maintenance-typed-target-unasked", `${at}/confirmation`),
+    ]);
+    expect(refusalsFor(maintained(respec(2, { perEntity: false, global: true })))).toEqual([
+      refusal("maintenance-typed-target-unasked", `${at}/confirmation`),
+      refusal("maintenance-preview-unplaced", `${at}/preview`),
+    ]);
+    expect(refusalsFor(maintained(respec(2, { perEntity: false, global: false })))).toEqual([
+      refusal("maintenance-spec-unplaced", at),
+      refusal("maintenance-typed-target-unasked", `${at}/confirmation`),
+      refusal("maintenance-preview-unplaced", `${at}/preview`),
+    ]);
+  });
+
+  test("a maintenance preview no per-row control shows is refused as maintenance-preview-unplaced", () => {
+    expect(refusalsFor(maintained(respec(1, { preview: true })))).toEqual([
+      refusal("maintenance-preview-unplaced", `${MAINTENANCE_SPECS}/1/preview`),
+    ]);
+    expect(refusalsFor(maintained(respec(0, { preview: true })))).toEqual([]);
+  });
+
   test("a sign-in shaped like Snowflake's is admitted", () => {
     expect(refusalsFor(manifest(signInShaped))).toEqual([]);
   });
@@ -3195,6 +3439,31 @@ describe("one engine declaration", () => {
     });
   });
 
+  test("an engine declaration's maintenance specs are held to their rules, at pointers into it", () => {
+    const shaped = kafkaManifest();
+    withMaintenance(shaped);
+    const declaration = shaped.engines[0] as Json;
+    declaration.facets.maintenance = ["vacuum", "check", "compact", "kill", "analyze"];
+    declaration.facets.maintenanceSpecs.push(maintenanceSpec("kill", "Kill Again", false, false));
+    Object.assign(declaration.facets.maintenanceSpecs[0], { perEntity: false, global: false });
+    Object.assign(declaration.facets.maintenanceSpecs[1], { preview: true });
+    Object.assign(declaration.facets.maintenanceSpecs[3], { title: null });
+    Object.assign(declaration.facets.maintenanceSpecs[2], { global: true });
+
+    expect(validator.validateEngine(declaration)).toEqual({
+      admitted: false,
+      refusals: [
+        refusal("maintenance-spec-missing", "/facets/maintenance/4"),
+        refusal("maintenance-spec-unplaced", "/facets/maintenanceSpecs/0"),
+        refusal("maintenance-preview-unplaced", "/facets/maintenanceSpecs/1/preview"),
+        refusal("maintenance-typed-target-unasked", "/facets/maintenanceSpecs/2/confirmation"),
+        refusal("maintenance-spec-unlisted", "/facets/maintenanceSpecs/2/operation"),
+        refusal("maintenance-typed-confirmation-unasked", "/facets/maintenanceSpecs/3/confirmation"),
+        refusal("maintenance-spec-duplicate", "/facets/maintenanceSpecs/5/operation"),
+      ],
+    });
+  });
+
   test("an engine declaration's write reach is refused at its own pointer under validateEngine", () => {
     const declaration = kafkaManifest().engines[0] as Json;
     declaration.policy.writeReach = "partial";
@@ -3311,6 +3580,17 @@ describe("refusals carry no value", () => {
     ]);
     expect(JSON.stringify(safeguardRefusals)).not.toContain(name);
     for (const item of safeguardRefusals) expect(refusalSentence(item)).not.toContain(name);
+
+    const label = `Label ${randomUUID()}`;
+    const unlisted = manifest((m) => {
+      withMaintenance(m);
+      maintenanceSpecsOf(m).push(maintenanceSpec("analyze", label, true, false, { description: label, title: label }));
+    });
+    const maintenanceRefusals = refusalsFor(unlisted);
+
+    expect(maintenanceRefusals).toEqual([refusal("maintenance-spec-unlisted", `${MAINTENANCE_SPECS}/5/operation`)]);
+    expect(JSON.stringify(maintenanceRefusals)).not.toContain(label);
+    for (const item of maintenanceRefusals) expect(refusalSentence(item)).not.toContain(label);
   });
 
   test("no SQL writing rule refusal carries the pattern or the type name it refuses", () => {
