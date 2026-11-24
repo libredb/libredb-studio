@@ -260,7 +260,7 @@ those fields always runs first, and a test holds that order.
 ### 4.3 TLS
 
 Not applicable. RFC 6242 makes SSH the transport, so there is no TLS panel to get wrong and no
-credential warning about one. `CREDENTIAL_WARNINGS` carries no entry for this engine, and the
+credential warning about one. Its declaration's `connection.credentialWarnings` is empty, so `CREDENTIAL_WARNINGS` carries no entry for this engine, and the
 reason is measured rather than assumed: there is no documented vendor default account to warn
 about, no JWT, and the "no secret" case is unreachable because a missing, empty or wrong
 credential all end in the same refusal.
@@ -278,7 +278,7 @@ The device at the far end is not checked here: a link-local or metadata address 
 ### Connection string
 
 `netconf` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/network/netconf/connection-string.ts)).
-Its one seed-only field is `hostKeyFingerprint` (`SEED_ONLY_FIELDS.netconf` in [`connection-fields.ts`](../../src/lib/db/connection-fields.ts)): only the NETCONF provider reads it, so a seed of any other type that carries it is refused at load, naming the field.
+Its one seed-only field is `hostKeyFingerprint` (its declaration's `connection.seedOnly`, read as `SEED_ONLY_FIELDS.netconf` in [`connection-fields.ts`](../../src/lib/db/connection-fields.ts)): only the NETCONF provider reads it, so a seed of any other type that carries it is refused at load, naming the field.
 
 ### Execution UI
 
