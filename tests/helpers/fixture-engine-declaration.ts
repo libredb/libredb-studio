@@ -1,7 +1,8 @@
 import type { EngineDeclaration } from "@libredb/provider-sdk/manifest";
 
 /**
- * The fixture engine of the removal tests (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72, M-74, M-75 and M-77):
+ * The fixture engine of the removal tests (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72, M-74, M-75, M-77 and
+ * M-78):
  * `base` declared as `acmefoo`, the id the FND-1 tests give a stored connection of an engine no provider serves, named
  * "Acme Foo", with a connect budget of 90 s.
  *
@@ -17,7 +18,11 @@ import type { EngineDeclaration } from "@libredb/provider-sdk/manifest";
  * alias of its own, `acmefooql`, so its execution UI entry is one no shipped engine has and it restates none of
  * `base`'s aliases, which the fence alias projection would refuse as declared twice (clause M-75). It states `base`'s
  * query dialect and editor language unchanged, so it adds no query editor entry, and restates none of them otherwise,
- * which the query editor projection would refuse as stated differently (clause M-77).
+ * which the query editor projection would refuse as stated differently (clause M-77). Its SQL text is `base`'s with one
+ * trailing limit clause of its own after `base`'s, `\s+WITH\s+ACME\s+HINT\s*$`, so its entry is one no shipped
+ * engine has, and it names no completion reader, whatever `base` names, so Studio's grammar function table holds
+ * nothing for it and its grammar composes (clause M-78); its `sqlText.redaction` is `base`'s, a claim no projection
+ * reads.
  */
 export function fixtureEngineDeclaration(base: EngineDeclaration): EngineDeclaration {
   return {
@@ -61,6 +66,17 @@ export function fixtureEngineDeclaration(base: EngineDeclaration): EngineDeclara
           "On Acme Foo a read that runs past its deadline is stopped by the server, which keeps no partial result.",
       },
       fenceAliases: ["acmefooql"],
+    },
+    sqlText: {
+      ...base.sqlText,
+      grammar: {
+        ...base.sqlText.grammar,
+        trailingLimitClauses: [
+          ...base.sqlText.grammar.trailingLimitClauses,
+          { source: String.raw`\s+WITH\s+ACME\s+HINT\s*$`, flags: "i" },
+        ],
+      },
+      completion: { formatSegment: null, readQuotedQualifier: null },
     },
   };
 }
