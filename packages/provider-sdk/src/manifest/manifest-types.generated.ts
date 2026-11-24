@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "80097541a868368133346d7e30c74b11942e513ac8c78eb3f50a5de4db3eb73c";
+export const MANIFEST_SCHEMA_SHA256 = "54a438ec18bee12a2de19469e1dd0f0b9814f42563c7ddef452cc28e29bc5188";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -79,6 +79,7 @@ export interface EnvDeclaration {
 /** What the package's code answers beyond the mandatory calls. One implementation serves every engine the package declares, so these are facts of the package, not of an engine; every key is required, written as not-offered or an empty list where the package answers nothing more. */
 export interface Calls {
   readonly console: ConsoleCalls;
+  readonly objects: ObjectsCalls;
 }
 
 /** The console's calls: execute, which every package answers, and each optional console facet, keyed by the path to its function under the implementation's console. */
@@ -87,6 +88,11 @@ export interface ConsoleCalls {
   readonly cancel: FacetOffer;
   readonly endScope: FacetOffer;
   readonly transaction: FacetOffer;
+}
+
+/** The object facets: each optional call that reads what a connection holds, keyed by the path to its function under the implementation's objects. tree: list a connection's containers and the objects of one kind in one container, count each kind's objects in one container, and describe one object or every object of one kind in one container. */
+export interface ObjectsCalls {
+  readonly tree: FacetOffer;
 }
 
 /** What the package's console execute does with the optional fields of its request. */

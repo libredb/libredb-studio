@@ -22,10 +22,10 @@
  * The host's side refuses, before any frame and before anything else it checks, a call whose deadline has passed or
  * whose signal has aborted (`checkCallStart`), the signal's reason as the error's cause, so the provider is never
  * called and the tables are unchanged. It holds every call to the session's calls before any frame
- * (`checkExecuteRequest`, `checkConsoleFacet`), reads `open`'s refinement with `sessionCalls`, and closes what an
- * answer it refuses handed over: the session through the provider's `close`, under a cleanup context of its own
- * (`cleanupContext`), never the open's, which may have aborted, and each source through its own, every close run and
- * no failure lost.
+ * (`checkExecuteRequest`, `checkConsoleFacet`, `checkObjectsFacet`), reads `open`'s refinement with `sessionCalls`,
+ * and closes what an answer it refuses handed over: the session through the provider's `close`, under a cleanup
+ * context of its own (`cleanupContext`), never the open's, which may have aborted, and each source through its own,
+ * every close run and no failure lost.
  * Every loop over a provider's array stops at its first hole, an execute answer's result that is not an object is
  * refused at its index like a hole, and a served source asks the provider for exactly the limit it is pulled with, so
  * a frame never grows past what the provider holds.
@@ -39,8 +39,8 @@ import { cleanupContext, refuseCallStart } from "../calls/deadline";
 import { checkProviderModule, ProviderDefinitionError } from "../calls/define-provider";
 import { freezeContext, freezeData } from "../calls/freeze";
 import { isPlainRecord, pointerTo, readOwn } from "../calls/records";
-import { CallRefusalError } from "../calls/refusals";
-import { checkConsoleFacet, checkExecuteRequest, sessionCalls } from "../calls/session";
+import { type CallRefusal, CallRefusalError } from "../calls/refusals";
+import { checkConsoleFacet, checkExecuteRequest, checkObjectsFacet, sessionCalls } from "../calls/session";
 import type {
   BatchLimit,
   CallContext,
@@ -52,6 +52,7 @@ import type {
   EndScopeRequest,
   ExecuteAnswer,
   ExecuteRequest,
+  ObjectsImpl,
   OpenAnswer,
   OpenContext,
   ProviderImpl,
@@ -60,6 +61,8 @@ import type {
   RowBatch,
   TransactionAnswer,
   TransactionRequest,
+  TreeAnswer,
+  TreeRequest,
 } from "../calls/types";
 import { decodeValue, encodeValue } from "../values/codec";
 import { type FramePart, type FrameRefusal, FrameRefusalError, type ServedCall } from "./frames";
@@ -142,6 +145,7 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
   const declared = sessionCalls((module.manifest as { readonly calls: Calls }).calls, undefined);
   const impl = module.impl;
   const consoleImpl = impl.console;
+  const objectsImpl = impl.objects;
   const provider = Object.freeze({
     open: impl.open,
     close: impl.close,
@@ -149,6 +153,7 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
     cancel: consoleImpl.cancel,
     endScope: consoleImpl.endScope,
     transaction: consoleImpl.transaction,
+    tree: objectsImpl?.tree,
   });
   const observe = options.observe;
 
@@ -215,19 +220,22 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
   }
 
   /**
-   * One console call on the session `handle` with `request`: the request and context frame, the provider's call on
-   * decoded copies, and the answer frame, read and compared, decoded for the host.
+   * One facet call on the session `handle` with `request`, held first to the session's calls by `check`: the request
+   * and context frame, the provider's call `fn` on decoded copies, with `owner` as its `this`, and the answer frame,
+   * read and compared, decoded for the host.
    */
-  async function consoleCall<Answer>(
-    call: "console.cancel" | "console.endScope" | "console.transaction",
-    facet: ConsoleFacet,
+  async function facetCall<Answer>(
+    call: "console.cancel" | "console.endScope" | "console.transaction" | "objects.tree",
+    check: (calls: Calls) => readonly CallRefusal[],
+    fn: (handle: unknown, request: unknown, ctx: CallContext) => Promise<unknown>,
+    owner: unknown,
     handle: unknown,
-    request: CancelRequest | EndScopeRequest | TransactionRequest,
+    request: CancelRequest | EndScopeRequest | TransactionRequest | TreeRequest,
     ctx: CallContext,
   ): Promise<Answer> {
     refuseCallStart(ctx);
     const session = hostSession(call, handle);
-    const refusals = checkConsoleFacet(session.calls, facet);
+    const refusals = check(session.calls);
     if (refusals.length > 0) throw new CallRefusalError(refusals);
     const sent = cross(call, "to-provider", {
       call,
@@ -237,10 +245,21 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
     });
     const providerCtx = providerContext<CallContext>(receive(call, "context", sent.context, ctx, SERVICES), ctx);
     const providerRequest = freezeData(receive(call, "request", sent.request, request));
-    const fn = provider[facet] as (handle: unknown, request: unknown, ctx: CallContext) => Promise<unknown>;
-    const answer = await fn.call(consoleImpl, handles.get(session.id), providerRequest, providerCtx);
+    const answer = await fn.call(owner, handles.get(session.id), providerRequest, providerCtx);
     const received = cross(call, "to-host", { answer: encodeValue(answer) });
     return receive(call, "answer", received.answer, answer) as Answer;
+  }
+
+  /** One console facet call: a facet call held to the session's console calls, on the provider's console. */
+  function consoleCall<Answer>(
+    call: "console.cancel" | "console.endScope" | "console.transaction",
+    facet: ConsoleFacet,
+    handle: unknown,
+    request: CancelRequest | EndScopeRequest | TransactionRequest,
+    ctx: CallContext,
+  ): Promise<Answer> {
+    const fn = provider[facet] as (handle: unknown, request: unknown, ctx: CallContext) => Promise<unknown>;
+    return facetCall<Answer>(call, (calls) => checkConsoleFacet(calls, facet), fn, consoleImpl, handle, request, ctx);
   }
 
   /** A served source over the provider's source `id`, with the columns and the row count its descriptor carried. */
@@ -448,5 +467,21 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
             consoleCall<TransactionAnswer>("console.transaction", "transaction", handle, request, ctx),
         }),
   };
-  return Object.freeze({ open, close, console: Object.freeze(served) });
+  const tree = provider.tree;
+  const servedObjects: ObjectsImpl<ServedHandle> =
+    tree === undefined
+      ? {}
+      : {
+          tree: (handle: ServedHandle, request: TreeRequest, ctx: CallContext) =>
+            facetCall<TreeAnswer>(
+              "objects.tree",
+              (calls) => checkObjectsFacet(calls, "tree"),
+              tree as (handle: unknown, request: unknown, ctx: CallContext) => Promise<unknown>,
+              objectsImpl,
+              handle,
+              request,
+              ctx,
+            ),
+        };
+  return Object.freeze({ open, close, console: Object.freeze(served), objects: Object.freeze(servedObjects) });
 }

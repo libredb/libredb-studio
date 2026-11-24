@@ -170,9 +170,12 @@
       "properties": {
         "console": {
           "$ref": "#/$defs/consoleCalls"
+        },
+        "objects": {
+          "$ref": "#/$defs/objectsCalls"
         }
       },
-      "required": ["console"],
+      "required": ["console", "objects"],
       "additionalProperties": false
     },
     "consoleCalls": {
@@ -193,6 +196,17 @@
         }
       },
       "required": ["execute", "cancel", "endScope", "transaction"],
+      "additionalProperties": false
+    },
+    "objectsCalls": {
+      "description": "The object facets: each optional call that reads what a connection holds, keyed by the path to its function under the implementation's objects. tree: list a connection's containers and the objects of one kind in one container, count each kind's objects in one container, and describe one object or every object of one kind in one container.",
+      "type": "object",
+      "properties": {
+        "tree": {
+          "$ref": "#/$defs/facetOffer"
+        }
+      },
+      "required": ["tree"],
       "additionalProperties": false
     },
     "executeCall": {

@@ -2,8 +2,8 @@
  * A refinement `open` answers only narrows the manifest's calls, and any other refinement is refused by name
  * (docs/providers/CONTRACT.md, clause C-10).
  *
- * The declared calls offer cancel and not endScope and honour both request fields; each case asserts the exact
- * refusal list, every pointer rooted at the refinement.
+ * The declared calls offer cancel and not endScope, honour both request fields and offer the objects tree; each case
+ * asserts the exact refusal list, every pointer rooted at the refinement.
  */
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
@@ -24,10 +24,11 @@ const DECLARED: Calls = Object.freeze({
     endScope: "not-offered",
     transaction: "not-offered",
   }),
+  objects: Object.freeze({ tree: "offered" }),
 });
 
 /** Declared calls that honour only `params`. */
-const PARAMS_ONLY: Calls = { console: { ...DECLARED.console, execute: { honours: ["params"] } } };
+const PARAMS_ONLY: Calls = { ...DECLARED, console: { ...DECLARED.console, execute: { honours: ["params"] } } };
 
 function refused(rule: CallRefusal["rule"], pointer: string, name?: string): CallRefusal {
   return name === undefined ? { rule, pointer } : { rule, pointer, name };
@@ -45,7 +46,7 @@ describe("checkRefinement and sessionCalls", () => {
       calls: { console: { cancel: "not-offered", execute: { honours: ["params"] } } },
     };
 
-    for (const refine of [undefined, {}, { calls: {} }, { calls: { console: {} } }]) {
+    for (const refine of [undefined, {}, { calls: {} }, { calls: { console: {} } }, { calls: { objects: {} } }]) {
       expect(checkRefinement(DECLARED, refine)).toEqual([]);
       const calls = sessionCalls(DECLARED, refine);
       expect(calls).toEqual(DECLARED);
@@ -60,15 +61,18 @@ describe("checkRefinement and sessionCalls", () => {
         endScope: "not-offered",
         transaction: "not-offered",
       },
+      objects: { tree: "offered" },
     });
     expect(deepFrozen(calls)).toBe(true);
     expect(DECLARED.console.cancel).toBe("offered");
     expect(DECLARED.console.execute.honours).toEqual(["params", "offset"]);
     const unfrozen: Calls = {
       console: { execute: { honours: ["params"] }, cancel: "offered", endScope: "offered", transaction: "offered" },
+      objects: { tree: "offered" },
     };
     expect(deepFrozen(sessionCalls(unfrozen, { calls: { console: { endScope: "not-offered" } } }))).toBe(true);
     expect(Object.isFrozen(unfrozen.console.execute.honours)).toBe(false);
+    expect(Object.isFrozen(unfrozen.objects)).toBe(false);
   });
 
   test("a refinement that widens a declared value is refused as refinement-widens", () => {
@@ -90,7 +94,7 @@ describe("checkRefinement and sessionCalls", () => {
   });
 
   test("a refinement may withdraw console.transaction, and never offer it where the manifest does not", () => {
-    const offering: Calls = { console: { ...DECLARED.console, transaction: "offered" } };
+    const offering: Calls = { ...DECLARED, console: { ...DECLARED.console, transaction: "offered" } };
     const withdraw = { calls: { console: { transaction: "not-offered" } } };
     const offer = { calls: { console: { transaction: "offered" } } };
     let reads = 0;
@@ -116,6 +120,69 @@ describe("checkRefinement and sessionCalls", () => {
     expect(checkRefinement(offering, { calls: { console: accessor } })).toEqual([
       refused("refinement-unreadable", "/calls/console/transaction"),
     ]);
+    expect(reads).toBe(0);
+  });
+
+  test("a refinement may withdraw objects.tree, and never offer it where the manifest does not", () => {
+    const notOffering: Calls = { ...DECLARED, objects: { tree: "not-offered" } };
+    const withdraw = { calls: { objects: { tree: "not-offered" } } };
+    const offer = { calls: { objects: { tree: "offered" } } };
+    const both = { calls: { objects: { tree: "not-offered" }, console: { cancel: "not-offered" } } };
+    let reads = 0;
+    const accessor = Object.defineProperty({}, "tree", {
+      enumerable: true,
+      get() {
+        reads += 1;
+        return "not-offered";
+      },
+    });
+
+    expect(checkRefinement(DECLARED, withdraw)).toEqual([]);
+    const withdrawn = sessionCalls(DECLARED, withdraw as Refinement);
+    expect(withdrawn.objects).toEqual({ tree: "not-offered" });
+    expect(deepFrozen(withdrawn)).toBe(true);
+    expect(DECLARED.objects.tree).toBe("offered");
+    expect(sessionCalls(DECLARED, undefined).objects.tree).toBe("offered");
+    expect(sessionCalls(DECLARED, { calls: { objects: {} } }).objects.tree).toBe("offered");
+    expect(checkRefinement(DECLARED, offer)).toEqual([]);
+    expect(checkRefinement(notOffering, withdraw)).toEqual([]);
+    expect(checkRefinement(notOffering, offer)).toEqual([refused("refinement-widens", "/calls/objects/tree")]);
+    expect(checkRefinement(DECLARED, both)).toEqual([]);
+    expect(sessionCalls(DECLARED, both as Refinement)).toEqual({
+      console: { ...DECLARED.console, cancel: "not-offered" },
+      objects: { tree: "not-offered" },
+    });
+    expect(
+      checkRefinement(notOffering, { calls: { objects: { tree: "offered" }, console: { endScope: "offered" } } }),
+    ).toEqual([
+      refused("refinement-widens", "/calls/objects/tree"),
+      refused("refinement-widens", "/calls/console/endScope"),
+    ]);
+    for (const value of ["maybe", true, null]) {
+      expect(checkRefinement(DECLARED, { calls: { objects: { tree: value } } })).toEqual([
+        refused("refinement-unreadable", "/calls/objects/tree"),
+      ]);
+    }
+    expect(checkRefinement(DECLARED, { calls: { objects: "tree" } })).toEqual([
+      refused("refinement-unreadable", "/calls/objects"),
+    ]);
+    expect(checkRefinement(DECLARED, { calls: { objects: { source: "offered" } } })).toEqual([
+      refused("refinement-key-unknown", "/calls/objects/source", "source"),
+    ]);
+    expect(checkRefinement(DECLARED, { calls: { objects: accessor } })).toEqual([
+      refused("refinement-unreadable", "/calls/objects/tree"),
+    ]);
+    expect(
+      checkRefinement(DECLARED, {
+        calls: Object.defineProperty({}, "objects", {
+          enumerable: true,
+          get() {
+            reads += 1;
+            return {};
+          },
+        }),
+      }),
+    ).toEqual([refused("refinement-unreadable", "/calls/objects")]);
     expect(reads).toBe(0);
   });
 
@@ -160,6 +227,14 @@ describe("checkRefinement and sessionCalls", () => {
     ];
 
     for (const [refine, expected] of cases) expect(checkRefinement(DECLARED, refine)).toEqual([expected]);
+  });
+
+  test("a calls segment the contract does not define is refused by name, and never read as the objects segment", () => {
+    for (const value of [{ tree: "offered" }, { tree: "maybe" }, "tree", null]) {
+      expect(checkRefinement(DECLARED, { calls: { queries: value } })).toEqual([
+        refused("refinement-key-unknown", "/calls/queries", "queries"),
+      ]);
+    }
   });
 
   test("a refinement value of the wrong type, an accessor or a repeated field is refused as refinement-unreadable", () => {

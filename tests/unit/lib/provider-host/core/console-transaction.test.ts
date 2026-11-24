@@ -54,6 +54,7 @@ function callsOf(transaction = true): Calls {
       endScope: "not-offered",
       transaction: transaction ? "offered" : "not-offered",
     },
+    objects: { tree: "not-offered" },
   };
 }
 

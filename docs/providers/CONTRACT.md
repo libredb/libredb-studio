@@ -1428,8 +1428,9 @@ How a host reconciles two packages that state one language differently is decide
 The host calls a provider's implementation in its own process, as async functions.
 Every request and answer is data in the value codec's domain, except the session handle `open` answers, so the calls need no framing.
 The handle holds the session's state and is the package's own: the host never reads it, which the memory test transport checks, C-22.
-The manifest's `calls` segment declares what the package's code answers beyond the mandatory calls: the optional console facets and the optional request fields its execute honours.
+The manifest's `calls` segment declares what the package's code answers beyond the mandatory calls: the optional console facets, the optional request fields its execute honours, and the optional object facets.
 The optional console facets are `cancel`, which cancels a run, `endScope`, which ends a session scope, and `transaction`, which opens, commits and rolls back a transaction on the session and reads its state, C-57.
+The one object facet is `tree`, which lists a connection's containers and objects, counts them and describes them, C-61.
 One implementation serves every engine the package declares, so `calls` is a fact of the package, a sibling of `runtime`, and never a fact of an engine.
 The shapes of each call, its request, its answer and the contexts the host passes are the types `@libredb/provider-sdk/calls` exports.
 Every other surface of today's provider interface, health among them, joins this chapter with the change that carries it.
@@ -1472,23 +1473,28 @@ No loader exists yet, so nothing checks this.
 ### C-3 (normative): The mandatory calls
 
 The mandatory calls are `open`, `close` and `console.execute`, each a function of the implementation's own, found at the path its name spells.
-An implementation defines no other key than the calls this contract defines.
+An implementation defines no other key than the calls this contract defines: its keys are `open`, `close`, `console` and `objects`, which holds the object facets and which an implementation that offers none may leave out or hold empty.
+Each calls segment it has, `console` and `objects` alike, is a record of its calls: one that is `null`, a string, an array or any other value that is not an object is refused by name, and nothing under it is read.
 
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a mandatory call that is missing or no function is refused as call-missing"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a calls segment of the implementation that is not a record is refused as impl-segment-not-a-record, and nothing under it is read"
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an implementation key the contract does not define is refused as impl-key-unknown"
 
 ### C-4 (normative): An optional facet is declared and implemented, both ways
 
-An optional console facet, one of `CONSOLE_FACETS`, is offered in the manifest's `calls.console` exactly when the implementation has its function.
+An optional facet, one of `CONSOLE_FACETS` or of `OBJECTS_FACETS`, is offered in the manifest's `calls.console` or `calls.objects` exactly when the implementation has its function under `console` or `objects`.
 A facet is never discovered by calling it or by its shape.
 An engine facet for which this contract has no call yet, a monitoring panel, a maintenance operation or an agent reading, is refused when it is offered.
 
 - schema `/$defs/consoleCalls`
+- schema `/$defs/objectsCalls`
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an offered facet the implementation lacks is refused as facet-unimplemented"
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an implemented facet the manifest does not offer is refused as facet-undeclared"
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "the transaction facet is declared and implemented both ways, like every console facet"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "the objects tree facet is declared and implemented both ways, like every console facet"
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an engine facet this contract has no call for is refused as engine-facet-without-call"
 - test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the console facets and execute's request fields are the schema's"
+- test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the objects facets are the schema's"
 
 ### C-5 (normative): A package declares the request fields its execute honours
 
@@ -1517,10 +1523,14 @@ So a provider moves onto the contract without a behaviour change.
 A provider is built from the connection's fields and from the marks core sets beside them under symbol keys: the tunnel's far end and route, the literal seed-file mark, the file core admitted and the host paths core admitted.
 A census over Studio's own types holds this, one record over the connection's fields and one over its marks, and the shapes the open context shares with Studio, the TLS settings, the egress decision, the trust material, the pool settings, the tunnel's far end and the admitted host paths, are each mutually assignable with Studio's own.
 The census covers today's transaction surface too, the transaction methods the transaction route calls, begin's options and result and the arguments of a statement inside the transaction, each placed on the transaction facet's actions, its request and answer, or console execute, C-57.
+It covers today's object tree surface, the five provider members that list containers and objects, count them and describe them, each placed on an action of `objects.tree` and each argument on a member of that action's request, except the billed-read allowance, which stays with the host, C-61.
+The tree's answer shapes, the container, the object and its read range, the kind count, the column, index, foreign key and exclusion constraint and the object's detail and its batch, are each mutually assignable with Studio's own and have its keys, and each answer form's member is Studio's answer, a list compared by its items, since Studio's lists are mutable and the SDK's are not.
 
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every input a provider is built with has a place in the open context or a reason it stays with the host"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's console answer and request has a place in the console calls"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's transaction surface has a place in the console calls"
+- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's object tree surface has a place in the objects calls"
+- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "the object tree's answers are Studio's own shapes"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "the context's shared shapes are Studio's own"
 
 ### C-8 (informative): A provider never ignores a request field it does not honour
@@ -1551,15 +1561,18 @@ A refusal names the field and a JSON Pointer into the request, never a value of 
 `checkRefinement` refuses a widening, an unknown key and an unreadable value by name, reading every value as a data property and never calling a getter, and no refusal carries a value of the refinement.
 An `honours` list longer than the declared one is refused as a widening by its length, before any item is read, so a sparse array's length bounds no loop of the check.
 `sessionCalls` answers the narrowed calls, frozen, and the host keeps them with the session and nowhere else, with no cache and no invalidation event.
-A refinement may withdraw any console facet the manifest offers, `console.transaction` among them, and never offers one the manifest does not.
+A refinement may withdraw any console facet the manifest offers, `console.transaction` among them, and `objects.tree`, and never offers one the manifest does not.
+Its `calls` may hold `console` and `objects`, each optional and closed, and each is read by its own segment's reader, so a key that names no segment is refused by name and never read as another segment.
 A refinement is a call's answer, not a manifest fact, so the schema has no place for it.
 
 - test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement that narrows the declared calls is admitted, and the session's calls are the narrowed ones"
 - test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement that widens a declared value is refused as refinement-widens"
 - test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement may withdraw console.transaction, and never offer it where the manifest does not"
+- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement may withdraw objects.tree, and never offer it where the manifest does not"
 - test `packages/provider-sdk/tests/calls/refinement.test.ts` "an honours list longer than the declared one is refused as refinement-widens at the list, and no item is read"
 - test `packages/provider-sdk/tests/calls/honours-bounds.test.ts` "a refinement honours list of the longest length is refused at the list, in a bounded child"
 - test `packages/provider-sdk/tests/calls/refinement.test.ts` "a key a refinement cannot have is refused as refinement-key-unknown"
+- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a calls segment the contract does not define is refused by name, and never read as the objects segment"
 - test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement value of the wrong type, an accessor or a repeated field is refused as refinement-unreadable"
 - test `packages/provider-sdk/tests/calls/refinement.test.ts` "no refinement refusal carries a value of the refinement"
 
@@ -1650,15 +1663,17 @@ How many pages larger than one batch the host holds at once is bounded by its pa
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a cell outside the value codec is measured in its JSON form and answered unchanged"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the page's row limit is the probe limit for a bound Studio wrote, and every returned row otherwise"
 
-### C-17 (normative): The host calls a console facet only when the session offers it
+### C-17 (normative): The host calls a facet only when the session offers it
 
-The host holds every call to a console facet to the session's calls with `checkConsoleFacet` before the call, and refuses it by `facet-not-offered`, a rule of `CALL_REFUSAL_RULES`, when the session's calls do not offer that facet.
+The host holds every call to a console facet to the session's calls with `checkConsoleFacet` before the call, and every call to an object facet with `checkObjectsFacet`, and refuses it by `facet-not-offered`, a rule of `CALL_REFUSAL_RULES`, when the session's calls do not offer that facet.
 The session's calls are the ones `sessionCalls` answers, so a facet the manifest offers and a refinement narrowed to not-offered is refused too.
 The refusal names the facet by its call name and a JSON Pointer into the session's calls.
 
 - test `packages/provider-sdk/tests/calls/request.test.ts` "a console facet the session does not offer is refused before the call"
 - test `packages/provider-sdk/tests/calls/request.test.ts` "a console facet the session offers is called"
 - test `packages/provider-sdk/tests/calls/request.test.ts` "the transaction facet is refused by name to a session that does not offer it"
+- test `packages/provider-sdk/tests/calls/request.test.ts` "the objects tree facet is refused by name to a session that does not offer it"
+- test `packages/provider-sdk/tests/calls/request.test.ts` "a session that offers objects.tree is called"
 
 ### C-18 (normative): The testing entry is for tests
 
@@ -1688,6 +1703,7 @@ An error either side throws crosses by reference.
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "an error a call or a source throws reaches the host as the same object"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a served source's provider receives the limit's numbers decoded and frozen with the host's measure by reference, and the frame carries the numbers only"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a served transaction call crosses its request and answer as frames, and a statement inside the transaction carries its session state back"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served tree call crosses each action's request and answer as frames, and the provider receives decoded frozen copies"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a value that is not a provider module record is refused with every refusal before anything is served"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "the served implementation is an implementation of the module's manifest, with the module's facets"
 
@@ -1696,6 +1712,8 @@ An error either side throws crosses by reference.
 `readFrame` reads each part of each call's frame, its context, its request and its answer, as the closed shape of the call type it carries.
 A key the shape does not define, a required key the part lacks, and a value of the wrong type, outside its vocabulary, behind an accessor or in a list with a hole are each refused by a rule of `FRAME_REFUSAL_RULES`, at a JSON Pointer into the part, and never with a value of it.
 A page bound is exactly one of its two forms, a transaction request is read as the closed shape of the action it names, so only a begin carries `requireReportedState`, and a connection's keys are the contract's field names.
+A tree request is read as the closed shape of the action it names, so a member of another action is refused, and a tree answer is exactly one of its five forms, told apart by its keys, each read as its closed shape; a kind count, an object's read range and an object's indexes are each one of their forms, and the counts are a map whose every key is read.
+The frame reader reads shapes only: which answer form answers which action is the host's, C-62.
 Each reader is declared as the shape of its call type, so a member added to a call type, or to a union it reads, fails typecheck until its reader names it.
 
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "a well-formed frame of every call and part is admitted"
@@ -1704,6 +1722,8 @@ Each reader is declared as the shape of its call type, so a member added to a ca
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "a value of the wrong type or outside its vocabulary is refused as frame-value-unreadable"
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "a page bound is exactly one of its two forms"
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "a transaction request is one of its actions, and only begin carries requireReportedState"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a tree request is one of its actions, each with its own members"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a tree answer is exactly one of its five forms, each read as its closed shape"
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "a connection's keys are the contract's field names and each value a connection field value"
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "no frame refusal and no sentence carries a value of the frame"
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "every frame refusal rule is worded in one sentence"
@@ -1722,6 +1742,7 @@ A `Uint8Array` and a `Date` are compared by their bytes and their time alone, so
 - test `packages/provider-sdk/tests/testing/round-trip.test.ts` "an accessor is refused as round-trip-changed at its pointer, and the comparison never calls its getter"
 - test `packages/provider-sdk/tests/testing/round-trip.test.ts` "an array's own property that is not an index is refused as round-trip-changed at the array"
 - test `packages/provider-sdk/tests/testing/round-trip.test.ts` "a received value that differs from the sent one is refused at the pointer where it differs"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served tree call crosses each action's request and answer as frames, and the provider receives decoded frozen copies"
 
 ### C-22 (normative): A session handle and a result source never cross
 
@@ -1745,6 +1766,7 @@ Every close runs, and when one fails the host receives an `AggregateError` with 
 
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a request field or a console facet the session does not offer is refused before any frame"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a transaction call or a statement inside a transaction on a session without console.transaction is refused before any frame"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a tree call on a session without objects.tree is refused before any frame"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a refinement open answers narrows the served session's calls"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "an open answer the host refuses closes its session, and an execute answer the host refuses closes its sources"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a close that fails beside a refused answer is thrown with the refusal first"
@@ -2108,6 +2130,7 @@ Its execute honours `params` and `offset` for every engine, so each provider ans
 It offers `console.cancel` exactly when the provider can cancel a run.
 It offers `console.endScope` exactly where the provider ends the transactions its query path left open, and its `endScope` runs the provider's `endOpenQueryTransaction` with the request's scope and answers its outcome; its execute hands the provider the request's scope and ends nothing itself.
 It offers `console.transaction` exactly when the provider holds a transaction session, the duck typing of begin, commit and rollback the transaction route has always read.
+It offers no `objects.tree`: the object routes and the VS Code backend still call a provider's tree methods themselves, until they move onto the host core.
 Its transaction call runs the provider's own method for the action, a begin with `requireReportedState` as the transaction route has always passed it, answering `stateReported` exactly when the provider answered a result, and `state` runs nothing.
 Every transaction answer's session state is the provider's `isInTransaction()` read after the call, so through the bridge a state is `in-transaction` or `not-in-transaction`, and the bridge keeps none between calls.
 A statement sent with `transaction` runs the provider's prepare, the probe row past the page and `queryInTransaction` with a new array of the request's params, with no run id, no scope and no transaction ender, since it runs on the transaction's own connection, and answers the session state read after it.
@@ -2123,6 +2146,7 @@ The page's row limit is set once execute answered: one past the page when the pr
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session honours params and offset, offers cancel only where the provider cancels, and endScope only where the provider ends its query path's transactions"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged endScope runs the provider's ender on the scope it is sent and answers its outcome, its failure by reference"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session offers the transaction facet exactly where the provider is a TransactionProvider"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session offers no objects tree facet, since the object routes and the VS Code backend still call the provider's tree methods themselves"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged begin, COMMIT, ROLLBACK and state read call the provider's methods and answer its state after each"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged begin hands the provider requireReportedState as the route always did, true only when asked"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged statement inside the transaction prepares, probes and runs queryInTransaction, with no run id, no scope and no ender, and answers the state after it"
@@ -2448,6 +2472,42 @@ Only the legacy bridge calls a provider's `endOpenQueryTransaction`.
 - test `tests/api/db/multi-query.test.ts` "a provider that cannot end one is asked nothing and answers as before"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "only the legacy bridge calls a provider's endOpenQueryTransaction, so a run's open transaction ends through console.endScope alone"
 
+### C-61 (normative): The objects tree facet
+
+`objects.tree` is one object facet, offered or not in `calls.objects.tree`, and implemented as one function under the implementation's `objects` whose request names its action, one of `TREE_ACTIONS`.
+`containers` lists the containers under `parent`, or at the top level when the request sends none.
+`count` answers each kind's count of objects in one container, keyed by the kind: a count, a count read from a bounded sample with the provider's sentence for what bounded it, or the engine's sentence for a read that was refused.
+`list` answers one kind's objects in one container, by name and path, with no columns.
+`describe` answers one object's columns, indexes and foreign keys, its indexes the engine's sentence where that read was refused.
+`describeMany` answers the same detail for every object of one kind in one container in one read, at most `limit` of them when the request sends one, and says so in `truncated` when the read stopped short; with `defaultSql` it answers each default as SQL text, which a provider whose catalog already spells a default as SQL answers anyway.
+A container's path and an object's path are opaque: the host sends each back exactly as it was answered and reads nothing in it.
+The facet has no honours list: its request's members are each the action's own, absent `parent` meaning the top level and absent `limit` meaning unbounded, and a provider honours every one of them, C-63.
+The answer shapes are Studio's own object tree shapes, declared by the SDK and held mutually assignable with Studio's, C-7.
+
+- schema `/$defs/calls/properties/objects`
+- schema `/$defs/objectsCalls/properties/tree`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "calls that leave out objects, or objects that leave out tree, are refused as missing-key"
+- test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the objects facets are the schema's"
+- test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the tree actions are containers, count, list, describe and describeMany"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "the objects tree facet is declared and implemented both ways, like every console facet"
+- test `packages/provider-sdk/tests/calls/request.test.ts` "the objects tree facet is refused by name to a session that does not offer it"
+- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement may withdraw objects.tree, and never offer it where the manifest does not"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a tree request is one of its actions, each with its own members"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a tree answer is exactly one of its five forms, each read as its closed shape"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served tree call crosses each action's request and answer as frames, and the provider receives decoded frozen copies"
+
+### C-62 (informative): A tree answer is read by reference
+
+In process the host reads a tree answer by reference and decides nothing on its values; what a caller reads of one stays the caller's.
+The host's reader of a native provider's tree answer, which checks that the form answers the action, arrives with the first native provider.
+
+### C-63 (informative): A provider honours every member of a tree request
+
+A provider's `objects.tree` honours every member of the request its action names: it lists the containers under the `parent` it is sent, and it stops a `describeMany` read at the `limit` it is sent and says so in `truncated`, never at a cap of its own it does not state.
+No package implements `objects.tree` yet, and the legacy bridge offers it to no session, so nothing checks this of an implementation.
+Today's providers, whose tree methods the object routes and the VS Code backend call themselves, are held to the same members by `assertObjectSurface` in `tests/helpers/object-surface-conformance.ts`, which their integration tests run: its own tests "rejects a deep container whose LAST segment the provider never answered", "rejects a bounded read that stops short and says nothing" and "rejects an unbounded read that reports the caller's bound", in `tests/unit/db/object-surface-conformance.test.ts`, show it fails a provider that ignores `parent` or `limit`.
+The host's reader of a native provider's tree answer, which arrives with the first native provider, or a case of the kit checks it, and neither exists yet.
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:
@@ -2506,6 +2566,7 @@ Against the manifest sketch the design started from:
 - Each maintenance operation's spec is an entry naming its operation, and every operation the maintenance list names has one, M-64.
 - A maintenance spec's placements, confirmation and preview are the provider's statements, never claims, and only kill is placed nowhere, M-64 and M-65.
 - Transactions are one console facet, `transaction`, whose request names its action, and a statement inside a transaction is console execute sent with `transaction`; the sketch named four wire methods and a separate `session/state` read, C-57.
+- The object tree is one facet, `objects.tree`, whose request names its action; the sketch named five wire methods, `objects/containers`, `objects/count`, `objects/list`, `objects/describe` and `objects/describeMany`, C-61.
 
 Against this contract's earlier text:
 

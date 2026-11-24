@@ -6,9 +6,10 @@
  * value codec's domain (`@libredb/provider-sdk/values`), except the session handle `open` answers, which is the
  * package's own and which the host never reads.
  *
- * The SDK declares each shape the contexts share with Studio's own source (`TlsSettings`, `EgressDecision`,
- * `TrustMaterial`, `PoolSettings`, `TunnelFarEnd`, `AdmittedHostPaths`) itself, because a package imports nothing from
- * Studio; a census in Studio's tests holds each one mutually assignable with Studio's type.
+ * The SDK declares each shape the contexts and the object tree share with Studio's own source (`TlsSettings`,
+ * `EgressDecision`, `TrustMaterial`, `PoolSettings`, `TunnelFarEnd`, `AdmittedHostPaths`, and the tree's `Container`,
+ * `DatabaseObject`, `KindCount`, `ObjectDetail` and the shapes they hold) itself, because a package imports nothing
+ * from Studio; a census in Studio's tests holds each one mutually assignable with Studio's type.
  */
 import type {
   ConsoleCalls,
@@ -16,6 +17,7 @@ import type {
   ExecuteRequestField,
   FacetOffer,
   FieldName,
+  ObjectsCalls,
   ProviderManifest,
 } from "../manifest/manifest-types.generated";
 import type { SessionState } from "../errors";
@@ -43,6 +45,23 @@ export type ConsoleFacet = (typeof CONSOLE_FACETS)[number];
 export const TRANSACTION_ACTIONS = Object.freeze(["begin", "commit", "rollback", "state"] as const);
 
 export type TransactionAction = (typeof TRANSACTION_ACTIONS)[number];
+
+/**
+ * The optional object facets, the keys of `$defs/objectsCalls`, in schema order. Each is the path to its function under
+ * the implementation's `objects`, and the manifest's `calls.objects` declares each as offered or not.
+ */
+export const OBJECTS_FACETS = Object.freeze(["tree"] as const) satisfies readonly (keyof ObjectsCalls)[];
+
+export type ObjectsFacet = (typeof OBJECTS_FACETS)[number];
+
+/**
+ * The actions an `objects.tree` request names: list the containers under a parent, count each kind's objects in one
+ * container, list one kind's objects in one container, describe one object, and describe every object of one kind in
+ * one container in one read.
+ */
+export const TREE_ACTIONS = Object.freeze(["containers", "count", "list", "describe", "describeMany"] as const);
+
+export type TreeAction = (typeof TREE_ACTIONS)[number];
 
 /** The optional request fields of console execute, `$defs/executeRequestField`, in schema order. */
 export const EXECUTE_REQUEST_FIELDS = Object.freeze([
@@ -180,6 +199,9 @@ export interface Refinement {
       readonly cancel?: FacetOffer;
       readonly endScope?: FacetOffer;
       readonly transaction?: FacetOffer;
+    };
+    readonly objects?: {
+      readonly tree?: FacetOffer;
     };
   };
 }
@@ -330,11 +352,193 @@ export interface ConsoleImpl<Handle> {
   transaction?(handle: Handle, request: TransactionRequest, ctx: CallContext): Promise<TransactionAnswer>;
 }
 
+/**
+ * One container: its path, opaque and sent back exactly as answered, its name, its index into the engine's container
+ * levels, whether the session is already in it where the engine says so, and the kinds it holds when it does not hold
+ * every one.
+ */
+export interface Container {
+  readonly path: readonly string[];
+  readonly name: string;
+  readonly level: number;
+  readonly isSessionDefault?: boolean;
+  readonly kinds?: readonly string[];
+}
+
+/** One piece of an object's key range the connection may read: one key, every key under a prefix, or a range. */
+export type ObjectReadRange =
+  | { readonly key: string }
+  | { readonly prefix: string }
+  | { readonly start: string; readonly end: string };
+
+/**
+ * One object: its path, which addresses it, opaque and sent back exactly as answered, its name, which labels it, its
+ * kind, the engine's word for a state a reader should act on, its counts where the engine has them, and the pieces of
+ * its range the connection may read where they do not cover it.
+ */
+export interface DatabaseObject {
+  readonly path: readonly string[];
+  readonly name: string;
+  readonly kind: string;
+  readonly status?: string;
+  readonly rowCount?: number;
+  readonly sizeBytes?: number;
+  readonly readRanges?: readonly ObjectReadRange[];
+}
+
+/**
+ * The count of one kind in one container: a count, a count read from a bounded sample with the provider's sentence for
+ * what bounded it, or the engine's sentence for a read that was refused.
+ */
+export type KindCount =
+  | { readonly count: number }
+  | { readonly count: number; readonly sampledFrom: string }
+  | { readonly unavailable: string };
+
+/** One column of an object, as Studio's object detail carries it. */
+export interface ColumnSchema {
+  readonly name: string;
+  readonly type: string;
+  readonly baseType?: string;
+  readonly declaredType?: string;
+  readonly nullable: boolean;
+  readonly isPrimary: boolean;
+  readonly defaultValue?: string;
+  readonly defaultExpression?: string;
+  readonly provenance?: "sampled";
+  readonly projectable?: boolean;
+}
+
+/** One index of an object. Its columns are a mutable list, as Studio's own type has them. */
+export interface IndexSchema {
+  readonly name: string;
+  readonly columns: string[];
+  readonly unique: boolean;
+}
+
+/** One foreign key of an object. */
+export interface ForeignKeySchema {
+  readonly columnName: string;
+  readonly referencedTable: string;
+  readonly referencedColumn: string;
+}
+
+/** One exclusion constraint of an object: its name and its definition as the engine prints it. */
+export interface ExclusionConstraintSchema {
+  readonly name: string;
+  readonly definition: string;
+}
+
+/**
+ * One object's columns, indexes and foreign keys, its indexes the engine's sentence where the read was refused, and its
+ * exclusion constraints where the engine has them.
+ */
+export interface ObjectDetail {
+  readonly path: readonly string[];
+  readonly columns: readonly ColumnSchema[];
+  readonly indexes: readonly IndexSchema[] | { readonly unavailable: string };
+  readonly foreignKeys: readonly ForeignKeySchema[];
+  readonly exclusionConstraints?: readonly ExclusionConstraintSchema[];
+}
+
+/** Every object's detail of one kind in one container, and the bound that stopped the read short, when one did. */
+export interface ObjectDetailBatch {
+  readonly details: readonly ObjectDetail[];
+  readonly truncated?: { readonly limit: number; readonly reason: string };
+}
+
+/** List the containers under `parent`, or at the top level when it is absent. */
+export interface TreeContainersRequest {
+  readonly action: "containers";
+  readonly parent?: readonly string[];
+}
+
+/** Count each kind's objects in one container. */
+export interface TreeCountRequest {
+  readonly action: "count";
+  readonly container: readonly string[];
+}
+
+/** List one kind's objects in one container. */
+export interface TreeListRequest {
+  readonly action: "list";
+  readonly container: readonly string[];
+  readonly kind: string;
+}
+
+/** Describe one object of one kind. */
+export interface TreeDescribeRequest {
+  readonly action: "describe";
+  readonly path: readonly string[];
+  readonly kind: string;
+}
+
+/**
+ * Describe every object of one kind in one container in one read, at most `limit` of them when it is sent, each default
+ * as SQL text when `defaultSql` is sent.
+ */
+export interface TreeDescribeManyRequest {
+  readonly action: "describeMany";
+  readonly container: readonly string[];
+  readonly kind: string;
+  readonly limit?: number;
+  readonly defaultSql?: true;
+}
+
+/** What `objects.tree` is asked to do: one request per action, each with its own members. */
+export type TreeRequest =
+  | TreeContainersRequest
+  | TreeCountRequest
+  | TreeListRequest
+  | TreeDescribeRequest
+  | TreeDescribeManyRequest;
+
+/** What a `containers` request answers. */
+export interface TreeContainersAnswer {
+  readonly containers: readonly Container[];
+}
+
+/** What a `count` request answers: each kind's count, keyed by the kind. */
+export interface TreeCountAnswer {
+  readonly counts: Readonly<Record<string, KindCount>>;
+}
+
+/** What a `list` request answers. */
+export interface TreeListAnswer {
+  readonly objects: readonly DatabaseObject[];
+}
+
+/** What a `describe` request answers. */
+export interface TreeDescribeAnswer {
+  readonly detail: ObjectDetail;
+}
+
+/**
+ * What `objects.tree` answers, one form per action, each told apart by its keys: a `describeMany` request answers an
+ * `ObjectDetailBatch`.
+ */
+export type TreeAnswer =
+  | TreeContainersAnswer
+  | TreeCountAnswer
+  | TreeListAnswer
+  | TreeDescribeAnswer
+  | ObjectDetailBatch;
+
+/**
+ * The object facets. Each is implemented exactly when the manifest's `calls.objects` offers it. Written as methods so
+ * an implementation over its own handle type is a `ProviderImpl<unknown>` too.
+ */
+export interface ObjectsImpl<Handle> {
+  tree?(handle: Handle, request: TreeRequest, ctx: CallContext): Promise<TreeAnswer>;
+}
+
 /** A package's implementation: the functions the host calls, keyed by the path of each call's name. */
 export interface ProviderImpl<Handle> {
   open(ctx: OpenContext): Promise<OpenAnswer<Handle>>;
   close(handle: Handle, ctx: CallContext): Promise<void>;
   readonly console: ConsoleImpl<Handle>;
+  /** The object facets; may be absent, or an empty record, when the implementation offers none. */
+  readonly objects?: ObjectsImpl<Handle>;
 }
 
 /**

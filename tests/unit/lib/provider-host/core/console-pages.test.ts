@@ -112,6 +112,7 @@ function sessionOf(results: readonly ResultSource[]): ConsoleSession {
         endScope: "not-offered",
         transaction: "not-offered",
       },
+      objects: { tree: "not-offered" },
     },
     execute: async (): Promise<ExecuteAnswer> => ({ results, warnings: [], executionTimeMs: 1, pageApplied: true }),
   };
@@ -365,6 +366,7 @@ describe("the console execute under the page budget", () => {
     const session: ConsoleSession = {
       calls: {
         console: { execute: { honours: [] }, cancel: "offered", endScope: "not-offered", transaction: "not-offered" },
+        objects: { tree: "not-offered" },
       },
       execute: async (): Promise<ExecuteAnswer> => ({
         results: [read.source],

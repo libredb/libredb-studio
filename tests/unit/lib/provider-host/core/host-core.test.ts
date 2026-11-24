@@ -49,6 +49,7 @@ function runOn(core: HostCore, source: ResultSource): Promise<ExecuteRecord> {
   const session: ConsoleSession = {
     calls: {
       console: { execute: { honours: [] }, cancel: "not-offered", endScope: "not-offered", transaction: "not-offered" },
+      objects: { tree: "not-offered" },
     },
     execute: async () => ({ results: [source], warnings: [], executionTimeMs: 1, pageApplied: true }),
   };

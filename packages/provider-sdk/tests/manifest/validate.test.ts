@@ -3192,10 +3192,23 @@ describe("the calls segment", () => {
     expect(refusalsFor(manifest((m) => (m.calls.console.cancel = "maybe")))).toEqual([
       refusal("value-not-allowed", "/calls/console/cancel"),
     ]);
-    expect(refusalsFor(manifest((m) => (m.calls.objects = {})))).toEqual([refusal("unknown-key", "/calls", "objects")]);
+    expect(refusalsFor(manifest((m) => (m.calls.explain = {})))).toEqual([refusal("unknown-key", "/calls", "explain")]);
     expect(refusalsFor(manifest((m) => (m.calls.console.explain = "offered")))).toEqual([
       refusal("unknown-key", "/calls/console", "explain"),
     ]);
+  });
+  test("calls that leave out objects, or objects that leave out tree, are refused as missing-key", () => {
+    expect(refusalsFor(manifest((m) => delete m.calls.objects))).toEqual([refusal("missing-key", "/calls", "objects")]);
+    expect(refusalsFor(manifest((m) => delete m.calls.objects.tree))).toEqual([
+      refusal("missing-key", "/calls/objects", "tree"),
+    ]);
+    expect(refusalsFor(manifest((m) => (m.calls.objects.source = "offered")))).toEqual([
+      refusal("unknown-key", "/calls/objects", "source"),
+    ]);
+    expect(refusalsFor(manifest((m) => (m.calls.objects.tree = "maybe")))).toEqual([
+      refusal("value-not-allowed", "/calls/objects/tree"),
+    ]);
+    expect(refusalsFor(manifest((m) => (m.calls.objects.tree = "offered")))).toEqual([]);
   });
 });
 

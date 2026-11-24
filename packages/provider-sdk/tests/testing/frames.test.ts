@@ -87,6 +87,55 @@ function executeAnswer(change: (draft: Json) => void = () => {}): Json {
   return draft;
 }
 
+/** A container as a tree answer carries it, with every optional member. */
+function container(change: (draft: Json) => void = () => {}): Json {
+  const draft: Json = { path: [marker()], name: marker(), level: 0, isSessionDefault: true, kinds: ["table"] };
+  change(draft);
+  return draft;
+}
+
+/** An object as a tree answer carries it, with every optional member and a read range of each form. */
+function databaseObject(change: (draft: Json) => void = () => {}): Json {
+  const draft: Json = {
+    path: [marker(), marker()],
+    name: marker(),
+    kind: "table",
+    status: "INVALID",
+    rowCount: 12,
+    sizeBytes: 8192,
+    readRanges: [{ key: marker() }, { prefix: marker() }, { start: marker(), end: marker() }],
+  };
+  change(draft);
+  return draft;
+}
+
+/** An object's detail as a tree answer carries it, with every optional member. */
+function objectDetail(change: (draft: Json) => void = () => {}): Json {
+  const draft: Json = {
+    path: [marker(), marker()],
+    columns: [
+      {
+        name: "id",
+        type: "integer",
+        baseType: "int4",
+        declaredType: "integer",
+        nullable: false,
+        isPrimary: true,
+        defaultValue: "1",
+        defaultExpression: "'1'",
+        provenance: "sampled",
+        projectable: true,
+      },
+      { name: "label", type: "text", nullable: true, isPrimary: false },
+    ],
+    indexes: [{ name: marker(), columns: ["id"], unique: true }],
+    foreignKeys: [{ columnName: "id", referencedTable: marker(), referencedColumn: "id" }],
+    exclusionConstraints: [{ name: marker(), definition: marker() }],
+  };
+  change(draft);
+  return draft;
+}
+
 /** One well-formed value of each part of each call, and a second, minimal one where a part has optional members. */
 function wellFormed(): readonly (readonly [ServedCall, FramePart, unknown])[] {
   return [
@@ -145,6 +194,42 @@ function wellFormed(): readonly (readonly [ServedCall, FramePart, unknown])[] {
     ["console.transaction", "answer", { sessionState: "in-transaction", stateReported: false }],
     ["console.transaction", "answer", { sessionState: "not-in-transaction" }],
     ["console.transaction", "answer", { sessionState: "unknown" }],
+    ["objects.tree", "context", { deadline: 1 }],
+    ["objects.tree", "request", { action: "containers", parent: [marker()] }],
+    ["objects.tree", "request", { action: "containers" }],
+    ["objects.tree", "request", { action: "count", container: [marker()] }],
+    ["objects.tree", "request", { action: "list", container: [marker()], kind: "table" }],
+    ["objects.tree", "request", { action: "describe", path: [marker(), marker()], kind: "table" }],
+    [
+      "objects.tree",
+      "request",
+      { action: "describeMany", container: [marker()], kind: "table", limit: 100, defaultSql: true },
+    ],
+    ["objects.tree", "request", { action: "describeMany", container: [], kind: "table" }],
+    ["objects.tree", "answer", { containers: [container(), container((c) => delete c.kinds)] }],
+    ["objects.tree", "answer", { containers: [] }],
+    [
+      "objects.tree",
+      "answer",
+      {
+        counts: { table: { count: 3 }, view: { count: 1204, sampledFrom: marker() }, index: { unavailable: marker() } },
+      },
+    ],
+    ["objects.tree", "answer", { counts: {} }],
+    ["objects.tree", "answer", { objects: [databaseObject(), { path: [marker()], name: marker(), kind: "view" }] }],
+    ["objects.tree", "answer", { detail: objectDetail() }],
+    [
+      "objects.tree",
+      "answer",
+      {
+        detail: objectDetail((d) => {
+          d.indexes = { unavailable: marker() };
+          delete d.exclusionConstraints;
+        }),
+      },
+    ],
+    ["objects.tree", "answer", { details: [objectDetail()], truncated: { limit: 1, reason: marker() } }],
+    ["objects.tree", "answer", { details: [] }],
     ["result.next", "request", { maxRows: 100, maxBytes: 1_048_576 }],
     [
       "result.next",
@@ -201,6 +286,9 @@ describe("readFrame", () => {
       "console.transaction context",
       "console.transaction request",
       "console.transaction answer",
+      "objects.tree context",
+      "objects.tree request",
+      "objects.tree answer",
       "result.next request",
       "result.next answer",
     ]);
@@ -253,6 +341,25 @@ describe("readFrame", () => {
     expect(
       readFrame("console.cancel", "answer", Object.defineProperty({ cancelled: true }, "hidden", { value: 1 })),
     ).toEqual([refusal("frame-key-unknown", "console.cancel", "answer", "/hidden", "hidden")]);
+    expect(readFrame("objects.tree", "request", { action: "count", container: [], extra: 1 })).toEqual([
+      refusal("frame-key-unknown", "objects.tree", "request", "/extra", "extra"),
+    ]);
+    expect(
+      readFrame("objects.tree", "answer", {
+        objects: [databaseObject((o) => (o.readRanges[0].extra = 1))],
+      }),
+    ).toEqual([refusal("frame-key-unknown", "objects.tree", "answer", "/objects/0/readRanges/0/extra", "extra")]);
+    expect(
+      readFrame("objects.tree", "answer", {
+        detail: objectDetail((d) => {
+          d.columns[0].comment = marker();
+          d.indexes[0].extra = 1;
+        }),
+      }),
+    ).toEqual([
+      refusal("frame-key-unknown", "objects.tree", "answer", "/detail/columns/0/comment", "comment"),
+      refusal("frame-key-unknown", "objects.tree", "answer", "/detail/indexes/0/extra", "extra"),
+    ]);
   });
 
   test("a required key a frame lacks is refused as frame-key-missing", () => {
@@ -378,6 +485,30 @@ describe("readFrame", () => {
       readFrame("console.execute", "request", { statement: "s", params: withHole, page: { unlimited: true } }),
     ).toEqual([unreadable("console.execute", "request", "/params/0")]);
     expect(readFrame("close", "context", accessor)).toEqual([unreadable("close", "context", "/deadline")]);
+    expect(
+      readFrame("objects.tree", "request", { action: "describeMany", container: [1], kind: "table", limit: "10" }),
+    ).toEqual([unreadable("objects.tree", "request", "/container/0"), unreadable("objects.tree", "request", "/limit")]);
+    expect(
+      readFrame("objects.tree", "answer", {
+        containers: [container((c) => (c.level = "0")), container((c) => (c.isSessionDefault = "yes"))],
+      }),
+    ).toEqual([
+      unreadable("objects.tree", "answer", "/containers/0/level"),
+      unreadable("objects.tree", "answer", "/containers/1/isSessionDefault"),
+    ]);
+    expect(
+      readFrame("objects.tree", "answer", {
+        detail: objectDetail((d) => {
+          d.columns[0].provenance = "declared";
+          d.columns[1].nullable = "yes";
+          d.foreignKeys[0].referencedColumn = null;
+        }),
+      }),
+    ).toEqual([
+      unreadable("objects.tree", "answer", "/detail/columns/0/provenance"),
+      unreadable("objects.tree", "answer", "/detail/columns/1/nullable"),
+      unreadable("objects.tree", "answer", "/detail/foreignKeys/0/referencedColumn"),
+    ]);
     expect(reads).toBe(0);
   });
 
@@ -427,6 +558,122 @@ describe("readFrame", () => {
     expect(transaction(accessor)).toEqual([unreadable("/action")]);
     expect(transaction(null)).toEqual([unreadable("")]);
     expect(transaction([])).toEqual([unreadable("")]);
+    expect(reads).toBe(0);
+  });
+
+  test("a tree request is one of its actions, each with its own members", () => {
+    const tree = (request: unknown) => readFrame("objects.tree", "request", request);
+    const unreadable = (pointer: string) => refusal("frame-value-unreadable", "objects.tree", "request", pointer);
+    const unknown = (key: string) => refusal("frame-key-unknown", "objects.tree", "request", `/${key}`, key);
+    const missing = (key: string) => refusal("frame-key-missing", "objects.tree", "request", `/${key}`, key);
+    let reads = 0;
+    const accessor = Object.defineProperty({}, "action", {
+      enumerable: true,
+      get() {
+        reads += 1;
+        return "containers";
+      },
+    });
+    const container = [marker()];
+
+    expect(tree({ action: "containers" })).toEqual([]);
+    expect(tree({ action: "containers", parent: container })).toEqual([]);
+    expect(tree({ action: "containers", container })).toEqual([unknown("container")]);
+    expect(tree({ action: "containers", parent: marker() })).toEqual([unreadable("/parent")]);
+    expect(tree({ action: "count", container })).toEqual([]);
+    expect(tree({ action: "count" })).toEqual([missing("container")]);
+    expect(tree({ action: "count", container, kind: "table" })).toEqual([unknown("kind")]);
+    expect(tree({ action: "list", container, kind: "table" })).toEqual([]);
+    expect(tree({ action: "list", container })).toEqual([missing("kind")]);
+    expect(tree({ action: "list", container, kind: "table", limit: 1 })).toEqual([unknown("limit")]);
+    expect(tree({ action: "describe", path: container, kind: "table" })).toEqual([]);
+    expect(tree({ action: "describe", container, kind: "table" })).toEqual([unknown("container"), missing("path")]);
+    expect(tree({ action: "describeMany", container, kind: "table", limit: 5, defaultSql: true })).toEqual([]);
+    expect(tree({ action: "describeMany", container, kind: "table", defaultSql: false })).toEqual([
+      unreadable("/defaultSql"),
+    ]);
+    expect(tree({ action: "describeMany", container, kind: "table", parent: container })).toEqual([unknown("parent")]);
+    expect(tree({ action: "describeMany", kind: 1 })).toEqual([unreadable("/kind"), missing("container")]);
+    expect(tree({ action: "search", container })).toEqual([unreadable("/action")]);
+    expect(tree({ action: 1 })).toEqual([unreadable("/action")]);
+    expect(tree({ action: "toString" })).toEqual([unreadable("/action")]);
+    expect(tree({ container })).toEqual([missing("action")]);
+    expect(tree(accessor)).toEqual([unreadable("/action")]);
+    expect(tree(null)).toEqual([unreadable("")]);
+    expect(tree([])).toEqual([unreadable("")]);
+    expect(reads).toBe(0);
+  });
+
+  test("a tree answer is exactly one of its five forms, each read as its closed shape", () => {
+    const tree = (answer: unknown) => readFrame("objects.tree", "answer", answer);
+    const unreadable = (pointer: string) => refusal("frame-value-unreadable", "objects.tree", "answer", pointer);
+    const missing = (pointer: string, key: string) =>
+      refusal("frame-key-missing", "objects.tree", "answer", pointer, key);
+    let reads = 0;
+    const accessor = Object.defineProperty({}, "table", {
+      enumerable: true,
+      get() {
+        reads += 1;
+        return { count: 1 };
+      },
+    });
+
+    expect(tree({ containers: [], objects: [] })).toEqual([unreadable("")]);
+    expect(tree({ counts: {}, detail: objectDetail() })).toEqual([unreadable("")]);
+    expect(tree({ extra: 1 })).toEqual([unreadable("")]);
+    expect(tree({})).toEqual([unreadable("")]);
+    expect(tree([])).toEqual([unreadable("")]);
+    expect(tree(null)).toEqual([unreadable("")]);
+    expect(tree({ containers: {} })).toEqual([unreadable("/containers")]);
+    expect(tree({ containers: [container((c) => delete c.path)] })).toEqual([missing("/containers/0/path", "path")]);
+    expect(tree({ counts: { table: { count: 1, unavailable: marker() } } })).toEqual([unreadable("/counts/table")]);
+    expect(tree({ counts: { table: {} } })).toEqual([unreadable("/counts/table")]);
+    expect(tree({ counts: { table: { count: "1" }, view: { sampledFrom: marker() } } })).toEqual([
+      unreadable("/counts/table/count"),
+      missing("/counts/view/count", "count"),
+    ]);
+    expect(tree({ counts: { table: { unavailable: 1 } } })).toEqual([unreadable("/counts/table/unavailable")]);
+    expect(tree({ counts: { "a/b": 2 } })).toEqual([unreadable("/counts/a~1b")]);
+    expect(tree({ counts: [] })).toEqual([unreadable("/counts")]);
+    expect(tree({ counts: accessor })).toEqual([unreadable("/counts/table")]);
+    expect(tree({ counts: Object.defineProperty({}, "hidden", { value: { count: "1" } }) })).toEqual([
+      unreadable("/counts/hidden/count"),
+    ]);
+    expect(
+      tree({
+        objects: [
+          databaseObject((o) => (o.readRanges = [{ key: marker(), prefix: marker() }, { start: marker() }, {}])),
+        ],
+      }),
+    ).toEqual([
+      unreadable("/objects/0/readRanges/0"),
+      missing("/objects/0/readRanges/1/end", "end"),
+      unreadable("/objects/0/readRanges/2"),
+    ]);
+    expect(tree({ objects: [databaseObject((o) => delete o.kind)] })).toEqual([missing("/objects/0/kind", "kind")]);
+    expect(
+      tree({
+        detail: objectDetail((d) => {
+          d.indexes = { unavailable: marker(), extra: 1 };
+          d.exclusionConstraints = [{ name: marker() }];
+        }),
+      }),
+    ).toEqual([
+      refusal("frame-key-unknown", "objects.tree", "answer", "/detail/indexes/extra", "extra"),
+      missing("/detail/exclusionConstraints/0/definition", "definition"),
+    ]);
+    expect(tree({ detail: objectDetail((d) => (d.indexes = "none")) })).toEqual([unreadable("/detail/indexes")]);
+    expect(
+      tree({ detail: objectDetail((d) => (d.indexes = [{ name: marker(), columns: [1], unique: true }])) }),
+    ).toEqual([unreadable("/detail/indexes/0/columns/0")]);
+    expect(tree({ detail: objectDetail((d) => delete d.foreignKeys) })).toEqual([
+      missing("/detail/foreignKeys", "foreignKeys"),
+    ]);
+    expect(tree({ truncated: { limit: 1, reason: marker() } })).toEqual([missing("/details", "details")]);
+    expect(tree({ details: [objectDetail()], truncated: { limit: "1" } })).toEqual([
+      unreadable("/truncated/limit"),
+      missing("/truncated/reason", "reason"),
+    ]);
     expect(reads).toBe(0);
   });
 

@@ -42,6 +42,7 @@ const child = boundedChild({
             endScope: "not-offered",
             transaction: "not-offered",
           },
+          objects: { tree: "not-offered" },
         },
         execute: async () => ({ results: [source], warnings: [], executionTimeMs: 1, pageApplied: true }),
       }) as unknown as Parameters<typeof calls.executeCall>[0];

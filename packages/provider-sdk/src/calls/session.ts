@@ -5,7 +5,8 @@
  * session, which `checkRefinement` reads and `sessionCalls` applies. The host keeps the session's calls with the
  * session, with no cache and no invalidation event, and holds every request to them with `checkExecuteRequest` before
  * the call, so a package is never sent a field it does not honour, and every console facet call to it with
- * `checkConsoleFacet`, so a package is never called on a facet the session does not offer.
+ * `checkConsoleFacet` and every object facet call with `checkObjectsFacet`, so a package is never called on a facet the
+ * session does not offer.
  */
 import type { Calls, ExecuteRequestField, FacetOffer } from "../manifest/manifest-types.generated";
 import { isPlainRecord, pointerTo, readOwn } from "./records";
@@ -15,6 +16,8 @@ import {
   type ConsoleFacet,
   EXECUTE_REQUEST_FIELDS,
   type ExecuteRequest,
+  OBJECTS_FACETS,
+  type ObjectsFacet,
   type Refinement,
 } from "./types";
 
@@ -55,6 +58,16 @@ export function checkExecuteRequest(calls: Calls, request: ExecuteRequest): read
 export function checkConsoleFacet(calls: Calls, facet: ConsoleFacet): readonly CallRefusal[] {
   if (calls.console[facet] === "offered") return [];
   return [{ rule: "facet-not-offered", pointer: pointerTo("/console", facet), name: `console.${facet}` }];
+}
+
+/**
+ * The refusal of a call to the object facet `facet` when `calls`, the session's calls, do not offer it, a refinement's
+ * narrowing included: one `facet-not-offered` at the facet's pointer into the calls, named by its call name; none when
+ * the session offers it. The request is the host's own typed object and is not read here.
+ */
+export function checkObjectsFacet(calls: Calls, facet: ObjectsFacet): readonly CallRefusal[] {
+  if (calls.objects[facet] === "offered") return [];
+  return [{ rule: "facet-not-offered", pointer: pointerTo("/objects", facet), name: `objects.${facet}` }];
 }
 
 const OFFERS: readonly unknown[] = Object.freeze(["offered", "not-offered"] satisfies FacetOffer[]);
@@ -166,24 +179,54 @@ function readConsole(value: unknown, declared: Calls, pointer: string, refusals:
   }
 }
 
-/** The refusals of a record of which `key` is the one key it may have, its value read by `read`. */
-function readOnly(
+/** The refusals of a refinement's `calls.objects`. */
+function readObjects(value: unknown, declared: Calls, pointer: string, refusals: CallRefusal[]): void {
+  readClosed(value, OBJECTS_FACETS, pointer, refusals, (facet, offer, at) =>
+    readOffer(offer, declared.objects[facet], at, refusals),
+  );
+}
+
+/**
+ * The reader of each segment a refinement's `calls` may have, one per segment of the manifest's calls, in schema order.
+ * It satisfies a type over every segment, so a segment the calls gain fails typecheck here until it has a reader of
+ * its own, and is never read by another segment's, and a reader for a segment the calls do not have fails it too.
+ */
+const SEGMENT_READERS = Object.freeze({ console: readConsole, objects: readObjects } satisfies {
+  readonly [S in keyof Calls]: (value: unknown, declared: Calls, pointer: string, refusals: CallRefusal[]) => void;
+});
+
+/**
+ * The keys a refinement's `calls` may have: the segments `SEGMENT_READERS` reads. Any other key is refused by name as
+ * `refinement-key-unknown` before any reader runs.
+ */
+const CALLS_KEYS = Object.freeze(Object.keys(SEGMENT_READERS) as (keyof Calls)[]);
+
+/** Whether `key` is one of `keys`. */
+function isOneOf<Key extends string>(keys: readonly Key[], key: string): key is Key {
+  return (keys as readonly string[]).includes(key);
+}
+
+/**
+ * The refusals of a closed record whose keys may be only `keys`, each optional, in the record's own key order, each
+ * value read by `read` with its key; a key not in `keys` is refused by name as `refinement-key-unknown` and not read.
+ */
+function readClosed<Key extends string>(
   value: unknown,
-  key: string,
+  keys: readonly Key[],
   pointer: string,
   refusals: CallRefusal[],
-  read: (value: unknown, at: string) => void,
+  read: (key: Key, value: unknown, at: string) => void,
 ): void {
-  const keys = closedRecord(value, pointer, refusals);
-  if (keys === null) return;
-  for (const own of keys) {
-    const at = pointerTo(pointer, own);
-    if (own !== key) {
-      refusals.push({ rule: "refinement-key-unknown", pointer: at, name: own });
+  const own = closedRecord(value, pointer, refusals);
+  if (own === null) return;
+  for (const key of own) {
+    const at = pointerTo(pointer, key);
+    if (!isOneOf(keys, key)) {
+      refusals.push({ rule: "refinement-key-unknown", pointer: at, name: key });
       continue;
     }
-    const data = dataAt(value, own, at, refusals);
-    if (data !== undefined) read(data.value, at);
+    const data = dataAt(value, key, at, refusals);
+    if (data !== undefined) read(key, data.value, at);
   }
 }
 
@@ -197,9 +240,9 @@ function readOnly(
 export function checkRefinement(declared: Calls, refine: unknown): readonly CallRefusal[] {
   if (refine === undefined) return [];
   const refusals: CallRefusal[] = [];
-  readOnly(refine, "calls", "", refusals, (calls, at) =>
-    readOnly(calls, "console", at, refusals, (consoleCalls, consoleAt) =>
-      readConsole(consoleCalls, declared, consoleAt, refusals),
+  readClosed(refine, ["calls"], "", refusals, (_key, calls, at) =>
+    readClosed(calls, CALLS_KEYS, at, refusals, (segment, segmentValue, segmentAt) =>
+      SEGMENT_READERS[segment](segmentValue, declared, segmentAt, refusals),
     ),
   );
   return refusals;
@@ -226,6 +269,7 @@ export function sessionCalls(declared: Calls, refine: Refinement | undefined): C
   const refusals = checkRefinement(declared, refine);
   if (refusals.length > 0) throw new CallRefusalError(refusals);
   const narrowed = refine?.calls?.console;
+  const narrowedObjects = refine?.calls?.objects;
   const honours = narrowed?.execute?.honours ?? declared.console.execute.honours;
   return Object.freeze({
     console: Object.freeze({
@@ -233,6 +277,9 @@ export function sessionCalls(declared: Calls, refine: Refinement | undefined): C
       cancel: narrowed?.cancel ?? declared.console.cancel,
       endScope: narrowed?.endScope ?? declared.console.endScope,
       transaction: narrowed?.transaction ?? declared.console.transaction,
+    }),
+    objects: Object.freeze({
+      tree: narrowedObjects?.tree ?? declared.objects.tree,
     }),
   });
 }
