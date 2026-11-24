@@ -3,7 +3,7 @@
  * its header, in place of any DDL.
  *
  * The migration text carries no transaction wrapper (#284): `mongodb` writes no SQL text at all (`readsSqlText: false`
- * in its `sql-grammar` module), and wrapping non-SQL command text in SQL statements is wrong regardless of Mongo's
+ * in its declaration's `sqlText`), and wrapping non-SQL command text in SQL statements is wrong regardless of Mongo's
  * own driver-level transaction API.
  */
 import type { MigrationDdlSpec } from "@/lib/db/migration-ddl/types";

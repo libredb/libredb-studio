@@ -703,8 +703,8 @@ probe_shapes` are both HTTP 200. That is why `elasticsearch` is **not** in the b
 double-quote default — the exact opposite of `opensearch`, which shares that branch with MySQL.
 
 **`#` opens nothing.** `SELECT 1 # x` is a `parsing_exception` ("mismatched input '#'"), so the rest of
-the line is *not* hidden. `ELASTICSEARCH_GRAMMAR.hash` is therefore `"code"`
-([`elasticsearch-sql-grammar.ts`](../../src/lib/db/providers/sql/search/elasticsearch-sql-grammar.ts)), which matters beyond cosmetics: reading `#` as a
+the line is *not* hidden. Its declared `sqlText.grammar.hash` is therefore `"code"`
+([`elasticsearch.json`](../../src/lib/db/engine-declarations/elasticsearch.json)), which matters beyond cosmetics: reading `#` as a
 comment would leave every `#` run ambiguous, and since #297 an unreadable span is a confirmation
 **prompt** rather than silence — a prompt on a statement this engine simply refuses.
 
@@ -830,8 +830,8 @@ fallback: the caller shape-checks for the method and this provider does not answ
 
 ### 5.8 SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/search/elasticsearch-sql-grammar.ts`](../../src/lib/db/providers/sql/search/elasticsearch-sql-grammar.ts), the `elasticsearch` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
-Its grammar is `ELASTICSEARCH_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/elasticsearch.json`](../../src/lib/db/engine-declarations/elasticsearch.json), from which the `elasticsearch` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
+Its grammar is the declaration's `sqlText.grammar`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
 Every fact was established by live probe on 2026-08-19 against Elasticsearch 9.1.4, since the SQL surface is an HTTP endpoint the grammar can be asked through; it disagrees with OpenSearch about `#` and about `[...]`.
 `#` opens nothing: `SELECT 1 # x` and `SELECT # x` followed by `1` are each a `parsing_exception`, "mismatched input '#'".
 `[` is not established and stays at the default: `SELECT [1, 2]` and `SELECT [customer] FROM probe_orders` are both "extraneous input '['", so it is neither a name quote nor a subscript.
@@ -2027,7 +2027,7 @@ The refusal reason it prints, verbatim:
 - Interface & DTOs: [`src/lib/db/types.ts`](../../src/lib/db/types.ts)
 - Errors: [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts)
 - Connection form config: [`src/lib/db/engine-declarations/elasticsearch.json`](../../src/lib/db/engine-declarations/elasticsearch.json), composed by [`src/lib/db/connection-form.ts`](../../src/lib/db/connection-form.ts)
-- Dialect facts elsewhere in the codebase: `ELASTICSEARCH_GRAMMAR` in [`src/lib/db/providers/sql/search/elasticsearch-sql-grammar.ts`](../../src/lib/db/providers/sql/search/elasticsearch-sql-grammar.ts) (`#`, `[`, block comments) · `quoteIdentifier()` in [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) (double quotes) · `ELASTICSEARCH_SQL_WRITING` in [`elasticsearch-sql-writing.ts`](../../src/lib/db/providers/sql/search/elasticsearch-sql-writing.ts) (literal escaping) · [`src/lib/sql/fence-tags.ts`](../../src/lib/sql/fence-tags.ts) (the fence tag)
+- Dialect facts elsewhere in the codebase: `sqlText.grammar` in [`src/lib/db/engine-declarations/elasticsearch.json`](../../src/lib/db/engine-declarations/elasticsearch.json) (`#`, `[`, block comments) · `quoteIdentifier()` in [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) (double quotes) · `ELASTICSEARCH_SQL_WRITING` in [`elasticsearch-sql-writing.ts`](../../src/lib/db/providers/sql/search/elasticsearch-sql-writing.ts) (literal escaping) · [`src/lib/sql/fence-tags.ts`](../../src/lib/sql/fence-tags.ts) (the fence tag)
 - Local cluster: [`database-compose.yml`](../../database-compose.yml) (`elasticsearch` service, 9200)
 - Tests: [`tests/integration/db/elasticsearch-provider.test.ts`](../../tests/integration/db/elasticsearch-provider.test.ts) · [`tests/unit/db/search/`](../../tests/unit/db/search/)
 - API contract: [`docs/API_DOCS.md`](../API_DOCS.md)

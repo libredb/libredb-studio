@@ -41,8 +41,8 @@
  * (captures 02 and 05).
  */
 import { ExecutionProfileError } from "../../../errors";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { hasLoneCarriageReturnInLineComment, readSqlSpan } from "@/lib/sql/spans";
-import { COUCHBASE_SQL_GRAMMAR } from "./sql-grammar";
 import { CouchbaseError, type CouchbaseQueryResult } from "./transport";
 
 /** The two requests the check sends as the agent user, each on its own request. */
@@ -187,12 +187,12 @@ const FIRST_KEYWORD = /^(?:select|with)(?![\w$])/i;
  * STATISTICS, BEGIN WORK, PREPARE and the EXECUTE of another user's prepared statement (captures 02 and 04), so the
  * role check alone cannot keep the agent from them; only a SELECT is sent.
  *
- * The text is walked with the shared span reader under SQL++'s own grammar (`sql-grammar.ts`), so `--` and block
- * comments and whitespace are skipped, and string literals and backtick-quoted names are opaque. The first code
- * character must open SELECT or WITH; a code semicolon ends the statement, and only comments and whitespace may follow
- * it, since the server runs `SELECT 1 AS a;;` (capture 05). A subscript's brackets are read as code, a literal inside
- * them still opaque, so a semicolon there ends the statement too. Text that ends inside a comment, string or quoted
- * name cannot be bounded and is refused, and so is a `$$` or `$tag$` run, which SQL++ does not have.
+ * The text is walked with the shared span reader under SQL++'s own grammar (its declaration's `sqlText.grammar`), so
+ * `--` and block comments and whitespace are skipped, and string literals and backtick-quoted names are opaque. The
+ * first code character must open SELECT or WITH; a code semicolon ends the statement, and only comments and whitespace
+ * may follow it, since the server runs `SELECT 1 AS a;;` (capture 05). A subscript's brackets are read as code, a
+ * literal inside them still opaque, so a semicolon there ends the statement too. Text that ends inside a comment,
+ * string or quoted name cannot be bounded and is refused, and so is a `$$` or `$tag$` run, which SQL++ does not have.
  *
  * A lone carriage return inside a `--` comment with more text after it is refused before the walk. The server ends
  * the comment there (capture 05: `SELECT 1 AS a -- x<CR>, 2 AS b` answers both columns), and so does the grammar the
@@ -200,7 +200,7 @@ const FIRST_KEYWORD = /^(?:select|with)(?![\w$])/i;
  * refused whichever reading is the walk's. U+2028, U+0085 and a form feed end no comment there.
  */
 export function couchbaseAgentStatementRefusal(sql: string): string | null {
-  const grammar = COUCHBASE_SQL_GRAMMAR.grammar;
+  const grammar = resolveSqlGrammar("couchbase");
   if (hasLoneCarriageReturnInLineComment(sql, grammar)) {
     return `${FENCE}; this text holds a carriage return inside a -- comment with more text after it, and the server ends the comment at that carriage return, so a reader that does not could read another statement, and it was not sent. End a comment with a line feed.`;
   }

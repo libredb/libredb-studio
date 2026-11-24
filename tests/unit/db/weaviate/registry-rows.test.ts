@@ -1,8 +1,8 @@
 /**
- * The `weaviate` rows of the five contract registries (#1566 spec 4, 5.9, 9, Migration DDL): three declared beside the
- * provider and registered as its row, the connection string composed from its declaration, the execution UI read from
- * its declaration, and each saying what the design says, since a Weaviate console request is not SQL text and nothing
- * it runs writes.
+ * The `weaviate` rows of the five contract registries (#1566 spec 4, 5.9, 9, Migration DDL): two declared beside the
+ * provider and registered as its row, the SQL grammar and the connection string composed from its declaration, the
+ * execution UI read from its declaration, and each saying what the design says, since a Weaviate console request is not
+ * SQL text and nothing it runs writes.
  */
 import { describe, expect, test } from "bun:test";
 import { CONNECTION_STRING } from "@/lib/db/connection-string";
@@ -10,7 +10,6 @@ import { EXECUTION_UI } from "@/lib/db/execution-ui";
 import { SQL_COMMIT_KEYWORD } from "@/lib/db/execution-ui/shared";
 import { MIGRATION_DDL } from "@/lib/db/migration-ddl";
 import { WEAVIATE_MIGRATION_DDL } from "@/lib/db/providers/vector/weaviate/migration-ddl";
-import { WEAVIATE_SQL_GRAMMAR } from "@/lib/db/providers/vector/weaviate/sql-grammar";
 import { WEAVIATE_SQL_WRITING } from "@/lib/db/providers/vector/weaviate/sql-writing";
 import { SQL_GRAMMAR } from "@/lib/db/sql-grammar";
 import { DEFAULT_SQL_GRAMMAR } from "@libredb/provider-sdk/sql";
@@ -19,7 +18,6 @@ import { identifierDoubleQuoted, literalStandard } from "@/lib/db/sql-writing/sh
 
 describe("each row is the registry's weaviate row", () => {
   test.each([
-    ["SQL_GRAMMAR", SQL_GRAMMAR.weaviate, WEAVIATE_SQL_GRAMMAR],
     ["SQL_WRITING", SQL_WRITING.weaviate, WEAVIATE_SQL_WRITING],
     ["MIGRATION_DDL", MIGRATION_DDL.weaviate, WEAVIATE_MIGRATION_DDL],
   ] as const)("%s", (_name, registered, declared) => {
@@ -29,10 +27,10 @@ describe("each row is the registry's weaviate row", () => {
 
 describe("the rows", () => {
   test("the SQL grammar reads no SQL text and redacts a statement whole", () => {
-    expect(WEAVIATE_SQL_GRAMMAR.readsSqlText).toBe(false);
-    expect(WEAVIATE_SQL_GRAMMAR.grammar).toBe(DEFAULT_SQL_GRAMMAR);
-    expect(WEAVIATE_SQL_GRAMMAR.redaction).toEqual({ kind: "none" });
-    expect(WEAVIATE_SQL_GRAMMAR.completion).toEqual({ formatSegment: null, readQuotedQualifier: null });
+    expect(SQL_GRAMMAR.weaviate.readsSqlText).toBe(false);
+    expect(SQL_GRAMMAR.weaviate.grammar).toEqual(DEFAULT_SQL_GRAMMAR);
+    expect(SQL_GRAMMAR.weaviate.redaction).toEqual({ kind: "none" });
+    expect(SQL_GRAMMAR.weaviate.completion).toEqual({ formatSegment: null, readQuotedQualifier: null });
   });
 
   test("SQL writing is the standard form, with no placeholder and no temporal literal", () => {

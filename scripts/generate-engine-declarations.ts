@@ -7,13 +7,15 @@
  * A declaration's authored members, `AUTHORED_MEMBERS` (`id`, `displayName`, `location`, and of `connection` its
  * `fields`, `defaults`, `seedOnly`, `refused`, of its `connectionString` the `accepted`, `dialogOffersUri`, `scheme`,
  * `urlTls`, `paste` and `seedCheck`, and its `tls`, `readsTrustMaterial`, `dialog`, `hostUriSchemes`,
- * `credentialWarnings`, `fieldRules`, `hostHint`, `hostIdentity`, `import` and `connectBudgetMs`, and of `editor` its
- * `commitKeyword`, `consentDeadline` and `fenceAliases`), are written in the declaration itself: this script reads them
+ * `credentialWarnings`, `fieldRules`, `hostHint`, `hostIdentity`, `import` and `connectBudgetMs`, of `editor` its
+ * `commitKeyword`, `consentDeadline`, `fenceAliases`, `dialect` and `language`, and of `sqlText` its `readsSqlText`,
+ * `grammar`, `updateTarget` and `completion`), are written in the declaration itself: this script reads them
  * from the committed file of the engine in src/lib/db/engine-declarations, whatever directory `--out` names, with
  * `authoredMembersOf` (scripts/generate-engine-catalog.ts), which refuses by name a file that lacks one or whose `id`
  * is not its file name, and writes them back unchanged. Every other member is built from the tables. The engine
- * catalog, the connection tables, the connection forms, the connection strings, and the execution UI and fence aliases
- * (scripts/generate-engine-catalog.ts, clauses M-70, M-71, M-72, M-74 and M-75) project the authored members, and
+ * catalog, the connection tables, the connection forms, the connection strings, the execution UI and fence aliases, the
+ * query dialects, tab type editors and editor languages, and the SQL text (scripts/generate-engine-catalog.ts, clauses
+ * M-70, M-71, M-72, M-74, M-75, M-77 and M-78) project the authored members, and
  * `bun run engines:generate` runs that command's `--write` first and its `--check` last: this script builds every
  * provider through the factory, which builds only an engine the catalog holds, and `--check` admits every declaration
  * this script wrote, with the SDK validator's rules, which refuse by name, among others, a dialog entry or a field rule
@@ -46,14 +48,14 @@
  * census resolves each name with a table of its own and holds it, by identity, to the function the connection form or
  * the connection string row holds.
  *
- * The SQL text facts come from the engine's row in `SQL_GRAMMAR`. A grammar fact the SDK's `SqlGrammar` type may leave
- * out is written at the reading its readers give that absence, false, an empty list, true for `dollarTags`,
- * `postgresql` for the formatter language and two empty lists for the completion words, except the two backslash
- * overrides and `confirmConfigKeys`, which are null where they are left out, since each has a reading no value of its
- * type gives. Each trailing limit clause is written as its source and flags, each word set as an array in its iteration
- * order, and each function named by its slot: `redactionReader` for a command redaction's reader, `formatSegment` and
- * `readQuotedQualifier` for the completion readers. The generator refuses by name a member of the row it has no place
- * for and a trailing limit clause whose flags are not i or iu.
+ * The SQL text's `readsSqlText`, `grammar`, `updateTarget` and `completion` are authored, written back as the committed
+ * file states them; the catalog generator projects them into src/lib/db/engine-catalog/sql-text.generated.ts, from
+ * which Studio composes each engine's grammar row (clause M-78). A grammar fact the SDK's `SqlGrammar` type may leave
+ * out is stated at the reading its readers give that absence (clause S-4), each trailing limit clause as its source and
+ * flags, which the schema holds to i or iu and the validator to a pattern that compiles, and each completion reader
+ * named by its slot, `formatSegment` and `readQuotedQualifier`. The redaction is a claim, written from Studio's record
+ * of it, `SQL_TEXT_REDACTION` (src/lib/db/sql-grammar/redaction.ts), a command redaction's reader named
+ * `redactionReader`.
  *
  * The SQL writing facts come from the engine's row in `SQL_WRITING`, member by member with the row's names and nesting,
  * a hook the row leaves out written null. Each function is named by its slot: `escapeLiteral`, `unescapeLiteral`,
@@ -149,29 +151,23 @@ import type {
   AgentOverlay,
   CatalogCapture,
   CatalogRead,
-  ClausePattern,
   Editor,
   EngineDeclaration,
   FieldName,
-  GrammarFacts,
   MaintenanceSpec,
   MigrationDdl,
-  NameQuote,
   PlanEstimate,
   ProfileComposition,
   ProfileTypePattern,
   Safeguards,
   SqlDialect,
   SqlGenerators,
-  SqlText,
   SqlWriting,
-  StatementRedaction,
   StatisticsReading,
   TypeFamilies,
   TypePattern,
   WritePathEvidence,
 } from "@libredb/provider-sdk/manifest";
-import type { SqlGrammar } from "@libredb/provider-sdk/sql";
 import { AGENT_STATEMENT_LANGUAGE } from "../src/lib/agent/agent-manifest";
 import type { AgentCatalogRead, AgentPlanEstimate } from "../src/lib/agent/composed-sql-primitives";
 import { engineServerOverlay } from "../src/lib/agent/languages/engines/server";
@@ -207,8 +203,7 @@ import { MIGRATION_DDL } from "../src/lib/db/migration-ddl";
 import type { MigrationDdlSpec } from "../src/lib/db/migration-ddl/types";
 import { SQL_ENGINE_GENERATORS } from "../src/lib/db/query-generators";
 import type { SqlEngineGenerators } from "../src/lib/db/query-generators/types";
-import { SQL_GRAMMAR } from "../src/lib/db/sql-grammar";
-import type { SqlGrammarSpec, SqlRedaction } from "../src/lib/db/sql-grammar/types";
+import { SQL_TEXT_REDACTION } from "../src/lib/db/sql-grammar/redaction";
 import { SQL_WRITING } from "../src/lib/db/sql-writing";
 import type { InferredKind, SqlWritingSpec } from "../src/lib/db/sql-writing/types";
 import type { MaintenanceOperation, ProviderCapabilities, WritePath, WritePathReach } from "../src/lib/db/types";
@@ -328,181 +323,6 @@ export function buildEditor(
     explainFormat: explainFormat ?? null,
     dialect: authored.dialect,
     language: authored.language,
-  };
-}
-
-/** The members of each part of a SQL grammar row the declaration places: a key a part's list lacks would be dropped. */
-const SQL_TEXT_MEMBERS = {
-  spec: ["grammar", "readsSqlText", "redaction", "updateTarget", "completion"],
-  grammar: [
-    "hash",
-    "bracket",
-    "blockComment",
-    "alternateQuoting",
-    "doubleSlashComment",
-    "backslashAlwaysEscapes",
-    "tripleQuotedStrings",
-    "backtickBackslashEscapes",
-    "dollarTags",
-    "doubleQuoteBackslashEscapes",
-    "singleQuoteBackslashEscapes",
-    "rawStrings",
-    "hintsAreCode",
-    "lineCommentBackslashContinues",
-    "lineCommentEndsAtCarriageReturn",
-    "script",
-    "trailingLimitClauses",
-    "nonNumericRowBounds",
-    "confirmForms",
-    "confirmCodeForms",
-    "confirmFormsWhen",
-    "confirmExemptForms",
-    "formatterLanguage",
-    "completionWords",
-    "confirmConfigKeys",
-    "explainExecutesWithAnalyze",
-  ],
-  script: ["blocks", "separatorLine", "unit", "terminatedStatements"],
-  updateTarget: ["dashCommentNeedsSeparator", "extraQueryOpeners", "extraSetOperators"],
-  completion: ["formatSegment", "readQuotedQualifier"],
-} as const satisfies Readonly<Record<string, readonly string[]>>;
-
-/** The members of the grammar's completion words, which the declaration places. */
-const COMPLETION_WORDS_MEMBERS: readonly string[] = ["keywords", "functions"];
-
-/** The members of each entry of the grammar's confirmFormsWhen, which the declaration places. */
-const CONFIRM_FORM_MEMBERS: readonly string[] = ["form", "when"];
-
-/** The members a redaction of each kind holds, which the declaration places. */
-const REDACTION_MEMBERS: Readonly<Record<SqlRedaction["kind"], readonly string[]>> = {
-  sql: ["kind", "nameQuote"],
-  command: ["kind", "read"],
-  none: ["kind"],
-};
-
-/**
- * Throws an error naming the engine and the member where `part`, at the dotted path `at` of a SQL grammar row, has a
- * key the declaration does not write, since writing member by member would otherwise drop it. The keys are read with
- * `Object.keys`, so a key a spread carried in is read too.
- */
-function refuseUnplacedSqlTextMembers(type: DatabaseType, part: object, at: string, members: readonly string[]): void {
-  for (const key of Object.keys(part)) {
-    if (!members.includes(key)) {
-      throw new Error(`${type}: the SQL grammar member "${at}${key}" has no place in the engine declaration`);
-    }
-  }
-}
-
-/**
- * A trailing limit clause as the contract's pattern, or a thrown error naming the clause where its flags are not i or
- * iu.
- */
-function clausePattern(pattern: RegExp, index: number, type: DatabaseType): ClausePattern {
-  const { source, flags } = pattern;
-  if (flags !== "i" && flags !== "iu") {
-    throw new Error(
-      `${type}: trailing limit clause ${index} has flags "${flags}"; the provider contract allows i or iu`,
-    );
-  }
-  return { source, flags };
-}
-
-/**
- * The grammar facts of one engine, member by member in the order of the schema's `grammarFacts`: a fact the grammar
- * leaves out at the reading its absence has (false, an empty list, true for `dollarTags`, `postgresql` for the
- * formatter language, two empty lists for completion words), the two backslash overrides and `confirmConfigKeys` as
- * null where it is left out, each trailing limit clause as its source and flags.
- */
-function buildGrammarFacts(grammar: SqlGrammar, type: DatabaseType): GrammarFacts {
-  const { script } = grammar;
-  return {
-    hash: grammar.hash,
-    bracket: grammar.bracket,
-    blockComment: grammar.blockComment,
-    alternateQuoting: grammar.alternateQuoting,
-    doubleSlashComment: grammar.doubleSlashComment,
-    backslashAlwaysEscapes: grammar.backslashAlwaysEscapes,
-    tripleQuotedStrings: grammar.tripleQuotedStrings ?? false,
-    backtickBackslashEscapes: grammar.backtickBackslashEscapes ?? false,
-    dollarTags: grammar.dollarTags ?? true,
-    doubleQuoteBackslashEscapes: grammar.doubleQuoteBackslashEscapes ?? null,
-    singleQuoteBackslashEscapes: grammar.singleQuoteBackslashEscapes ?? null,
-    rawStrings: grammar.rawStrings ?? false,
-    hintsAreCode: grammar.hintsAreCode ?? false,
-    lineCommentBackslashContinues: grammar.lineCommentBackslashContinues ?? false,
-    lineCommentEndsAtCarriageReturn: grammar.lineCommentEndsAtCarriageReturn ?? false,
-    script: {
-      blocks: script.blocks,
-      separatorLine: script.separatorLine,
-      unit: script.unit,
-      terminatedStatements: [...(script.terminatedStatements ?? [])],
-    },
-    trailingLimitClauses: grammar.trailingLimitClauses.map((pattern, index) => clausePattern(pattern, index, type)),
-    nonNumericRowBounds: [...(grammar.nonNumericRowBounds ?? [])],
-    confirmForms: (grammar.confirmForms ?? []).map((form) => form.slice()),
-    confirmCodeForms: (grammar.confirmCodeForms ?? []).map((form) => (Array.isArray(form) ? form.slice() : form)),
-    confirmFormsWhen: (grammar.confirmFormsWhen ?? []).map(({ form, when }) => ({ form: form.slice(), when })),
-    confirmExemptForms: (grammar.confirmExemptForms ?? []).map((form) => form.slice()),
-    formatterLanguage: grammar.formatterLanguage ?? "postgresql",
-    completionWords: {
-      keywords: [...(grammar.completionWords?.keywords ?? [])],
-      functions: [...(grammar.completionWords?.functions ?? [])],
-    },
-    confirmConfigKeys: grammar.confirmConfigKeys === undefined ? null : [...grammar.confirmConfigKeys],
-    explainExecutesWithAnalyze: grammar.explainExecutesWithAnalyze ?? false,
-  };
-}
-
-/** An engine's redaction as the contract's: a command reader named by its slot, `redactionReader`. */
-function buildRedaction(redaction: SqlRedaction): StatementRedaction {
-  switch (redaction.kind) {
-    case "sql":
-      // The schema's nameQuote vocabulary holds the quote: the census admits every declaration by the schema.
-      return { kind: "sql", nameQuote: redaction.nameQuote as NameQuote };
-    case "command":
-      return { kind: "command", reader: "redactionReader" };
-    case "none":
-      return { kind: "none" };
-  }
-}
-
-/**
- * One engine's SQL text facts, read from its row in `SQL_GRAMMAR` (a parameter, so a test can hand the generator
- * another row): whether its text is SQL, its grammar facts, its redaction, its update target words, each set as an
- * array in its iteration order, and its completion readers, each function named by its slot. A member the declaration
- * has no place for, and a trailing limit clause whose flags are not i or iu, are thrown errors naming the engine.
- */
-export function buildSqlText(type: DatabaseType, spec: SqlGrammarSpec = SQL_GRAMMAR[type]): SqlText {
-  refuseUnplacedSqlTextMembers(type, spec, "", SQL_TEXT_MEMBERS.spec);
-  refuseUnplacedSqlTextMembers(type, spec.grammar, "grammar.", SQL_TEXT_MEMBERS.grammar);
-  refuseUnplacedSqlTextMembers(type, spec.grammar.script, "grammar.script.", SQL_TEXT_MEMBERS.script);
-  refuseUnplacedSqlTextMembers(type, spec.redaction, "redaction.", REDACTION_MEMBERS[spec.redaction.kind]);
-  refuseUnplacedSqlTextMembers(type, spec.updateTarget, "updateTarget.", SQL_TEXT_MEMBERS.updateTarget);
-  refuseUnplacedSqlTextMembers(type, spec.completion, "completion.", SQL_TEXT_MEMBERS.completion);
-  if (spec.grammar.completionWords !== undefined) {
-    refuseUnplacedSqlTextMembers(
-      type,
-      spec.grammar.completionWords,
-      "grammar.completionWords.",
-      COMPLETION_WORDS_MEMBERS,
-    );
-  }
-  for (const [index, entry] of (spec.grammar.confirmFormsWhen ?? []).entries()) {
-    refuseUnplacedSqlTextMembers(type, entry, `grammar.confirmFormsWhen.${index}.`, CONFIRM_FORM_MEMBERS);
-  }
-  return {
-    readsSqlText: spec.readsSqlText,
-    grammar: buildGrammarFacts(spec.grammar, type),
-    redaction: buildRedaction(spec.redaction),
-    updateTarget: {
-      dashCommentNeedsSeparator: spec.updateTarget.dashCommentNeedsSeparator,
-      extraQueryOpeners: [...spec.updateTarget.extraQueryOpeners],
-      extraSetOperators: [...spec.updateTarget.extraSetOperators],
-    },
-    completion: {
-      formatSegment: spec.completion.formatSegment === null ? null : "formatSegment",
-      readQuotedQualifier: spec.completion.readQuotedQualifier === null ? null : "readQuotedQualifier",
-    },
   };
 }
 
@@ -1122,7 +942,13 @@ export function buildEngineDeclaration(
     },
     agent: { statementLanguage: AGENT_STATEMENT_LANGUAGE[type], overlay: buildAgentOverlay(type) },
     editor: buildEditor(type, capabilities, authored.editor),
-    sqlText: buildSqlText(type),
+    sqlText: {
+      readsSqlText: authored.sqlText.readsSqlText,
+      grammar: authored.sqlText.grammar,
+      redaction: SQL_TEXT_REDACTION[type],
+      updateTarget: authored.sqlText.updateTarget,
+      completion: authored.sqlText.completion,
+    },
     sqlWriting: buildSqlWriting(type),
     migrationDdl: buildMigrationDdl(type),
     sqlGenerators: buildSqlGenerators(type),

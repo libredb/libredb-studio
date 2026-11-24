@@ -6,8 +6,8 @@
  * anchor only the first alternative behind a character that is not whitespace: every later alternative would then be
  * tried from every position of a whitespace run, in time quadratic in the run's length, and an earlier alternative that
  * does not end in `\s*$` would match in the middle of a statement and strip the text after it. Each child plants such a
- * clause on trino, whose shipped grammar declares none, through a stub of the module the SQL grammar reads trino's row
- * from. Without the whole-pattern anchor the first case reads a million spaces for minutes, so the spawn timeout kills
+ * clause on trino, whose shipped grammar declares none, as a declaration states it: through a stub of the generated SQL
+ * text the SQL grammar is composed from, the shipped record with trino's clauses replaced. Without the whole-pattern anchor the first case reads a million spaces for minutes, so the spawn timeout kills
  * the child within seconds and the case fails by its exit, and the second answers a statement with ` = 1` dropped. The
  * child holds a referenced interval, so it cannot exit early (tests/helpers/bounded-node-child.ts).
  *
@@ -33,14 +33,15 @@ interface ClauseReport {
 
 const SOURCE = path.join(import.meta.dir, "..", "..", "..", "src");
 
-/** A stub of trino's grammar module: the shipped row with `source` as its one trailing limit clause, flags `i`. */
+/** A stub of the generated SQL text: the shipped record with `source` as trino's one trailing limit clause, flags `i`. */
 function plantedTrino(source: string): string {
-  const shipped = path.join(SOURCE, "lib", "db", "providers", "sql", "trino", "sql-grammar.ts");
+  const shipped = path.join(SOURCE, "lib", "db", "engine-catalog", "sql-text.generated.ts");
+  const clause = JSON.stringify({ source, flags: "i" });
   return [
-    `import { TRINO_SQL_GRAMMAR as SHIPPED } from ${JSON.stringify(shipped)};`,
-    "export const TRINO_SQL_GRAMMAR = {",
+    `import { BUNDLED_SQL_TEXT as SHIPPED } from ${JSON.stringify(shipped)};`,
+    "export const BUNDLED_SQL_TEXT = {",
     "  ...SHIPPED,",
-    `  grammar: { ...SHIPPED.grammar, trailingLimitClauses: [new RegExp(${JSON.stringify(source)}, "i")] },`,
+    `  trino: { ...SHIPPED.trino, grammar: { ...SHIPPED.trino.grammar, trailingLimitClauses: [${clause}] } },`,
     "};",
     "",
   ].join("\n");
@@ -63,7 +64,7 @@ function childPlanting(label: string, source: string): BoundedChild {
     },
     heapLimitMiB: 256,
     timeoutMs: 10_000,
-    stubs: [{ specifier: "@/lib/db/providers/sql/trino/sql-grammar", source: plantedTrino(source) }],
+    stubs: [{ specifier: "@/lib/db/engine-catalog/sql-text.generated", source: plantedTrino(source) }],
   });
 }
 

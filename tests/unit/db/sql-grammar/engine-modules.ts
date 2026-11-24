@@ -1,8 +1,8 @@
 /**
- * The engine grammar modules as the registry imports them, read from the TypeScript AST of
- * `src/lib/db/sql-grammar/index.ts` rather than from a list typed here, so the seam and
- * isolation tests cover every module the registry reaches and a new one the day it lands.
- * `census.test.ts` holds each of them to its placement beside the provider.
+ * The engine function modules as the registry imports them, read from the TypeScript AST of
+ * `src/lib/db/sql-grammar/index.ts` rather than from a list typed here, so the seam and isolation tests cover every
+ * module the registry reaches and a new one the day it lands. `compose.test.ts` holds each binding to the slot Studio's
+ * grammar function table binds it at.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -21,7 +21,8 @@ export interface ModuleImport {
 
 export interface EngineModule {
   readonly id: string;
-  readonly exportName: string;
+  /** The bindings the registry imports from the module, each a function its grammar function table binds. */
+  readonly exportNames: readonly string[];
   readonly specifier: string;
   readonly path: string;
 }
@@ -84,24 +85,29 @@ export function resolveSpecifier(specifier: string, fromPath: string): string | 
   throw new Error(`${specifier} imported by ${fromPath} resolves to no file`);
 }
 
-/** `POSTGRES_SQL_GRAMMAR` is `postgres`; the named no-connection spec is not an engine. */
-const NOT_ENGINES = new Set(["NO_CONNECTION_SQL_GRAMMAR"]);
+/** The suffixes of the bindings the registry imports from a function module, one per slot kind of its function table. */
+const FUNCTION_SUFFIXES = ["_REDACTION_READER", "_FORMAT_SEGMENT", "_READ_QUOTED_QUALIFIER"] as const;
 
-/** Every engine module the registry imports, one per `<ID>_SQL_GRAMMAR` binding. */
+/**
+ * Every function module the registry imports from a provider directory, one per engine, with the bindings it imports
+ * from it: the modules that hold the functions Studio's grammar function table binds to the names a declaration or the
+ * redaction record gives.
+ */
 export function engineModules(): EngineModule[] {
   const modules: EngineModule[] = [];
   for (const entry of importsOf(REGISTRY_INDEX)) {
-    for (const name of entry.names) {
-      if (!name.endsWith("_SQL_GRAMMAR") || NOT_ENGINES.has(name)) continue;
-      const path = resolveSpecifier(entry.specifier, REGISTRY_INDEX);
-      if (path === null) throw new Error(`${name} comes from the package ${entry.specifier}`);
-      modules.push({
-        id: name.slice(0, -"_SQL_GRAMMAR".length).toLowerCase(),
-        exportName: name,
-        specifier: entry.specifier,
-        path,
-      });
-    }
+    if (!entry.specifier.startsWith("@/lib/db/providers/")) continue;
+    const path = resolveSpecifier(entry.specifier, REGISTRY_INDEX) as string;
+    const prefixes = new Set(
+      entry.names.map((name) => {
+        const suffix = FUNCTION_SUFFIXES.find((candidate) => name.endsWith(candidate));
+        if (suffix === undefined) throw new Error(`${name} from ${entry.specifier} is no grammar function`);
+        return name.slice(0, -suffix.length);
+      }),
+    );
+    if (prefixes.size !== 1) throw new Error(`${entry.specifier} holds the functions of more than one engine`);
+    const [prefix] = prefixes;
+    modules.push({ id: prefix.toLowerCase(), exportNames: entry.names, specifier: entry.specifier, path });
   }
   return modules.sort((a, b) => a.id.localeCompare(b.id));
 }

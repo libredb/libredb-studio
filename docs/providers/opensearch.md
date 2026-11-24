@@ -638,8 +638,8 @@ double quotes instead"*). The two search ids genuinely cannot share a quoting br
 
 **`[…]` is also an identifier quote**, MySQL/SQL-Server style: `SELECT [customer] FROM probe_orders`
 answers the field's value, while `SELECT [1, 2]` is refused with "All items between Brackets should be
-identifiers, got:LITERAL_INT". So `OPENSEARCH_GRAMMAR.bracket` is `"quoted-identifier"`
-([`opensearch-sql-grammar.ts`](../../src/lib/db/providers/sql/search/opensearch-sql-grammar.ts)), where `elasticsearch` leaves it at the default,
+identifiers, got:LITERAL_INT". So its declared `sqlText.grammar.bracket` is `"quoted-identifier"`
+([`opensearch.json`](../../src/lib/db/engine-declarations/opensearch.json)), where `elasticsearch` leaves it at the default,
 because `[` has no meaning in that grammar at all.
 
 **`#` really is a line comment**, and this is where the fork's SQL plugin parts company with upstream.
@@ -772,8 +772,8 @@ fallback: the caller shape-checks for the method and this provider does not answ
 
 ### 5.8 SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/search/opensearch-sql-grammar.ts`](../../src/lib/db/providers/sql/search/opensearch-sql-grammar.ts), the `opensearch` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
-Its grammar is `OPENSEARCH_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/opensearch.json`](../../src/lib/db/engine-declarations/opensearch.json), from which the `opensearch` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
+Its grammar is the declaration's `sqlText.grammar`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
 Every fact was established by live probe on 2026-08-19 against OpenSearch 3.8.0; it disagrees with Elasticsearch about `#` and about `[...]`.
 `#` is a line comment: `SELECT 1 AS a # , 2 AS b` answers one column, the same with a newline before `, 2 AS b` answers two, and `SELECT customer # FROM probe_orders` is a `SemanticCheckException` because the `FROM` was hidden.
 `[...]` is a name quote: `SELECT [customer] FROM probe_orders` answers the field's value, `SELECT [1, 2]` is refused with "All items between Brackets should be identifiers, got:LITERAL_INT", and `[customer]]` and `[a[b]]` are both refused, so it has no escape and does not nest.
@@ -2007,7 +2007,7 @@ The refusal reason it prints, verbatim:
 - Interface & DTOs: [`src/lib/db/types.ts`](../../src/lib/db/types.ts)
 - Errors: [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts)
 - Connection form config: [`src/lib/db/engine-declarations/opensearch.json`](../../src/lib/db/engine-declarations/opensearch.json), composed by [`src/lib/db/connection-form.ts`](../../src/lib/db/connection-form.ts)
-- Dialect facts elsewhere in the codebase: `OPENSEARCH_GRAMMAR` in [`src/lib/db/providers/sql/search/opensearch-sql-grammar.ts`](../../src/lib/db/providers/sql/search/opensearch-sql-grammar.ts) (`#`, `[…]`, block comments) · `quoteIdentifier()` in [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) (backticks) · `OPENSEARCH_SQL_WRITING` in [`opensearch-sql-writing.ts`](../../src/lib/db/providers/sql/search/opensearch-sql-writing.ts) (both escape forms) · [`src/lib/sql/fence-tags.ts`](../../src/lib/sql/fence-tags.ts) (the fence tag)
+- Dialect facts elsewhere in the codebase: `sqlText.grammar` in [`src/lib/db/engine-declarations/opensearch.json`](../../src/lib/db/engine-declarations/opensearch.json) (`#`, `[…]`, block comments) · `quoteIdentifier()` in [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) (backticks) · `OPENSEARCH_SQL_WRITING` in [`opensearch-sql-writing.ts`](../../src/lib/db/providers/sql/search/opensearch-sql-writing.ts) (both escape forms) · [`src/lib/sql/fence-tags.ts`](../../src/lib/sql/fence-tags.ts) (the fence tag)
 - Local cluster: [`database-compose.yml`](../../database-compose.yml) (`opensearch` service, host port 9201)
 - Tests: [`tests/integration/db/opensearch-provider.test.ts`](../../tests/integration/db/opensearch-provider.test.ts) · [`tests/unit/db/search/`](../../tests/unit/db/search/)
 - API contract: [`docs/API_DOCS.md`](../API_DOCS.md)

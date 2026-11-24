@@ -571,7 +571,7 @@ Its ticked bounds row carries the chip `SQLite: killed at its timeout`, and the 
 (`DEFAULT_QUERY_LIMIT = 500`). No transactions, no cancellation ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
 
 The inherited path reads the statement under **SQLite's** grammar, which the base passes down from the
-provider's own `type` ([`sqlite-sql-grammar.ts`](../../src/lib/db/providers/sql/sqlite-sql-grammar.ts)). SQLite has two comment forms,
+provider's own `type` ([`sqlite.json`](../../src/lib/db/engine-declarations/sqlite.json)). SQLite has two comment forms,
 `--` and `/* … */`; `#` opens neither. Its own tokenizer (the amalgamation bundled with
 `better-sqlite3` classifies `#` as `CC_VARALPHA`) reads `#name` as a bind variable, i.e. code. The
 shared reader used to guess MySQL's rule here, which swallowed the rest of the line and cost the
@@ -704,9 +704,9 @@ SQLite stores no NaN: a bound NaN is stored as NULL.
 
 ### SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/sqlite-sql-grammar.ts`](../../src/lib/db/providers/sql/sqlite-sql-grammar.ts), the `sqlite` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
-Its grammar is `SQLITE_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
-`SQLITE_GRAMMAR` lives in `src/lib/db/sql-grammar/shared.ts`, the one grammar two engines share, since libSQL reads SQLite's grammar.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/sqlite.json`](../../src/lib/db/engine-declarations/sqlite.json), from which the `sqlite` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
+Its grammar is the declaration's `sqlText.grammar`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+libSQL reads SQLite's grammar, so the `libsql` declaration states the same facts.
 `#` is code and `[...]` a quoted identifier, from the amalgamation bundled with `better-sqlite3`: `#` is `CC_VARALPHA`, a bind-variable prefix, comments open on `--` and `/*` only, and `[` is `CC_QUOTE2`, scanned to the first `]`.
 Block comments are flat: `case CC_SLASH` scans for the first `*/` with no depth count.
 `//` is code, probed 2026-08-25 through the bundled driver: `SELECT 1 AS a // note` and `SELECT 1 // 2` are both 'near "/": syntax error'.

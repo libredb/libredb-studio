@@ -1,7 +1,11 @@
-import { NO_EXTRA_WORDS } from "@/lib/db/sql-grammar/shared";
-import { DEFAULT_SQL_GRAMMAR } from "@libredb/provider-sdk/sql";
-import type { SqlGrammarSpec } from "@/lib/db/sql-grammar/types";
-import type { SqlGrammar } from "@libredb/provider-sdk/sql";
+/**
+ * PostgreSQL's SQL grammar functions, the ones its declaration names at `sqlText.completion` and Studio's grammar
+ * function table binds (src/lib/db/sql-grammar/index.ts, `SQL_GRAMMAR_FUNCTIONS`): only PostgreSQL completions
+ * introduce quoted table names, and every other dialect keeps its bare-identifier lookup and quotes through the
+ * connection's capabilities. Its grammar facts are stated in its declaration,
+ * src/lib/db/engine-declarations/postgres.json.
+ */
+import type { QuotedQualifierReader, SegmentFormatter } from "@/lib/db/sql-grammar/types";
 
 // PostgreSQL quote_ident quotes every keyword except UNRESERVED_KEYWORD.
 // Source: PostgreSQL 18, src/include/parser/kwlist.h and
@@ -30,134 +34,20 @@ function doubleQuoted(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
 }
 
-/** Format one catalog identifier using PostgreSQL's conservative quote_ident rule. */
-function formatPostgresIdentifier(name: string): string {
+/**
+ * PostgreSQL's completion segment formatter, the `formatSegment` its declaration names: one catalog identifier quoted
+ * by PostgreSQL's conservative quote_ident rule, bare only when it is lower case and no keyword but an unreserved one.
+ */
+export const POSTGRES_FORMAT_SEGMENT: SegmentFormatter = function formatPostgresIdentifier(name: string): string {
   return /^[a-z_][a-z0-9_]*$/.test(name) && !QUOTED_KEYWORDS.has(name) ? name : doubleQuoted(name);
-}
-
-const POSTGRES_GRAMMAR: SqlGrammar = {
-  hash: "code",
-  bracket: "subscript",
-  blockComment: "nesting",
-  alternateQuoting: false,
-  // CODE, and the strongest of the six refusals: `SELECT 1 // 2` on 18 is "operator
-  // does not exist: integer // integer", so `//` is a real OPERATOR NAME here that
-  // merely has no implementation for those argument types - not a comment and not a
-  // syntax error. `SELECT 1 AS a // note` is "syntax error at or near \"//\"".
-  doubleSlashComment: false,
-  backslashAlwaysEscapes: false,
-  // Established, and equal to the default: a routine body is a literal (`$$ … $$` or
-  // `'…'`), which the span reader already holds whole, so no `;` inside one is code.
-  script: DEFAULT_SQL_GRAMMAR.script,
-  // Materialize's `AS OF [AT LEAST] <t>`, which shares this type-id route (E2E pass
-  // of 2026-10-03/04, #1398): `SELECT * FROM ui_mv AS OF AT LEAST 0` sent with the
-  // bound appended is `Expected end of statement, found LIMIT`, and with the bound
-  // before the clause it returns rows. The timestamp is a number or a single-quoted
-  // literal - the forms the clause's own grammar documents - so `AS of` as an alias
-  // (its next word is a name, not a literal) and an `AS OF` inside a subquery (a
-  // `)` follows the timestamp) never match. Real PostgreSQL and RisingWave share
-  // this row and have no such clause: a statement of theirs ending in these words
-  // is one the server refuses bound or unbound, so the reading costs neither.
-  //
-  // A locking clause takes the row bound on either side of it: PostgreSQL's SELECT
-  // grammar spells the two shapes as `for_locking_clause opt_select_limit` and
-  // `select_limit opt_for_locking_clause` (18 gram.y, select_no_parens), so
-  // `SELECT * FROM t LIMIT 5 FOR UPDATE` and `... FOR UPDATE LIMIT 5` are both the
-  // writer's to write. On a statement that ends in one, the limiter writes the
-  // first spelling: the locking
-  // tails are declared here as trailing clauses (#1398's strip/re-attach path), so
-  // the run comes off the end before the bound is written and is re-attached after
-  // it, and a bound that already stands before one reads as the statement's own
-  // instead of taking a second one past the clause (#1964) - which PostgreSQL
-  // refuses as two LIMIT clauses.
-  //
-  // The four strengths (FOR UPDATE, FOR NO KEY UPDATE, FOR SHARE, FOR KEY SHARE -
-  // 18 SELECT docs, The Locking Clause) and the NOWAIT / SKIP LOCKED option are
-  // options OF THE CLAUSE, not clauses of their own: a pattern that peeled
-  // `SKIP LOCKED` off separately would re-attach it before its `FOR UPDATE`. A
-  // chain - `FOR UPDATE OF t1 FOR SHARE OF t2` - keeps its order because each pass
-  // strips one clause from the end backward.
-  //
-  // A name in the OF list is a bare token or a double-quoted identifier (4.1.1,
-  // the quoted form is the only way a name carries a space, a `"` inside it
-  // doubled). The bare token excludes quotes, brackets and commas, so a closing
-  // quote cannot ride on a name: a literal or a quoted identifier that merely
-  // ENDS in the clause words (`WHERE note = "x FOR UPDATE OF t"`) fails the
-  // pattern's `\s*$` after the name, the tail is not stripped, and the bound
-  // keeps its place at the end rather than landing inside the quoted text. `$`
-  // is legal inside an unquoted PostgreSQL identifier after its first character
-  // (4.1.1), so a name may carry one; a DOLLAR-QUOTED BODY ending in the clause
-  // words (`SELECT $$x FOR UPDATE OF t$$`) is held whole by the span reader, and
-  // `stripTrailingClauses` refuses a match that starts inside one, so the bound
-  // lands after the closing `$$` and not inside the body. A `)` is excluded for
-  // the same reason as everywhere else: a locking clause written inside a
-  // subquery is never the statement's own tail.
-  trailingLimitClauses: [
-    /\s+AS\s+OF\s+(?:AT\s+LEAST\s+)?(?:\d+|'[^']*')\s*$/i,
-    /\s+FOR\s+(?:NO\s+KEY\s+UPDATE|KEY\s+SHARE|UPDATE|SHARE)(?:\s+OF\s+(?:"(?:[^"]|"")*"|[^\s()',;"`][^\s()',;"`]*)(?:\s*,\s*(?:"(?:[^"]|"")*"|[^\s()',;"`][^\s()',;"`]*))*)?(?:\s+(?:NOWAIT|SKIP\s+LOCKED))?\s*$/i,
-  ],
-  // `LIMIT ALL` is PostgreSQL's own spelling of "no limit" (SELECT docs, LIMIT { count | ALL });
-  // the parser takes the ALL alternative for the count only - the FETCH spelling has no ALL arm
-  // (gram.y: select_limit_value has one, select_fetch_first_value does not). The count is a word,
-  // so the shared digit-only probe missed it, `hasLimit` read false and a second `LIMIT` followed
-  // the statement's own - which PostgreSQL refuses as two LIMIT clauses. Declaring the value reads
-  // the form as the statement's own unlimited bound, like Snowflake's `NULL` (SF-021). The
-  // declaration is shared by the whole row-bound probe family: an `OFFSET ALL` is not PostgreSQL
-  // syntax either, but a lone one is left untouched by the normal path and the engine keeps
-  // refusing the text as written.
-  nonNumericRowBounds: ["ALL"],
-  // `DO` runs an anonymous block whose code is a literal, `$$ ... $$` or `'...'`, which the gate does not read, so it
-  // asks whatever the block does; `DO LANGUAGE <name>` writes the language before the body. The `DO` of
-  // `ON CONFLICT DO NOTHING | UPDATE` and of `CREATE RULE ... DO INSTEAD | ALSO` is followed by a word and does not ask.
-  confirmCodeForms: [{ wordThenBody: "DO" }, ["DO", "LANGUAGE"]],
-  // `EXPLAIN` only plans. `EXPLAIN ANALYZE` (and the British `ANALYSE`) executes the explained statement, and so does
-  // a parenthesised `ANALYZE` whose value is absent or anything other than a boolean false (`false`, `off`, `no`, `0`
-  // and their accepted prefixes) or an integer literal of value 0. `0x1`, `0b1`, `0o1` and `0_1` are 1, so they
-  // execute (PostgreSQL manual, EXPLAIN; the integer scanner). CockroachDB shares this type-id, so the same
-  // statements ask there (#1863).
-  explainExecutesWithAnalyze: true,
 };
 
-/** How PostgreSQL statement text is read: grammar, SQL text, redaction, update target and completion. */
-export const POSTGRES_SQL_GRAMMAR: SqlGrammarSpec = {
-  // PostgreSQL has exactly two comment forms, `--` and the block
-  // form; `#` is an operator character (`#>`, `#>>`, `#-` walk or delete a jsonb
-  // path, `#` is integer XOR).
-  // Block comments NEST: the PostgreSQL manual's lexical-structure chapter (4.1.5
-  // Comments, postgresql.org/docs/current/sql-syntax-lexical.html; checked
-  // 2026-08-05) says block comments nest "as specified in the SQL standard but
-  // unlike C", precisely so a region containing comments can be commented out.
-  // `//` reads as CODE (18), and PostgreSQL is the most explicit of the engines that refuse it: `SELECT 1 // 2`
-  // is "operator does not exist: integer // integer", so `//` is an operator NAME here rather than a comment
-  // marker or a syntax error.
-  // Brackets: `expression[subscript]` extracts an element and
-  // `expression[lower:upper]` a slice (PostgreSQL manual 4.2.3 Subscripts), and
-  // array constructors nest: the manual's own example is
-  // `SELECT ARRAY[[1,2],[3,4]]` (4.2.12 Array Constructors, which also notes the
-  // inner `ARRAY` keyword may be omitted). Identifiers there are quoted with double
-  // quotes (4.1.1), so `[` is never a name quote in this dialect.
-  // PostgreSQL was briefly left there too, and the cost is why it is not: an
-  // undeterminable run is also text the confirmation gate cannot read, and since #297
-  // that gate ASKS rather than staying silent - so `ARRAY[[1,2],[3,4]]` and
-  // `j['a]b']`, everyday reads in this dialect, both lost their bound AND prompted
-  // before running. A confirmation an operator learns to click through protects
-  // nothing, so a false prompt on everyday syntax is not the cheap direction it looks
-  // like. The rule was established from the manual rather than the cost being
-  // accepted. Pinned in `tests/components/QuerySafetyDialog.test.tsx` and the
-  // PostgreSQL provider suite, and documented in `docs/providers/postgres.md`.
-  grammar: POSTGRES_GRAMMAR,
-  readsSqlText: true,
-  // A double quote is a name under every session setting, the one quoted run a redacted statement keeps.
-  redaction: { kind: "sql", nameQuote: '"' },
-  updateTarget: {
-    dashCommentNeedsSeparator: false,
-    extraQueryOpeners: NO_EXTRA_WORDS,
-    extraSetOperators: NO_EXTRA_WORDS,
-  },
-  // Only PostgreSQL completions introduce quoted table names; every other dialect keeps its bare-identifier
-  // lookup and quotes through the connection's capabilities.
-  completion: {
-    formatSegment: formatPostgresIdentifier,
-    readQuotedQualifier: (textToDot) => textToDot.match(/"((?:[^"]|"")+)"\.$/)?.[1].replace(/""/g, '"'),
-  },
+/**
+ * PostgreSQL's completion quoted qualifier reader, the `readQuotedQualifier` its declaration names: the qualifier a
+ * text up to a dot ends in when it is written in double quotes, its doubled quotes undone, or undefined.
+ */
+export const POSTGRES_READ_QUOTED_QUALIFIER: QuotedQualifierReader = function readPostgresQuotedQualifier(
+  textToDot: string,
+): string | undefined {
+  return textToDot.match(/"((?:[^"]|"")+)"\.$/)?.[1].replace(/""/g, '"');
 };

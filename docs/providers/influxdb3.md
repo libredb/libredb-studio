@@ -366,7 +366,7 @@ The engine accepts `$1` and `?` placeholders, but the route body has no paramete
 
 ### 5.4 The DataFusion grammar
 
-The statement splitter, the row limiter, the confirmation gate and the read policy read text under one measured grammar row, `DATAFUSION_GRAMMAR` in `src/lib/db/providers/timeseries/influxdb/influxdb3-sql-grammar.ts`, so they cannot disagree about where a comment or a literal ends.
+The statement splitter, the row limiter, the confirmation gate and the read policy read text under one measured grammar row, composed from the `sqlText.grammar` of `src/lib/db/engine-declarations/influxdb3.json`, so they cannot disagree about where a comment or a literal ends.
 
 | Field | Value | Measured on 3.12.0 Core |
 |---|---|---|
@@ -483,8 +483,8 @@ For the Charts tab, order by `time` ascending and choose `time` as the x axis: t
 
 ### 5.12 SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/timeseries/influxdb/influxdb3-sql-grammar.ts`](../../src/lib/db/providers/timeseries/influxdb/influxdb3-sql-grammar.ts), the `influxdb3` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
-Its grammar is `DATAFUSION_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/influxdb3.json`](../../src/lib/db/engine-declarations/influxdb3.json), from which the `influxdb3` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
+Its grammar is the declaration's `sqlText.grammar`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
 Every fact is Apache DataFusion as InfluxDB 3.12.0 Core parses it, each a statement the server answered through `POST /api/v3/query_sql` with the body the provider sends, re-run 2026-10-04.
 `#` opens nothing: `SELECT 1 AS x # c` is HTTP 400, `ParserError("Expected: end of statement, found: # at Line: 1, Column: 15")`.
 `[` is a subscript and an array literal that nests, never a name quote: `SELECT [1,2][1] AS x` answers 1, `SELECT [[1,2],[3,4]][2][1] AS x` answers 3, `SELECT ['a]b'][1] AS x` answers `a]b`, and `SELECT [room] FROM home` answers an array column named `make_array(home.room)`.

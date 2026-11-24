@@ -15,7 +15,7 @@ const units = (sql: string) => splitExecutionUnits(sql, grammar).map((unit) => u
 
 describe("the Snowflake grammar", () => {
   test("is its own row, not the compatibility default", () => {
-    expect(grammar).not.toBe(DEFAULT_SQL_GRAMMAR);
+    expect(grammar).not.toEqual(DEFAULT_SQL_GRAMMAR);
   });
 
   test("M63: `//` opens a line comment, so a `;` and a DROP behind it stay in the comment", () => {
@@ -90,7 +90,7 @@ describe("the Snowflake grammar", () => {
   });
 
   test("a script keeps the default: no procedural block is read", () => {
-    expect(grammar.script).toBe(DEFAULT_SQL_GRAMMAR.script);
+    expect(grammar.script).toEqual(DEFAULT_SQL_GRAMMAR.script);
     expect(grammar.script.blocks).toBe("none");
   });
 });

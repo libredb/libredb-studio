@@ -18,7 +18,7 @@ const limited = (sql: string) => applyQueryLimit(sql, 500, 0, {}, "couchbase");
 
 describe("the Couchbase SQL++ grammar", () => {
   test("is its own row, not the compatibility default, and its text is SQL", () => {
-    expect(grammar).not.toBe(DEFAULT_SQL_GRAMMAR);
+    expect(grammar).not.toEqual(DEFAULT_SQL_GRAMMAR);
     expect(readsSqlText("couchbase")).toBe(true);
   });
 
@@ -115,7 +115,7 @@ describe("the Couchbase SQL++ grammar", () => {
 
   test("a script keeps the default: one statement per request and no procedural body", () => {
     // `SELECT 1 AS a; SELECT 2 AS b` is 3000 "syntax error ... at: SELECT", and `SELECT 1 AS a;` answers 1.
-    expect(grammar.script).toBe(DEFAULT_SQL_GRAMMAR.script);
+    expect(grammar.script).toEqual(DEFAULT_SQL_GRAMMAR.script);
   });
 
   test("the unsafe-statement check reads a write after an escaped quote as a write", () => {

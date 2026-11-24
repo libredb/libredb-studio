@@ -117,7 +117,7 @@ can correct it.
 | `src/lib/db/factory.ts` | `case "cassandra"`, dynamic `import("./providers/sql/cassandra/index")` |
 | `src/lib/db/engine-declarations/cassandra.json` | `displayName` "Apache Cassandra", `connection.defaults` port 9042, the `localDataCenter` field, which `CONNECTION_FORM` in `src/lib/db/connection-form.ts` composes |
 | `src/lib/db-ui-config.ts` | Icon, `text-sky-300` |
-| `src/lib/db/providers/sql/cassandra/sql-grammar.ts` | `CASSANDRA_GRAMMAR`: all four facts probed ([§5.4](#54-dialect-traps-a-user-will-hit)) |
+| `src/lib/db/engine-declarations/cassandra.json` | `sqlText.grammar`: all four facts probed ([§5.4](#54-dialect-traps-a-user-will-hit)) |
 | `src/lib/db/providers/sql/cassandra/sql-writing.ts` | `literalStandard` literal escaping: doubling, backslash is data (measured) |
 | `src/lib/db/engine-declarations/cassandra.json` | The engine declaration: `id`, `location` and `connection.connectBudgetMs` authored, the rest generated |
 | `src/lib/seed/types.ts` | `localDataCenter` |
@@ -647,7 +647,7 @@ SELECT * FROM probe.customers LIMIT 3 // note\n    -> 3 rows
 ```
 
 `//` is a line comment in CQL, and that half **is** a shared grammar fact — `doubleSlashComment` in
-[`src/lib/db/providers/sql/cassandra/sql-grammar.ts`](../../src/lib/db/providers/sql/cassandra/sql-grammar.ts), measured over the native protocol on
+[`src/lib/db/engine-declarations/cassandra.json`](../../src/lib/db/engine-declarations/cassandra.json), measured over the native protocol on
 Cassandra 5.0.9 and ScyllaDB 2026.2.4. It used to be a private scan inside this provider, and while
 it was, the shared readers were blind to it: the statement splitter cut
 `SELECT id FROM probe.customers // note; DROP TABLE probe.customers` — **one** statement to this
@@ -704,7 +704,7 @@ whatever the protocol declared rather than the DDL word. The schema tree reads
 | `SELECT … WHERE 1=1 LIMIT 100;` | `line 24:6 no viable alternative at input '1'`: a predicate names a column |
 | `INSERT INTO t (id, v) VALUES (10, 'a'), (11, 'b');` | `line 3:17 mismatched input ',' expecting EOF`: an INSERT carries one row |
 
-The four grammar facts in `src/lib/db/providers/sql/cassandra/sql-grammar.ts` were all probed on this engine rather than read
+The four grammar facts in `src/lib/db/engine-declarations/cassandra.json` were all probed on this engine rather than read
 off a neighbour:
 
 | Fact | CQL | Probe |
@@ -714,7 +714,7 @@ off a neighbour:
 | block comments | **flat** | `SELECT /* a /* b */ id …` returns the row |
 | `q'…'` | **not a literal** | `q'{it''s}'` is `no viable alternative at input '{it's}'` |
 
-`cassandra` deliberately declares `readsSqlText: true` in `src/lib/db/providers/sql/cassandra/sql-grammar.ts`. That fact asks whether the text is
+`cassandra` deliberately declares `readsSqlText: true` in `src/lib/db/engine-declarations/cassandra.json`. That fact asks whether the text is
 SQL-*shaped* so that a span reader can find where a literal ends and where a comment hides a write —
 and CQL is written with the same statement keywords, the same `'…'` literals with doubled quotes, the
 same `"…"` quoted names and the same `--` / `/* */` comments. The keywords it *lacks* are a smaller
@@ -816,8 +816,8 @@ Measured 2026-10-04 on Cassandra 5.0.9: a table of every scalar type, `list<int>
 
 ### 5.8 SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/cassandra/sql-grammar.ts`](../../src/lib/db/providers/sql/cassandra/sql-grammar.ts), the `cassandra` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
-Its grammar is `CASSANDRA_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/cassandra.json`](../../src/lib/db/engine-declarations/cassandra.json), from which the `cassandra` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
+Its grammar is the declaration's `sqlText.grammar`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
 Every fact was a statement Apache Cassandra 5.0.9 answered over the native protocol on 2026-08-20, probed before any provider code existed.
 `#` opens nothing and is no identifier character: `... WHERE id = 1 # trailing`, `SELECT # x` and `SELECT id#a` are each "no viable alternative at character '#'".
 `[` is a subscript that nests: `SELECT [id] ...` answers a `list` column holding `[1]`, `SELECT [[id]] ...` answers `[[1]]`, and `SELECT ['a]b'] ...` shows a `]` inside a string does not close the run.

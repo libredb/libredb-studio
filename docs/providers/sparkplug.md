@@ -219,7 +219,7 @@ Agent mode does not use this request: it has a closed table of four reads of its
 
 ### 5.1 SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/industrial/sparkplug/sql-grammar.ts`](../../src/lib/db/providers/industrial/sparkplug/sql-grammar.ts), the `sparkplug` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/sparkplug.json`](../../src/lib/db/engine-declarations/sparkplug.json), from which the `sparkplug` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
 `readsSqlText` is `false`: the console takes one JSON read request naming a group, an edge node and a window, so no span of it is SQL (#1720).
 The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/sparkplugread/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.

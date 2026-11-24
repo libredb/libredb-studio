@@ -1,76 +1,32 @@
 /**
- * The SQL grammar registry is total over the type ids, each row is the module at its placement next to the
- * provider (spec 5.3), the no-connection spec answers `undefined`, and every other value outside the `DatabaseType`
- * union is refused by name (FND-1).
+ * The SQL grammar registry is total over the type ids, each row is its declaration's SQL text composed with Studio's
+ * record of its redaction (docs/providers/CONTRACT.md, clause M-78), the no-connection spec answers `undefined`, and
+ * every other value outside the `DatabaseType` union is refused by name (FND-1).
  */
 import { describe, expect, test } from "bun:test";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
-import { SQL_GRAMMAR, sqlGrammarFor } from "@/lib/db/sql-grammar";
+import { BUNDLED_SQL_TEXT } from "@/lib/db/engine-catalog/sql-text.generated";
+import { composeSqlGrammar, SQL_GRAMMAR, SQL_GRAMMAR_FUNCTIONS, sqlGrammarFor } from "@/lib/db/sql-grammar";
 import { NO_CONNECTION_SQL_GRAMMAR } from "@/lib/db/sql-grammar/no-connection";
+import { SQL_TEXT_REDACTION } from "@/lib/db/sql-grammar/redaction";
 import type { SqlGrammarSpec } from "@/lib/db/sql-grammar/types";
 import { DEFAULT_SQL_GRAMMAR } from "@libredb/provider-sdk/sql";
 import type { DatabaseType } from "@/lib/types";
 import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../../../helpers/outside-the-union";
-
-const FLAT: Partial<Record<DatabaseType, string>> = {
-  postgres: "sql/postgres-sql-grammar",
-  mysql: "sql/mysql-sql-grammar",
-  mssql: "sql/mssql-sql-grammar",
-  oracle: "sql/oracle-sql-grammar",
-  sqlite: "sql/sqlite-sql-grammar",
-  redis: "keyvalue/redis-sql-grammar",
-  libredb: "embedded/libredb-sql-grammar",
-  elasticsearch: "sql/search/elasticsearch-sql-grammar",
-  opensearch: "sql/search/opensearch-sql-grammar",
-  influxdb: "timeseries/influxdb/influxdb-sql-grammar",
-  influxdb3: "timeseries/influxdb/influxdb3-sql-grammar",
-};
-
-const FAMILIES: Record<string, readonly DatabaseType[]> = {
-  document: ["couchbase", "firestore", "mongodb"],
-  graph: ["neo4j"],
-  industrial: ["modbus", "mtconnect", "opcua", "sparkplug"],
-  keyvalue: ["etcd", "mqtt", "oxia"],
-  network: ["netconf", "snmp"],
-  objectstore: ["s3"],
-  platform: ["kubernetes"],
-  sql: [
-    "bigquery",
-    "cassandra",
-    "clickhouse",
-    "databend",
-    "db2",
-    "druid",
-    "duckdb",
-    "libsql",
-    "snowflake",
-    "spark",
-    "trino",
-  ],
-  stream: ["kafka", "rabbitmq"],
-  timeseries: ["prometheus"],
-  vector: ["milvus", "qdrant", "weaviate"],
-};
-
-/** Where each type id's module sits, under `src/lib/db/providers/`. */
-const PLACEMENT: Record<string, string> = { ...FLAT };
-for (const [family, ids] of Object.entries(FAMILIES)) {
-  for (const id of ids) PLACEMENT[id] = `${family}/${id}/sql-grammar`;
-}
 
 const ALL_IDS = [...EXTERNAL_DATABASE_TYPES, "libredb"].sort();
 
 describe("the SQL grammar registry", () => {
   test("has one row per type id and no other", () => {
     expect(Object.keys(SQL_GRAMMAR).sort()).toEqual(ALL_IDS);
-    expect(Object.keys(PLACEMENT).sort()).toEqual(ALL_IDS);
     expect(Object.isFrozen(SQL_GRAMMAR)).toBe(true);
   });
 
-  for (const id of ALL_IDS) {
-    test(`${id}'s row is the module at its placement`, async () => {
-      const declared = (await import(`@/lib/db/providers/${PLACEMENT[id]}`)) as Record<string, SqlGrammarSpec>;
-      expect(declared[`${id.toUpperCase()}_SQL_GRAMMAR`]).toBe(SQL_GRAMMAR[id as DatabaseType]);
+  for (const id of ALL_IDS as DatabaseType[]) {
+    test(`${id}'s row is its declaration's SQL text composed with Studio's record of its redaction`, () => {
+      expect(SQL_GRAMMAR[id]).toEqual(
+        composeSqlGrammar(id, BUNDLED_SQL_TEXT[id], SQL_TEXT_REDACTION[id], SQL_GRAMMAR_FUNCTIONS),
+      );
     });
   }
 
@@ -78,14 +34,24 @@ describe("the SQL grammar registry", () => {
     expect(new Set(Object.values(SQL_GRAMMAR)).size).toBe(ALL_IDS.length);
   });
 
-  test("only sqlite and libsql share a grammar object", () => {
-    const owners = new Map<object, string[]>();
-    for (const [id, spec] of Object.entries(SQL_GRAMMAR)) {
-      if (spec.grammar === NO_CONNECTION_SQL_GRAMMAR.grammar) continue;
-      owners.set(spec.grammar, [...(owners.get(spec.grammar) ?? []), id]);
-    }
-    const shared = [...owners.values()].filter((ids) => ids.length > 1).map((ids) => ids.sort());
-    expect(shared).toEqual([["libsql", "sqlite"]]);
+  test("no two rows share a grammar object", () => {
+    expect(new Set(Object.values(SQL_GRAMMAR).map((spec) => spec.grammar)).size).toBe(ALL_IDS.length);
+    expect(Object.values(SQL_GRAMMAR).some((spec) => spec.grammar === NO_CONNECTION_SQL_GRAMMAR.grammar)).toBe(false);
+  });
+
+  test("sqlite and libsql state one grammar, with the confirmation forms of the INSERTs that replace rows", () => {
+    // libSQL reads SQLite's grammar, so the two declarations state the same facts.
+    expect(SQL_GRAMMAR.libsql.grammar).toEqual(SQL_GRAMMAR.sqlite.grammar);
+    expect(SQL_GRAMMAR.sqlite.grammar.hash).toBe("code");
+    expect(SQL_GRAMMAR.sqlite.grammar.bracket).toBe("quoted-identifier");
+    expect(SQL_GRAMMAR.sqlite.grammar.script.blocks).toBe("trigger-body");
+    // OR REPLACE is the one conflict algorithm that deletes a row already there; OR ROLLBACK, OR ABORT, OR FAIL and OR
+    // IGNORE leave it (SQLite reference, "The ON CONFLICT Clause").
+    expect(SQL_GRAMMAR.sqlite.grammar.confirmForms).toEqual([
+      ["REPLACE", "INTO"],
+      ["INSERT", "OR", "REPLACE"],
+    ]);
+    expect(SQL_GRAMMAR.sqlite.grammar.confirmCodeForms).toBeUndefined();
   });
 
   test("an absent type is the no-connection spec", () => {
@@ -97,13 +63,14 @@ describe("the SQL grammar registry", () => {
   });
 
   // A redaction reader guessing where a literal ends can store the literal, so `sql` redaction needs text that IS
-  // SQL and a grammar established for the engine. Before the registry, `readerOf` refused both cases itself.
+  // SQL and a grammar established for the engine, one whose declared facts are not the compatibility default's.
+  // Before the registry, `readerOf` refused both cases itself.
   test.each([...Object.entries(SQL_GRAMMAR), ["no connection", NO_CONNECTION_SQL_GRAMMAR]] as [
     string,
     SqlGrammarSpec,
   ][])("%s redacts as SQL only text it reads as SQL under its own grammar", (_id, spec) => {
     if (spec.redaction.kind !== "sql") return;
     expect(spec.readsSqlText).toBe(true);
-    expect(spec.grammar).not.toBe(DEFAULT_SQL_GRAMMAR);
+    expect(spec.grammar).not.toEqual(DEFAULT_SQL_GRAMMAR);
   });
 });

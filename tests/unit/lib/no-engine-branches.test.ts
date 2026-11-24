@@ -155,9 +155,27 @@ export const REGISTRIES: readonly Listed[] = [
   ...[
     ["src/lib/db/engine-facets/index.ts", "ENGINE_FACETS"],
     ["src/lib/db/migration-ddl/index.ts", "MIGRATION_DDL"],
-    ["src/lib/db/sql-grammar/index.ts", "SQL_GRAMMAR"],
     ["src/lib/db/sql-writing/index.ts", "SQL_WRITING"],
   ].map(([path, declaration]) => ({ path, declaration, count: 1, reason: CONTRACT })),
+  {
+    path: "src/lib/db/engine-catalog/sql-text.generated.ts",
+    declaration: "BUNDLED_SQL_TEXT",
+    count: 1,
+    reason: "each engine's SQL text, generated from the declarations and compile-enforced over the type-id union",
+  },
+  {
+    path: "src/lib/db/sql-grammar/index.ts",
+    declaration: "SQL_GRAMMAR",
+    count: 2,
+    reason: "each engine's SQL grammar row, composed from the generated SQL text and typed over the type-id union",
+  },
+  {
+    path: "src/lib/db/sql-grammar/redaction.ts",
+    declaration: "SQL_TEXT_REDACTION",
+    count: 1,
+    reason:
+      "Studio's hand-written review record of the sqlText.redaction claim, compile-enforced over the type-id union",
+  },
   {
     path: "src/lib/db/engine-catalog/editor.generated.ts",
     declaration: "BUNDLED_EXECUTION_UI",

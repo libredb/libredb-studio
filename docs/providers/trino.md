@@ -710,8 +710,8 @@ The type list changes from the shared list only where the engine disagrees; a ro
 
 ### 5.8 SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/trino/sql-grammar.ts`](../../src/lib/db/providers/sql/trino/sql-grammar.ts), the `trino` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
-Its grammar is `TRINO_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/trino.json`](../../src/lib/db/engine-declarations/trino.json), from which the `trino` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
+Its grammar is the declaration's `sqlText.grammar`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
 Every fact was a statement Trino 476 answered through `POST /v1/statement` on 2026-08-20.
 `#` opens nothing: `SELECT 1 AS a # trailing` is "line 1:15: mismatched input '#'" and `SELECT # x` is "line 1:8: mismatched input '#'".
 `[` is a subscript that nests and no name quote: `SELECT ARRAY[1,2][1]` answers 1, `SELECT ARRAY[ARRAY[1,2],ARRAY[3,4]][1][2]` answers 2, and `SELECT [customer] FROM tpch.sf1.nation` fails with "Column 'customer' cannot be resolved".
@@ -2085,7 +2085,7 @@ A deadline met during the check, or during the catalog list in the statement's o
 
 Only one statement whose first keyword is `SELECT` or `WITH` is sent, refused before anything is sent otherwise (`trinoAgentStatementRefusal`).
 Inside a transaction, a `COMMIT` or `ROLLBACK` ends it and a nested `START TRANSACTION` is refused and aborts it (capture 03); `SET SESSION`, `USE`, `CALL`, `EXECUTE` and `PREPARE` are not reads; so none of them is sent, and neither is a second statement, `EXPLAIN`, `SHOW` or `VALUES`.
-The text is read with Trino's registered grammar row ([`sql-grammar.ts`](../../src/lib/db/providers/sql/trino/sql-grammar.ts)): `--` and block comments and whitespace skipped, string literals and double-quoted names opaque, `#` and `//` read as code, and a code semicolon ending the statement with only comments and whitespace after it.
+The text is read with Trino's registered grammar row ([`trino.json`](../../src/lib/db/engine-declarations/trino.json)): `--` and block comments and whitespace skipped, string literals and double-quoted names opaque, `#` and `//` read as code, and a code semicolon ending the statement with only comments and whitespace after it.
 A carriage return inside a `--` comment with more text after it and a `$$` run are refused, since a reader can differ from the server on either; text ending inside a comment, a string or a name is refused.
 
 A statement that names the `system` catalog is refused before it is sent, and so is the open of a connection that pins it as its catalog.

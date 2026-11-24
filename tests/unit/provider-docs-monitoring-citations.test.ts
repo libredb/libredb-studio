@@ -809,8 +809,6 @@ const SEARCH_MODULE_CITATIONS = [
   { name: "SQL_WRITING", source: "src/lib/db/sql-writing/index.ts" },
   { name: "ELASTICSEARCH_SQL_WRITING", source: "src/lib/db/providers/sql/search/elasticsearch-sql-writing.ts" },
   { name: "OPENSEARCH_SQL_WRITING", source: "src/lib/db/providers/sql/search/opensearch-sql-writing.ts" },
-  { name: "ELASTICSEARCH_GRAMMAR", source: "src/lib/db/providers/sql/search/elasticsearch-sql-grammar.ts" },
-  { name: "OPENSEARCH_GRAMMAR", source: "src/lib/db/providers/sql/search/opensearch-sql-grammar.ts" },
   { name: "ELASTICSEARCH_MIGRATION_DDL", source: "src/lib/db/providers/sql/search/elasticsearch-migration-ddl.ts" },
   { name: "OPENSEARCH_MIGRATION_DDL", source: "src/lib/db/providers/sql/search/opensearch-migration-ddl.ts" },
 ] as const;

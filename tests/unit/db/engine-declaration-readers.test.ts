@@ -25,7 +25,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { AUTHORED_MEMBERS } from "../../../scripts/generate-engine-declarations";
-import { SEGMENT_CLAIMS } from "./engine-declarations/claims";
+import { CONFIRMATION_GATE_CLAIMS, SEGMENT_CLAIMS } from "./engine-declarations/claims";
 import { ENGINE_TABLE_INVENTORY } from "./engine-declarations/inventory";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
@@ -100,6 +100,18 @@ const FENCE_ALIAS_MEMBERS = ["editor.fenceAliases"] as const;
  * authored members, M-15, each an offer, presentation or a mask that only adds to what history drops, none a claim.
  */
 const QUERY_EDITOR_MEMBERS = ["editor.dialect", "editor.language"] as const;
+
+/**
+ * The SQL text members the SQL text is projected from, M-78: authored members, M-15, its redaction, a claim, never
+ * among them. `readsSqlText` and an exempt form of the grammar are the confirmation gate's claims, which the gate counts
+ * only through `CONFIRMATION_CLAIM_REVIEW` (S-8), and every other reader reads as declared.
+ */
+const SQL_TEXT_MEMBERS = [
+  "sqlText.readsSqlText",
+  "sqlText.grammar",
+  "sqlText.updateTarget",
+  "sqlText.completion",
+] as const;
 
 /** Every module of Studio's source that reads a declaration or a projection of the declarations. */
 const DECLARATION_READERS: readonly DeclarationReader[] = [
@@ -189,15 +201,21 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
       ...EXECUTION_UI_MEMBERS,
       ...FENCE_ALIAS_MEMBERS,
       ...QUERY_EDITOR_MEMBERS,
+      ...SQL_TEXT_MEMBERS,
     ],
     reason:
-      "projects the admitted declarations into the engine catalog, the connection tables, the connection forms, the connection strings, the execution UI and fence aliases, and the query dialects, tab type editors and editor languages",
+      "projects the admitted declarations into the engine catalog, the connection tables, the connection forms, the connection strings, the execution UI and fence aliases, the query dialects, tab type editors and editor languages, and the SQL text",
   },
   {
     path: "src/lib/db/engine-catalog/query-editor.generated.ts",
     members: QUERY_EDITOR_MEMBERS,
     reason:
       "the query dialects, the tab type editors and the editor languages, generated from the admitted declarations",
+  },
+  {
+    path: "src/lib/db/engine-catalog/sql-text.generated.ts",
+    members: SQL_TEXT_MEMBERS,
+    reason: "each engine's SQL text, generated from the admitted declarations",
   },
   {
     path: "src/lib/db/execution-ui/index.ts",
@@ -208,6 +226,12 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
     path: "src/lib/db/query-dialects.ts",
     members: ["editor.dialect"],
     reason: "each query dialect's row, read from the generated query dialect record",
+  },
+  {
+    path: "src/lib/db/sql-grammar/index.ts",
+    members: SQL_TEXT_MEMBERS,
+    reason:
+      "each engine's SQL grammar row, composed from the generated SQL text, Studio's hand-written redaction record and Studio's grammar function table, which binds each named function",
   },
   {
     path: "src/lib/editor/dialect-editors.ts",
@@ -425,13 +449,10 @@ const CLAIM_DESTINATION =
   /^engine declaration: [\w.]+, the engine's request, which this table grants as Studio's review record of the claim$/;
 
 /**
- * The registries whose claims sit in rows beside each provider, M-54's case: each row is written in its provider's
+ * The registry whose claims sit in rows beside each provider, M-54's case: each row is written in its provider's
  * directory and its index collects them, so the record is no single literal and this guard does not hold it.
  */
-const ROW_REGISTRIES: readonly CoreRecord[] = [
-  { module: "src/lib/db/engine-facets/index.ts", name: "ENGINE_FACETS" },
-  { module: "src/lib/db/sql-grammar/index.ts", name: "SQL_GRAMMAR" },
-];
+const ROW_REGISTRIES: readonly CoreRecord[] = [{ module: "src/lib/db/engine-facets/index.ts", name: "ENGINE_FACETS" }];
 
 /**
  * The confirmation gate's review record (docs/providers/CONTRACT.md, clause M-52): a list keyed by a claim's kind, its
@@ -583,14 +604,60 @@ describe("engine declaration readers", () => {
     ]);
   });
 
+  test("the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module and the SQL grammar, and counted by the gate only through CONFIRMATION_CLAIM_REVIEW", () => {
+    const gateClaims = (member: string) =>
+      CONFIRMATION_GATE_CLAIMS.filter((claim) => overlaps(member, claim)).map(
+        (claim) =>
+          `${member} is authored, and it holds the claim ${claim}, but an authored member feeds a projection Studio reads, and a claim reaches a gate only through Studio's review record of it (docs/providers/CONTRACT.md, clause M-54)`,
+      );
+    // The only authored members holding one of the gate's claims: readsSqlText, and the grammar, which holds the forms.
+    expect(authoredClaims(AUTHORED_MEMBERS, CONFIRMATION_GATE_CLAIMS)).toEqual([
+      ...gateClaims("sqlText.readsSqlText"),
+      ...gateClaims("sqlText.grammar"),
+    ]);
+    expect(authoredClaims(AUTHORED_MEMBERS, CONFIRMATION_GATE_CLAIMS)).toHaveLength(2);
+    // The only readers of them: the projection, its generated module and the SQL grammar that composes each row.
+    const readers = [
+      ...new Set(claimReaders(DECLARATION_READERS, CONFIRMATION_GATE_CLAIMS).map((problem) => problem.split(" ")[0])),
+    ];
+    expect(readers).toEqual([
+      "src/lib/db/engine-catalog/projection.ts",
+      "src/lib/db/engine-catalog/sql-text.generated.ts",
+      "src/lib/db/sql-grammar/index.ts",
+    ]);
+    // The gate counts each through the review record: the modules that import it are the gate's two, each importing
+    // only isReviewedConfirmationClaim, and the SQL reading asks it about exactly these two kinds of claim.
+    const importers = sourceFiles().flatMap((file) => {
+      const source = ts.createSourceFile(file.path, file.text, ts.ScriptTarget.Latest, false);
+      return source.statements.flatMap((statement) => {
+        if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) return [];
+        if (statement.moduleSpecifier.text !== "@/lib/db/confirmation-claim-review") return [];
+        const bindings = statement.importClause?.namedBindings;
+        const names =
+          bindings !== undefined && ts.isNamedImports(bindings) ? bindings.elements.map((e) => e.name.text) : [];
+        return [{ path: file.path, names }];
+      });
+    });
+    expect(importers).toEqual([
+      { path: "src/lib/db/destructive-commands.ts", names: ["isReviewedConfirmationClaim"] },
+      { path: "src/lib/sql/dangerous-query.ts", names: ["isReviewedConfirmationClaim"] },
+    ]);
+    const gate = readFileSync(path.join(ROOT, "src/lib/sql/dangerous-query.ts"), "utf8");
+    expect(gate).toContain('isReviewedConfirmationClaim({ kind: "exempt-form", type: databaseType, form })');
+    expect(gate).toContain('isReviewedConfirmationClaim({ kind: "text-not-sql", type: databaseType })');
+  }, 60_000);
+
   test("every claim record Studio keeps in core is written by hand, so no projection of the declarations can feed one", () => {
     const records = ENGINE_TABLE_INVENTORY.filter((entry) => CLAIM_DESTINATION.test(entry.destination));
     const modules = [...new Set([...records, ...CONFIRMATION_RECORDS].map((record) => record.module))];
     const files = modules.map((module) => ({ path: module, text: readFileSync(path.join(ROOT, module), "utf8") }));
 
-    expect(records.length).toBe(17);
+    expect(records.length).toBe(18);
+    expect(records).toContainEqual(
+      expect.objectContaining({ module: "src/lib/db/sql-grammar/redaction.ts", name: "SQL_TEXT_REDACTION" }),
+    );
     expect(computedClaimRecords(files, [...records, ...CONFIRMATION_RECORDS])).toEqual([]);
-    // The two registries whose claims sit in rows beside providers are named in the claim's words, but not in its form.
+    // The registry whose claims sit in rows beside providers is named in the claim's words, but not in its form.
     for (const registry of ROW_REGISTRIES) {
       const entry = ENGINE_TABLE_INVENTORY.find(
         (candidate) => candidate.module === registry.module && candidate.name === registry.name,

@@ -372,8 +372,8 @@ A backslash inside `"..."` is part of the name, so `"a\b"` names the column `a\b
 
 ### 4.1 SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/snowflake/sql-grammar.ts`](../../src/lib/db/providers/sql/snowflake/sql-grammar.ts), the `snowflake` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
-Its grammar is `SNOWFLAKE_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/snowflake.json`](../../src/lib/db/engine-declarations/snowflake.json), from which the `snowflake` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
+Its grammar is the declaration's `sqlText.grammar`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
 The lexical facts were measured on the trial capture of 2026-10-12 (Snowflake 10.37.100), each recorded in `tests/fixtures/snowflake/trial-2026-10-12-v10.37.100/`; the rest are read off Snowflake's SQL reference.
 `#` is code: the trial refused `SELECT 3 # 2` at the `#`.
 `[` is a subscript into a semi-structured value, and names are quoted with `"` only.

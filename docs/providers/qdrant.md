@@ -365,7 +365,7 @@ The confirmation gate asks about nothing, because every request reads, and it ne
 
 ### 5.9 SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/vector/qdrant/sql-grammar.ts`](../../src/lib/db/providers/vector/qdrant/sql-grammar.ts), the `qdrant` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/qdrant.json`](../../src/lib/db/engine-declarations/qdrant.json), from which the `qdrant` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
 `readsSqlText` is `false`: `qdrant` takes one Qdrant console request, a `METHOD /path` line and one JSON body, whose strings escape with a backslash and where `//` opens a comment outside a string; the provider parses it with the shared console parser.
 The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/vector/qdrant/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.

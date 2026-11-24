@@ -1,10 +1,10 @@
 /**
- * The contract every SQL-reading engine fills in once: its grammar facts plus the
- * per-engine readings that sit beside them today (redaction, the update-target
- * reader and completion quoting). Every field of `SqlGrammarSpec` is required, so an engine states
- * each of these rather than inheriting one from a base object. `SqlGrammar` itself is unchanged by
- * the move and still has optional facts (`dollarTags`, `rawStrings`, `confirmForms` and others),
- * which its readers default when a grammar leaves them out.
+ * What Studio's readers read for one engine's statement text: its grammar facts plus the per-engine readings beside
+ * them (redaction, the update-target reader and completion quoting). Each engine's row is composed from its declaration
+ * (src/lib/db/sql-grammar/index.ts, `composeSqlGrammar`; docs/providers/CONTRACT.md, clause M-78), which states every
+ * fact, so no engine inherits one from a base object. `SqlGrammar` itself still has optional facts (`dollarTags`,
+ * `rawStrings`, `confirmForms` and others), which its readers default when a grammar leaves them out, and the
+ * composition leaves out each fact a declaration states at the reading its absence has.
  */
 import type { SqlGrammar } from "@libredb/provider-sdk/sql";
 
@@ -48,3 +48,12 @@ export interface SqlGrammarSpec {
   readonly updateTarget: UpdateTargetGrammar;
   readonly completion: CompletionQuoting;
 }
+
+/** A command redaction's reader: from a statement's text, the text the query event log keeps. */
+export type CommandRedactionReader = Extract<SqlRedaction, { readonly kind: "command" }>["read"];
+
+/** A completion segment formatter: one name segment quoted as the engine quotes it. */
+export type SegmentFormatter = NonNullable<CompletionQuoting["formatSegment"]>;
+
+/** A completion quoted qualifier reader: from the text up to a dot, the qualifier before it when it is quoted. */
+export type QuotedQualifierReader = NonNullable<CompletionQuoting["readQuotedQualifier"]>;

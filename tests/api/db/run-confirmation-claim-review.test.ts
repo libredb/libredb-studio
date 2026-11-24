@@ -4,27 +4,25 @@
  * `POST /api/db/transaction` with `action: "query"`.
  *
  * The claims are planted, since no shipped row makes an unlisted one: a decides-alone row is the stand-in vocabulary
- * row under Trino, an exempt form is Trino's real grammar row with `DELETE FROM` added, and a text-not-SQL claim is
- * Druid's real grammar row with `readsSqlText: false`. A grammar row is mocked
- * before anything that reaches the grammar registry is imported, because `SQL_GRAMMAR` is built from the row objects
- * when it loads, so this file imports only `bun:test` statically. Only what answers before a provider is replaced:
+ * row under Trino, and the two grammar claims are planted as a declaration states them, in the generated SQL text the
+ * grammar is composed from: an exempt form is Trino's real entry with `DELETE FROM` added to its `confirmExemptForms`,
+ * and a text-not-SQL claim is Druid's real entry with `readsSqlText: false`. The generated module is mocked before
+ * anything that reaches the grammar registry is imported, because `SQL_GRAMMAR` is composed from it when it loads, so
+ * this file imports only `bun:test` statically. Only what answers before a provider is replaced:
  * the session, the connection resolution, the provider cache and the query event insert.
  */
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
-const realTrino = await import("@/lib/db/providers/sql/trino/sql-grammar");
-mock.module("@/lib/db/providers/sql/trino/sql-grammar", () => ({
-  ...realTrino,
-  TRINO_SQL_GRAMMAR: {
-    ...realTrino.TRINO_SQL_GRAMMAR,
-    grammar: { ...realTrino.TRINO_SQL_GRAMMAR.grammar, confirmExemptForms: [["DELETE", "FROM"]] },
+const { BUNDLED_SQL_TEXT } = await import("@/lib/db/engine-catalog/sql-text.generated");
+mock.module("@/lib/db/engine-catalog/sql-text.generated", () => ({
+  BUNDLED_SQL_TEXT: {
+    ...BUNDLED_SQL_TEXT,
+    trino: {
+      ...BUNDLED_SQL_TEXT.trino,
+      grammar: { ...BUNDLED_SQL_TEXT.trino.grammar, confirmExemptForms: [["DELETE", "FROM"]] },
+    },
+    druid: { ...BUNDLED_SQL_TEXT.druid, readsSqlText: false },
   },
-}));
-
-const realDruid = await import("@/lib/db/providers/sql/druid/sql-grammar");
-mock.module("@/lib/db/providers/sql/druid/sql-grammar", () => ({
-  ...realDruid,
-  DRUID_SQL_GRAMMAR: { ...realDruid.DRUID_SQL_GRAMMAR, readsSqlText: false },
 }));
 
 const { createMockProvider } = await import("../../helpers/mock-provider");

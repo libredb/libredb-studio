@@ -313,8 +313,8 @@ A dropped connection reads `The connection to Spark dropped while the statement 
 
 ### 5.1 SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/spark/sql-grammar.ts`](../../src/lib/db/providers/sql/spark/sql-grammar.ts), the `spark` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
-Its grammar is `SPARK_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/spark.json`](../../src/lib/db/engine-declarations/spark.json), from which the `spark` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
+Its grammar is the declaration's `sqlText.grammar`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
 The lexical facts are read off Spark's lexer and parser at tag v4.2.0 (`SqlBaseLexer.g4`, `SqlBaseParser.g4`), and the comment facts were measured on Spark 4.2.0.
 `#` is no token outside a literal, `[` is a subscript (`arr[0]`, `m['k']`), names are quoted with backticks, and `/` is division with no `//` comment.
 Block comments nest at every level, and `/*+` opens a hint Spark lexes as code that opens no level inside a comment (both measured on 4.2.0).

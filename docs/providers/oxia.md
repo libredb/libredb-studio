@@ -90,7 +90,6 @@ The command language's modules (its numbers, the lexer, the command table, the g
 | `generators.ts` | The commands Generate Command writes | browser |
 | `sql-writing.ts` | The SQL writing row, the inert standard answer no generator calls | browser |
 | `src/lib/languages/oxiacli/destructive.ts` | The engine's row of the confirmation gate's vocabulary, which `src/lib/db/destructive-commands.ts` collects | browser |
-| `sql-grammar.ts` | The SQL grammar facts the editor and the query log read: not SQL text, nothing kept when redacted | browser |
 | `editor-syntax.ts` | The editor's `oxia` Monaco language over the console's lexer | browser |
 | `editor-language.ts` | The engine's editor language code: the `oxia` language, no completion, no formatter | browser |
 | `src/lib/languages/oxiacli/agent-statement.ts` | Agent mode's reader of one command: the closed table of metadata reads over the editor's parser, and every refusal in agent mode's words | server |
@@ -532,7 +531,7 @@ On a namespace that sorts keys naturally, a list or scan with those bounds carri
 
 ### 5.9 SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/keyvalue/oxia/sql-grammar.ts`](../../src/lib/db/providers/keyvalue/oxia/sql-grammar.ts), the `oxia` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/oxia.json`](../../src/lib/db/engine-declarations/oxia.json), from which the `oxia` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
 `readsSqlText` is `false`: `oxia` takes one `oxia client` read command, words split by POSIX shell rules, and a SQL span reader would report its quoting as unreadable and prompt on every run.
 The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/oxiacli/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.

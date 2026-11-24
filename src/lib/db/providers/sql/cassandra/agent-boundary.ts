@@ -50,9 +50,9 @@
  * shows the revoke at once (capture 05). A fresh role, rather than a revoke, is the remedy.
  */
 import { ExecutionProfileError } from "../../../errors";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { hasLoneCarriageReturnInLineComment, readSqlSpan } from "@/lib/sql/spans";
 import { CASSANDRA_SYSTEM_KEYSPACES } from "./objects";
-import { CASSANDRA_SQL_GRAMMAR } from "./sql-grammar";
 import { type CassandraQueryResult, CassandraTransportError, type CassandraFaultCategory } from "./transport";
 
 /** Runs one check statement as the agent role, on the statement's own session. */
@@ -335,7 +335,7 @@ const SELECT_KEYWORD = /^select(?![\w$])/i;
  * (`readScopeRefusal`), since the server lets every signed-in role read some system tables no grant names.
  */
 export function cassandraAgentStatementRefusal(cql: string, keyspace: string): string | null {
-  const grammar = CASSANDRA_SQL_GRAMMAR.grammar;
+  const grammar = resolveSqlGrammar("cassandra");
   if (hasLoneCarriageReturnInLineComment(cql, grammar)) {
     return `${FENCE}; this text holds a carriage return inside a -- or // comment with more text after it, and the server ends the comment at that carriage return, so the server could read a statement other than the one checked here, and it was not sent. End a comment with a line feed.`;
   }
@@ -397,7 +397,7 @@ const UNQUOTED_NAME = /^[A-Za-z][A-Za-z0-9_]*$/;
 
 /** The code of `cql` as tokens, read with CQL's own grammar: trivia skipped, strings and quoted names whole. */
 function cqlTokens(cql: string): CqlToken[] {
-  const grammar = CASSANDRA_SQL_GRAMMAR.grammar;
+  const grammar = resolveSqlGrammar("cassandra");
   const tokens: CqlToken[] = [];
   for (let at = 0; at < cql.length; ) {
     const span = readSqlSpan(cql, at, grammar);

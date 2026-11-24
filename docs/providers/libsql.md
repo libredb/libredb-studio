@@ -465,7 +465,7 @@ finished statements, so the panel is not offered: it is never read and the dashb
 
 ### 3.12 The dialect facts were re-measured, not inherited
 
-The grammar registry maps `libsql` to the SAME `SQLITE_GRAMMAR` object, and every one of its four
+The `libsql` declaration states the SAME grammar facts as `sqlite`'s, and every one of its four
 facts was re-measured over Hrana rather than assumed:
 
 | Fact | Measured on sqld 0.24.33 |
@@ -633,12 +633,12 @@ SEARCH probe_customers USING INDEX idx_customers_country (country=?)
 
 ### SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/libsql/sql-grammar.ts`](../../src/lib/db/providers/sql/libsql/sql-grammar.ts), the `libsql` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
-Its grammar is `SQLITE_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
-It is the same grammar object as `sqlite`'s, and every one of its facts was re-measured over Hrana on sqld 0.24.33 rather than inherited: `SELECT 1 # x` is refused ("bad variable name"), `SELECT [id] FROM probe_customers` parses, `/* outer /* inner */ SELECT 1` runs, and `q'[x]'` is a syntax error.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/libsql.json`](../../src/lib/db/engine-declarations/libsql.json), from which the `libsql` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
+Its grammar is the declaration's `sqlText.grammar`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+Its facts are the ones `sqlite`'s declaration states, and every one of them was re-measured over Hrana on sqld 0.24.33 rather than inherited: `SELECT 1 # x` is refused ("bad variable name"), `SELECT [id] FROM probe_customers` parses, `/* outer /* inner */ SELECT 1` runs, and `q'[x]'` is a syntax error.
 The trigger-body fact was measured on the same sqld: a trigger cut at its inner `;` is "SQL string could not be parsed: unexpected end of input", and sent whole it is created.
-Sharing the object is deliberate: a divergence would have to be written down as its own grammar, which is the change a reader should see.
-The confirmation gate therefore asks before `REPLACE INTO` and `INSERT OR REPLACE` here as on `sqlite`, the `confirmForms` of `SQLITE_GRAMMAR`: both delete the row a new one collides with on a primary or unique key, and the other `INSERT OR` forms do not ask.
+Stating the same facts is deliberate: a divergence is a fact changed in one of the two declarations, which is the change a reader should see.
+The confirmation gate therefore asks before `REPLACE INTO` and `INSERT OR REPLACE` here as on `sqlite`, the `confirmForms` both declarations state: both delete the row a new one collides with on a primary or unique key, and the other `INSERT OR` forms do not ask.
 That fact was measured over Hrana on the same sqld 0.24.33, whose embedded SQLite is 3.45.1, against a table holding `(1, 'a', 'keep-me')`: `INSERT OR ROLLBACK`, `OR ABORT` and `OR FAIL` of key 1 answer "SQLite error: UNIQUE constraint failed: t.id" and keep the row, `OR IGNORE` keeps it with no error, and `OR REPLACE` and `REPLACE INTO` leave `(1, 'new', NULL)`.
 `readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
 Redaction is `sql` with no name quote: a redacted statement keeps its words, and every literal and quoted run becomes `?`.

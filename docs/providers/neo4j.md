@@ -342,7 +342,7 @@ A node or relationship found under a column the grid masks by name has every pro
 
 ### 5.7 SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/graph/neo4j/sql-grammar.ts`](../../src/lib/db/providers/graph/neo4j/sql-grammar.ts), the `neo4j` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/neo4j.json`](../../src/lib/db/engine-declarations/neo4j.json), from which the `neo4j` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
 `readsSqlText` is `false`: `neo4j` takes one Cypher statement, whose strings escape with a backslash, where `//` opens a comment and a backtick quotes a name, so a SQL span reader would misread where a literal ends; the provider reads it with the graph lexer (`src/lib/db/graph/cypher/lexer.ts`) and refuses every write before sending it.
 The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/graph/cypher/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.

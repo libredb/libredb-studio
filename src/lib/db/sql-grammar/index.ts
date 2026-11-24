@@ -1,106 +1,210 @@
-import { BIGQUERY_SQL_GRAMMAR } from "@/lib/db/providers/sql/bigquery/sql-grammar";
-import { CASSANDRA_SQL_GRAMMAR } from "@/lib/db/providers/sql/cassandra/sql-grammar";
-import { CLICKHOUSE_SQL_GRAMMAR } from "@/lib/db/providers/sql/clickhouse/sql-grammar";
-import { COUCHBASE_SQL_GRAMMAR } from "@/lib/db/providers/document/couchbase/sql-grammar";
-import { DATABEND_SQL_GRAMMAR } from "@/lib/db/providers/sql/databend/sql-grammar";
-import { DB2_SQL_GRAMMAR } from "@/lib/db/providers/sql/db2/sql-grammar";
-import { DRUID_SQL_GRAMMAR } from "@/lib/db/providers/sql/druid/sql-grammar";
-import { DUCKDB_SQL_GRAMMAR } from "@/lib/db/providers/sql/duckdb/sql-grammar";
-import { ELASTICSEARCH_SQL_GRAMMAR } from "@/lib/db/providers/sql/search/elasticsearch-sql-grammar";
-import { ETCD_SQL_GRAMMAR } from "@/lib/db/providers/keyvalue/etcd/sql-grammar";
-import { FIRESTORE_SQL_GRAMMAR } from "@/lib/db/providers/document/firestore/sql-grammar";
-import { INFLUXDB3_SQL_GRAMMAR } from "@/lib/db/providers/timeseries/influxdb/influxdb3-sql-grammar";
-import { INFLUXDB_SQL_GRAMMAR } from "@/lib/db/providers/timeseries/influxdb/influxdb-sql-grammar";
-import { KAFKA_SQL_GRAMMAR } from "@/lib/db/providers/stream/kafka/sql-grammar";
-import { KUBERNETES_SQL_GRAMMAR } from "@/lib/db/providers/platform/kubernetes/sql-grammar";
-import { LIBREDB_SQL_GRAMMAR } from "@/lib/db/providers/embedded/libredb-sql-grammar";
-import { LIBSQL_SQL_GRAMMAR } from "@/lib/db/providers/sql/libsql/sql-grammar";
-import { MILVUS_SQL_GRAMMAR } from "@/lib/db/providers/vector/milvus/sql-grammar";
-import { MODBUS_SQL_GRAMMAR } from "@/lib/db/providers/industrial/modbus/sql-grammar";
-import { MONGODB_SQL_GRAMMAR } from "@/lib/db/providers/document/mongodb/sql-grammar";
-import { MQTT_SQL_GRAMMAR } from "@/lib/db/providers/keyvalue/mqtt/sql-grammar";
-import { MSSQL_SQL_GRAMMAR } from "@/lib/db/providers/sql/mssql-sql-grammar";
-import { MTCONNECT_SQL_GRAMMAR } from "@/lib/db/providers/industrial/mtconnect/sql-grammar";
-import { MYSQL_SQL_GRAMMAR } from "@/lib/db/providers/sql/mysql-sql-grammar";
-import { NEO4J_SQL_GRAMMAR } from "@/lib/db/providers/graph/neo4j/sql-grammar";
-import { NETCONF_SQL_GRAMMAR } from "@/lib/db/providers/network/netconf/sql-grammar";
-import { OPCUA_SQL_GRAMMAR } from "@/lib/db/providers/industrial/opcua/sql-grammar";
-import { OPENSEARCH_SQL_GRAMMAR } from "@/lib/db/providers/sql/search/opensearch-sql-grammar";
-import { ORACLE_SQL_GRAMMAR } from "@/lib/db/providers/sql/oracle-sql-grammar";
-import { OXIA_SQL_GRAMMAR } from "@/lib/db/providers/keyvalue/oxia/sql-grammar";
-import { POSTGRES_SQL_GRAMMAR } from "@/lib/db/providers/sql/postgres-sql-grammar";
-import { PROMETHEUS_SQL_GRAMMAR } from "@/lib/db/providers/timeseries/prometheus/sql-grammar";
-import { QDRANT_SQL_GRAMMAR } from "@/lib/db/providers/vector/qdrant/sql-grammar";
-import { WEAVIATE_SQL_GRAMMAR } from "@/lib/db/providers/vector/weaviate/sql-grammar";
-import { RABBITMQ_SQL_GRAMMAR } from "@/lib/db/providers/stream/rabbitmq/sql-grammar";
-import { REDIS_SQL_GRAMMAR } from "@/lib/db/providers/keyvalue/redis-sql-grammar";
-import { S3_SQL_GRAMMAR } from "@/lib/db/providers/objectstore/s3/sql-grammar";
-import { SNMP_SQL_GRAMMAR } from "@/lib/db/providers/network/snmp/sql-grammar";
-import { SNOWFLAKE_SQL_GRAMMAR } from "@/lib/db/providers/sql/snowflake/sql-grammar";
-import { SPARKPLUG_SQL_GRAMMAR } from "@/lib/db/providers/industrial/sparkplug/sql-grammar";
-import { SPARK_SQL_GRAMMAR } from "@/lib/db/providers/sql/spark/sql-grammar";
-import { SQLITE_SQL_GRAMMAR } from "@/lib/db/providers/sql/sqlite-sql-grammar";
-import { TRINO_SQL_GRAMMAR } from "@/lib/db/providers/sql/trino/sql-grammar";
+/**
+ * Every engine's SQL grammar row, one per type id, composed when this module loads (docs/providers/CONTRACT.md, clause
+ * M-78) from three sources:
+ *
+ * - the SQL text each engine's declaration authors, `sqlText.readsSqlText`, `grammar`, `updateTarget` and
+ *   `completion`, projected into src/lib/db/engine-catalog/sql-text.generated.ts as `BUNDLED_SQL_TEXT`;
+ * - Studio's review record of the `sqlText.redaction` claim, `SQL_TEXT_REDACTION` (./redaction.ts), written by hand and
+ *   never read from a declaration, so a package never carries its own grant (clauses M-53 and M-54);
+ * - Studio's grammar function table, `SQL_GRAMMAR_FUNCTIONS`, which binds each function name a declaration or the
+ *   record gives to the function Studio's own source holds for that engine at that slot.
+ *
+ * The grammar is the declaration's facts in its member order, each fact a declaration states at the reading its
+ * absence has left out (clause S-4), so a reader that reads an absent fact through `=== undefined` reads it as it always
+ * has, and each trailing limit clause is compiled once, here. A declaration's grammar facts, its update target words and
+ * its completion readers' names are therefore edited in its file under src/lib/db/engine-declarations and regenerated
+ * with `bun run engines:generate`; its redaction is edited in ./redaction.ts.
+ */
+import type { StatementRedaction } from "@libredb/provider-sdk/manifest";
+import type { SqlGrammar } from "@libredb/provider-sdk/sql";
+import { BUNDLED_SQL_TEXT } from "@/lib/db/engine-catalog/sql-text.generated";
+import type { SqlTextEntry } from "@/lib/db/engine-catalog/projection";
+import { boundFunction, type FunctionTable } from "@/lib/db/function-table";
+import { MONGODB_REDACTION_READER } from "@/lib/db/providers/document/mongodb/sql-grammar";
+import { REDIS_REDACTION_READER } from "@/lib/db/providers/keyvalue/redis-sql-grammar";
+import { POSTGRES_FORMAT_SEGMENT, POSTGRES_READ_QUOTED_QUALIFIER } from "@/lib/db/providers/sql/postgres-sql-grammar";
+import { typeIdRow } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
 import { NO_CONNECTION_SQL_GRAMMAR } from "./no-connection";
-import type { SqlGrammarSpec } from "./types";
-import { typeIdRow } from "@/lib/db/type-id";
+import { SQL_TEXT_REDACTION } from "./redaction";
+import type {
+  CommandRedactionReader,
+  QuotedQualifierReader,
+  SegmentFormatter,
+  SqlGrammarSpec,
+  SqlRedaction,
+} from "./types";
 
 /**
- * Every engine's SQL grammar facts, one row per type id, each declared in a module beside its provider (spec 5.3).
- * Being total over `DatabaseType` is what makes a new type id without a module a compile error here.
- *
- * The rows' `redaction` is Studio's review record of the claim an engine declaration requests at `sqlText.redaction`,
- * and every gate reads it: the declaration states each shipped engine's request as its row, and the rows are never a
- * projection of declarations (docs/providers/CONTRACT.md, clauses M-52 and M-53). The rows stay in Studio's source:
- * the change that moves a provider into a package, or first makes Studio read the claim from a declaration, keeps the
- * claim's row in a core record keyed by the engine, so a package never carries its own grant (M-54).
+ * Studio's grammar function table: for each slot kind a declaration or the redaction record names a function at, the
+ * functions Studio's own source holds, per engine and name. A name is bound only at its own kind, so a segment
+ * formatter is never run as a redaction reader.
  */
-export const SQL_GRAMMAR: Readonly<Record<DatabaseType, SqlGrammarSpec>> = Object.freeze({
-  bigquery: BIGQUERY_SQL_GRAMMAR,
-  cassandra: CASSANDRA_SQL_GRAMMAR,
-  clickhouse: CLICKHOUSE_SQL_GRAMMAR,
-  couchbase: COUCHBASE_SQL_GRAMMAR,
-  databend: DATABEND_SQL_GRAMMAR,
-  db2: DB2_SQL_GRAMMAR,
-  druid: DRUID_SQL_GRAMMAR,
-  duckdb: DUCKDB_SQL_GRAMMAR,
-  elasticsearch: ELASTICSEARCH_SQL_GRAMMAR,
-  etcd: ETCD_SQL_GRAMMAR,
-  firestore: FIRESTORE_SQL_GRAMMAR,
-  influxdb: INFLUXDB_SQL_GRAMMAR,
-  influxdb3: INFLUXDB3_SQL_GRAMMAR,
-  kafka: KAFKA_SQL_GRAMMAR,
-  kubernetes: KUBERNETES_SQL_GRAMMAR,
-  libredb: LIBREDB_SQL_GRAMMAR,
-  libsql: LIBSQL_SQL_GRAMMAR,
-  milvus: MILVUS_SQL_GRAMMAR,
-  modbus: MODBUS_SQL_GRAMMAR,
-  mongodb: MONGODB_SQL_GRAMMAR,
-  mqtt: MQTT_SQL_GRAMMAR,
-  mssql: MSSQL_SQL_GRAMMAR,
-  mtconnect: MTCONNECT_SQL_GRAMMAR,
-  mysql: MYSQL_SQL_GRAMMAR,
-  neo4j: NEO4J_SQL_GRAMMAR,
-  netconf: NETCONF_SQL_GRAMMAR,
-  opcua: OPCUA_SQL_GRAMMAR,
-  opensearch: OPENSEARCH_SQL_GRAMMAR,
-  oracle: ORACLE_SQL_GRAMMAR,
-  oxia: OXIA_SQL_GRAMMAR,
-  postgres: POSTGRES_SQL_GRAMMAR,
-  prometheus: PROMETHEUS_SQL_GRAMMAR,
-  qdrant: QDRANT_SQL_GRAMMAR,
-  rabbitmq: RABBITMQ_SQL_GRAMMAR,
-  redis: REDIS_SQL_GRAMMAR,
-  s3: S3_SQL_GRAMMAR,
-  snmp: SNMP_SQL_GRAMMAR,
-  snowflake: SNOWFLAKE_SQL_GRAMMAR,
-  spark: SPARK_SQL_GRAMMAR,
-  sparkplug: SPARKPLUG_SQL_GRAMMAR,
-  sqlite: SQLITE_SQL_GRAMMAR,
-  trino: TRINO_SQL_GRAMMAR,
-  weaviate: WEAVIATE_SQL_GRAMMAR,
+export interface SqlGrammarFunctions {
+  /** A command redaction's `reader`: from a statement's text, the text the query event log keeps. */
+  readonly redactionReaders: FunctionTable<CommandRedactionReader>;
+  /** `completion.formatSegment`: one name segment quoted as the engine quotes it. */
+  readonly segmentFormatters: FunctionTable<SegmentFormatter>;
+  /** `completion.readQuotedQualifier`: the quoted qualifier a text up to a dot ends in. */
+  readonly quotedQualifierReaders: FunctionTable<QuotedQualifierReader>;
+}
+
+/**
+ * The functions the committed declarations and the redaction record name, each the one Studio's source holds for that
+ * engine at that slot: MongoDB's and Redis's command redaction readers, and PostgreSQL's completion quoting. The
+ * completion readers run in the browser, so only Studio's own functions are bound here: a name this table does not
+ * hold, a package's included, is refused when the grammar is composed, and where a package's completion reader runs is
+ * decided with the first package that names one (docs/providers/CONTRACT.md, clause S-10).
+ * tests/unit/db/sql-grammar/compose.test.ts holds the table to exactly the names the committed declarations and the
+ * record give.
+ */
+export const SQL_GRAMMAR_FUNCTIONS: SqlGrammarFunctions = Object.freeze({
+  redactionReaders: Object.freeze({
+    mongodb: Object.freeze({ redactionReader: MONGODB_REDACTION_READER }),
+    redis: Object.freeze({ redactionReader: REDIS_REDACTION_READER }),
+  }),
+  segmentFormatters: Object.freeze({ postgres: Object.freeze({ formatSegment: POSTGRES_FORMAT_SEGMENT }) }),
+  quotedQualifierReaders: Object.freeze({
+    postgres: Object.freeze({ readQuotedQualifier: POSTGRES_READ_QUOTED_QUALIFIER }),
+  }),
 });
+
+/**
+ * The reading each grammar fact a declaration must state has where the SDK's `SqlGrammar` may leave it out (clause
+ * S-4): a declaration states the fact at this reading, and the composition leaves it out, as the readers default it.
+ * The three facts whose absence is a reading no value of their type gives are null here. The script's
+ * `terminatedStatements` is left out where it is empty, beside these.
+ */
+const ABSENT_READINGS: Readonly<Record<string, unknown>> = Object.freeze({
+  tripleQuotedStrings: false,
+  backtickBackslashEscapes: false,
+  dollarTags: true,
+  doubleQuoteBackslashEscapes: null,
+  singleQuoteBackslashEscapes: null,
+  rawStrings: false,
+  hintsAreCode: false,
+  lineCommentBackslashContinues: false,
+  lineCommentEndsAtCarriageReturn: false,
+  nonNumericRowBounds: Object.freeze([]),
+  confirmForms: Object.freeze([]),
+  confirmCodeForms: Object.freeze([]),
+  confirmFormsWhen: Object.freeze([]),
+  confirmExemptForms: Object.freeze([]),
+  formatterLanguage: "postgresql",
+  completionWords: Object.freeze({ keywords: Object.freeze([]), functions: Object.freeze([]) }),
+  confirmConfigKeys: null,
+  explainExecutesWithAnalyze: false,
+});
+
+/**
+ * Whether `value`, the fact `fact` as a declaration states it, is the reading its absence has. Both are data the JSON
+ * of a declaration holds, so their JSON text is compared: a list in its order, a record in its member order.
+ */
+function atAbsentReading(fact: string, value: unknown): boolean {
+  return Object.hasOwn(ABSENT_READINGS, fact) && JSON.stringify(value) === JSON.stringify(ABSENT_READINGS[fact]);
+}
+
+/** A declared script as the grammar reads it: its `terminatedStatements` left out where it is empty, frozen. */
+function scriptOf(script: SqlTextEntry["grammar"]["script"]): SqlGrammar["script"] {
+  const { blocks, separatorLine, unit, terminatedStatements } = script;
+  return Object.freeze({
+    blocks,
+    separatorLine,
+    unit,
+    ...(terminatedStatements.length === 0 ? {} : { terminatedStatements }),
+  });
+}
+
+/** The declared trailing limit clauses, each compiled from its source and flags, in a frozen list. */
+function clausesOf(clauses: SqlTextEntry["grammar"]["trailingLimitClauses"]): SqlGrammar["trailingLimitClauses"] {
+  return Object.freeze(clauses.map(({ source, flags }) => new RegExp(source, flags)));
+}
+
+/**
+ * The grammar `facts` declare, in their member order: each fact at the reading its absence has left out, the script
+ * and the clauses read by `scriptOf` and `clausesOf`, and every other fact as declared. The facts are the SDK's
+ * `GrammarFacts`, one member per member of `SqlGrammar`, so the record built here is a `SqlGrammar`.
+ */
+function grammarOf(facts: SqlTextEntry["grammar"]): SqlGrammar {
+  const grammar: Record<string, unknown> = {};
+  for (const [fact, value] of Object.entries(facts)) {
+    if (fact === "script") grammar.script = scriptOf(facts.script);
+    else if (fact === "trailingLimitClauses") grammar.trailingLimitClauses = clausesOf(facts.trailingLimitClauses);
+    else if (!atAbsentReading(fact, value)) grammar[fact] = value;
+  }
+  return Object.freeze(grammar) as unknown as SqlGrammar;
+}
+
+/**
+ * The redaction `record` grants engine `id`: a `sql` and a `none` redaction as given, and a `command` redaction with
+ * the reader it names bound through `functions`.
+ *
+ * @throws {Error} Naming the engine and the name, where `functions` holds no redaction reader for it under that name.
+ */
+function redactionOf(id: DatabaseType, record: StatementRedaction, functions: SqlGrammarFunctions): SqlRedaction {
+  switch (record.kind) {
+    case "sql":
+      return Object.freeze({ kind: "sql", nameQuote: record.nameQuote });
+    case "command":
+      return Object.freeze({ kind: "command", read: boundFunction(id, functions.redactionReaders, record.reader) });
+    case "none":
+      return Object.freeze({ kind: "none" });
+  }
+}
+
+/**
+ * Engine `id`'s grammar row, composed from `entry`, its projected SQL text, `redaction`, the row of Studio's record of
+ * its redaction, and `functions`: the grammar by `grammarOf`; `readsSqlText` as declared; the update target's flag and
+ * its two word lists as sets in the declared order; each completion reader bound through `functions` or null; and the
+ * redaction `redaction` grants, never anything `entry` holds. The row and every record in it are frozen, a trailing
+ * limit clause apart, whose `lastIndex` is the engine's to write.
+ *
+ * @throws {Error} Naming the engine and the name, for a function name `functions` holds none for at its slot, a name it
+ * holds only at another slot included.
+ */
+export function composeSqlGrammar(
+  id: DatabaseType,
+  entry: SqlTextEntry,
+  redaction: StatementRedaction,
+  functions: SqlGrammarFunctions,
+): SqlGrammarSpec {
+  const { updateTarget, completion } = entry;
+  return Object.freeze({
+    grammar: grammarOf(entry.grammar),
+    readsSqlText: entry.readsSqlText,
+    redaction: redactionOf(id, redaction, functions),
+    updateTarget: Object.freeze({
+      dashCommentNeedsSeparator: updateTarget.dashCommentNeedsSeparator,
+      extraQueryOpeners: Object.freeze(new Set(updateTarget.extraQueryOpeners)),
+      extraSetOperators: Object.freeze(new Set(updateTarget.extraSetOperators)),
+    }),
+    completion: Object.freeze({
+      formatSegment:
+        completion.formatSegment === null
+          ? null
+          : boundFunction(id, functions.segmentFormatters, completion.formatSegment),
+      readQuotedQualifier:
+        completion.readQuotedQualifier === null
+          ? null
+          : boundFunction(id, functions.quotedQualifierReaders, completion.readQuotedQualifier),
+    }),
+  });
+}
+
+/**
+ * Every engine's grammar row, composed when this module loads from `BUNDLED_SQL_TEXT`, `SQL_TEXT_REDACTION` and
+ * Studio's grammar function table, so a committed module naming a function Studio holds none for fails every importer
+ * by that sentence. Keyed in the projection's ascending id order, and total over `DatabaseType`, since the generated
+ * record is typed over it.
+ */
+export const SQL_GRAMMAR: Readonly<Record<DatabaseType, SqlGrammarSpec>> = Object.freeze(
+  Object.fromEntries(
+    (Object.keys(BUNDLED_SQL_TEXT) as DatabaseType[]).map((id) => [
+      id,
+      composeSqlGrammar(id, BUNDLED_SQL_TEXT[id], SQL_TEXT_REDACTION[id], SQL_GRAMMAR_FUNCTIONS),
+    ]),
+  ) as Record<DatabaseType, SqlGrammarSpec>,
+);
 
 /**
  * The grammar facts of a type: `NO_CONNECTION_SQL_GRAMMAR` for `undefined`, and its row for a type id, read through

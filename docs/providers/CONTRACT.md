@@ -209,7 +209,7 @@ A declaration is not a full manifest: the runtime and compatibility segments des
 
 - test `tests/unit/db/engine-declarations.test.ts` "the directory holds exactly one declaration per shipped type-id"
 - test `tests/unit/db/engine-declarations.test.ts` "each declaration is what the generator builds from its authored members and Studio's tables"
-- test `tests/unit/db/engine-declarations.test.ts` "the authored members are the catalog's, the data-only connection members, the connection form's, the connection string's and the editor's commit keyword, consent deadline, fence aliases, dialect and language"
+- test `tests/unit/db/engine-declarations.test.ts` "the authored members are the catalog's, the data-only connection members, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, and the SQL text's members but its redaction"
 - test `tests/unit/db/engine-declarations.test.ts` "a declaration's authored members are its committed file's, and every other member is the tables'"
 - test `tests/unit/db/engine-declarations.test.ts` "a committed declaration lacking an authored member, or naming another id than its file, is refused by name"
 - test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate regenerates an authored connection.fields and connection.dialog change in one run: a placeable field added and a placed one removed"
@@ -1451,7 +1451,7 @@ The default is frozen to its leaves, so no module that imports it changes it for
 - test `packages/provider-sdk/tests/sql/grammar.test.ts` "DEFAULT_SQL_GRAMMAR is the compatibility reading"
 - test `packages/provider-sdk/tests/sql/grammar.test.ts` "DEFAULT_SQL_GRAMMAR is frozen to its leaves, so no importer changes it for another"
 - test `tests/unit/sql/grammar.test.ts` "the module that resolves a grammar by engine id exports only its two readers"
-- test `tests/unit/db/sql-grammar/shared.test.ts` "the shared blocks are SQLITE_GRAMMAR, NO_EXTRA_WORDS and REDACTED_VALUE"
+- test `tests/unit/db/sql-grammar/shared.test.ts` "the shared blocks are NO_EXTRA_WORDS and REDACTED_VALUE"
 
 ### S-2 (informative): Studio still reads its grammar rows
 
@@ -1470,7 +1470,6 @@ Studio's census holds every member of every declaration to the engine's grammar 
 - test `tests/unit/db/engine-declarations.test.ts` "sqlText.readsSqlText is the engine's SQL_GRAMMAR row's"
 - test `tests/unit/db/engine-declarations.test.ts` "sqlText.grammar is the row's grammar, each fact the row leaves out at its reading when left out and each trailing limit clause by its source and flags"
 - test `tests/unit/db/engine-declarations.test.ts` "every member of a grammar row has its member in the declaration"
-- test `tests/unit/db/engine-declarations.test.ts` "the generator refuses, by name, a SQL grammar member it has no place for"
 
 ### S-4 (normative): A fact the grammar may leave out is written
 
@@ -1497,7 +1496,6 @@ Studio places the row bound before the run of such clauses at a statement's end,
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "a trailing limit clause whose flags are not i or iu is refused as value-not-allowed"
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "a trailing limit clause that does not compile is refused as pattern-invalid"
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's trailing limit clauses are held to the rules the schema cannot state, at pointers into it"
-- test `tests/unit/db/engine-declarations.test.ts` "the generator refuses, by name, a trailing limit clause whose flags the contract does not allow"
 - test `tests/unit/sql/spark-grammar.test.ts` "a trailing OFFSET follows the row bound, and LIMIT before OFFSET reads as bounded"
 
 ### S-6 (informative): How a host runs a clause pattern

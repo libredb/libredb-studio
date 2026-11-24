@@ -802,9 +802,9 @@ The type list changes from the shared list only where the engine disagrees (`JSO
 
 ### SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/duckdb/sql-grammar.ts`](../../src/lib/db/providers/sql/duckdb/sql-grammar.ts), the `duckdb` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
-Its grammar is `DUCKDB_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
-Every fact was measured on v1.5.5 through `@duckdb/node-api` 1.5.5-r.4, and the object is separate from `POSTGRES_GRAMMAR` although the values coincide: DuckDB's dialect is Postgres-shaped rather than PostgreSQL's, and a divergence should be a value changing here rather than a split.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/duckdb.json`](../../src/lib/db/engine-declarations/duckdb.json), from which the `duckdb` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
+Its grammar is the declaration's `sqlText.grammar`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+Every fact was measured on v1.5.5 through `@duckdb/node-api` 1.5.5-r.4, and DuckDB's declaration states its own facts although their values coincide with PostgreSQL's: DuckDB's dialect is Postgres-shaped rather than PostgreSQL's, and a divergence should be a value changing in this declaration alone.
 `#` is code: `SELECT 1 # x` is `Parser Error: syntax error at or near "#"`.
 `[` is a subscript, not a name quote: `SELECT [1,2][1]` answers 1, a list literal followed by a 1-based index.
 Block comments nest: `/* a /* b */ still */ SELECT 1` runs.

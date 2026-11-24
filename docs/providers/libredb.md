@@ -539,7 +539,7 @@ fallback: the caller shape-checks for the method and this provider does not answ
 
 ### 5.5 SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/embedded/libredb-sql-grammar.ts`](../../src/lib/db/providers/embedded/libredb-sql-grammar.ts), the `libredb` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/libredb.json`](../../src/lib/db/engine-declarations/libredb.json), from which the `libredb` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, because no rule was established for the command grammar, not because it agrees with the default.
 `readsSqlText` is `true` although the provider declares `queryLanguage: "json"`: the store was never listed as an engine whose text is not SQL, so its text reaches the SQL readers under that default.
 This is the one exception `tests/isolated/sql-grammar-reads-sql-text.test.ts` records between the two facts, and the test fails if a second engine splits them.

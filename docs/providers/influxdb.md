@@ -448,7 +448,7 @@ EXPLAIN SELECT count("co") FROM "home".."home"
 
 ### 5.11 SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/timeseries/influxdb/influxdb-sql-grammar.ts`](../../src/lib/db/providers/timeseries/influxdb/influxdb-sql-grammar.ts), the `influxdb` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/influxdb.json`](../../src/lib/db/engine-declarations/influxdb.json), from which the `influxdb` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
 `readsSqlText` is `false`: `influxdb` takes one InfluxQL statement, whose strings escape with a backslash, where `/.../` is a regex where the parser asks for one and a `--` comment ends at a lone `\r`, so a SQL span reader misreads where a literal ends; the provider reads it with its own lexer (`src/lib/languages/influxql/lexer.ts`) and refuses every write before sending it.
 The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/influxql/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.

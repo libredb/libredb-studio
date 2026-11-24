@@ -339,7 +339,7 @@ of this fixture reaches one.
 
 ### 5.6 SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/network/netconf/sql-grammar.ts`](../../src/lib/db/providers/network/netconf/sql-grammar.ts), the `netconf` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/netconf.json`](../../src/lib/db/engine-declarations/netconf.json), from which the `netconf` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
 `readsSqlText` is `false`: the console takes one JSON read request naming a datastore and a path, so no span of it is SQL (#1724).
 The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/netconfrpc/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.

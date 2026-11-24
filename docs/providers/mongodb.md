@@ -502,11 +502,11 @@ fallback: the caller shape-checks for the method and this provider does not answ
 
 ### SQL grammar
 
-How this engine's statement text is read is declared once, in [`src/lib/db/providers/document/mongodb/sql-grammar.ts`](../../src/lib/db/providers/document/mongodb/sql-grammar.ts), the `mongodb` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/mongodb.json`](../../src/lib/db/engine-declarations/mongodb.json), from which the `mongodb` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
 `readsSqlText` is `false`: MongoDB takes a JSON document, which never reaches the SQL readers on the query path, since the provider extends `BaseDatabaseProvider` and never calls `prepareQuery`; it reaches the confirmation gate because both execution paths ask about whatever is in the editor before running it (#297).
 The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/mongo/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
-Redaction is `command`, read by the module's own reader: a redacted statement keeps the document's keys and its top-level `collection`, `operation` and `database` names as SQL keeps table names, replaces every other value with `?` as compact JSON, and keeps nothing (`?`) of text that is not one JSON document, since the provider does not run it either.
+Redaction is `command`, read by `MONGODB_REDACTION_READER` in [`src/lib/db/providers/document/mongodb/sql-grammar.ts`](../../src/lib/db/providers/document/mongodb/sql-grammar.ts), the `redactionReader` Studio's redaction record names and its grammar function table binds: a redacted statement keeps the document's keys and its top-level `collection`, `operation` and `database` names as SQL keeps table names, replaces every other value with `?` as compact JSON, and keeps nothing (`?`) of text that is not one JSON document, since the provider does not run it either.
 The document is walked with a stack of its own rather than by recursion, because `JSON.parse` reads a document nested far deeper than a recursive walk can follow.
 
 ## 6. Schema introspection

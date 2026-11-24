@@ -8,8 +8,7 @@
  * imports the generator, and which provider files import the shared transport under src/lib/db/grpc/ (the registry
  * row's transportImporters, which the shared guard's G5 holds too). Two isolation rules hold over the repository: no
  * Spark file imports a module under src/lib/db/providers/ outside its directory but the base class ../sql-base, and no
- * file under src/ outside the directory but the factory, the connection-string parser and the SQL grammar registry
- * imports a Spark module, except that a per-engine contract's registry imports the one Spark module that declares
+ * file under src/ outside the directory but the factory and the connection-string parser imports a Spark module, except that a per-engine contract's registry imports the one Spark module that declares
  * that contract.
  * Every rule is proven both ways: the real sources pass it and a planted file fails it by name.
  *
@@ -50,7 +49,7 @@ const GENERATOR_IMPORTERS: readonly string[] = [DESCRIPTOR_TEST, HARNESS];
 /** The provider files that import src/lib/db/grpc/, type-only imports included, as the shared guard's G5 counts them. */
 const TRANSPORT_IMPORTERS: readonly string[] = [`${SPARK}/connection-options.ts`, ADAPTER];
 /** The only files under src/ outside the provider directory that may import a Spark module. */
-const OUTSIDE_IMPORTERS_ALLOWED: readonly string[] = ["src/lib/db/factory.ts", "src/lib/db/sql-grammar/index.ts"];
+const OUTSIDE_IMPORTERS_ALLOWED: readonly string[] = ["src/lib/db/factory.ts"];
 /** Each per-engine contract's registry, with the one Spark module, the engine's declaration, it may import. */
 const CONTRACT_REGISTRIES: Readonly<Record<string, string>> = {
   "src/lib/db/connection-string/index.ts": `${SPARK}/connection-string`,

@@ -25,8 +25,8 @@
  * answer is one this check has not measured; both refuse the profile. A failure to reach the server leaves as it came.
  */
 import { ExecutionProfileError } from "../../../errors";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { hasLoneCarriageReturnInLineComment, readSqlSpan } from "@/lib/sql/spans";
-import { DRUID_SQL_GRAMMAR } from "./sql-grammar";
 import { type DruidQueryResult, type DruidRow, DruidTransportError } from "./transport";
 
 /** Sends one statement under the agent request's context and answers its result, or throws the server's refusal. */
@@ -78,12 +78,12 @@ const FIRST_KEYWORD = /^(?:select|with)(?![\w$])/i;
  * WITH, else the reason it is refused, before anything is sent. A SET before a statement selects another engine and
  * replaces the request's query id and timeout (capture 01), so only a SELECT is sent.
  *
- * The text is walked with the shared span reader under Druid's own grammar (`sql-grammar.ts`), so `--`, `//` and
- * block comments and whitespace are skipped, and string literals and double-quoted names are opaque. The first code
- * character must open SELECT or WITH; a code semicolon ends the statement, and only comments and whitespace may follow
- * it. A hint (`/*+ ... *\/`) and an array's brackets are read as code, a literal inside them still opaque, so a
- * semicolon there ends the statement too. Text that ends inside a comment, string or quoted name cannot be bounded and
- * is refused: that includes a plain literal ending in a backslash, which Druid closes and the reader cannot place
+ * The text is walked with the shared span reader under Druid's own grammar (its declaration's `sqlText.grammar`), so
+ * `--`, `//` and block comments and whitespace are skipped, and string literals and double-quoted names are opaque. The
+ * first code character must open SELECT or WITH; a code semicolon ends the statement, and only comments and whitespace
+ * may follow it. A hint (`/*+ ... *\/`) and an array's brackets are read as code, a literal inside them still opaque,
+ * so a semicolon there ends the statement too. Text that ends inside a comment, string or quoted name cannot be bounded
+ * and is refused: that includes a plain literal ending in a backslash, which Druid closes and the reader cannot place
  * (capture 02), so it refuses rather than guesses.
  *
  * Two readings where the server and a reader can differ are refused before the walk. A carriage return inside a `--`
@@ -93,7 +93,7 @@ const FIRST_KEYWORD = /^(?:select|with)(?![\w$])/i;
  * code to one and text to the other. A form feed, U+2028 and U+0085 end no comment on the server.
  */
 export function druidAgentStatementRefusal(sql: string): string | null {
-  const grammar = DRUID_SQL_GRAMMAR.grammar;
+  const grammar = resolveSqlGrammar("druid");
   if (hasLoneCarriageReturnInLineComment(sql, grammar)) {
     return `${FENCE}; this text holds a carriage return inside a -- or // comment with more text after it, and the server ends the comment at that carriage return, so a reader that does not could read another statement, and it was not sent. End a comment with a line feed.`;
   }
@@ -135,7 +135,7 @@ export function druidAgentStatementRefusal(sql: string): string | null {
  * spelling rather than decode it. A `U&'...'` string literal is a value, not a name, and passes.
  */
 function spellsEscapedName(sql: string): boolean {
-  const grammar = DRUID_SQL_GRAMMAR.grammar;
+  const grammar = resolveSqlGrammar("druid");
   for (let at = 0; at < sql.length; ) {
     const span = readSqlSpan(sql, at, grammar);
     if (span !== null && span.kind !== "subscript") {
@@ -169,7 +169,7 @@ const CLUSTER_SCHEMAS = new Set(["sys", "lookup", "view"]);
  * what a statement reads is checked before it is sent as well, so this reading is not the only layer.
  */
 function readsBeyondDatasources(sql: string): boolean {
-  const grammar = DRUID_SQL_GRAMMAR.grammar;
+  const grammar = resolveSqlGrammar("druid");
   // The last code token: a name (lowercased), or null for anything else.
   let last: string | null = null;
   for (let at = 0; at < sql.length; ) {
