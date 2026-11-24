@@ -31,7 +31,7 @@ import { AGENT_WORKFLOW_SENDS_STATEMENTS, type AgentRunWorkflowType } from "@/li
 import { getDBConfig } from "@/lib/db-ui-config";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import type { DatabaseProvider } from "@/lib/db/types";
-import type { DatabaseConnection } from "@/lib/types";
+import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 
 const { SeedConnectionError } = realSeed;
@@ -54,6 +54,16 @@ const mockResolveConnection = mock(async (body: { connectionId?: string }) => ({
   name: "Sales",
   type: "postgres",
 }));
+
+/**
+ * The real connect budgets, with `connectBudgetFor` answering `budgetOverride` while a case sets one, so the case that
+ * needs an open's deadline to pass sets it to a few tens of milliseconds for itself. The real functions are taken
+ * before the module is replaced, since a replaced module's namespace answers the replacement.
+ */
+const realConnectBudget = await import("@/lib/db/connect-budget");
+const realConnectBudgetFor = realConnectBudget.connectBudgetFor;
+const realOpenDeadlineSentence = realConnectBudget.openDeadlineSentence;
+let budgetOverride: number | undefined;
 
 const mockForCatalog = mock(async (_catalog: string) => ({}));
 // The provider stands for the connection it is handed, which `catalogChoice` reads (M-57).
@@ -200,6 +210,10 @@ function installMocks(): void {
   mock.module("@/lib/seed/resolve-connection", () => ({ ...realSeed, resolveConnection: mockResolveConnection }));
   // Opening a database's session connects; the suite answers it instead (#1530).
   mock.module("@/lib/db", () => ({ ...realDb, getOrCreateProvider: mockGetOrCreateProvider }));
+  mock.module("@/lib/db/connect-budget", () => ({
+    openDeadlineSentence: realOpenDeadlineSentence,
+    connectBudgetFor: (type: DatabaseType) => budgetOverride ?? realConnectBudgetFor(type),
+  }));
   mock.module("@/lib/agent/agent-manifest", () => ({
     ...realManifest,
     workflowAvailability: mockWorkflowAvailability,
@@ -238,6 +252,7 @@ const VALID_BODY = { mode: "agent", objective: "why is checkout slow", connectio
 
 beforeEach(() => {
   installMocks();
+  budgetOverride = undefined;
   clearRateLimitState();
   runs = new Map([["arun_1", fakeRun()]]);
   mockGetSession.mockResolvedValue({ role: "user", username: "ada" });
@@ -1748,6 +1763,59 @@ describe("POST /api/agent/runs on a server-level connection (#1530)", () => {
 
   afterEach(() => {
     mockResolveConnection.mockImplementation(defaultConnection);
+  });
+
+  /** A catalog open that never settles: only the request's own wait ends it, as `openOnce` ends a caller's wait. */
+  function catalogOpenNeverSettles(reached: () => void) {
+    mockGetOrCreateProvider.mockImplementationOnce((async (...args: unknown[]) => {
+      const wait = args[3] as { readonly signal: AbortSignal } | undefined;
+      reached();
+      return new Promise((_resolve, reject) => {
+        wait?.signal.addEventListener("abort", () => reject(wait.signal.reason), { once: true });
+      });
+    }) as never);
+  }
+
+  test("a run whose client leaves while its catalog opens answers 499 and opens no run", async () => {
+    const opening = Promise.withResolvers<void>();
+    catalogOpenNeverSettles(opening.resolve);
+    const controller = new AbortController();
+    const answer = POST(
+      new Request("http://localhost:3000/api/agent/runs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...VALID_BODY, catalog: "shop" }),
+        signal: controller.signal,
+      }),
+    );
+    await opening.promise;
+    controller.abort();
+
+    const res = await answer;
+    const body = await parseResponseJSON<Record<string, unknown>>(res);
+
+    expect(res.status).toBe(499);
+    expect(body).toMatchObject({ code: "QUERY_CANCELLED", kind: "cancelled", outcome: "not-sent" });
+    const opened = mockGetOrCreateProvider.mock.calls.at(-1) as unknown[] | undefined;
+    expect(opened?.[3]).toMatchObject({ signal: expect.any(AbortSignal) });
+    expect(mockForCatalog).not.toHaveBeenCalled();
+    expect(mockStart).not.toHaveBeenCalled();
+  });
+
+  test("a run whose catalog open outlasts its engine's connect budget answers 504 studio-timeout-refusal not-sent", async () => {
+    budgetOverride = 40;
+    catalogOpenNeverSettles(() => {});
+
+    const res = await POST(startRequest({ ...VALID_BODY, catalog: "shop" }));
+    const body = await parseResponseJSON<Record<string, unknown>>(res);
+
+    expect(res.status).toBe(504);
+    expect(body).toMatchObject({
+      error: "The connection did not open within 0.1 seconds, so Studio stopped waiting for it and sent nothing.",
+      kind: "studio-timeout-refusal",
+      outcome: "not-sent",
+    });
+    expect(mockStart).not.toHaveBeenCalled();
   });
 
   test("a run reads the database it names, which is part of its identity and echoed back", async () => {

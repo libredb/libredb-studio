@@ -1,13 +1,14 @@
-import type {
-  DatabaseOverview,
-  HealthInfo,
-  MonitoringFacet,
-  MonitoringPanelAnswer,
-  MonitoringPanelRequest,
-  PoolStats,
+import {
+  type DatabaseOverview,
+  deadlineSignal,
+  type HealthInfo,
+  type MonitoringFacet,
+  type MonitoringPanelAnswer,
+  type MonitoringPanelRequest,
+  type PoolStats,
 } from "@libredb/provider-sdk/calls";
 import { callContext, contextOn, EXECUTE_SLACK_MS, executeDeadline, statementTimeout } from "@/lib/api/editor-query";
-import { memberOf, readDeclaredPanels } from "@/lib/db/engine-facets/monitoring";
+import { memberOf, type PanelMember, readDeclaredPanels } from "@/lib/db/engine-facets/monitoring";
 import { errorCode, errorKind } from "@/lib/db/error-record";
 import { waitedSeconds } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
@@ -21,7 +22,7 @@ import { hostCore } from "@/lib/provider-host/instance";
 import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
 
 /*
- * MONITORING AND HEALTH ON THE PROVIDER HOST CORE (docs/providers/CONTRACT.md, clauses C-74 and C-75).
+ * MONITORING AND HEALTH ON THE PROVIDER HOST CORE (docs/providers/CONTRACT.md, clauses C-74, C-75 and C-76).
  *
  * `providerMonitoring` is the caller facade of the monitoring and pool-stats routes, `POST /api/db/monitoring` and
  * `POST /api/db/pool-stats`, of the health route, `POST /api/db/health`, and of fleet health's health and overview
@@ -52,6 +53,15 @@ import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
  * orchestration starts every panel read of a dashboard in one turn, within 0.06 ms of each other as measured on
  * PostgreSQL on the editor's pool and on a pool of two (2026-11-24), so a per-read deadline is the dashboard's to within
  * that, and the dashboard has no deadline of its own.
+ *
+ * `readGrantedPanel` and `readGrantedHealth` are the agent's curated readings' reads (src/lib/agent/tools.ts, clause
+ * C-76): one panel call or one health call on the session of the provider the run acquired, under the deadline its call
+ * was granted and, as its caller's signal, one that never aborts (`driveCaller`), since the agent's drive has none.
+ * Each reads the core and builds the session synchronously, so a read made before the install throws
+ * `HostCoreBootOrderError` before any promise, and builds a fresh request copy and a fresh context of the grant's
+ * deadline, its deadline signal and the empty environment. A panel the session does not offer answers `not-offered`
+ * with no call. A read its deadline stopped hands the stopped call's settlement to the grant's `holdUntilSettled`, so
+ * the run counts the provider call until it settles, and throws `StudioTimeoutRefusal` with the grant's sentence.
  *
  * Answers. A read answers the provider's own answer by reference and throws every refusal and stop as the accessor's
  * error: `QueryCancelledError` when the caller left, `StudioTimeoutRefusal` naming the read at its deadline, outcome
@@ -203,6 +213,92 @@ export function readHealthWithin(
   return core
     .healthCall(session, contextOn(deadline, signal), { late: monitoringLate(route, "health") })
     .then((record) => (record.kind === "answered" ? { kind: "answered", health: record.answer } : { kind: "ended" }));
+}
+
+/**
+ * What a granted read is given: the deadline its call was granted, the sentence a read that deadline ended answers,
+ * the route its late failures are logged under, and the hold that keeps the caller counting a stopped call until it
+ * settles.
+ */
+export interface GrantedRead {
+  readonly deadline: number;
+  readonly deadlineSentence: string;
+  readonly route: string;
+  readonly holdUntilSettled: (settled: Promise<unknown>) => void;
+}
+
+/** What a granted panel read answers: the panel's member by reference, or that the session does not offer the panel. */
+export type GrantedPanel<P extends MonitoringPanelRequest["panel"]> =
+  | { readonly kind: "answered"; readonly member: PanelMember<P> }
+  | { readonly kind: "not-offered" };
+
+/** A granted read's context: the grant's deadline, a signal that aborts at it alone, and the empty environment. */
+function grantedContext(grant: GrantedRead) {
+  return contextOn(grant.deadline, deadlineSignal(grant.deadline));
+}
+
+/**
+ * The caller signal of one granted read: a signal that never aborts, made for that call. The agent's drive has no
+ * signal of its own, since its cancellation is the run's checkpoint between tool calls, so the drive cannot leave a call
+ * mid-way, and the accessor reads a granted read that ended as its deadline's, never as the caller leaving.
+ */
+function driveCaller(): AbortSignal {
+  return new AbortController().signal;
+}
+
+/**
+ * A granted read's record as its answer: a stopped call's settlement handed to the grant's hold before the accessor's
+ * error is thrown for it, under the drive's caller signal, which never aborts.
+ */
+function grantedAnswer<Answer>(
+  record: RefusedRecord | StoppedRecord | { readonly kind: "answered"; readonly answer: Answer },
+  grant: GrantedRead,
+): Answer {
+  if (record.kind === "stopped") grant.holdUntilSettled(record.settled);
+  return answerOf(record, { caller: driveCaller(), deadlineSentence: grant.deadlineSentence });
+}
+
+/** Whether a refused record's one refusal is of a panel the session does not offer. */
+function panelNotOffered(record: RefusedRecord): boolean {
+  return record.refusals.length === 1 && record.refusals[0]?.rule === "request-panel-not-offered";
+}
+
+/**
+ * One panel read of `provider` for the agent, on a fresh copy of `request`, within `grant`: one host core panel call on
+ * the bridged session, its context the grant's deadline and that deadline's signal alone.
+ *
+ * @throws {HostCoreBootOrderError} Synchronously, before the host core is installed.
+ * @returns A promise of the panel's member by reference, or `not-offered` with no call where the session does not
+ * offer the panel; it rejects with `StudioTimeoutRefusal` with the grant's sentence when the deadline ended the read,
+ * after handing the stopped call's settlement to the grant's hold, and with the provider's error as the same object.
+ */
+export function readGrantedPanel<R extends MonitoringPanelRequest>(
+  provider: DatabaseProvider,
+  request: R,
+  grant: GrantedRead,
+): Promise<GrantedPanel<R["panel"]>> {
+  const core = hostCore();
+  const { session } = bridgedConsole(provider, {});
+  const ownRequest: R = { ...request };
+  const late = monitoringLate(grant.route, "panel", request.panel);
+  return core.panelCall(session, ownRequest, grantedContext(grant), { late }).then((record) => {
+    if (record.kind === "refused" && panelNotOffered(record)) return { kind: "not-offered" };
+    return { kind: "answered", member: memberOf(request, grantedAnswer(record, grant)) };
+  });
+}
+
+/**
+ * One health read of `provider` for the agent within `grant`: one host core health call on the bridged session, its
+ * context the grant's deadline and that deadline's signal alone.
+ *
+ * @throws {HostCoreBootOrderError} Synchronously, before the host core is installed.
+ * @returns A promise of the provider's health by reference; it rejects as `readGrantedPanel`'s does.
+ */
+export function readGrantedHealth(provider: DatabaseProvider, grant: GrantedRead): Promise<HealthInfo> {
+  const core = hostCore();
+  const { session } = bridgedConsole(provider, {});
+  const late = monitoringLate(grant.route, "health");
+  return core.healthCall(session, grantedContext(grant), { late }).then((record) => grantedAnswer(record, grant));
 }
 
 /** Whether `value`, a present limit, is a whole number of at least 1 that JavaScript holds exactly. */

@@ -3576,6 +3576,34 @@ describe("rules the schema cannot state", () => {
     expect(refusalsFor(maintained(respec(0, { preview: true })))).toEqual([]);
   });
 
+  test("an agent reading whose monitoring panel the engine does not offer is refused as agent-reading-panel-not-offered", () => {
+    const changed = manifest((m) => (facetsOf(m).agentReadings = ["sessions", "health", "storage"]));
+    const [first] = refusalsFor(changed);
+
+    expect(refusalsFor(changed)).toEqual([
+      refusal("agent-reading-panel-not-offered", "/engines/0/facets/agentReadings/0"),
+      refusal("agent-reading-panel-not-offered", "/engines/0/facets/agentReadings/2"),
+    ]);
+    expect(refusalSentence(first as ManifestRefusal)).toBe(
+      "The agent reading at /engines/0/facets/agentReadings/0 is read through a monitoring panel the engine does not offer.",
+    );
+  });
+
+  test("the health reading and a reading whose panel the engine offers are admitted", () => {
+    const panelsOff = manifest((m) => {
+      for (const panel of Object.keys(facetsOf(m).monitoring)) facetsOf(m).monitoring[panel] = "not-offered";
+      facetsOf(m).agentReadings = ["health"];
+    });
+    const offered = manifest((m) => {
+      Object.assign(facetsOf(m).monitoring, { activeSessions: "offered", slowQueries: "offered", tables: "offered" });
+      Object.assign(facetsOf(m).monitoring, { indexes: "offered", storage: "offered" });
+      facetsOf(m).agentReadings = ["sessions", "slow-queries", "table-stats", "index-stats", "storage", "health"];
+    });
+
+    expect(refusalsFor(panelsOff)).toEqual([]);
+    expect(refusalsFor(offered)).toEqual([]);
+  });
+
   test("an engine that speaks a statement language with no agent overlay is refused as agent-overlay-missing", () => {
     const changed = kafkaManifest();
     agentOf(changed).overlay = null;

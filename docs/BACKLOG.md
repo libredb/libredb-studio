@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D810, U17 · 379
+- [Drivers and connections](#drivers-and-connections) — D1-D820, U17 · 380
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -5019,6 +5019,16 @@ Owner: an input to PR 12 of the provider plugin program, which admits a package'
 Found 2026-11-24 while projecting each engine's connection string from its declaration.
 
 **Done when:** a paste reader's not-applied parameters are shown in a sentence the reader itself writes, with a test that plants a reader setting `ignoredParameters` and shows its own sentence, not Databend's.
+
+### D820. The agent's MongoDB catalog read and Kubernetes cluster readings reach their providers' own members outside the host core
+
+The agent's curated readings go through the host core's panel and health calls (docs/providers/CONTRACT.md C-76), but three family readings still call their providers' own members through `runReadOnlyReading`: `readCatalogReadOnly` in `src/lib/agent/languages/mongo/tools.ts`, and `readClusterUsage` and `readWorkloadProfile` in `src/lib/agent/languages/kubectl/tools.ts`.
+No contract call serves a statement family's own reading, so a native provider of either engine could not serve them through the contract alone.
+Neither pilot provider reads them.
+
+Found 2026-11-24 while moving the agent's curated readings onto the host core.
+
+**Done when:** a contract call serves a statement family's own reading, and the three go through the host core under the time their call was granted, a stopped read held by the run until its provider call settles, with a test per reading; or the readings are retired.
 
 ## Value interpolation
 

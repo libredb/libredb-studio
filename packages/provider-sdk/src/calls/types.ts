@@ -14,6 +14,7 @@
  * type.
  */
 import type {
+  AgentReading,
   ConsoleCalls,
   EngineId,
   ExecuteRequestField,
@@ -107,6 +108,20 @@ export const MONITORING_FACETS = Object.freeze([
 ] as const) satisfies readonly (keyof MonitoringCalls)[];
 
 export type MonitoringFacet = (typeof MONITORING_FACETS)[number];
+
+/**
+ * The call that serves each agent reading, `$defs/agentReading`, in schema order: the monitoring panel of
+ * `$defs/monitoringPanels` whose `monitoring.panel` call reads it, or null for `health`, which the mandatory health
+ * call serves. An engine's reading is admitted where that call is offered (clause C-4).
+ */
+export const AGENT_READING_PANELS = Object.freeze({
+  sessions: "activeSessions",
+  "slow-queries": "slowQueries",
+  "table-stats": "tables",
+  "index-stats": "indexes",
+  storage: "storage",
+  health: null,
+} as const) satisfies Readonly<Record<AgentReading, keyof MonitoringPanels | null>>;
 
 /** The optional request fields of console execute, `$defs/executeRequestField`, in schema order. */
 export const EXECUTE_REQUEST_FIELDS = Object.freeze([

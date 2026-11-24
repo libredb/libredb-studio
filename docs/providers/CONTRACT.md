@@ -1222,6 +1222,19 @@ Removing an engine's declaration gives exactly the execution UI and fence aliase
 - test `tests/unit/db/engine-projections-removal.test.ts` "the execution UI and the fence aliases built with the fixture engine hold its entries, and with it removed are exactly a fresh build from the remaining set and the committed module"
 - test `tests/unit/db/engine-projections-removal.test.ts` "the execution UI and the fence aliases are the same whatever order the declarations are admitted in"
 
+### M-76 (normative): An agent reading's panel is offered
+
+An engine lists in `facets.agentReadings` a reading read through a monitoring panel, as `AGENT_READING_PANELS` names it, only where its `facets.monitoring` offers that panel, since the host refuses every panel call for a panel the session's engine does not offer, C-71.
+A reading whose panel the engine does not offer is refused as `agent-reading-panel-not-offered`, at the reading's own pointer, in a sentence naming that pointer and no value.
+`health`, which the mandatory health call serves, is admitted whatever the panels.
+Every engine Studio ships satisfies the rule, which its census holds.
+
+- schema `/$defs/agentReading`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an agent reading whose monitoring panel the engine does not offer is refused as agent-reading-panel-not-offered"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "the health reading and a reading whose panel the engine offers are admitted"
+- test `tests/unit/db/engine-declarations.test.ts` "each declaration is admitted by the schema's engine declaration and its rules"
+- test `tests/unit/db/engine-facets/census.test.ts` "every agent reading is the kind of a panel the row offers, or health"
+
 ## Values
 
 A value crosses a JSON boundary, between a provider and the host or between two of the host's own hops, in one form: the value codec of `@libredb/provider-sdk/values`.
@@ -1780,7 +1793,8 @@ Of a maintenance spec the check reads only whether it previews; every other rule
 A package may offer either maintenance facet with no engine listing an operation: the host never calls it without one.
 An engine's offered monitoring panel is admitted only where the package offers `monitoring.panel`, and is otherwise refused by name as `engine-facet-call-not-offered`, naming `monitoring.panel`.
 A package may offer either monitoring facet with no engine offering a panel: the host never asks a panel its session's engine does not offer, C-71, and pool statistics describe the session's own pool.
-An agent reading, for which this contract has no call yet, is refused when it is offered.
+An engine's agent reading is admitted only where the package offers the call that serves it, which `AGENT_READING_PANELS` names: a reading read through a monitoring panel only where it offers `monitoring.panel`, and is otherwise refused by name as `engine-facet-call-not-offered`, naming `monitoring.panel`; `health`, which the mandatory health call serves, on every package.
+Of an agent reading the check reads only which call serves it; a reading outside the vocabulary, and a reading whose panel its engine does not offer, are the validator's, M-76.
 
 - schema `/$defs/consoleCalls`
 - schema `/$defs/objectsCalls`
@@ -1795,11 +1809,14 @@ An agent reading, for which this contract has no call yet, is refused when it is
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a maintenance spec that previews is admitted where the package offers maintenance.preview, and refused by name where it does not"
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "the monitoring facets are declared and implemented both ways, like every console facet"
 - test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an engine's offered monitoring panel is admitted where the package offers monitoring.panel, and refused by name as engine-facet-call-not-offered where it does not"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an engine facet this contract has no call for is refused as engine-facet-without-call"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an agent reading is admitted where the call that serves it is offered: a panel reading where the package offers monitoring.panel, and health on every package"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a panel reading is refused by name as engine-facet-call-not-offered, naming monitoring.panel, where the package does not offer it"
+- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "no definition check answers engine-facet-without-call, which left the vocabulary with the agent readings' calls"
 - test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the console facets and execute's request fields are the schema's"
 - test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the objects facets are the schema's"
 - test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the maintenance facets are the schema's"
 - test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the monitoring facets are the schema's"
+- test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "each agent reading names the monitoring panel that serves it, or none for health"
 
 ### C-5 (normative): A package declares the request fields its execute honours
 
@@ -2496,8 +2513,9 @@ It offers `console.endScope` exactly where the provider ends the transactions it
 It offers `console.transaction` exactly when the provider holds a transaction session, the duck typing of begin, commit and rollback the transaction route has always read.
 It offers `objects.tree` on every session, since every legacy provider holds the five tree members.
 It offers `maintenance.run` on every session, since every legacy provider holds `runMaintenance`, and `maintenance.preview` exactly where the provider holds `previewMaintenance`.
-It offers `monitoring.panel` on every session, since every legacy provider holds the seven panel members, and `monitoring.poolStats` exactly where the provider holds a pool statistics read.
-The session's panels are its engine's row of monitoring panels.
+It offers `monitoring.panel` on every session, and `monitoring.poolStats` exactly where the provider holds a pool statistics read.
+The session's panels are its engine's row of monitoring panels, by identity, where the provider holds the member of every panel the row offers, as every shipped provider does.
+Otherwise they are a frozen copy of the row with each panel whose member the provider does not hold not offered, a member held as the pool statistics read is, a function on the provider or its prototype, so the host refuses a call for such a panel before the call and never calls a member that is not there.
 Its panel call runs the panel's own member with today's argument and answers its answer under the panel's key by reference, and its pool statistics call answers the provider's own statistics by reference, a synchronous throw as the call's rejection.
 Neither calls `forCatalog`, and each passes a provider's error by reference.
 It serves `health` on every session, since every legacy provider holds `getHealth`: its health call runs `getHealth` with no argument and answers its answer by reference, a synchronous throw as the call's rejection, never calls `forCatalog`, and passes a provider's error by reference.
@@ -2527,6 +2545,8 @@ The page's row limit is set once execute answered: one past the page when the pr
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session offers maintenance.run for every provider and maintenance.preview exactly where the provider previews"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session offers monitoring.panel for every provider and monitoring.poolStats exactly where the provider reads its pool statistics"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session's panels are its engine's row"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a panel whose member the legacy provider does not hold is not offered on its session, and a provider holding every member keeps its engine's row"
+- test `tests/isolated/monitoring-panels-census.test.ts` "every shipped provider holds the member of each panel its engine offers, so its bridged session offers its engine's row"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged panel call runs the panel's own member with today's argument and answers its answer by reference under the panel's key"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged pool statistics call answers the provider's own statistics by reference, and a throw as its rejection"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged health call runs getHealth with no argument and answers its health by reference, and a throw as its rejection"
@@ -3252,6 +3272,49 @@ Each route's doors, checks, scrubs and answers run where they ran.
 - test `tests/unit/lib/api/test-connection.test.ts` "checks or a health read still pending at the deadline answer the test's ConnectionError, never a caution or a degraded success"
 - test `tests/unit/lib/api/test-connection-bounds.test.ts` "a health read that never settles is cut at the test's deadline"
 
+### C-76 (normative): The agent's curated readings on the host
+
+The agent's curated readings read through the monitoring facade and the host core, C-73, on the session the legacy bridge serves, C-50, of the provider the run acquired under the operations profile.
+A panel reading is one panel call for the panel `AGENT_READING_PANELS` names for it, its request the limit or the schema the reading takes, and the health reading is one health call.
+Each call's deadline is the time its call was granted, the run's statement timeout already clamped to what is left of the run, from the reading's start, with no slack, and its signal is that deadline's alone.
+Its caller signal is one that never aborts, made for that call, since the agent's drive has no signal of its own and cannot leave a call mid-way, its cancellation being the run's checkpoint between tool calls, so the accessor, C-51, reads a call that ended as its deadline's.
+Its context carries the deadline, that signal and the empty environment, never a credential, and its request is a fresh copy.
+A panel the session does not offer answers that it is not offered, with no call, and the reading is refused as a kind the provider does not serve.
+So a run whose header predates the engine field, offered every kind, has a kind whose panel its engine does not offer refused that way, and the provider's member is never called.
+A reading its deadline stopped is `StudioTimeoutRefusal` with a sentence naming the reading and the time granted, outcome unknown, refused to the model as a repairable failure, and the stopped call's settlement is handed to the run, which counts the call as an execution until it settles.
+A refused start is `StudioTimeoutRefusal`, outcome not-sent, and no member is called.
+A provider's error passes as the same object, and a failure after the stop is logged under the reading's route, the facet and the panel by kind and code, never its text.
+A reading made before the host core is installed throws by name before any promise, so it is never taken for a provider's failure.
+
+- test `tests/unit/lib/api/provider-monitoring.test.ts` "a granted panel read answers the panel's member through one host core panel call, on a fresh request and a context of deadline, signal and env alone"
+- test `tests/unit/lib/api/provider-monitoring.test.ts` "a granted panel read of a panel the session does not offer answers not-offered and reads nothing"
+- test `tests/unit/lib/api/provider-monitoring.test.ts` "a granted read whose deadline passed before it started is StudioTimeoutRefusal not-sent and reads nothing"
+- test `tests/unit/lib/api/provider-monitoring.test.ts` "a granted read its deadline stopped is StudioTimeoutRefusal, hands its caller the stopped call's settlement and logs a later failure by kind and code only"
+- test `tests/unit/lib/api/provider-monitoring.test.ts` "a granted read passes the provider's error as the same object"
+- test `tests/unit/lib/api/provider-monitoring.test.ts` "a granted read before the host core is installed throws by name before any read"
+- test `tests/unit/lib/api/provider-monitoring.test.ts` "a granted health read follows the same rules over the host core's health call"
+- test `tests/unit/lib/api/provider-monitoring-bounds.test.ts` "a granted panel read and a granted health read whose provider never answers each end at their own deadline"
+- test `tests/unit/lib/agent/tools.test.ts` "a curated reading reads through the host core's panel call, with the reading's panel, the model's limit or the run's ceiling, and the schema where named"
+- test `tests/unit/lib/agent/tools.test.ts` "the health reading reads through the host core's health call"
+- test `tests/unit/lib/agent/tools.test.ts` "a curated reading that outlives the time its call was granted is refused as a timeout, and the run counts it until the provider's call settles"
+- test `tests/unit/lib/agent/tools.test.ts` "a provider that does not serve a kind is REFUSED, not crashed"
+- test `tests/unit/lib/agent/operations-readings.test.ts` "a context without an engine on kafka asking for a kind whose panel kafka's row does not offer is refused as KIND_UNSUPPORTED_BY_PROVIDER, its member never called"
+
+### C-77 (normative): The agent routes' opens
+
+The hand-over route and the agent runs route wait for their opens within the engine's connect budget and the request's signal, as the query route does, C-44 and C-55: the hand-over for its execution-profile provider, the runs route for the database session a run names.
+An execution-profile acquisition takes the caller's own wait as the editor's acquisition does: a caller whose wait ends rejects with its reason by reference while the open goes on for every other caller and admits its provider into the profiled cache once, and without a wait it waits for the open as before.
+A request that leaves while its open is pending answers `QueryCancelledError`, 499, and an open past the budget `StudioTimeoutRefusal`, 504, naming the budget, both outcome not-sent, and nothing is read and no run is opened.
+The agent's drive passes no wait of its own: it has no signal of its own, C-76, so its acquisitions end where their open's own deadline, the engine's connect budget, ends them.
+
+- test `tests/isolated/factory.test.ts` "a caller whose wait ends stops waiting while the open goes on and admits itself once"
+- test `tests/isolated/factory.test.ts` "a profile acquisition without a wait waits for the open as before"
+- test `tests/api/agent/handover.test.ts` "a hand-over whose client leaves while its provider opens answers 499 not-sent and never reads"
+- test `tests/api/agent/handover.test.ts` "a hand-over whose open outlasts its engine's connect budget answers 504 studio-timeout-refusal not-sent"
+- test `tests/api/agent/runs.test.ts` "a run whose client leaves while its catalog opens answers 499 and opens no run"
+- test `tests/api/agent/runs.test.ts` "a run whose catalog open outlasts its engine's connect budget answers 504 studio-timeout-refusal not-sent"
+- test `tests/isolated/agent-runtime.test.ts` "the drive's acquisitions pass no wait of their own: the open's own deadline bounds them"
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:
@@ -3342,3 +3405,7 @@ Against this contract's earlier text:
 - An engine's TLS offer lists the TLS modes the engine takes, M-73, where it was a word offering every mode of Studio's or none.
 - Each engine's connection string is a projection of the declarations, M-15 and M-74, each named function bound by Studio's connection string function table, where each engine kept a row beside its provider.
 - Each engine's commit keyword, consent deadline and fence aliases are a projection of the declarations, M-15 and M-75, where each engine kept an execution UI row beside its provider and Studio kept one table of fence tags.
+- The hand-over route and the agent runs route wait for their opens within the engine's connect budget and the request's signal, C-77, where they waited for the open alone.
+- The agent's curated readings read through the host core's panel and health calls, C-76, each within the time its call was granted, where they called the provider's members with no bound.
+- A run whose header predates the engine field, on an engine that does not offer a kind's panel, such as Apache Kafka or SQLite, has that reading refused as a kind its provider does not serve, C-76, where it called the provider's member.
+- An engine's agent reading is refused only where its package does not offer the call that serves it, C-4, where every reading was refused as having no call, so `engine-facet-without-call` left the definition rules; a reading whose monitoring panel its engine does not offer is refused, M-76.

@@ -2328,6 +2328,9 @@ could arrive twice.
 > A `connectionId` naming a seed entry whose type names no provider ([SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md#a-connection-whose-type-this-studio-has-no-provider-for)) answers in that shared shape too, with `code` `"PROVIDER_UNKNOWN"`, the sentence that quotes its type and no `refused`.
 > It is answered before the engine check and before the model is probed.
 
+With a `catalog`, the database's session opens within its engine's connect budget and while the request stays, as on `POST /api/db/query`.
+A request that leaves while it opens answers `499 QUERY_CANCELLED` at once, `outcome: "not-sent"`, and an open past the budget answers `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "not-sent"`, in a sentence naming the budget; no run is opened either way, and the open goes on for the next request.
+
 > `422` rather than `400`: the request is well-formed and it is the server's configuration that
 > cannot honour it. Only a **positively established** incapability refuses this way — a bad key, a
 > quota or a 5xx start the run and are reported by the drive instead. `missing` is what this run
@@ -2410,6 +2413,8 @@ and the auto-execute gate declined it (`handover` is `applied` or `none`), with 
 warning in the message — the statement belongs in the editor unrun, and this route will not do what
 the run decided against. A row or byte budget overrun **refuses** rather than truncating, exactly as
 the agent's own read path does.
+The connection opens within its engine's connect budget and while the request stays, as on `POST /api/db/query`.
+A request that leaves while it opens answers `499 QUERY_CANCELLED` at once, `outcome: "not-sent"`, and an open past the budget answers `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "not-sent"`, in a sentence naming the budget; the statement is never sent either way, and the open goes on for the next request.
 A failure whose text held a credential of the connection keeps its own status, `code`, `kind` and `outcome`, with only its text replaced, as [Error Response Format](#error-response-format) describes.
 
 #### POST /api/agent/drive

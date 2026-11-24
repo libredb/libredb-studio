@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,6 +12,8 @@ import { type ExecutionProfileDenyCode, ExecutionProfileError } from "@/lib/db/e
 import * as realFactory from "@/lib/db/factory";
 import type { ExecutionProfile } from "@/lib/db/factory";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import * as realResolveConnection from "@/lib/seed/resolve-connection";
 import type { DatabaseConnection } from "@/lib/types";
 import { mongoDriver, mongoDriverModule, resetMongoDriver } from "../helpers/mongodb-driver";
@@ -105,6 +107,10 @@ const factoryExports = { ...realFactory };
 const runStoreExports = { ...realRunStore };
 const modelAdapterExports = { ...realModelAdapter };
 const resolveConnectionExports = { ...realResolveConnection };
+
+// The operations run's reading goes through the host core's monitoring calls, so the file installs one.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 afterAll(async () => {
   await clearProviderCache();

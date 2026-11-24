@@ -264,6 +264,36 @@ describe("bridgedConsole", () => {
     ).toHaveLength(4);
   });
 
+  test("a panel whose member the legacy provider does not hold is not offered on its session, and a provider holding every member keeps its engine's row", async () => {
+    const row = engineFacetsFor("postgres").monitoring;
+    const holding = createMockProvider({ type: "postgres" });
+    const getStorageStats = mock(async () => []);
+    const lacking = Object.assign(createMockProvider({ type: "postgres" }), { getStorageStats: undefined });
+    const inherited = Object.setPrototypeOf(
+      Object.assign(createMockProvider({ type: "postgres" }), { getStorageStats: undefined }),
+      { getStorageStats },
+    ) as DatabaseProvider;
+    delete (inherited as Partial<DatabaseProvider>).getStorageStats;
+
+    expect(bridgedConsole(holding, {}).session.panels).toBe(row);
+    expect(bridgedConsole(inherited, {}).session.panels).toBe(row);
+    const { session } = bridgedConsole(lacking, {});
+    expect(session.panels).not.toBe(row);
+    expect(session.panels).toEqual({ ...row, storage: "not-offered" });
+    expect(Object.isFrozen(session.panels)).toBe(true);
+    expect(row.storage).toBe("offered");
+
+    const late = mock(() => {});
+    const record = await createHostCore().panelCall(session, { panel: "storage" }, contextOf(), { late });
+    expect(record).toEqual({
+      kind: "refused",
+      called: false,
+      refusals: [{ rule: "request-panel-not-offered", pointer: "/panel" }],
+    });
+    expect(getStorageStats).not.toHaveBeenCalled();
+    expect(late).not.toHaveBeenCalled();
+  });
+
   test("a bridged panel call runs the panel's own member with today's argument and answers its answer by reference under the panel's key", async () => {
     const MEMBER = {
       overview: "getOverview",

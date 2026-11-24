@@ -521,7 +521,10 @@ export async function openEvalRun(options: EvalRunOptions = {}): Promise<EvalRun
     // preset without it can answer nothing but a curated reading, so an operations
     // eval that sent a statement fails on the fixture rather than on an assertion
     // somebody might later delete as redundant.
+    // The provider carries its engine's type, as a real one does: the curated readings reach it through the host core
+    // on its bridged session, whose monitoring panels are that engine's row.
     const provider = {
+      type: engine.connection.type,
       ...(engine.servesReadOnlyStatements ? { queryReadOnly } : {}),
       // The object surface is REQUIRED on `DatabaseProvider`, so a preset without it is a
       // provider shape that cannot exist and an eval driven against it would prove nothing

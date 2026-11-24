@@ -72,7 +72,7 @@ function requestOf(
 }
 
 /** What a panel answer holds for `P`: the member under the panel's own key in the answer form of that panel. */
-type PanelMember<P extends MonitoringPanel> = Extract<MonitoringPanelAnswer, Readonly<Record<P, unknown>>>[P];
+export type PanelMember<P extends MonitoringPanel> = Extract<MonitoringPanelAnswer, Readonly<Record<P, unknown>>>[P];
 
 /**
  * What `answer` holds for the panel `request` names: its one own key, the panel's, read as a data property by its
