@@ -1,15 +1,17 @@
 /**
  * The legacy bridge (docs/providers/CONTRACT.md, clause C-50): a legacy `DatabaseProvider` served as one session of
- * console execute, cancel and transaction, so today's providers run through the host core's console calls. It lives in
+ * console execute, cancel, endScope and transaction, so today's providers run through the host core's console calls. It lives in
  * the calling bundle, beside the accessor, and is built per call by the caller's facade (`runEditorQuery` and
  * `cancelEditorRun` in src/lib/api/editor-query.ts, the transaction calls in src/lib/api/editor-transaction.ts); the
  * bridge and the facades leave together, once every provider is a contract provider.
  *
  * Its calls are declared once: execute honours `params` and `offset` for every engine, so each provider answers both as
  * it always has, its own `OffsetUnsupportedError` included; `console.cancel` is offered exactly when the provider can
- * cancel (`supportsQueryCancel`); `console.endScope` is not offered, since the run's open transaction is ended inside
- * execute, as `runEditorQuery` always ended it, until it moves onto `console.endScope`; `console.transaction` is
- * offered exactly when the provider holds a transaction session (`isTransactionProvider`).
+ * cancel (`supportsQueryCancel`); `console.endScope` is offered exactly when the provider ends the transactions its
+ * query path left open (`endsOpenQueryTransactions`), and its `endScope` runs the provider's `endOpenQueryTransaction`
+ * with the request's scope and answers its outcome; `console.transaction` is offered exactly when the provider holds a
+ * transaction session (`isTransactionProvider`). The bridge is the one caller of a provider's ender: the caller that
+ * minted a run's scope ends it through the host core's endScope call (clause C-60).
  *
  * Its transaction call runs the provider's own method for the action: `beginTransaction` with `requireReportedState`
  * as the transaction route has always passed it, answering `stateReported` exactly when the provider answered a result,
@@ -22,10 +24,10 @@
  * Its execute runs today's provider steps: `prepareQuery` on a fresh copy of the caller's own options object (the
  * request's resolved page is the contract's view; the options are what a legacy provider has always received), the
  * probe row past the page (`probePastPage`), `query` with the probe's text, a new array of the request's params, the
- * run id only for a provider that cancels, and a new call scope, `noteAppendedBound` on a failure, and the transaction
- * ender in a `finally`. It keeps the prepared query, the legacy result and the transaction's outcome on `run`, the
- * facade's per-call record, beside whether its cancel was sent, and answers one source per result set, the main rows
- * first.
+ * run id only for a provider that cancels, and the request's scope, absent when the request carries none, and
+ * `noteAppendedBound` on a failure; it ends nothing itself. It keeps the prepared query and the legacy result on `run`,
+ * the facade's per-call record, beside whether its cancel was sent, and answers one source per result set, the main
+ * rows first.
  *
  * A source reads each legacy row positionally under the result's `fields`, in the form the page budget measures: its
  * value codec form, or, when the codec refuses a cell (`undefined`, a class instance, a `Map`), the JSON form the
@@ -45,6 +47,8 @@ import {
   type BatchLimit,
   type CancelAnswer,
   type CancelRequest,
+  type EndScopeAnswer,
+  type EndScopeRequest,
   type ExecuteAnswer,
   type ExecuteRequest,
   PAGE_MAX_BYTES,
@@ -63,8 +67,6 @@ import {
   type DatabaseProvider,
   endsOpenQueryTransactions,
   isTransactionProvider,
-  newQueryCallScope,
-  type OpenQueryTransactionOutcome,
   type PreparedQuery,
   type QueryPrepareOptions,
   type TransactionProvider,
@@ -74,21 +76,19 @@ import type { ConsoleSession } from "@/lib/provider-host/core/console";
 import type { QueryResult, QueryWarning } from "@/lib/types";
 
 /**
- * What one bridged execute left for the facade: the prepared query, the legacy result and the transaction's end, and
- * whether the session's cancel was sent.
+ * What one bridged execute left for the facade: the prepared query and the legacy result, and whether the session's
+ * cancel was sent.
  */
 export interface LegacyRun {
   prepared?: PreparedQuery;
   result?: QueryResult;
-  openTransaction: OpenQueryTransactionOutcome;
   cancelSent: boolean;
 }
 
-/** What a bridged execute that answered left: its prepared query, its legacy result and its transaction's end. */
+/** What a bridged execute that answered left: its prepared query and its legacy result. */
 export interface AnsweredRun {
   readonly prepared: PreparedQuery;
   readonly result: QueryResult;
-  readonly openTransaction: OpenQueryTransactionOutcome;
 }
 
 /** A bridged session, the run its execute fills, and the page limits read from that run. */
@@ -241,7 +241,8 @@ async function legacyTransaction(
 export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepareOptions): BridgedConsole {
   const canceller: QueryCancelProvider | undefined = supportsQueryCancel(provider) ? provider : undefined;
   const transactional: TransactionProvider | undefined = isTransactionProvider(provider) ? provider : undefined;
-  const run: LegacyRun = { openTransaction: "none", cancelSent: false };
+  const ender = endsOpenQueryTransactions(provider) ? provider : undefined;
+  const run: LegacyRun = { cancelSent: false };
 
   async function execute(request: ExecuteRequest): Promise<ExecuteAnswer> {
     const { statement } = request;
@@ -268,35 +269,12 @@ export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepare
       return { ...answerOf(inTransaction, prepared), sessionState: sessionStateOf(transactional) };
     }
     const cancelId = canceller === undefined ? undefined : request.runId;
-    // A SINGLE STATEMENT CAN LEAVE A TRANSACTION OPEN, SO THIS RUN ENDS IT (D74).
-    //
-    // MEASURED 2026-09-15 against PostgreSQL 18.4 through the query route with the real
-    // provider and the real process-wide cache: a lone `BEGIN` answered 200 and released
-    // its pooled client in status `T`, and the next request on the same cached provider,
-    // which is any other signed-in user of that stored connection, ran its `CREATE TABLE`
-    // inside that stranger's transaction, answered 200, and an independent reader saw no
-    // such table. Driven the other way the loss is loud: a `BEGIN` followed by a statement
-    // naming a missing relation leaves the client in `E` and the next request answers 500.
-    //
-    // This `finally` was tried once before and REVERTED, because the ender it calls named
-    // one shared pointer: it rolled back whichever client anybody had recorded last, which
-    // cost a concurrent `/api/db/multi-query` script its committed `CREATE TABLE` and an
-    // interactive `POST /api/db/transaction` session its own. D87 fixed that in the
-    // provider, where the borrowed client is in scope, and the `scope` minted here is what
-    // names this run's own session: nothing this run did not run on can be ended.
-    //
-    // It is a `finally` and not a line after the call because the statement that poisons a
-    // client is usually the one that threw, and the answer must not be able to leave by
-    // a path that skips this.
-    const scope = newQueryCallScope();
     let result: QueryResult;
     try {
-      result = await provider.query(probe.query, params, cancelId, scope);
+      result = await provider.query(probe.query, params, cancelId, request.scope);
     } catch (error) {
       // An error that names the bound the limiter added says so, rather than pointing into text the user never wrote.
       throw noteAppendedBound(error, statement, probe.query);
-    } finally {
-      if (endsOpenQueryTransactions(provider)) run.openTransaction = await provider.endOpenQueryTransaction(scope);
     }
     run.result = result;
     return answerOf(result, prepared);
@@ -307,7 +285,7 @@ export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepare
       console: {
         execute: { honours: ["params", "offset"] },
         cancel: canceller === undefined ? "not-offered" : "offered",
-        endScope: "not-offered",
+        endScope: ender === undefined ? "not-offered" : "offered",
         transaction: transactional === undefined ? "not-offered" : "offered",
       },
     },
@@ -315,11 +293,11 @@ export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepare
   );
 
   function answered(): AnsweredRun {
-    const { prepared, result, openTransaction } = run;
+    const { prepared, result } = run;
     if (prepared === undefined || result === undefined) {
       throw new Error("The bridge's run was read before its execute answered, a defect of the host.");
     }
-    return { prepared, result, openTransaction };
+    return { prepared, result };
   }
 
   function pumpLimits(): PumpLimits {
@@ -339,6 +317,13 @@ export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepare
               run.cancelSent = true;
               return { cancelled: await canceller.cancelQuery(request.runId) };
             },
+          }),
+      ...(ender === undefined
+        ? {}
+        : {
+            endScope: async (request: EndScopeRequest): Promise<EndScopeAnswer> => ({
+              openTransaction: await ender.endOpenQueryTransaction(request.scope),
+            }),
           }),
       ...(transactional === undefined
         ? {}

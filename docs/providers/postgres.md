@@ -2235,8 +2235,9 @@ Both were false, measured 2026-09-15 on 18.4 (D87).
 And `beginTransaction()` calls `pool.connect()` on a LIFO idle list, so it is handed the very object a previous `query()` recorded: the ender rolled the interactive session's committed `CREATE TABLE` away while the status route still read `inTransaction` and `commit` answered "Transaction committed".
 Both controls, run without the ender, kept the table.
 
-`POST /api/db/multi-query` and `POST /api/db/query` each call this in a `finally` under a scope of their own and report the outcome.
+`POST /api/db/multi-query` and `POST /api/db/query` each end their scope through the host core's `console.endScope` after the run ([`CONTRACT.md`](CONTRACT.md), C-60), each under a scope of its own, and report the outcome; an end that fails is answered in the run's place.
 What it still cannot undo: a client this scope released in `T` is back in the idle list, and the pool may hand it to another request in the moment before the ender runs, whose statement then joins this transaction and is discarded with it.
+On `POST /api/db/query` the end comes after the run's page is read, one turn of the event loop later for a page of one batch, and after the whole read, and any wait for the large-page slot, for a page of several batches, so that moment is that much longer, tracked as [D620](../BACKLOG.md).
 That is the leak ending it promptly is for, not a second defect.
 
 THE OTHER REQUEST CAN BE THE INTERACTIVE SESSION, and then its `commit` lies, which is sharper than the sentence above and is said here rather than left to be met.
@@ -2248,7 +2249,7 @@ Ten apparent losses in the first run of that probe were `HTTP 429` from the rout
 Every client the scope recorded is attempted inside its own `try`, so one dead socket cannot strand the clients behind it in the loop, and the held failures are raised together once the loop is done: `Could not roll back the transaction this request left open on N of M pooled clients: ...`, where `M` counts the clients ASKED and not the clients recorded, because a client a later statement of the same scope already returned to `I` was never sent anything.
 Neither arm of the outcome type is true of a client still sitting in `T`: `"none"` denies the transaction and `"rolled-back"` certifies a rollback that did not happen.
 The class raised is the base `DatabaseError` with `code: "DATABASE_ERROR"` and NOT the `QueryError` the rest of this provider raises, because `databaseErrorBody` in [`error-body.ts`](../../src/lib/api/error-body.ts), reached through `createErrorResponse`, maps `QueryError` to HTTP 400 `QUERY_ERROR`, which would report a rollback this server could not issue on a client of its own pool as a fault in the SQL the caller sent; the `DatabaseError` arm answers HTTP 500 `DATABASE_ERROR`, which is what it is.
-The cost is two losses and both are deliberate: the throw is inside the route's `finally`, so it replaces the response the request had already produced, a script's per-statement results included, and a `finally` that throws also DISCARDS the exception the body was leaving with, so a dead socket that killed the statement AND the ROLLBACK costs the engine's own message with its `position` and `detail`.
+The cost is two losses and both are deliberate: the throw is answered in the run's place, so it replaces the response the request had already produced, a script's per-statement results included, and it also DISCARDS the exception the statement was failing with, so a dead socket that killed the statement AND the ROLLBACK costs the engine's own message with its `position` and `detail`.
 A pooled client left `idle in transaction` poisons every later user of that stored connection, which is the failure this whole surface exists for, so it is raised rather than reported quietly.
 
 ---

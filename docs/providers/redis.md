@@ -737,8 +737,8 @@ So the next user's command does not fail, it silently does not happen, and the s
 `endOpenQueryTransaction()` ends it and reports `"none"` or `"rolled-back"`.
 
 **WHICH CALLERS END IT, AND WHY THAT CHANGED.** The surface now has TWO callers in the product,
-`POST /api/db/multi-query` and `POST /api/db/query`, each awaiting it in a `finally` under a call
-scope of its own. **The editor never sends a Redis buffer to the first of those.**
+`POST /api/db/multi-query` and `POST /api/db/query`, each ending its scope through the host core's
+`console.endScope` after the run ([`CONTRACT.md`](CONTRACT.md), C-60), under a call scope of its own. **The editor never sends a Redis buffer to the first of those.**
 `use-query-execution.ts` gates the multi-statement route on `runsAsScript`, read from
 `queryLanguage`, and this provider declares `json` (§9), so an editor run goes to
 `POST /api/db/query` (§12.2).
@@ -760,8 +760,8 @@ touches. The server is the only thing that can be asked, and this is how it is a
 
 Asking first is not a refinement. Measured on redis 7.4.11 with an ordinary read-only ACL,
 `ACL SETUSER ro on >pw ~* +@read +ping +info`: `PING` answers `PONG` and `DISCARD` is refused with
-`NOPERM User ro has no permissions to run the 'discard' command`. Since the caller awaits this in a
-`finally`, a blind `DISCARD` made every multi-query request on such a connection answer an error and
+`NOPERM User ro has no permissions to run the 'discard' command`. Since an end that fails is answered
+in the run's place, a blind `DISCARD` made every multi-query request on such a connection answer an error and
 threw away the per-statement results it had already earned; with the ask first, no `DISCARD` is sent
 and the answer is `"none"`. That same ACL cannot run `MULTI` either, so there is never one to end.
 
@@ -780,7 +780,7 @@ to run, so the queue is dropped rather than executed on an authority nobody gave
 because this provider holds one connection and there is no other client to name.
 That is true and it is not the same as the transaction being the caller's own: a `MULTI` is state
 of the CONNECTION, and one connection serves every concurrent request on this stored connection.
-So `POST /api/db/query`, which now ends what it opened in a `finally` (above), PINGs and on `QUEUED`
+So `POST /api/db/query`, which now ends what it opened after every run (above), PINGs and on `QUEUED`
 `DISCARD`s whatever `MULTI` is open there, whoever opened it.
 A plain `GET` typed by one user drops a `MULTI` another user had just queued commands into, and that
 user is told nothing: their next command answers `QUEUED` from no transaction.
@@ -1979,7 +1979,7 @@ no control offers it.
 | `supportsInlineRowEdit` | `false` — Redis commands are not SQL, so there is no `UPDATE ... SET` for the results grid's inline editor to emit |
 | `supportsTestDataGeneration` | `false` - no kind here declares a row write, and Redis commands have no multi-row insert for the Generate Test Data dialog to emit |
 | `supportsResultPagination` | `false` — `prepareQuery` pins both `limit` and `offset`: a Redis read is a command, not a statement whose bound this layer can advance (#816) |
-| `supportsTransactions` | `false` — `MULTI`/`EXEC` exists in Redis and is not exposed through this provider, so the transaction trio and SANDBOX are not offered (#464). A `MULTI` a script sends anyway is ended by `endOpenQueryTransaction()`, which BOTH query routes now call in a `finally`, `POST /api/db/multi-query` and `POST /api/db/query`, so an editor run ends its own too (D74, D87) ([§5.2a](#52a-a-multi-a-statement-left-open-d75)) |
+| `supportsTransactions` | `false`: `MULTI`/`EXEC` exists in Redis and is not exposed through this provider, so the transaction trio and SANDBOX are not offered (#464). A `MULTI` a script sends anyway is ended by `endOpenQueryTransaction()`, which BOTH query routes now call after the run through the host core's `console.endScope`, `POST /api/db/multi-query` and `POST /api/db/query`, so an editor run ends its own too (D74, D87) ([§5.2a](#52a-a-multi-a-statement-left-open-d75)) |
 | `declaresForeignKeys` | `false` — Redis has no constraints at all, and the "tables" here are key prefixes this provider grouped rather than objects anyone declared |
 | `tablesAreDerivedGroupings` | `true` — the object surface SCANs a bounded slice of the keyspace and groups the real key names it found by their prefix, so a `user:*` row is this server's own summary and not a key any command can be given. The agent layer states this to a plan run, in one sentence, so a grounded run does not draft a command against a grouping. In the object tree it is what withholds Profile from a `keyspace` row ([§6.1](#61-the-object-surface-789)) |
 | `containerLevels` | one level, `schema`, labelled Database ([§6.1](#61-the-object-surface-789)) |

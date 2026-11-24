@@ -729,7 +729,7 @@ Two facts, and neither is an inference from the engine's name.
 Druid SQL through this endpoint cannot write at all - the server refuses INSERT, UPDATE and DELETE itself ([§5.5](#55-druid-sql-cannot-write-and-the-server-says-so-clearly)) - so there is no uncommitted work for a transaction to hold, which is the same reason `supportsTransactions` is `false` ([§9](#9-capabilities--labels)).
 And the transport is one `POST /druid/v2/sql` per statement with no session identifier of any kind ([`http-transport.ts`](../../src/lib/db/providers/sql/druid/http-transport.ts)), so there is no handle between two statements for state to survive on even if the engine had some.
 
-This is a declared boundary, not a default: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default value, and the route shape-checks for it rather than assuming `"none"`.
+This is a declared boundary, not a default: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default value, and the legacy bridge offers `console.endScope` only where it is implemented ([`CONTRACT.md`](CONTRACT.md), C-50), rather than assuming `"none"`.
 
 
 ---

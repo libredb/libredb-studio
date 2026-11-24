@@ -1,7 +1,10 @@
 import {
   CLEANUP_DEADLINE_MS,
   type CallContext,
+  checkConsoleFacet,
+  cleanupContext,
   deadlineSignal,
+  type EndScopeAnswer,
   envReader,
   type ExecuteRequest,
   type PageBound,
@@ -13,12 +16,25 @@ import { consoleTextByteLimit, consoleTextOverLimit } from "@/lib/db/destructive
 import { errorCode, errorKind } from "@/lib/db/error-record";
 import { QueryCancelledError, waitedSeconds } from "@/lib/db/errors";
 import { type ProviderTextScrub, withScrubbedWarnings } from "@/lib/db/operations/provider-text";
-import { DEFAULT_QUERY_TIMEOUT, type DatabaseProvider, type QueryPrepareOptions } from "@/lib/db/types";
+import {
+  DEFAULT_QUERY_TIMEOUT,
+  type DatabaseProvider,
+  newQueryCallScope,
+  type QueryPrepareOptions,
+} from "@/lib/db/types";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { logger } from "@/lib/logger";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 import { type CallerView, openStopError, refusalError, stopError } from "@/lib/provider-host/access";
-import type { HostCallPorts, PageRecord, StoppedRecord } from "@/lib/provider-host/core/console";
+import type {
+  ConsoleSession,
+  EndScopeRecord,
+  ExecuteRecord,
+  HostCallPorts,
+  PageRecord,
+  StoppedRecord,
+} from "@/lib/provider-host/core/console";
+import type { HostCore } from "@/lib/provider-host/core/host-core";
 import type { OpenWait } from "@/lib/provider-host/core/open-once";
 import { hostCore } from "@/lib/provider-host/instance";
 import { type AnsweredRun, bridgedConsole } from "@/lib/provider-host/legacy-bridge";
@@ -133,9 +149,9 @@ export interface EditorQueryAnswer {
 }
 
 /**
- * How long after the statement timeout the host still waits: the engine's own timeout answer and the rollback of the
- * run's open transaction (at most 5 s) arrive within it, so today's timeout answer wins wherever the engine answers in
- * time.
+ * How long after the statement timeout the host still waits: the engine's own timeout answer arrives within it, so
+ * today's timeout answer wins wherever the engine answers in time. The end of the run's scope comes after the run,
+ * under a cleanup deadline of its own (`CLEANUP_DEADLINE_MS`).
  */
 export const EXECUTE_SLACK_MS = 10_000;
 
@@ -222,7 +238,7 @@ export function callContext(deadline: number, caller: AbortSignal): CallContext 
 }
 
 /*
- * THE EDITOR QUERY ON THE PROVIDER HOST CORE (docs/providers/CONTRACT.md, clauses C-48 to C-51).
+ * THE EDITOR QUERY ON THE PROVIDER HOST CORE (docs/providers/CONTRACT.md, clauses C-48 to C-51 and C-60).
  *
  * `runEditorQuery` is the caller facade: it keeps the shape both callers have always used and answers today's body,
  * while the run goes through the legacy bridge and the host core's execute call. The core is the one the process's
@@ -242,6 +258,10 @@ export function callContext(deadline: number, caller: AbortSignal): CallContext 
  * A caller that goes while the statement runs is answered at once, and the core sends the run's cancel; the
  * statement's own end is handled late, logged by kind and code when it fails, unless it is the provider's cancellation
  * answer to that cancel. A provider that never answers is cut at the deadline, `StudioTimeoutRefusal`, answered 504.
+ *
+ * The run's scope is the facade's: it mints one for a session that offers `console.endScope`, sends it with the execute,
+ * and ends it through the core's endScope call after the run, under the cleanup deadline (see the D74 and D87 note
+ * above `runEditorQuery`).
  */
 
 /** How the accessor reads an execute's records: the view of the call, and the view of a stop by the wait it ended. */
@@ -281,7 +301,8 @@ export function executeViews(provider: Pick<DatabaseProvider, "config">, caller:
 
 /**
  * The answer body of the page `record` holds, built from what the bridged execute that answered left (`answeredRun`),
- * its warnings through `scrub`; the record is released once, in a `finally`, whether or not the body was built.
+ * its warnings through `scrub`; the record is released once, in a `finally`, whether or not the body was built. The
+ * run's `openTransaction` is not the page's: `runEditorQuery` appends it from the end of the run's scope.
  */
 export function editorPageBody(
   record: PageRecord,
@@ -289,7 +310,7 @@ export function editorPageBody(
   scrub: ProviderTextScrub,
 ): EditorQueryAnswer {
   try {
-    const { prepared, result, openTransaction } = answeredRun();
+    const { prepared, result } = answeredRun();
     // The page the host pumped holds the rows that fit the page's row limit and its 32 MiB; the answer is the legacy
     // rows themselves, as the provider returned them, by that count.
     const pumped = result.rows.slice(0, record.page.rows.length);
@@ -327,12 +348,6 @@ export function editorPageBody(
         // NaN and the infinities as words: `JSON.stringify` would write each as null, which
         // the grid and every export then show as SQL NULL (`src/lib/non-finite.ts`).
         rows: rowsWithNonFiniteWords(pageRows),
-        // Present only when there was a transaction to end, the way `/api/db/multi-query`
-        // reports it, so an always-present "none" would announce something that did not happen.
-        // `use-query-execution.ts` raises the notice off this field on BOTH paths; it used to raise
-        // it only inside its `multiStatement` branch, which a lone statement never sets, so this
-        // field was answered and never rendered for its whole first commit.
-        ...(openTransaction === "rolled-back" && { openTransaction }),
         pagination: {
           limit: prepared.limit,
           offset: prepared.offset,
@@ -355,28 +370,149 @@ export function editorPageBody(
   }
 }
 
+/*
+ * A SINGLE STATEMENT CAN LEAVE A TRANSACTION OPEN, SO THE RUN ENDS ITS SCOPE (D74, D87;
+ * docs/providers/CONTRACT.md, clause C-60).
+ *
+ * MEASURED 2026-09-15 against PostgreSQL 18.4 through the query route with the real
+ * provider and the real process-wide cache: a lone `BEGIN` answered 200 and released
+ * its pooled client in status `T`, and the next request on the same cached provider,
+ * which is any other signed-in user of that stored connection, ran its `CREATE TABLE`
+ * inside that stranger's transaction, answered 200, and an independent reader saw no
+ * such table. Driven the other way the loss is loud: a `BEGIN` followed by a statement
+ * naming a missing relation leaves the client in `E` and the next request answers 500.
+ *
+ * Ending the run's transaction was tried once before and REVERTED, because the ender named
+ * one shared pointer: it rolled back whichever client anybody had recorded last, which
+ * cost a concurrent `/api/db/multi-query` script its committed `CREATE TABLE` and an
+ * interactive `POST /api/db/transaction` session its own. D87 fixed that in the
+ * provider, where the borrowed client is in scope, and the `scope` minted here is what
+ * names this run's own session: nothing this run did not run on can be ended.
+ *
+ * The scope is minted only for a session that offers `console.endScope`, since the host refuses
+ * a scope to any other (clause C-9), and it is ended through the host core's endScope call
+ * after the run, under a cleanup context of its own that the caller's leaving does not end: on
+ * every path the statement may have run on, the failing one included, since the statement
+ * that poisons a client is usually the one that threw. A run refused before its call ran
+ * nothing and ends nothing; a run Studio stopped waiting for is ended once its call settled,
+ * and that end's failure is logged, since its answer has already gone.
+ */
+
+/** Studio's sentence for an end of a run's scope its cleanup deadline stopped. */
+const END_SCOPE_DEADLINE_SENTENCE = `Ending the transaction this request may have left open did not answer within ${waitedSeconds(CLEANUP_DEADLINE_MS)}, so Studio stopped waiting for it.`;
+
+/**
+ * The late handler of every end of a run's scope, logged under `route`: a failure of the end after Studio stopped
+ * waiting for it, or the end of a stopped run's scope that failed or was stopped, by its kind and code and never its
+ * text, which can carry a server's words.
+ */
+function lateScopeEnd(route: string): (failure: unknown) => void {
+  return (failure) =>
+    logger.warn("Ending the transaction a run Studio stopped waiting for may have left open failed", {
+      route,
+      kind: errorKind(failure),
+      code: errorCode(failure),
+    });
+}
+
+/** Ends `scope` on `session` through the host core's endScope call, under a cleanup context of its own. */
+function endScopeRecord(
+  core: HostCore,
+  session: ConsoleSession,
+  scope: string,
+  route: string,
+): Promise<EndScopeRecord> {
+  return core.endScopeCall(session, { scope }, cleanupContext(NO_ENVIRONMENT), { late: lateScopeEnd(route) });
+}
+
+/**
+ * The outcome an end of a run's scope answered.
+ *
+ * @throws The provider's error by reference; `StudioTimeoutRefusal` naming the end when its cleanup deadline stopped
+ * it, outcome unknown; a host defect for a refusal.
+ */
+function endedScope(record: EndScopeRecord, caller: AbortSignal): EndScopeAnswer["openTransaction"] {
+  const view: CallerView = { caller, deadlineSentence: END_SCOPE_DEADLINE_SENTENCE };
+  if (record.kind === "answered") return record.openTransaction;
+  if (record.kind === "stopped") throw stopError(record.reason, view);
+  throw refusalError(record, view);
+}
+
+/** Ends the run's `scope`, when it has one, and answers the outcome; see `endedScope` for what it throws. */
+async function endRunScope(
+  core: HostCore,
+  session: ConsoleSession,
+  scope: string | undefined,
+  run: EditorQueryRun,
+): Promise<EndScopeAnswer["openTransaction"]> {
+  if (scope === undefined) return "none";
+  return endedScope(await endScopeRecord(core, session, scope, run.route), run.signal);
+}
+
+/**
+ * Ends the run's scope as the execute's `record` says, and answers the end's outcome: at once for a page, before its
+ * body is built, releasing the record if the end throws, and for a refusal after the call; once the stopped call has
+ * settled for a stop, its failure logged, since the stop is answered at once; and not at all for a refusal before the
+ * call, which ran nothing.
+ */
+async function endAfterRun(
+  record: ExecuteRecord,
+  end: () => Promise<EndScopeAnswer["openTransaction"]>,
+  route: string,
+): Promise<EndScopeAnswer["openTransaction"]> {
+  if (record.kind === "stopped") {
+    record.settled.then(end).then(() => undefined, lateScopeEnd(route));
+    return "none";
+  }
+  if (record.kind === "refused" && !record.called) return "none";
+  if (record.kind === "refused") return end();
+  try {
+    return await end();
+  } catch (error) {
+    record.release();
+    throw error;
+  }
+}
+
 /** Runs one statement on `provider` and answers its first result set's page. */
 export async function runEditorQuery(provider: DatabaseProvider, run: EditorQueryRun): Promise<EditorQueryAnswer> {
   const core = hostCore();
   const deadline = executeDeadline(provider, Date.now());
   const views = executeViews(provider, run.signal);
   const bridged = bridgedConsole(provider, run.options);
+  const scope = checkConsoleFacet(bridged.session.calls, "endScope").length === 0 ? newQueryCallScope() : undefined;
+  const end = () => endRunScope(core, bridged.session, scope, run);
   const request: ExecuteRequest = {
     statement: run.statement,
     page: pageBound(run.options),
     ...(run.params === undefined ? {} : { params: [...run.params] }),
     ...(run.queryId === undefined ? {} : { runId: run.queryId }),
+    ...(scope === undefined ? {} : { scope }),
   };
-  const record = await core.executeCall(
-    bridged.session,
-    request,
-    callContext(deadline, run.signal),
-    bridged.pumpLimits,
-    hostPorts(run.route, () => bridged.run.cancelSent),
-  );
+  let record: ExecuteRecord;
+  try {
+    record = await core.executeCall(
+      bridged.session,
+      request,
+      callContext(deadline, run.signal),
+      bridged.pumpLimits,
+      hostPorts(run.route, () => bridged.run.cancelSent),
+    );
+  } catch (error) {
+    await end();
+    throw error;
+  }
+  const openTransaction = await endAfterRun(record, end, run.route);
   if (record.kind === "refused") throw refusalError(record, views.view);
   if (record.kind === "stopped") throw stopError(record.reason, views.stopView(record));
-  return editorPageBody(record, bridged.answered, run.scrub);
+  const answer = editorPageBody(record, bridged.answered, run.scrub);
+  // Present only when there was a transaction to end, the way `/api/db/multi-query`
+  // reports it, so an always-present "none" would announce something that did not happen.
+  // `use-query-execution.ts` raises the notice off this field on BOTH paths; it used to raise
+  // it only inside its `multiStatement` branch, which a lone statement never sets, so this
+  // field was answered and never rendered for its whole first commit.
+  if (openTransaction !== "rolled-back") return answer;
+  return { ...answer, body: { ...answer.body, openTransaction } };
 }
 
 /** What a cancel answers: the provider cannot cancel, or whether the engine stopped the run. */
@@ -408,4 +544,32 @@ export async function cancelEditorRun(
   if (record.kind === "stopped") throw stopError(record.reason, view);
   if (record.refusals.some((refusal) => refusal.rule === "facet-not-offered")) return { offered: false };
   throw refusalError(record, view);
+}
+
+/** What the end of a script's scope answers: the provider ends nothing of its query path, or the end's outcome. */
+export type EditorScopeEnd =
+  | { readonly offered: false }
+  | { readonly offered: true; readonly openTransaction: EndScopeAnswer["openTransaction"] };
+
+/**
+ * Ends `scope`, which a caller minted and sent with every statement it ran on `provider` itself, through the bridge's
+ * `console.endScope` and the host core's endScope call, under a cleanup context of its own that `caller`'s leaving does
+ * not end (docs/providers/CONTRACT.md, clause C-60). A provider that ends nothing of its query path is answered
+ * `offered: false`, the core's refusal of the facet, as `cancelEditorRun` answers one that cannot cancel.
+ *
+ * @throws The provider's error by reference; `StudioTimeoutRefusal` naming the end when its cleanup deadline stopped
+ * it, outcome unknown; a host defect for any other refusal.
+ */
+export async function endEditorScope(
+  provider: DatabaseProvider,
+  scope: string,
+  caller: AbortSignal,
+  route: string,
+): Promise<EditorScopeEnd> {
+  const core = hostCore();
+  const record = await endScopeRecord(core, bridgedConsole(provider, {}).session, scope, route);
+  if (record.kind === "refused" && record.refusals.some((refusal) => refusal.rule === "facet-not-offered")) {
+    return { offered: false };
+  }
+  return { offered: true, openTransaction: endedScope(record, caller) };
 }

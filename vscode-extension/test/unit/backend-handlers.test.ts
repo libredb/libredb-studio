@@ -763,8 +763,8 @@ describe("query/run", () => {
     const [prepare, probe, query] = plain.provider.calls;
     assert.deepEqual(prepare, ["prepareQuery", "SELECT n FROM t", { limit: 2, offset: 0 }]);
     assert.deepEqual(probe, ["prepareQuery", "SELECT n FROM t", { limit: 3, offset: 0, unlimited: false }]);
-    assert.deepEqual(query.slice(0, 4), ["query", "SELECT n FROM t LIMIT 3 OFFSET 0", undefined, undefined]);
-    assert.equal(typeof query[4], "string");
+    // A provider without a transaction ender offers no console.endScope, so it is sent no scope.
+    assert.deepEqual(query, ["query", "SELECT n FROM t LIMIT 3 OFFSET 0", undefined, undefined, undefined]);
 
     const cancelling = await openedOn(fakeProvider({ cancelQuery: async () => true }));
     await cancelling.handlers.runQuery(RUN, idle);
@@ -789,6 +789,26 @@ describe("query/run", () => {
   it("answers a transaction the statement left open as rolled back (D74)", async () => {
     const { handlers } = await openedOn(fakeProvider({ endOpenQueryTransaction: async () => "rolled-back" }));
     assert.equal((await handlers.runQuery(RUN, idle)).openTransaction, "rolled-back");
+  });
+
+  it("ends the statement's own scope after the run, and answers an end that fails in the run's place", async () => {
+    const ending = await openedOn(fakeProvider({ endOpenQueryTransaction: async () => "none" }));
+    const page = await ending.handlers.runQuery(RUN, idle);
+    assert.equal("openTransaction" in page, false);
+    assert.deepEqual(methodsOf(ending.provider), ["prepareQuery", "prepareQuery", "query", "endOpenQueryTransaction"]);
+    const [, , query, end] = ending.provider.calls;
+    assert.equal(typeof query[4], "string");
+    assert.deepEqual(end, ["endOpenQueryTransaction", query[4]]);
+
+    const failing = new DatabaseError("Could not roll back the transaction this request left open", "postgres");
+    const { handlers } = await openedOn(
+      fakeProvider({
+        endOpenQueryTransaction: async () => {
+          throw failing;
+        },
+      }),
+    );
+    await answeredAs(handlers.runQuery(RUN, idle), failing);
   });
 
   it("runs in the catalog asked for only where the provider has catalog sessions", async () => {

@@ -1,12 +1,16 @@
 /**
  * The legacy bridge (src/lib/provider-host/legacy-bridge.ts; docs/providers/CONTRACT.md, clause C-50): a legacy
- * `DatabaseProvider` served as a session of console execute and cancel, its declared calls, the copies it hands the
- * provider, today's provider steps, one source per result set, the measured form of a row and the page's row limit.
+ * `DatabaseProvider` served as a session of console execute, cancel, endScope and transaction, its declared calls, the
+ * copies it hands the provider, today's provider steps, one source per result set, the measured form of a row and the
+ * page's row limit.
  *
  * Every provider here is a fake the test builds; every marker is generated at run time and no timer runs.
  */
 import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import {
   BATCH_MAX_BYTES,
   type CallContext,
@@ -130,9 +134,10 @@ async function failure(run: () => Promise<unknown>): Promise<unknown> {
 }
 
 describe("bridgedConsole", () => {
-  test("a bridged session honours params and offset, offers cancel only where the provider cancels, and offers no scope", () => {
+  test("a bridged session honours params and offset, offers cancel only where the provider cancels, and endScope only where the provider ends its query path's transactions", () => {
     const cancelling = bridgedConsole(fake(resultOf([]), { cancelQuery: mock(async () => true) }), {});
     const plain = bridgedConsole(fake(resultOf([])), {});
+    const ending = bridgedConsole(fake(resultOf([]), { endOpenQueryTransaction: mock(async () => "none") }), {});
 
     expect(cancelling.session.calls).toEqual({
       console: {
@@ -145,6 +150,18 @@ describe("bridgedConsole", () => {
     expect(plain.session.calls.console.cancel).toBe("not-offered");
     expect(typeof cancelling.session.cancel).toBe("function");
     expect(plain.session.cancel).toBeUndefined();
+    expect(plain.session.calls.console.endScope).toBe("not-offered");
+    expect(plain.session.endScope).toBeUndefined();
+    expect(cancelling.session.endScope).toBeUndefined();
+    expect(ending.session.calls).toEqual({
+      console: {
+        execute: { honours: ["params", "offset"] },
+        cancel: "not-offered",
+        endScope: "offered",
+        transaction: "not-offered",
+      },
+    });
+    expect(typeof ending.session.endScope).toBe("function");
     expect(Object.isFrozen(cancelling.session.calls)).toBe(true);
     expect(Object.isFrozen(cancelling.session.calls.console.execute.honours)).toBe(true);
   });
@@ -239,7 +256,6 @@ describe("bridgedConsole", () => {
     expect(callsOf(endOpenQueryTransaction)).toHaveLength(0);
     expect(answer.sessionState).toBe("not-in-transaction");
     expect(answer.pageApplied).toBe(true);
-    expect(bridged.run.openTransaction).toBe("none");
     expect(bridged.answered().result.rows).toEqual(rowsOf(3));
     expect(bridged.pumpLimits(answer).maxRows).toBe(3);
 
@@ -328,23 +344,21 @@ describe("bridgedConsole", () => {
     expect(Object.isFrozen(request.params)).toBe(true);
   });
 
-  test("the run prepares, probes, queries and ends its transaction as runEditorQuery did", async () => {
+  test("the run prepares, probes and queries with the request's own scope, and ends nothing itself", async () => {
     const endOpenQueryTransaction = mock(async () => "rolled-back");
     const cancelQuery = mock(async () => true);
     const provider = fake(resultOf(rowsOf(3)), { endOpenQueryTransaction, cancelQuery });
     const bridged = bridgedConsole(provider, { limit: 2 });
+    const scope = marker();
 
-    const answer = await bridged.session.execute(requestOf({ params: ["a"], runId: "q-1" }), contextOf());
+    const answer = await bridged.session.execute(requestOf({ params: ["a"], runId: "q-1", scope }), contextOf());
 
     expect(callsOf(provider.prepareQuery)).toEqual([
       ["SELECT n FROM t", { limit: 2 }],
       ["SELECT n FROM t", { limit: 3, unlimited: false }],
     ]);
-    const call = callsOf(provider.query)[0] as unknown[];
-    expect(call.slice(0, 3)).toEqual(["SELECT n FROM t LIMIT 3 OFFSET 0", ["a"], "q-1"]);
-    expect(typeof call[3]).toBe("string");
-    expect(callsOf(endOpenQueryTransaction)).toEqual([[call[3]]]);
-    expect(bridged.run.openTransaction).toBe("rolled-back");
+    expect(callsOf(provider.query)).toEqual([["SELECT n FROM t LIMIT 3 OFFSET 0", ["a"], "q-1", scope]]);
+    expect(callsOf(endOpenQueryTransaction)).toHaveLength(0);
     expect(bridged.run.prepared).toEqual({
       query: "SELECT n FROM t LIMIT 2 OFFSET 0",
       wasLimited: true,
@@ -357,17 +371,43 @@ describe("bridgedConsole", () => {
 
     const plain = fake(resultOf(rowsOf(1)));
     await bridgedConsole(plain, {}).session.execute(requestOf({ runId: "q-2" }), contextOf());
-    expect(callsOf(plain.query)[0]?.slice(1, 3)).toEqual([undefined, undefined]);
+    // A request that carries no scope hands the provider none.
+    expect(callsOf(plain.query)[0]?.slice(1)).toEqual([undefined, undefined, undefined]);
 
     const failing = new Error('syntax error at or near "LIMIT"');
     const ender = mock(async () => "rolled-back");
     const thrower = bridgedConsole(fake(failing, { endOpenQueryTransaction: ender }), { limit: 2 });
-    const caught = await failure(() => thrower.session.execute(requestOf(), contextOf()));
+    const caught = await failure(() => thrower.session.execute(requestOf({ scope: marker() }), contextOf()));
     expect(caught).toBe(failing);
     expect(failing.message).toBe(`syntax error at or near "LIMIT" ${appendedBoundNote("LIMIT 3 OFFSET 0")}`);
-    expect(callsOf(ender)).toHaveLength(1);
-    expect(thrower.run.openTransaction).toBe("rolled-back");
+    expect(callsOf(ender)).toHaveLength(0);
     expect(thrower.run.result).toBeUndefined();
+  });
+
+  test("a bridged endScope runs the provider's ender on the scope it is sent and answers its outcome, its failure by reference", async () => {
+    const outcomes = ["rolled-back", "none"] as const;
+    const endOpenQueryTransaction = mock(async () => outcomes[callsOf(endOpenQueryTransaction).length - 1]);
+    const { session } = bridgedConsole(fake(resultOf([]), { endOpenQueryTransaction }), {});
+    const first = marker();
+    const second = marker();
+
+    const rolledBack = await session.endScope?.({ scope: first }, contextOf());
+    const none = await session.endScope?.({ scope: second }, contextOf());
+
+    expect(rolledBack).toEqual({ openTransaction: "rolled-back" });
+    expect(none).toEqual({ openTransaction: "none" });
+    expect(callsOf(endOpenQueryTransaction)).toEqual([[first], [second]]);
+
+    const failing = new Error(marker());
+    const thrower = bridgedConsole(
+      fake(resultOf([]), {
+        endOpenQueryTransaction: mock(async () => {
+          throw failing;
+        }),
+      }),
+      {},
+    );
+    expect(await failure(async () => thrower.session.endScope?.({ scope: marker() }, contextOf()))).toBe(failing);
   });
 
   test("every result set is a source, the main rows first", async () => {
@@ -523,7 +563,7 @@ describe("bridgedConsole", () => {
     const answered = limited.answered();
     expect(answered.prepared).toBe(limited.run.prepared as PreparedQuery);
     expect(answered.result).toBe(limited.run.result as QueryResult);
-    expect(answered.openTransaction).toBe("none");
+    expect(Object.keys(answered).sort()).toEqual(["prepared", "result"]);
   });
 
   test("a bridged cancel names the run and answers the provider's boolean", async () => {
@@ -536,5 +576,24 @@ describe("bridgedConsole", () => {
     expect(known).toEqual({ cancelled: true });
     expect(unknown).toEqual({ cancelled: false });
     expect(callsOf(cancelQuery)[0]).toEqual(["known"]);
+  });
+});
+
+describe("the one ender", () => {
+  const ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..");
+
+  /** Every tracked `.ts` and `.tsx` source of Studio and the VS Code extension outside the providers, repository-relative. */
+  function trackedSources(): string[] {
+    return execFileSync("git", ["ls-files", "--", "src", "vscode-extension/src"], { cwd: ROOT, encoding: "utf8" })
+      .split("\n")
+      .filter((file) => /\.tsx?$/.test(file) && !file.startsWith("src/lib/db/providers/"));
+  }
+
+  test("only the legacy bridge calls a provider's endOpenQueryTransaction, so a run's open transaction ends through console.endScope alone", () => {
+    const callers = trackedSources().filter((file) =>
+      /\.endOpenQueryTransaction\s*\(/.test(readFileSync(path.join(ROOT, file), "utf8")),
+    );
+
+    expect(callers).toEqual(["src/lib/provider-host/legacy-bridge.ts"]);
   });
 });

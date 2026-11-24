@@ -2209,8 +2209,9 @@ export function newQueryCallScope(): string {
  * it; on the rest a caller leaves the handle exactly as it found it, because inventing a
  * rollback there would be guessing at another engine's state. On `spark` it releases the
  * scope's Spark session and answers `"none"`, since Spark has no transaction across
- * statements. Shared by the two routes that end what they opened, so they cannot disagree
- * about who can be asked.
+ * statements. Read by the legacy bridge alone, which offers `console.endScope` exactly where it
+ * holds, so every caller that ends a run's scope asks the same provider the same question
+ * (docs/providers/CONTRACT.md, clause C-60).
  */
 export function endsOpenQueryTransactions(
   provider: DatabaseProvider,
