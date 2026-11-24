@@ -23,7 +23,8 @@
  * whose signal has aborted (`checkCallStart`), the signal's reason as the error's cause, so the provider is never
  * called and the tables are unchanged. It holds every call to the session's calls before any frame
  * (`checkExecuteRequest`, `checkConsoleFacet`, `checkObjectsFacet`, `checkMaintenanceFacet`), reads `open`'s refinement
- * with `sessionCalls`,
+ * with `sessionCalls` and `sessionMaintenance`, the latter against the maintenance of the engine the open context names,
+ * which it refuses before any frame when the module's manifest does not declare it,
  * and closes what an answer it refuses handed over: the session through the provider's `close`, under a cleanup
  * context of its own (`cleanupContext`), never the open's, which may have aborted, and each source through its own,
  * every close run and no failure lost.
@@ -35,7 +36,7 @@
  * delivered whole, its token and served sources included, for the host's late handler to close. Each served instance
  * keeps its sessions in its own tables, so a token of one is foreign to another.
  */
-import type { Calls } from "../manifest/manifest-types.generated";
+import type { Calls, ProviderManifest } from "../manifest/manifest-types.generated";
 import { cleanupContext, refuseCallStart } from "../calls/deadline";
 import { checkProviderModule, ProviderDefinitionError } from "../calls/define-provider";
 import { freezeContext, freezeData } from "../calls/freeze";
@@ -47,6 +48,7 @@ import {
   checkMaintenanceFacet,
   checkObjectsFacet,
   sessionCalls,
+  sessionMaintenance,
 } from "../calls/session";
 import type {
   BatchLimit,
@@ -56,6 +58,7 @@ import type {
   ConsoleFacet,
   ConsoleImpl,
   EndScopeAnswer,
+  EngineMaintenance,
   EndScopeRequest,
   ExecuteAnswer,
   ExecuteRequest,
@@ -103,10 +106,21 @@ export interface ServedHandle {
 /** The context members that are host services, never framed. */
 const SERVICES: readonly string[] = Object.freeze(["signal", "env"] satisfies (keyof CallContext)[]);
 
-/** What the host's side keeps of an open session. */
+/** What the host's side keeps of an open session: its calls, and its maintenance, narrowed as its open answered. */
 interface HostSession {
   readonly id: string;
   readonly calls: Calls;
+  readonly maintenance: EngineMaintenance;
+}
+
+/** The maintenance each engine of `manifest` declares, by its id: the two maintenance members of its facets. */
+function engineMaintenance(manifest: ProviderManifest): ReadonlyMap<string, EngineMaintenance> {
+  return new Map(
+    manifest.engines.map((engine) => [
+      engine.id,
+      { maintenance: engine.facets.maintenance, maintenanceSpecs: engine.facets.maintenanceSpecs },
+    ]),
+  );
 }
 
 /** The limit's data, the copy the encoder is handed: its numbers, without the host's measure. */
@@ -155,7 +169,9 @@ async function throwAfterClosing(error: unknown, closes: readonly (() => Promise
 export function serve(module: ProviderModule, options: ServeOptions = {}): ProviderImpl<ServedHandle> {
   const definitionRefusals = checkProviderModule(module);
   if (definitionRefusals.length > 0) throw new ProviderDefinitionError(definitionRefusals);
-  const declared = sessionCalls((module.manifest as { readonly calls: Calls }).calls, undefined);
+  const manifest = module.manifest as ProviderManifest;
+  const declared = sessionCalls(manifest.calls, undefined);
+  const engines = engineMaintenance(manifest);
   const impl = module.impl;
   const consoleImpl = impl.console;
   const objectsImpl = impl.objects;
@@ -368,6 +384,12 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
 
   async function open(ctx: OpenContext): Promise<OpenAnswer<ServedHandle>> {
     refuseCallStart(ctx);
+    const engine = engines.get(ctx.engine);
+    if (engine === undefined) {
+      throw new Error(
+        `The open context names the engine ${JSON.stringify(ctx.engine)}, which the served module's manifest does not declare, so the provider was not called.`,
+      );
+    }
     const sent = cross("open", "to-provider", { call: "open", context: encodeValue(contextData(ctx)) });
     const providerCtx = providerContext<OpenContext>(receive("open", "context", sent.context, ctx, SERVICES), ctx);
     const answer: unknown = await provider.open.call(impl, providerCtx);
@@ -397,9 +419,11 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
       );
       const received = cross("open", "to-host", { session: id, answer: encodeValue(framed) });
       const decoded = receive("open", "answer", received.answer, answer, ["handle"]) as Record<string, unknown>;
-      const calls = sessionCalls(declared, decoded.refine as OpenAnswer<unknown>["refine"]);
+      const refine = decoded.refine as OpenAnswer<unknown>["refine"];
+      const calls = sessionCalls(declared, refine);
+      const maintenance = sessionMaintenance(engine, refine);
       const token: ServedHandle = Object.freeze({ session: id });
-      sessions.set(token, { id, calls });
+      sessions.set(token, { id, calls, maintenance });
       return { ...decoded, handle: token };
     } catch (error) {
       return throwAfterClosing(error, [closeSession]);

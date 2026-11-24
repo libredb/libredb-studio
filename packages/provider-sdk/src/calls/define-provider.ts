@@ -179,9 +179,9 @@ function readOffers(
 }
 
 /**
- * The manifest's console, object and maintenance facet offers, by contract name, each `true` when offered, `false` when not, and
- * absent when it cannot be read, with a refusal for every key the check reads that is missing, of the wrong type or an
- * accessor.
+ * The manifest's console, object and maintenance facet offers, by contract name, each `true` when offered, `false`
+ * when not, and absent when it cannot be read, with a refusal for every key the check reads that is missing, of the
+ * wrong type or an accessor.
  */
 function readCalls(manifest: Fields, refusals: DefinitionRefusal[]): Offers {
   const offers: Offers = {};
@@ -203,9 +203,9 @@ function readCalls(manifest: Fields, refusals: DefinitionRefusal[]): Offers {
 }
 
 /**
- * The facet list `list` of an engine's `facets`, or undefined with a refusal at its pointer: `property-not-data` for an
- * accessor, `manifest-unreadable` for a value that is no list or is longer than the schema admits, refused by its length
- * before any item is read, since a sparse array's length bounds no loop over it.
+ * The facet list `list` of an engine's `facets`, or undefined with a refusal at its pointer: `property-not-data` for
+ * an accessor, `manifest-unreadable` for a value that is no list or is longer than the schema admits, refused by its
+ * length before any item is read, since a sparse array's length bounds no loop over it.
  */
 function facetList(
   facets: Fields,
@@ -273,7 +273,7 @@ function readMaintenanceSpecs(facets: Fields, at: string, offers: Offers, refusa
   }
 }
 
-/** The refusals of an engine's agent readings, each refused when listed, since this contract has no call for them yet. */
+/** The refusals of an engine's agent readings, each refused when listed: this contract has no call for them yet. */
 function readAgentReadings(facets: Fields, at: string, refusals: DefinitionRefusal[]): void {
   const pointer = `${at}/facets/agentReadings`;
   const items = facetList(facets, "agentReadings", pointer, refusals);

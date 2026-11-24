@@ -151,6 +151,14 @@ function wellFormed(): readonly (readonly [ServedCall, FramePart, unknown])[] {
       }),
     ],
     ["open", "answer", { serverVersion: marker(), refine: { calls: { console: { cancel: "not-offered" } } } }],
+    [
+      "open",
+      "answer",
+      {
+        engineUser: marker(),
+        refine: { maintenance: [{ operation: "vacuum", perEntity: false, global: true }] },
+      },
+    ],
     ["open", "answer", {}],
     ["close", "context", { deadline: 1 }],
     ["console.execute", "context", { deadline: 1 }],
@@ -538,6 +546,9 @@ describe("readFrame", () => {
       unreadable("objects.tree", "answer", "/detail/columns/0/provenance"),
       unreadable("objects.tree", "answer", "/detail/columns/1/nullable"),
       unreadable("objects.tree", "answer", "/detail/foreignKeys/0/referencedColumn"),
+    ]);
+    expect(readFrame("open", "answer", { serverVersion: marker(), engineUser: 1 })).toEqual([
+      unreadable("open", "answer", "/engineUser"),
     ]);
     expect(readFrame("maintenance.run", "request", { operation: "shrink", target: 4711 })).toEqual([
       unreadable("maintenance.run", "request", "/operation"),

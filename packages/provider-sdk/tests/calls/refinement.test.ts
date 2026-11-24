@@ -1,6 +1,7 @@
 /**
  * A refinement `open` answers only narrows the manifest's calls, and any other refinement is refused by name
- * (docs/providers/CONTRACT.md, clause C-10).
+ * (docs/providers/CONTRACT.md, clause C-10), and a maintenance narrowing only withdraws what the session's engine
+ * declares (clause C-68).
  *
  * The declared calls offer cancel and not endScope, honour both request fields and offer the objects tree and both
  * maintenance facets; each case asserts the exact refusal list, every pointer rooted at the refinement.
@@ -12,10 +13,13 @@ import {
   CallRefusalError,
   callRefusalSentence,
   checkRefinement,
+  type EngineMaintenance,
+  type MaintenanceAccepted,
   type Refinement,
   sessionCalls,
+  sessionMaintenance,
 } from "@libredb/provider-sdk/calls";
-import type { Calls } from "@libredb/provider-sdk/manifest";
+import type { Calls, MaintenanceOperation, MaintenanceSpec } from "@libredb/provider-sdk/manifest";
 
 const DECLARED: Calls = Object.freeze({
   console: Object.freeze({
@@ -33,6 +37,43 @@ const PARAMS_ONLY: Calls = { ...DECLARED, console: { ...DECLARED.console, execut
 
 function refused(rule: CallRefusal["rule"], pointer: string, name?: string): CallRefusal {
   return name === undefined ? { rule, pointer } : { rule, pointer, name };
+}
+
+/** A spec of `operation`, placed as `perEntity` and `global` say, with every other member stated. */
+function spec(operation: MaintenanceOperation, perEntity: boolean, global: boolean): MaintenanceSpec {
+  return {
+    operation,
+    label: `Run ${operation}`,
+    perEntity,
+    global,
+    title: global ? `${operation} the database` : null,
+    description: `What ${operation} does.`,
+    confirmation: global ? "typed" : null,
+    preview: false,
+    kinds: perEntity ? ["table", "materialized_view"] : null,
+  };
+}
+
+/** An engine's maintenance: vacuum both ways, analyze on a row only, kill placed nowhere. */
+function engineMaintenance(): EngineMaintenance {
+  return {
+    maintenance: ["vacuum", "analyze", "kill"],
+    maintenanceSpecs: [spec("vacuum", true, true), spec("analyze", true, false), spec("kill", false, false)],
+  };
+}
+
+function accepted(operation: MaintenanceOperation, perEntity: boolean, global: boolean): MaintenanceAccepted {
+  return { operation, perEntity, global };
+}
+
+/** What `run` threw; a run that does not throw fails the case. */
+function thrownBy(run: () => unknown): unknown {
+  try {
+    run();
+  } catch (error) {
+    return error;
+  }
+  throw new Error("The call was expected to throw, and it answered.");
 }
 
 /** Whether every object and array in `value` is frozen. */
@@ -377,5 +418,213 @@ describe("checkRefinement and sessionCalls", () => {
       expect(deepFrozen(calls)).toBe(true);
     }
     expect(planted).toEqual([]);
+  });
+
+  test("a maintenance narrowing is a list of the placements the server accepts, each read as a closed record of its operation and two booleans", () => {
+    let reads = 0;
+    const getter = (key: string, value: unknown): object =>
+      Object.defineProperty({}, key, {
+        enumerable: true,
+        get() {
+          reads += 1;
+          return value;
+        },
+      });
+    const vacuum = accepted("vacuum", true, false);
+
+    for (const maintenance of [[], [vacuum], [vacuum, accepted("kill", false, false)]]) {
+      expect(checkRefinement(DECLARED, { maintenance })).toEqual([]);
+      expect(checkRefinement(DECLARED, { calls: { objects: {} }, maintenance })).toEqual([]);
+    }
+    const cases: [unknown, CallRefusal[]][] = [
+      ["vacuum", [refused("refinement-unreadable", "/maintenance")]],
+      [{ 0: vacuum }, [refused("refinement-unreadable", "/maintenance")]],
+      [[null], [refused("refinement-unreadable", "/maintenance/0")]],
+      [[["vacuum", true, true]], [refused("refinement-unreadable", "/maintenance/0")]],
+      [[{ perEntity: true, global: true }], [refused("refinement-unreadable", "/maintenance/0/operation")]],
+      [
+        [{ operation: "vacuum" }],
+        [
+          refused("refinement-unreadable", "/maintenance/0/perEntity"),
+          refused("refinement-unreadable", "/maintenance/0/global"),
+        ],
+      ],
+      [[{ ...vacuum, operation: "shrink" }], [refused("refinement-unreadable", "/maintenance/0/operation")]],
+      [[vacuum, { ...vacuum }], [refused("refinement-unreadable", "/maintenance/1/operation")]],
+      [
+        [{ ...vacuum, perEntity: "yes", global: 1 }],
+        [
+          refused("refinement-unreadable", "/maintenance/0/perEntity"),
+          refused("refinement-unreadable", "/maintenance/0/global"),
+        ],
+      ],
+      [[{ ...vacuum, label: "Vacuum" }], [refused("refinement-key-unknown", "/maintenance/0/label", "label")]],
+      [
+        [Object.assign(getter("operation", "vacuum"), { perEntity: true, global: true })],
+        [refused("refinement-unreadable", "/maintenance/0/operation")],
+      ],
+      [
+        [getter("perEntity", true)],
+        [
+          refused("refinement-unreadable", "/maintenance/0/perEntity"),
+          refused("refinement-unreadable", "/maintenance/0/operation"),
+          refused("refinement-unreadable", "/maintenance/0/global"),
+        ],
+      ],
+      [
+        Object.defineProperty([], "0", { enumerable: true, get: () => vacuum }),
+        [refused("refinement-unreadable", "/maintenance/0")],
+      ],
+    ];
+
+    for (const [maintenance, expected] of cases) {
+      expect([maintenance, checkRefinement(DECLARED, { maintenance })]).toEqual([maintenance, expected]);
+    }
+    expect(checkRefinement(DECLARED, getter("maintenance", []))).toEqual([
+      refused("refinement-unreadable", "/maintenance"),
+    ]);
+    expect(checkRefinement(DECLARED, { maintenance: [vacuum], extra: 1 })).toEqual([
+      refused("refinement-key-unknown", "/extra", "extra"),
+    ]);
+    expect(reads).toBe(0);
+  });
+
+  test("a maintenance narrowing longer than the operation vocabulary is refused as refinement-unreadable at the list, and no item is read", () => {
+    let reads = 0;
+    const operations: MaintenanceOperation[] = [
+      "vacuum",
+      "analyze",
+      "reindex",
+      "kill",
+      "optimize",
+      "check",
+      "compact",
+      "defragment",
+      "disarm",
+      "load",
+      "release",
+    ];
+    const longest = operations.map((operation) => accepted(operation, true, true));
+    const planted = Object.defineProperty([...longest, longest[0]], "0", {
+      enumerable: true,
+      get() {
+        reads += 1;
+        return longest[0];
+      },
+    });
+
+    expect(checkRefinement(DECLARED, { maintenance: longest })).toEqual([]);
+    expect(checkRefinement(DECLARED, { maintenance: planted })).toEqual([
+      refused("refinement-unreadable", "/maintenance"),
+    ]);
+    expect(thrownBy(() => sessionMaintenance(engineMaintenance(), { maintenance: planted } as Refinement))).toEqual(
+      new CallRefusalError([refused("refinement-unreadable", "/maintenance")]),
+    );
+    expect(reads).toBe(0);
+  });
+
+  test("sessionMaintenance refuses an operation the session's engine does not list as refinement-widens", () => {
+    const declared = engineMaintenance();
+    const widening: Refinement = {
+      maintenance: [accepted("vacuum", true, true), accepted("compact", true, true), accepted("reindex", false, true)],
+    };
+
+    const error = thrownBy(() => sessionMaintenance(declared, widening));
+
+    expect(error).toBeInstanceOf(CallRefusalError);
+    expect((error as CallRefusalError).refusals).toEqual([
+      refused("refinement-widens", "/maintenance/1/operation"),
+      refused("refinement-widens", "/maintenance/2/operation"),
+    ]);
+    const shape = thrownBy(() =>
+      sessionMaintenance(declared, { maintenance: [{ operation: "vacuum" }] } as unknown as Refinement),
+    );
+    expect((shape as CallRefusalError).refusals).toEqual([
+      refused("refinement-unreadable", "/maintenance/0/perEntity"),
+      refused("refinement-unreadable", "/maintenance/0/global"),
+    ]);
+    for (const refine of [null, "refine", [], { maintenance: "vacuum" }]) {
+      const unreadable = thrownBy(() => sessionMaintenance(declared, refine as unknown as Refinement));
+      expect([refine, (unreadable as CallRefusalError).refusals]).toEqual([
+        refine,
+        [
+          refused(
+            "refinement-unreadable",
+            typeof refine === "object" && refine !== null && !Array.isArray(refine) ? "/maintenance" : "",
+          ),
+        ],
+      ]);
+    }
+    let reads = 0;
+    const accessor = Object.defineProperty({}, "maintenance", {
+      enumerable: true,
+      get() {
+        reads += 1;
+        return [];
+      },
+    });
+    expect((thrownBy(() => sessionMaintenance(declared, accessor)) as CallRefusalError).refusals).toEqual([
+      refused("refinement-unreadable", "/maintenance"),
+    ]);
+    expect(reads).toBe(0);
+    expect(engineMaintenance()).toEqual(declared);
+  });
+
+  test("sessionMaintenance withdraws what the server refuses and adds nothing, as narrowMaintenance does", () => {
+    const declared = engineMaintenance();
+    const narrow = (...items: MaintenanceAccepted[]) => sessionMaintenance(declared, { maintenance: items });
+
+    const globalOnly = narrow(accepted("vacuum", false, true));
+    expect(globalOnly).toEqual({
+      maintenance: ["vacuum", "analyze", "kill"],
+      maintenanceSpecs: [
+        { ...spec("vacuum", true, true), perEntity: false },
+        spec("analyze", true, false),
+        spec("kill", false, false),
+      ],
+    });
+    expect(narrow(accepted("vacuum", false, false))).toEqual({
+      maintenance: ["analyze", "kill"],
+      maintenanceSpecs: [spec("analyze", true, false), spec("kill", false, false)],
+    });
+    expect(narrow(accepted("kill", false, false))).toEqual({
+      maintenance: ["vacuum", "analyze"],
+      maintenanceSpecs: [spec("vacuum", true, true), spec("analyze", true, false)],
+    });
+    expect(narrow(accepted("kill", true, true))).toEqual({
+      maintenance: ["vacuum", "analyze"],
+      maintenanceSpecs: [spec("vacuum", true, true), spec("analyze", true, false)],
+    });
+    expect(narrow(accepted("analyze", true, true))).toEqual(declared);
+    expect(narrow()).toEqual(declared);
+    for (const refine of [undefined, {}, { calls: {} }]) {
+      const answer = sessionMaintenance(declared, refine);
+      expect(answer).toEqual(declared);
+      expect(answer).not.toBe(declared);
+      expect(answer.maintenanceSpecs[0]).not.toBe(declared.maintenanceSpecs[0]);
+      expect(deepFrozen(answer)).toBe(true);
+    }
+    expect(deepFrozen(globalOnly)).toBe(true);
+    expect(globalOnly.maintenanceSpecs[0]?.kinds).not.toBe(declared.maintenanceSpecs[0]?.kinds);
+    expect(Object.isFrozen(declared)).toBe(false);
+    expect(Object.isFrozen(declared.maintenanceSpecs[0]?.kinds)).toBe(false);
+    expect(declared).toEqual(engineMaintenance());
+  });
+
+  test("no maintenance narrowing refusal carries a value of the refinement", () => {
+    const planted = `planted-${randomUUID()}`;
+    const refine = { maintenance: [{ operation: planted, perEntity: planted, global: planted }] };
+
+    const refusals = checkRefinement(DECLARED, refine);
+    const error = thrownBy(() => sessionMaintenance(engineMaintenance(), refine as unknown as Refinement));
+
+    expect(refusals).toEqual([
+      refused("refinement-unreadable", "/maintenance/0/operation"),
+      refused("refinement-unreadable", "/maintenance/0/perEntity"),
+      refused("refinement-unreadable", "/maintenance/0/global"),
+    ]);
+    expect(JSON.stringify(refusals)).not.toContain(planted);
+    for (const item of refusals) expect(callRefusalSentence(item)).not.toContain(planted);
+    expect((error as CallRefusalError).message).not.toContain(planted);
   });
 });

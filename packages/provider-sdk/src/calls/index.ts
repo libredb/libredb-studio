@@ -7,7 +7,8 @@
  * `checkObjectsFacet` and `checkMaintenanceFacet`, which refuse a console, object or maintenance facet the session does
  * not offer, `checkTransactionAnswer` and `checkTransactionStatement`, which refuse a session state a transaction call
  * or a statement inside the transaction answered that the host cannot read, `checkRefinement` and `sessionCalls`, which
- * narrow a session's calls by the refinement `open` answers, and `freezeContext` and `freezeData`, which deep-freeze
+ * narrow a session's calls by the refinement `open` answers, `sessionMaintenance`, which narrows a session's
+ * maintenance by the placements its server accepts, and `freezeContext` and `freezeData`, which deep-freeze
  * the contexts and requests the host passes; and the byte budgets of a result, `BATCH_MAX_BYTES` and
  * `PAGE_MAX_BYTES`, with `encodedRowBytes`, the row measure, `rowsSource`, a batch holder for rows already in memory,
  * and `pumpPage`, the host's pump that cuts a page by size and hands each pull its own row measure, so each row is
@@ -63,6 +64,7 @@ export {
   checkObjectsFacet,
   checkRefinement,
   sessionCalls,
+  sessionMaintenance,
 } from "./session";
 export { checkTransactionAnswer, checkTransactionStatement } from "./transaction";
 export * from "./types";

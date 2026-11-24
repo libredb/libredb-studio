@@ -913,6 +913,80 @@ describe("serve", () => {
     }
   });
 
+  test("a served open whose maintenance narrowing names an operation its engine does not list is refused, and the session it opened is closed", async () => {
+    const fx = fixture();
+    const { impl, frames } = served(fx);
+    const closes = () => fx.seen.filter((item) => item.call === "close");
+    const engineUser = marker();
+    fx.answers.open = () => ({
+      handle: fx.handle,
+      engineUser,
+      refine: { maintenance: [{ operation: "vacuum", perEntity: true, global: false }] },
+    });
+
+    const widened = await failure(() => impl.open(openContext()));
+
+    expect(widened).toBeInstanceOf(CallRefusalError);
+    expect((widened as CallRefusalError).refusals).toEqual([
+      { rule: "refinement-widens", pointer: "/maintenance/0/operation" },
+    ]);
+    expect(closes().map((item) => item.handle)).toEqual([fx.handle]);
+    expect(closes()[0]?.ctx?.deadline).toBeGreaterThan(Date.now());
+    // The served side closes a refused open's session on the provider's side directly, so no close frame crosses.
+    expect(frames.map((frame) => `${frame.direction} ${frame.call}`)).toEqual(["to-provider open", "to-host open"]);
+
+    const listing = fixture();
+    const offered = served(listing);
+    listing.answers.open = () => ({ handle: listing.handle, engineUser, refine: { maintenance: [] } });
+    const opened = await offered.impl.open(openContext());
+    expect(opened.engineUser).toBe(engineUser);
+    expect(opened.refine).toEqual({ maintenance: [] });
+    expect(listing.seen.map((item) => item.call)).toEqual(["open"]);
+
+    const unread = fixture();
+    const unreadServed = served(unread);
+    unread.answers.open = () => ({ handle: unread.handle, refine: { maintenance: [{ operation: "vacuum" }] } });
+    const shape = await failure(() => unreadServed.impl.open(openContext()));
+    expect((shape as CallRefusalError).refusals).toEqual([
+      { rule: "refinement-unreadable", pointer: "/maintenance/0/perEntity" },
+      { rule: "refinement-unreadable", pointer: "/maintenance/0/global" },
+    ]);
+    expect(unread.seen.map((item) => item.call)).toEqual(["open", "close"]);
+  });
+
+  test("a served open is held to the maintenance of the engine its context names, which the module declares", async () => {
+    const fx = fixture();
+    const manifest = structuredClone(fx.module.manifest) as Json;
+    manifest.engines[0].facets.maintenance = ["vacuum", "analyze"];
+    manifest.engines[0].facets.maintenanceSpecs = ["vacuum", "analyze"].map((operation) => ({
+      operation,
+      label: operation,
+      perEntity: true,
+      global: true,
+      title: null,
+      description: null,
+      confirmation: null,
+      preview: false,
+      kinds: null,
+    }));
+    const listing = defineProvider(manifest, fx.module.impl);
+    const impl = serve(listing);
+    fx.answers.open = () => ({
+      handle: fx.handle,
+      refine: { maintenance: [{ operation: "vacuum", perEntity: false, global: true }] },
+    });
+
+    const opened = await impl.open(openContext());
+    const undeclared = await failure(() => impl.open({ ...openContext(), engine: "otherdb" }));
+
+    expect(opened.refine).toEqual({ maintenance: [{ operation: "vacuum", perEntity: false, global: true }] });
+    expect(undeclared).toBeInstanceOf(Error);
+    expect((undeclared as Error).message).toBe(
+      'The open context names the engine "otherdb", which the served module\'s manifest does not declare, so the provider was not called.',
+    );
+    expect(fx.seen.map((item) => item.call)).toEqual(["open"]);
+  });
+
   test("a refinement open answers narrows the served session's calls", async () => {
     const fx = fixture();
     const { impl } = served(fx);

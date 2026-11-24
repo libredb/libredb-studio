@@ -685,7 +685,11 @@ const openContext = record<ContextData<OpenContext>>({
   timezone: optional(text),
 });
 
-const openAnswer = record<OpenAnswerFrame>({ serverVersion: optional(text), refine: optional(anyValue) });
+const openAnswer = record<OpenAnswerFrame>({
+  serverVersion: optional(text),
+  refine: optional(anyValue),
+  engineUser: optional(text),
+});
 
 const executeRequest = record<ExecuteRequest>({
   statement: required(text),

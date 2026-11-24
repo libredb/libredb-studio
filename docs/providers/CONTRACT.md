@@ -948,7 +948,7 @@ A preview is admitted only where a row shows it.
 A provider whose engine family's servers accept different maintenance may measure at connect which placements its server accepts and narrow its declaration for that connection.
 A refused placement is withdrawn, an operation left with none leaves the list, and nothing is added or widened, so every label, confirmation and preview stays as declared.
 The maintenance routes after connect, and the Operations and Tables tabs through the monitoring answer, read the connected provider's narrowed declaration.
-The declaration states the maintenance before any connection, and no member states a connection's narrowing, as M-63 leaves billed compute to the connected provider.
+The declaration states the maintenance before any connection, and no member of it states a connection's narrowing, which a session answers in its refinement, C-68.
 
 ### M-67 (normative): An engine's agent overlay
 
@@ -1680,6 +1680,7 @@ An `honours` list longer than the declared one is refused as a widening by its l
 `sessionCalls` answers the narrowed calls, frozen, and the host keeps them with the session and nowhere else, with no cache and no invalidation event.
 A refinement may withdraw any console facet the manifest offers, `console.transaction` among them, `objects.tree`, `maintenance.run` and `maintenance.preview`, and never offers one the manifest does not.
 Its `calls` may hold `console`, `objects` and `maintenance`, each optional and closed, and each is read by its own segment's reader, so a key that names no segment is refused by name and never read as another segment.
+A refinement may also hold `maintenance`, the placements the session's server accepts, C-68, read for its shape here; any other top-level key is refused by name.
 A refinement is a call's answer, not a manifest fact, so the schema has no place for it.
 
 - test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement that narrows the declared calls is admitted, and the session's calls are the narrowed ones"
@@ -1834,6 +1835,7 @@ An error either side throws crosses by reference.
 A key the shape does not define, a required key the part lacks, and a value of the wrong type, outside its vocabulary, behind an accessor or in a list with a hole are each refused by a rule of `FRAME_REFUSAL_RULES`, at a JSON Pointer into the part, and never with a value of it.
 A page bound is exactly one of its two forms, a transaction request is read as the closed shape of the action it names, so only a begin carries `requireReportedState`, and a connection's keys are the contract's field names.
 A tree request is read as the closed shape of the action it names, so a member of another action is refused, and a tree answer is exactly one of its five forms, told apart by its keys, each read as its closed shape; a kind count, an object's read range and an object's indexes are each one of their forms, and the counts are a map whose every key is read.
+An open answer may carry the engine principal the session acts as, `engineUser`, as text.
 A maintenance run request is its operation, one of the maintenance vocabulary, with its target and container as text where it names them, and its answer is whether the engine took it, how long it ran, the engine's sentence, and its rows, each a record of codec values, with their fields, so an answer with rows and no fields is refused as `frame-key-missing` at `fields`; a maintenance preview request is its operation and the object's path, never empty, so an empty path is refused as `frame-value-unreadable` at `path`, and its answer is the summary, the facts, each a closed label and value, and the refusal and the note where it has them.
 The frame reader reads shapes only: which answer form answers which action is the host's, C-62.
 Each reader is declared as the shape of its call type, so a member added to a call type, or to a union it reads, fails typecheck until its reader names it.
@@ -1883,7 +1885,7 @@ A close takes its entry out of both tables whatever the provider's close answers
 ### C-23 (normative): The served host side checks each call before any frame, and closes what a refused answer handed over
 
 The served host side refuses before any frame what C-9 and C-17 refuse, holding each call to the session's calls.
-It reads the refinement `open` answers by C-10, so the session's calls are the narrowed ones.
+It reads the refinement `open` answers by C-10, so the session's calls are the narrowed ones, and its maintenance narrowing by C-68 against the maintenance of the engine the open context names; an open context that names an engine the module's manifest does not declare is refused before any frame.
 An answer the host refuses holds nothing open afterwards: a refused open answer closes its session through the provider's `close`, under a cleanup context of its own, C-47, never the open's, and a refused execute answer closes each result source it handed over through its own `close`.
 An item of an execute answer's `results` that is not an object is refused at its index, as a hole is, and a source whose `columns` or `rowCount` read throws is closed with the sources before it, the read's own error thrown.
 Every close runs, and when one fails the host receives an `AggregateError` with the refusal first and each close's error after it.
@@ -1893,6 +1895,8 @@ Every close runs, and when one fails the host receives an `AggregateError` with 
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a tree call on a session without objects.tree is refused before any frame"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a maintenance call on a session without the facet is refused before any frame"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a refinement open answers narrows the served session's calls"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served open whose maintenance narrowing names an operation its engine does not list is refused, and the session it opened is closed"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served open is held to the maintenance of the engine its context names, which the module declares"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "an open answer the host refuses closes its session, and an execute answer the host refuses closes its sources"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a close that fails beside a refused answer is thrown with the refusal first"
 
@@ -2259,7 +2263,7 @@ It offers `console.cancel` exactly when the provider can cancel a run.
 It offers `console.endScope` exactly where the provider ends the transactions its query path left open, and its `endScope` runs the provider's `endOpenQueryTransaction` with the request's scope and answers its outcome; its execute hands the provider the request's scope and ends nothing itself.
 It offers `console.transaction` exactly when the provider holds a transaction session, the duck typing of begin, commit and rollback the transaction route has always read.
 It offers `objects.tree` on every session, since every legacy provider holds the five tree members.
-It offers neither maintenance facet: the two maintenance routes still call the provider's maintenance members themselves until they move onto the host core.
+It offers neither maintenance facet and answers no maintenance narrowing: the two maintenance routes still call the provider's maintenance members themselves until they move onto the host core.
 Its tree call runs the provider's own member for the action with a fresh copy of each path and today's arguments: `listContainers` with one argument, the parent or `undefined` at the top level, `countObjects`, `listObjects`, `describeObject`, and `describeObjects` with the limit, `defaultSql` passed only when the request sends it.
 It answers the member's answer by reference in its action's form, never calls `forCatalog` and passes no read allowance, and a provider's error passes by reference.
 The agent's and MCP's tree reads, and the source, edit and key scan routes, still call the provider themselves until they move onto the host core.
@@ -2741,6 +2745,7 @@ It answers whether the engine took the operation, how long it ran in millisecond
 `maintenance.preview` reads what one per-row operation would do to the object its path addresses, container levels first and the object last, so the path is never empty, and answers a summary, the facts it rests on, a refusal where a preflight refuses the operation, and a note on how fresh or exact the facts are.
 Every implementation honours every member of its request, so neither facet has an honours list.
 The host sends a run for an operation whose spec places it nowhere, `kill` with its session target, without a placement check, as the maintenance route always has.
+The engine principal a session acts as, a user name and never any part of a secret, is `open`'s optional `engineUser`, which the maintenance audit row names; it is read once, at open, since a session acts as one principal.
 No member of either call is a claim, M-64.
 The answer shapes are Studio's own maintenance result and preview, declared by the SDK and held mutually assignable with Studio's, C-7.
 
@@ -2758,6 +2763,24 @@ The answer shapes are Studio's own maintenance result and preview, declared by t
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "a maintenance run request and answer are each read as their closed shape"
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "a maintenance preview request and answer are each read as their closed shape"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a served maintenance call crosses its request and answer as frames, and the provider receives decoded frozen copies"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a value of the wrong type or outside its vocabulary is refused as frame-value-unreadable"
+
+### C-68 (normative): A session's maintenance is narrowed by what its server accepts
+
+`open` may answer, in its refinement's `maintenance`, the placements its server accepts for the operations its provider measured at open: one item for each such operation, naming it and whether the server takes it on a row and over the whole database.
+`checkRefinement` reads each item as a closed record of exactly its operation, one of the maintenance vocabulary and named once, and its two placements, each a boolean, in a list no longer than the vocabulary, refused by its length before any item is read, so a sparse array's length bounds no loop of the check.
+`sessionMaintenance` reads the same shape, refuses an operation the session's engine does not list as `refinement-widens`, and answers the engine's maintenance with every refused placement withdrawn and every operation left with none removed from both lists, `kill` among them.
+It adds nothing and changes no label, confirmation, preview or kinds, and an operation the narrowing does not name stays as declared, which is how Studio's `narrowMaintenance` reads a connected provider's measurement.
+Its answer is frozen at every depth, and the declaration is left as it is.
+The host keeps the narrowed maintenance with the session, beside its calls.
+
+- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a maintenance narrowing is a list of the placements the server accepts, each read as a closed record of its operation and two booleans"
+- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a maintenance narrowing longer than the operation vocabulary is refused as refinement-unreadable at the list, and no item is read"
+- test `packages/provider-sdk/tests/calls/narrowing-bounds.test.ts` "a maintenance narrowing of the longest length is refused at the list, in a bounded child"
+- test `packages/provider-sdk/tests/calls/refinement.test.ts` "sessionMaintenance refuses an operation the session's engine does not list as refinement-widens"
+- test `packages/provider-sdk/tests/calls/refinement.test.ts` "sessionMaintenance withdraws what the server refuses and adds nothing, as narrowMaintenance does"
+- test `packages/provider-sdk/tests/calls/refinement.test.ts` "no maintenance narrowing refusal carries a value of the refinement"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served open whose maintenance narrowing names an operation its engine does not list is refused, and the session it opened is closed"
 
 ## Not yet in this contract
 
@@ -2833,3 +2856,4 @@ Against this contract's earlier text:
 - A tree read runs on a metadata session of the connection's own where the host's session capacity class is several, C-66, where it shared the editor's session.
 - The engine catalog and the connect budget are projections of the declarations, M-15, M-51 and M-70, where Studio kept each in a table of its own.
 - An engine's maintenance operation is refused only where its package does not offer `maintenance.run`, C-4, where every one was refused as having no call.
+- A connection's maintenance narrowing is the session's refinement, C-68, where no member stated it.

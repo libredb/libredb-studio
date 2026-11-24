@@ -17,6 +17,7 @@ import type {
   EngineId,
   ExecuteRequestField,
   FacetOffer,
+  Facets,
   FieldName,
   MaintenanceCalls,
   MaintenanceOperation,
@@ -217,9 +218,23 @@ export interface OpenContext extends CallContext {
 }
 
 /**
+ * For one maintenance operation a provider measured at open, the placements its server accepts: on a row, over the
+ * whole database, or neither.
+ */
+export interface MaintenanceAccepted {
+  readonly operation: MaintenanceOperation;
+  readonly perEntity: boolean;
+  readonly global: boolean;
+}
+
+/** The maintenance an engine declares: the two maintenance members of its facets, the list and the specs. */
+export type EngineMaintenance = Pick<Facets, "maintenance" | "maintenanceSpecs">;
+
+/**
  * What a session answers narrower than its manifest's `calls`: a closed object at the paths of `calls`, every key
  * optional, every value a subset of the declared one. A key left out keeps the declared value. A later surface adds its
- * own top-level key.
+ * own top-level key: `maintenance` holds the placements the session's server accepts, one item for each operation the
+ * provider measured, which only withdraw what the session's engine declares.
  */
 export interface Refinement {
   readonly calls?: {
@@ -237,16 +252,23 @@ export interface Refinement {
       readonly preview?: FacetOffer;
     };
   };
+  readonly maintenance?: readonly MaintenanceAccepted[];
 }
 
 /**
- * What `open` answers: the session handle, which the host never reads, the server's version where it reports one, and
- * a refinement where the session answers less than the manifest declares.
+ * What `open` answers: the session handle, which the host never reads, the server's version where it reports one, a
+ * refinement where the session answers less than the manifest declares, and the engine principal the session acts as
+ * where the provider can name one.
  */
 export interface OpenAnswer<Handle> {
   readonly handle: Handle;
   readonly serverVersion?: string;
   readonly refine?: Refinement;
+  /**
+   * The engine principal the session acts as, a user name and never any part of a secret, which the maintenance audit
+   * row names.
+   */
+  readonly engineUser?: string;
 }
 
 /** The page the host asks for, its bound resolved by the host: a limit and an offset, or every row. */
