@@ -16,6 +16,8 @@
 import { createHash } from "node:crypto";
 import Ajv2020, { type ErrorObject, type ValidateFunction } from "ajv/dist/2020";
 import {
+  type AgentCredentialForm,
+  type AgentCredentialFormClaim,
   type CaptureKindWord,
   type EngineDeclaration,
   MANIFEST_SCHEMA_SHA256,
@@ -79,6 +81,7 @@ export const SCHEMA_REFUSAL_RULES = Object.freeze([
   "type-name-duplicate",
   "statement-read-unexposed",
   "agent-credential-form-missing",
+  "agent-credential-seed-form-differs",
   "read-roots-field-undeclared",
   "denied-file-access-unread",
   "masking-exemption-unanchored",
@@ -534,10 +537,24 @@ function maskingExemptionRefusals(exemption: MaskingExemption, at: string): Sche
 }
 
 /**
+ * The seed agent credential form each agent credential form request takes: a user and a password for `pair`, a user
+ * other than the connection's own for `dedicated-user`, and a secret alone for `token` and `service-account-key`. A
+ * request of `none` refuses every agent acquisition, so it takes no seed form and has no entry.
+ */
+const SEED_FORM_OF_REQUEST: Readonly<Record<Exclude<AgentCredentialFormClaim, "none">, AgentCredentialForm>> =
+  Object.freeze({
+    pair: "pair",
+    "dedicated-user": "dedicated-pair",
+    token: "secret",
+    "service-account-key": "secret",
+  });
+
+/**
  * The rules of one engine's policy and MCP claims the schema cannot state, at pointers under `at`. Each checks a
  * request, never the value Studio grants it: a statement read only on an engine exposed to MCP, an agent credential
- * required only of an engine whose seeds take one, read roots required only of an engine whose seeds can declare them,
- * a denied file access refusal only on an engine that reads the file-access posture, and a masking exemption only of
+ * required only of an engine whose seeds take one, a seed agent credential only in the form the agent credential form
+ * request names unless that request is `none`, read roots required only of an engine whose seeds can declare them, a
+ * denied file access refusal only on an engine that reads the file-access posture, and a masking exemption only of
  * whole column names, in a pattern that compiles.
  */
 function claimRuleRefusals(engine: EngineDeclaration, at: string): SchemaRefusal[] {
@@ -548,6 +565,13 @@ function claimRuleRefusals(engine: EngineDeclaration, at: string): SchemaRefusal
   }
   if (mcp.agentCredentialRequired && connection.agentCredential === null) {
     refusals.push(schemaRefusal("agent-credential-form-missing", `${at}/mcp/agentCredentialRequired`));
+  }
+  if (
+    connection.agentCredential !== null &&
+    policy.agentCredentialForm !== "none" &&
+    connection.agentCredential.form !== SEED_FORM_OF_REQUEST[policy.agentCredentialForm]
+  ) {
+    refusals.push(schemaRefusal("agent-credential-seed-form-differs", `${at}/connection/agentCredential/form`));
   }
   if (policy.readRootsRequired && !(connection.seedOnly?.fields ?? []).includes("agentReadRoots")) {
     refusals.push(schemaRefusal("read-roots-field-undeclared", `${at}/policy/readRootsRequired`));
@@ -1006,6 +1030,8 @@ export function refusalSentence(refusal: ManifestRefusal): string {
       return `The statement read claim at ${at} is made for an engine whose MCP claims do not expose it.`;
     case "agent-credential-form-missing":
       return `The agent credential claim at ${at} is made for an engine whose seeds take no agent credential.`;
+    case "agent-credential-seed-form-differs":
+      return `The seed agent credential at ${at} is not in the form the engine's agent credential form request names.`;
     case "read-roots-field-undeclared":
       return `The read roots claim at ${at} is made for an engine whose seed-only fields do not name agentReadRoots.`;
     case "denied-file-access-unread":

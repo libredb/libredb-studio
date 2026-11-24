@@ -769,6 +769,8 @@ Studio reads no declaration's claims yet, M-52, so nothing checks this rule, and
 
 A statement read is claimed only for an engine its MCP claims expose.
 An agent credential is required only of an engine whose seeds take one, `connection.agentCredential`.
+An agent credential a seed takes is in the form the agent credential form request names, M-58: for the pair request, the seed form `pair`, an `agentUser` and an `agentPassword` together; for the dedicated user's request, the seed form `dedicated-pair`, an `agentUser` and an `agentPassword` together whose `agentUser` is not the connection's own `user`, compared without case or surrounding space where neither is written as a reference; and for the token and service-account key requests, the seed form `secret`, an `agentPassword` alone with no `agentUser`.
+A request of `none` refuses every agent acquisition, so it is held to no seed form.
 Read roots are required only of an engine whose seed-only fields name `agentReadRoots`.
 A denied file access refusal is stated only for an engine that reads the file-access posture.
 The rules check requests, never a host's reading of them: a request of every policy and MCP claim at its restrictive value meets them where the engine's connection allows it.
@@ -776,9 +778,11 @@ An engine a host reads as requiring an agent credential it takes none of is clos
 
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "a statement read on an engine not exposed to MCP is refused as statement-read-unexposed"
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "an agent credential required of an engine whose seeds take none is refused as agent-credential-form-missing"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a seed agent credential whose form is not the one the agent credential form request names is refused as agent-credential-seed-form-differs, a request of none excepted"
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "read roots required of an engine whose seeds cannot declare them are refused as read-roots-field-undeclared"
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "a denied file access refusal on an engine that reads no file-access posture is refused as denied-file-access-unread"
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's claims are held to the rules the schema cannot state, at pointers into it"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a policy and an MCP segment at every claim's restrictive value are admitted"
 
 ### M-56 (normative): The trust material a provider is handed
 
@@ -2890,3 +2894,4 @@ Against this contract's earlier text:
 - An engine's maintenance operation is refused only where its package does not offer `maintenance.run`, C-4, where every one was refused as having no call.
 - A connection's maintenance narrowing is the session's refinement, C-68, where no member stated it.
 - The connection fields, seed-only fields, refused fields, credential warnings, trust material and connection string answers are projections of the declarations, M-15 and M-71, where Studio kept each in a table of its own.
+- A seed's agent credential form follows the agent credential form request, M-55.
