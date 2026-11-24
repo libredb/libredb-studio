@@ -7,7 +7,7 @@
  * table, on the row the engine's own module exports: the declaration says which slot, the module supplies the function,
  * so a name stated at the wrong member moves a function to where the migration then runs it.
  *
- * It is written apart from scripts/generate-engine-declarations.ts, which never reads a declaration back.
+ * It is written apart from scripts/generate-engine-declarations.ts, which reads back only a declaration's authored members.
  */
 import type { MigrationDdl } from "@libredb/provider-sdk/manifest";
 import type { CreateTableDdl, MigrationDdlSpec, TableDdlWritten } from "@/lib/db/migration-ddl/types";

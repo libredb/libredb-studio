@@ -1481,8 +1481,8 @@ const NO_HOST_PATH_FIELDS: readonly HostPathField[] = Object.freeze([]);
  * `ADMITTED_HOST_PATHS` (`@/lib/types`).
  *
  * Kept apart from `OPENS_LOCAL_FILE` because that record also decides governance row admission: an engine that reads a
- * certificate from the host is still a server a governance source may grant. An exhaustive Record for the reason
- * `EXTERNAL` gives, frozen with every row, like the records above it.
+ * certificate from the host is still a server a governance source may grant. An exhaustive Record over the union,
+ * frozen with every row, like the records above it.
  *
  * This table is Studio's review record of the claim an engine declaration requests at `connection.hostPathFields`, and
  * every gate reads it: the declaration states each shipped engine's request as this table's row, and the table is never

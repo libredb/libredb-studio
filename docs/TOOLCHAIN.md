@@ -718,12 +718,17 @@ A root file that imports a package by name needs the package in the root `devDep
 
 ### The SDK's generated files
 
-Two generators keep the SDK's contract and Studio's tables in step, each committed output held byte for byte by a test that renders it in memory, as the governance manifest is:
+Three generators keep the SDK's contract, the engine declarations and Studio's tables in step, each committed output held byte for byte by a test that renders it in memory, as the governance manifest is:
 
 - `bun run manifest:types` (`scripts/generate-manifest-types.ts`) renders the manifest's TypeScript types and the schema's digest from `packages/provider-sdk/src/manifest/manifest.schema.json`; `tests/unit/provider-sdk/manifest-types.test.ts` fails on drift.
-- `bun run engines:generate` (`scripts/generate-engine-declarations.ts`) writes `src/lib/db/engine-declarations/<type-id>.json` from the per-engine tables and each provider's unconnected declarations; `tests/unit/db/engine-declarations.test.ts` fails on drift.
+- `scripts/generate-engine-catalog.ts` admits every engine declaration through the SDK's validator and writes the engine catalog, `src/lib/db/engine-catalog/catalog.generated.ts`, from the members each declaration authors; `tests/unit/db/engine-catalog.test.ts` fails on drift.
+- `scripts/generate-engine-declarations.ts` writes `src/lib/db/engine-declarations/<type-id>.json`, each declaration's authored members kept from its committed file and every other member from the per-engine tables and each provider's unconnected declarations; `tests/unit/db/engine-declarations.test.ts` fails on drift.
 
-Both run inside `bun run test`, so neither needs a CI step of its own.
+`bun run engines:generate` runs the catalog generator, then the declaration generator.
+The order is the declaration generator's need: it builds every provider through the factory, which builds only an engine the catalog holds.
+One run of each is exact, because the catalog reads only authored members, which the declaration generator writes back unchanged.
+
+All three run inside `bun run test`, so none needs a CI step of its own.
 The generators live in `scripts/`, which the coverage merge does not measure, so their tests are what holds them.
 
 Tests resolve source: `tests/unit/source-plane.test.ts` holds every package's entry points (`exports`, `main`, `module`, `types`) under its `src/`, and fails a test under `tests/` or `packages/<name>/tests/` that imports a `dist/` path, the root package by name or a package's `dist/` subpath, so `lib:load` is the only path through a built artifact.

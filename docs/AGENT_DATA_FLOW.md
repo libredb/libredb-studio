@@ -292,7 +292,7 @@ SQLite the server composes a catalog statement per kind and executes it read-onl
 forty-one it invokes `db.schema.read`, which walks the connection's own OBJECT SURFACE, the same
 `listContainers`, `countObjects`, `listObjects` and `describeObjects` the sidebar walks when it lists
 your objects, and composes no statement at all.
-**Forty-one counts type-ids the factory can build, not engines a user would name**: `SHIPPED` holds
+**Forty-one counts type-ids the factory can build, not engines a user would name**: the engine catalog holds
 forty-three, two of them supply a `catalogCapture`, and the remainder is what this second reading covers.
 Every other count said about grounding in these docs counts the same thing. libSQL is one of the
 forty-one and not one of the two: it speaks SQLite's dialect, but the read-only catalog path

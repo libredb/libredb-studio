@@ -58,7 +58,7 @@ shipped, and was corrected only in chart 0.1.38, whose entire content is that se
 on its own costs a whole chart version, because the #167 gate requires a `version:` bump for any
 packaged-file edit once the current version is released - so **here** is where it is free, since this
 step moves `version:` anyway. The chart `keywords` are the same check: ArtifactHub search matches on
-them, and an engine missing there is an engine nobody finds. Read the engine count from `SHIPPED` in `src/lib/db/compatibility.ts` (minus the embedded
+them, and an engine missing there is an engine nobody finds. Read the engine count from `EXTERNAL_DATABASE_TYPES` in `src/lib/db/compatibility.ts` (the engine catalog minus the embedded
 `libredb`) rather than from any prose, and check the same list in `README.md`, `DOCKERHUB.md` and
 `deploy/rancher/CATALOG_LISTING.md` while you are here. `DOCKERHUB.md` is the one of the three that
 publishes itself: the tag's `sync-dockerhub-description` job pushes it onto the Docker Hub listing, so
@@ -415,7 +415,7 @@ true on a tag ref.
 | Trap | What happens |
 |---|---|
 | `artifacthub.io/changes` left to `chart:bump` | ArtifactHub shows one generic `Track app release` line as the whole changelog - and on a release flagged `containsSecurityUpdates`, that is the text an operator upgrades or does not upgrade on. Frozen once the chart publishes (#167) |
-| `Chart.yaml`'s `description` left as it was | It names the engines and `chart:bump` never touches it, so it goes stale silently - and it is what Rancher's Apps card and ArtifactHub display. Fixing it later needs a chart version of its own (#167); this release is the free moment. Read the count from `SHIPPED` in `src/lib/db/compatibility.ts`, minus `libredb` |
+| `Chart.yaml`'s `description` left as it was | It names the engines and `chart:bump` never touches it, so it goes stale silently - and it is what Rancher's Apps card and ArtifactHub display. Fixing it later needs a chart version of its own (#167); this release is the free moment. Read the count from `EXTERNAL_DATABASE_TYPES` in `src/lib/db/compatibility.ts`, the engine catalog minus `libredb` |
 | Chart hand-edited AFTER `chart:bump` | `operator/helm-charts/` keeps the pre-edit copy, `chart:check` fails on the mismatch, and `chart:bump` will not re-bump an already-in-sync version to fix it. Edit first, bump last |
 | Chart version already released | Republishing rewrites the released chart's gh-pages index digest and OCI content (#167). `chart:check` blocks it; `force_republish` is the only escape hatch, for an asset-uploaded-but-index-failed run |
 | Unquoted `{}:[],&*#?\|-<>=!%@` in a changes entry | ArtifactHub hard-skips that chart version, permanently |

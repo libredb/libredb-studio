@@ -7,7 +7,7 @@
  * module supplies the function, so a name stated at the wrong member moves a function to where the generators then run
  * it. A form the declaration states as null is left out of the row, so the shared form stands there.
  *
- * It is written apart from scripts/generate-engine-declarations.ts, which never reads a declaration back.
+ * It is written apart from scripts/generate-engine-declarations.ts, which reads back only a declaration's authored members.
  */
 import type { SqlGenerators } from "@libredb/provider-sdk/manifest";
 import type { SqlEngineGenerators } from "@/lib/db/query-generators/types";

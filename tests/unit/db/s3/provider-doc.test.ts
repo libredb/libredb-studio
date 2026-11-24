@@ -2106,7 +2106,7 @@ describe("the agent docs count the type-ids and name S3 where they list engines"
     expect(flow).toContain(
       `**${Word(provided)} counts type-ids the factory can build, not engines a user would name**`,
     );
-    expect(flow).toContain(`\`SHIPPED\` holds ${word(ids)}, two of them supply a \`catalogCapture\``);
+    expect(flow).toContain(`the engine catalog holds ${word(ids)}, two of them supply a \`catalogCapture\``);
     expect(flow).toContain(`libSQL is one of the ${word(provided)} and not one of the two`);
     expect(flow).toContain(
       "- On S3-compatible object storage the grounding carries bucket names only, never an object key, a prefix, a size or any object content (objects are listed by the Keys panel, not by the object walk).",
