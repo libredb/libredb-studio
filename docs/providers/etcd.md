@@ -239,7 +239,8 @@ Typed commands and the surfaces that walk no key (the member, lease, user and ro
 
 ### Connection string
 
-`etcd` has no connection string scheme, no `readTls` and no `paste`: those fields of its row in `CONNECTION_STRING` are `null` ([`connection-string.ts`](../../src/lib/db/providers/keyvalue/etcd/connection-string.ts)).
+`etcd` has no connection string scheme, no `readTls` and no `paste`: its declaration's `connection.connectionString` ([`etcd.json`](../../src/lib/db/engine-declarations/etcd.json)) names only a seed check, so those fields of its row in `CONNECTION_STRING` are `null`.
+The seed check is `ETCD_SEED_CHECK` in [`connection-string.ts`](../../src/lib/db/providers/keyvalue/etcd/connection-string.ts), which `CONNECTION_STRING_FUNCTIONS` binds to the name the declaration gives.
 Its `validateSeed` refuses at seed load a seed with `mcp: true` whose effective MCP principal is `root` ([section 3.5](#35-machine-access-e12)): that principal is the seed's `agentUser` when it sets one, since MCP then signs in as it, and its `user` otherwise, and the refusal names the field it read.
 So a seed whose `user` is `root` loads beside an `agentUser` of its own, and one whose `agentUser` is `root` is refused at `agentUser`.
 A principal written as a `${...}` reference is left to the proof when the connection opens.

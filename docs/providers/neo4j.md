@@ -249,7 +249,7 @@ Enterprise connects too; the monitoring differences are in section 7.
 
 ### Connection string
 
-`neo4j` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/graph/neo4j/connection-string.ts)).
+`neo4j` has no connection string scheme, no `readTls`, no `paste` and no seed load check: its declaration's `connection.connectionString` names no scheme, URL TLS reader, paste reader or seed check ([`neo4j.json`](../../src/lib/db/engine-declarations/neo4j.json)), so every field of its row in `CONNECTION_STRING` is `null`.
 
 ### Execution UI
 

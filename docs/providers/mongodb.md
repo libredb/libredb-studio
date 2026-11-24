@@ -416,7 +416,7 @@ before the mode reached the driver `require` failed the same way `disable` does.
 ### Connection string
 
 The scheme shown for MongoDB is `mongodb://`, and the parser also accepts `mongodb+srv://`.
-Its row in `CONNECTION_STRING` is declared in [`connection-string.ts`](../../src/lib/db/providers/document/mongodb/connection-string.ts).
+Its connection string is declared in its declaration's `connection.connectionString` ([`mongodb.json`](../../src/lib/db/engine-declarations/mongodb.json)), which names a paste reader, `MONGODB_PASTE_READER` in [`connection-string.ts`](../../src/lib/db/providers/document/mongodb/connection-string.ts), bound by `CONNECTION_STRING_FUNCTIONS` to the name the declaration gives.
 Its `paste` claims `mongodb://` and `mongodb+srv://`, and keeps the pasted URI as the connection string.
 It has no `readTls`: the URI's `tls`, `ssl`, `tlsInsecure`, `tlsAllowInvalidCertificates` and `tlsCAFile` options are read by `readMongoTLS` in its row's module instead, as described under `tls=true` in a pasted URI (D26).
 It runs no seed load check.

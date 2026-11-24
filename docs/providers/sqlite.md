@@ -547,7 +547,7 @@ Homebrew). Each channel is browser-verified by
 
 ### Connection string
 
-`sqlite` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`sqlite-connection-string.ts`](../../src/lib/db/providers/sql/sqlite-connection-string.ts)).
+`sqlite` has no connection string scheme, no `readTls`, no `paste` and no seed load check: its declaration's `connection.connectionString` names no scheme, URL TLS reader, paste reader or seed check ([`sqlite.json`](../../src/lib/db/engine-declarations/sqlite.json)), so every field of its row in `CONNECTION_STRING` is `null`.
 SQLite is a file path, so inventing `sqlite://` would put a scheme on the login page that `parseConnectionString` rejects.
 
 ### Execution UI

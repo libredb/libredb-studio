@@ -396,7 +396,7 @@ The modal's **Username** field is the Redis 6 ACL user. `connect()` passes it as
 `username` (the field is `user` on the connection, `username` in `RedisOptions`), and passes
 **nothing at all** when it is empty — a plain `requirepass` server has no ACL user to name, and
 ioredis only authenticates as `default` when `username` is absent. A pasted
-`redis://analytics:pw@host:6379/0` fills the same field: Redis's connection string row
+`redis://analytics:pw@host:6379/0` fills the same field: Redis's paste reader
 ([`src/lib/db/providers/keyvalue/redis-connection-string.ts`](../../src/lib/db/providers/keyvalue/redis-connection-string.ts))
 hands it to `parseGenericURL`
 ([`src/lib/db/connection-string/shared.ts`](../../src/lib/db/connection-string/shared.ts)), which decomposes the
@@ -438,7 +438,7 @@ or expect the monitoring panels to stay empty for that user.
 ### 4.2 Connection-string nuance
 
 `getCapabilities().supportsConnectionString` is **`false`** — the provider itself only consumes
-discrete fields. However, Redis's connection string row
+discrete fields. However, Redis's paste reader
 ([`src/lib/db/providers/keyvalue/redis-connection-string.ts`](../../src/lib/db/providers/keyvalue/redis-connection-string.ts)),
 which the UI parser offers a paste to, *does* recognise `redis://` and `rediss://` URLs and **decomposes** them into `host` / `port` (default
 `6379`) / `user` / `password` / `database` before they reach the provider. So a user can paste a
@@ -642,7 +642,7 @@ An application that embeds `@libredb/studio` installs ioredis itself, unpatched,
 ### Connection string
 
 The scheme shown for Redis is `redis://`, and the parser also accepts `rediss://`.
-Its row in `CONNECTION_STRING` is declared in [`redis-connection-string.ts`](../../src/lib/db/providers/keyvalue/redis-connection-string.ts).
+Its connection string is declared in its declaration's `connection.connectionString` ([`redis.json`](../../src/lib/db/engine-declarations/redis.json)), which names a paste reader, `REDIS_PASTE_READER` in [`redis-connection-string.ts`](../../src/lib/db/providers/keyvalue/redis-connection-string.ts), bound by `CONNECTION_STRING_FUNCTIONS` to the name the declaration gives.
 Its `paste` claims `redis://` and `rediss://`, with port 6379 by default.
 It has no `readTls`: the scheme itself is the TLS, so `rediss://` sets `require` and `redis://` sets `disable`.
 It runs no seed load check.

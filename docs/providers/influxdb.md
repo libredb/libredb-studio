@@ -281,7 +281,7 @@ With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, a loopback, private or other non-public a
 
 ### Connection string
 
-`influxdb` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`influxdb-connection-string.ts`](../../src/lib/db/providers/timeseries/influxdb/influxdb-connection-string.ts)).
+`influxdb` has no connection string scheme, no `readTls`, no `paste` and no seed load check: its declaration's `connection.connectionString` names no scheme, URL TLS reader, paste reader or seed check ([`influxdb.json`](../../src/lib/db/engine-declarations/influxdb.json)), so every field of its row in `CONNECTION_STRING` is `null`.
 
 ### Execution UI
 

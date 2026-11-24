@@ -1408,7 +1408,7 @@ names one, and every connection string, behaves exactly as before.
 
 #### `sslmode` in a pasted URL
 
-The paste box, through Postgres's connection string row
+The paste box, through Postgres's paste reader
 ([`postgres-connection-string.ts`](../../src/lib/db/providers/sql/postgres-connection-string.ts)), reads the
 query string, so `postgresql://host/db?sslmode=verify-full` arrives on the form with SSL Mode already
 set. `disable`, `require`, `verify-ca` and `verify-full` map one-to-one. `verify-system` is not in
@@ -1511,7 +1511,7 @@ this precedence:
 ### Connection string
 
 The scheme shown for PostgreSQL is `postgres://`, and the parser also accepts `postgresql://`.
-Its row in `CONNECTION_STRING` is declared in [`postgres-connection-string.ts`](../../src/lib/db/providers/sql/postgres-connection-string.ts).
+Its connection string is declared in its declaration's `connection.connectionString` ([`postgres.json`](../../src/lib/db/engine-declarations/postgres.json)), which names a URL TLS reader and a paste reader, `POSTGRES_URL_TLS` and `POSTGRES_PASTE_READER` in [`postgres-connection-string.ts`](../../src/lib/db/providers/sql/postgres-connection-string.ts), bound by `CONNECTION_STRING_FUNCTIONS` to the names the declaration gives.
 Its `paste` claims `postgres://` and `postgresql://`, with port 5432 by default, and libpq's `host`, `port`, `user`, `password` and `dbname` query keywords replace the URL's own parts.
 Its `readTls` reads `sslmode` first, and the boolean `ssl` only when no `sslmode` is present: a string carrying both said the specific thing on purpose.
 `sslmode` maps libpq's `disable`, `require`, `verify-ca` and `verify-full`, and leaves `prefer` and `allow` unmapped: they mean "encrypt if the server offers it", which no SSL mode describes.

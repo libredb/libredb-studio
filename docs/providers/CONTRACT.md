@@ -421,6 +421,9 @@ Where an engine names no identity reader, Studio reads a Host text's identity as
 Studio's own source holds every named check, hint and identity reader the engines it ships name, and the connection dialog calls each in the browser: the hint on each render of the Host box, the identity on a paste, and the check before Test Connection and Save.
 The test-connection path that Test Connection and Save post to runs the same check again on the server, through the same module, M-33.
 Composing a connection form refuses by name any function name Studio holds no function for at its slot, M-72, so no form binds a function only a package holds.
+Studio's own source holds every paste reader, URL TLS reader and import the engines it ships name, and the connection dialog calls each in the browser, so neither a pasted connection string nor a pasted kubeconfig reaches the server before Test Connection or Save.
+Composing a connection string refuses by name any function name Studio holds no function for at its slot, M-74, so no package reader runs in a browser.
+Where a package's paste reader, URL TLS reader, seed check or import runs is decided with the first package that names one.
 A package's named check will be answered by the route that Test Connection and Save post to, never on a keystroke, and the dialog will draw no hint from a package and read a Host text's identity as the default above, the text trimmed and lower-cased.
 
 ### M-33 (normative): Field rules

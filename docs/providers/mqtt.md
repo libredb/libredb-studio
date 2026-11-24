@@ -311,7 +311,7 @@ The broker at the far end is not checked here: a name is resolved by the SSH ser
 
 ### Connection string
 
-`mqtt` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/keyvalue/mqtt/connection-string.ts)).
+`mqtt` has no connection string scheme, no `readTls`, no `paste` and no seed load check: its declaration's `connection.connectionString` names no scheme, URL TLS reader, paste reader or seed check ([`mqtt.json`](../../src/lib/db/engine-declarations/mqtt.json)), so every field of its row in `CONNECTION_STRING` is `null`.
 
 ### Execution UI
 
