@@ -88,6 +88,7 @@ import type {
   FieldName,
   MaintenanceSpec,
   MaintenanceOperation as SdkMaintenanceOperation,
+  TlsMode,
 } from "@libredb/provider-sdk/manifest";
 import type { MonitoringPanel } from "@/lib/db/engine-facets/types";
 import type { ProviderConnection } from "@/lib/db/provider-connection";
@@ -149,6 +150,7 @@ import type {
   QueryResultSet,
   QueryWarning,
   SSLConfig,
+  SSLMode,
   TunnelFarEnd,
   WithAdmittedFile,
   WithAdmittedHostPaths,
@@ -158,7 +160,7 @@ import { ADMITTED_FILE, ADMITTED_HOST_PATHS, LITERAL_SEED_FILE, TUNNEL_FAR_END, 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 const SCHEMA = JSON.parse(
   readFileSync(path.join(ROOT, "packages/provider-sdk/src/manifest/manifest.schema.json"), "utf8"),
-) as { $defs: { fieldName: { enum: string[] } } };
+) as { $defs: { fieldName: { enum: string[] }; tlsMode?: { enum: string[] } } };
 
 /** An input or answer member that stays with the host, and why. */
 interface HostOnly {
@@ -1578,5 +1580,20 @@ describe("the call surface census", () => {
     expect(parity).toEqual([true, true, true, true, true, true, true, true, true, true, true]);
     expect(back).toEqual([tls, egress, trust, pool]);
     expect(farEndBack).toEqual(farEnd);
+  });
+
+  test("the manifest's TLS modes are Studio's published SSL modes, in its order", () => {
+    // A mode added to SSLMode fails the typecheck at this record, and one added to the schema fails at run time.
+    const studioModes: Record<SSLMode, true> = {
+      disable: true,
+      require: true,
+      "verify-system": true,
+      "verify-ca": true,
+      "verify-full": true,
+    };
+    const parity: Mutual<TlsMode, SSLMode> = true;
+
+    expect(parity).toBe(true);
+    expect(SCHEMA.$defs.tlsMode?.enum).toEqual(Object.keys(studioModes));
   });
 });
