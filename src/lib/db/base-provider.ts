@@ -38,7 +38,7 @@ import {
 } from "./types";
 import { DatabaseConfigError } from "./errors";
 import { engineFacetsFor } from "./engine-facets";
-import { readDeclaredPanels } from "./engine-facets/monitoring";
+import { readDeclaredPanels, readPanel } from "./engine-facets/monitoring";
 import { mapDatabaseError } from "./map-database-error";
 import { mergePoolConfig, formatDuration } from "./utils/pool-manager";
 
@@ -125,15 +125,18 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
 
   /**
    * Get comprehensive monitoring data: the panels the engine's `ENGINE_FACETS` row offers, read by
-   * `readDeclaredPanels`, which states the four panel states and the failure rule. A panel the engine does not offer is
-   * never read and is listed in `notOffered`.
+   * `readDeclaredPanels` through `readPanel` over this provider's own members, which states the four panel states and
+   * the failure rule. A panel the engine does not offer is never read and is listed in `notOffered`.
    *
    * Core reads only declared panels, so no provider overrides this method;
    * `tests/isolated/monitoring-panels-census.test.ts` holds that across the fleet.
    */
   public async getMonitoringData(options: MonitoringOptions = {}): Promise<MonitoringData> {
-    return readDeclaredPanels(this, engineFacetsFor(this.type).monitoring, options, (error) =>
-      this.mapError(error, undefined),
+    return readDeclaredPanels(
+      (request) => readPanel(this, request),
+      engineFacetsFor(this.type).monitoring,
+      options,
+      (error) => this.mapError(error, undefined),
     );
   }
 

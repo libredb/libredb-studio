@@ -19,7 +19,7 @@ import {
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { engineFacetsFor } from "@/lib/db/engine-facets";
-import { readDeclaredPanels } from "@/lib/db/engine-facets/monitoring";
+import { readDeclaredPanels, readPanel } from "@/lib/db/engine-facets/monitoring";
 import type { DatabaseProvider, DatabaseType, MonitoringOptions } from "@/lib/db/types";
 import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 
@@ -562,8 +562,11 @@ describe("what the monitoring route answers today, which the host core keeps", (
   function panelProvider(type: DatabaseType): DatabaseProvider {
     const provider = createMockProvider({ type });
     (provider.getMonitoringData as Mocked).mockImplementation(async (options?: MonitoringOptions) =>
-      readDeclaredPanels(provider, engineFacetsFor(provider.type).monitoring, options ?? {}, (error) =>
-        mapDatabaseError(error, provider.type),
+      readDeclaredPanels(
+        (request) => readPanel(provider, request),
+        engineFacetsFor(provider.type).monitoring,
+        options ?? {},
+        (error) => mapDatabaseError(error, provider.type),
       ),
     );
     return provider;

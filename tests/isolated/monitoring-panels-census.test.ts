@@ -5,7 +5,8 @@
  * double of the base class would do.
  *
  * It holds the two halves of the engine facets contract against real providers: core alone orchestrates the reads (no
- * provider overrides `getMonitoringData`), and core calls exactly the reads of the panels the engine's
+ * provider overrides `getMonitoringData`, nor `mapError`, which the host's monitoring facade stands in for with
+ * `mapDatabaseError` for the engine's type), and core calls exactly the reads of the panels the engine's
  * `ENGINE_FACETS` row offers, listing the others in `notOffered`. What each row declares is held separately, against
  * the measurement committed in `tests/unit/db/engine-facets/census.test.ts`.
  *
@@ -39,6 +40,15 @@ describe("monitoring panel reads across the fleet", () => {
     const providers = await Promise.all(ALL.map((type) => createDatabaseProvider(CENSUS_CONNECTION[type])));
     const overriding = ALL.filter(
       (_type, at) => providers[at].getMonitoringData !== BaseDatabaseProvider.prototype.getMonitoringData,
+    );
+    expect(overriding).toEqual([]);
+  });
+
+  test("no provider overrides mapError, so the host's mapping of a dashboard's several sentences is each provider's own", async () => {
+    const providers = await Promise.all(ALL.map((type) => createDatabaseProvider(CENSUS_CONNECTION[type])));
+    const mapErrorOf = (target: object): unknown => (target as { mapError: unknown }).mapError;
+    const overriding = ALL.filter(
+      (_type, at) => mapErrorOf(providers[at]) !== mapErrorOf(BaseDatabaseProvider.prototype),
     );
     expect(overriding).toEqual([]);
   });
