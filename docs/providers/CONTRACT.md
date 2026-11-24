@@ -2513,8 +2513,9 @@ It offers `console.endScope` exactly where the provider ends the transactions it
 It offers `console.transaction` exactly when the provider holds a transaction session, the duck typing of begin, commit and rollback the transaction route has always read.
 It offers `objects.tree` on every session, since every legacy provider holds the five tree members.
 It offers `maintenance.run` on every session, since every legacy provider holds `runMaintenance`, and `maintenance.preview` exactly where the provider holds `previewMaintenance`.
-It offers `monitoring.panel` on every session, since every legacy provider holds the seven panel members, and `monitoring.poolStats` exactly where the provider holds a pool statistics read.
-The session's panels are its engine's row of monitoring panels.
+It offers `monitoring.panel` on every session, and `monitoring.poolStats` exactly where the provider holds a pool statistics read.
+The session's panels are its engine's row of monitoring panels, by identity, where the provider holds the member of every panel the row offers, as every shipped provider does.
+Otherwise they are a frozen copy of the row with each panel whose member the provider does not hold not offered, a member held as the pool statistics read is, a function on the provider or its prototype, so the host refuses a call for such a panel before the call and never calls a member that is not there.
 Its panel call runs the panel's own member with today's argument and answers its answer under the panel's key by reference, and its pool statistics call answers the provider's own statistics by reference, a synchronous throw as the call's rejection.
 Neither calls `forCatalog`, and each passes a provider's error by reference.
 It serves `health` on every session, since every legacy provider holds `getHealth`: its health call runs `getHealth` with no argument and answers its answer by reference, a synchronous throw as the call's rejection, never calls `forCatalog`, and passes a provider's error by reference.
@@ -2544,6 +2545,8 @@ The page's row limit is set once execute answered: one past the page when the pr
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session offers maintenance.run for every provider and maintenance.preview exactly where the provider previews"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session offers monitoring.panel for every provider and monitoring.poolStats exactly where the provider reads its pool statistics"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session's panels are its engine's row"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a panel whose member the legacy provider does not hold is not offered on its session, and a provider holding every member keeps its engine's row"
+- test `tests/isolated/monitoring-panels-census.test.ts` "every shipped provider holds the member of each panel its engine offers, so its bridged session offers its engine's row"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged panel call runs the panel's own member with today's argument and answers its answer by reference under the panel's key"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged pool statistics call answers the provider's own statistics by reference, and a throw as its rejection"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged health call runs getHealth with no argument and answers its health by reference, and a throw as its rejection"

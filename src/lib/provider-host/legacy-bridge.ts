@@ -14,10 +14,13 @@
  * minted a run's scope ends it through the host core's endScope call (clause C-60). `objects.tree` is offered on every
  * session, since every legacy provider holds the five tree members. `maintenance.run` is offered on every session,
  * since every legacy provider holds `runMaintenance`, and `maintenance.preview` exactly where the provider holds
- * `previewMaintenance`. `monitoring.panel` is offered on every session, since every legacy provider holds the seven
- * panel members, and `monitoring.poolStats` exactly where the provider holds a pool statistics read (`getPoolStats`, a
- * function on the provider or its prototype); the session's panels are its engine's `ENGINE_FACETS` row
- * (`engineFacetsFor`). `health` is served on every session, since every legacy provider holds `getHealth`.
+ * `previewMaintenance`. `monitoring.panel` is offered on every session, and `monitoring.poolStats` exactly where the
+ * provider holds a pool statistics read (`getPoolStats`, a function on the provider or its prototype). The session's
+ * panels are its engine's `ENGINE_FACETS` row (`engineFacetsFor`), by identity, where the provider holds the member of
+ * every panel the row offers, as every shipped provider does; otherwise a frozen copy of the row with each panel whose
+ * member the provider does not hold, read as `getPoolStats` is, not offered, so the host core refuses a call for it as
+ * `request-panel-not-offered` before the call and never calls a member that is not there. `health` is served on every
+ * session, since every legacy provider holds `getHealth`.
  *
  * Its panel call runs the panel's own member with today's argument through `readPanel`, the one mapping
  * `getMonitoringData` reads through too, and answers the member's answer by reference under the panel's key. Its pool
@@ -110,7 +113,8 @@ import type { SessionState } from "@libredb/provider-sdk/errors";
 import type { MaintenanceSpec } from "@libredb/provider-sdk/manifest";
 import { probePastPage } from "@/lib/api/page-probe";
 import { engineFacetsFor } from "@/lib/db/engine-facets";
-import { readPanel } from "@/lib/db/engine-facets/monitoring";
+import { type PanelReads, readPanel } from "@/lib/db/engine-facets/monitoring";
+import { MONITORING_PANELS, type MonitoringPanel, type MonitoringPanelOffer } from "@/lib/db/engine-facets/types";
 import { type QueryCancelProvider, supportsQueryCancel } from "@/lib/db/query-cancel";
 import {
   type DatabaseProvider,
@@ -395,6 +399,36 @@ function readsPoolStats(provider: DatabaseProvider): provider is DatabaseProvide
   return "getPoolStats" in provider && typeof (provider as Partial<PoolStatsReader>).getPoolStats === "function";
 }
 
+/** The provider member each monitoring panel is read through, as `readPanel` calls it. */
+const PANEL_MEMBER: Readonly<Record<MonitoringPanel, keyof PanelReads>> = Object.freeze({
+  overview: "getOverview",
+  performance: "getPerformanceMetrics",
+  slowQueries: "getSlowQueries",
+  activeSessions: "getActiveSessions",
+  tables: "getTableStats",
+  indexes: "getIndexStats",
+  storage: "getStorageStats",
+});
+
+/** Whether `provider` holds the member `panel` is read through: a function on the provider or its prototype. */
+function holdsPanelMember(provider: DatabaseProvider, panel: MonitoringPanel): boolean {
+  const member = PANEL_MEMBER[panel];
+  return member in provider && typeof (provider as Partial<PanelReads>)[member] === "function";
+}
+
+/**
+ * The monitoring panels of `provider`'s session: its engine's row by identity where the provider holds the member of
+ * every panel the row offers, and otherwise a frozen copy of the row with each such panel it cannot read not offered.
+ */
+function bridgedPanels(provider: DatabaseProvider): MonitoringPanelOffer {
+  const row = engineFacetsFor(provider.type).monitoring;
+  const unread = MONITORING_PANELS.filter((panel) => row[panel] === "offered" && !holdsPanelMember(provider, panel));
+  if (unread.length === 0) return row;
+  const panels: Record<MonitoringPanel, MonitoringPanelOffer[MonitoringPanel]> = { ...row };
+  for (const panel of unread) panels[panel] = "not-offered";
+  return Object.freeze(panels);
+}
+
 /**
  * `provider` served as one session of console execute, cancel and transaction, of the object tree, of maintenance and
  * of monitoring, its execute run with a copy of `options`, the caller's own page options.
@@ -478,7 +512,7 @@ export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepare
       execute,
       tree: (request: TreeRequest) => legacyTree(provider, request),
       run: (request: MaintenanceRunRequest) => legacyRun(provider, request),
-      panels: engineFacetsFor(provider.type).monitoring,
+      panels: bridgedPanels(provider),
       panel: (request: MonitoringPanelRequest) => readPanel(provider, request),
       health: async (): Promise<HealthInfo> => provider.getHealth(),
       ...(pooled === undefined ? {} : { poolStats: async (): Promise<PoolStats> => pooled.getPoolStats() }),

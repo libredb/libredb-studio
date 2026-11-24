@@ -7,7 +7,8 @@
  * It holds the two halves of the engine facets contract against real providers: core alone orchestrates the reads (no
  * provider overrides `getMonitoringData`, nor `mapError`, which the host's monitoring facade stands in for with
  * `mapDatabaseError` for the engine's type), and core calls exactly the reads of the panels the engine's
- * `ENGINE_FACETS` row offers, listing the others in `notOffered`. What each row declares is held separately, against
+ * `ENGINE_FACETS` row offers, listing the others in `notOffered`; and every provider holds the member of each panel its
+ * row offers, so the legacy bridge offers that row on its session. What each row declares is held separately, against
  * the measurement committed in `tests/unit/db/engine-facets/census.test.ts`.
  *
  * It lives under `tests/isolated/` for the reason `object-source-declarations.test.ts` gives: it needs the real
@@ -19,6 +20,7 @@ import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import { MONITORING_PANELS, type MonitoringPanel } from "@/lib/db/engine-facets/types";
 import { createDatabaseProvider } from "@/lib/db/factory";
+import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
 import type { DatabaseProvider } from "@/lib/db/types";
 import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../helpers/census-connection";
@@ -51,6 +53,22 @@ describe("monitoring panel reads across the fleet", () => {
       (_type, at) => mapErrorOf(providers[at]) !== mapErrorOf(BaseDatabaseProvider.prototype),
     );
     expect(overriding).toEqual([]);
+  });
+
+  test("every shipped provider holds the member of each panel its engine offers, so its bridged session offers its engine's row", async () => {
+    const providers = await Promise.all(ALL.map((type) => createDatabaseProvider(CENSUS_CONNECTION[type])));
+    const missing = ALL.flatMap((type, at) =>
+      MONITORING_PANELS.filter(
+        (panel) =>
+          ENGINE_FACETS[type].monitoring[panel] === "offered" && typeof providers[at][METHOD[panel]] !== "function",
+      ).map((panel) => `${type} ${panel}`),
+    );
+    const rowless = ALL.filter(
+      (type, at) => bridgedConsole(providers[at], {}).session.panels !== ENGINE_FACETS[type].monitoring,
+    );
+
+    expect(missing).toEqual([]);
+    expect(rowless).toEqual([]);
   });
 
   test.each([...ALL])("getMonitoringData reads every panel %s offers and none it does not", async (type) => {
