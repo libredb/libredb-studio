@@ -127,7 +127,17 @@ export const AGENT_READING_PANELS = Object.freeze({
 export const EXECUTE_REQUEST_FIELDS = Object.freeze([
   "params",
   "offset",
+  "readOnly",
 ] as const) satisfies readonly ExecuteRequestField[];
+
+/**
+ * The modes of a read-only execute (clause C-78): `execute` runs the statement and answers its rows, and
+ * `estimate-plan` answers the engine's estimated plan for it, never running it, or refuses. A request without a mode
+ * executes the statement.
+ */
+export const READ_ONLY_MODES = Object.freeze(["execute", "estimate-plan"] as const);
+
+export type ReadOnlyMode = (typeof READ_ONLY_MODES)[number];
 
 /** What every call is given beside its request. */
 export interface CallContext {
@@ -312,6 +322,23 @@ export interface OpenAnswer<Handle> {
 /** The page the host asks for, its bound resolved by the host: a limit and an offset, or every row. */
 export type PageBound = { readonly limit: number; readonly offset: number } | { readonly unlimited: true };
 
+/** The most a read-only execute may answer: a count of rows and of UTF-8 JSON bytes of those rows. */
+export interface ReadBudget {
+  readonly maxRows: number;
+  readonly maxBytes: number;
+}
+
+/**
+ * A read-only execute (clause C-78): the statement runs on the session's read-only boundary, its answer within the
+ * budget's rows and bytes or refused, never truncated, in the mode asked for. Its time is the call's deadline, so it
+ * carries none of its own.
+ */
+export interface ReadOnlyExecute {
+  readonly budget: ReadBudget;
+  /** Absent: the statement executes. */
+  readonly mode?: ReadOnlyMode;
+}
+
 /** What console execute is asked to run. */
 export interface ExecuteRequest {
   readonly statement: string;
@@ -329,6 +356,11 @@ export interface ExecuteRequest {
    * without it runs outside any transaction the facet opened.
    */
   readonly transaction?: true;
+  /**
+   * A read-only execute, sent only to a package that honours `readOnly`, and only to a session opened with
+   * `policy.readOnly` and `policy.sendsStatements` both true, which takes no execute without it (clause C-78).
+   */
+  readonly readOnly?: ReadOnlyExecute;
 }
 
 /** A notice the engine attached to a statement it completed. */

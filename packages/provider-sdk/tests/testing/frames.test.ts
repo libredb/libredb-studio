@@ -1031,6 +1031,36 @@ describe("readFrame", () => {
     ]);
   });
 
+  test("a read-only execute's budget and mode are read as a closed shape", () => {
+    const readOnly = (value: unknown) =>
+      readFrame("console.execute", "request", { statement: marker(), page: { unlimited: true }, readOnly: value });
+    const unreadable = (pointer: string) => refusal("frame-value-unreadable", "console.execute", "request", pointer);
+    const budget = { maxRows: 200, maxBytes: 262144 };
+    const planted = marker();
+
+    expect(readOnly({ budget })).toEqual([]);
+    expect(readOnly({ budget, mode: "execute" })).toEqual([]);
+    expect(readOnly({ budget, mode: "estimate-plan" })).toEqual([]);
+    expect(readOnly({ budget, mode: planted })).toEqual([unreadable("/readOnly/mode")]);
+    expect(readOnly({ budget, timeoutMs: 1 })).toEqual([
+      refusal("frame-key-unknown", "console.execute", "request", "/readOnly/timeoutMs", "timeoutMs"),
+    ]);
+    expect(readOnly({ budget: { ...budget, readAllowance: 1 } })).toEqual([
+      refusal("frame-key-unknown", "console.execute", "request", "/readOnly/budget/readAllowance", "readAllowance"),
+    ]);
+    expect(readOnly({ budget: { maxRows: "200", maxBytes: 262144 } })).toEqual([
+      unreadable("/readOnly/budget/maxRows"),
+    ]);
+    expect(readOnly({ budget: { maxRows: 200 } })).toEqual([
+      refusal("frame-key-missing", "console.execute", "request", "/readOnly/budget/maxBytes", "maxBytes"),
+    ]);
+    expect(readOnly({})).toEqual([
+      refusal("frame-key-missing", "console.execute", "request", "/readOnly/budget", "budget"),
+    ]);
+    expect(readOnly(true)).toEqual([unreadable("/readOnly")]);
+    expect(JSON.stringify(readOnly({ budget, mode: planted }))).not.toContain(planted);
+  });
+
   test("a transaction request is one of its actions, and only begin carries requireReportedState", () => {
     const transaction = (request: unknown) => readFrame("console.transaction", "request", request);
     const unreadable = (pointer: string) =>

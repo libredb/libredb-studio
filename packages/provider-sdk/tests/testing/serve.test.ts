@@ -661,6 +661,80 @@ describe("serve", () => {
     expect(fx.seen.map((item) => item.call)).toEqual(["open"]);
   });
 
+  test("a read-only execute crosses to a session opened for read-only statements, and every other pairing is refused before any frame", async () => {
+    const fx = fixture({ honours: ["params", "offset", "readOnly"] });
+    const { impl, frames } = served(fx);
+    const policyOf = (readOnly: boolean, sendsStatements: boolean): OpenContext => {
+      const ctx = openContext();
+      return { ...ctx, policy: { ...ctx.policy, readOnly, sendsStatements } };
+    };
+    const readOnly = (mode?: "estimate-plan") =>
+      request((r) => {
+        r.page = { unlimited: true };
+        r.readOnly = { budget: { maxRows: 200, maxBytes: 262144 }, ...(mode === undefined ? {} : { mode }) };
+      });
+    const statements = await impl.open(policyOf(true, true));
+    const sent = readOnly("estimate-plan");
+
+    await impl.console.execute(statements.handle, sent, callContext());
+    await impl.console.execute(statements.handle, readOnly(), callContext());
+    const received = fx.seen.filter((item) => item.call === "console.execute");
+
+    expect(received.map((item) => item.request)).toEqual([
+      sent,
+      expect.objectContaining({ readOnly: { budget: sent.readOnly?.budget } }),
+    ]);
+    expect(received[0]?.request).not.toBe(sent);
+    expect(deepFrozen(received[0]?.request)).toBe(true);
+    const before = frames.length;
+    const plain = await failure(() => impl.console.execute(statements.handle, request(), callContext()));
+    // Each pairing is opened, refused and then sent a plain execute in turn, so the frames between are its own.
+    const refusedOn = async (readOnlyFlag: boolean, sendsStatements: boolean): Promise<unknown> => {
+      const opened = await impl.open(policyOf(readOnlyFlag, sendsStatements));
+      const opens = frames.length;
+      const error = await failure(() => impl.console.execute(opened.handle, readOnly(), callContext()));
+      expect(frames.length).toBe(opens);
+      await impl.console.execute(opened.handle, request(), callContext());
+      return error;
+    };
+    const notStatements = await refusedOn(false, true);
+    const notReadOnly = await refusedOn(true, false);
+    const neither = await refusedOn(false, false);
+
+    expect(plain).toBeInstanceOf(CallRefusalError);
+    expect((plain as CallRefusalError).refusals).toEqual([{ rule: "request-read-only-missing", pointer: "/readOnly" }]);
+    for (const error of [notStatements, notReadOnly, neither]) {
+      expect(error).toBeInstanceOf(CallRefusalError);
+      expect((error as CallRefusalError).refusals).toEqual([
+        { rule: "request-read-only-not-opened", pointer: "/readOnly" },
+      ]);
+    }
+    expect(frames.slice(before, before + 2).map((frame) => frame.call)).toEqual(["open", "open"]);
+    expect(fx.seen.filter((item) => item.call === "console.execute")).toHaveLength(5);
+  });
+
+  test("a read-only execute to a session whose module does not honour readOnly is refused by the field before any frame", async () => {
+    const fx = fixture();
+    const { impl, frames } = served(fx);
+    const ctx = openContext();
+    const opened = await impl.open({ ...ctx, policy: { ...ctx.policy, readOnly: true, sendsStatements: true } });
+    const before = frames.length;
+
+    const error = await failure(() =>
+      impl.console.execute(
+        opened.handle,
+        request((r) => (r.readOnly = { budget: { maxRows: 1, maxBytes: 1 } })),
+        callContext(),
+      ),
+    );
+
+    expect((error as CallRefusalError).refusals).toEqual([
+      { rule: "request-field-not-honoured", pointer: "/readOnly", name: "readOnly" },
+    ]);
+    expect(frames.length).toBe(before);
+    expect(fx.seen.map((item) => item.call)).toEqual(["open"]);
+  });
+
   test("a served transaction call crosses its request and answer as frames, and a statement inside the transaction carries its session state back", async () => {
     const fx = fixture();
     const { impl, frames } = served(fx);

@@ -1,6 +1,6 @@
 /**
  * What the host refuses of a call or of its answer (docs/providers/CONTRACT.md, clauses C-9, C-10, C-15, C-17, C-27,
- * C-57, C-67 and C-71).
+ * C-57, C-67, C-71 and C-78).
  *
  * One vocabulary for every such refusal, each naming its rule and a JSON Pointer rooted at the thing it names, stated
  * beside each rule. No refusal and no sentence carries a value of a request, a refinement or a row: a sentence names
@@ -18,6 +18,10 @@ export const CALL_REFUSAL_RULES = Object.freeze([
   "request-transaction-not-offered",
   /** A `scope` on a statement sent inside a transaction, which runs on the transaction's session; into the request. */
   "request-scope-in-transaction",
+  /** A read-only execute sent to a session not opened under the read-only policy to be sent statements; into the request. */
+  "request-read-only-not-opened",
+  /** An execute without `readOnly` sent to a session opened under the read-only policy to be sent statements; into the request. */
+  "request-read-only-missing",
   /** A maintenance operation the session's maintenance does not list; the pointer is into the request. */
   "request-operation-not-offered",
   /** A maintenance request field that names something sent empty; the pointer is into the request, `name` the field. */
@@ -114,6 +118,10 @@ export function callRefusalSentence(refusal: CallRefusal): string {
       return `The request is sent inside a transaction at ${at}, and the session does not offer console.transaction, so the call was not made.`;
     case "request-scope-in-transaction":
       return `The request carries a scope at ${at} on a statement sent inside a transaction, which runs on the transaction's own session, so the call was not made.`;
+    case "request-read-only-not-opened":
+      return `The request carries a read-only execute at ${at}, and the session was not opened under the read-only policy to be sent statements, so the call was not made.`;
+    case "request-read-only-missing":
+      return `The request carries no read-only execute at ${at}, and the session was opened under the read-only policy to be sent statements, which takes no other execute, so the call was not made.`;
     case "request-operation-not-offered":
       return `The request names at ${at} an operation the session's maintenance does not list, so the call was not made.`;
     case "request-field-empty":

@@ -2,6 +2,7 @@
  * The call vocabularies are stated once, in the manifest schema (docs/providers/CONTRACT.md, clause C-4), and the SDK's
  * runtime constants are their copy: `CONSOLE_FACETS` holds the optional console facets `$defs/consoleCalls` declares,
  * and `EXECUTE_REQUEST_FIELDS` the optional request fields `$defs/executeRequestField` names, each in schema order.
+ * `READ_ONLY_MODES` names the modes a read-only execute may carry (clause C-78).
  * `TRANSACTION_ACTIONS` names the actions a `console.transaction` request may carry (clause C-57). `OBJECTS_FACETS`
  * holds the object facets `$defs/objectsCalls` declares, and `TREE_ACTIONS` names the actions an `objects.tree` request
  * may carry (clause C-61). `MAINTENANCE_FACETS` holds the maintenance facets `$defs/maintenanceCalls` declares, and
@@ -21,6 +22,7 @@ import {
   MAINTENANCE_OPERATIONS,
   MONITORING_FACETS,
   OBJECTS_FACETS,
+  READ_ONLY_MODES,
   TRANSACTION_ACTIONS,
   TREE_ACTIONS,
 } from "@libredb/provider-sdk/calls";
@@ -39,7 +41,13 @@ describe("the call vocabularies", () => {
       (SCHEMA.$defs.executeRequestField?.enum ?? []).map(String),
     );
     expect(Object.isFrozen(CONSOLE_FACETS)).toBe(true);
+    expect<readonly string[]>([...EXECUTE_REQUEST_FIELDS]).toEqual(["params", "offset", "readOnly"]);
     expect(Object.isFrozen(EXECUTE_REQUEST_FIELDS)).toBe(true);
+  });
+
+  test("the read-only modes are execute and estimate-plan, frozen", () => {
+    expect<readonly string[]>([...READ_ONLY_MODES]).toEqual(["execute", "estimate-plan"]);
+    expect(Object.isFrozen(READ_ONLY_MODES)).toBe(true);
   });
 
   test("the transaction actions are begin, commit, rollback and state", () => {

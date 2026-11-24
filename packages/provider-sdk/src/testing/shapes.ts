@@ -67,6 +67,9 @@ import type {
   PerformanceMetrics,
   PoolSettings,
   PoolStats,
+  ReadBudget,
+  ReadOnlyExecute,
+  ReadOnlyMode,
   RowBatch,
   SessionActivity,
   SlowQuery,
@@ -361,6 +364,9 @@ const OPEN_TRANSACTIONS = Object.freeze<Record<EndScopeAnswer["openTransaction"]
   none: true,
   "rolled-back": true,
 });
+
+/** The modes of a read-only execute, `READ_ONLY_MODES`, typed so every mode has a word. */
+const READ_ONLY_MODE_WORDS = Object.freeze<Record<ReadOnlyMode, true>>({ execute: true, "estimate-plan": true });
 
 const SESSION_STATE_WORDS = Object.freeze<Record<SessionState, true>>({
   "in-transaction": true,
@@ -957,6 +963,12 @@ const executeRequest = record<ExecuteRequest>({
   ),
   scope: optional(text),
   transaction: optional(exactlyTrue),
+  readOnly: optional(
+    record<ReadOnlyExecute>({
+      budget: required(record<ReadBudget>({ maxRows: required(number), maxBytes: required(number) })),
+      mode: optional(vocabulary(READ_ONLY_MODE_WORDS)),
+    }),
+  ),
 });
 
 const column = record<Column>({

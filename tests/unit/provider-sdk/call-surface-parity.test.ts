@@ -38,6 +38,7 @@ import {
   type OpenAnswer,
   type PerformanceMetrics as SdkPerformanceMetrics,
   type PoolStats as SdkPoolStats,
+  READ_ONLY_MODES,
   type SessionActivity as SdkSessionActivity,
   type SlowQuery as SdkSlowQuery,
   type SlowQueryStats as SdkSlowQueryStats,
@@ -46,6 +47,7 @@ import {
   type TableStats as SdkTableStats,
 } from "@libredb/provider-sdk/calls";
 import type {
+  CallContext,
   CancelAnswer,
   Column,
   ColumnSchema as SdkColumnSchema,
@@ -67,6 +69,8 @@ import type {
   OpenContext,
   OpenPolicy,
   PoolSettings,
+  ReadBudget,
+  ReadOnlyExecute,
   ResultSource,
   TlsSettings,
   TransactionAction,
@@ -129,6 +133,8 @@ import type {
   ProviderBuildContext,
   ProviderOptions,
   QueryPrepareOptions,
+  ReadOnlyStatementBudget,
+  ReadOnlyStatementMode,
   SessionActivity,
   SlowQuery,
   SlowQueryStats,
@@ -193,6 +199,9 @@ type ConsolePlacement =
     }
   | { readonly where: "transaction-request"; readonly member: keyof BeginRequest; readonly note?: string }
   | { readonly where: "transaction-answer"; readonly member: keyof TransactionAnswer; readonly note?: string }
+  | { readonly where: "read-only-execute"; readonly member: keyof ReadOnlyExecute; readonly note?: string }
+  | { readonly where: "read-budget"; readonly member: keyof ReadBudget }
+  | { readonly where: "call-context"; readonly member: keyof CallContext; readonly note?: string }
   | HostOnly;
 
 /** A member of today's object tree surface, as the objects calls carry it. */
@@ -483,6 +492,43 @@ const QUERY_IN_TRANSACTION_ARGUMENT_CENSUS = {
 
 const QUERY_IN_TRANSACTION_ARGUMENT_COUNT: Required<Parameters<TransactionProvider["queryInTransaction"]>>["length"] =
   2;
+
+/** The read-only statement path's provider member today; `Pick` fails typecheck when it is renamed or removed. */
+type ReadOnlyStatementProvider = Pick<DatabaseProvider, "queryReadOnly">;
+
+const READ_ONLY_MEMBER_CENSUS = {
+  queryReadOnly: {
+    where: "execute-request",
+    member: "readOnly",
+    note: "console execute sent with readOnly, only to a session opened under the read-only policy to be sent statements",
+  },
+} as const satisfies { readonly [K in keyof Required<ReadOnlyStatementProvider>]: ConsolePlacement };
+
+/** `DatabaseProvider.queryReadOnly`'s three arguments, in order, each placed. */
+const QUERY_READ_ONLY_ARGUMENT_CENSUS = {
+  statement: { where: "execute-request", member: "statement" },
+  budget: { where: "read-only-execute", member: "budget", note: "its rows and bytes; its time is the deadline" },
+  mode: { where: "read-only-execute", member: "mode", note: "absent executes the statement" },
+} as const satisfies Record<string, ConsolePlacement>;
+
+const QUERY_READ_ONLY_ARGUMENT_COUNT: Required<
+  Parameters<Required<ReadOnlyStatementProvider>["queryReadOnly"]>
+>["length"] = 3;
+
+const READ_ONLY_BUDGET_CENSUS = {
+  statementTimeoutMs: {
+    where: "call-context",
+    member: "deadline",
+    note: "the host sets the call's deadline the timeout ahead",
+  },
+  maxResultRows: { where: "read-budget", member: "maxRows" },
+  maxResultBytes: { where: "read-budget", member: "maxBytes" },
+  readAllowance: {
+    where: "host",
+    reason:
+      "The billed-read allowance is a ledger the host charges synchronously as each request is sent, which no frame carries, so it reaches only a legacy provider, through the bridge's read-only statement session, until the contract carries it in a form that crosses a frame.",
+  },
+} as const satisfies { readonly [K in keyof Required<ReadOnlyStatementBudget>]: ConsolePlacement };
 
 /**
  * Today's object tree surface: the five provider members the object routes, the VS Code backend's tree calls and the
@@ -842,6 +888,9 @@ function placements(): [string, string, Placement][] {
     BeginTransactionOptions: BEGIN_OPTIONS_CENSUS,
     BeginTransactionResult: BEGIN_RESULT_CENSUS,
     "queryInTransaction arguments": QUERY_IN_TRANSACTION_ARGUMENT_CENSUS,
+    "read-only statement": READ_ONLY_MEMBER_CENSUS,
+    "queryReadOnly arguments": QUERY_READ_ONLY_ARGUMENT_CENSUS,
+    ReadOnlyStatementBudget: READ_ONLY_BUDGET_CENSUS,
     tree: TREE_MEMBER_CENSUS,
     "listContainers arguments": LIST_CONTAINERS_ARGUMENT_CENSUS,
     "countObjects arguments": COUNT_OBJECTS_ARGUMENT_CENSUS,
@@ -942,6 +991,30 @@ describe("the call surface census", () => {
       "queryInTransaction arguments.params",
     ]);
     expect(transaction.filter(([, , placement]) => placement.where === "host")).toEqual([]);
+  });
+
+  test("every member of today's read-only statement surface has a place in the console calls or with the host", () => {
+    const readOnly = placements().filter(([census]) =>
+      ["read-only statement", "queryReadOnly arguments", "ReadOnlyStatementBudget"].includes(census),
+    );
+    // Studio's mode is the SDK's, both ways, so a mode added to either fails typecheck here.
+    const sameModes: Mutual<ReadOnlyStatementMode, (typeof READ_ONLY_MODES)[number]> = true;
+
+    expect(QUERY_READ_ONLY_ARGUMENT_COUNT).toBe(3);
+    expect(Object.keys(QUERY_READ_ONLY_ARGUMENT_CENSUS)).toHaveLength(QUERY_READ_ONLY_ARGUMENT_COUNT);
+    expect(readOnly.map(([census, key, placement]) => [`${census}.${key}`, placement.where])).toEqual([
+      ["read-only statement.queryReadOnly", "execute-request"],
+      ["queryReadOnly arguments.statement", "execute-request"],
+      ["queryReadOnly arguments.budget", "read-only-execute"],
+      ["queryReadOnly arguments.mode", "read-only-execute"],
+      ["ReadOnlyStatementBudget.statementTimeoutMs", "call-context"],
+      ["ReadOnlyStatementBudget.maxResultRows", "read-budget"],
+      ["ReadOnlyStatementBudget.maxResultBytes", "read-budget"],
+      ["ReadOnlyStatementBudget.readAllowance", "host"],
+    ]);
+    expect(READ_ONLY_BUDGET_CENSUS.readAllowance.reason).toMatch(/^[A-Z][^\n]*\.$/);
+    expect(sameModes).toBe(true);
+    expect<readonly string[]>([...READ_ONLY_MODES]).toEqual(["execute", "estimate-plan"]);
   });
 
   test("every member of today's object tree surface has a place in the objects calls", () => {

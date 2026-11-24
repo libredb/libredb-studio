@@ -4,6 +4,8 @@
  * facets, the contexts the host passes them, `defineProvider` and `checkProviderModule`, which make and check the
  * record a package's entry default-exports, `envReader`, the declared environment behind `ctx.env`, and the host's
  * checks of a call: `checkExecuteRequest`, which refuses a request field the session does not honour,
+ * `checkReadOnlyRequest`, which refuses a read-only execute to a session not opened for one and any other execute to
+ * one that is,
  * `checkConsoleFacet`, `checkObjectsFacet`, `checkMaintenanceFacet` and `checkMonitoringFacet`, which refuse a console,
  * object, maintenance or monitoring facet the session does not offer, `checkMaintenanceRunRequest` and
  * `checkMaintenancePreviewRequest`, which refuse a maintenance request the session's maintenance does not take,
@@ -68,6 +70,7 @@ export {
   checkMonitoringFacet,
   checkMonitoringPanelRequest,
   checkObjectsFacet,
+  checkReadOnlyRequest,
   checkRefinement,
   sessionCalls,
   sessionMaintenance,

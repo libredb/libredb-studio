@@ -1850,6 +1850,7 @@ Of an agent reading the check reads only which call serves it; a reading outside
 
 A package lists in `calls.console.execute.honours` the optional request fields, of `EXECUTE_REQUEST_FIELDS`, its execute honours.
 How the host uses that list is C-9, and how a provider does is C-8.
+A package that serves read-only statements lists `readOnly`, the read-only execute of C-78.
 
 - schema `/$defs/executeCall/properties/honours`
 - schema `/$defs/executeRequestField`
@@ -1880,6 +1881,8 @@ The run's answer and the preview are mutually assignable with Studio's maintenan
 A session's maintenance, narrowed by what its server accepts, is what Studio's `narrowMaintenance` answers for every committed engine declaration, every spec and every placement a server may accept, one operation at a time and all of an engine's at once, C-68.
 It covers today's monitoring, pool statistics and health surface: each panel read placed on `monitoring.panel` with its panel and each of its options on a member of that panel's request, the pool statistics the pool-stats route reads on `monitoring.poolStats`, the health read on `health`, and the dashboard's orchestration, its panel states and the options that choose which panels are read with the host, C-71 and C-72.
 The panel shapes, the pool statistics and the health answer are mutually assignable with Studio's own and have their keys, each answer form's member is the answer of the member that reads its panel, lists compared by their items, and the panel vocabulary is Studio's.
+It covers today's read-only statement surface: the provider's read-only statement path placed on console execute sent with `readOnly`, its statement on the request's statement, its budget's rows and bytes on the read-only execute's budget, its mode on the read-only execute's mode, its timeout on the call's deadline, and its billed-read allowance with the host, C-78.
+Studio's read-only statement mode is the SDK's `READ_ONLY_MODES`, both ways.
 
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every input a provider is built with has a place in the open context or a reason it stays with the host"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's console answer and request has a place in the console calls"
@@ -1891,6 +1894,7 @@ The panel shapes, the pool statistics and the health answer are mutually assigna
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "a session's maintenance is narrowMaintenance's answer for every shipped spec and every placement a server accepts"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's monitoring and health surface has a place in the monitoring calls, the health call or with the host"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "the monitoring and health answers are Studio's own shapes"
+- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's read-only statement surface has a place in the console calls or with the host"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "the context's shared shapes are Studio's own"
 
 ### C-8 (informative): A provider never ignores a request field it does not honour
@@ -1905,6 +1909,7 @@ The host holds every execute request to the session's calls with `checkExecuteRe
 A statement sent inside a transaction, with `transaction`, goes only to a session that offers `console.transaction`, and never with a `scope`: it runs on the transaction's own session, which no scope names.
 Such a statement is held to the same `honours` as any other, since it is the same execute.
 A present `params` key is sent whatever its length, and an offset is sent when it is not zero.
+A present `readOnly` key is held to `honours` like every other field, and the session's read-only policy holds it beside, C-78.
 A refusal names the field and a JSON Pointer into the request, never a value of it.
 
 - test `packages/provider-sdk/tests/calls/request.test.ts` "a request field the session does not honour is refused before the call"
@@ -3343,6 +3348,32 @@ The agent's drive passes no wait of its own: it has no signal of its own, C-76, 
 - test `tests/api/agent/runs.test.ts` "a run whose catalog open outlasts its engine's connect budget answers 504 studio-timeout-refusal not-sent"
 - test `tests/isolated/agent-runtime.test.ts` "the drive's acquisitions pass no wait of their own: the open's own deadline bounds them"
 
+### C-78 (normative): The read-only execute
+
+A read-only execute is console execute sent with `readOnly`: the statement runs on the session's read-only boundary, and `readOnly` carries its budget, the most rows and the most UTF-8 JSON bytes of those rows it may answer, and its mode, of `READ_ONLY_MODES`.
+A request without a mode executes the statement, and `estimate-plan` asks for the engine's estimated plan, which the provider answers or refuses and never runs the statement instead.
+Its time is the call's deadline, C-26, so `readOnly` carries no timeout of its own.
+A provider answers within the budget's rows and bytes or refuses, and never truncates; an estimating plan's rows are the optimizer's operators, so its answer is held to the bytes alone.
+`readOnly` is a request field, so a package lists it in `honours`, C-5, and the host sends it only to a session that honours it, C-9.
+A read-only statement session is a session whose open policy has both `readOnly` and `sendsStatements`.
+The host holds every execute to its session's read-only policy with `checkReadOnlyRequest` before the call: a read-only execute to a session that is not one is refused `request-read-only-not-opened`, and an execute without `readOnly` to one that is is refused `request-read-only-missing`, so the plain path is never the fallback on such a session.
+Both refusals name the pointer `/readOnly` and never a value of the request.
+The memory transport keeps the policy its session was opened under and refuses both before any frame, and its frame reads `readOnly` as a closed shape of a budget of two numbers and an optional mode of the vocabulary.
+`readOnly` is also the name of the open policy's flag: the request reuses the word because the request is the read-only execute.
+The billed-read allowance a run spends stays with the host: it is a ledger charged as each request is sent, which no frame carries, so a provider of an engine that bills every read is handed none through the contract and refuses every statement, as its own rule refuses a budget that carries none.
+
+- schema `/$defs/executeRequestField`
+- test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the console facets and execute's request fields are the schema's"
+- test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the read-only modes are execute and estimate-plan, frozen"
+- test `packages/provider-sdk/tests/calls/request.test.ts` "a request field the session does not honour is refused before the call"
+- test `packages/provider-sdk/tests/calls/request.test.ts` "a read-only execute goes only to a session opened under the read-only policy to be sent statements, and such a session takes no other execute"
+- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement that narrows the declared calls is admitted, and the session's calls are the narrowed ones"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a request field execute does not know, or one listed twice, is refused"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a read-only execute crosses to a session opened for read-only statements, and every other pairing is refused before any frame"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a read-only execute to a session whose module does not honour readOnly is refused by the field before any frame"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a read-only execute's budget and mode are read as a closed shape"
+- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's read-only statement surface has a place in the console calls or with the host"
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:
@@ -3438,3 +3469,4 @@ Against this contract's earlier text:
 - A run whose header predates the engine field, on an engine that does not offer a kind's panel, such as Apache Kafka or SQLite, has that reading refused as a kind its provider does not serve, C-76, where it called the provider's member.
 - An engine's agent reading is refused only where its package does not offer the call that serves it, C-4, where every reading was refused as having no call, so `engine-facet-without-call` left the definition rules; a reading whose monitoring panel its engine does not offer is refused, M-76.
 - Each engine's query dialect row, its tabs' editor language and that language's accent are a projection of the declarations, M-15 and M-77, where Studio kept a table of dialect rows, a table of tab type languages and an accent beside each language's code.
+- Console execute carries a read-only execute, `readOnly`, its rows, bytes and mode, sent only to a session opened under the read-only policy to be sent statements, which takes no other execute, C-78, where the contract's execute carried no read budget, no mode and no read-only session.
