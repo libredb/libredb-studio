@@ -941,6 +941,8 @@ describe("runEditorQuery on the host core", () => {
         endScopeCall: real.endScopeCall,
         transactionCall: real.transactionCall,
         treeCall: real.treeCall,
+        maintenanceRunCall: real.maintenanceRunCall,
+        maintenancePreviewCall: real.maintenancePreviewCall,
       },
       "test",
     );
@@ -989,6 +991,8 @@ describe("runEditorQuery on the host core", () => {
         endScopeCall: real.endScopeCall,
         transactionCall: real.transactionCall,
         treeCall: real.treeCall,
+        maintenanceRunCall: real.maintenanceRunCall,
+        maintenancePreviewCall: real.maintenancePreviewCall,
       },
       "test",
     );

@@ -3,7 +3,8 @@
  * transaction surface, of today's object tree surface and of today's maintenance surface, has a place in the provider
  * contract's calls, or a stated reason it stays with the host (docs/providers/CONTRACT.md, clause C-7). So a provider
  * moves onto the contract without a behaviour change. A session's maintenance, narrowed by what its server accepts, is
- * what Studio's `narrowMaintenance` answers for every shipped spec (clause C-68).
+ * what Studio's `narrowMaintenance` answers for every shipped spec (clause C-68), and so is the maintenance the legacy
+ * bridge answers for a connected provider (clause C-50).
  *
  * A provider is built from the connection's fields and from the marks core sets beside them under symbol keys: the
  * tunnel's far end and route, the literal seed-file mark (`ProviderConnection` in src/lib/db/provider-connection.ts),
@@ -103,6 +104,7 @@ import type {
   TrustMaterial,
 } from "@/lib/db/types";
 import { narrowMaintenance } from "@/lib/db/types";
+import { bridgedMaintenance } from "@/lib/provider-host/legacy-bridge";
 import type { VectorColumn } from "@/lib/db/vector/types";
 import type {
   ColumnSchema,
@@ -947,6 +949,56 @@ describe("the call surface census", () => {
       if (session.maintenance.length < declared.maintenance.length) vacuity.withdrawsOperation += 1;
       const placementWithdrawn = session.maintenanceSpecs.some((spec) => {
         const before = declared.maintenanceSpecs.find((item) => item.operation === spec.operation);
+        return before !== undefined && (before.perEntity !== spec.perEntity || before.global !== spec.global);
+      });
+      if (placementWithdrawn) vacuity.withdrawsPlacement += 1;
+      if (items.some((item) => item.operation === "kill")) vacuity.namesKill += 1;
+    };
+
+    for (const declaration of engineDeclarations()) {
+      for (const answer of PLACEMENT_ANSWERS) {
+        const placed = `${answer.perEntity ? "row" : "no row"} and ${answer.global ? "whole database" : "no whole database"}`;
+        for (const spec of declaration.facets.maintenanceSpecs) {
+          compare(declaration, [{ operation: spec.operation, ...answer }], `${spec.operation} ${placed}`);
+        }
+        compare(
+          declaration,
+          declaration.facets.maintenance.map((operation) => ({
+            operation,
+            perEntity: answer.perEntity,
+            global: answer.global,
+          })),
+          `every operation ${placed}`,
+        );
+      }
+    }
+
+    expect(differing).toEqual([]);
+    expect(vacuity.runs).toBeGreaterThan(200);
+    expect(vacuity.withdrawsOperation).toBeGreaterThan(0);
+    expect(vacuity.withdrawsPlacement).toBeGreaterThan(0);
+    expect(vacuity.namesKill).toBeGreaterThan(0);
+  });
+
+  test("a bridged session's maintenance is narrowMaintenance's answer for every shipped spec and every placement a connected server accepts", () => {
+    const differing: string[] = [];
+    const vacuity = { runs: 0, withdrawsOperation: 0, withdrawsPlacement: 0, namesKill: 0 };
+    const compare = (declaration: EngineDeclaration, items: readonly MaintenanceAccepted[], label: string): void => {
+      vacuity.runs += 1;
+      const declared = studioMaintenance(declaration.facets);
+      const measured = Object.fromEntries(
+        items.map((item) => [item.operation, { perEntity: item.perEntity, global: item.global }]),
+      );
+      const connected = narrowMaintenance(declared, measured);
+      const provider = {
+        getCapabilities: () => ({ supportsMaintenance: true, ...connected }),
+      } as unknown as DatabaseProvider;
+      const studio = declarationMaintenance(connected);
+      const bridged = bridgedMaintenance(provider, declared);
+      if (JSON.stringify(bridged) !== JSON.stringify(studio)) differing.push(`${declaration.id} ${label}`);
+      if (bridged.maintenance.length < declared.maintenanceOperations.length) vacuity.withdrawsOperation += 1;
+      const placementWithdrawn = bridged.maintenanceSpecs.some((spec) => {
+        const before = declaration.facets.maintenanceSpecs.find((item) => item.operation === spec.operation);
         return before !== undefined && (before.perEntity !== spec.perEntity || before.global !== spec.global);
       });
       if (placementWithdrawn) vacuity.withdrawsPlacement += 1;

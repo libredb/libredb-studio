@@ -212,6 +212,8 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   readProviderDeclarations: {
     "src/app/api/admin/fleet-health/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/agent/runs/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
+    "src/app/api/db/maintenance/preview/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
+    "src/app/api/db/maintenance/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/provider-meta/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/query/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/statement/analyze/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
@@ -226,8 +228,6 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/agent/runs/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/cancel/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/health/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
-    "src/app/api/db/maintenance/preview/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
-    "src/app/api/db/maintenance/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/monitoring/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/multi-query/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/query/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,

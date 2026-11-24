@@ -430,6 +430,8 @@ describe("instrumentation register()", () => {
       "cancelCall",
       "endScopeCall",
       "executeCall",
+      "maintenancePreviewCall",
+      "maintenanceRunCall",
       "transactionCall",
       "treeCall",
     ]);

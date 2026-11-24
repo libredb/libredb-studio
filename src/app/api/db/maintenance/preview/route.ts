@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getOrCreateProvider, type MaintenanceOperation } from "@/lib/db";
+import { type MaintenanceOperation, readProviderDeclarations } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
 import { type ProviderTextScrub, providerTextScrub, scrubMaintenancePreview } from "@/lib/db/operations/provider-text";
 import { maintenanceControl } from "@/lib/db/types";
@@ -7,6 +7,8 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
+import { editorExecutionContext } from "@/lib/api/execution-context";
+import { providerMaintenance } from "@/lib/api/provider-maintenance";
 import { assertMaintenanceAccepted, assertMaintenanceOffered } from "@/lib/db/engine-facets/maintenance";
 
 const ROUTE = "POST /api/db/maintenance/preview";
@@ -24,6 +26,12 @@ const ROUTE = "POST /api/db/maintenance/preview";
  * Neither route proves that the target exists, because neither calls the provider before its one method: existence is
  * the provider's, and `previewMaintenance` raises a `QueryError` naming what is missing. Nothing but that method is
  * called, and no audit row is written for a preview answered, because a preview changes nothing.
+ *
+ * The preview goes through the host core (docs/providers/CONTRACT.md, clause C-70): after those checks the route reads
+ * the provider's declarations and reads the preview through `providerMaintenance`, on the session's maintenance, until
+ * the statement timeout plus ten seconds and until the request leaves, answering 499 or 504 when either ends the wait
+ * first. Whether a preview is offered is the bridged session's offer. A raw error the provider raises answers 500
+ * `INTERNAL_ERROR`, unmapped: the one preview Studio ships answers Studio's own classes.
  */
 export async function POST(request: Request) {
   const guard = await guardRoute({ route: ROUTE, bucket: "query", request });
@@ -95,13 +103,25 @@ export async function POST(request: Request) {
 
     // A preview belongs to the per-row dialog, so a spec that offers no row has none, whatever it declares: the
     // maintenance route lets a spec with both halves false through, and this route does not follow it there.
-    if (!perEntityControl.offered || perEntityControl.preview !== true || provider.previewMaintenance === undefined) {
+    if (!perEntityControl.offered || perEntityControl.preview !== true) {
+      return NextResponse.json({ error: "This operation has no preview" }, { status: 400 });
+    }
+
+    // The provider's maintenance as declared before it connects, read as the maintenance route reads it.
+    const { capabilities: declared } = await readProviderDeclarations(
+      connection,
+      editorExecutionContext(guard.session, connection),
+    );
+    const maintenance = providerMaintenance(provider, declared, request.signal, ROUTE);
+
+    // A provider that declares a preview and holds no `previewMaintenance`: the bridged session does not offer one.
+    if (!maintenance.previewOffered) {
       return NextResponse.json({ error: "This operation has no preview" }, { status: 400 });
     }
 
     // The object's path, container levels then the object (spec 3.11): one container level is all this body names.
     const path = requestedContainer === undefined ? [target] : [requestedContainer, target];
-    const preview = await provider.previewMaintenance(type as MaintenanceOperation, path);
+    const preview = await maintenance.preview(type as MaintenanceOperation, path);
     return NextResponse.json({ preview: scrubMaintenancePreview(scrub, preview) });
   } catch (error) {
     return createErrorResponse(error, { route: "api/db/maintenance/preview", scrub });

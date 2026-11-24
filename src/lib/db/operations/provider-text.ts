@@ -23,6 +23,7 @@
  * an error's full record (`errorRecord`), whose string fields therefore never hold a form, and which keeps the
  * error's own kind, code and outcome when its text is withheld.
  */
+import type { MaintenanceRunAnswer } from "@libredb/provider-sdk/calls";
 import { CONNECTION_FORM } from "@/lib/db/connection-form";
 import { type ErrorRecord, errorCode, errorKind, errorOutcome } from "@/lib/db/error-record";
 import {
@@ -43,7 +44,6 @@ import type {
   KeyScanPage,
   KindCount,
   MaintenancePreview,
-  MaintenanceResult,
   MonitoringData,
   ObjectDetail,
   ObjectEditOutcome,
@@ -192,8 +192,11 @@ export function scrubMonitoringData(scrub: ProviderTextScrub, data: MonitoringDa
   return { ...data, errors: errors as MonitoringData["errors"] };
 }
 
-/** A maintenance answer with its `message` scrubbed; its verdict, time, `rows` and `fields` are kept as given. */
-export function scrubMaintenanceResult(scrub: ProviderTextScrub, result: MaintenanceResult): MaintenanceResult {
+/**
+ * A maintenance answer with its `message` scrubbed; its verdict, time, `rows` and `fields` are kept as given. It takes
+ * the run answer's readonly lists, so the answer the maintenance facade passes by reference reaches it as it is.
+ */
+export function scrubMaintenanceResult(scrub: ProviderTextScrub, result: MaintenanceRunAnswer): MaintenanceRunAnswer {
   return { ...result, message: scrubProviderText(scrub, result.message) };
 }
 

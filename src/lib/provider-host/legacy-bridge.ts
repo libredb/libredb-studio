@@ -12,9 +12,22 @@
  * with the request's scope and answers its outcome; `console.transaction` is offered exactly when the provider holds a
  * transaction session (`isTransactionProvider`). The bridge is the one caller of a provider's ender: the caller that
  * minted a run's scope ends it through the host core's endScope call (clause C-60). `objects.tree` is offered on every
- * session, since every legacy provider holds the five tree members. Neither maintenance facet is offered, and no
- * session answers a maintenance narrowing: the two maintenance routes still call the provider's maintenance members
- * themselves.
+ * session, since every legacy provider holds the five tree members. `maintenance.run` is offered on every session,
+ * since every legacy provider holds `runMaintenance`, and `maintenance.preview` exactly where the provider holds
+ * `previewMaintenance`.
+ *
+ * Its maintenance run calls `runMaintenance` with exactly three arguments, the request's operation, target and
+ * container, `undefined` for an absent one, and its preview calls `previewMaintenance` with the operation and a fresh
+ * copy of the frozen request's path, so a legacy member may write what it receives. Each answers the provider's answer
+ * by reference, never calls `forCatalog`, and passes a provider's error by reference.
+ *
+ * The session's maintenance is `bridgedMaintenance`'s answer, which the caller lays beside the session: the provider's
+ * maintenance as declared before it connects, in the engine declaration's form, narrowed through the SDK's own
+ * `sessionMaintenance` by a refinement the bridge answers from the connected provider's capabilities. The refinement
+ * names, for each declared operation with a spec, the placements both the declaration and the connected provider say
+ * true, both false when the connected provider no longer lists the operation, and only where that differs from the
+ * declaration, so it never names an operation the declaration does not list and never widens it
+ * (tests/unit/provider-sdk/call-surface-parity.test.ts holds it to `narrowMaintenance` for every shipped spec).
  *
  * Its tree call runs the provider's own member for the action with today's arguments: `listContainers` with one
  * argument, the parent or `undefined` at the top level, `countObjects`, `listObjects`, `describeObject`, and
@@ -60,13 +73,20 @@ import {
   type CancelRequest,
   type EndScopeAnswer,
   type EndScopeRequest,
+  type EngineMaintenance,
   type ExecuteAnswer,
   type ExecuteRequest,
+  type MaintenancePreview,
+  type MaintenancePreviewRequest,
+  type MaintenanceRunAnswer,
+  type MaintenanceRunRequest,
+  type MaintenanceAccepted,
   PAGE_MAX_BYTES,
   type PumpLimits,
   type ResultSource,
   type RowBatch,
   sessionCalls,
+  sessionMaintenance,
   type TransactionAnswer,
   type TransactionRequest,
   type TreeAnswer,
@@ -74,18 +94,24 @@ import {
   type Warning,
 } from "@libredb/provider-sdk/calls";
 import type { SessionState } from "@libredb/provider-sdk/errors";
+import type { MaintenanceSpec } from "@libredb/provider-sdk/manifest";
 import { probePastPage } from "@/lib/api/page-probe";
 import { type QueryCancelProvider, supportsQueryCancel } from "@/lib/db/query-cancel";
 import {
   type DatabaseProvider,
   endsOpenQueryTransactions,
   isTransactionProvider,
+  type MaintenanceDeclaration,
+  type MaintenanceOperation,
+  type MaintenanceOperationSpec,
   type PreparedQuery,
+  type ProviderCapabilities,
   type QueryPrepareOptions,
   type TransactionProvider,
 } from "@/lib/db/types";
 import { noteAppendedBound } from "@/lib/db/utils/query-limiter";
 import type { ConsoleSession } from "@/lib/provider-host/core/console";
+import type { MaintenanceSession } from "@/lib/provider-host/core/maintenance";
 import type { ObjectsSession } from "@/lib/provider-host/core/objects";
 import type { QueryResult, QueryWarning } from "@/lib/types";
 
@@ -105,9 +131,12 @@ export interface AnsweredRun {
   readonly result: QueryResult;
 }
 
-/** A bridged session, the run its execute fills, and the page limits read from that run. */
+/**
+ * A bridged session, the run its execute fills, and the page limits read from that run. The session's maintenance is
+ * not the bridge's to hold: the caller lays it beside the session.
+ */
 export interface BridgedConsole {
-  readonly session: ConsoleSession & ObjectsSession;
+  readonly session: ConsoleSession & ObjectsSession & Omit<MaintenanceSession, "maintenance">;
   readonly run: LegacyRun;
   /**
    * What the execute that answered left, for the facade to answer from.
@@ -271,14 +300,80 @@ async function legacyTree(provider: DatabaseProvider, request: TreeRequest): Pro
   }
 }
 
+/** One spec of Studio's in the engine declaration's form, every member Studio leaves out written as null or false. */
+function declaredSpec(operation: MaintenanceOperation, spec: MaintenanceOperationSpec): MaintenanceSpec {
+  return {
+    operation,
+    label: spec.label,
+    perEntity: spec.perEntity,
+    global: spec.global,
+    title: spec.title ?? null,
+    description: spec.description ?? null,
+    confirmation: spec.confirmation ?? null,
+    preview: spec.preview === true,
+    kinds: spec.kinds === undefined ? null : [...spec.kinds],
+  };
+}
+
+/** Studio's maintenance declaration in the engine declaration's form: the operations in order, one spec for each that has one. */
+function declarationForm(declared: MaintenanceDeclaration): EngineMaintenance {
+  const specs = declared.maintenanceOperationSpecs ?? {};
+  return {
+    maintenance: [...declared.maintenanceOperations],
+    maintenanceSpecs: declared.maintenanceOperations.flatMap((operation) => {
+      const spec = specs[operation];
+      return spec === undefined ? [] : [declaredSpec(operation, spec)];
+    }),
+  };
+}
+
 /**
- * `provider` served as one session of console execute, cancel and transaction and of the object tree, its execute run
- * with a copy of `options`, the caller's own page options.
+ * The placements `connected`, the connected provider's capabilities, still accepts for each operation `declared` lists
+ * with a spec, where they differ from the declaration: both placements the two say true, and both false for an
+ * operation the connected provider no longer lists, its list read as empty when it does not support maintenance.
+ */
+function acceptedPlacements(declared: EngineMaintenance, connected: ProviderCapabilities): MaintenanceAccepted[] {
+  const listed: readonly MaintenanceOperation[] =
+    connected.supportsMaintenance === true ? connected.maintenanceOperations : [];
+  const items: MaintenanceAccepted[] = [];
+  for (const spec of declared.maintenanceSpecs) {
+    const stillListed = listed.includes(spec.operation);
+    const now = connected.maintenanceOperationSpecs?.[spec.operation];
+    const perEntity = stillListed && spec.perEntity && (now?.perEntity ?? true);
+    const global = stillListed && spec.global && (now?.global ?? true);
+    if (stillListed && perEntity === spec.perEntity && global === spec.global) continue;
+    items.push({ operation: spec.operation, perEntity, global });
+  }
+  return items;
+}
+
+/**
+ * The maintenance of a session the bridge serves for `provider`: `declared`, the provider's maintenance before it
+ * connects, in the engine declaration's form, narrowed through `sessionMaintenance` by the placements the connected
+ * provider's capabilities still accept, frozen at every depth.
+ */
+export function bridgedMaintenance(provider: DatabaseProvider, declared: MaintenanceDeclaration): EngineMaintenance {
+  const form = declarationForm(declared);
+  return sessionMaintenance(form, { maintenance: acceptedPlacements(form, provider.getCapabilities()) });
+}
+
+/**
+ * The provider's own `runMaintenance` with the request's operation, target and container, `undefined` for an absent
+ * one, answering its result by reference.
+ */
+function legacyRun(provider: DatabaseProvider, request: MaintenanceRunRequest): Promise<MaintenanceRunAnswer> {
+  return provider.runMaintenance(request.operation, request.target, request.container);
+}
+
+/**
+ * `provider` served as one session of console execute, cancel and transaction, of the object tree and of maintenance,
+ * its execute run with a copy of `options`, the caller's own page options.
  */
 export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepareOptions): BridgedConsole {
   const canceller: QueryCancelProvider | undefined = supportsQueryCancel(provider) ? provider : undefined;
   const transactional: TransactionProvider | undefined = isTransactionProvider(provider) ? provider : undefined;
   const ender = endsOpenQueryTransactions(provider) ? provider : undefined;
+  const previewer = provider.previewMaintenance === undefined ? undefined : provider.previewMaintenance.bind(provider);
   const run: LegacyRun = { cancelSent: false };
 
   async function execute(request: ExecuteRequest): Promise<ExecuteAnswer> {
@@ -326,7 +421,7 @@ export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepare
         transaction: transactional === undefined ? "not-offered" : "offered",
       },
       objects: { tree: "offered" },
-      maintenance: { run: "not-offered", preview: "not-offered" },
+      maintenance: { run: "offered", preview: previewer === undefined ? "not-offered" : "offered" },
     },
     undefined,
   );
@@ -350,6 +445,13 @@ export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepare
       calls,
       execute,
       tree: (request: TreeRequest) => legacyTree(provider, request),
+      run: (request: MaintenanceRunRequest) => legacyRun(provider, request),
+      ...(previewer === undefined
+        ? {}
+        : {
+            preview: (request: MaintenancePreviewRequest): Promise<MaintenancePreview> =>
+              previewer(request.operation, [...request.path]),
+          }),
       ...(canceller === undefined
         ? {}
         : {

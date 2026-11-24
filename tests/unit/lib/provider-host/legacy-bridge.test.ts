@@ -35,14 +35,17 @@ import {
   type BeginTransactionResult,
   type DatabaseProvider,
   isTransactionProvider,
+  type MaintenanceDeclaration,
+  narrowMaintenance,
   type PreparedQuery,
+  type ProviderCapabilities,
   type QueryPrepareOptions,
 } from "@/lib/db/types";
 import type { ConsoleSession } from "@/lib/provider-host/core/console";
 import { runEditorQuery } from "@/lib/api/editor-query";
 import { providerTextScrub } from "@/lib/db/operations/provider-text";
 import { appendedBoundNote } from "@/lib/db/utils/query-limiter";
-import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
+import { bridgedConsole, bridgedMaintenance } from "@/lib/provider-host/legacy-bridge";
 import type { QueryResult } from "@/lib/types";
 import { createMockProvider } from "../../../helpers/mock-provider";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
@@ -155,7 +158,7 @@ describe("bridgedConsole", () => {
         transaction: "not-offered",
       },
       objects: { tree: "offered" },
-      maintenance: { run: "not-offered", preview: "not-offered" },
+      maintenance: { run: "offered", preview: "not-offered" },
     });
     expect(plain.session.calls.console.cancel).toBe("not-offered");
     expect(typeof cancelling.session.cancel).toBe("function");
@@ -171,7 +174,7 @@ describe("bridgedConsole", () => {
         transaction: "not-offered",
       },
       objects: { tree: "offered" },
-      maintenance: { run: "not-offered", preview: "not-offered" },
+      maintenance: { run: "offered", preview: "not-offered" },
     });
     expect(typeof ending.session.endScope).toBe("function");
     expect(Object.isFrozen(cancelling.session.calls)).toBe(true);
@@ -194,27 +197,117 @@ describe("bridgedConsole", () => {
     }
   });
 
-  test("a bridged session offers no maintenance facet, since the maintenance routes still call the provider's maintenance members themselves", () => {
+  test("a bridged session offers maintenance.run for every provider and maintenance.preview exactly where the provider previews", () => {
     const milvusLike = Object.assign(fake(resultOf([])), {
-      runMaintenance: mock(async () => ({ success: true, executionTime: 0, message: "" })),
       previewMaintenance: mock(async () => ({ summary: "", facts: [] })),
       engineUser: () => "root",
     });
-    const sessions = [
-      bridgedConsole(fake(resultOf([])), {}),
-      bridgedConsole(milvusLike, {}),
-      bridgedConsole(transactionalFake().provider, {}),
+    const cases = [
+      { previews: false, bridged: bridgedConsole(fake(resultOf([])), {}) },
+      { previews: true, bridged: bridgedConsole(milvusLike, {}) },
+      { previews: false, bridged: bridgedConsole(transactionalFake().provider, {}) },
+      { previews: false, bridged: bridgedConsole(fake(resultOf([]), { cancelQuery: mock(async () => true) }), {}) },
     ];
 
-    for (const { session } of sessions) {
-      expect(session.calls.maintenance).toEqual({ run: "not-offered", preview: "not-offered" });
+    for (const { previews, bridged } of cases) {
+      const { session } = bridged;
+      expect(session.calls.maintenance).toEqual({ run: "offered", preview: previews ? "offered" : "not-offered" });
       expect(Object.isFrozen(session.calls.maintenance)).toBe(true);
-      for (const facet of ["run", "preview"] as const) {
-        expect(checkMaintenanceFacet(session.calls, facet)).toEqual([
-          { rule: "facet-not-offered", pointer: `/maintenance/${facet}`, name: `maintenance.${facet}` },
-        ]);
-      }
+      expect(checkMaintenanceFacet(session.calls, "run")).toEqual([]);
+      expect(checkMaintenanceFacet(session.calls, "preview")).toEqual(
+        previews ? [] : [{ rule: "facet-not-offered", pointer: "/maintenance/preview", name: "maintenance.preview" }],
+      );
+      expect(typeof session.run).toBe("function");
+      expect(session.preview === undefined).toBe(!previews);
     }
+  });
+
+  test("a bridged maintenance run calls runMaintenance with the operation, the target and the container, undefined where absent, and answers its result by reference", async () => {
+    const results = [
+      { success: true, executionTime: 2, message: marker() },
+      { success: true, executionTime: 1, message: marker(), rows: [{ key: marker() }], fields: ["key"] },
+      { success: false, executionTime: 0, message: marker() },
+    ];
+    const answers = [...results];
+    const forCatalog = mock(async () => fake(resultOf([])));
+    const provider = Object.assign(fake(resultOf([])), {
+      runMaintenance: mock(async () => answers.shift()),
+      forCatalog,
+    });
+    const { session } = bridgedConsole(provider, {});
+    const run = session.run as NonNullable<typeof session.run>;
+
+    const got = [];
+    for (const request of [
+      { operation: "vacuum", target: "users", container: "app" },
+      { operation: "vacuum" },
+      { operation: "kill", target: "4711" },
+    ] as const) {
+      // oxlint-disable-next-line no-await-in-loop -- one run at a time, so each answer is its own run's.
+      got.push(await run(freezeData(request), contextOf()));
+    }
+
+    expect(callsOf(provider.runMaintenance)).toEqual([
+      ["vacuum", "users", "app"],
+      ["vacuum", undefined, undefined],
+      ["kill", "4711", undefined],
+    ]);
+    for (const call of callsOf(provider.runMaintenance)) expect(call).toHaveLength(3);
+    for (const [index, result] of results.entries()) expect(got[index]).toBe(result);
+    expect(forCatalog).not.toHaveBeenCalled();
+    expect(provider.query).not.toHaveBeenCalled();
+  });
+
+  test("a bridged maintenance preview calls previewMaintenance with a copy of the path and answers its preview by reference", async () => {
+    const preview = { summary: marker(), facts: [{ label: marker(), value: marker() }] };
+    const received: string[][] = [];
+    const forCatalog = mock(async () => fake(resultOf([])));
+    const provider = Object.assign(fake(resultOf([])), {
+      previewMaintenance: mock(async (_operation: string, path: string[]) => {
+        received.push(path);
+        path.push(marker());
+        return preview;
+      }),
+      forCatalog,
+    });
+    const { session } = bridgedConsole(provider, {});
+    const previewCall = session.preview as NonNullable<typeof session.preview>;
+    const request = freezeData({ operation: "release" as const, path: ["app", "orders"] });
+
+    const got = await previewCall(request, contextOf());
+
+    expect(got).toBe(preview);
+    expect(callsOf(provider.previewMaintenance)).toHaveLength(1);
+    expect(callsOf(provider.previewMaintenance)[0]?.[0]).toBe("release");
+    expect(received[0]).not.toBe(request.path);
+    expect(request.path).toEqual(["app", "orders"]);
+    expect(callsOf(provider.previewMaintenance)[0]).toHaveLength(2);
+    expect(forCatalog).not.toHaveBeenCalled();
+    expect(provider.runMaintenance).not.toHaveBeenCalled();
+  });
+
+  test("a bridged maintenance call whose member throws passes the error by reference", async () => {
+    const ranThrown = new Error(marker());
+    const previewThrown = new Error(marker());
+    const provider = Object.assign(fake(resultOf([])), {
+      runMaintenance: mock(async () => {
+        throw ranThrown;
+      }),
+      previewMaintenance: mock(async () => {
+        throw previewThrown;
+      }),
+    });
+    const { session } = bridgedConsole(provider, {});
+    const run = session.run as NonNullable<typeof session.run>;
+    const previewCall = session.preview as NonNullable<typeof session.preview>;
+
+    const ran = await failure(() => run(freezeData({ operation: "analyze" as const }), contextOf()));
+    const previewed = await failure(() =>
+      previewCall(freezeData({ operation: "load" as const, path: ["c"] }), contextOf()),
+    );
+
+    expect(ran).toBe(ranThrown);
+    expect(previewed).toBe(previewThrown);
   });
 
   test("a bridged tree call runs the provider's own member for each action with today's arguments, and answers its answer by reference", async () => {
@@ -775,6 +868,133 @@ describe("bridgedConsole", () => {
     expect(known).toEqual({ cancelled: true });
     expect(unknown).toEqual({ cancelled: false });
     expect(callsOf(cancelQuery)[0]).toEqual(["known"]);
+  });
+});
+
+/** A PostgreSQL-shaped declaration in Studio's form: vacuum, analyze and reindex on a row and whole, kill on neither. */
+const POSTGRES_DECLARED: Required<MaintenanceDeclaration> = {
+  maintenanceOperations: ["vacuum", "analyze", "reindex", "kill"],
+  maintenanceOperationSpecs: {
+    vacuum: { label: "Vacuum", perEntity: true, global: true, description: "Reclaims space." },
+    analyze: { label: "Analyze", perEntity: true, global: true },
+    reindex: { label: "Reindex", perEntity: true, global: true, confirmation: "typed-target", kinds: ["table"] },
+    kill: { label: "Terminate", perEntity: false, global: false },
+  },
+};
+
+/** A provider whose connected capabilities hold `maintenance`, with `supportsMaintenance` as given. */
+function connectedWith(maintenance: MaintenanceDeclaration, supportsMaintenance = true): DatabaseProvider {
+  const provider = fake(resultOf([]));
+  const capabilities = { ...provider.getCapabilities(), ...maintenance, supportsMaintenance } as ProviderCapabilities;
+  return Object.assign(provider, { getCapabilities: () => capabilities });
+}
+
+/** Whether `value` and every object it holds are frozen. */
+function deepFrozen(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return true;
+  return Object.isFrozen(value) && Object.values(value).every((member) => deepFrozen(member));
+}
+
+/** Each spec of the PostgreSQL-shaped declaration in the declaration's form, as `buildMaintenanceSpecs` writes it. */
+const POSTGRES_SPECS = {
+  vacuum: {
+    operation: "vacuum",
+    label: "Vacuum",
+    perEntity: true,
+    global: true,
+    title: null,
+    description: "Reclaims space.",
+    confirmation: null,
+    preview: false,
+    kinds: null,
+  },
+  analyze: {
+    operation: "analyze",
+    label: "Analyze",
+    perEntity: true,
+    global: true,
+    title: null,
+    description: null,
+    confirmation: null,
+    preview: false,
+    kinds: null,
+  },
+  reindex: {
+    operation: "reindex",
+    label: "Reindex",
+    perEntity: true,
+    global: true,
+    title: null,
+    description: null,
+    confirmation: "typed-target",
+    preview: false,
+    kinds: ["table"],
+  },
+  kill: {
+    operation: "kill",
+    label: "Terminate",
+    perEntity: false,
+    global: false,
+    title: null,
+    description: null,
+    confirmation: null,
+    preview: false,
+    kinds: null,
+  },
+} as const;
+
+describe("bridgedMaintenance", () => {
+  test("a bridged session's maintenance is the provider's declaration, narrowed through sessionMaintenance by what the connected provider still accepts", () => {
+    const unchanged = bridgedMaintenance(connectedWith(POSTGRES_DECLARED), POSTGRES_DECLARED);
+    const cockroachLike = narrowMaintenance(POSTGRES_DECLARED, {
+      vacuum: { perEntity: false, global: true },
+      reindex: { perEntity: false, global: false },
+    });
+    const narrowed = bridgedMaintenance(connectedWith(cockroachLike), POSTGRES_DECLARED);
+    const killWithdrawn = bridgedMaintenance(
+      connectedWith({ ...POSTGRES_DECLARED, maintenanceOperations: ["vacuum", "analyze", "reindex"] }),
+      POSTGRES_DECLARED,
+    );
+    const notSupported = bridgedMaintenance(connectedWith(POSTGRES_DECLARED, false), POSTGRES_DECLARED);
+
+    expect(unchanged).toEqual({
+      maintenance: ["vacuum", "analyze", "reindex", "kill"],
+      maintenanceSpecs: [POSTGRES_SPECS.vacuum, POSTGRES_SPECS.analyze, POSTGRES_SPECS.reindex, POSTGRES_SPECS.kill],
+    });
+    expect(deepFrozen(unchanged)).toBe(true);
+    expect(narrowed).toEqual({
+      maintenance: ["vacuum", "analyze", "kill"],
+      maintenanceSpecs: [{ ...POSTGRES_SPECS.vacuum, perEntity: false }, POSTGRES_SPECS.analyze, POSTGRES_SPECS.kill],
+    });
+    expect(deepFrozen(narrowed)).toBe(true);
+    expect(killWithdrawn.maintenance).toEqual(["vacuum", "analyze", "reindex"]);
+    expect(notSupported).toEqual({ maintenance: [], maintenanceSpecs: [] });
+    expect(POSTGRES_DECLARED.maintenanceOperations).toEqual(["vacuum", "analyze", "reindex", "kill"]);
+  });
+
+  test("a bridged session's maintenance never offers more than the declaration", () => {
+    const declared: Required<MaintenanceDeclaration> = {
+      maintenanceOperations: ["vacuum", "kill"],
+      maintenanceOperationSpecs: {
+        vacuum: { label: "Vacuum", perEntity: false, global: true },
+        kill: { label: "Terminate", perEntity: false, global: false },
+      },
+    };
+    const wider = connectedWith({
+      maintenanceOperations: ["vacuum", "kill", "optimize"],
+      maintenanceOperationSpecs: {
+        vacuum: { label: "Vacuum", perEntity: true, global: true },
+        kill: { label: "Terminate", perEntity: true, global: true },
+        optimize: { label: "Optimize", perEntity: true, global: true },
+      },
+    });
+
+    const maintenance = bridgedMaintenance(wider, declared);
+
+    expect(maintenance).toEqual({
+      maintenance: ["vacuum", "kill"],
+      maintenanceSpecs: [{ ...POSTGRES_SPECS.vacuum, description: null, perEntity: false }, POSTGRES_SPECS.kill],
+    });
   });
 });
 

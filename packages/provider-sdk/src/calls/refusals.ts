@@ -1,6 +1,6 @@
 /**
- * What the host refuses of a call or of its answer (docs/providers/CONTRACT.md, clauses C-9, C-10, C-15, C-17, C-27
- * and C-57).
+ * What the host refuses of a call or of its answer (docs/providers/CONTRACT.md, clauses C-9, C-10, C-15, C-17, C-27,
+ * C-57 and C-67).
  *
  * One vocabulary for every such refusal, each naming its rule and a JSON Pointer rooted at the thing it names, stated
  * beside each rule. No refusal and no sentence carries a value of a request, a refinement or a row: a sentence names
@@ -18,6 +18,14 @@ export const CALL_REFUSAL_RULES = Object.freeze([
   "request-transaction-not-offered",
   /** A `scope` on a statement sent inside a transaction, which runs on the transaction's session; into the request. */
   "request-scope-in-transaction",
+  /** A maintenance operation the session's maintenance does not list; the pointer is into the request. */
+  "request-operation-not-offered",
+  /** A maintenance request field that names something sent empty; the pointer is into the request, `name` the field. */
+  "request-field-empty",
+  /** A maintenance run on a placement its operation's spec in the session's maintenance does not offer; into the request. */
+  "request-placement-not-offered",
+  /** A maintenance preview of an operation whose spec declares no preview on a row; the pointer is into the request. */
+  "request-preview-not-offered",
   /** A facet the session's calls do not offer; the pointer is into the calls, `name` the facet's call name. */
   "facet-not-offered",
   /** A key a refinement cannot have; the pointer is into the refinement, `name` the key. */
@@ -59,7 +67,7 @@ export interface CallRefusal {
   /** A JSON Pointer into the thing the rule names; the empty string is that thing itself. */
   readonly pointer: string;
   /**
-   * The request field, for a field not honoured, the facet's call name, for a facet not offered, or the key, for a key
+   * The request field, for a field not honoured or sent empty, the facet's call name, for a facet not offered, or the key, for a key
    * a refinement or a transaction answer cannot have.
    */
   readonly name?: string;
@@ -104,6 +112,14 @@ export function callRefusalSentence(refusal: CallRefusal): string {
       return `The request is sent inside a transaction at ${at}, and the session does not offer console.transaction, so the call was not made.`;
     case "request-scope-in-transaction":
       return `The request carries a scope at ${at} on a statement sent inside a transaction, which runs on the transaction's own session, so the call was not made.`;
+    case "request-operation-not-offered":
+      return `The request names at ${at} an operation the session's maintenance does not list, so the call was not made.`;
+    case "request-field-empty":
+      return `The request carries the field ${name} at ${at} empty, so it names nothing and the call was not made.`;
+    case "request-placement-not-offered":
+      return `The request asks at ${at} for a placement the operation's spec in the session's maintenance does not offer, so the call was not made.`;
+    case "request-preview-not-offered":
+      return `The request at ${at} names an operation whose spec in the session's maintenance declares no preview on a row, so the call was not made.`;
     case "facet-not-offered":
       return `The session does not offer the facet ${name} at ${at}, so the call was not made.`;
     case "refinement-key-unknown":

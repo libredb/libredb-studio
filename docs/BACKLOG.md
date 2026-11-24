@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D711, U17 · 375
+- [Drivers and connections](#drivers-and-connections) — D1-D730, U17 · 376
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -4974,6 +4974,14 @@ Measured on 2026-11-24 against `postgres:18-alpine` with Studio's default pool o
 So a kill cannot end a statement of a connection whose editor pool its own statements hold, and with a statement longer than the acquire timeout, 60 seconds by default, it answers a pool timeout instead.
 
 **Done when:** a kill runs on a connection apart from the editor's pool, or the route refuses it by name when none is free, and a test that holds every editor connection shows a kill ends its target and leaves its own connection open.
+
+### D730. A maintenance run Studio stopped waiting for goes on in the engine, and no cancel reaches it
+
+`POST /api/db/maintenance` waits for a run until the connection's statement timeout plus 10 seconds and until its request leaves (`providerMaintenance` in `src/lib/api/provider-maintenance.ts`), and answers 504 or 499 with outcome unknown when either ends the wait first.
+The engine is not told: no provider's `runMaintenance` takes a run id or a signal, so an OPTIMIZE on MySQL, a statistics gather on Oracle or a compact on MongoDB, none of which the provider bounds by the statement timeout, runs on to its end, and the audit row records an unknown outcome.
+On PostgreSQL and SQL Server the engine's own statement timeout ends the run first.
+
+**Done when:** a run Studio stops waiting for is cancelled in the engine wherever the engine has a cancel, and a test that stops a pending run shows the cancel sent and the audit row naming whether it reached the engine.
 
 ## Value interpolation
 

@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { afterAll, beforeAll, describe, test, expect, mock, beforeEach, spyOn } from "bun:test";
 import { createFakeEtcdClient, type FakeEtcdClient } from "../../helpers/etcd-fake-client";
 import { KEY_SPACE_HEADER } from "../../helpers/etcd-key-space";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
@@ -29,10 +29,30 @@ import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import { TIMEOUT_SENTENCE } from "@/lib/api/error-body";
 import { errorKind } from "@/lib/db/error-record";
+import { logger } from "@/lib/logger";
+import { HOST_DEFECT_PREFIX } from "@/lib/provider-host/access";
+import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
+import type { MaintenanceRunRecord, MaintenanceSession } from "@/lib/provider-host/core/maintenance";
+import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The route runs and previews through the process's host core (src/lib/provider-host/instance.ts), so this file
+// composes its own.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 // ─── Create mock objects ────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
 const mockGetOrCreateProvider = mock(async () => mockProvider as never);
+
+/**
+ * The provider the factory stand-in last built, whose capabilities the declarations read answers: a route's connected
+ * checks and the session's maintenance then agree, as they do for every shipped provider.
+ */
+let lastBuilt: { getCapabilities(): unknown } = mockProvider;
+const mockReadProviderDeclarations = mock(async (...args: unknown[]) => {
+  void args;
+  return { capabilities: lastBuilt.getCapabilities(), labels: {}, supportsQueryCancel: false };
+});
 
 // ─── Mock getSession for auth ───────────────────────────────────────────────
 const mockGetSession = mock(
@@ -96,7 +116,14 @@ mock.module("@/lib/audit", () => ({
 }));
 
 mock.module("@/lib/db", () => ({
-  getOrCreateProvider: mockGetOrCreateProvider,
+  getOrCreateProvider: async (...args: unknown[]) => {
+    const built = await (mockGetOrCreateProvider as (...given: unknown[]) => Promise<{ getCapabilities(): unknown }>)(
+      ...args,
+    );
+    lastBuilt = built;
+    return built;
+  },
+  readProviderDeclarations: mockReadProviderDeclarations,
   createDatabaseProvider: mock(async () => mockProvider),
   removeProvider: mock(async () => {}),
   clearProviderCache: mock(async () => {}),
@@ -1463,7 +1490,7 @@ describe("what the maintenance route answers today, which the host core keeps", 
     });
   });
 
-  test("the provider is asked once with the operation, the target as it arrived and the container, and the answer is its result", async () => {
+  test("the provider is asked once with the operation, the target the request names, none for an empty one, and the container, and the answer is its result", async () => {
     const result = {
       success: true,
       executionTime: 7,
@@ -1473,7 +1500,7 @@ describe("what the maintenance route answers today, which the host core keeps", 
     };
     const calls: [Record<string, unknown>, unknown[]][] = [
       [{ type: "vacuum", target: "users", container: "app" }, ["vacuum", "users", "app"]],
-      [{ type: "vacuum", target: "" }, ["vacuum", "", undefined]],
+      [{ type: "vacuum", target: "" }, ["vacuum", undefined, undefined]],
       [{ type: "kill", target: "4711" }, ["kill", "4711", undefined]],
     ];
 
@@ -1490,5 +1517,334 @@ describe("what the maintenance route answers today, which the host core keeps", 
       expect([body, runMaintenance.mock.calls]).toEqual([body, [args]]);
       expect([body, answer]).toEqual([body, result]);
     }
+  });
+});
+
+describe("the maintenance route on the host core", () => {
+  const runMaintenance = mockProvider.runMaintenance as ReturnType<typeof mock>;
+
+  /** A capability set with vacuum on a row and whole, and kill on neither placement. */
+  const KILLING = () => ({
+    queryLanguage: "sql",
+    supportsExplain: true,
+    supportsExternalQueryLimiting: true,
+    supportsMaintenance: true,
+    maintenanceOperations: ["vacuum", "analyze", "kill"],
+    maintenanceOperationSpecs: {
+      vacuum: { label: "Vacuum", perEntity: true, global: true },
+      analyze: { label: "Analyze", perEntity: true, global: false },
+      kill: { label: "Terminate", perEntity: false, global: false },
+    },
+    supportsConnectionString: true,
+    defaultPort: 5432,
+    schemaRefreshPattern: "(?:CREATE|ALTER|DROP|TRUNCATE)\\s",
+  });
+
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetSession.mockImplementation(
+      async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+    );
+    mockGetOrCreateProvider.mockReset();
+    mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
+    mockReadProviderDeclarations.mockClear();
+    mockAuditPush.mockClear();
+    mockRecordQueryEvent.mockClear();
+    mockAdmitQueryExecution.mockReset();
+    runMaintenance.mockReset();
+    runMaintenance.mockImplementation(async () => ({ success: true, executionTime: 1, message: "OK" }));
+    (mockProvider.getCapabilities as ReturnType<typeof mock>).mockImplementation(KILLING);
+  });
+
+  /** A maintenance request whose signal is `signal`, as a browser that may leave sends it. */
+  function post(body: Record<string, unknown>, signal?: AbortSignal): Promise<Response> {
+    return POST(
+      new Request("http://localhost:3000/api/db/maintenance", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ connection: validConnection, ...body }),
+        ...(signal === undefined ? {} : { signal }),
+      }) as never,
+    );
+  }
+
+  /** Runs `body` with a core `make` builds around the real one installed, then puts the real one back. */
+  async function withCore<T>(make: (real: HostCore) => HostCore, body: () => Promise<T>): Promise<T> {
+    const real = hostCore();
+    forgetHostCore();
+    installHostCore(make(real), "test");
+    try {
+      return await body();
+    } finally {
+      forgetHostCore();
+      installHostCore(real, "test");
+    }
+  }
+
+  /** The audit rows the route wrote. */
+  const auditRows = () => mockAuditPush.mock.calls.map((call) => call[0] as Record<string, unknown>);
+
+  test("the route reads the provider's declarations once, after its own checks, and none for a request it refuses", async () => {
+    mockGetSession.mockImplementationOnce(async () => ({ role: "user", username: "user" }));
+    const refused = [
+      await post({ type: "vacuum" }),
+      await POST(
+        new Request("http://localhost:3000/api/db/maintenance", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "[]",
+        }) as never,
+      ),
+      await post({ type: "optimize" }),
+      await post({ type: "reindex" }),
+      await post({ type: "kill" }),
+      await post({ type: "analyze" }),
+    ];
+
+    expect(refused.map((response) => response.status)).toEqual([403, 400, 400, 400, 200, 400]);
+    // Only the kill, which passes every check of the route, read the declarations.
+    expect(mockReadProviderDeclarations).toHaveBeenCalledTimes(1);
+    mockReadProviderDeclarations.mockClear();
+    mockGetOrCreateProvider.mockClear();
+
+    const response = await post({ type: "vacuum", target: "users", container: "app" });
+
+    expect(response.status).toBe(200);
+    expect(mockReadProviderDeclarations).toHaveBeenCalledTimes(1);
+    const [connection, execution] = mockReadProviderDeclarations.mock.calls[0] ?? [];
+    expect(connection).toEqual(validConnection);
+    expect(execution).toEqual((mockGetOrCreateProvider.mock.calls[0] as unknown[] | undefined)?.[2]);
+    expect(execution).toBeDefined();
+  });
+
+  test("a run whose request leaves while the provider runs answers 499 at once, outcome unknown, and is audited as an unknown outcome", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    const pending = Promise.withResolvers<never>();
+    const reached = Promise.withResolvers<void>();
+    runMaintenance.mockImplementation(() => {
+      reached.resolve();
+      return pending.promise;
+    });
+    const caller = new AbortController();
+    try {
+      const answering = post({ type: "vacuum", target: "users", container: "app" }, caller.signal);
+      await reached.promise;
+      caller.abort(new DOMException("The request went away.", "AbortError"));
+      const response = await answering;
+      const body = await parseResponseJSON<Record<string, unknown>>(response);
+
+      expect(response.status).toBe(499);
+      expect(body).toMatchObject({ code: "QUERY_CANCELLED", outcome: "unknown" });
+      expect(auditRows()).toEqual([
+        expect.objectContaining({
+          type: "maintenance",
+          action: "VACUUM",
+          target: "users",
+          container: "app",
+          result: "failure",
+          reason: "maintenance_outcome_unknown",
+          duration: expect.any(Number),
+        }),
+      ]);
+      expect(mockRecordQueryEvent.mock.calls.map((call) => call[0].status)).toEqual(["cancelled"]);
+      pending.reject(new Error(crypto.randomUUID()));
+      await pending.promise.catch(() => undefined);
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a run whose request is already gone answers 499 not-sent, asks the provider nothing and writes no audit row", async () => {
+    const caller = new AbortController();
+    caller.abort(new DOMException("The request went away.", "AbortError"));
+
+    const response = await post({ type: "vacuum" }, caller.signal);
+    const body = await parseResponseJSON<Record<string, unknown>>(response);
+
+    expect(response.status).toBe(499);
+    expect(body).toMatchObject({ code: "QUERY_CANCELLED", outcome: "not-sent" });
+    expect(runMaintenance).not.toHaveBeenCalled();
+    expect(auditRows()).toEqual([]);
+    expect(mockRecordQueryEvent.mock.calls.map((call) => call[0].status)).toEqual(["cancelled"]);
+  });
+
+  test("a run past its deadline answers 504 studio-timeout-refusal naming the run, and is audited as an unknown outcome", async () => {
+    const response = await withCore(
+      (real) => ({
+        ...real,
+        maintenanceRunCall: async (): Promise<MaintenanceRunRecord> => ({
+          kind: "stopped",
+          reason: new DOMException("The call's deadline has passed.", "TimeoutError"),
+          settled: Promise.resolve(),
+        }),
+      }),
+      () => post({ type: "vacuum" }),
+    );
+    const body = await parseResponseJSON<Record<string, unknown>>(response);
+
+    expect(response.status).toBe(504);
+    expect(body).toMatchObject({ code: "TIMEOUT_ERROR", kind: "studio-timeout-refusal", outcome: "unknown" });
+    expect(body.error).toBe(
+      "The maintenance run did not answer within the statement timeout of 60 seconds and 10 seconds more for the engine's own answer, so Studio stopped waiting for it.",
+    );
+    expect(auditRows()).toEqual([
+      expect.objectContaining({ result: "failure", reason: "maintenance_outcome_unknown", target: "all" }),
+    ]);
+    expect(mockRecordQueryEvent.mock.calls.map((call) => call[0].status)).toEqual(["error"]);
+  });
+
+  test("a broken audit sink does not change the answer for a run Studio stopped waiting for", async () => {
+    const logged = spyOn(logger, "error").mockImplementation(() => {});
+    mockAuditPush.mockImplementationOnce(() => {
+      throw new Error("audit sink down");
+    });
+    try {
+      const response = await withCore(
+        (real) => ({
+          ...real,
+          maintenanceRunCall: async (): Promise<MaintenanceRunRecord> => ({
+            kind: "stopped",
+            reason: new DOMException("The call's deadline has passed.", "TimeoutError"),
+            settled: Promise.resolve(),
+          }),
+        }),
+        () => post({ type: "vacuum" }),
+      );
+
+      expect(response.status).toBe(504);
+      expect(await parseResponseJSON(response)).toMatchObject({ kind: "studio-timeout-refusal" });
+      expect(logged.mock.calls.map((call) => call[0])).toContain("Failed to record maintenance audit event");
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  test("a run the host refuses before the call answers as a defect of Studio and writes no audit row", async () => {
+    const error = mock(() => {});
+    const logged = spyOn(logger, "error").mockImplementation(error);
+    try {
+      const response = await withCore(
+        (real) => ({
+          ...real,
+          maintenanceRunCall: async (): Promise<MaintenanceRunRecord> => ({
+            kind: "refused",
+            called: false,
+            refusals: [{ rule: "request-operation-not-offered", pointer: "/operation" }],
+          }),
+        }),
+        () => post({ type: "vacuum" }),
+      );
+      const body = await parseResponseJSON<Record<string, unknown>>(response);
+
+      expect(response.status).toBe(500);
+      expect(body).toMatchObject({ code: "INTERNAL_ERROR" });
+      expect(String(body.error).startsWith(HOST_DEFECT_PREFIX)).toBe(true);
+      expect(body.error).toContain('"/operation"');
+      expect(runMaintenance).not.toHaveBeenCalled();
+      expect(auditRows()).toEqual([]);
+      expect(mockRecordQueryEvent.mock.calls.map((call) => call[0].status)).toEqual(["error"]);
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  test("an error the host raises before the provider is called is not audited as an execution failure", async () => {
+    const logged = spyOn(logger, "error").mockImplementation(() => {});
+    const real = hostCore();
+    try {
+      // No core installed: the process was composed wrong, and nothing reached the provider.
+      forgetHostCore();
+      const unbooted = await post({ type: "vacuum" });
+      installHostCore(real, "test");
+      // A declaration whose spec names an operation outside the vocabulary: the session's maintenance refuses its
+      // narrowing as a CallRefusalError before the call.
+      mockReadProviderDeclarations.mockImplementationOnce(async () => ({
+        capabilities: {
+          ...KILLING(),
+          maintenanceOperations: ["vacuum", "shrink"],
+          maintenanceOperationSpecs: { ...KILLING().maintenanceOperationSpecs, shrink: { label: "Shrink" } },
+        },
+        labels: {},
+        supportsQueryCancel: false,
+      }));
+      const unreadable = await post({ type: "vacuum" });
+
+      expect([unbooted.status, unreadable.status]).toEqual([500, 500]);
+      expect(runMaintenance).not.toHaveBeenCalled();
+      expect(auditRows().map((row) => row.reason)).not.toContain("maintenance_execution_failed");
+      expect(auditRows()).toEqual([]);
+      expect(mockRecordQueryEvent.mock.calls.map((call) => call[0].status)).toEqual(["error", "error"]);
+    } finally {
+      forgetHostCore();
+      installHostCore(real, "test");
+      logged.mockRestore();
+    }
+  });
+
+  test("a connection whose connected maintenance is narrower than its declaration is refused the placement its session's maintenance withdrew", async () => {
+    // Declared: vacuum on a row and whole, analyze on a row. Connected: vacuum whole only, analyze withdrawn.
+    mockReadProviderDeclarations.mockImplementation(async () => ({
+      capabilities: KILLING(),
+      labels: {},
+      supportsQueryCancel: false,
+    }));
+    (mockProvider.getCapabilities as ReturnType<typeof mock>).mockImplementation(() => ({
+      ...KILLING(),
+      maintenanceOperations: ["vacuum", "kill"],
+      maintenanceOperationSpecs: {
+        vacuum: { label: "Vacuum", perEntity: false, global: true },
+        kill: { label: "Terminate", perEntity: false, global: false },
+      },
+    }));
+    const sessions: MaintenanceSession[] = [];
+    try {
+      const [onRow, withdrawn, whole] = await withCore(
+        (real) => ({
+          ...real,
+          maintenanceRunCall: (session, request, ctx, ports) => {
+            sessions.push(session);
+            return real.maintenanceRunCall(session, request, ctx, ports);
+          },
+        }),
+        async () => [
+          await post({ type: "vacuum", target: "users" }),
+          await post({ type: "analyze", target: "users" }),
+          await post({ type: "vacuum" }),
+        ],
+      );
+
+      expect([onRow.status, withdrawn.status, whole.status]).toEqual([400, 400, 200]);
+      expect((await parseResponseJSON<{ error: string }>(onRow)).error).toBe(
+        "Vacuum takes no target on this database: it runs over the whole database. Omit 'target'.",
+      );
+      expect(await parseResponseJSON(withdrawn)).toMatchObject({ code: "FACET_NOT_OFFERED" });
+      expect(runMaintenance.mock.calls).toEqual([["vacuum", undefined, undefined]]);
+      // The one run the route sent was held to the session's maintenance: the declaration narrowed as connected.
+      expect(sessions.map((session) => session.maintenance)).toEqual([
+        {
+          maintenance: ["vacuum", "kill"],
+          maintenanceSpecs: [
+            expect.objectContaining({ operation: "vacuum", perEntity: false, global: true }),
+            expect.objectContaining({ operation: "kill", perEntity: false, global: false }),
+          ],
+        },
+      ]);
+      expect(auditRows()).toEqual([expect.objectContaining({ action: "VACUUM", target: "all", result: "success" })]);
+    } finally {
+      mockReadProviderDeclarations.mockImplementation(async () => ({
+        capabilities: lastBuilt.getCapabilities(),
+        labels: {},
+        supportsQueryCancel: false,
+      }));
+    }
+  });
+
+  test("kill's session target passes the host's placement check, which neither placement describes", async () => {
+    const response = await post({ type: "kill", target: "4711" });
+
+    expect(response.status).toBe(200);
+    expect(runMaintenance.mock.calls).toEqual([["kill", "4711", undefined]]);
+    expect(auditRows()).toEqual([expect.objectContaining({ type: "kill_session", result: "success" })]);
   });
 });

@@ -5,7 +5,8 @@
  * default-exports, `envReader`, the declared environment behind `ctx.env`, and the host's checks of a call:
  * `checkExecuteRequest`, which refuses a request field the session does not honour, `checkConsoleFacet`,
  * `checkObjectsFacet` and `checkMaintenanceFacet`, which refuse a console, object or maintenance facet the session does
- * not offer, `checkTransactionAnswer` and `checkTransactionStatement`, which refuse a session state a transaction call
+ * not offer, `checkMaintenanceRunRequest` and `checkMaintenancePreviewRequest`, which refuse a maintenance request the
+ * session's maintenance does not take, `checkTransactionAnswer` and `checkTransactionStatement`, which refuse a session state a transaction call
  * or a statement inside the transaction answered that the host cannot read, `checkRefinement` and `sessionCalls`, which
  * narrow a session's calls by the refinement `open` answers, `sessionMaintenance`, which narrows a session's
  * maintenance by the placements its server accepts, and `freezeContext` and `freezeData`, which deep-freeze
@@ -61,6 +62,8 @@ export {
   checkConsoleFacet,
   checkExecuteRequest,
   checkMaintenanceFacet,
+  checkMaintenancePreviewRequest,
+  checkMaintenanceRunRequest,
   checkObjectsFacet,
   checkRefinement,
   sessionCalls,

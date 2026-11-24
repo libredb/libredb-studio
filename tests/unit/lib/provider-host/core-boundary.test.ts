@@ -114,6 +114,7 @@ describe("the host core's boundary", () => {
     expect(files.map(({ file }) => path.relative(CORE_DIRECTORY, file)).sort()).toEqual([
       "console.ts",
       "host-core.ts",
+      "maintenance.ts",
       "objects.ts",
       "open-once.ts",
       "page-budget.ts",

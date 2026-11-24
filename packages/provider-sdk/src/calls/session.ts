@@ -9,9 +9,17 @@
  * to them with `checkExecuteRequest` before the call, so a package is never sent a field it does not honour, and every
  * console facet call to it with `checkConsoleFacet`, every object facet call with `checkObjectsFacet` and every
  * maintenance facet call with `checkMaintenanceFacet`, so a package is never called on a facet the session does not
- * offer.
+ * offer. It holds every maintenance run and preview request to the session's maintenance with
+ * `checkMaintenanceRunRequest` and `checkMaintenancePreviewRequest`, so a package is never sent an operation or a
+ * placement its session's maintenance does not offer.
  */
-import type { Calls, ExecuteRequestField, FacetOffer, MaintenanceSpec } from "../manifest/manifest-types.generated";
+import type {
+  Calls,
+  ExecuteRequestField,
+  FacetOffer,
+  MaintenanceOperation,
+  MaintenanceSpec,
+} from "../manifest/manifest-types.generated";
 import { isPlainRecord, pointerTo, readOwn } from "./records";
 import { type CallRefusal, CallRefusalError } from "./refusals";
 import {
@@ -24,6 +32,8 @@ import {
   MAINTENANCE_OPERATIONS,
   type MaintenanceAccepted,
   type MaintenanceFacet,
+  type MaintenancePreviewRequest,
+  type MaintenanceRunRequest,
   OBJECTS_FACETS,
   type ObjectsFacet,
   type Refinement,
@@ -86,6 +96,75 @@ export function checkObjectsFacet(calls: Calls, facet: ObjectsFacet): readonly C
 export function checkMaintenanceFacet(calls: Calls, facet: MaintenanceFacet): readonly CallRefusal[] {
   if (calls.maintenance[facet] === "offered") return [];
   return [{ rule: "facet-not-offered", pointer: pointerTo("/maintenance", facet), name: `maintenance.${facet}` }];
+}
+
+/**
+ * The spec of `operation` in `maintenance`, or `undefined` with a `request-operation-not-offered` refusal when the
+ * maintenance does not list the operation; `undefined` alone for a listed operation with no spec.
+ */
+function listedSpec(
+  maintenance: EngineMaintenance,
+  operation: MaintenanceOperation,
+  refusals: CallRefusal[],
+): { readonly listed: boolean; readonly spec?: MaintenanceSpec } {
+  if (!(maintenance.maintenance as readonly unknown[]).includes(operation)) {
+    refusals.push({ rule: "request-operation-not-offered", pointer: "/operation" });
+    return { listed: false };
+  }
+  return { listed: true, spec: maintenance.maintenanceSpecs.find((spec) => spec.operation === operation) };
+}
+
+/**
+ * Every way `request` asks `maintenance`, the session's maintenance, for a run it does not offer, in request order: an
+ * operation it does not list; an empty `target`, which names nothing; a placement the operation's spec does not offer,
+ * a target where it offers no row or no target where it offers no whole database; an empty `container`. An operation
+ * its spec places nowhere, `kill`, takes its target from somewhere neither placement describes and passes, as does an
+ * operation listed with no spec. A refusal names a pointer into the request, and the field for an empty one, never a
+ * value of it.
+ */
+export function checkMaintenanceRunRequest(
+  maintenance: EngineMaintenance,
+  request: MaintenanceRunRequest,
+): readonly CallRefusal[] {
+  const refusals: CallRefusal[] = [];
+  const { spec } = listedSpec(maintenance, request.operation, refusals);
+  if (request.target === "") {
+    refusals.push({ rule: "request-field-empty", pointer: "/target", name: "target" });
+  } else if (spec !== undefined && (spec.perEntity || spec.global)) {
+    const placed = request.target === undefined ? spec.global : spec.perEntity;
+    if (!placed) refusals.push({ rule: "request-placement-not-offered", pointer: "/target" });
+  }
+  if (request.container === "") {
+    refusals.push({ rule: "request-field-empty", pointer: "/container", name: "container" });
+  }
+  return refusals;
+}
+
+/**
+ * Every way `request` asks `maintenance`, the session's maintenance, for a preview it does not offer, in request order:
+ * an operation it does not list, or one whose spec does not declare a preview on a row, since a preview belongs to a
+ * per-row control; an empty `path`, and each name in it that is empty text. A `path` that is not a list is not read
+ * here: it is not a request of this shape, and reading the request's frame refuses it by name. A refusal names a
+ * pointer into the request, and the field for an empty one, never a value of it.
+ */
+export function checkMaintenancePreviewRequest(
+  maintenance: EngineMaintenance,
+  request: MaintenancePreviewRequest,
+): readonly CallRefusal[] {
+  const refusals: CallRefusal[] = [];
+  const { listed, spec } = listedSpec(maintenance, request.operation, refusals);
+  if (listed && !(spec !== undefined && spec.perEntity && spec.preview)) {
+    refusals.push({ rule: "request-preview-not-offered", pointer: "/operation" });
+  }
+  const path: unknown = request.path;
+  if (!Array.isArray(path)) return refusals;
+  if (path.length === 0) refusals.push({ rule: "request-field-empty", pointer: "/path", name: "path" });
+  for (let index = 0; index < path.length; index += 1) {
+    if (path[index] === "") {
+      refusals.push({ rule: "request-field-empty", pointer: pointerTo("/path", index), name: "path" });
+    }
+  }
+  return refusals;
 }
 
 const OFFERS: readonly unknown[] = Object.freeze(["offered", "not-offered"] satisfies FacetOffer[]);

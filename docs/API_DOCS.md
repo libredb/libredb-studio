@@ -1353,9 +1353,12 @@ provider qualifies with it rather than splitting the name. Engines with one atta
 
 Every request that reaches the provider's `runMaintenance` writes one audit event, of type `kill_session` for `kill` and `maintenance` otherwise.
 A run the engine completed records `result: "success"`, and a run the engine answered with `success: false` records `result: "failure"` with no reason.
-A run that throws records `result: "failure"` with the reason `maintenance_execution_failed` and the time the call took, never the thrown message, and the response is the one the thrown error maps to, as it was before the event existed.
-A request refused before the provider is called writes no maintenance event.
-An event also carries `engineUser`, the engine principal the connection acts as, when the provider implements the optional `engineUser()` method: on the completed, the failed (`success: false`) and the thrown rows alike.
+A run whose provider throws records `result: "failure"` with the reason `maintenance_execution_failed` and the time the call took, never the thrown message, and the response is the one the thrown error maps to, as it was before the event existed.
+A request refused before the provider is called writes no maintenance event, nor does an error Studio raises before the call, since nothing reached the engine.
+A run Studio stopped waiting for, because its request left or its deadline passed, records `result: "failure"` with the reason `maintenance_outcome_unknown` and the time waited: the engine may still complete it.
+When the engine settles such a run later, the server logs one warning naming the route and the facet: that it answered, never the answer, or that it failed, by the failure's kind and code, never its text.
+A run whose request had left before it was sent writes no maintenance event, as a request refused before the provider is called.
+An event also carries `engineUser`, the engine principal the connection acts as, when the provider implements the optional `engineUser()` method: on the completed, the failed (`success: false`), the thrown and the unknown-outcome rows alike.
 It is a user name and never any part of a secret.
 On the authoritative stdout line, `libredb.audit.v1`, it appears as `engine_user`, and the key is absent from every row whose provider names no engine principal.
 Milvus's provider implements `engineUser()`: the Milvus user name, the user name before the colon when Password or token carries a `user:password` token with User empty, or the word `token` for a token with no colon.
@@ -1465,6 +1468,13 @@ On a `postgres` or `mysql` connection the supported set and its placements are t
 
 When the engine itself refuses the statement, the reply is the engine's answer, not a server fault (#1387): the thrown driver error is typed by `mapDatabaseError`, and one whose driver code says the statement is at fault answers `400` with `code: "QUERY_ERROR"` and the engine's own sentence, for example `{ "error": "at or near \"vacuum\": syntax error", "code": "QUERY_ERROR", "statusCode": 400 }`. Any other thrown error keeps a `5xx`.
 
+An empty `target` is the whole-database form, and the provider is sent no target for it, never empty text.
+
+The run goes through the provider host core (`docs/providers/CONTRACT.md`, clause C-70), which waits for it until the connection's statement timeout plus 10 seconds and until the request leaves.
+A request that leaves while the run is in flight is answered at once with `499` and `code: "QUERY_CANCELLED"`, `outcome: "unknown"`, since the engine may still complete it; one that had left before the run was sent answers `499` with `outcome: "not-sent"`.
+A run with no answer at that deadline answers `504` with `code: "TIMEOUT_ERROR"`, `kind: "studio-timeout-refusal"` and `outcome: "unknown"`, in a sentence naming the maintenance run, the statement timeout and the 10 seconds.
+On an engine whose provider does not bound its maintenance statements by the statement timeout (MySQL, Oracle, MongoDB, ClickHouse, SQLite, DuckDB, Db2 and Redis) a longer run is cut there while the engine goes on, and the operator's lever is the connection's query timeout; Studio sends the engine no cancel (BACKLOG D730).
+
 #### POST /api/db/maintenance/preview
 
 Read what one per-object maintenance operation will do, before an admin confirms it.
@@ -1511,6 +1521,8 @@ A dialog that receives a `refusal` shows it and offers no confirm button.
 
 A missing `type`, a `type` that is not a string, a non-string `container`, a missing `target` and an operation the engine does not offer are refused before any provider is opened.
 Whether the object exists is the provider's to say: its `previewMaintenance` raises a `QueryError` naming what is missing, answered with `400`.
+
+The preview goes through the provider host core as a run does, under the same deadline and the request's signal: a request that leaves while the preview is read answers `499`, `outcome: "unknown"`, one that had left before answers `499`, `outcome: "not-sent"`, and a preview with no answer at the deadline answers `504` `studio-timeout-refusal` in a sentence naming the maintenance preview.
 
 **Declaring a per-object operation.** A provider declares it on the operation's `MaintenanceOperationSpec` in `maintenanceOperationSpecs`:
 
