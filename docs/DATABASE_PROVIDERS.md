@@ -267,8 +267,8 @@ QueryEditor                      /api/db/query
 ## Supported Databases
 
 Forty-three type-ids are supported by forty-one provider modules: two pairs share one, `elasticsearch` and `opensearch` in `providers/sql/search/`, and `influxdb` and `influxdb3` in `providers/timeseries/influxdb/`.
-The count is derived from the exhaustive `SHIPPED` record in
-[`src/lib/db/compatibility.ts`](../src/lib/db/compatibility.ts) rather than written here twice - and
+The count is derived from the engine catalog, `SHIPPED_DATABASE_TYPES` in
+[`src/lib/db/compatibility.ts`](../src/lib/db/compatibility.ts), projected from the engine declarations, rather than written here twice - and
 the TABLE under it has to be checked by hand, which is the lesson a review left here: the numeral was
 swept to thirty-three while the table stayed thirty rows, missing BigQuery, MQTT and OPC UA, so a
 reader following this page was never told two shipped engines existed. For

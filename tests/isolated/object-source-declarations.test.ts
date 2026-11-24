@@ -533,12 +533,12 @@ describe("the fleet census of object source declarations", () => {
  */
 const KEY_BROWSER_KINDS: readonly string[] = Object.freeze([
   "etcd/key",
+  "firestore/document",
+  "mqtt/topic",
+  "netconf/key",
+  "opcua/node",
   "oxia/key",
   "s3/object",
-  "mqtt/topic",
-  "firestore/document",
-  "opcua/node",
-  "netconf/key",
 ]);
 
 /**
@@ -606,7 +606,7 @@ function keyBrowserBreaches(type: string, capabilities: ProviderCapabilities): r
 // another kind stands for it (#1677).
 // NETCONF declares `levels` too: a device is addressed by datastore and then by YANG module, so its
 // walk has two container levels where every other engine here has one (#1724).
-const LEVEL_SCAN_TYPES: readonly string[] = Object.freeze(["s3", "firestore", "opcua", "netconf"]);
+const LEVEL_SCAN_TYPES: readonly string[] = Object.freeze(["firestore", "netconf", "opcua", "s3"]);
 
 /** The breaches of the level rules in one declaration, one sentence each. */
 function levelBreaches(type: string, capabilities: ProviderCapabilities): readonly string[] {

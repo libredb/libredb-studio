@@ -100,14 +100,13 @@ mock.module("@/lib/db/factory", () => ({
 }));
 
 /**
- * The real connect budget table, with `connectBudgetFor` answering `budgetOverride` while a case sets one, so the case
+ * The real connect budgets, with `connectBudgetFor` answering `budgetOverride` while a case sets one, so the case
  * that needs the test's deadline to pass sets it to a few tens of milliseconds for itself.
  */
 const realConnectBudget = await import("@/lib/db/connect-budget");
 const realConnectBudgetFor = realConnectBudget.connectBudgetFor;
 let budgetOverride: number | undefined;
 mock.module("@/lib/db/connect-budget", () => ({
-  CONNECT_BUDGET: realConnectBudget.CONNECT_BUDGET,
   openDeadlineSentence: realConnectBudget.openDeadlineSentence,
   connectBudgetFor: (type: DatabaseType) => budgetOverride ?? realConnectBudgetFor(type),
 }));

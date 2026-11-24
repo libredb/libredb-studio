@@ -1,8 +1,17 @@
 #!/usr/bin/env bun
 /**
- * Writes src/lib/db/engine-declarations/<type-id>.json, one engine declaration per shipped type-id, from today's
- * per-engine tables and from what each engine's provider declares before it connects (docs/providers/CONTRACT.md,
- * clause M-15).
+ * Writes src/lib/db/engine-declarations/<type-id>.json, one engine declaration per shipped type-id, from its authored
+ * members, today's per-engine tables and what each engine's provider declares before it connects
+ * (docs/providers/CONTRACT.md, clause M-15).
+ *
+ * A declaration's authored members, `AUTHORED_MEMBERS` (`id`, `location` and `connection.connectBudgetMs`), are
+ * written in the declaration itself: this script reads them from the committed file of the engine in
+ * src/lib/db/engine-declarations, whatever directory `--out` names, refuses by name a file that lacks one or whose `id`
+ * is not its file name, and writes them back unchanged. Every other member is built from the tables. The engine catalog
+ * (scripts/generate-engine-catalog.ts, clause M-70) projects the authored members, and `bun run engines:generate`
+ * runs it first: this script builds every provider through the factory, which builds only an engine the catalog
+ * holds. A new engine's declaration therefore starts as a copy of another engine's file with its authored members
+ * written for the new engine; the catalog generator admits it and this script writes every other member.
  *
  * Each file is a `#/$defs/engineDeclaration` of the provider manifest schema
  * (packages/provider-sdk/src/manifest/manifest.schema.json): the engine's identity, its connection facts, its facets,
@@ -13,9 +22,10 @@
  * `src/lib/db/providers/` has yet, so they are written when a provider moves into a package of its own, from this
  * declaration.
  *
- * The files are committed and never edited by hand, so a change to any table they come from lands with its declaration
- * diff. tests/unit/db/engine-declarations.test.ts rebuilds each in memory and fails on any byte of difference, holds
- * each to the schema, and reads each back to every table with read-back functions of its own.
+ * The files are committed and never edited by hand outside their authored members, so a change to any table they
+ * come from lands with its declaration diff. tests/unit/db/engine-declarations.test.ts rebuilds each in memory and
+ * fails on any byte of difference, holds each to the schema, and reads each back to every table with read-back
+ * functions of its own.
  *
  * A refusal sentence the tables hold as a function becomes a template: the function is called with the placeholder
  * itself (`{field}`, or `{id}` and `{type}`), so the template is the sentence with each value's place marked, and the
@@ -29,8 +39,7 @@
  * provider module directly and reads no function's `name`; the census resolves each name with a table of its own and
  * holds it, by identity, to the function the connection form or the connection string row holds.
  *
- * The connect budget, `connection.connectBudgetMs`, is the engine's row in `CONNECT_BUDGET`, null where the engine
- * takes the host's default.
+ * The connect budget, `connection.connectBudgetMs`, is authored, null where the engine takes the host's default.
  *
  * The SQL text facts come from the engine's row in `SQL_GRAMMAR`. A grammar fact the SDK's `SqlGrammar` type may leave
  * out is written at the reading its readers give that absence, false, an empty list, true for `dollarTags`,
@@ -182,7 +191,6 @@ import {
   CONNECTION_FORM_URI_MODE,
   CONNECTION_STRING_ACCEPTED,
   HOST_PATH_FIELDS,
-  isExternalDatabaseType,
   MASKING_EXEMPT_COLUMNS,
   MCP_AGENT_CREDENTIAL_REQUIRED,
   MCP_EXPOSABLE,
@@ -211,7 +219,6 @@ import {
   SEED_ONLY_FIELD_NAMES,
   SEED_ONLY_FIELDS,
 } from "../src/lib/db/connection-fields";
-import { CONNECT_BUDGET } from "../src/lib/db/connect-budget";
 import { CONNECTION_FORM, type ConnectionFormSpec, offersSslPanel } from "../src/lib/db/connection-form";
 import { CONNECTION_STRING } from "../src/lib/db/connection-string";
 import { CREDENTIAL_WARNINGS } from "../src/lib/db/credential-warnings";
@@ -235,9 +242,56 @@ import { DIALECT_EDITORS, type DialectEditor } from "../src/lib/editor/dialect-e
 import { resolveTabType } from "../src/lib/editor/tab-language";
 import { ALIAS_ENGINES, QUERY_FENCE_ALIASES } from "../src/lib/sql/fence-tags";
 import type { DatabaseType, QueryTab } from "../src/lib/types";
+import { ENGINE_DECLARATIONS_DIRECTORY } from "./generate-engine-catalog";
 
-/** The declarations' directory in the repository. */
-export const ENGINE_DECLARATIONS_DIRECTORY = "src/lib/db/engine-declarations";
+export { ENGINE_DECLARATIONS_DIRECTORY } from "./generate-engine-catalog";
+
+/** The members a declaration authors, as dotted paths: read from its committed file, never built from a table. */
+export const AUTHORED_MEMBERS = ["id", "location", "connection.connectBudgetMs"] as const;
+
+/** One declaration's authored members, as `authoredMembersOf` reads them. */
+export interface AuthoredMembers {
+  readonly id: string;
+  readonly location: EngineDeclaration["location"];
+  readonly connectBudgetMs: EngineDeclaration["connection"]["connectBudgetMs"];
+}
+
+/** Whether `value` is an object, not an array, holding `member` as an own property. */
+function holds(value: unknown, member: string): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value) && Object.hasOwn(value, member);
+}
+
+/**
+ * The authored members of `value`, the parsed text of the declaration file `file`.
+ *
+ * @throws {Error} Naming the file and the member, for a value that lacks an authored member; naming the file and the
+ * id, for a value whose `id` is not the file's name.
+ */
+export function authoredMembersOf(value: unknown, file: string): AuthoredMembers {
+  const lacks = (member: (typeof AUTHORED_MEMBERS)[number]) => new Error(`${file} lacks its authored member ${member}`);
+  if (!holds(value, "id") || value.id === undefined) throw lacks("id");
+  if (!holds(value, "location")) throw lacks("location");
+  if (!holds(value, "connection") || !holds(value.connection, "connectBudgetMs")) {
+    throw lacks("connection.connectBudgetMs");
+  }
+  if (`${String(value.id)}.json` !== file) {
+    throw new Error(`${file} names the engine id ${JSON.stringify(value.id)}, not its file name`);
+  }
+  return {
+    id: value.id as string,
+    location: value.location as AuthoredMembers["location"],
+    connectBudgetMs: value.connection.connectBudgetMs as AuthoredMembers["connectBudgetMs"],
+  };
+}
+
+/** The authored members of the committed declaration of `type`, read from the repository's declarations directory. */
+function committedAuthoredMembers(type: DatabaseType): AuthoredMembers {
+  const file = `${type}.json`;
+  return authoredMembersOf(
+    JSON.parse(readFileSync(path.join(REPO_ROOT, ENGINE_DECLARATIONS_DIRECTORY, file), "utf8")),
+    file,
+  );
+}
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
 const WRITE_COMMAND = "bun run engines:generate";
@@ -1371,8 +1425,20 @@ function maskingExemption(type: DatabaseType): EngineDeclaration["policy"]["mask
   return row === null ? null : { column: row.column, reason: row.reason };
 }
 
-/** One engine's declaration, read from every table the contract states for it and from its provider's capabilities. */
-export function buildEngineDeclaration(type: DatabaseType, capabilities: ProviderCapabilities): EngineDeclaration {
+/**
+ * One engine's declaration: its `authored` members as given, and every other member read from every table the contract
+ * states for it and from its provider's capabilities.
+ *
+ * @throws {Error} When `authored` names another engine id than `type`, and each refusal of the members it builds.
+ */
+export function buildEngineDeclaration(
+  type: DatabaseType,
+  capabilities: ProviderCapabilities,
+  authored: AuthoredMembers,
+): EngineDeclaration {
+  if (authored.id !== type) {
+    throw new Error(`${type}: the authored members given name the engine id ${JSON.stringify(authored.id)}`);
+  }
   const form = CONNECTION_FORM[type];
   const seedOnly = SEED_ONLY_FIELDS[type];
   const credential = SEED_AGENT_CREDENTIAL[type];
@@ -1384,7 +1450,7 @@ export function buildEngineDeclaration(type: DatabaseType, capabilities: Provide
   return {
     id: type,
     displayName: form.label,
-    location: isExternalDatabaseType(type) ? "external" : "embedded",
+    location: authored.location,
     connection: {
       fields: [...CONNECTION_FIELDS[type]],
       defaults,
@@ -1420,7 +1486,7 @@ export function buildEngineDeclaration(type: DatabaseType, capabilities: Provide
       hostHint: form.hostHint === undefined ? null : "hostHint",
       hostIdentity: form.hostIdentity === undefined ? null : "hostIdentity",
       import: form.connectionImport === undefined ? null : { label: form.connectionImport.label, importer: "importer" },
-      connectBudgetMs: CONNECT_BUDGET[type],
+      connectBudgetMs: authored.connectBudgetMs,
     },
     facets: {
       // Written out panel by panel, in MONITORING_PANELS order, so every declaration lists them alike and a panel the
@@ -1533,7 +1599,7 @@ async function main(argv: readonly string[]): Promise<number> {
   const declarations = new Map(
     SHIPPED_DATABASE_TYPES.map((type) => [
       `${type}.json`,
-      renderEngineDeclaration(buildEngineDeclaration(type, capabilities[type])),
+      renderEngineDeclaration(buildEngineDeclaration(type, capabilities[type], committedAuthoredMembers(type))),
     ]),
   );
 

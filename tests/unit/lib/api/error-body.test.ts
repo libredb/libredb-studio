@@ -486,6 +486,7 @@ describe("the error body is Next-free", () => {
       "src/lib/api/error-body.ts",
       "src/lib/api/error-codes.ts",
       "src/lib/db/compatibility.ts",
+      "src/lib/db/engine-catalog/catalog.generated.ts",
       "src/lib/db/error-record.ts",
       "src/lib/db/errors.ts",
       "src/lib/db/type-id.ts",

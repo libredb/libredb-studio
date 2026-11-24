@@ -9,7 +9,7 @@
  * engine's own module exports: the declaration says which slot, the module supplies the function, so a name stated at
  * the wrong member moves a function to where a reader then runs it.
  *
- * It is written apart from scripts/generate-engine-declarations.ts, which never reads a declaration back.
+ * It is written apart from scripts/generate-engine-declarations.ts, which reads back only a declaration's authored members.
  */
 import type { SqlWriting } from "@libredb/provider-sdk/manifest";
 import type { ExportSpec, InferredKind, InlineEditSpec, SqlWritingSpec } from "@/lib/db/sql-writing/types";

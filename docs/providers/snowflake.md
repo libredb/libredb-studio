@@ -268,7 +268,7 @@ Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/pr
 Studio waits for a `snowflake` connection to open, and for its Test connection, at most 80 seconds, longer than the host's default of 70 seconds.
 The connect sends two Studio statements, the warehouse or database `SHOW` and the role check of section 2.5, and each is cut at Snowflake's 30 s surface timeout plus its 5 s grace, so the connect can take 70 s on its own.
 The budget is those two bounds plus 10 s, so a connect that fails answers in Snowflake's words before Studio stops waiting.
-Its row in `CONNECT_BUDGET` is declared in [`src/lib/db/connect-budget.ts`](../../src/lib/db/connect-budget.ts), and the engine declaration states it as `connection.connectBudgetMs`.
+The budget is authored in the engine's declaration, [`src/lib/db/engine-declarations/snowflake.json`](../../src/lib/db/engine-declarations/snowflake.json), as `connection.connectBudgetMs`, and Studio reads it through the engine catalog that `bun run engines:generate` projects from the declarations.
 
 ## 3. The recommended Snowflake setup
 

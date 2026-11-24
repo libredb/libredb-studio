@@ -1176,14 +1176,14 @@ The integration points, all of which need an entry. This is the list the Strateg
 - [ ] `src/lib/db/providers/<family>/<type-id>/execution-ui.ts` (or `<type-id>-execution-ui.ts` beside a flat provider file): **new:** the type's `ExecutionUiSpec`, its `commitKeyword` (`SQL_COMMIT_KEYWORD` unless the engine keeps a transaction with another keyword) and `consentDeadline` (`null` unless a long read ends differently on it); add its row to `EXECUTION_UI` in `src/lib/db/execution-ui/index.ts` and run `UPDATE_GOLDEN=1` for `tests/unit/db/execution-ui/golden.test.tsx`
 - [ ] `src/lib/db/providers/<family>/<type-id>/engine-facets.ts` (or `<type-id>-engine-facets.ts` beside a flat provider file): **new:** the type's `EngineFacets`, stating each of the seven monitoring panels `"offered"` where its read asks the engine, now or from what the engine said at connect, and `"not-offered"` where it would answer a stub empty, a constant or a refusal, its `maintenance` operations, equal to the provider's `maintenanceOperations` before connect (`tests/isolated/maintenance-facets-census.test.ts`), and its `agentReadings`, the curated `inspect_operations` kinds of the offered panels whose reads the agent handle answers plus `health` unless the agent handle withholds it, measured on the agent handle; add its row to `ENGINE_FACETS` in `src/lib/db/engine-facets/index.ts`, its expectations to `EXPECTED_OFFERED` and `EXPECTED_AGENT_READINGS` in `tests/unit/db/engine-facets/census.test.ts`, and the `Engine facets` subsection, with its `Maintenance operations offered:` and `Agent readings offered:` lines, to its provider doc
 - [ ] `src/lib/db/connection-form.ts`: **append** to `CONNECTION_PICKER_ORDER` (do not retype the array)
-- [ ] `src/lib/db/engine-declarations/<type-id>.json`: **generated**, never written by hand: run `bun run engines:generate` once the type's rows exist and its provider builds from its census connection (`tests/helpers/census-connection.ts`), and commit the new declaration.
-      `tests/unit/db/engine-declarations.test.ts` fails on a shipped type-id with no declaration, on a declaration that differs from its rows, and on one the provider manifest schema refuses (docs/providers/CONTRACT.md, clause M-15).
-      Any later change to a row it reads is regenerated the same way.
+- [ ] `src/lib/db/engine-declarations/<type-id>.json`: **authored, then generated**.
+      Start it as a copy of another engine's declaration and write its three authored members for the new engine: `id`, the type-id; `location`, `external` for an engine the user already runs (a server, or a file of theirs such as SQLite's) and `embedded` only for a store Studio carries with it; and `connection.connectBudgetMs`, null unless the engine's own connect bound needs a longer budget (`docs/providers/CONTRACT.md`, M-51).
+      Then run `bun run engines:generate` once the type's rows exist and its provider builds from its census connection (`tests/helpers/census-connection.ts`): it admits the declaration into the engine catalog, `src/lib/db/engine-catalog/catalog.generated.ts`, and writes every other member from the rows; commit both.
+      The catalog is where the shipped engine count and the external count come from, so the count in `README.md` and `docs/BRAND_MESSAGING.md` moves in the same PR.
+      Until the declaration exists the compiler refuses the new member of `DatabaseType` at the generated catalog record, which names the record rather than the missing file.
+      `tests/unit/db/engine-declarations.test.ts` fails on a shipped type-id with no declaration, on a declaration that differs from its authored members and its rows, and on one the provider manifest schema refuses, and `tests/unit/db/engine-catalog.test.ts` on a catalog module that differs from the declarations (docs/providers/CONTRACT.md, clauses M-15 and M-70).
+      Any later change to a row it reads, or to an authored member, is regenerated the same way.
 - [ ] `src/components/icons/db-icons.tsx` — the engine's mark (`strokeWidth={1.5}`, no HTML size attrs)
-- [ ] `src/lib/db/compatibility.ts` — the `SHIPPED` record. It is an exhaustive
-      `Record<DatabaseType, true>`, so the compiler refuses the omission rather than letting the
-      published engine count silently undercount; it is listed here because the count in `README.md`
-      and `docs/BRAND_MESSAGING.md` is derived from it and has to move in the same PR
 - [ ] `src/lib/db/compatibility.ts`: the new id's `WRITE_REACH` entry, `none`, `guarded` or `open`, which `READ_ONLY_ENFORCED` is derived from.
       A provider whose reach is not `open` declares `writeReach` on all four write paths, naming its gate or proof by an exported symbol, and its doc carries the `| **Write reach** |` header row with the same value; `tests/unit/db/write-reach-capability.test.ts`, `tests/unit/db/write-reach-proofs.test.ts` and `tests/unit/db/write-reach-docs.test.ts` hold the three equal
       The provider's `writeReach`, `metadataOnly` and `inlineEditRefusedColumns` are the source of the engine declaration's `safeguards` segment, a provider that declares no `writeReach` written open on every path, so run `bun run engines:generate` after changing one and commit the regenerated declaration (`docs/providers/CONTRACT.md`, M-60 and M-61).
@@ -1213,11 +1213,11 @@ The integration points, all of which need an entry. This is the list the Strateg
 
 **Also always, and not named above until the Prometheus provider found them (#1085):** each is an exhaustive record or a hand-kept population.
 Three searches reach them: the `git grep -l` of an earlier provider's type-id that the note below names, `git grep -n "Record<DatabaseType" -- src tests` with its two-line form `git grep -n -A1 -E "Record<\s*$" -- src tests | grep -B1 "DatabaseType,"`, and `git grep -n "DatabaseType\[\]" -- src tests`.
-The compiler refuses the first seven without an entry; the last two are refused by a test.
+The compiler refuses the first six without an entry; the last two are refused by a test.
 Those three reach code and tests only; the four prose greps of the published block below reach what a new engine makes false in the docs and the listings.
 
-- [ ] `src/lib/db/compatibility.ts`: the `EXTERNAL` record beside `SHIPPED`.
-      It answers whether the new id is an external engine or an embedded store, and every published database count reads it.
+- [ ] `src/lib/db/engine-declarations/<type-id>.json`: the authored `location`, projected into the engine catalog's generated record.
+      It answers whether the new id is an external engine or an embedded store, and every published database count reads it through `EXTERNAL_DATABASE_TYPES`.
 - [ ] `src/lib/db-showcase.ts`: `SHOWCASE_RANK`, the login showcase's order.
 - [ ] `src/lib/sql/fence-tags.ts`: `ENGINE_FENCE_TAGS`, the fence tags a plan-mode draft may carry.
 - [ ] `src/lib/db/sql-writing/index.ts`: `SQL_WRITING`, whose row is the module the Step 2 "SQL writing" rule places beside the provider, with its golden file written by `UPDATE_GOLDEN=1`.

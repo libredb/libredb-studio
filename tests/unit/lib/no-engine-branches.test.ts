@@ -78,8 +78,6 @@ const OXIA_PROGRAM = "the program name `oxia` an `oxia client` command begins wi
 /** The registries of spec 5.6, which stay. */
 export const REGISTRIES: readonly Listed[] = [
   ...[
-    "SHIPPED",
-    "EXTERNAL",
     "WRITE_REACH",
     "READS_FILE_ACCESS_POSTURE",
     "READS_TRUST_MATERIAL",
@@ -113,10 +111,10 @@ export const REGISTRIES: readonly Listed[] = [
     reason: FIELDS,
   })),
   {
-    path: "src/lib/db/connect-budget.ts",
-    declaration: "CONNECT_BUDGET",
+    path: "src/lib/db/engine-catalog/catalog.generated.ts",
+    declaration: "BUNDLED_CATALOG",
     count: 1,
-    reason: "the UI-free connect budget table, compile-enforced over the type-id union",
+    reason: "the engine catalog, generated from the declarations and compile-enforced over the type-id union",
   },
   ...[
     ["src/lib/db/connection-string/index.ts", "CONNECTION_STRING"],

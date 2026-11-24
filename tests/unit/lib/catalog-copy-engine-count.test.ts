@@ -12,7 +12,8 @@
  * abridge, because a numeral there goes stale the day the next engine lands (#445). It
  * is:
  *
- * 1. a numeral qualifying the word "engines" must equal `EXTERNAL_DATABASE_TYPES.length`;
+ * 1. a numeral qualifying the word "engines" must equal `EXTERNAL_DATABASE_TYPES.length`, the engine catalog's
+ *    external engines, projected from the engine declarations (docs/providers/CONTRACT.md, clause M-70);
  * 2. where that numeral introduces a LIST, the list must name every one of them, by the
  *    `DB_UI_CONFIG` labels rather than by a copy of the names kept here.
  *
