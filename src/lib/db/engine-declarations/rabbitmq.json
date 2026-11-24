@@ -164,6 +164,7 @@
       "storage": "not-offered"
     },
     "maintenance": [],
+    "maintenanceSpecs": [],
     "agentReadings": [
       "health"
     ]

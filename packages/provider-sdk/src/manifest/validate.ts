@@ -18,6 +18,8 @@ import Ajv2020, { type ErrorObject, type ValidateFunction } from "ajv/dist/2020"
 import {
   type EngineDeclaration,
   MANIFEST_SCHEMA_SHA256,
+  type MaintenanceOperation,
+  type MaintenanceSpec,
   type MaskingExemption,
   type ProviderManifest,
   type TypeFamilies,
@@ -80,6 +82,13 @@ export const SCHEMA_REFUSAL_RULES = Object.freeze([
   "editor-write-path-unproven",
   "metadata-operation-duplicate",
   "metadata-column-duplicate",
+  "maintenance-spec-unlisted",
+  "maintenance-spec-duplicate",
+  "maintenance-spec-missing",
+  "maintenance-spec-unplaced",
+  "maintenance-typed-confirmation-unasked",
+  "maintenance-typed-target-unasked",
+  "maintenance-preview-unplaced",
 ] as const);
 
 export type SchemaRefusalRule = (typeof SCHEMA_REFUSAL_RULES)[number];
@@ -581,9 +590,66 @@ function safeguardRuleRefusals(engine: EngineDeclaration, at: string): SchemaRef
   return refusals;
 }
 
+/** The maintenance operation whose target is a session the session list names, so its spec places it nowhere. */
+const SESSION_TARGETED_OPERATION: MaintenanceOperation = "kill";
+
 /**
- * The rules of one engine's connection, editor, SQL text, SQL writing facts, claims and safeguards the schema cannot
- * state, at pointers under `at`.
+ * The rules of where one maintenance spec places its operation, its confirmation and its preview, at pointers under
+ * `pointer`, the spec's own: a spec places its operation on a row or over the whole database, except kill's; a typed
+ * confirmation is admitted only on a spec placed over the whole database alone, with a title and a description, the
+ * only spec whose operation is sent by its declared card alone, whose typed dialog asks for the connection's name under
+ * the title and the description; a typed target only on a spec placed on a row alone, the only spec whose operation is
+ * sent from its objects' rows alone, whose dialog asks for the object's own name; so every control that sends an
+ * operation asks the confirmation its spec declares; and a preview only on a spec placed on a row, since only a row's
+ * dialog shows one.
+ */
+function maintenanceSpecRefusals(spec: MaintenanceSpec, pointer: string): SchemaRefusal[] {
+  const refusals: SchemaRefusal[] = [];
+  const { perEntity, global, confirmation } = spec;
+  if (!perEntity && !global && spec.operation !== SESSION_TARGETED_OPERATION) {
+    refusals.push(schemaRefusal("maintenance-spec-unplaced", pointer));
+  }
+  const card = global && !perEntity && spec.title !== null && spec.description !== null;
+  if (confirmation === "typed" && !card) {
+    refusals.push(schemaRefusal("maintenance-typed-confirmation-unasked", `${pointer}/confirmation`));
+  }
+  if (confirmation === "typed-target" && !(perEntity && !global)) {
+    refusals.push(schemaRefusal("maintenance-typed-target-unasked", `${pointer}/confirmation`));
+  }
+  if (spec.preview && !perEntity) refusals.push(schemaRefusal("maintenance-preview-unplaced", `${pointer}/preview`));
+  return refusals;
+}
+
+/**
+ * The rules of an engine's maintenance specs the schema cannot state, at pointers under `at`: one spec for each
+ * operation the maintenance list names and for no other, the later of two specs for one operation refused, and each
+ * spec held to where it places its operation, its confirmation and its preview.
+ */
+function maintenanceRuleRefusals(engine: EngineDeclaration, at: string): SchemaRefusal[] {
+  const refusals: SchemaRefusal[] = [];
+  const { maintenance, maintenanceSpecs } = engine.facets;
+  const listed = new Set<string>(maintenance);
+  const specified = new Set<string>();
+  maintenanceSpecs.forEach((spec, index) => {
+    const pointer = `${at}/facets/maintenanceSpecs/${index}`;
+    if (!listed.has(spec.operation)) refusals.push(schemaRefusal("maintenance-spec-unlisted", `${pointer}/operation`));
+    if (specified.has(spec.operation)) {
+      refusals.push(schemaRefusal("maintenance-spec-duplicate", `${pointer}/operation`));
+    }
+    specified.add(spec.operation);
+    refusals.push(...maintenanceSpecRefusals(spec, pointer));
+  });
+  maintenance.forEach((operation, index) => {
+    if (!specified.has(operation)) {
+      refusals.push(schemaRefusal("maintenance-spec-missing", `${at}/facets/maintenance/${index}`));
+    }
+  });
+  return refusals;
+}
+
+/**
+ * The rules of one engine's connection, editor, SQL text, SQL writing facts, maintenance specs, claims and safeguards
+ * the schema cannot state, at pointers under `at`.
  */
 function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies: FieldVocabularies): SchemaRefusal[] {
   const seedOnlyNames = vocabularies.seedOnly;
@@ -615,6 +681,7 @@ function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies:
   refusals.push(...editorRuleRefusals(engine, at, vocabularies));
   refusals.push(...clausePatternRefusals(engine, at));
   refusals.push(...sqlWritingRuleRefusals(engine, at, vocabularies));
+  refusals.push(...maintenanceRuleRefusals(engine, at));
   refusals.push(...claimRuleRefusals(engine, at));
   refusals.push(...safeguardRuleRefusals(engine, at));
   return refusals;
@@ -863,5 +930,19 @@ export function refusalSentence(refusal: ManifestRefusal): string {
       return `The metadata operation at ${at} is already named by an earlier operation.`;
     case "metadata-column-duplicate":
       return `The metadata column at ${at} is already named earlier in its operation.`;
+    case "maintenance-spec-unlisted":
+      return `The maintenance spec's operation at ${at} is not one the engine's maintenance list names.`;
+    case "maintenance-spec-duplicate":
+      return `The maintenance spec's operation at ${at} already has an earlier spec.`;
+    case "maintenance-spec-missing":
+      return `The maintenance operation at ${at} has no spec in the engine's maintenance specs.`;
+    case "maintenance-spec-unplaced":
+      return `The maintenance spec at ${at} places its operation neither on a row nor over the whole database, which only kill's may.`;
+    case "maintenance-typed-confirmation-unasked":
+      return `The typed confirmation at ${at} is admitted only on a spec placed over the whole database alone, with a title and a description: only that spec's operation is sent by its declared card alone, whose typed dialog asks for the connection's name under the title and the description.`;
+    case "maintenance-typed-target-unasked":
+      return `The typed target at ${at} is admitted only on a spec placed on a row alone: only that spec's operation is sent from its objects' rows alone, whose dialog asks for the object's own name.`;
+    case "maintenance-preview-unplaced":
+      return `The maintenance preview at ${at} is declared for a spec no per-row control shows it on.`;
   }
 }

@@ -71,6 +71,7 @@
       "storage": "not-offered"
     },
     "maintenance": [],
+    "maintenanceSpecs": [],
     "agentReadings": []
   },
   "agent": {

@@ -92,6 +92,52 @@
       "check",
       "kill"
     ],
+    "maintenanceSpecs": [
+      {
+        "operation": "vacuum",
+        "label": "Compact Collection",
+        "perEntity": true,
+        "global": true,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      },
+      {
+        "operation": "analyze",
+        "label": "Validate Collection",
+        "perEntity": true,
+        "global": true,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      },
+      {
+        "operation": "check",
+        "label": "Check Collection",
+        "perEntity": true,
+        "global": false,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      },
+      {
+        "operation": "kill",
+        "label": "Kill Operation",
+        "perEntity": false,
+        "global": false,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      }
+    ],
     "agentReadings": [
       "sessions",
       "slow-queries",

@@ -32,7 +32,9 @@ import {
   type HostUriScheme as ManifestHostUriScheme,
   type InsertForm,
   type JwtAccessClaim,
+  type MaintenanceConfirmation,
   type MaintenanceOperation as ManifestMaintenanceOperation,
+  type MaintenanceSpec,
   type McpClaims,
   type MetadataOnlyKind,
   type MigrationDdl,
@@ -197,13 +199,16 @@ import {
 } from "@/lib/db/providers/sql/snowflake/account-host";
 import { SNOWFLAKE_CONNECTION_STRING } from "@/lib/db/providers/sql/snowflake/connection-string";
 import { SPARK_CONNECTION_STRING } from "@/lib/db/providers/sql/spark/connection-string";
-import type {
-  AgentCredentialForm as ProviderAgentCredentialForm,
-  ExplainFormat,
-  MaintenanceOperation,
-  ProviderCapabilities,
-  WritePath,
-  WritePathReach,
+import {
+  type AgentCredentialForm as ProviderAgentCredentialForm,
+  declaredEntityOperations,
+  type ExplainFormat,
+  type MaintenanceOperation,
+  type MaintenanceOperationSpec,
+  maintenanceControl,
+  type ProviderCapabilities,
+  type WritePath,
+  type WritePathReach,
 } from "@/lib/db/types";
 import { getExplainStrategy } from "@/lib/explain";
 import { DIALECT_EDITORS, type DialectEditor } from "@/lib/editor/dialect-editors";
@@ -1313,6 +1318,79 @@ const SAFEGUARD_FACTS: { readonly [K in keyof Safeguards]: (type: DatabaseType) 
   },
 };
 
+/**
+ * Every member of Studio's maintenance spec, as a value. A record rather than a list, so a member Studio's spec gains
+ * fails to compile here until the census places it.
+ */
+const STUDIO_MAINTENANCE_SPEC_MEMBERS: Readonly<Record<keyof MaintenanceOperationSpec, true>> = {
+  label: true,
+  perEntity: true,
+  global: true,
+  title: true,
+  description: true,
+  confirmation: true,
+  preview: true,
+  kinds: true,
+};
+
+/**
+ * A provider's maintenance specs in the declaration's form (docs/providers/CONTRACT.md, clause M-64): one per operation
+ * the provider lists, in its order, each member the provider leaves out written at its absence, null or false. Written
+ * here apart from the generator, which reads the order from the engine's `ENGINE_FACETS` row: a listed operation with no
+ * spec and a spec for an unlisted operation are each refused by name, as the generator refuses them.
+ */
+function declaredMaintenanceSpecs(type: DatabaseType, capabilities: ProviderCapabilities): MaintenanceSpec[] {
+  const specs = capabilities.maintenanceOperationSpecs ?? {};
+  for (const operation of Object.keys(specs) as MaintenanceOperation[]) {
+    if (!capabilities.maintenanceOperations.includes(operation)) {
+      throw new Error(
+        `${type}: the provider declares a maintenance spec for ${operation}, which its engine's maintenance facet does not list`,
+      );
+    }
+  }
+  return capabilities.maintenanceOperations.map((operation) => {
+    const spec = specs[operation];
+    if (spec === undefined) throw new Error(`${type}: the provider declares no maintenance spec for ${operation}`);
+    return {
+      operation,
+      label: spec.label,
+      perEntity: spec.perEntity,
+      global: spec.global,
+      title: spec.title ?? null,
+      description: spec.description ?? null,
+      confirmation: spec.confirmation ?? null,
+      preview: spec.preview === true,
+      kinds: spec.kinds === undefined ? null : [...spec.kinds],
+    };
+  });
+}
+
+/** One declared spec back in Studio's form: null and false read as the member left out, its documented absence. */
+function studioMaintenanceSpec(spec: MaintenanceSpec): MaintenanceOperationSpec {
+  return {
+    label: spec.label,
+    perEntity: spec.perEntity,
+    global: spec.global,
+    ...(spec.title === null ? {} : { title: spec.title }),
+    ...(spec.description === null ? {} : { description: spec.description }),
+    ...(spec.confirmation === null ? {} : { confirmation: spec.confirmation }),
+    ...(spec.preview ? { preview: true } : {}),
+    ...(spec.kinds === null ? {} : { kinds: [...spec.kinds] }),
+  };
+}
+
+/** A provider's capabilities with their maintenance half rebuilt from the engine's declaration alone. */
+function maintenanceFromDeclaration(capabilities: ProviderCapabilities, d: EngineDeclaration): ProviderCapabilities {
+  return {
+    ...capabilities,
+    supportsMaintenance: d.facets.maintenance.length > 0,
+    maintenanceOperations: [...d.facets.maintenance],
+    maintenanceOperationSpecs: Object.fromEntries(
+      d.facets.maintenanceSpecs.map((spec) => [spec.operation, studioMaintenanceSpec(spec)]),
+    ),
+  };
+}
+
 /** How the census reads one claim of an earlier segment: the engine's request, and Studio's record of it. */
 interface SegmentClaimRecord {
   /** The claim as the declaration requests it. */
@@ -1526,6 +1604,96 @@ describe("the census", () => {
     };
 
     expect(differing(matches)).toEqual([]);
+  });
+
+  test("facets.maintenanceSpecs is its provider's own maintenance specs, one for each operation its facet lists, in the facet's order", () => {
+    const stated = (read: (spec: MaintenanceSpec) => boolean) =>
+      SHIPPED_DATABASE_TYPES.filter((type) => declared(type).facets.maintenanceSpecs.some(read));
+
+    expect(
+      differing((type, d) => sameValue(d.facets.maintenanceSpecs, declaredMaintenanceSpecs(type, CAPABILITIES[type]))),
+    ).toEqual([]);
+    expect(
+      differing((_type, d) =>
+        sameList(
+          d.facets.maintenanceSpecs.map((spec) => spec.operation),
+          d.facets.maintenance,
+        ),
+      ),
+    ).toEqual([]);
+    // Vacuity: some engine declares a typed card, a typed target, a preview, its kinds and a spec placed nowhere.
+    expect(stated((spec) => spec.confirmation === "typed" && spec.title !== null).length).toBeGreaterThan(0);
+    expect(stated((spec) => spec.confirmation === "typed-target").length).toBeGreaterThan(0);
+    expect(stated((spec) => spec.preview).length).toBeGreaterThan(0);
+    expect(stated((spec) => spec.kinds !== null).length).toBeGreaterThan(0);
+    expect(stated((spec) => !spec.perEntity && !spec.global).length).toBeGreaterThan(0);
+  });
+
+  test("maintenanceControl and declaredEntityOperations answer from each declaration what they answer from its provider, for every operation, placement and kind", () => {
+    const operations = SCHEMA.$defs.maintenanceOperation?.enum as MaintenanceOperation[];
+    const wrong: string[] = [];
+    let asked = 0;
+    for (const type of SHIPPED_DATABASE_TYPES) {
+      const provider = CAPABILITIES[type];
+      const rebuilt = maintenanceFromDeclaration(provider, declared(type));
+      const kinds = [undefined, ...(provider.objectKinds ?? []).map((kind) => kind.id)];
+      for (const kind of kinds) {
+        if (!sameValue(declaredEntityOperations(rebuilt, kind), declaredEntityOperations(provider, kind))) {
+          wrong.push(`${type} entity operations on ${kind ?? "any kind"}`);
+        }
+        for (const operation of operations) {
+          for (const placement of ["perEntity", "global"] as const) {
+            asked += 1;
+            const answer = maintenanceControl(rebuilt, operation, placement, kind);
+            if (!sameValue(answer, maintenanceControl(provider, operation, placement, kind))) {
+              wrong.push(`${type} ${operation} ${placement} on ${kind ?? "any kind"}`);
+            }
+          }
+        }
+      }
+    }
+
+    expect(operations.length).toBe(11);
+    expect(asked).toBeGreaterThan(SHIPPED_DATABASE_TYPES.length * operations.length * 2);
+    expect(wrong).toEqual([]);
+  });
+
+  test("each declaration's maintenance specs hold exactly Studio's spec members and the operation they name", () => {
+    const members = sorted(["operation", ...Object.keys(STUDIO_MAINTENANCE_SPEC_MEMBERS)]);
+    const providerKeys = SHIPPED_DATABASE_TYPES.flatMap((type) =>
+      Object.values(CAPABILITIES[type].maintenanceOperationSpecs ?? {}).flatMap((spec) => Object.keys(spec ?? {})),
+    );
+
+    expect(sorted(Object.keys(SCHEMA.$defs.maintenanceSpec?.properties ?? {}))).toEqual(members);
+    expect(sorted(SCHEMA.$defs.maintenanceSpec?.required ?? [])).toEqual(members);
+    expect(providerKeys.length).toBeGreaterThan(0);
+    expect([...new Set(providerKeys)].filter((key) => !Object.hasOwn(STUDIO_MAINTENANCE_SPEC_MEMBERS, key))).toEqual(
+      [],
+    );
+    expect(
+      differing((_type, d) => d.facets.maintenanceSpecs.every((spec) => sameList(sorted(Object.keys(spec)), members))),
+    ).toEqual([]);
+  });
+
+  test("a provider's maintenance spec missing for a listed operation, or given for an unlisted one, is refused by name, by the generator and by the census", () => {
+    const { kill, ...withoutKill } = CAPABILITIES.postgres.maintenanceOperationSpecs ?? {};
+    const missing = { ...CAPABILITIES.postgres, maintenanceOperationSpecs: withoutKill };
+    const extra = {
+      ...CAPABILITIES.postgres,
+      maintenanceOperationSpecs: {
+        ...CAPABILITIES.postgres.maintenanceOperationSpecs,
+        compact: { label: "Compact", perEntity: false, global: true },
+      },
+    };
+    const missingRefusal = "postgres: the provider declares no maintenance spec for kill";
+    const extraRefusal =
+      "postgres: the provider declares a maintenance spec for compact, which its engine's maintenance facet does not list";
+
+    expect(kill).toBeDefined();
+    expect(() => buildEngineDeclaration("postgres", missing)).toThrow(missingRefusal);
+    expect(() => declaredMaintenanceSpecs("postgres", missing)).toThrow(missingRefusal);
+    expect(() => buildEngineDeclaration("postgres", extra)).toThrow(extraRefusal);
+    expect(() => declaredMaintenanceSpecs("postgres", extra)).toThrow(extraRefusal);
   });
 
   test("agent.statementLanguage is the engine's AGENT_STATEMENT_LANGUAGE row", () => {
@@ -3462,7 +3630,11 @@ describe("the vocabularies", () => {
       Equal<WritePathEvidence["reach"], WritePathReach["reach"]>,
       Equal<MetadataOnlyKind, MetadataKind>,
       Equal<Exclude<AgentCredentialFormClaim, "pair">, ProviderAgentCredentialForm>,
+      Equal<Exclude<keyof MaintenanceSpec, "operation">, keyof MaintenanceOperationSpec>,
+      Equal<Exclude<MaintenanceConfirmation, null>, NonNullable<MaintenanceOperationSpec["confirmation"]>>,
     ] = [
+      true,
+      true,
       true,
       true,
       true,
@@ -3499,7 +3671,7 @@ describe("the vocabularies", () => {
       true,
     ];
 
-    expect<readonly boolean[]>(parity).toEqual(Array.from({ length: 34 }, () => true));
+    expect<readonly boolean[]>(parity).toEqual(Array.from({ length: 36 }, () => true));
   });
 
   test("the explain formats, the query dialects and the generic fence tags are Studio's", () => {

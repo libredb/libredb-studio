@@ -86,6 +86,41 @@
       "reindex",
       "kill"
     ],
+    "maintenanceSpecs": [
+      {
+        "operation": "analyze",
+        "label": "Update Statistics",
+        "perEntity": true,
+        "global": false,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      },
+      {
+        "operation": "reindex",
+        "label": "Build Deferred Indexes",
+        "perEntity": true,
+        "global": false,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      },
+      {
+        "operation": "kill",
+        "label": "Cancel Request",
+        "perEntity": false,
+        "global": false,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      }
+    ],
     "agentReadings": [
       "sessions",
       "slow-queries",

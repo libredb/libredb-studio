@@ -93,6 +93,7 @@
       "storage": "offered"
     },
     "maintenance": [],
+    "maintenanceSpecs": [],
     "agentReadings": [
       "health"
     ]

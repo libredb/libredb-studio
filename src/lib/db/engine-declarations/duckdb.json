@@ -60,6 +60,41 @@
       "analyze",
       "optimize"
     ],
+    "maintenanceSpecs": [
+      {
+        "operation": "vacuum",
+        "label": "Vacuum Table",
+        "perEntity": true,
+        "global": true,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      },
+      {
+        "operation": "analyze",
+        "label": "Analyze Table",
+        "perEntity": true,
+        "global": true,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      },
+      {
+        "operation": "optimize",
+        "label": "Checkpoint Database",
+        "perEntity": false,
+        "global": true,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      }
+    ],
     "agentReadings": [
       "table-stats",
       "index-stats",

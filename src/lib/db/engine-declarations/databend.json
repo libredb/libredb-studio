@@ -136,6 +136,19 @@
     "maintenance": [
       "kill"
     ],
+    "maintenanceSpecs": [
+      {
+        "operation": "kill",
+        "label": "Kill Query",
+        "perEntity": false,
+        "global": false,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      }
+    ],
     "agentReadings": [
       "sessions",
       "slow-queries",

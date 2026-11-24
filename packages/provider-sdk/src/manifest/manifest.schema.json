@@ -1172,6 +1172,14 @@
           "uniqueItems": true,
           "maxItems": 11
         },
+        "maintenanceSpecs": {
+          "description": "How each maintenance operation the engine offers is placed, worded and confirmed: one spec for each operation the maintenance list names and for no other, so at most as many as the operations there are. The provider's own statements of its target grammar and wording, never claims: the maintenance routes read the placements only to refuse a request in a form the provider says it does not take, and a typed confirmation only adds a step to the confirmations Studio asks itself.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/maintenanceSpec"
+          },
+          "maxItems": 11
+        },
         "agentReadings": {
           "description": "The curated operational readings agent mode is offered on the engine, each once, so at most as many as the readings there are.",
           "type": "array",
@@ -1182,7 +1190,7 @@
           "maxItems": 6
         }
       },
-      "required": ["monitoring", "maintenance", "agentReadings"],
+      "required": ["monitoring", "maintenance", "maintenanceSpecs", "agentReadings"],
       "additionalProperties": false
     },
     "monitoringPanels": {
@@ -1229,6 +1237,80 @@
         "load",
         "release"
       ]
+    },
+    "maintenanceSpec": {
+      "description": "One maintenance operation's spec: where its controls are placed, the words they show, the confirmation and preview they ask and the object kinds they run on. A spec places its operation on a row, over the whole database or both; only kill's places it nowhere, since its target is a session the session list names.",
+      "type": "object",
+      "properties": {
+        "operation": {
+          "$ref": "#/$defs/maintenanceOperation"
+        },
+        "label": {
+          "description": "The engine's own wording for a control that runs the operation.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "perEntity": {
+          "description": "Whether the operation runs on one object a row names: a table, a collection, a keyspace.",
+          "type": "boolean"
+        },
+        "global": {
+          "description": "Whether the operation runs with no target, over the whole database.",
+          "type": "boolean"
+        },
+        "title": {
+          "description": "The heading of the operation's own whole-database card, which the card draws with the label on its button and the description as its body; null where the operation stays on the Operations tab's own cards.",
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "description": {
+          "description": "The body of the operation's card, of its typed dialog and of its per-row dialog; null where the operation states none.",
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "confirmation": {
+          "$ref": "#/$defs/maintenanceConfirmation"
+        },
+        "preview": {
+          "description": "Whether a per-row control shows the provider's preview of the operation before it offers the confirm button.",
+          "type": "boolean"
+        },
+        "kinds": {
+          "description": "The object kinds a per-row control offers the operation on, each once; null where it runs on every relation kind, which no empty list states.",
+          "type": ["array", "null"],
+          "items": {
+            "$ref": "#/$defs/objectKindId"
+          },
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "operation",
+        "label",
+        "perEntity",
+        "global",
+        "title",
+        "description",
+        "confirmation",
+        "preview",
+        "kinds"
+      ],
+      "additionalProperties": false
+    },
+    "maintenanceConfirmation": {
+      "description": "How a control of the operation is confirmed before it sends anything, beyond the confirmations Studio asks itself. typed: the operation's whole-database card asks for the connection's name, typed exactly. typed-target: a per-row control asks for its object's own name, typed exactly. null where the spec asks neither.",
+      "type": ["string", "null"],
+      "enum": ["typed", "typed-target", null]
+    },
+    "objectKindId": {
+      "description": "An object kind, by the id Studio's object model gives it.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$"
     },
     "agentReading": {
       "type": "string",

@@ -92,6 +92,30 @@
       "reindex",
       "check"
     ],
+    "maintenanceSpecs": [
+      {
+        "operation": "reindex",
+        "label": "Reindex Table",
+        "perEntity": true,
+        "global": true,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      },
+      {
+        "operation": "check",
+        "label": "Integrity Check",
+        "perEntity": false,
+        "global": true,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      }
+    ],
     "agentReadings": [
       "table-stats",
       "index-stats",
