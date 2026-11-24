@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D880, U17 · 382
+- [Drivers and connections](#drivers-and-connections) — D1-D890, U17 · 383
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -5052,6 +5052,16 @@ Reading the wrapper case-insensitively would change the export's own reading ins
 Found 2026-11-24 while projecting each engine's SQL writing from its declaration.
 
 **Done when:** the inline edit reads the engine's declared wrapper with the export's bound, SQL Server's bound edit receives what it needs to do the same, and the answers that change, a wrapper spelled in another case, are stated as breaking with a test.
+
+### D890. MCP's statement tools answer an error Studio raised for its own defect as the database's error, behind a notice naming the provider
+
+`execute` in `src/lib/mcp/tools/run-statement.ts` answers every error `executeOpened` throws through `engineError` with the provider's author (`providerAuthor`).
+An error of Studio's own making there, a `TypeError` in Studio's code or the host core's refusal that only a defect of Studio's legacy bridge can cause (`HOST_DEFECT_PREFIX` in `src/lib/provider-host/access.ts`), is then presented as text the database wrote; the agent and the editor answer such errors as a server fault.
+It is not new with the host core: every error that is not a database error has taken this path since the tool existed, and a host defect cannot be reached without a defect of Studio.
+
+Found 2026-11-24 while moving MCP's statements onto the host core.
+
+**Done when:** an error MCP's statement and schema tools cannot attribute to the provider or the database is answered in Studio's words as a server fault, with its cause in the server log, and a test pins a host defect answered that way.
 
 ## Value interpolation
 
