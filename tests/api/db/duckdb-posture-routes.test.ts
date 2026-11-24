@@ -33,6 +33,11 @@ const mockGetOrCreateProvider = mock(async (...args: unknown[]) => {
   void args;
   return mockProvider;
 });
+/** The tree routes' resolution, on the connection's metadata session (docs/providers/CONTRACT.md, clause C-66). */
+const mockGetOrCreateMetadataProvider = mock(async (...args: unknown[]) => {
+  void args;
+  return mockProvider;
+});
 const mockCreateDatabaseProvider = mock(async (...args: unknown[]) => {
   void args;
   return mockProvider;
@@ -62,12 +67,14 @@ mock.module("@/lib/auth", () => ({
 mock.module("@/lib/db", () => ({
   ...actualDb,
   getOrCreateProvider: mockGetOrCreateProvider,
+  getOrCreateMetadataProvider: mockGetOrCreateMetadataProvider,
   createDatabaseProvider: mockCreateDatabaseProvider,
   readProviderDeclarations: mockReadProviderDeclarations,
 }));
 mock.module("@/lib/db/factory", () => ({
   ...actualFactory,
   getOrCreateProvider: mockGetOrCreateProvider,
+  getOrCreateMetadataProvider: mockGetOrCreateMetadataProvider,
   createDatabaseProvider: mockCreateDatabaseProvider,
   readProviderDeclarations: mockReadProviderDeclarations,
   findOpenSingleWriterProvider: mockFindOpenSingleWriterProvider,
@@ -126,6 +133,16 @@ const ADMIN_ONLY = new Set(["maintenance", "maintenance/preview"]);
  */
 const RUNS_TO_ITS_SCOPE_END = new Set(["query", "multi-query"]);
 
+/** The tree routes, which take the connection's metadata session rather than the editor's provider. */
+const READS_THE_TREE = new Set([
+  "objects/containers",
+  "objects/counts",
+  "objects/describe",
+  "objects/inventory",
+  "objects/list",
+  "objects/search",
+]);
+
 /** The routes that build their own provider rather than take a cached one. */
 const BUILDS_ITS_OWN = new Set(["test-connection"]);
 
@@ -171,15 +188,23 @@ async function postureFrom(route: string, target: Record<string, unknown>): Prom
     expect(mockReadProviderDeclarations.mock.calls.length).toBeGreaterThan(0);
     return mockReadProviderDeclarations.mock.calls[0]?.[1];
   }
-  const calls = BUILDS_ITS_OWN.has(route) ? mockCreateDatabaseProvider.mock.calls : mockGetOrCreateProvider.mock.calls;
-  expect(calls.length).toBeGreaterThan(0);
-  return calls[0]?.[2];
+  const opener = BUILDS_ITS_OWN.has(route)
+    ? mockCreateDatabaseProvider
+    : READS_THE_TREE.has(route)
+      ? mockGetOrCreateMetadataProvider
+      : mockGetOrCreateProvider;
+  expect(opener.mock.calls.length).toBeGreaterThan(0);
+  // A tree route takes no editor provider, and no other route a metadata session.
+  const other = READS_THE_TREE.has(route) ? mockGetOrCreateProvider : mockGetOrCreateMetadataProvider;
+  expect([route, other.mock.calls.length]).toEqual([route, 0]);
+  return opener.mock.calls[0]?.[2];
 }
 
 beforeEach(() => {
   clearRateLimitState();
   resetSeedCache();
   mockGetOrCreateProvider.mockClear();
+  mockGetOrCreateMetadataProvider.mockClear();
   mockCreateDatabaseProvider.mockClear();
   mockReadProviderDeclarations.mockClear();
   mockFindOpenSingleWriterProvider.mockClear();
@@ -282,6 +307,7 @@ describe("no route takes the posture from the request body (non-admin DuckDB fil
       );
       expect(response.status).toBe(400);
       expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+      expect(mockGetOrCreateMetadataProvider).not.toHaveBeenCalled();
       expect(mockCreateDatabaseProvider).not.toHaveBeenCalled();
     },
   );

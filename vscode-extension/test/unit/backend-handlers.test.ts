@@ -120,6 +120,10 @@ function fakeFactory(provider: FakeProvider = fakeProvider(), over: Partial<Back
       calls.push(["getOrCreateProvider", ...args]);
       return provider;
     },
+    getOrCreateMetadataProvider: async (...args) => {
+      calls.push(["getOrCreateMetadataProvider", ...args]);
+      return provider;
+    },
     removeProvider: async (...args) => {
       calls.push(["removeProvider", ...args]);
     },
@@ -593,7 +597,7 @@ describe("object reads", () => {
     const { handlers, provider, calls } = await opened();
     assert.equal(await handlers.listContainers({ connectionId: "c1", parent: ["app"] }, idle), CONTAINERS);
     assert.deepEqual(provider.calls.at(-1), ["listContainers", ["app"]]);
-    assert.deepEqual(calls.at(-1), ["getOrCreateProvider", REVIVED, {}, { allowExternalFileAccess: false }]);
+    assert.deepEqual(calls.at(-1), ["getOrCreateMetadataProvider", REVIVED, {}, { allowExternalFileAccess: false }]);
     await handlers.listContainers({ connectionId: "c1" }, idle);
     assert.deepEqual(provider.calls.at(-1), ["listContainers", undefined]);
   });
@@ -811,7 +815,7 @@ describe("object reads", () => {
     },
   ];
 
-  it("each tree call reads through the host core's tree call, the provider resolved as before", async () => {
+  it("each tree call reads through the host core's tree call, on the provider of the connection's metadata session", async () => {
     const seen: { action: string; deadline: number }[] = [];
     const counted = countedToken();
     const failing = await opened({
@@ -834,7 +838,12 @@ describe("object reads", () => {
           // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each listener count is its own call's.
           await call(handlers, counted.token);
           assert.equal(counted.live(), 0, "the token's listener is disposed after the call answered");
-          assert.deepEqual(calls.at(-1), ["getOrCreateProvider", REVIVED, {}, { allowExternalFileAccess: false }]);
+          assert.deepEqual(calls.at(-1), [
+            "getOrCreateMetadataProvider",
+            REVIVED,
+            {},
+            { allowExternalFileAccess: false },
+          ]);
         }
         await assert.rejects(TREE_CALLS[2]?.call(failing.handlers, counted.token) as Promise<unknown>);
         assert.equal(counted.live(), 0, "the token's listener is disposed after the call failed");
@@ -850,6 +859,58 @@ describe("object reads", () => {
       assert.ok(deadline >= before + 60_000 + EXECUTE_SLACK_MS && deadline <= after + 60_000 + EXECUTE_SLACK_MS);
     }
     assert.equal(counted.registered(), TREE_CALLS.length + 1);
+  });
+
+  it("a tree call answers while the editor's provider holds every read, without waiting for it", async () => {
+    // The editor's provider holds every tree read until the end, and signals when one reaches it; the metadata
+    // session's answers. A tree call that went to the editor's provider loses the race at once.
+    const reached = Promise.withResolvers<string>();
+    const held = Promise.withResolvers<never>();
+    const holds = (member: string) => () => {
+      reached.resolve(member);
+      return held.promise;
+    };
+    const editor = fakeProvider({
+      listContainers: holds("listContainers"),
+      countObjects: holds("countObjects"),
+      listObjects: holds("listObjects"),
+      describeObject: holds("describeObject"),
+    });
+    const metadata = fakeProvider({
+      listContainers: async () => CONTAINERS,
+      countObjects: async () => COUNTS,
+      listObjects: async () => OBJECTS,
+      describeObject: async () => DETAIL,
+    });
+    const { handlers, calls } = backend(editor, {
+      getOrCreateMetadataProvider: async (...args) => {
+        calls.push(["getOrCreateMetadataProvider", ...args]);
+        return metadata;
+      },
+    });
+    await handlers.openConnection({ connection: WIRE, posture: { allowExternalFileAccess: false } });
+
+    const winners: [string, string][] = [];
+    for (const { action, call } of TREE_CALLS) {
+      const answering = call(handlers, idle);
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each race is its own call's.
+      const winner = await Promise.race([answering.then(() => "answer"), reached.promise.then(() => "editor")]);
+      winners.push([action, winner]);
+    }
+    held.reject(new Error("the test ended"));
+    await held.promise.catch(() => undefined);
+
+    assert.deepEqual(
+      winners,
+      TREE_CALLS.map(({ action }) => [action, "answer"]),
+    );
+    // The open read the editor's declarations; no tree member of it was ever asked.
+    const treeMembers = new Set<unknown>(["listContainers", "countObjects", "listObjects", "describeObject"]);
+    assert.deepEqual(
+      methodsOf(editor).filter((method) => treeMembers.has(method)),
+      [],
+    );
+    assert.equal(await handlers.listObjects({ connectionId: "c1", container: ["app"], kind: "table" }, idle), OBJECTS);
   });
 
   it("a tree call whose request is cancelled while the provider reads answers QUERY_CANCELLED at once, outcome unknown", async () => {
@@ -1578,7 +1639,7 @@ describe("objects/selectStatement", () => {
       () => handlers.selectStatement({ connectionId: "c1", object: ORDERS }, idle),
     );
     assert.deepEqual(actions, ["describe"]);
-    assert.deepEqual(calls.at(-1), ["getOrCreateProvider", REVIVED, {}, POSTURE]);
+    assert.deepEqual(calls.at(-1), ["getOrCreateMetadataProvider", REVIVED, {}, POSTURE]);
 
     const pending = Promise.withResolvers<never>();
     const reached = Promise.withResolvers<void>();

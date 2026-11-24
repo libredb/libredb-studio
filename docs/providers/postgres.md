@@ -1442,6 +1442,8 @@ server. Paste the certificate content instead.
 
 ### 4.2 Connection pooling
 
+The object tree reads on a pool of its own, the connection's metadata session, of at most 2 connections and none while idle, so a listing never waits for the editor's pool ([`CONTRACT.md`](CONTRACT.md), clause C-66; the live check in [§13.5](#135-live-checks-ci-runs)).
+
 `connect()` builds a `pg.Pool` ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)) and
 validates it by acquiring and releasing one client. Pool **sizing** comes from `ProviderOptions.pool`
 merged over `DEFAULT_POOL_CONFIG`:
@@ -2869,6 +2871,10 @@ They are not part of `bun run test`.
 
 - `postgres-read-only-live.ts`: the agent read-only profile against a real server ([§12](#12-agent-read-only-execution-profile-328)).
 - `postgres-held-session-live.ts`: a session that ends under a statement or a held transaction ([§8.0.2](#802-a-session-that-ends-while-a-statement-or-the-transaction-holds-it)), run under Bun and, bundled with `bun build --target=node`, under Node.
+
+One more starts its own container the same way and runs by hand, not in CI: `bun tests/live/postgres-metadata-session-live.ts`.
+It holds every connection of the editor's pool with `pg_sleep(4)`, the shared pool of 10 and an owned pool of 3, and fails unless a listing on the connection's metadata session answers within 1,000 ms while the editor's listing waits for the holders ([`CONTRACT.md`](CONTRACT.md), clause C-66).
+Measured on 24 November 2026 against PostgreSQL 18: 4 ms on the metadata session against 3,913 ms on the shared editor pool, and 3 ms against 4,004 ms on the owned one.
 
 ---
 

@@ -153,6 +153,7 @@ only reliable question is the round trip.
 ### 4.1 Configuration fields
 
 Host, Port and the register map ([section 3.1](#31-the-register-map-is-the-data-model)), and nothing else. The default port is 502 (IANA `mbap`).
+The object tree reads on the editor's session, never on a metadata session of its own: the tree is the connection's register map, so a second session would only dial a device that may serve one client at a time ((docs/providers/CONTRACT.md, clause C-66)).
 
 ### 4.2 There is no credential field
 

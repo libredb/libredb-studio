@@ -108,6 +108,8 @@ out in parallel.
 
 ### 2.4 Registration & lifecycle
 
+The object tree reads on the editor's one handle, never on a metadata session of its own, because LibreDB keeps one read-write handle per database file and refuses a second open ((docs/providers/CONTRACT.md, clause C-66)).
+
 The factory wires LibreDB in via a dynamic import so the `@libredb/libredb` driver is only loaded
 when a LibreDB connection is actually opened by `createDatabaseProvider()`
 ([`factory.ts`](../../src/lib/db/factory.ts)):

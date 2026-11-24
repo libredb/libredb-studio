@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getOrCreateProvider } from "@/lib/db";
+import { getOrCreateMetadataProvider, getOrCreateProvider } from "@/lib/db";
 import { readBoundedJson } from "@/lib/api/bounded-json";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
@@ -66,12 +66,22 @@ import type { UserPayload } from "@/lib/auth";
  * substitution and not a flag for the reason every seam in this module is a value: a boolean here
  * would be a second way to reach one behaviour and would put the bound's NUMBER in this file,
  * where it has no business being.
+ *
+ * `options.session` names which session the provider is resolved on, as a value and never a function a route hands
+ * in, so the routes import no provider builder: `"editor"`, the default, resolves the editor's provider through
+ * `getOrCreateProvider`, and `"metadata"`, which the six tree routes pass, resolves the connection's metadata session
+ * through `getOrCreateMetadataProvider`, so a tree read never waits for the editor's statements except on a connection
+ * that serves one session (docs/providers/CONTRACT.md, clause C-66). Either is resolved after the guard, the body read
+ * and the connection's resolution, with the same execution context.
  */
 export async function handleObjectRequest(
   req: NextRequest,
   route: string,
   run: (provider: DatabaseProvider, body: Record<string, unknown>, context: ObjectRequestContext) => Promise<unknown>,
-  options?: { readonly readBody?: (req: NextRequest) => Promise<Record<string, unknown>> },
+  options?: {
+    readonly readBody?: (req: NextRequest) => Promise<Record<string, unknown>>;
+    readonly session?: "editor" | "metadata";
+  },
 ): Promise<NextResponse> {
   // Ahead of body parsing: an unauthenticated caller never gets a body parsed on its behalf, and
   // the rate limiter sees the request before any work is done for it. Same ordering, and the same
@@ -101,7 +111,10 @@ export async function handleObjectRequest(
     // Covers all nine object routes and keys/scan: the DuckDB editor file-access posture is
     // derived from the verified session role and the resolved connection (non-admin DuckDB file access), so a non-admin
     // browsing or editing objects on a DuckDB connection opens a handle with external access off.
-    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
+    const execution = editorExecutionContext(guard.session, connection);
+    const provider = await (options?.session === "metadata"
+      ? getOrCreateMetadataProvider(connection, {}, execution)
+      : getOrCreateProvider(connection, {}, execution));
     return NextResponse.json(
       await run(provider, body, { connection, session: guard.session, route, scrub: connectionScrub }),
     );

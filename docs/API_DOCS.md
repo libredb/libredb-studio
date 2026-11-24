@@ -1592,6 +1592,7 @@ Past that the route answers 504 `TIMEOUT_ERROR`, `kind: "studio-timeout-refusal"
 A request that leaves while a read runs is answered 499 `QUERY_CANCELLED` at once, outcome `unknown`, and the read goes on in the database; a request already gone when a read is to start is answered 499 `QUERY_CANCELLED`, outcome `not-sent`, and the read is never sent.
 An inventory or a search gives each read its own deadline rather than one for the whole request, since a whole walk is a sum of round trips that grows with the server's distance, and a request that leaves between two reads sends no further read.
 The connection's open is unchanged: these routes do not bound it by the request.
+The six routes read on the connection's metadata session, beside the editor's, so a listing never waits for the editor's statements, except on the connections that serve one session ([`docs/providers/CONTRACT.md`](providers/CONTRACT.md), clause C-66), whose tree reads on the editor's session.
 
 | Condition | Status | Body |
 |-----------|--------|------|

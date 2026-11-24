@@ -14,11 +14,20 @@ export const dynamic = "force-dynamic";
  *
  * The listing is a host core tree call (`objectTree`, src/lib/api/object-tree.ts), under its own deadline and the
  * request's signal.
+ *
+ * The listing runs on the connection's metadata session (`{ session: "metadata" }`), beside the editor's, so it never
+ * waits for the editor's statements, except on a connection that serves one session (docs/providers/CONTRACT.md,
+ * clause C-66).
  */
 export async function POST(req: NextRequest) {
-  return handleObjectRequest(req, "api/db/objects/containers", async (provider, body, context) => {
-    const parent = optionalStringArray(body, "parent");
-    if (parent !== undefined) assertContainerDepth(provider, "parent", parent);
-    return objectTree(provider, req.signal, context.route).listContainers(parent);
-  });
+  return handleObjectRequest(
+    req,
+    "api/db/objects/containers",
+    async (provider, body, context) => {
+      const parent = optionalStringArray(body, "parent");
+      if (parent !== undefined) assertContainerDepth(provider, "parent", parent);
+      return objectTree(provider, req.signal, context.route).listContainers(parent);
+    },
+    { session: "metadata" },
+  );
 }

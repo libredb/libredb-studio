@@ -39,6 +39,7 @@ function fakeFactory(clearProviderCache: () => Promise<void>) {
   let clears = 0;
   const factory: BackendFactory = {
     getOrCreateProvider: () => Promise.reject(new Error("not called")),
+    getOrCreateMetadataProvider: () => Promise.reject(new Error("not called")),
     removeProvider: () => Promise.reject(new Error("not called")),
     clearProviderCache: () => {
       clears += 1;

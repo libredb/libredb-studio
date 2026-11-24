@@ -621,6 +621,8 @@ Pass `{ allowExternalFileAccess: true }` as the third argument for the full reac
 
 ## 4. Connection
 
+The object tree reads on the editor's one handle, never on a metadata session of its own, because DuckDB keeps one read-write handle per database file and a second session would be a second handle on the file ((docs/providers/CONTRACT.md, clause C-66)).
+
 ### 4.1 Configuration fields
 
 | Field | Required | Meaning |

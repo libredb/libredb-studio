@@ -259,6 +259,7 @@ The extension's own client sends no cancellation for `query/cancel`, so only a J
 `objects/containers`, `objects/counts`, `objects/list`, `objects/describe` and the describe `objects/selectStatement` makes read through the same host core's tree call, `objectTree`, with the same deadline as the object routes, the connection's statement timeout plus 10 s from each read's start.
 Their JSON-RPC request's cancellation is their caller signal: a `$/cancelRequest` ends the read's wait at once, `QUERY_CANCELLED` with the outcome unknown, and a request already cancelled reads nothing, `QUERY_CANCELLED` with the outcome not-sent.
 A read past its deadline answers `TIMEOUT_ERROR`, naming the read, the statement timeout and the slack.
+The five calls read on the connection's metadata session, beside the editor's, so a listing never waits for the editor's statements, except on the connections that serve one session ([`docs/providers/CONTRACT.md`](providers/CONTRACT.md), clause C-66), whose tree reads on the editor's session.
 
 ### Errors
 

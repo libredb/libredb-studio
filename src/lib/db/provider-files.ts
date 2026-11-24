@@ -97,12 +97,8 @@ function withoutAdmittedFile<T extends DatabaseConnection>(connection: T): T {
  */
 export function admittedFileConnection<T extends DatabaseConnection>(connection: T): T {
   if (!typeIdRow(OPENS_LOCAL_FILE, connection.type)) return connection;
-  const fromString = typeIdRow(CONNECTION_STRING_ACCEPTED, connection.type) && connection.connectionString;
-  const named: unknown = fromString ? fromString : connection.database;
-  if (named === undefined || named === null || named === "") return withoutAdmittedFile(connection);
-  if (typeof named !== "string") throw new DatabaseConfigError(FILE_NAME_NOT_TEXT, connection.type);
-  const file = named === fromString && named.startsWith(FILE_SCHEME) ? named.slice(FILE_SCHEME.length) : named;
-  if (file === "") throw new DatabaseConfigError(NO_FILE_AFTER_SCHEME, connection.type);
+  const file = namedFile(connection);
+  if (file === null) return withoutAdmittedFile(connection);
   if (file === IN_MEMORY) return { ...connection, [ADMITTED_FILE]: IN_MEMORY };
   if (file.includes("\0")) throw new DatabaseConfigError(NUL_IN_DATABASE_PATH, connection.type);
   const absolute = path.resolve(file);
@@ -110,6 +106,34 @@ export function admittedFileConnection<T extends DatabaseConnection>(connection:
     throw new DatabaseConfigError(RESERVED_STORAGE_PATH, connection.type);
   }
   return { ...connection, [ADMITTED_FILE]: absolute };
+}
+
+/**
+ * The file a connection of an engine `OPENS_LOCAL_FILE` marks names, as `admittedFileConnection` reads it, steps 2 to 5:
+ * the connection string, a leading `file:` removed, where the engine accepts one and it is not empty, otherwise
+ * `database`; null when the name is absent or empty. A name that is not text, and a connection string that is `file:`
+ * and nothing after it, are refused by name. The admission and `namesInMemoryDatabase` both read the name here, so the
+ * two never read it differently.
+ */
+function namedFile(connection: DatabaseConnection): string | null {
+  const fromString = typeIdRow(CONNECTION_STRING_ACCEPTED, connection.type) && connection.connectionString;
+  const named: unknown = fromString ? fromString : connection.database;
+  if (named === undefined || named === null || named === "") return null;
+  if (typeof named !== "string") throw new DatabaseConfigError(FILE_NAME_NOT_TEXT, connection.type);
+  const file = named === fromString && named.startsWith(FILE_SCHEME) ? named.slice(FILE_SCHEME.length) : named;
+  if (file === "") throw new DatabaseConfigError(NO_FILE_AFTER_SCHEME, connection.type);
+  return file;
+}
+
+/**
+ * Whether `connection` names an in-memory database: an engine `OPENS_LOCAL_FILE` marks, whose named file is exactly
+ * `:memory:`, the one name `admittedFileConnection` admits as `:memory:`. Every other spelling is a file, as the
+ * admission resolves it. An in-memory database is one database per handle, so the host serves such a connection's tree
+ * from the editor's session (`sessionCapacity` in `./session-capacity`, docs/providers/CONTRACT.md, clause C-66). A
+ * name the admission refuses is refused here by the same sentence.
+ */
+export function namesInMemoryDatabase(connection: DatabaseConnection): boolean {
+  return typeIdRow(OPENS_LOCAL_FILE, connection.type) && namedFile(connection) === IN_MEMORY;
 }
 
 /** The connection without admitted host paths: itself when it carries none, otherwise a copy without the caller's. */

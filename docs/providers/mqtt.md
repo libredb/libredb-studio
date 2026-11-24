@@ -228,6 +228,8 @@ that is not coming back, which is itself one of the ways a broker silently drops
 asserted byte by byte off the written CONNECT in `tests/unit/db/mqtt/outbound.test.ts`, because neither is
 visible in a replayed capture: a capture records what a correct CONNECT produced.
 
+The object tree reads on the editor's session, never on a metadata session of its own: the tree reads nothing from the broker, so a second session would only cost one more broker read at its open ((docs/providers/CONTRACT.md, clause C-66)).
+
 ### 4.4 Credentials in the clear
 
 A password sent with no SSL mode crosses the network in cleartext.

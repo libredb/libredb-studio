@@ -683,6 +683,75 @@ export const SINGLE_WRITER_FILE: Readonly<Record<DatabaseType, boolean>> = Objec
 });
 
 /**
+ * Which shipped engines' connections serve their object tree from one session, the editor's, each with the reason
+ * Studio's census found, or `null` where a tree read may run on a metadata session of the connection's own
+ * (docs/providers/CONTRACT.md, clause C-66).
+ *
+ * The host's own record, core-owned: no engine declaration requests it, and no manifest member states it, since which
+ * session a tree read runs on is the host's measurement of the engine and not a claim the engine makes. It is read only
+ * by `sessionCapacity` in src/lib/db/session-capacity.ts, which answers `one` for an engine this record names a reason
+ * for, and for a connection whose database is in memory, and `several` otherwise. The class decides only which session a
+ * tree read runs on, so a wrong `null` opens one more session for the tree, a wrong reason keeps today's sharing, and
+ * neither authorizes anything.
+ *
+ * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone answering, and
+ * `tests/unit/db/compatibility.test.ts` holds a reason for every engine `SINGLE_WRITER_FILE` names. Frozen like the
+ * records above it.
+ */
+export const SERVES_ONE_SESSION: Readonly<Record<DatabaseType, string | null>> = Object.freeze({
+  postgres: null,
+  bigquery: null,
+  snowflake: null,
+  spark: null,
+  mysql: null,
+  // A file serves a second session; an in-memory database is another database per handle, which the class reads from
+  // the connection.
+  sqlite: null,
+  libsql: null,
+  duckdb:
+    "It keeps one read-write handle per database file, as SINGLE_WRITER_FILE records, so a second session would be a second handle on the file.",
+  oracle: null,
+  db2: null,
+  mssql: null,
+  clickhouse: null,
+  druid: null,
+  trino: null,
+  cassandra: null,
+  elasticsearch: null,
+  opensearch: null,
+  mongodb: null,
+  couchbase: null,
+  redis: null,
+  prometheus: null,
+  kafka: null,
+  etcd: null,
+  neo4j: null,
+  milvus: null,
+  qdrant: null,
+  weaviate: null,
+  influxdb: null,
+  influxdb3: null,
+  oxia: null,
+  databend: null,
+  s3: null,
+  kubernetes: null,
+  mqtt: "Its tree reads nothing from the broker, so a second session would only cost one more broker read at its open.",
+  firestore: null,
+  rabbitmq: null,
+  opcua: "Its tree lists no node, so a second session would only take one more of the server's sessions at its open.",
+  mtconnect: null,
+  modbus:
+    "Its tree is the connection's register map, so a second session would only dial a device that may serve one client at a time.",
+  netconf:
+    "It holds one NETCONF session per provider, and a device may admit few sessions, none measured, so a second session could be refused where the editor's answers.",
+  snmp: "Its tree is the bundled catalog, so a second session would only probe the agent once more at its open.",
+  sparkplug:
+    "Its tree is the session's own connect read, so a second session would answer another read's snapshot after a broker read of its own.",
+  libredb:
+    "It keeps one read-write handle per database file, as SINGLE_WRITER_FILE records, so a second session would be a second handle on the file.",
+});
+
+/**
  * The result columns each shipped engine's provider exempts from the masking rules, with the reason the grid shows in
  * place of the masked-column lock, or `null` where it exempts none, the restrictive value: every column the rules
  * match stays masked.

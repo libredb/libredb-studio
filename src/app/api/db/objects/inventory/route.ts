@@ -92,129 +92,143 @@ export const dynamic = "force-dynamic";
  * the request: the whole walk is a sum of round trips that grows with the server's distance, so one
  * deadline for it would cut an inventory that answers. The request's signal ends the walk at its
  * next read.
+ *
+ * Every read of the inventory runs on the connection's metadata session (`{ session: "metadata" }`), beside the
+ * editor's, so it never waits for the editor's statements, except on a connection that serves one session
+ * (docs/providers/CONTRACT.md, clause C-66).
  */
 export async function POST(req: NextRequest) {
-  return handleObjectRequest(req, "api/db/objects/inventory", async (provider, body, ctx): Promise<ObjectInventory> => {
-    const kinds = resolveKinds(provider, optionalStringArray(body, "kinds"));
-    const named = optionalContainerList(body, "containers");
-    named?.forEach((container) => assertContainerAddress(provider, "containers", container));
+  return handleObjectRequest(
+    req,
+    "api/db/objects/inventory",
+    async (provider, body, ctx): Promise<ObjectInventory> => {
+      const kinds = resolveKinds(provider, optionalStringArray(body, "kinds"));
+      const named = optionalContainerList(body, "containers");
+      named?.forEach((container) => assertContainerAddress(provider, "containers", container));
 
-    // Deduplicated before the fan-out is built, not after: a repeated container costs one full
-    // listing round trip per kind, and a body may name the same one any number of times.
-    //
-    // The enumeration also answers which container the SESSION is in, off the same walk and at
-    // no extra round trip. A body that NAMED its containers skips the walk, so there is no
-    // default to report and none is invented (#789). On an engine whose containers name their
-    // kinds, the named ones are still asked of the provider, because which kinds a container
-    // holds is the provider's answer: a caller naming a cluster's cluster-scoped container must
-    // not have its namespaced kinds listed there. See `namedEnumeration`.
-    if (named === undefined) assertNotWholeServer(provider);
-    const tree = objectTree(provider, req.signal, ctx.route);
-    const enumerated =
-      named === undefined
-        ? await enumerateContainers(tree)
-        : await namedEnumeration(provider, tree, dedupePaths(named));
-    const containers = dedupePaths(enumerated.containers);
-    const kindsOf = kindsByContainer(enumerated);
-    const { listObjects } = tree;
+      // Deduplicated before the fan-out is built, not after: a repeated container costs one full
+      // listing round trip per kind, and a body may name the same one any number of times.
+      //
+      // The enumeration also answers which container the SESSION is in, off the same walk and at
+      // no extra round trip. A body that NAMED its containers skips the walk, so there is no
+      // default to report and none is invented (#789). On an engine whose containers name their
+      // kinds, the named ones are still asked of the provider, because which kinds a container
+      // holds is the provider's answer: a caller naming a cluster's cluster-scoped container must
+      // not have its namespaced kinds listed there. See `namedEnumeration`.
+      if (named === undefined) assertNotWholeServer(provider);
+      const tree = objectTree(provider, req.signal, ctx.route);
+      const enumerated =
+        named === undefined
+          ? await enumerateContainers(tree)
+          : await namedEnumeration(provider, tree, dedupePaths(named));
+      const containers = dedupePaths(enumerated.containers);
+      const kindsOf = kindsByContainer(enumerated);
+      const { listObjects } = tree;
 
-    // Flattened to one loop so each limit is checked in one place. Nested loops would need a label
-    // to leave both, and the outer check would otherwise re-enter for every later container.
-    //
-    // The scan below is sequential, and the `no-await-in-loop` warning is accepted for it: a
-    // `Promise.all` would take one pool client per pair, and it could not stop at either limit,
-    // which is the whole point of the bounds.
-    const pairs = containers.flatMap((container) =>
-      applicableKinds(kinds, kindsOf.get(JSON.stringify(container))).map((kind) => ({ container, kind: kind.id })),
-    );
-    const scanned = pairs.slice(0, INVENTORY_PAIR_LIMIT);
-
-    // Reported the same way an object overflow is, rather than as a 400, and the choice matters for
-    // the enumerated case: an engine that genuinely has more containers than this is not a caller
-    // mistake, and refusing to answer it at all is worse than answering part of it and saying so.
-    // One answer shape for "this inventory is incomplete" is also the only thing its reader, the
-    // agent, has to handle.
-    const pairBound: ObjectInventory["truncated"] =
-      pairs.length > scanned.length ? { limit: INVENTORY_PAIR_LIMIT, reason: PAIR_TRUNCATION_REASON } : undefined;
-    /** Set when the object budget ran out, which is the bound the caller can see for itself. */
-    let objectBound: ObjectInventory["truncated"];
-    /** The provider's own bound on a column read, in the provider's own words. */
-    let columnBound: ObjectInventory["truncated"];
-
-    const includeColumns = optionalBoolean(body, "includeColumns");
-    const includeDefaultSql = optionalBoolean(body, "includeDefaultSql");
-    if (includeDefaultSql && !includeColumns) {
-      throw new ObjectRouteError(
-        '"includeDefaultSql" needs "includeColumns": default SQL is carried on the columns',
-        400,
+      // Flattened to one loop so each limit is checked in one place. Nested loops would need a label
+      // to leave both, and the outer check would otherwise re-enter for every later container.
+      //
+      // The scan below is sequential on purpose, and its awaits say so where they stand: a
+      // `Promise.all` would take one pool client per pair, and it could not stop at either limit,
+      // which is the whole point of the bounds.
+      const pairs = containers.flatMap((container) =>
+        applicableKinds(kinds, kindsOf.get(JSON.stringify(container))).map((kind) => ({ container, kind: kind.id })),
       );
-    }
-    const { describeObjects } = tree;
+      const scanned = pairs.slice(0, INVENTORY_PAIR_LIMIT);
 
-    const objects: DatabaseObject[] = [];
-    const details: ObjectDetail[] = [];
-    for (const pair of scanned) {
-      if (objects.length >= INVENTORY_LIMIT) {
-        objectBound = { limit: INVENTORY_LIMIT, reason: INVENTORY_TRUNCATION_REASON };
-        break;
+      // Reported the same way an object overflow is, rather than as a 400, and the choice matters for
+      // the enumerated case: an engine that genuinely has more containers than this is not a caller
+      // mistake, and refusing to answer it at all is worse than answering part of it and saying so.
+      // One answer shape for "this inventory is incomplete" is also the only thing its reader, the
+      // agent, has to handle.
+      const pairBound: ObjectInventory["truncated"] =
+        pairs.length > scanned.length ? { limit: INVENTORY_PAIR_LIMIT, reason: PAIR_TRUNCATION_REASON } : undefined;
+      /** Set when the object budget ran out, which is the bound the caller can see for itself. */
+      let objectBound: ObjectInventory["truncated"];
+      /** The provider's own bound on a column read, in the provider's own words. */
+      let columnBound: ObjectInventory["truncated"];
+
+      const includeColumns = optionalBoolean(body, "includeColumns");
+      const includeDefaultSql = optionalBoolean(body, "includeDefaultSql");
+      if (includeDefaultSql && !includeColumns) {
+        throw new ObjectRouteError(
+          '"includeDefaultSql" needs "includeColumns": default SQL is carried on the columns',
+          400,
+        );
       }
-      const before = objects.length;
-      for (const object of await listObjects(pair.container, pair.kind)) {
+      const { describeObjects } = tree;
+
+      const objects: DatabaseObject[] = [];
+      const details: ObjectDetail[] = [];
+      for (const pair of scanned) {
         if (objects.length >= INVENTORY_LIMIT) {
           objectBound = { limit: INVENTORY_LIMIT, reason: INVENTORY_TRUNCATION_REASON };
           break;
         }
-        objects.push(object);
-      }
-      // Only for a pair that actually named something, and bounded by what is left of the object
-      // budget: describing a folder this read already had to cut short would buy columns for
-      // objects the caller is not being given.
-      if (includeColumns && objects.length > before) {
-        const bound = objects.length - before;
-        const batch = includeDefaultSql
-          ? await describeObjects(pair.container, pair.kind, bound, { defaultSql: true })
-          : await describeObjects(pair.container, pair.kind, bound);
-        details.push(...batch.details.map((detail) => scrubObjectDetail(ctx.scrub, detail)));
-        // The provider's own bound, kept in the provider's own words through the connection's scrub,
-        // as each detail's index sentence is. It is reported even when the listing above fitted,
-        // because a complete list of objects whose columns were cut is still an incomplete answer,
-        // and a reader that trusted it would read a missing column as an absent one. The LAST one wins among column bounds: they are all the same statement about
-        // the same read, and only the precedence below decides whether any of them is reported.
-        if (batch.truncated !== undefined) {
-          columnBound = { limit: batch.truncated.limit, reason: scrubProviderText(ctx.scrub, batch.truncated.reason) };
+        const before = objects.length;
+        // oxlint-disable-next-line no-await-in-loop -- one pair at a time, so the scan stops at either limit.
+        for (const object of await listObjects(pair.container, pair.kind)) {
+          if (objects.length >= INVENTORY_LIMIT) {
+            objectBound = { limit: INVENTORY_LIMIT, reason: INVENTORY_TRUNCATION_REASON };
+            break;
+          }
+          objects.push(object);
+        }
+        // Only for a pair that actually named something, and bounded by what is left of the object
+        // budget: describing a folder this read already had to cut short would buy columns for
+        // objects the caller is not being given.
+        if (includeColumns && objects.length > before) {
+          const bound = objects.length - before;
+          // oxlint-disable-next-line no-await-in-loop -- its bound is what this pair took of the object budget.
+          const batch = await (includeDefaultSql
+            ? describeObjects(pair.container, pair.kind, bound, { defaultSql: true })
+            : describeObjects(pair.container, pair.kind, bound));
+          details.push(...batch.details.map((detail) => scrubObjectDetail(ctx.scrub, detail)));
+          // The provider's own bound, kept in the provider's own words through the connection's scrub,
+          // as each detail's index sentence is. It is reported even when the listing above fitted,
+          // because a complete list of objects whose columns were cut is still an incomplete answer,
+          // and a reader that trusted it would read a missing column as an absent one. The LAST one wins among column bounds: they are all the same statement about
+          // the same read, and only the precedence below decides whether any of them is reported.
+          if (batch.truncated !== undefined) {
+            columnBound = {
+              limit: batch.truncated.limit,
+              reason: scrubProviderText(ctx.scrub, batch.truncated.reason),
+            };
+          }
         }
       }
-    }
 
-    /**
-     * Which bound is REPORTED when more than one bit, in one expression rather than by whichever
-     * assignment ran last (#789).
-     *
-     * A missing OBJECT outranks a missing COLUMN, and the reason is what the reader does with the
-     * answer: the agent treats an object it was not shown as an object the database does not hold
-     * (#414), while a short column read still names every object it holds. So the object limit
-     * first, because it is the one the caller can see reflected in `objects.length`; then the pair
-     * limit, which also means objects are missing, whole containers and kinds of them; then the
-     * provider's own column bound, which costs columns only.
-     *
-     * Either way the answer says the inventory is incomplete, which is the one thing a reader must
-     * act on; the precedence decides only which sentence explains it.
-     */
-    const truncated = objectBound ?? pairBound ?? columnBound;
+      /**
+       * Which bound is REPORTED when more than one bit, in one expression rather than by whichever
+       * assignment ran last (#789).
+       *
+       * A missing OBJECT outranks a missing COLUMN, and the reason is what the reader does with the
+       * answer: the agent treats an object it was not shown as an object the database does not hold
+       * (#414), while a short column read still names every object it holds. So the object limit
+       * first, because it is the one the caller can see reflected in `objects.length`; then the pair
+       * limit, which also means objects are missing, whole containers and kinds of them; then the
+       * provider's own column bound, which costs columns only.
+       *
+       * Either way the answer says the inventory is incomplete, which is the one thing a reader must
+       * act on; the precedence decides only which sentence explains it.
+       */
+      const truncated = objectBound ?? pairBound ?? columnBound;
 
-    // `truncated` is reported when a limit lands exactly on a boundary with work still unread: what
-    // was not scanned cannot be claimed as absent, and over-reporting incompleteness is the only
-    // safe direction here. Both optional fields are SPREAD rather than assigned `undefined`, since
-    // an omitted key and an explicit `undefined` are the same bytes on the wire and a reader
-    // testing `"defaultContainer" in body` must see the absence.
-    const { defaultContainer } = enumerated;
-    return {
-      objects,
-      ...(includeColumns ? { details } : {}),
-      ...(truncated === undefined ? {} : { truncated }),
-      ...(defaultContainer === undefined ? {} : { defaultContainer }),
-    };
-  });
+      // `truncated` is reported when a limit lands exactly on a boundary with work still unread: what
+      // was not scanned cannot be claimed as absent, and over-reporting incompleteness is the only
+      // safe direction here. Both optional fields are SPREAD rather than assigned `undefined`, since
+      // an omitted key and an explicit `undefined` are the same bytes on the wire and a reader
+      // testing `"defaultContainer" in body` must see the absence.
+      const { defaultContainer } = enumerated;
+      return {
+        objects,
+        ...(includeColumns ? { details } : {}),
+        ...(truncated === undefined ? {} : { truncated }),
+        ...(defaultContainer === undefined ? {} : { defaultContainer }),
+      };
+    },
+    { session: "metadata" },
+  );
 }
 
 /**

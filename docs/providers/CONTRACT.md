@@ -2063,6 +2063,7 @@ An open a removal or a close of the caches overtook closes what it opened exactl
 A close of the caches overtakes every open that settles while it runs, one that started after it began included, so it leaves no provider admitted and drops none without a close.
 An open that fails with no caller left is handled by the host, never left as a detached rejection: it is logged by its connection, the error's kind and its code, never its text.
 A caller passes its own wait as the fourth argument of `getOrCreateProvider`.
+The metadata session of C-66 shares its opens the same way, in a table of its own.
 The editor's query and its cancel, in the routes and in the VS Code backend, wait for their provider's open at most their engine's connect budget, M-51, or until their caller leaves, whichever comes first.
 
 - test `tests/unit/lib/provider-host/core/open-once.test.ts` "concurrent callers of one key share one open"
@@ -2076,6 +2077,7 @@ The editor's query and its cancel, in the routes and in the VS Code backend, wai
 - test `tests/isolated/factory.test.ts` "two concurrent first calls for one connection build, connect and cache one provider"
 - test `tests/isolated/factory.test.ts` "a connect two concurrent callers share fails once for both, releases the tunnel once and caches nothing"
 - test `tests/isolated/factory.test.ts` "twelve concurrent first acquisitions of one connection and profile construct one provider"
+- test `tests/isolated/factory.test.ts` "two concurrent first tree reads of one connection open one metadata session, and a removal overtakes one in flight"
 - test `tests/isolated/factory.test.ts` "a removal of the connection closes an open it overtook and caches nothing"
 - test `tests/isolated/factory.test.ts` "a cache clear closes an open in flight and names one still opening at the cut"
 - test `tests/isolated/factory.test.ts` "an open that settles while the caches close is closed once, admits nothing and answers not-sent, in either cache"
@@ -2094,7 +2096,7 @@ The editor's query and its cancel, in the routes and in the VS Code backend, wai
 
 ### C-45 (normative): Teardown under fixed deadlines
 
-When the host closes its sessions, at a shutdown or when its caches are cleared, it tears each one down under fixed deadlines, shared and owned sessions alike.
+When the host closes its sessions, at a shutdown or when its caches are cleared, it tears each one down under fixed deadlines, shared, owned and metadata sessions alike.
 An open transaction is rolled back first, and the host waits at most 5 s for the rollback.
 Then the session is closed, and the host waits at most 10 s for the close.
 A step that fails or is cut is logged, the next step still runs, and the teardown itself never fails.
@@ -2112,6 +2114,7 @@ Each provider still open at a cut is named, by its connection, its author and St
 - test `tests/isolated/factory.test.ts` "a shared provider whose rollback never settles is cut at 5 s and still closed"
 - test `tests/isolated/factory.test.ts` "the providers not closed at shutdown are named with their author and Studio's version"
 - test `tests/isolated/factory.test.ts` "the close the factory registers for the shutdown names an owned provider whose rollback or disconnect timed out or failed, and a profiled one whose close failed"
+- test `tests/isolated/factory.test.ts` "the caches' close tears the metadata sessions down under the teardown's deadlines and names one not closed"
 
 ### C-46 (normative): Contract first
 
@@ -2609,7 +2612,7 @@ A session that offers the facet with no function is a defect of the host's sessi
 
 ### C-65 (normative): The object tree on the host
 
-The six tree routes and the VS Code backend's tree calls, `selectStatement`'s describe among them, read every container listing, count, object listing and description through one caller facade and the host core's tree call, C-64, on the session the legacy bridge serves, C-50.
+The six tree routes and the VS Code backend's tree calls, `selectStatement`'s describe among them, read every container listing, count, object listing and description through one caller facade and the host core's tree call, C-64, on the session the legacy bridge serves, C-50, of the provider the connection's metadata session holds, C-66.
 Each read waits until its own deadline, the statement timeout plus 10 s from that read's start, and the caller's signal, the request's or the JSON-RPC request's cancellation.
 An inventory's and a search's walks take one deadline per read, not one per request, since a whole walk is a sum of round trips that grows with the server's distance.
 A read the caller left is answered at once as `QueryCancelledError`, outcome unknown, or not-sent when refused before the call, and one past its deadline as `StudioTimeoutRefusal` naming the read, the statement timeout and the slack.
@@ -2634,11 +2637,47 @@ Each route's and handler's own checks and scrubs run where they ran.
 - test `tests/api/db-objects.test.ts` "a tree route past its deadline answers 504 studio-timeout-refusal naming the read"
 - test `tests/api/db-objects.test.ts` "every read of an inventory, its container walk included, is a host core tree call with a deadline of its own"
 - test `tests/api/db-objects.test.ts` "a tree route reads no catalog, and its provider's forCatalog is never called"
-- test `vscode-extension/test/unit/backend-handlers.test.ts` "each tree call reads through the host core's tree call, the provider resolved as before"
+- test `vscode-extension/test/unit/backend-handlers.test.ts` "each tree call reads through the host core's tree call, on the provider of the connection's metadata session"
 - test `vscode-extension/test/unit/backend-handlers.test.ts` "a tree call whose request is cancelled while the provider reads answers QUERY_CANCELLED at once, outcome unknown"
 - test `vscode-extension/test/unit/backend-handlers.test.ts` "a tree call whose request is already cancelled reads nothing and answers QUERY_CANCELLED, not-sent"
 - test `vscode-extension/test/unit/backend-handlers.test.ts` "a tree call past its deadline answers TIMEOUT_ERROR naming the read"
 - test `vscode-extension/test/unit/backend-handlers.test.ts` "the columns are read through the host core's tree call, under the request's cancellation"
+
+### C-66 (normative): The metadata session and the host's session capacity class
+
+The host classes each connection's session capacity, one or several, from Studio's own records and the connection, never from a manifest or a provider.
+It is one where Studio's record of the engines that serve their tree from one session, `SERVES_ONE_SESSION`, names a reason, which it does for every engine that keeps one handle per file, and where the connection's database is in memory, one database per handle, as the file admission reads it; it is several otherwise.
+A manifest has no member for it, and a built provider's declaration never reaches it, M-57.
+The class decides only which session a tree read runs on; it never authorizes anything.
+On a connection of class several, the tree routes and the VS Code backend's tree calls, `selectStatement`'s describe among them, read on a metadata session of the connection's own, opened beside the editor's session from the same connection, with the same credentials, file-access posture and owner, through the same checks in the same order, and keyed by the editor session's key with a metadata frame, so it is each owner's own under governance.
+Its pool holds at most two sessions and opens none until a read asks.
+On a connection of class one they read on the editor's session.
+A metadata session opens once per key, C-44, is torn down with the caches under the teardown's deadlines, C-45, leaves with the idle sweep and with every removal that names its connection, its owner or its record's key, and keeps the connection's SSH tunnel open while it serves the connection.
+It takes no catalog, so no catalog choice is honoured on it, M-57.
+A native provider's metadata session is an open like the editor's with a smaller `pool`, and the open names no role.
+
+- test `tests/unit/db/session-capacity.test.ts` "every shipped engine's session capacity is one exactly where Studio's record names a reason"
+- test `tests/unit/db/session-capacity.test.ts` "an in-memory database serves one session on every engine that opens a local file"
+- test `tests/unit/db/session-capacity.test.ts` "a name the file admission reads as a file is a file, whatever it spells"
+- test `tests/unit/db/session-capacity.test.ts` "the class and the file admission read one in-memory name"
+- test `tests/unit/db/session-capacity.test.ts` "the class reads Studio's records and the connection, never a provider or a manifest"
+- test `tests/unit/db/compatibility.test.ts` "is exhaustive over the shipped engines and frozen, each reason a sentence"
+- test `tests/unit/db/compatibility.test.ts` "names a reason for every engine SINGLE_WRITER_FILE names"
+- test `tests/isolated/factory.test.ts` "a tree read's provider is a session of its own beside the editor's, from the same connection and posture, with a pool of at most two that opens none until asked"
+- test `tests/isolated/factory.test.ts` "under governance each owner's metadata session is their own, with a pool of at most two beside a pool of poolMaxPerUser"
+- test `tests/isolated/factory.test.ts` "a connection that serves one session answers the editor's own provider and builds no other"
+- test `tests/isolated/factory.test.ts` "every refusal of the editor's open refuses a metadata open alike, before anything is built"
+- test `tests/isolated/factory.test.ts` "two concurrent first tree reads of one connection open one metadata session, and a removal overtakes one in flight"
+- test `tests/isolated/factory.test.ts` "a removal closes the metadata session with the editor's, by connection, by owner and by record key"
+- test `tests/isolated/factory.test.ts` "the idle sweep evicts an idle metadata session and keeps one with a run in flight"
+- test `tests/isolated/factory.test.ts` "the caches' close tears the metadata sessions down under the teardown's deadlines and names one not closed"
+- test `tests/isolated/factory.test.ts` "the SSH tunnel stays open while a metadata session still serves the connection"
+- test `tests/isolated/factory.test.ts` "a saved query timeout change reopens the metadata session"
+- test `tests/api/db-objects.test.ts` "each tree route reads on the connection's metadata session, and the source and edit routes on the editor's"
+- test `tests/api/db-objects.test.ts` "a tree route answers while the editor's provider holds every read, without waiting for it"
+- test `tests/api/db-objects.test.ts` "handleObjectRequest resolves the editor's provider by default and the metadata session when asked, after the guard and the connection's resolution"
+- test `vscode-extension/test/unit/backend-handlers.test.ts` "each tree call reads through the host core's tree call, on the provider of the connection's metadata session"
+- test `vscode-extension/test/unit/backend-handlers.test.ts` "a tree call answers while the editor's provider holds every read, without waiting for it"
 
 ## Not yet in this contract
 
@@ -2710,3 +2749,4 @@ Against this contract's earlier text:
 - C-58 is normative: the host's half of the unknown state arrived with the host's transaction calls, C-58 and C-59.
 - A row is measured once on the host's path: the pump hands each pull its own measure and takes the size it recorded for the row a source answers, C-13 to C-16 and C-50, where a source and the pump each measured every row.
 - The legacy bridge offers `console.endScope` where its provider ends what its query path left open, and a run's scope ends through it after the run, C-50 and C-60, where the bridge ended the run's open transaction inside its execute.
+- A tree read runs on a metadata session of the connection's own where the host's session capacity class is several, C-66, where it shared the editor's session.

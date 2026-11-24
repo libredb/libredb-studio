@@ -731,6 +731,8 @@ The five container-aware methods (`listContainers`, `countObjects`, `listObjects
 [`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts). They are the only reading of this engine's
 objects.
 
+A file's tree reads on a metadata session of its own, a second worker child of about 47 MiB resident while it lives, so a long editor statement on the editor's worker never holds a listing; an in-memory database's tree reads on the editor's one handle, since a second handle would be another, empty database ((docs/providers/CONTRACT.md, clause C-66)).
+
 #### SQLite is a ZERO-CONTAINER engine, and `[]` is an answer
 
 `containerLevels` is `[]`, `containerDepth()` answers 0, and `listContainers()` answers `[]`. That

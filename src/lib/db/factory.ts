@@ -45,6 +45,7 @@ import { egressDecision } from "./egress-decision";
 import { trustMaterial } from "./trust-material";
 import { admittedFileConnection, admittedHostPathConnection, opcuaPkiRoot } from "./provider-files";
 import { registerOwnerRemoval } from "./owner-removal";
+import { sessionCapacity } from "./session-capacity";
 import {
   READ_ONLY_ENFORCED,
   READS_FILE_ACCESS_POSTURE,
@@ -1065,7 +1066,7 @@ function openExpired(flight: Flight<OpenMeta>): StudioTimeoutRefusal {
 }
 
 /**
- * The deadline of every open of both caches (docs/providers/CONTRACT.md, clause C-55): its engine's connect budget from
+ * The deadline of every open of every cache (docs/providers/CONTRACT.md, clause C-55): its engine's connect budget from
  * the open's start (src/lib/db/connect-budget.ts). At it every caller still waiting is answered `openExpired`, the
  * next call opens afresh, and the open, once its connect settles, closes what it opened (`connectUnlessOvertaken`).
  */
@@ -1075,9 +1076,9 @@ const OPEN_DEADLINE: OpenDeadline<OpenMeta> = {
 };
 
 /**
- * The opens in flight of the writable cache and of the execution-profile cache, one table each, by the key the cache
- * holds what they open under (src/lib/provider-host/core/open-once.ts). Module state of this copy of the factory, as
- * the caches are: each Next.js bundle that loads the factory keeps its own caches and its own opens.
+ * The opens in flight of the writable cache, of the execution-profile cache and of the metadata cache, one table each,
+ * by the key the cache holds what they open under (src/lib/provider-host/core/open-once.ts). Module state of this copy
+ * of the factory, as the caches are: each Next.js bundle that loads the factory keeps its own caches and its own opens.
  *
  * Concurrent first calls for one key share one open, so a connection is built, connected and cached once whatever the
  * number of callers: two handles on one DuckDB file, the second replacing the first in the cache, lost a committed row
@@ -1086,6 +1087,7 @@ const OPEN_DEADLINE: OpenDeadline<OpenMeta> = {
  */
 const editorFlights = createOpenFlights<DatabaseProvider, OpenMeta>(logUnclaimedOpen, OPEN_DEADLINE);
 const profiledFlights = createOpenFlights<DatabaseProvider, OpenMeta>(logUnclaimedOpen, OPEN_DEADLINE);
+const metadataFlights = createOpenFlights<DatabaseProvider, OpenMeta>(logUnclaimedOpen, OPEN_DEADLINE);
 
 /**
  * How many closes of the caches (`closeCaches`) are running. An open that settles while one runs is overtaken as one in
@@ -1369,22 +1371,80 @@ export async function profiledCacheKey(
 /**
  * `key`, a key of the writable cache, with `profile` framed onto it: the key the profiled cache holds the entry of that
  * profile under. {@link profiledCacheKey} keys an acquisition with it, and the key scope of `removeProvider` names the
- * profiled entries of one record with it, so the two never frame a profile differently.
+ * profiled entries of one record with it, so the two never frame a profile differently. It frames the metadata
+ * session's key too, with `METADATA_FRAME` onto the editor's key, in a cache of its own.
  */
 function withProfile(profile: string, key: string): string {
   return `${profile.length}:${profile}${key}`;
 }
 
-/** True when any provider — shared or profiled — still serves this connection. */
+// ============================================================================
+// The metadata cache (docs/providers/CONTRACT.md, clause C-66)
+// ----------------------------------------------------------------------------
+// Each connection's tree session, beside its editor's, so a tree read never waits for the editor's statements.
+// Physically separate from both caches above, as the profiled cache is, so `getProviderCacheStats` keeps answering
+// editor providers only. Keyed by the editor's key with `METADATA_FRAME` framed onto it.
+// ============================================================================
+
+const metadataProviderCache = new Map<string, CachedProvider>();
+
+/**
+ * The frame the metadata session's key carries onto the editor's key (`withProfile`), so it frames the same connection
+ * fingerprint, credentials, file-access posture and owner as the editor's entry beside it. No execution profile is
+ * named `metadata`, and the caches are separate maps.
+ */
+const METADATA_FRAME = "metadata";
+
+/**
+ * The most sessions a metadata session's pool holds, which opens with `min: 0`, so an idle one holds no database
+ * connection, and keeps the pool's other defaults. Measured on PostgreSQL 18 at a 50 ms round trip, a warm burst of
+ * eight tree reads took 418 ms on one connection, 209 ms on two, 158 ms on three and 106 ms on four: the second
+ * connection saves the most, and each further one is a database session per connection per owner. Under governance an
+ * owned metadata session opens with this size too, whatever `provider.poolMaxPerUser` says (docs/GOVERNANCE.md).
+ */
+const METADATA_POOL_MAX = 2;
+
+/**
+ * Where a writable session is cached and opened: the editor's, or the connection's metadata session, which
+ * `getOrCreateMetadataProvider` opens for a connection of session capacity class several (`sessionCapacity`).
+ */
+interface WritableSession {
+  readonly cache: Map<string, CachedProvider>;
+  readonly flights: typeof editorFlights;
+  /** The key the session caches under, from the editor's key. */
+  readonly key: (editorKey: string) => string;
+  /** The pool size the session opens with, shared or owned, or undefined for the caller's own and the owner's share. */
+  readonly poolMax: number | undefined;
+}
+
+const EDITOR_SESSION: WritableSession = {
+  cache: providerCache,
+  flights: editorFlights,
+  key: (editorKey) => editorKey,
+  poolMax: undefined,
+};
+
+const METADATA_SESSION: WritableSession = {
+  cache: metadataProviderCache,
+  flights: metadataFlights,
+  key: (editorKey) => withProfile(METADATA_FRAME, editorKey),
+  poolMax: METADATA_POOL_MAX,
+};
+
+/** True when any provider, shared, profiled or metadata, still serves this connection. */
 function connectionStillServed(connectionId: string): boolean {
-  if (Array.from(providerCache.values()).some((entry) => entry.connectionId === connectionId)) return true;
-  return Array.from(profiledProviderCache.values()).some((entry) => entry.connectionId === connectionId);
+  return [providerCache, profiledProviderCache, metadataProviderCache].some((cache) =>
+    Array.from(cache.values()).some((entry) => entry.connectionId === connectionId),
+  );
 }
 
 // ============================================================================
 // Teardown of a provider under fixed deadlines (docs/GOVERNANCE.md#per-user-providers;
 // docs/providers/CONTRACT.md, clause C-45)
 // ============================================================================
+
+/** How the log lines name a provider of each cache: the writable cache's, the profiled cache's and the metadata cache's. */
+type CacheNoun = "provider" | "profiled provider" | "metadata provider";
 
 /** The deadlines every teardown runs under, the host core's (src/lib/provider-host/core/teardown.ts). */
 const TEARDOWN_DEADLINES = { rollbackMs: TEARDOWN_ROLLBACK_MS, closeMs: TEARDOWN_CLOSE_MS } as const;
@@ -1438,7 +1498,7 @@ async function teardownProvider(
   cache: Map<string, CachedProvider>,
   key: string,
   entry: CachedProvider,
-  noun: "provider" | "profiled provider" = "provider",
+  noun: CacheNoun = "provider",
 ): Promise<boolean> {
   cache.delete(key);
   const { provider, connectionId: id, scrub } = entry;
@@ -1505,7 +1565,7 @@ function keepsRunInFlight(
   provider: DatabaseProvider,
   scrub: ProviderTextScrub,
   id: string,
-  noun: "idle provider" | "idle profiled provider",
+  noun: `idle ${CacheNoun}`,
 ): boolean {
   if (provider.hasRunsInFlight === undefined) return false;
   try {
@@ -1521,100 +1581,83 @@ function keepsRunInFlight(
 }
 
 /**
- * Evict providers that have been idle longer than maxIdleMs.
+ * Evicts the entries of `cache` idle for at least `maxIdleMs` at `now`, and answers how many it evicted. An entry whose
+ * provider reports a run in flight is kept for the next sweep (`keepsRunInFlight`). An owned entry
+ * (docs/GOVERNANCE.md#per-user-providers) is torn down (`teardownProvider`), so an open transaction it still holds is
+ * rolled back and a pool that hangs is abandoned; an entry every caller shares is disconnected, and a failed disconnect
+ * is logged through the entry's scrub. The connection's SSH tunnel is closed once nothing serves the connection
+ * (`connectionStillServed`), since it is shared per connection id by every cache. Each line names the provider by
+ * `noun`, with its idle minutes when `showsIdleMinutes`.
+ */
+async function evictIdleEntries(
+  cache: Map<string, CachedProvider>,
+  noun: CacheNoun,
+  showsIdleMinutes: boolean,
+  now: number,
+  maxIdleMs: number,
+): Promise<number> {
+  let evicted = 0;
+  for (const [key, entry] of cache) {
+    if (now - entry.lastUsed < maxIdleMs) continue;
+    const id = entry.connectionId;
+    const idle = showsIdleMinutes ? ` (idle ${Math.round((now - entry.lastUsed) / 60000)}min)` : "";
+    if (keepsRunInFlight(entry.provider, entry.scrub, id, `idle ${noun}`)) {
+      logger.info(
+        `[DB] Keeping idle ${noun} ${sanitize(id)}${idle}: it reports a run in flight, so the next sweep checks it again.`,
+      );
+      continue;
+    }
+    logger.info(`[DB] Evicting idle ${noun}: ${sanitize(id)}${idle}`);
+    if (entry.owner !== undefined) {
+      // oxlint-disable-next-line no-await-in-loop -- the tunnel below may close only once this provider has closed.
+      await teardownProvider(cache, key, entry);
+    } else {
+      try {
+        // oxlint-disable-next-line no-await-in-loop -- the tunnel below may close only once this provider has closed.
+        await entry.provider.disconnect();
+      } catch (error) {
+        logger.warn(`[DB] Error disconnecting idle ${noun} ${sanitize(id)}`, {
+          connectionId: id,
+          error: String(withholdProviderError(entry.scrub, error)),
+        });
+      }
+      cache.delete(key);
+    }
+    // Close the shared tunnel only when nothing serves the connection anymore: a live entry of another cache still
+    // needs it, and so does another entry of this connection opened with different credentials.
+    if (!connectionStillServed(id)) {
+      try {
+        // oxlint-disable-next-line no-await-in-loop -- the sweep closes one provider and tunnel at a time, not a burst.
+        await closeSSHTunnel(id);
+      } catch {
+        /* ignore */
+      }
+    }
+    evicted++;
+  }
+  return evicted;
+}
+
+/**
+ * Evict providers that have been idle longer than maxIdleMs, from the writable cache, the execution-profile cache and
+ * the metadata cache in turn, each on its own idle clock (`evictIdleEntries`).
  * Called by the periodic sweep timer, but also exported for direct testing.
- * An owned provider (docs/GOVERNANCE.md#per-user-providers) is torn down (`teardownProvider`), so an open transaction
- * it still holds is rolled back and a pool that hangs is abandoned; a provider every caller shares is disconnected as
- * before.
  *
  * @returns number of evicted providers
  */
 export async function evictIdleProviders(maxIdleMs: number = IDLE_TIMEOUT_MS): Promise<number> {
   const now = Date.now();
-  let evicted = 0;
+  const editors = await evictIdleEntries(providerCache, "provider", true, now, maxIdleMs);
+  const profiled = await evictIdleEntries(profiledProviderCache, "profiled provider", false, now, maxIdleMs);
+  const metadata = await evictIdleEntries(metadataProviderCache, "metadata provider", true, now, maxIdleMs);
 
-  for (const [key, entry] of providerCache) {
-    if (now - entry.lastUsed >= maxIdleMs) {
-      const id = entry.connectionId;
-      const idleMinutes = Math.round((now - entry.lastUsed) / 60000);
-      if (keepsRunInFlight(entry.provider, entry.scrub, id, "idle provider")) {
-        logger.info(
-          `[DB] Keeping idle provider ${sanitize(id)} (idle ${idleMinutes}min): it reports a run in flight, so the next sweep checks it again.`,
-        );
-        continue;
-      }
-      logger.info(`[DB] Evicting idle provider: ${sanitize(id)} (idle ${idleMinutes}min)`);
-      if (entry.owner !== undefined) {
-        // oxlint-disable-next-line no-await-in-loop -- the tunnel below may close only once this provider has closed.
-        await teardownProvider(providerCache, key, entry);
-      } else {
-        try {
-          await entry.provider.disconnect();
-        } catch (error) {
-          logger.warn(`[DB] Error disconnecting idle provider ${sanitize(id)}`, {
-            connectionId: id,
-            error: String(withholdProviderError(entry.scrub, error)),
-          });
-        }
-        providerCache.delete(key);
-      }
-      // Close the shared tunnel only when nothing serves the connection
-      // anymore — a live profiled provider still needs it, and so does another
-      // entry of this connection opened with different credentials.
-      if (!connectionStillServed(id)) {
-        try {
-          await closeSSHTunnel(id);
-        } catch {
-          /* ignore */
-        }
-      }
-      evicted++;
-    }
-  }
-
-  // Profiled providers idle out on the same clock. The tunnel is shared per
-  // connection id, so it is closed only once nothing serves that connection.
-  for (const [key, entry] of profiledProviderCache) {
-    if (now - entry.lastUsed >= maxIdleMs) {
-      if (keepsRunInFlight(entry.provider, entry.scrub, entry.connectionId, "idle profiled provider")) {
-        logger.info(
-          `[DB] Keeping idle profiled provider ${sanitize(entry.connectionId)}: it reports a run in flight, so the next sweep checks it again.`,
-        );
-        continue;
-      }
-      logger.info(`[DB] Evicting idle profiled provider: ${sanitize(entry.connectionId)}`);
-      if (entry.owner !== undefined) {
-        // oxlint-disable-next-line no-await-in-loop -- the tunnel below may close only once this provider has closed.
-        await teardownProvider(profiledProviderCache, key, entry);
-      } else {
-        try {
-          await entry.provider.disconnect();
-        } catch (error) {
-          logger.warn(`[DB] Error disconnecting idle profiled provider ${sanitize(entry.connectionId)}`, {
-            connectionId: entry.connectionId,
-            error: String(withholdProviderError(entry.scrub, error)),
-          });
-        }
-        profiledProviderCache.delete(key);
-      }
-      if (!connectionStillServed(entry.connectionId)) {
-        try {
-          await closeSSHTunnel(entry.connectionId);
-        } catch {
-          /* ignore */
-        }
-      }
-      evicted++;
-    }
-  }
-
-  // Stop sweeping if both caches are empty
-  if (providerCache.size === 0 && profiledProviderCache.size === 0 && sweepTimer) {
+  // Stop sweeping once every cache is empty
+  if (providerCache.size === 0 && profiledProviderCache.size === 0 && metadataProviderCache.size === 0 && sweepTimer) {
     clearInterval(sweepTimer);
     sweepTimer = null;
   }
 
-  return evicted;
+  return editors + profiled + metadata;
 }
 
 function startIdleSweep(): void {
@@ -1674,6 +1717,46 @@ export async function getOrCreateProvider(
   execution: EditorExecutionContext = {},
   wait?: OpenWait,
 ): Promise<DatabaseProvider> {
+  return openWritable(connection, options, execution, wait, "editor");
+}
+
+/**
+ * The provider a tree read of `connection` runs on (docs/providers/CONTRACT.md, clause C-66): on a connection of session
+ * capacity class several (`sessionCapacity` in `./session-capacity`), a metadata session of the connection's own,
+ * opened beside the editor's from the same connection, with the same file-access posture and owner, through the same
+ * checks in the same order as `getOrCreateProvider`, and cached apart from it under the editor's key with a metadata
+ * frame, so it is each owner's own under governance. Its pool holds at most `METADATA_POOL_MAX` sessions and opens none
+ * until a read asks, owned or shared alike. On a connection of class one, the editor's own provider, as
+ * `getOrCreateProvider` answers it.
+ *
+ * The class decides only which session a tree read runs on and authorizes nothing: every refusal here is
+ * `getOrCreateProvider`'s own, raised by the same check. The metadata session takes no catalog, and no caller waits for
+ * its open with a signal of its own, so it takes no wait. It opens once per key (C-44), leaves with the idle sweep and
+ * with every removal that names its connection, its owner or its record's key, is torn down with the caches under the
+ * teardown's deadlines (C-45), and keeps the connection's SSH tunnel open while it serves the connection.
+ *
+ * @throws UnknownProviderError if the connection's type is absent or names no provider, as `getOrCreateProvider`.
+ */
+export async function getOrCreateMetadataProvider(
+  connection: DatabaseConnection,
+  options: ProviderOptions = {},
+  execution: EditorExecutionContext = {},
+): Promise<DatabaseProvider> {
+  return openWritable(connection, options, execution, undefined, "tree");
+}
+
+/**
+ * The body of `getOrCreateProvider` and `getOrCreateMetadataProvider`: the checks, the session `reads` resolves to, its
+ * key, a cached entry's reuse and the open shared per key. A tree read (`"tree"`) of a connection whose session
+ * capacity class is several takes the metadata session (`METADATA_SESSION`); every other call takes the editor's.
+ */
+async function openWritable(
+  connection: DatabaseConnection,
+  options: ProviderOptions,
+  execution: EditorExecutionContext,
+  wait: OpenWait | undefined,
+  reads: "editor" | "tree",
+): Promise<DatabaseProvider> {
   // First, ahead of the cache lookup and of any tunnel (#1089): see assertReadOnlyHonoured. The id
   // refusal shares the place: the cache key length-frames connection.id, so a missing id must be
   // refused before the key is computed, as the DatabaseConfigError the provider would have raised (#1539). The type
@@ -1694,9 +1777,11 @@ export async function getOrCreateProvider(
   // execution context: a readOnly reaching the provider from here would be served to every later
   // editor request, or a read-only caller handed the writable one. The type has no such field; a
   // caller that passes one anyway is refused rather than silently given the writable provider.
+  // The refusal names the entry point the caller used: `reads` is `"tree"` only from `getOrCreateMetadataProvider`.
   if ((execution as ProviderExecutionContext).readOnly !== undefined) {
+    const entryPoint = reads === "tree" ? "getOrCreateMetadataProvider" : "getOrCreateProvider";
     throw new DatabaseConfigError(
-      "getOrCreateProvider takes no readOnly in its execution context: it caches writable providers, so a read-only one would be served to every later request. Build a read-only provider with createDatabaseProvider instead.",
+      `${entryPoint} takes no readOnly in its execution context: it caches writable providers, so a read-only one would be served to every later request. Build a read-only provider with createDatabaseProvider instead.`,
       connection.type,
     );
   }
@@ -1708,33 +1793,47 @@ export async function getOrCreateProvider(
   // provider every caller shares: the provider, the entry and the key `editorCacheKey` frames all take this value, so
   // they never disagree.
   const owner = providerOwner(connection, execution.owner);
-  const cacheKey = await editorCacheKey(connection, execution);
+  // Which session serves the call (docs/providers/CONTRACT.md, clause C-66): the host's class, from Studio's records and
+  // the connection alone, decides whether a tree read shares the editor's session.
+  const session = reads === "tree" && sessionCapacity(connection) === "several" ? METADATA_SESSION : EDITOR_SESSION;
+  const cacheKey = session.key(await editorCacheKey(connection, execution));
+  // The metadata session's pool size, shared or owned: the caller's other pool options stand, and the owner's share is
+  // replaced, so the key above, which frames the owner and not the size, is unchanged.
+  const sized =
+    session.poolMax === undefined
+      ? { options, execution }
+      : {
+          options: { ...options, pool: { ...options.pool, min: 0, max: session.poolMax } },
+          execution: owner === undefined ? execution : { ...execution, ownerPoolMax: session.poolMax },
+        };
 
   // A saved timeout change must reach the next query, even when the connection is already open (`reusableEntry`).
-  const cached = await reusableEntry(providerCache, cacheKey, connection);
+  const cached = await reusableEntry(session.cache, cacheKey, connection);
   if (cached !== null) return cached;
 
   // One open per key: a concurrent first caller joins the open in flight rather than building a second provider.
   return sharedOpen(
-    providerCache,
-    editorFlights,
+    session.cache,
+    session.flights,
     cacheKey,
     connection,
     { connectionId: connection.id, owner, type: connection.type },
     (flight) =>
       openEditorProvider(
         connection,
-        options,
-        execution,
-        { cacheKey, owner, allowExternalFileAccess, tunnelDecision },
+        sized.options,
+        sized.execution,
+        { cache: session.cache, cacheKey, owner, allowExternalFileAccess, tunnelDecision },
         flight,
       ),
     wait,
   );
 }
 
-/** What `getOrCreateProvider` decided before its open, which the open builds with exactly. */
+/** What `openWritable` decided before its open, which the open builds with exactly. */
 interface EditorOpenPlan {
+  /** The cache the open admits into: the writable cache, or the metadata cache for a metadata session. */
+  readonly cache: Map<string, CachedProvider>;
   readonly cacheKey: string;
   readonly owner: string | undefined;
   readonly allowExternalFileAccess: boolean;
@@ -1742,10 +1841,11 @@ interface EditorOpenPlan {
 }
 
 /**
- * The open `getOrCreateProvider` shares under `plan.cacheKey`: it closes a stale single-writer handle of the record,
- * opens the tunnel, builds and connects the provider, and admits it into the writable cache itself, so an open no caller
- * waits for any more is still admitted once. An open a removal or a cache close overtook admits nothing
- * (`connectUnlessOvertaken`).
+ * The open `openWritable` shares under `plan.cacheKey`: it closes a stale single-writer handle of the record in
+ * `plan.cache`, opens the tunnel, builds and connects the provider, and admits it into `plan.cache` itself, so an open no
+ * caller waits for any more is still admitted once. An open a removal or a cache close overtook admits nothing
+ * (`connectUnlessOvertaken`). On the metadata cache the stale close finds nothing and no entry records a file, by
+ * construction: the session capacity class never opens a metadata session for an engine `SINGLE_WRITER_FILE` names.
  */
 async function openEditorProvider(
   connection: DatabaseConnection,
@@ -1754,7 +1854,7 @@ async function openEditorProvider(
   plan: EditorOpenPlan,
   flight: Flight<OpenMeta>,
 ): Promise<DatabaseProvider> {
-  const { cacheKey, owner, allowExternalFileAccess, tunnelDecision } = plan;
+  const { cache, cacheKey, owner, allowExternalFileAccess, tunnelDecision } = plan;
   // A single-writer engine keeps ONE writable handle per file per process. We are about to open one
   // under `cacheKey`, so a handle of THIS connection record on the SAME file under a DIFFERENT key would
   // be a second handle on one file. That happens whenever one record's key changes while its handle is
@@ -1776,7 +1876,7 @@ async function openEditorProvider(
   if (openFileIdentity !== null) {
     // Not the key we are about to open under (any entry still there is disconnected, since a connected
     // one would have returned above), and only this record on this file.
-    const stale = [...providerCache].filter(
+    const stale = [...cache].filter(
       ([key, entry]) =>
         key !== cacheKey && entry.connectionId === connection.id && entry.singleWriterFile === openFileIdentity,
     );
@@ -1792,7 +1892,7 @@ async function openEditorProvider(
           error: String(withholdProviderError(entry.scrub, close.reason)),
         });
       }
-      providerCache.delete(key);
+      cache.delete(key);
     });
   }
 
@@ -1830,7 +1930,7 @@ async function openEditorProvider(
     const admit = () => {
       const singleWriterFile = typeIdRow(SINGLE_WRITER_FILE, connection.type) ? fileIdentity(connection) : null;
       if (tunnel) tunnelProviderOpened(tunnel);
-      providerCache.set(cacheKey, {
+      cache.set(cacheKey, {
         provider,
         connectionId: connection.id,
         owner,
@@ -2324,24 +2424,26 @@ export async function acquireExecutionProfileProvider(
 }
 
 /**
- * Remove the cached providers of `connectionId` and disconnect them, from the writable cache and the execution-profile
- * cache alike: a deleted or re-credentialed connection must not leave a stale agent pool running under the old
- * configuration. The scope decides which entries of the connection go, and no scope ever reaches another connection's:
+ * Remove the cached providers of `connectionId` and disconnect them, from the writable cache, the execution-profile
+ * cache and the metadata cache alike: a deleted or re-credentialed connection must not leave a stale agent pool running
+ * under the old configuration. The scope decides which entries of the connection go, and no scope ever reaches another
+ * connection's:
  *
- * - Without a scope, every entry of the connection in both caches, and then its SSH tunnel, as before owners existed.
- * - With an owner scope, every entry of either cache opened for `scope.owner`, and no other. Under governance every
+ * - Without a scope, every entry of the connection in every cache, and then its SSH tunnel, as before owners existed.
+ * - With an owner scope, every entry of any cache opened for `scope.owner`, and no other. Under governance every
  *   user's providers are their own (docs/GOVERNANCE.md#per-user-providers), so one user's disconnect must not tear down
  *   another user's pool, session state or transaction. An engine that keeps one handle per file records no owner on it
  *   (`providerOwner`), so its one handle, which every owner shares, is left to the removal without a scope.
  * - With a key scope, the entry the writable cache holds under `scope.key`, which {@link editorCacheKey} answers for one
  *   record of the connection, and the entries the profiled cache holds under that key with a profile framed onto it
- *   (`withProfile`), the record's own execution-profile providers. No other entry goes: one opened with another record
- *   of the same id, or under another file-access posture, is cached under another key. Without governance every caller
- *   of a connection shares its provider, so a disconnect may remove only what the caller's own record names
- *   (docs/SECURITY.md, note 0.9). The key frames the server and the credentials, so naming a connection id reaches
- *   nothing.
+ *   (`withProfile`), the record's own execution-profile providers, and the entry the metadata cache holds under that
+ *   key with the metadata frame, the record's own metadata session (docs/providers/CONTRACT.md, clause C-66). No other
+ *   entry goes: one opened with another record of the same id, or under another file-access posture, is cached under
+ *   another key. Without governance every caller of a connection shares its provider, so a disconnect may remove only
+ *   what the caller's own record names (docs/SECURITY.md, note 0.9). The key frames the server and the credentials, so
+ *   naming a connection id reaches nothing.
  *
- * The SSH tunnel serves every entry of the connection, so a scoped removal closes it only once no entry of either cache
+ * The SSH tunnel serves every entry of the connection, so a scoped removal closes it only once no entry of any cache
  * still serves the connection, as the idle sweep does. A scope that names neither an owner nor a key as a string, or
  * names both, is refused before anything is removed: matching on a missing owner would remove the entries every caller
  * shares.
@@ -2349,7 +2451,8 @@ export async function acquireExecutionProfileProvider(
  * An owned entry is torn down (`teardownProvider`): it leaves the cache first, an open transaction on it is rolled
  * back, and a pool that hangs is abandoned, so the removal of a user's providers, which the governance loader asks for
  * when a grant is taken away or changed (`src/lib/db/owner-removal.ts`), ends within 15 s. The owned entries are torn
- * down at once, and before the tunnel goes. An entry every caller shares is disconnected as before.
+ * down at once, and before the tunnel goes. The entries every caller shares are disconnected at once too, beside the
+ * owned ones, each leaving its cache once its own disconnect has answered, and all of them before the tunnel goes.
  *
  * An open still in flight that the scope names, by its connection, its owner or its key as the entries are named, is
  * overtaken (docs/providers/CONTRACT.md, clause C-44): once it has connected it closes the provider it built and admits
@@ -2369,57 +2472,66 @@ export async function removeProvider(
       "removeProvider takes a scope only with the owner whose providers it removes or the cache key of the record whose providers it removes, as a string, and never with both.",
     );
   }
-  // A key scope names the record's writable entry by the key itself, and its profiled entries by the key with each
-  // profile framed onto it.
+  // A key scope names the record's writable entry by the key itself, its profiled entries by the key with each
+  // profile framed onto it, and its metadata session by the key with the metadata frame.
   const profiledKeys: ReadonlySet<string> = new Set(
     byKey ? Array.from(EXECUTION_PROFILES, (profile) => withProfile(profile, scopedKey)) : [],
   );
+  const metadataKey = byKey ? withProfile(METADATA_FRAME, scopedKey) : undefined;
   const removes = (entry: { connectionId: string; owner?: string }, keyed: boolean): boolean =>
     entry.connectionId === connectionId && (scope === undefined || (byKey ? keyed : entry.owner === owner));
   const teardowns: Promise<boolean>[] = [];
+  const disconnects: Promise<void>[] = [];
 
   // An open in flight the scope names is overtaken first: it closes what it opens and admits nothing
   // (`connectUnlessOvertaken`), so a removal is never undone by an open that was still connecting when it ran.
   discardFlights(editorFlights, (flight) => removes(flight.meta, flight.key === scopedKey), "removeProvider");
   discardFlights(profiledFlights, (flight) => removes(flight.meta, profiledKeys.has(flight.key)), "removeProvider");
+  discardFlights(metadataFlights, (flight) => removes(flight.meta, flight.key === metadataKey), "removeProvider");
 
-  // A connection can hold more than one entry now - one per distinct server-and-credentials
-  // it was opened with - so this removes every entry serving it, the way the profiled loop
-  // below always has.
-  for (const [key, entry] of providerCache) {
-    if (!removes(entry, key === scopedKey)) continue;
-    if (entry.owner !== undefined) {
-      teardowns.push(teardownProvider(providerCache, key, entry));
-      continue;
-    }
+  /**
+   * Disconnects `entry`, which every caller shares, a failed disconnect logged by `noun` through the entry's scrub, and
+   * takes it out of `cache` once its disconnect has answered. It never rejects.
+   */
+  const disconnectShared = async (
+    cache: Map<string, CachedProvider>,
+    noun: CacheNoun,
+    key: string,
+    entry: CachedProvider,
+  ): Promise<void> => {
     try {
       await entry.provider.disconnect();
     } catch (error) {
-      logger.warn(`Error disconnecting provider ${sanitize(connectionId)}`, {
+      logger.warn(`Error disconnecting ${noun} ${sanitize(connectionId)}`, {
         connectionId,
         error: String(withholdProviderError(entry.scrub, error)),
       });
     }
-    providerCache.delete(key);
-  }
+    cache.delete(key);
+  };
 
-  for (const [key, entry] of profiledProviderCache) {
-    if (!removes(entry, profiledKeys.has(key))) continue;
-    if (entry.owner !== undefined) {
-      teardowns.push(teardownProvider(profiledProviderCache, key, entry));
-      continue;
+  /**
+   * Starts the removal of the entries of `cache` the scope names, `keyed` answering whether an entry's key is the one a
+   * key scope names: an owned entry's teardown and a shared entry's disconnect (`disconnectShared`) are each started
+   * beside the others and collected, for the removal to wait for together.
+   */
+  const removeEntries = (
+    cache: Map<string, CachedProvider>,
+    noun: CacheNoun,
+    keyed: (key: string) => boolean,
+  ): void => {
+    // A connection can hold more than one entry in a cache, one per distinct server-and-credentials it was opened
+    // with, so this removes every entry serving it.
+    for (const [key, entry] of cache) {
+      if (!removes(entry, keyed(key))) continue;
+      if (entry.owner !== undefined) teardowns.push(teardownProvider(cache, key, entry));
+      else disconnects.push(disconnectShared(cache, noun, key, entry));
     }
-    try {
-      await entry.provider.disconnect();
-    } catch (error) {
-      logger.warn(`Error disconnecting profiled provider ${sanitize(connectionId)}`, {
-        connectionId,
-        error: String(withholdProviderError(entry.scrub, error)),
-      });
-    }
-    profiledProviderCache.delete(key);
-  }
-  await Promise.all(teardowns);
+  };
+  removeEntries(providerCache, "provider", (key) => key === scopedKey);
+  removeEntries(profiledProviderCache, "profiled provider", (key) => profiledKeys.has(key));
+  removeEntries(metadataProviderCache, "metadata provider", (key) => key === metadataKey);
+  await Promise.all([...teardowns, ...disconnects]);
 
   // The entries the scope left, another owner's or another record's, keep the tunnel they reach the connection through.
   if (scope !== undefined && connectionStillServed(connectionId)) return;
@@ -2457,7 +2569,7 @@ async function overtakenOpenStillOpening(overtaken: DiscardedFlight<OpenMeta>): 
 }
 
 /**
- * Closes every cached provider (shared and execution-profile), all at once, and answers the names
+ * Closes every cached provider (shared, execution-profile and metadata), all at once, and answers the names
  * (`providerName`) of those that did not close completely: one whose rollback or disconnect failed or was cut, and an
  * open in flight still connecting at the close deadline. Every provider, owned (docs/GOVERNANCE.md#per-user-providers)
  * or shared alike, is torn down (`teardownProvider`): its entry leaves the cache, an open transaction it holds is rolled
@@ -2493,6 +2605,7 @@ async function closeEveryProvider(): Promise<string[]> {
   const closes: Promise<string | null>[] = [
     ...discardFlights(editorFlights, () => true, "closeCaches"),
     ...discardFlights(profiledFlights, () => true, "closeCaches"),
+    ...discardFlights(metadataFlights, () => true, "closeCaches"),
   ].map(overtakenOpenStillOpening);
   /** Answers the provider's name when its close did not complete, so the caller lists it, and null when it did. */
   const notClosed = (entry: CachedProvider) => (closed: boolean) =>
@@ -2504,13 +2617,16 @@ async function closeEveryProvider(): Promise<string[]> {
   for (const [key, entry] of profiledProviderCache) {
     closes.push(teardownProvider(profiledProviderCache, key, entry, "profiled provider").then(notClosed(entry)));
   }
+  for (const [key, entry] of metadataProviderCache) {
+    closes.push(teardownProvider(metadataProviderCache, key, entry, "metadata provider").then(notClosed(entry)));
+  }
 
   return (await Promise.all(closes)).filter((id): id is string => id !== null);
 }
 
 /**
- * Clear all cached providers (shared and execution-profile), all at once (`closeCaches`), within 15 s. A provider whose
- * close fails or is cut is logged, and the clear still resolves.
+ * Clear all cached providers (shared, execution-profile and metadata), all at once (`closeCaches`), within 15 s. A
+ * provider whose close fails or is cut is logged, and the clear still resolves.
  * At a shutdown Studio's handler owns, the handler (src/lib/shutdown-handler.ts) closes the caches through the shutdown
  * registry, where each copy of this module registers `closeCachesAtShutdown` below; importing this module adds no
  * process listener, so an embedder of the package that wants its pools closed on a signal calls this from its own

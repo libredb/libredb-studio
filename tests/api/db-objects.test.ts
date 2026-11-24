@@ -64,6 +64,8 @@ import { EXECUTE_SLACK_MS } from "@/lib/api/editor-query";
 import { waitedSeconds } from "@/lib/db/errors";
 import { DEFAULT_QUERY_TIMEOUT } from "@/lib/db/types";
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
+import { editorExecutionContext } from "@/lib/api/execution-context";
+import type { UserPayload } from "@/lib/auth";
 import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
 import { ALLOWS_PRIVATE_HOSTS } from "../helpers/egress-decisions";
 
@@ -76,6 +78,9 @@ import { ALLOWS_PRIVATE_HOSTS } from "../helpers/egress-decisions";
 
 let activeProvider: DatabaseProvider = createMockProvider();
 const mockGetOrCreateProvider = mock(async () => activeProvider);
+/** The tree routes' resolution (docs/providers/CONTRACT.md, clause C-66): the file's provider unless a test says otherwise. */
+const answerActiveProvider = async () => activeProvider;
+const mockGetOrCreateMetadataProvider = mock(answerActiveProvider);
 
 const mockGetSession = mock(async () => ({ role: "admin", username: "admin" }) as unknown);
 mock.module("@/lib/auth", () => ({
@@ -115,6 +120,7 @@ mock.module("@/lib/seed/resolve-connection", () => ({
 
 mock.module("@/lib/db", () => ({
   getOrCreateProvider: mockGetOrCreateProvider,
+  getOrCreateMetadataProvider: mockGetOrCreateMetadataProvider,
   createDatabaseProvider: mock(),
   removeProvider: mock(),
   clearProviderCache: mock(),
@@ -238,6 +244,8 @@ beforeEach(() => {
   clearRateLimitState();
   mockGetSession.mockClear();
   mockGetOrCreateProvider.mockClear();
+  mockGetOrCreateMetadataProvider.mockReset();
+  mockGetOrCreateMetadataProvider.mockImplementation(answerActiveProvider);
   activeProvider = objectProvider();
 });
 
@@ -3732,5 +3740,149 @@ describe("the tree routes on the host core", () => {
 
     expect(statuses).toEqual(posts.map(([name]) => [name, 200]));
     expect(forCatalog).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================================
+// The tree routes on the metadata session (docs/providers/CONTRACT.md, clause C-66)
+// ============================================================================
+
+describe("the tree routes on the metadata session", () => {
+  /** The session the mocked guard answers, which every route derives its execution context from. */
+  const ADMIN = { role: "admin", username: "admin" } as unknown as UserPayload;
+
+  /** Each object route, the body it reads, and the session its provider resolves on. */
+  const ROUTES: readonly [string, { POST: (req: never) => Promise<Response> }, Record<string, unknown>, string][] = [
+    ["containers", containersRoute, {}, "metadata"],
+    ["counts", countsRoute, { container: ["app"] }, "metadata"],
+    ["list", listRoute, { container: ["app"], kind: "table" }, "metadata"],
+    ["describe", describeRoute, { path: ["app", "orders"], kind: "table" }, "metadata"],
+    ["search", searchRoute, { term: "orders" }, "metadata"],
+    ["inventory", inventoryRoute, {}, "metadata"],
+    ["source", sourceRoute, { path: ["app", "orders"], kind: "table" }, "editor"],
+    ["edit-plan", editPlanRoute, { path: ["app", "orders"], kind: "table" }, "editor"],
+    ["edit-apply", editApplyRoute, { path: ["app", "orders"], kind: "table" }, "editor"],
+  ];
+
+  const post = (name: string, route: { POST: (req: never) => Promise<Response> }, body: Record<string, unknown>) =>
+    route.POST(
+      createMockRequest(`/api/db/objects/${name}`, { method: "POST", body: { connection, ...body } }) as never,
+    );
+
+  test("each tree route reads on the connection's metadata session, and the source and edit routes on the editor's", async () => {
+    // Every route on the file's census, so a tenth route is placed here too.
+    expect(ROUTES.map(([name]) => name).sort()).toEqual(Object.keys(objectRoutes).sort());
+    const context = editorExecutionContext(ADMIN, connection as never);
+    for (const [name, route, body, session] of ROUTES) {
+      mockGetOrCreateProvider.mockClear();
+      mockGetOrCreateMetadataProvider.mockClear();
+      // oxlint-disable-next-line no-await-in-loop -- one request at a time, so each resolution count is its own route's.
+      const response = await post(name, route, body);
+      const resolved = session === "metadata" ? mockGetOrCreateMetadataProvider : mockGetOrCreateProvider;
+      const other = session === "metadata" ? mockGetOrCreateProvider : mockGetOrCreateMetadataProvider;
+      expect([name, resolved.mock.calls as unknown[][]]).toEqual([name, [[connection, {}, context]]]);
+      expect([name, other.mock.calls.length]).toEqual([name, 0]);
+      if (session === "metadata") expect([name, response.status]).toEqual([name, 200]);
+    }
+  });
+
+  test("a tree route answers while the editor's provider holds every read, without waiting for it", async () => {
+    // The editor's provider holds every tree read until the end, and signals when one reaches it.
+    const reached = Promise.withResolvers<string>();
+    const held = Promise.withResolvers<never>();
+    const holds = (member: string) =>
+      mock(() => {
+        reached.resolve(member);
+        return held.promise;
+      });
+    activeProvider = objectProvider({
+      listContainers: holds("listContainers"),
+      countObjects: holds("countObjects"),
+      listObjects: holds("listObjects"),
+      describeObject: holds("describeObject"),
+      describeObjects: holds("describeObjects"),
+    });
+    const marker = `answered_${randomUUID().replaceAll("-", "")}`;
+    const metadata = objectProvider({
+      listContainers: mock(async () => [{ path: [marker], name: marker, level: 0 }]),
+      countObjects: mock(async () => ({ [marker]: { count: 1 } })),
+      listObjects: mock(async (container: readonly string[], kind: string) => [object([...container, marker], kind)]),
+      describeObject: mock(async () => emptyDetail(["app", marker])),
+    });
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => metadata);
+
+    const winners: [string, string, number, string][] = [];
+    for (const [name, route, body] of ROUTES.filter(([each]) =>
+      ["containers", "counts", "list", "describe", "inventory"].includes(each),
+    )) {
+      const answering = post(name, route, body);
+      // A tree read that went to the editor's provider loses this race at once: `reached` resolves as it is called.
+      // oxlint-disable-next-line no-await-in-loop -- one request at a time, so each race is its own route's.
+      const winner = await Promise.race([answering.then(() => "answer"), reached.promise.then(() => "editor")]);
+      // oxlint-disable-next-line no-await-in-loop -- the answer of the request above, once it has won.
+      const response = winner === "answer" ? await answering : undefined;
+      // oxlint-disable-next-line no-await-in-loop -- the answer's body, read in order.
+      const text = response === undefined ? "" : await response.text();
+      winners.push([name, winner, response?.status ?? 0, text.includes(marker) ? "metadata answer" : text]);
+    }
+    held.reject(new Error("the test ended"));
+    await held.promise.catch(() => undefined);
+
+    expect(winners).toEqual(
+      ["containers", "counts", "list", "describe", "inventory"].map((name) => [name, "answer", 200, "metadata answer"]),
+    );
+  });
+
+  test("handleObjectRequest resolves the editor's provider by default and the metadata session when asked, after the guard and the connection's resolution", async () => {
+    const probeRoute = "api/db/objects/probe";
+    const request = () =>
+      createMockRequest(`/${probeRoute}`, { method: "POST", body: { connection } }) as never as Parameters<
+        typeof handleObjectRequest
+      >[0];
+    const answered = async (provider: DatabaseProvider) => ({ editor: provider === activeProvider });
+    const metadata = objectProvider();
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => metadata);
+    const context = editorExecutionContext(ADMIN, connection as never);
+
+    const options: [string, Parameters<typeof handleObjectRequest>[3]][] = [
+      ["no options", undefined],
+      ["the editor's session", { session: "editor" }],
+      ["the metadata session", { session: "metadata" }],
+    ];
+    const seen: [string, unknown, number, number][] = [];
+    for (const [label, option] of options) {
+      mockGetOrCreateProvider.mockClear();
+      mockGetOrCreateMetadataProvider.mockClear();
+      // oxlint-disable-next-line no-await-in-loop -- one request at a time, so each resolution count is its own.
+      const response = await handleObjectRequest(request(), probeRoute, answered, option);
+      seen.push([
+        label,
+        // oxlint-disable-next-line no-await-in-loop -- the answer of the request above.
+        await parseResponseJSON(response),
+        mockGetOrCreateProvider.mock.calls.length,
+        mockGetOrCreateMetadataProvider.mock.calls.length,
+      ]);
+    }
+    expect(seen).toEqual([
+      ["no options", { editor: true }, 1, 0],
+      ["the editor's session", { editor: true }, 1, 0],
+      ["the metadata session", { editor: false }, 0, 1],
+    ]);
+    expect(mockGetOrCreateMetadataProvider.mock.calls as unknown[][]).toEqual([[connection, {}, context]]);
+
+    // The guard runs first: a caller with no session is refused before the connection is resolved or a session opened.
+    mockGetSession.mockResolvedValueOnce(null as unknown as { role: string; username: string });
+    mockResolveConnection.mockClear();
+    mockGetOrCreateMetadataProvider.mockClear();
+    const refused = await handleObjectRequest(request(), probeRoute, answered, { session: "metadata" });
+    expect(refused.status).toBe(401);
+    expect(mockResolveConnection).toHaveBeenCalledTimes(0);
+    expect(mockGetOrCreateMetadataProvider).toHaveBeenCalledTimes(0);
+
+    // A connection that does not resolve is refused before a metadata session is opened.
+    mockResolveConnection.mockRejectedValueOnce(new SeedConnectionError("Connection not found", 404));
+    const unresolved = await handleObjectRequest(request(), probeRoute, answered, { session: "metadata" });
+    expect(unresolved.status).toBe(404);
+    expect(mockGetOrCreateMetadataProvider).toHaveBeenCalledTimes(0);
   });
 });
