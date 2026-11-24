@@ -7,6 +7,8 @@
  * A statement sent inside a transaction goes only to a session that offers `console.transaction`, and never with a
  * scope. A console facet call goes only to a session that offers the facet, and an object facet call only to one that
  * offers the object facet, and a maintenance facet call only to one that offers the maintenance facet (clause C-17).
+ * A maintenance run or preview request is held to the session's maintenance: an operation it lists, a placement its
+ * spec offers, a preview its spec declares on a row, and no empty text where the request names something.
  */
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
@@ -18,11 +20,17 @@ import {
   checkConsoleFacet,
   checkExecuteRequest,
   checkMaintenanceFacet,
+  checkMaintenancePreviewRequest,
+  checkMaintenanceRunRequest,
   checkObjectsFacet,
+  type EngineMaintenance,
   type ExecuteRequest,
+  type MaintenancePreviewRequest,
+  type MaintenanceRunRequest,
   sessionCalls,
+  sessionMaintenance,
 } from "@libredb/provider-sdk/calls";
-import type { Calls } from "@libredb/provider-sdk/manifest";
+import type { Calls, MaintenanceOperation, MaintenanceSpec } from "@libredb/provider-sdk/manifest";
 
 /** The calls of a package that honours nothing and offers no facet. */
 const NOTHING: Calls = {
@@ -210,6 +218,171 @@ describe("checkMaintenanceFacet", () => {
       expect(checkMaintenanceFacet(sessionCalls(EVERYTHING, undefined), facet)).toEqual([]);
     }
     expect(checkMaintenanceFacet(previewWithdrawn, "run")).toEqual([]);
+  });
+});
+
+/** One maintenance spec, placed as given, with every other member as the declaration writes an unstated one. */
+function specOf(
+  operation: MaintenanceOperation,
+  perEntity: boolean,
+  global: boolean,
+  preview = false,
+): MaintenanceSpec {
+  return {
+    operation,
+    label: operation,
+    perEntity,
+    global,
+    title: null,
+    description: null,
+    confirmation: null,
+    preview,
+    kinds: null,
+  };
+}
+
+/** A PostgreSQL-shaped maintenance: vacuum, analyze and reindex on a row and over the whole database, kill on neither. */
+const POSTGRES_LIKE: EngineMaintenance = {
+  maintenance: ["vacuum", "analyze", "reindex", "kill"],
+  maintenanceSpecs: [
+    specOf("vacuum", true, true),
+    specOf("analyze", true, true),
+    specOf("reindex", true, true),
+    specOf("kill", false, false),
+  ],
+};
+
+/** The same maintenance narrowed as a server that runs vacuum only over the whole database and no reindex narrows it. */
+const NARROWED = sessionMaintenance(POSTGRES_LIKE, {
+  maintenance: [
+    { operation: "vacuum", perEntity: false, global: true },
+    { operation: "reindex", perEntity: false, global: false },
+  ],
+});
+
+/** A maintenance with a row-only preview, a row-only operation that previews nothing, and one listed with no spec. */
+const PREVIEWING: EngineMaintenance = {
+  maintenance: ["release", "load", "optimize", "check"],
+  maintenanceSpecs: [
+    specOf("release", true, false, true),
+    specOf("load", true, false),
+    specOf("optimize", false, true, true),
+  ],
+};
+
+const OPERATION_NOT_OFFERED: CallRefusal = { rule: "request-operation-not-offered", pointer: "/operation" };
+const PLACEMENT_NOT_OFFERED: CallRefusal = { rule: "request-placement-not-offered", pointer: "/target" };
+const PREVIEW_NOT_OFFERED: CallRefusal = { rule: "request-preview-not-offered", pointer: "/operation" };
+
+describe("checkMaintenanceRunRequest and checkMaintenancePreviewRequest", () => {
+  test("a maintenance run is held to the operations and placements the session's maintenance offers, kill placed nowhere", () => {
+    const target = randomUUID();
+    const container = randomUUID();
+    const taken: MaintenanceRunRequest[] = [
+      { operation: "vacuum", target, container },
+      { operation: "vacuum" },
+      { operation: "analyze", target },
+      { operation: "kill", target },
+      { operation: "kill" },
+    ];
+    for (const request of taken) {
+      expect(checkMaintenanceRunRequest(POSTGRES_LIKE, request)).toEqual([]);
+    }
+
+    expect(checkMaintenanceRunRequest(POSTGRES_LIKE, { operation: "optimize", target })).toEqual([
+      OPERATION_NOT_OFFERED,
+    ]);
+    expect(checkMaintenanceRunRequest(NARROWED, { operation: "reindex" })).toEqual([OPERATION_NOT_OFFERED]);
+    expect(checkMaintenanceRunRequest(NARROWED, { operation: "vacuum", target, container })).toEqual([
+      PLACEMENT_NOT_OFFERED,
+    ]);
+    expect(checkMaintenanceRunRequest(NARROWED, { operation: "vacuum" })).toEqual([]);
+    expect(checkMaintenanceRunRequest(NARROWED, { operation: "kill", target })).toEqual([]);
+    expect(checkMaintenanceRunRequest(PREVIEWING, { operation: "release" })).toEqual([PLACEMENT_NOT_OFFERED]);
+    expect(checkMaintenanceRunRequest(PREVIEWING, { operation: "release", target })).toEqual([]);
+    // An operation the maintenance lists with no spec is placed nowhere, so no placement is refused.
+    expect(checkMaintenanceRunRequest(PREVIEWING, { operation: "check" })).toEqual([]);
+    expect(checkMaintenanceRunRequest(PREVIEWING, { operation: "check", target })).toEqual([]);
+    expect(callRefusalSentence(OPERATION_NOT_OFFERED)).toBe(
+      'The request names at "/operation" an operation the session\'s maintenance does not list, so the call was not made.',
+    );
+    expect(callRefusalSentence(PLACEMENT_NOT_OFFERED)).toBe(
+      "The request asks at \"/target\" for a placement the operation's spec in the session's maintenance does not offer, so the call was not made.",
+    );
+  });
+
+  test("a maintenance preview is held to an operation whose spec previews on a row", () => {
+    const path = [randomUUID(), randomUUID()];
+
+    expect(checkMaintenancePreviewRequest(PREVIEWING, { operation: "release", path })).toEqual([]);
+    expect(checkMaintenancePreviewRequest(PREVIEWING, { operation: "release", path: [randomUUID()] })).toEqual([]);
+    expect(checkMaintenancePreviewRequest(PREVIEWING, { operation: "vacuum", path })).toEqual([OPERATION_NOT_OFFERED]);
+    expect(checkMaintenancePreviewRequest(PREVIEWING, { operation: "load", path })).toEqual([PREVIEW_NOT_OFFERED]);
+    // A spec that declares a preview but offers no row has no per-row dialog to show it in.
+    expect(checkMaintenancePreviewRequest(PREVIEWING, { operation: "optimize", path })).toEqual([PREVIEW_NOT_OFFERED]);
+    expect(checkMaintenancePreviewRequest(PREVIEWING, { operation: "check", path })).toEqual([PREVIEW_NOT_OFFERED]);
+    expect(checkMaintenancePreviewRequest(POSTGRES_LIKE, { operation: "vacuum", path })).toEqual([PREVIEW_NOT_OFFERED]);
+    // A request with no path list is not of this shape: the check does not read it, and the request's frame refuses it.
+    const noPath = { operation: "release" } as unknown as MaintenancePreviewRequest;
+    expect(checkMaintenancePreviewRequest(PREVIEWING, noPath)).toEqual([]);
+    expect(checkMaintenancePreviewRequest(POSTGRES_LIKE, { ...noPath, operation: "vacuum" })).toEqual([
+      PREVIEW_NOT_OFFERED,
+    ]);
+    expect(callRefusalSentence(PREVIEW_NOT_OFFERED)).toBe(
+      'The request at "/operation" names an operation whose spec in the session\'s maintenance declares no preview on a row, so the call was not made.',
+    );
+  });
+
+  test("a maintenance request with empty text where it names something is refused by the field", () => {
+    const target: CallRefusal = { rule: "request-field-empty", pointer: "/target", name: "target" };
+    const container: CallRefusal = { rule: "request-field-empty", pointer: "/container", name: "container" };
+    const path: CallRefusal = { rule: "request-field-empty", pointer: "/path", name: "path" };
+    const item = (index: number): CallRefusal => ({
+      rule: "request-field-empty",
+      pointer: `/path/${index}`,
+      name: "path",
+    });
+
+    expect(checkMaintenanceRunRequest(POSTGRES_LIKE, { operation: "vacuum", target: "" })).toEqual([target]);
+    expect(checkMaintenanceRunRequest(POSTGRES_LIKE, { operation: "vacuum", container: "" })).toEqual([container]);
+    expect(checkMaintenanceRunRequest(POSTGRES_LIKE, { operation: "vacuum", target: "", container: "" })).toEqual([
+      target,
+      container,
+    ]);
+    // An empty target is refused as empty, never also read as a placement.
+    expect(checkMaintenanceRunRequest(NARROWED, { operation: "vacuum", target: "" })).toEqual([target]);
+    expect(checkMaintenancePreviewRequest(PREVIEWING, { operation: "release", path: [] })).toEqual([path]);
+    expect(checkMaintenancePreviewRequest(PREVIEWING, { operation: "release", path: ["", randomUUID(), ""] })).toEqual([
+      item(0),
+      item(2),
+    ]);
+    expect(callRefusalSentence(target)).toBe(
+      'The request carries the field "target" at "/target" empty, so it names nothing and the call was not made.',
+    );
+  });
+
+  test("no maintenance request refusal carries a value of the request", () => {
+    const values = [randomUUID(), randomUUID(), randomUUID()];
+    const unlisted = randomUUID() as MaintenanceOperation;
+    const run: MaintenanceRunRequest = { operation: unlisted, target: values[0], container: values[1] };
+    const preview: MaintenancePreviewRequest = { operation: unlisted, path: [values[2] as string, ""] };
+    const placed: MaintenanceRunRequest = { operation: "vacuum", target: values[0], container: "" };
+
+    const refusals = [
+      ...checkMaintenanceRunRequest(POSTGRES_LIKE, run),
+      ...checkMaintenancePreviewRequest(POSTGRES_LIKE, preview),
+      ...checkMaintenanceRunRequest(NARROWED, placed),
+    ];
+    const text = JSON.stringify(refusals) + new CallRefusalError(refusals).message;
+
+    expect(refusals.map((refusal) => refusal.rule)).toEqual([
+      "request-operation-not-offered",
+      "request-operation-not-offered",
+      "request-field-empty",
+      "request-placement-not-offered",
+      "request-field-empty",
+    ]);
+    for (const value of [unlisted, ...values]) expect(text).not.toContain(value);
   });
 });
 

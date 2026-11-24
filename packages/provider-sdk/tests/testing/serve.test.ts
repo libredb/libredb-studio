@@ -16,6 +16,7 @@ import {
   awaitWithin,
   type BatchLimit,
   type CallContext,
+  type CallRefusal,
   CallRefusalError,
   CLEANUP_DEADLINE_MS,
   checkProviderModule,
@@ -82,6 +83,8 @@ function fixture(
     readonly run?: boolean;
     readonly preview?: boolean;
     readonly honours?: string[];
+    /** Whether the engine lists maintenance: vacuum and analyze on a row and whole, kill on neither, release on a row. */
+    readonly listsMaintenance?: boolean;
   } = {},
 ): Fixture {
   const manifest = JSON.parse(readFileSync(path.join(import.meta.dir, "../fixtures/minimal-manifest.json"), "utf8"));
@@ -93,6 +96,26 @@ function fixture(
   manifest.calls.maintenance.run = options.run === false ? "not-offered" : "offered";
   manifest.calls.maintenance.preview = options.preview === false ? "not-offered" : "offered";
   manifest.engines[0].facets.monitoring.overview = "not-offered";
+  if (options.listsMaintenance === true) {
+    const placed: [string, boolean, boolean, boolean][] = [
+      ["vacuum", true, true, false],
+      ["analyze", true, true, false],
+      ["kill", false, false, false],
+      ["release", true, false, options.preview !== false],
+    ];
+    manifest.engines[0].facets.maintenance = placed.map(([operation]) => operation);
+    manifest.engines[0].facets.maintenanceSpecs = placed.map(([operation, perEntity, global, preview]) => ({
+      operation,
+      label: operation,
+      perEntity,
+      global,
+      title: null,
+      description: null,
+      confirmation: null,
+      preview,
+      kinds: null,
+    }));
+  }
   const seen: Seen[] = [];
   const handle: ProviderHandle = { marker: marker() };
   const answers: Json = {
@@ -797,7 +820,7 @@ describe("serve", () => {
   });
 
   test("a served maintenance call crosses its request and answer as frames, and the provider receives decoded frozen copies", async () => {
-    const fx = fixture();
+    const fx = fixture({ listsMaintenance: true });
     const { impl, frames } = served(fx);
     const opened = await impl.open(openContext());
     const before = frames.length;
@@ -865,15 +888,26 @@ describe("serve", () => {
     expect((unknownKey as FrameRefusalError).refusals).toEqual([
       { rule: "frame-key-unknown", call: "maintenance.run", part: "answer", pointer: "/columns", name: "columns" },
     ]);
-    const unknownOperation = await failure(async () =>
+    const unreadablePath = await failure(async () =>
       impl.maintenance?.preview?.(
         opened.handle,
-        { operation: "shrink", path: ["a"] } as unknown as MaintenancePreviewRequest,
+        { operation: "release", path: [7] } as unknown as MaintenancePreviewRequest,
         callContext(),
       ),
     );
-    expect((unknownOperation as FrameRefusalError).refusals).toEqual([
-      { rule: "frame-value-unreadable", call: "maintenance.preview", part: "request", pointer: "/operation" },
+    expect((unreadablePath as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-value-unreadable", call: "maintenance.preview", part: "request", pointer: "/path/0" },
+    ]);
+    const missingPath = await failure(async () =>
+      impl.maintenance?.preview?.(
+        opened.handle,
+        { operation: "release" } as unknown as MaintenancePreviewRequest,
+        callContext(),
+      ),
+    );
+    expect(missingPath).toBeInstanceOf(FrameRefusalError);
+    expect((missingPath as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-key-missing", call: "maintenance.preview", part: "request", pointer: "/path", name: "path" },
     ]);
     expect(fx.seen.length).toBe(runs.length + 3);
   });
@@ -881,7 +915,7 @@ describe("serve", () => {
   test("a maintenance call on a session without the facet is refused before any frame", async () => {
     for (const facet of ["run", "preview"] as const) {
       const declaredNot = fixture({ [facet]: false });
-      const withdrawn = fixture();
+      const withdrawn = fixture({ listsMaintenance: true });
       withdrawn.answers.open = () => ({
         handle: withdrawn.handle,
         refine: { calls: { maintenance: { [facet]: "not-offered" } } },
@@ -911,6 +945,61 @@ describe("serve", () => {
       expect(narrowed.frames.length).toBe(before);
       expect(withdrawn.seen.map((item) => item.call)).toEqual(["open"]);
     }
+  });
+
+  test("a served maintenance call whose request the session's maintenance does not take is refused before any frame", async () => {
+    const fx = fixture({ listsMaintenance: true });
+    const { impl, frames } = served(fx);
+    fx.answers.open = () => ({
+      handle: fx.handle,
+      refine: { maintenance: [{ operation: "vacuum", perEntity: false, global: true }] },
+    });
+    const opened = await impl.open(openContext());
+    const before = frames.length;
+    const cases: [() => Promise<unknown> | undefined, CallRefusal][] = [
+      [
+        () => impl.maintenance?.run?.(opened.handle, { operation: "optimize" }, callContext()),
+        { rule: "request-operation-not-offered", pointer: "/operation" },
+      ],
+      [
+        () =>
+          impl.maintenance?.run?.(
+            opened.handle,
+            { operation: "shrink" } as unknown as MaintenanceRunRequest,
+            callContext(),
+          ),
+        { rule: "request-operation-not-offered", pointer: "/operation" },
+      ],
+      [
+        () => impl.maintenance?.run?.(opened.handle, { operation: "vacuum", target: marker() }, callContext()),
+        { rule: "request-placement-not-offered", pointer: "/target" },
+      ],
+      [
+        () => impl.maintenance?.run?.(opened.handle, { operation: "analyze", container: "" }, callContext()),
+        { rule: "request-field-empty", pointer: "/container", name: "container" },
+      ],
+      [
+        () => impl.maintenance?.preview?.(opened.handle, { operation: "analyze", path: [marker()] }, callContext()),
+        { rule: "request-preview-not-offered", pointer: "/operation" },
+      ],
+      [
+        () => impl.maintenance?.preview?.(opened.handle, { operation: "release", path: [] }, callContext()),
+        { rule: "request-field-empty", pointer: "/path", name: "path" },
+      ],
+    ];
+
+    for (const [call, refusal] of cases) {
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, so no frame of one is read as another's.
+      const refused = await failure(async () => call());
+      expect(refused).toBeInstanceOf(CallRefusalError);
+      expect((refused as CallRefusalError).refusals).toEqual([refusal]);
+    }
+    expect(frames.length).toBe(before);
+    expect(fx.seen.map((item) => item.call)).toEqual(["open"]);
+
+    const taken = await impl.maintenance?.run?.(opened.handle, { operation: "vacuum" }, callContext());
+    expect(taken?.success).toBe(true);
+    expect(fx.seen.map((item) => item.call)).toEqual(["open", "maintenance.run"]);
   });
 
   test("a served open whose maintenance narrowing names an operation its engine does not list is refused, and the session it opened is closed", async () => {

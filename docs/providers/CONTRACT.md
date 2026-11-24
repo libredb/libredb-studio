@@ -1828,6 +1828,12 @@ How many pages larger than one batch the host holds at once is bounded by its pa
 The host holds every call to a console facet to the session's calls with `checkConsoleFacet` before the call, every call to an object facet with `checkObjectsFacet` and every call to a maintenance facet with `checkMaintenanceFacet`, and refuses it by `facet-not-offered`, a rule of `CALL_REFUSAL_RULES`, when the session's calls do not offer that facet.
 The session's calls are the ones `sessionCalls` answers, so a facet the manifest offers and a refinement narrowed to not-offered is refused too.
 The refusal names the facet by its call name and a JSON Pointer into the session's calls.
+The host also holds every maintenance run request to the session's maintenance with `checkMaintenanceRunRequest`, and every maintenance preview request with `checkMaintenancePreviewRequest`, before the call.
+It refuses an operation the session's maintenance does not list as `request-operation-not-offered`, a run on a placement the operation's spec does not offer as `request-placement-not-offered`, and a preview of an operation whose spec declares no preview on a row as `request-preview-not-offered`.
+An operation its spec places nowhere, `kill`, passes the placement check, as does an operation listed with no spec.
+Empty text where a request names something, a target, a container, the path or a name in it, is refused as `request-field-empty`, named by the field.
+A preview request whose path is not a list is not read by the check: reading the request's frame refuses it by name.
+Each refusal names a JSON Pointer into the request, in request order, and never a value of it.
 
 - test `packages/provider-sdk/tests/calls/request.test.ts` "a console facet the session does not offer is refused before the call"
 - test `packages/provider-sdk/tests/calls/request.test.ts` "a console facet the session offers is called"
@@ -1836,6 +1842,12 @@ The refusal names the facet by its call name and a JSON Pointer into the session
 - test `packages/provider-sdk/tests/calls/request.test.ts` "a session that offers objects.tree is called"
 - test `packages/provider-sdk/tests/calls/request.test.ts` "the maintenance facets are refused by name to a session that does not offer them"
 - test `packages/provider-sdk/tests/calls/request.test.ts` "a session that offers maintenance.run and maintenance.preview is called"
+- test `packages/provider-sdk/tests/calls/request.test.ts` "a maintenance run is held to the operations and placements the session's maintenance offers, kill placed nowhere"
+- test `packages/provider-sdk/tests/calls/request.test.ts` "a maintenance preview is held to an operation whose spec previews on a row"
+- test `packages/provider-sdk/tests/calls/request.test.ts` "a maintenance request with empty text where it names something is refused by the field"
+- test `packages/provider-sdk/tests/calls/request.test.ts` "no maintenance request refusal carries a value of the request"
+- test `packages/provider-sdk/tests/calls/request.test.ts` "every call refusal rule is worded in one sentence"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served maintenance call whose request the session's maintenance does not take is refused before any frame"
 
 ### C-18 (normative): The testing entry is for tests
 
@@ -2782,6 +2794,7 @@ A native provider's metadata session is an open like the editor's with a smaller
 
 `maintenance.run` and `maintenance.preview` are the two maintenance facets, each offered or not in `calls.maintenance`, and each implemented as one function under the implementation's `maintenance`.
 `maintenance.run` runs one operation of those the session's engine lists: its request names the operation, the object or session it targets, absent for the whole database, and the container the target lives in, absent where it names none.
+A target or a container, when present, is never empty text, and the host holds each run and preview request to the session's maintenance, C-17.
 It answers whether the engine took the operation, how long it ran in milliseconds, the engine's sentence and, for an operation whose answer is a table, its rows and their fields, `fields` present whenever `rows` is.
 `maintenance.preview` reads what one per-row operation would do to the object its path addresses, container levels first and the object last, so the path is never empty, and answers a summary, the facts it rests on, a refusal where a preflight refuses the operation, and a note on how fresh or exact the facts are.
 Every implementation honours every member of its request, so neither facet has an honours list.
@@ -2813,7 +2826,7 @@ The answer shapes are Studio's own maintenance result and preview, declared by t
 `sessionMaintenance` reads the same shape, refuses an operation the session's engine does not list as `refinement-widens`, and answers the engine's maintenance with every refused placement withdrawn and every operation left with none removed from both lists, `kill` among them.
 It adds nothing and changes no label, confirmation, preview or kinds, and an operation the narrowing does not name stays as declared, which is how Studio's `narrowMaintenance` reads a connected provider's measurement.
 Its answer is frozen at every depth, and the declaration is left as it is.
-The host keeps the narrowed maintenance with the session, beside its calls.
+The host keeps the narrowed maintenance with the session, beside its calls, and holds every run and preview request to it, C-17.
 
 - test `packages/provider-sdk/tests/calls/refinement.test.ts` "a maintenance narrowing is a list of the placements the server accepts, each read as a closed record of its operation and two booleans"
 - test `packages/provider-sdk/tests/calls/refinement.test.ts` "a maintenance narrowing longer than the operation vocabulary is refused as refinement-unreadable at the list, and no item is read"
@@ -2901,3 +2914,4 @@ Against this contract's earlier text:
 - A connection's maintenance narrowing is the session's refinement, C-68, where no member stated it.
 - The connection fields, seed-only fields, refused fields, credential warnings, trust material and connection string answers are projections of the declarations, M-15 and M-71, where Studio kept each in a table of its own.
 - A seed's agent credential form follows the agent credential form request, M-55.
+- A maintenance run or preview is held to the session's maintenance before the call, C-17 and C-68, where only its facet was.

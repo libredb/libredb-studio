@@ -22,7 +22,8 @@
  * The host's side refuses, before any frame and before anything else it checks, a call whose deadline has passed or
  * whose signal has aborted (`checkCallStart`), the signal's reason as the error's cause, so the provider is never
  * called and the tables are unchanged. It holds every call to the session's calls before any frame
- * (`checkExecuteRequest`, `checkConsoleFacet`, `checkObjectsFacet`, `checkMaintenanceFacet`), reads `open`'s refinement
+ * (`checkExecuteRequest`, `checkConsoleFacet`, `checkObjectsFacet`, `checkMaintenanceFacet`), and every maintenance
+ * request to the session's maintenance (`checkMaintenanceRunRequest`, `checkMaintenancePreviewRequest`), reads `open`'s refinement
  * with `sessionCalls` and `sessionMaintenance`, the latter against the maintenance of the engine the open context names,
  * which it refuses before any frame when the module's manifest does not declare it,
  * and closes what an answer it refuses handed over: the session through the provider's `close`, under a cleanup
@@ -46,6 +47,8 @@ import {
   checkConsoleFacet,
   checkExecuteRequest,
   checkMaintenanceFacet,
+  checkMaintenancePreviewRequest,
+  checkMaintenanceRunRequest,
   checkObjectsFacet,
   sessionCalls,
   sessionMaintenance,
@@ -252,7 +255,7 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
   }
 
   /**
-   * One facet call on the session `handle` with `request`, held first to the session's calls by `check`: the request
+   * One facet call on the session `handle` with `request`, held first to the host's session by `check`: the request
    * and context frame, the provider's call `fn` on decoded copies, with `owner` as its `this`, and the answer frame,
    * read and compared, decoded for the host.
    */
@@ -264,7 +267,7 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
       | "objects.tree"
       | "maintenance.run"
       | "maintenance.preview",
-    check: (calls: Calls) => readonly CallRefusal[],
+    check: (session: HostSession) => readonly CallRefusal[],
     fn: (handle: unknown, request: unknown, ctx: CallContext) => Promise<unknown>,
     owner: unknown,
     handle: unknown,
@@ -279,7 +282,7 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
   ): Promise<Answer> {
     refuseCallStart(ctx);
     const session = hostSession(call, handle);
-    const refusals = check(session.calls);
+    const refusals = check(session);
     if (refusals.length > 0) throw new CallRefusalError(refusals);
     const sent = cross(call, "to-provider", {
       call,
@@ -303,19 +306,27 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
     ctx: CallContext,
   ): Promise<Answer> {
     const fn = provider[facet] as (handle: unknown, request: unknown, ctx: CallContext) => Promise<unknown>;
-    return facetCall<Answer>(call, (calls) => checkConsoleFacet(calls, facet), fn, consoleImpl, handle, request, ctx);
+    const check = (session: HostSession) => checkConsoleFacet(session.calls, facet);
+    return facetCall<Answer>(call, check, fn, consoleImpl, handle, request, ctx);
   }
 
-  /** One maintenance facet call: a facet call held to the session's maintenance calls, on the provider's maintenance. */
+  /**
+   * One maintenance facet call: a facet call held to the session's maintenance calls and its request to the session's
+   * maintenance by `checkRequest`, the facet first, on the provider's maintenance.
+   */
   function maintenanceCall<Answer>(
     call: "maintenance.run" | "maintenance.preview",
     facet: MaintenanceFacet,
+    checkRequest: (maintenance: EngineMaintenance) => readonly CallRefusal[],
     handle: unknown,
     request: MaintenanceRunRequest | MaintenancePreviewRequest,
     ctx: CallContext,
   ): Promise<Answer> {
     const fn = provider[facet] as (handle: unknown, request: unknown, ctx: CallContext) => Promise<unknown>;
-    const check = (calls: Calls) => checkMaintenanceFacet(calls, facet);
+    const check = (session: HostSession) => {
+      const offered = checkMaintenanceFacet(session.calls, facet);
+      return offered.length > 0 ? offered : checkRequest(session.maintenance);
+    };
     return facetCall<Answer>(call, check, fn, maintenanceImpl, handle, request, ctx);
   }
 
@@ -540,7 +551,7 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
           tree: (handle: ServedHandle, request: TreeRequest, ctx: CallContext) =>
             facetCall<TreeAnswer>(
               "objects.tree",
-              (calls) => checkObjectsFacet(calls, "tree"),
+              (session) => checkObjectsFacet(session.calls, "tree"),
               tree as (handle: unknown, request: unknown, ctx: CallContext) => Promise<unknown>,
               objectsImpl,
               handle,
@@ -553,13 +564,27 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
       ? {}
       : {
           run: (handle: ServedHandle, request: MaintenanceRunRequest, ctx: CallContext) =>
-            maintenanceCall<MaintenanceRunAnswer>("maintenance.run", "run", handle, request, ctx),
+            maintenanceCall<MaintenanceRunAnswer>(
+              "maintenance.run",
+              "run",
+              (maintenance) => checkMaintenanceRunRequest(maintenance, request),
+              handle,
+              request,
+              ctx,
+            ),
         }),
     ...(provider.preview === undefined
       ? {}
       : {
           preview: (handle: ServedHandle, request: MaintenancePreviewRequest, ctx: CallContext) =>
-            maintenanceCall<MaintenancePreview>("maintenance.preview", "preview", handle, request, ctx),
+            maintenanceCall<MaintenancePreview>(
+              "maintenance.preview",
+              "preview",
+              (maintenance) => checkMaintenancePreviewRequest(maintenance, request),
+              handle,
+              request,
+              ctx,
+            ),
         }),
   };
   return Object.freeze({
