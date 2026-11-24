@@ -122,9 +122,11 @@ const ONE_ROW: QueryResult = { rows: [{ n: 1 }], fields: ["n"], rowCount: 1, exe
  * `tests/unit/lib/agent/investigation.test.ts` builds one: an empty read, and one container holding one listed object of
  * the engine's first declared kind, unless the case says otherwise.
  */
-function providerDouble(listedKind: string, answers: DoubleAnswers = {}): DatabaseProvider {
+function providerDouble(engine: DatabaseType, listedKind: string, answers: DoubleAnswers = {}): DatabaseProvider {
   const listed = answers.listed ?? ["orders"];
   return {
+    // The engine it stands for, whose engine row the bridged session of the grounding walk reads.
+    type: engine,
     queryReadOnly: answers.query ?? (async () => EMPTY_RESULT),
     readCatalogReadOnly: answers.catalog ?? (async () => ({ kind: "not-found", container: "app", object: "none" })),
     readClusterUsage: answers.usage ?? (async () => ({ kind: "rows", result: ONE_ROW })),
@@ -175,7 +177,7 @@ async function drive(
   forgetHeldSnapshots();
   const connection = CENSUS_CONNECTION[engine];
   const { capabilities, labels, listedKind } = await declarationsOf(engine);
-  const provider = providerDouble(listedKind, answers);
+  const provider = providerDouble(engine, listedKind, answers);
   const availability = workflowAvailability(mode, workflowType, engine);
   if (!availability.open) throw new Error(`${mode} ${workflowType} does not open on ${engine}`);
 
@@ -575,7 +577,7 @@ async function toolContext(
 ): Promise<AgentToolContext> {
   const connection = CENSUS_CONNECTION[engine];
   const { capabilities, labels, listedKind } = await declarationsOf(engine);
-  const provider = providerDouble(listedKind, answers);
+  const provider = providerDouble(engine, listedKind, answers);
   const language = engine === SQL_ENGINE ? "sql" : LANGUAGE[engine as keyof typeof LANGUAGE];
   return {
     runId: "run_g",

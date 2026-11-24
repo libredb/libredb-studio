@@ -13,11 +13,18 @@ import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from "bun:te
 import { randomUUID } from "node:crypto";
 import type { CallContext, TreeAnswer, TreeRequest } from "@libredb/provider-sdk/calls";
 import { EXECUTE_SLACK_MS, executeDeadline } from "@/lib/api/editor-query";
-import { type ObjectTree, objectTree } from "@/lib/api/object-tree";
+import {
+  type GrantedObjectTree,
+  grantedObjectTree,
+  type ObjectTree,
+  objectTree,
+  type WalkGrant,
+} from "@/lib/api/object-tree";
 import { errorOutcome } from "@/lib/db/error-record";
 import { QueryCancelledError, StudioTimeoutRefusal, waitedSeconds } from "@/lib/db/errors";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
+import { RunReadAllowance } from "@/lib/db/read-allowance";
 import { HOST_DEFECT_PREFIX } from "@/lib/provider-host/access";
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
 import type { TreeRecord } from "@/lib/provider-host/core/objects";
@@ -98,6 +105,33 @@ const MEMBER: Record<TreeRequest["action"], keyof DatabaseProvider> = {
 /** D5's deadline sentence for the read `noun` on a provider whose statement timeout is `queryTimeout`. */
 const deadlineSentence = (noun: string, queryTimeout: number) =>
   `${noun} did not answer within the statement timeout of ${waitedSeconds(queryTimeout)} and ${waitedSeconds(EXECUTE_SLACK_MS)} more for the engine's own answer, so Studio stopped waiting for it.`;
+
+/** A grant of `ms` from now on the route, its time refusal `refusal` by reference and its hold `hold`. */
+function grantOf(
+  over: Partial<WalkGrant> = {},
+  refusal: Error = new Error(marker()),
+): WalkGrant & { readonly hold: ReturnType<typeof mock<(settled: Promise<unknown>) => void>> } {
+  const hold = mock<(settled: Promise<unknown>) => void>(() => {});
+  return {
+    deadline: Date.now() + 60_000,
+    timeRefusal: () => refusal,
+    route: ROUTE,
+    holdUntilSettled: hold,
+    hold,
+    ...over,
+  };
+}
+
+/** One read of each action the granted tree offers, each with arrays of its own. */
+const GRANTED_READS: readonly {
+  readonly action: Exclude<TreeRequest["action"], "describe">;
+  readonly run: (tree: GrantedObjectTree) => Promise<unknown>;
+}[] = [
+  { action: "containers", run: (tree) => tree.containers(["app"]) },
+  { action: "count", run: (tree) => tree.countObjects(["app"]) },
+  { action: "list", run: (tree) => tree.listObjects(["app"], "table") },
+  { action: "describeMany", run: (tree) => tree.describeObjects(["app"], "table", 3) },
+];
 
 const NOUN: Record<TreeRequest["action"], string> = {
   containers: "The container listing",
@@ -348,6 +382,53 @@ describe("objectTree", () => {
     });
   });
 
+  test("a containers answer that says the inventory needs configuration reaches the granted tree whole and the editor's listing as its containers alone", async () => {
+    const reason = marker();
+    const provider = Object.assign(providerOf(), {
+      inventoryNeedsConfiguration: mock<() => Promise<string | undefined>>(async () => reason),
+    });
+
+    const listed = await objectTree(provider, new AbortController().signal, ROUTE).listContainers();
+    const whole = await grantedObjectTree(provider, grantOf()).containers();
+
+    expect(listed).toEqual([]);
+    expect(whole).toEqual({ containers: [], needsConfiguration: reason });
+    expect(mockOf(provider.listContainers)).not.toHaveBeenCalled();
+  });
+
+  test("a needsConfiguration beside a container, or below the top level, is answered as the provider's defect, named", async () => {
+    const provider = providerOf();
+    const container = { path: ["app"], name: "app", level: 0 };
+    const caught = await withCore(
+      (real) => ({
+        ...real,
+        treeCall: async (_session, request): Promise<TreeRecord> => ({
+          kind: "answered",
+          answer:
+            request.action === "containers" && request.parent === undefined
+              ? { containers: [container], needsConfiguration: marker() }
+              : { containers: [], needsConfiguration: marker() },
+        }),
+      }),
+      () => {
+        const editor = objectTree(provider, new AbortController().signal, ROUTE);
+        const granted = grantedObjectTree(provider, grantOf());
+        return Promise.all([
+          failure(() => editor.listContainers()),
+          failure(() => granted.containers()),
+          failure(() => editor.listContainers(["app"])),
+          failure(() => granted.containers(["app"])),
+        ]);
+      },
+    );
+
+    const beside =
+      "The provider answered a containers tree read with needsConfiguration beside a container, which is a defect of the provider.";
+    const below =
+      "The provider answered a containers tree read below the top level with needsConfiguration, which is a defect of the provider.";
+    expect(caught.map((error) => (error as Error).message)).toEqual([beside, beside, below, below]);
+  });
+
   test("a tree read before the host core is installed fails by name and reaches no provider", async () => {
     const provider = providerOf();
     const real = hostCore();
@@ -362,5 +443,177 @@ describe("objectTree", () => {
 
     for (const error of caught) expect(error).toBeInstanceOf(HostCoreBootOrderError);
     for (const { action } of READS) expect(mockOf(provider[MEMBER[action]])).not.toHaveBeenCalled();
+  });
+});
+
+describe("grantedObjectTree", () => {
+  test("each granted read is one host core tree call on the walk's one bridged session, a fresh request, and a fresh context on the grant's one deadline and one signal, of deadline, signal and env alone", async () => {
+    const provider = providerOf();
+    const seen: { session: unknown; request: TreeRequest; ctx: CallContext }[] = [];
+    const container = ["app"];
+    const grant = grantOf({ deadline: Date.now() + 45_000 });
+    await withCore(
+      (real) => ({
+        ...real,
+        treeCall: (session, request, ctx, ports) => {
+          seen.push({ session, request, ctx });
+          return real.treeCall(session, request, ctx, ports);
+        },
+      }),
+      async () => {
+        const tree = grantedObjectTree(provider, grant);
+        await tree.containers();
+        await tree.containers(container);
+        await tree.countObjects(container);
+        await tree.listObjects(container, "table");
+        await tree.describeObjects(container, "table", 3);
+      },
+    );
+
+    expect(seen.map(({ request }) => request)).toEqual([
+      { action: "containers" },
+      { action: "containers", parent: ["app"] },
+      { action: "count", container: ["app"] },
+      { action: "list", container: ["app"], kind: "table" },
+      { action: "describeMany", container: ["app"], kind: "table", limit: 3 },
+    ]);
+    expect(new Set(seen.map(({ session }) => session)).size).toBe(1);
+    expect(new Set(seen.map(({ ctx }) => ctx)).size).toBe(seen.length);
+    expect(new Set(seen.map(({ ctx }) => ctx.signal)).size).toBe(1);
+    for (const { ctx } of seen) {
+      expect(Object.keys(ctx).sort()).toEqual(["deadline", "env", "signal"]);
+      expect(ctx.deadline).toBe(grant.deadline);
+      expect(ctx.signal.aborted).toBe(false);
+    }
+    expect(Object.isFrozen(container)).toBe(false);
+    const requests = seen.map(({ request }) => request as Partial<Record<"parent" | "container", unknown>>);
+    for (const request of requests.slice(1)) expect(request.parent ?? request.container).not.toBe(container);
+    expect(grant.hold).not.toHaveBeenCalled();
+  });
+
+  test("a granted read hands the grant's read allowance to the bridge by reference, and none where the grant has none", async () => {
+    const readAllowance = new RunReadAllowance(5);
+    const billed = providerOf();
+    const tree = grantedObjectTree(billed, grantOf({ readAllowance }));
+    await tree.countObjects(["app"]);
+    await tree.listObjects(["app"], "table");
+    await tree.describeObjects(["app"], "table", 3);
+    const unbilled = providerOf();
+    const plain = grantedObjectTree(unbilled, grantOf());
+    await plain.countObjects(["app"]);
+    await plain.listObjects(["app"], "table");
+    await plain.describeObjects(["app"], "table", 3);
+
+    expect(mockOf(billed.countObjects).mock.calls).toEqual([[["app"], { readAllowance }]]);
+    expect(mockOf(billed.listObjects).mock.calls).toEqual([[["app"], "table", { readAllowance }]]);
+    expect(mockOf(billed.describeObjects).mock.calls).toEqual([[["app"], "table", 3, { readAllowance }]]);
+    const [, counted] = mockOf(billed.countObjects).mock.calls[0] as [unknown, { readAllowance: unknown }];
+    const [, , listed] = mockOf(billed.listObjects).mock.calls[0] as [unknown, unknown, { readAllowance: unknown }];
+    const [, , , described] = mockOf(billed.describeObjects).mock.calls[0] as [
+      unknown,
+      unknown,
+      unknown,
+      { readAllowance: unknown },
+    ];
+    for (const options of [counted, listed, described]) expect(options.readAllowance).toBe(readAllowance);
+    expect(mockOf(unbilled.countObjects).mock.calls[0]).toHaveLength(1);
+    expect(mockOf(unbilled.listObjects).mock.calls[0]).toHaveLength(2);
+    expect(mockOf(unbilled.describeObjects).mock.calls[0]).toHaveLength(3);
+  });
+
+  test("a granted read its deadline stopped answers the grant's own time refusal, hands the stopped read's settlement to the grant's hold, and logs a later failure by kind and code only", async () => {
+    const warned: unknown[][] = [];
+    const warn = spyOn(logger, "warn").mockImplementation((...args: unknown[]) => {
+      warned.push(args);
+    });
+    const secret = marker();
+    try {
+      const provider = providerOf();
+      const pending = Promise.withResolvers<never>();
+      let memberSettled = false;
+      mockOf(provider.countObjects).mockImplementation(() =>
+        pending.promise.finally(() => {
+          memberSettled = true;
+        }),
+      );
+      const refusal = new Error(marker());
+      const grant = grantOf({ deadline: Date.now() + 50 }, refusal);
+      const tree = grantedObjectTree(provider, grant);
+
+      // A plain await of the read, which the grant's real deadline ends.
+      const caught = await failure(() => tree.countObjects(["app"]));
+
+      expect(caught).toBe(refusal);
+      expect(grant.hold).toHaveBeenCalledTimes(1);
+      const held = grant.hold.mock.calls[0]?.[0] as Promise<unknown>;
+      let heldSettled = false;
+      const watched = held.then(() => {
+        heldSettled = true;
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(heldSettled).toBe(false);
+      pending.reject(new Error(secret));
+      await watched;
+      expect(memberSettled).toBe(true);
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(warned).toEqual([
+        [
+          "A tree read Studio stopped waiting for failed afterwards",
+          { route: ROUTE, action: "count", kind: "internal", code: "INTERNAL_ERROR" },
+        ],
+      ]);
+      expect(JSON.stringify(warned)).not.toContain(secret);
+      expect(mockOf(provider.listObjects)).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a granted read after the grant's deadline is refused before the call with the grant's own time refusal and reads nothing", async () => {
+    const provider = providerOf();
+    const refusal = new Error(marker());
+    const grant = grantOf({ deadline: Date.now() - 1 }, refusal);
+    const tree = grantedObjectTree(provider, grant);
+
+    const caught = await Promise.all(GRANTED_READS.map(({ run }) => failure(() => run(tree))));
+
+    for (const error of caught) expect(error).toBe(refusal);
+    for (const { action } of GRANTED_READS) expect(mockOf(provider[MEMBER[action]])).not.toHaveBeenCalled();
+    expect(grant.hold).not.toHaveBeenCalled();
+  });
+
+  test("a granted read passes the provider's error as the same object", async () => {
+    const provider = providerOf();
+    const thrown = GRANTED_READS.map(() => new Error(marker()));
+    GRANTED_READS.forEach(({ action }, index) => {
+      mockOf(provider[MEMBER[action]]).mockImplementation(async () => {
+        throw thrown[index];
+      });
+    });
+    const tree = grantedObjectTree(provider, grantOf());
+
+    const caught = await Promise.all(GRANTED_READS.map(({ run }) => failure(() => run(tree))));
+
+    caught.forEach((error, index) => {
+      expect(error).toBe(thrown[index]);
+    });
+  });
+
+  test("a granted tree before the host core is installed throws by name and reads nothing", () => {
+    const provider = providerOf();
+    const real = hostCore();
+    forgetHostCore();
+    let thrown: unknown;
+    try {
+      grantedObjectTree(provider, grantOf());
+    } catch (error) {
+      thrown = error;
+    } finally {
+      installHostCore(real, "test");
+    }
+
+    expect(thrown).toBeInstanceOf(HostCoreBootOrderError);
+    for (const { action } of GRANTED_READS) expect(mockOf(provider[MEMBER[action]])).not.toHaveBeenCalled();
   });
 });

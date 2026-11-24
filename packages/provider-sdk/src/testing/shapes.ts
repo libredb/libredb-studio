@@ -538,6 +538,7 @@ const treeAnswer = oneOfRecords([
         }),
       ),
     ),
+    needsConfiguration: optional(text),
   }),
   form<TreeCountAnswer>({ counts: required(mapOf(kindCount)) }),
   form<TreeListAnswer>({

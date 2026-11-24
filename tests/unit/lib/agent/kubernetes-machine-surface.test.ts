@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { captureContextSnapshot, packContextForTask, packOperationsInventory } from "@/lib/agent/context-snapshot";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
@@ -19,6 +19,12 @@ import { fakeCluster } from "../../../helpers/kubernetes-cluster";
 import { kubernetesConnection } from "../../../helpers/kubernetes-connection";
 import { KUBERNETES_SAMPLE_MARKERS as M } from "../../../helpers/kubernetes-markers";
 import { jsonAnswer, recordingKubernetesTransport, testSeams } from "../../../helpers/kubernetes-transport";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The agent's grounding walk reads through the host core's tree calls, so this file composes its own core.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The provider that relays every inventory this file packs. */
 const RELAYED_BY = providerAuthor("kubernetes");

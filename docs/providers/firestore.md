@@ -678,7 +678,7 @@ Each agent-mode path reads this much:
 
 One billed read is one Firestore document read: a collection id page is charged one, a count one per 1,000 index entries it may read, up to its `upTo` and at least one, and a document read one.
 Each request is admitted by the closed table first, then charged to the run's `RunReadAllowance` (`src/lib/db/read-allowance.ts`) with what it may cost at most, then sent, so a request the table refuses costs nothing and a request past the allowance is refused before it is sent, in Studio's words (`Read-only execution exceeded the read allowance`).
-`queryReadOnly` refuses a budget that carries no allowance, and the grounding walk's count, listing and bulk describe charge the allowance it hands them and send nothing without one.
+`queryReadOnly` refuses a budget that carries no allowance, and the grounding walk's count, listing and bulk describe, each a host core tree call, charge the allowance the walk's session hands them by reference and send nothing without one.
 Enterprise edition bills 4 KiB read units, which a document read may exceed; the allowance counts documents.
 
 ### 15.5 Agent language pack

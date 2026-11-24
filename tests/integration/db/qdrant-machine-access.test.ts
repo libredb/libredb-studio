@@ -8,7 +8,7 @@
  * The provider is connected over a client whose answers this file writes from the seeded `docs` description, with
  * the markers added; nothing here calls a server.
  */
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { captureContextSnapshot, packContextForTask } from "@/lib/agent/context-snapshot";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
@@ -28,6 +28,12 @@ import type { DatabaseConnection, QueryResult } from "@/lib/types";
 import { fakeTextScrub, pinMcpTestEnvironment, resetMcpTestState } from "../../helpers/mcp-fixtures";
 import { recordedAnswer, resultOf, vectorCapture } from "../../helpers/qdrant-surface-fixtures";
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The agent's grounding walk reads through the host core's tree calls, so this file composes its own core.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The provider that relays every inventory this file packs. */
 const RELAYED_BY = providerAuthor("qdrant");

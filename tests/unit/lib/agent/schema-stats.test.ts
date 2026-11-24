@@ -23,10 +23,11 @@ import { admitComposedStatement, agentQueryReadSqlInput } from "@/lib/db/operati
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
 import { TABLE_LABELS } from "../../../fixtures/provider-labels";
 import type { DatabaseConnection, DatabaseType, QueryResult } from "@/lib/types";
-import { createHostCore } from "@/lib/provider-host/core/host-core";
-import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
 
-// The agent's statements run through the host core's read-only execute, so this file installs one for its runs.
+// The agent's statements run through the host core's read-only execute, and plan mode's statistics read through its
+// console execute, so this file installs one for its runs.
 beforeAll(() => installHostCore(createHostCore(), "test"));
 afterAll(forgetHostCore);
 
@@ -86,6 +87,10 @@ interface Harness {
   readonly methods: () => string[];
   /** Every profile the read acquired, in order. */
   readonly profiles: () => string[];
+  /** Every argument list the plain `query` was called with, in order. */
+  readonly queryArguments: () => unknown[][];
+  /** How many times the provider's `prepareQuery` was called. */
+  readonly prepared: () => number;
 }
 
 function harness(
@@ -95,14 +100,22 @@ function harness(
   statementLanguage?: AgentToolContext["statementLanguage"],
 ): Harness {
   const sent: { readonly method: string; readonly sql: string }[] = [];
+  const queryArguments: unknown[][] = [];
+  let prepared = 0;
   const provider = {
     queryReadOnly: async (sql: string) => {
       sent.push({ method: "queryReadOnly", sql });
       return answer(sql);
     },
-    query: async (sql: string) => {
+    query: async (...args: unknown[]) => {
+      const sql = args[0] as string;
+      queryArguments.push(args);
       sent.push({ method: "query", sql });
       return answer(sql);
+    },
+    prepareQuery: () => {
+      prepared += 1;
+      throw new Error("the statistics read never prepares its composed statement");
     },
   } as unknown as DatabaseProvider;
   const acquireProvider = mock(async (_connection: DatabaseConnection, _profile: string) => provider);
@@ -135,6 +148,8 @@ function harness(
     statements: () => sent.map((call) => call.sql),
     methods: () => sent.map((call) => call.method),
     profiles: () => acquireProvider.mock.calls.map((call) => String(call[1])),
+    queryArguments: () => queryArguments,
+    prepared: () => prepared,
   };
 }
 
@@ -635,6 +650,79 @@ describe("readSchemaStatistics: the profile it reads under", () => {
     expect(await next).toMatchObject({ kind: "completed" });
     expect(h.statements()).toHaveLength(2);
     expect(context.tracker.usage(context.runId)).toMatchObject({ activeExecutions: 0, executedStatements: 2 });
+  });
+});
+
+/**
+ * Runs `body` with a core that counts every execute call around the real one installed, then puts the real one back.
+ */
+async function withExecuteCalls<T>(body: (calls: () => number) => Promise<T>): Promise<T> {
+  const real = hostCore();
+  let calls = 0;
+  const counting: HostCore = {
+    ...real,
+    executeCall: (...args) => {
+      calls += 1;
+      return real.executeCall(...args);
+    },
+  };
+  forgetHostCore();
+  installHostCore(counting, "test");
+  try {
+    return await body(() => calls);
+  } finally {
+    forgetHostCore();
+    installHostCore(real, "test");
+  }
+}
+
+describe("the operations-profile statistics read on the host core", () => {
+  test("the operations-profile statistics read runs through the host core's console execute on a composed statement session, its statement exactly as composed", async () => {
+    const libsql = harness("libsql", answerSqlite(true));
+    const mssql = harness("mssql", answerMssql);
+
+    const { read, executes } = await withExecuteCalls(async (calls) => {
+      const read = [await readOf(libsql), await readOf(mssql)];
+      return { read, executes: calls() };
+    });
+
+    expect(read.map((statistics) => statistics.kind)).toEqual(["read", "read"]);
+    expect(libsql.profiles()).toEqual(["agent-operations", "agent-operations"]);
+    expect(mssql.profiles()).toEqual(["agent-operations"]);
+    expect(libsql.queryArguments()).toEqual([
+      [composeStatisticsAvailabilityProbe("libsql")],
+      [composeCatalogRead("libsql", { kind: "statistics" })],
+    ]);
+    expect(mssql.queryArguments()).toEqual([[composeCatalogRead("mssql", { kind: "statistics" })]]);
+    expect(executes).toBe(3);
+    expect(libsql.prepared() + mssql.prepared()).toBe(0);
+  });
+
+  test("a statistics reading past the byte budget in UTF-8 bytes is refused, though its text is shorter than the budget", async () => {
+    const { maxResultBytes } = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets;
+    // Each name is CJK text: one UTF-16 code unit and three UTF-8 bytes per character.
+    const rows = Array.from({ length: 100 }, (_, i) => ({
+      table_schema: "dbo",
+      table_name: `${i}${"表".repeat(1_000)}`,
+      estimated_rows: i,
+    }));
+    expect(JSON.stringify(rows).length).toBeLessThan(maxResultBytes);
+    const h = harness("mssql", async () => result(rows));
+
+    const outcome = await readStatisticsForGrounding(h.context, "estimates");
+
+    if (outcome.kind !== "refused") throw new Error(`expected a refusal, got ${outcome.kind}`);
+    expect(outcome.refusal).toMatchObject({ class: "reading-refused", reasonCode: "READING_OVER_BUDGET" });
+  });
+
+  test("a bigint cell in a statistics reading is measured as its decimal text", async () => {
+    const h = harness("mssql", async () =>
+      result([{ table_schema: "dbo", table_name: "orders", estimated_rows: BigInt("9007199254740993") }]),
+    );
+
+    const outcome = await readStatisticsForGrounding(h.context, "estimates");
+
+    expect(outcome.kind).toBe("completed");
   });
 });
 

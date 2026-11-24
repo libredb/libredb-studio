@@ -4,7 +4,7 @@
  * the walk skips the key-browser `document` kind and the bulk describe samples nothing. Every listing the walk sends
  * is charged to the run's read allowance, and a walk that carries none sends nothing and tells the run why.
  */
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { captureContextSnapshot, packContextForTask } from "@/lib/agent/context-snapshot";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
@@ -23,6 +23,12 @@ import type { ProviderExecutionContext, QueryResult } from "@/lib/db/types";
 import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { fakeSeams, jsonAnswer } from "../../../helpers/firestore-seams";
 import { firestoreConnection, googleServer, requestsOf, wire } from "../../../helpers/firestore-provider";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The agent's grounding walk reads through the host core's tree calls, so this file composes its own core.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The provider that relays every inventory this file packs. */
 const RELAYED_BY = providerAuthor("firestore");

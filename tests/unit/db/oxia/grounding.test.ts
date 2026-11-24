@@ -3,7 +3,7 @@
  * shard rows and nothing else. No key name, no value and no leader address reaches the capture, and the capture reads
  * the shard map alone.
  */
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { captureContextSnapshot } from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
@@ -17,6 +17,12 @@ import { OxiaProvider } from "@/lib/db/providers/keyvalue/oxia/index";
 import type { QueryResult } from "@/lib/db/types";
 import { createFakeOxiaClient } from "../../../helpers/oxia-fake-client";
 import { oxiaConnection } from "../../../helpers/oxia-connection";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The agent's grounding walk reads through the host core's tree calls, so this file composes its own core.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 const SECRET_KEY = "/admin/policies/tenant-secret-marker";
 const SECRET_VALUE = "value-secret-marker";

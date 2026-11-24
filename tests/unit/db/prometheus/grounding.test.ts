@@ -24,6 +24,11 @@ import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import type { DatabaseConnection } from "@/lib/types";
 import { capture, captureVm } from "../../../helpers/prometheus-fixtures";
 
+// The agent's grounding walk reads through the host core's tree calls, and its readings through its monitoring calls,
+// so this file composes its own core.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
+
 const ORIGIN = "http://victoriametrics.test:8428";
 const TEST_ENDPOINT: PrometheusEndpoint = {
   url: (pathname, query) => {
@@ -155,10 +160,6 @@ describe("grounding on a server that does not serve the scrape pool listing", ()
 });
 
 describe("an Operate run's storage reading on a server that does not serve the runtime read", () => {
-  // The readings reach the provider through the host core's monitoring calls.
-  beforeAll(() => installHostCore(createHostCore(), "test"));
-  afterAll(forgetHostCore);
-
   test("is a refusal the model reads, so the run goes on to its report", async () => {
     const provider = await opened(OPERATIONS);
 

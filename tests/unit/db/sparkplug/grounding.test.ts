@@ -3,7 +3,7 @@
  * rather than a refused schema read. The capabilities are built the way the agent runtime builds a run's declarations,
  * and the provider the walk acquires is an agent-mode handle, so this is the drive path and not a hand-built handle.
  */
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { captureContextSnapshot } from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
@@ -17,6 +17,12 @@ import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptor
 import { createTargetScope } from "@/lib/db/operations/policy";
 import type { ProviderCapabilities, QueryResult } from "@/lib/db/types";
 import { connection, scriptedProvider } from "./fake-plant";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The agent's grounding walk reads through the host core's tree calls, so this file composes its own core.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The harness the other grounding suites build, with the run's declarations passed in and acquisitions counted. */
 function agentContext(capabilities: ProviderCapabilities): { context: AgentToolContext; acquired: string[] } {

@@ -5033,6 +5033,7 @@ Found 2026-11-24 while moving the agent's curated readings onto the host core.
 ### D850. A native provider of an engine that bills every read cannot be handed the run's billed-read allowance
 
 The contract's read-only execute carries a statement's rows, bytes and mode (docs/providers/CONTRACT.md C-78), and the run's billed-read allowance reaches only a legacy provider, through the legacy bridge's read-only statement session, by reference.
+The grounding walk's count, listing and bulk describe reach it the same way, through the bridge's session input (C-50), since a tree request carries no allowance either.
 Firestore's `queryReadOnly` and Modbus's agent read charge that allowance before each request they send, and `RunReadAllowance.charge` (`src/lib/db/read-allowance.ts`) is a synchronous mutation that no frame carries.
 So a native provider of an engine that bills every read is handed none and refuses every statement, as its own rule already refuses a budget that carries none.
 Neither pilot provider bills its reads.
@@ -10257,15 +10258,16 @@ Found 2026-11-04 while building the read roots, and left out of that change by d
 
 **Done when:** an OPC UA seed may declare `agentReadExclusions`, held to the read roots grammar at load and when the provider is built, refused inline and in `defaults`, kept from the browser, pruned with its subtree during the walk so an excluded node answers as one the server does not hold, with seed, walk and provider tests and the field documented in `docs/SEED_CONNECTIONS.md` and `docs/providers/opcua.md`; cited in `docs/AGENT.md`.
 
-### B172. The curated readings and the operations statistics read compare UTF-16 length with a byte budget, and a bigint cell throws
+### B172. The curated readings compare UTF-16 length with a byte budget, and a bigint cell throws
 
-`runCuratedRead` and `readStatisticsForGrounding` in `src/lib/agent/tools.ts` hold their rows to `maxResultBytes` by `JSON.stringify(rows).length`, which counts UTF-16 code units, not bytes.
+`runCuratedRead` in `src/lib/agent/tools.ts` holds its rows to `maxResultBytes` by `JSON.stringify(rows).length`, which counts UTF-16 code units, not bytes.
 Text outside ASCII then passes at up to three times the byte budget: measured 2026-11-21, a table statistics reading of 150 rows whose names are CJK text completed under the operations workflow's 262,144-byte budget at 172,881 code units, while its rows carry 472,730 UTF-8 bytes summed per row.
 A bigint cell makes the same comparison throw `TypeError: JSON.stringify cannot serialize BigInt`, which leaves the tool layer as a server fault rather than the `READING_OVER_BUDGET` refusal or a reading.
 The read-only statement path measures with `measureRowBytes` in `src/lib/db/providers/sql/read-only-budget.ts`, which sums each row's UTF-8 JSON bytes and counts a bigint as its decimal text.
+Plan mode's statistics read under the operations profile (`readStatisticsForGrounding`) measured the same way until it moved onto the host core, and since then holds its rows with `holdReadOnlyRows`, which sums each row's UTF-8 JSON bytes, so only the curated readings remain.
 Found 2026-11-21 while reviewing the read-only statement re-check.
 
-**Done when:** both sites measure their rows with `measureRowBytes`, summed per row and stopping at the row that crosses the budget, a test pins a multibyte reading past the budget refused as `READING_OVER_BUDGET` and a bigint cell measured as its text, for the curated readings and for the statistics read; cited in `docs/AGENT.md`.
+**Done when:** the curated readings measure their rows with `measureRowBytes`, summed per row and stopping at the row that crosses the budget, and a test pins a multibyte reading past the budget refused as `READING_OVER_BUDGET` and a bigint cell measured as its text; cited in `docs/AGENT.md`.
 
 ### B173. The hand-over route answers an execution-profile refusal as an unhandled server error
 

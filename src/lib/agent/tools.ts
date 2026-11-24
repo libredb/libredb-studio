@@ -8,8 +8,10 @@
  * composed, and no provider method reached outside a registered operation: a reach
  * that skipped this module would be a defect by the milestone's own constraint, not a
  * shortcut. The one `provider.query()` is `readStatisticsForGrounding` under the
- * operations profile, which sends a statement it composes itself, and only after the
- * statement guard admits it as `sql.query.read`'s input contract would. Every
+ * operations profile, which sends a statement it composes itself, exactly as composed,
+ * through the host core's console execute (`runComposedStatement`,
+ * `src/lib/api/composed-statement.ts`), and only after the statement guard admits it as
+ * `sql.query.read`'s input contract would. Every other
  * statement goes through `runReadOnlyExecute` (`src/lib/api/read-only-execute.ts`), the
  * host core's read-only execute, which holds the provider's answer to the row, byte and
  * time budget this layer handed out.
@@ -64,9 +66,16 @@
  * imported, so the profile literal still cannot drift from the factory's vocabulary.
  */
 
-import { AGENT_READING_PANELS, type HealthInfo, type MonitoringPanelRequest } from "@libredb/provider-sdk/calls";
+import {
+  AGENT_READING_PANELS,
+  type HealthInfo,
+  type MonitoringPanelRequest,
+  type TreeContainersAnswer,
+} from "@libredb/provider-sdk/calls";
 import { z } from "zod";
+import { type GrantedObjectTree, grantedObjectTree } from "@/lib/api/object-tree";
 import { driveCaller, type GrantedRead, readGrantedHealth, readGrantedPanel } from "@/lib/api/provider-monitoring";
+import { runComposedStatement } from "@/lib/api/composed-statement";
 import { runReadOnlyExecute } from "@/lib/api/read-only-execute";
 import { type AuditReason, emitAuditEvent } from "@/lib/audit";
 import type { PanelMember } from "@/lib/db/engine-facets/monitoring";
@@ -110,6 +119,7 @@ import {
   refuseAuditedInput,
 } from "@/lib/db/operations/execution";
 import type { ExecutionActor, ExecutionPolicy, PolicyDenyCode, TargetScope } from "@/lib/db/operations/policy";
+import { holdReadOnlyRows } from "@/lib/db/operations/read-only-statement";
 import type { OperationRegistry } from "@/lib/db/operations/registry";
 import {
   admitComposedStatement,
@@ -119,11 +129,9 @@ import {
 import type {
   Container,
   DatabaseObject,
-  KindCount,
   DatabaseProvider,
   ObjectDetail,
   ObjectKindSpec,
-  ObjectReadOptions,
   ProviderCapabilities,
   ProviderLabels,
   ReadOnlyStatementBudget,
@@ -1649,9 +1657,10 @@ export interface AuditedAgentCall {
   /**
    * A statement this call sends that its descriptor's input does not carry, set by the operations-profile statistics
    * read alone: it is audited under `db.schema.read`, whose input is empty, and sends a composed statement through
-   * `provider.query`. The statement is validated with `agentQueryReadSqlInput`, the input contract `sql.query.read`
-   * applies, before the pipeline is consulted, and a refusal is the pipeline's own input denial (`refuseAuditedInput`):
-   * audited, answered and recorded in the repair ledger as one, with nothing acquired, charged or sent.
+   * the provider's plain `query`, on the host core's composed statement session (`runComposedStatement`). The statement
+   * is validated with `agentQueryReadSqlInput`, the input contract `sql.query.read` applies, before the pipeline is
+   * consulted, and a refusal is the pipeline's own input denial (`refuseAuditedInput`): audited, answered and recorded
+   * in the repair ledger as one, with nothing acquired, charged or sent.
    */
   readonly guardedStatement?: { readonly sql: string; readonly composed?: ComposedStatementAdmission };
   readonly invoke: (
@@ -2621,32 +2630,6 @@ export async function readCatalogForGrounding(
 }
 
 /**
- * `work`, or `overrun()` once `grantedMs` has passed, whichever comes first.
- *
- * For a provider call that takes no budget of its own, so what this bounds is THE RUN and not the database: the call
- * is not cancelled, and this run simply stops waiting for it. `work` is handed to `holdUntilSettled` first, so the
- * run's `maxConcurrentExecutions` counts it until the provider's call settles, as it counts a read-only statement
- * (`runReadOnlyExecute`), and the run's next call and its end wait for it.
- */
-async function withinGrantedTime<T>(
-  work: Promise<T>,
-  grantedMs: number,
-  overrun: () => Error,
-  holdUntilSettled: AuditedInvocation["holdUntilSettled"],
-): Promise<T> {
-  holdUntilSettled(work);
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const overran = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(overrun()), grantedMs);
-  });
-  try {
-    return await Promise.race([work, overran]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/**
  * The provider object read overran the time this call was granted.
  *
  * A sentinel rather than a refusal code, for the same reason `AgentCuratedReadError`
@@ -2810,26 +2793,26 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
           : AGENT_OPERATIONS_PROFILE;
         const provider = await context.acquireProvider(context.connection, groundingProfile);
         const startedAtMs = context.clock?.() ?? Date.now();
+        // THE HONEST LIMIT, stated because the alternative reading of this deadline is wrong: no
+        // provider member here takes a budget, so what the walk's one deadline, the time its call
+        // was granted, bounds is THE RUN and not the database. Every read is a host core tree call
+        // under it (`grantedObjectTree`); the read in flight at the deadline is not cancelled and
+        // counts against the run's concurrency until it settles, and the walk sends no further read.
+        const tree = grantedObjectTree(provider, {
+          deadline: Date.now() + budget.statementTimeoutMs,
+          timeRefusal: () => new AgentSchemaReadTimeout(budget.statementTimeoutMs),
+          route: OBJECT_INVENTORY_ROUTE,
+          holdUntilSettled,
+          ...(context.readAllowance === undefined ? {} : { readAllowance: context.readAllowance }),
+        });
         phase.statementSent = true;
 
-        // THE HONEST LIMIT, stated because the alternative reading of this race is wrong: no
-        // provider method here takes a budget, so what this bounds is THE RUN and not the
-        // database. The walk is not cancelled - it goes on reading until the engine or the
-        // driver ends it - and this run simply stops waiting for it, while the walk still
-        // counts against the run's concurrency until it settles. Without the race there is
-        // no bound at all, which is the only worse answer.
         try {
-          const walked = await withinGrantedTime(
-            walkObjectInventory(
-              provider,
-              context.capabilities,
-              declared,
-              objectReadArguments(context),
-              providerTextScrub(context.connection, "profiled"),
-            ),
-            budget.statementTimeoutMs,
-            () => new AgentSchemaReadTimeout(budget.statementTimeoutMs),
-            holdUntilSettled,
+          const walked = await walkObjectInventory(
+            tree,
+            context.capabilities,
+            declared,
+            providerTextScrub(context.connection, "profiled"),
           );
           inventory = walked.inventory;
           defaultContainer = walked.defaultContainer;
@@ -2895,19 +2878,17 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
  * exactly as before.
  */
 async function walkObjectInventory(
-  provider: DatabaseProvider,
+  tree: GrantedObjectTree,
   capabilities: ProviderCapabilities,
   declared: readonly ObjectKindSpec[],
-  readArguments: readonly [ObjectReadOptions] | readonly [],
   scrub: ProviderTextScrub,
 ): Promise<{ readonly inventory: AgentInventory; readonly defaultContainer?: readonly string[] }> {
-  const listObjects = provider.listObjects.bind(provider);
-  const describeObjects = provider.describeObjects.bind(provider);
-
-  // Asked before any container (U189): a provider whose inventory is configuration the connection lacks lists no
-  // container, and that empty answer is no answer about what the engine holds. Every kind then carries the provider's
-  // sentence as `unavailable`, the note a refused kind already has, and `context-snapshot.ts` says nothing was listed.
-  const needs = await provider.inventoryNeedsConfiguration?.();
+  // The walk's first read, where the engine declares a container level (U189): a provider whose inventory is
+  // configuration the connection lacks lists no container and says why on that top-level listing, and that empty
+  // answer is no answer about what the engine holds. Every kind then carries the provider's sentence as
+  // `unavailable`, the note a refused kind already has, and `context-snapshot.ts` says nothing was listed.
+  const top = await topLevelListing(tree, capabilities);
+  const needs = top.needsConfiguration;
   if (needs !== undefined) {
     return {
       inventory: {
@@ -2922,7 +2903,7 @@ async function walkObjectInventory(
   // A provider that declares a walk scope is read in its session-default container and the ones it names; the
   // rest are counted, and a parent the scope reads nothing below whose listing failed is named, so the inventory
   // can say what it did not read.
-  const grounding = await enumerateGroundingContainers(provider, capabilities, scrub);
+  const grounding = await enumerateGroundingContainers(tree, capabilities, scrub, top.containers);
   const { unlistedParents, unlistedParentsNotNamed } = grounding;
   const scoped = scopeGroundingContainers(grounding.enumeration, capabilities.agentWalkScope, grounding.parentDefault);
   const enumeration = scoped.enumeration;
@@ -2942,7 +2923,8 @@ async function walkObjectInventory(
 
   let pairs = 0;
   for (const container of containers) {
-    const counts = await countForGrounding(provider, container, readArguments);
+    // oxlint-disable-next-line no-await-in-loop -- the walk reads in order and stops reading when its grant ends, so the loop's order is the behaviour.
+    const counts = await tree.countObjects(container);
     for (const spec of applicableKinds(declared, kindsOf.get(JSON.stringify(container)))) {
       const count = Object.hasOwn(counts, spec.id) ? counts[spec.id] : undefined;
       if (count !== undefined && !isCountUnavailable(count) && count.count === 0) continue;
@@ -2971,7 +2953,8 @@ async function walkObjectInventory(
       }
       pairs += 1;
       const listed: DatabaseObject[] = [];
-      for (const object of await listObjects(container, spec.id, ...readArguments)) {
+      // oxlint-disable-next-line no-await-in-loop -- the walk reads in order and stops reading when its grant ends, so the loop's order is the behaviour.
+      for (const object of await tree.listObjects(container, spec.id)) {
         if (objects.length + listed.length >= INVENTORY_LIMIT) {
           // Overwrites a pair-limit reason where both bit, the same way the route resolves
           // it: the object limit is the one a reader can see reflected in what they hold.
@@ -2986,7 +2969,8 @@ async function walkObjectInventory(
       // round trip for an empty answer.
       let details: readonly ObjectDetail[] = [];
       if (listed.length > 0) {
-        const batch = await describeObjects(container, spec.id, listed.length, ...readArguments);
+        // oxlint-disable-next-line no-await-in-loop -- the walk reads in order and stops reading when its grant ends, so the loop's order is the behaviour.
+        const batch = await tree.describeObjects(container, spec.id, listed.length);
         details = batch.details;
         // The provider's own bound in the provider's own words. Reported even when the listing
         // fitted, because a complete list of objects whose columns were cut is still an
@@ -3109,9 +3093,10 @@ function inventoryKind(
  * named, and every one of them is still asked.
  */
 async function enumerateGroundingContainers(
-  provider: DatabaseProvider,
+  tree: GrantedObjectTree,
   capabilities: ProviderCapabilities,
   scrub: ProviderTextScrub,
+  topLevel: readonly Container[],
 ): Promise<{
   readonly enumeration: ContainerEnumeration;
   readonly parentDefault?: readonly string[];
@@ -3120,10 +3105,9 @@ async function enumerateGroundingContainers(
 }> {
   const depth = containerDepth(capabilities);
   if (depth === 0) return { enumeration: { containers: [[]], defaultContainer: [] }, unlistedParents: [] };
-  const listContainers = provider.listContainers.bind(provider);
   const levels = capabilities.containerLevels ?? [];
 
-  let level = await listContainers();
+  let level = topLevel;
   let parentDefault: readonly string[] | undefined;
   const unlistedParents: AgentUnlistedParent[] = [];
   let unlistedParentsNotNamed: AgentUnlistedParentsNotNamed | undefined;
@@ -3133,7 +3117,8 @@ async function enumerateGroundingContainers(
     const next: Container[] = [];
     for (const parent of level) {
       try {
-        next.push(...(await listContainers(parent.path)));
+        // oxlint-disable-next-line no-await-in-loop -- the walk reads in order and stops reading when its grant ends, so the loop's order is the behaviour.
+        next.push(...(await tree.containers(parent.path)).containers);
       } catch (error) {
         if (!(error instanceof DatabaseError) || scopeReadsUnder(capabilities.agentWalkScope, parent)) throw error;
         if (unlistedParents.length < UNLISTED_PARENTS_NAMED_MAX) {
@@ -3196,23 +3181,21 @@ function unlistedReason(message: string): string {
   return line;
 }
 
-/** One container's counts, or none where the provider declares no counting. */
-async function countForGrounding(
-  provider: DatabaseProvider,
-  container: readonly string[],
-  readArguments: readonly [ObjectReadOptions] | readonly [],
-): Promise<Record<string, KindCount>> {
-  const countObjects = provider.countObjects?.bind(provider);
-  return countObjects === undefined ? {} : await countObjects(container, ...readArguments);
-}
+/** The route the grounding walk's reads that fail after the walk stopped waiting are logged under. */
+const OBJECT_INVENTORY_ROUTE = "agent/object-inventory";
 
 /**
- * The trailing argument the walk hands each object read: the drive's billed-read allowance, so an engine that bills
- * every read charges the grounding's listings to the run as it charges the run's statements. No argument at all when
- * the context carries none, so a read outside a drive is called exactly as the editor's routes call it.
+ * An engine with no container level reads no top-level listing: its one container is the empty path, which
+ * `enumerateGroundingContainers` answers without a read, so the walk has no listing to read the question on.
  */
-function objectReadArguments(context: AgentToolContext): readonly [ObjectReadOptions] | readonly [] {
-  return context.readAllowance === undefined ? [] : [{ readAllowance: context.readAllowance }];
+const NO_TOP_LEVEL: TreeContainersAnswer = Object.freeze({ containers: Object.freeze([]) });
+
+/**
+ * The walk's first read: the top-level container listing, which carries the provider's reason where its inventory
+ * needs configuration the session lacks, and whose containers are the walk's first level. None at depth 0.
+ */
+function topLevelListing(tree: GrantedObjectTree, capabilities: ProviderCapabilities): Promise<TreeContainersAnswer> {
+  return containerDepth(capabilities) === 0 ? Promise.resolve(NO_TOP_LEVEL) : tree.containers();
 }
 
 /**
@@ -3249,13 +3232,16 @@ export type AgentStatisticsStatement = "availability" | "estimates";
  * it is the curated family `readObjectInventoryForGrounding` belongs to, and audited the same way, under the
  * `db.schema.read` descriptor with an empty input: the statement is composed HERE from the dialect's own composers,
  * the caller names only which of the two it wants, and no text from a caller or a model reaches the engine. It is sent
- * through `provider.query`, because the operations profile opens no read-only statement path, after the statement
- * guard admits it as `sql.query.read`'s input contract admits the same statement on the execution profile (a refusal
- * is the pipeline's audited input denial, and nothing is acquired or sent), and it is bounded the way the curated
- * reads are: a result over the run's row or byte budget is refused rather than cut, and a read that
- * outlasts the time the call was granted is refused as a timeout, which `readSchemaStatistics` reports like any other
- * read that did not complete. The read counts against the run's concurrency until its provider call settles, as a
- * read-only statement does (`withinGrantedTime`).
+ * through the host core's console execute on the legacy bridge's composed statement session (`runComposedStatement`),
+ * which hands the provider's plain `query` the statement exactly as composed, because the operations profile opens no
+ * read-only statement path and the console session's prepare would append a page bound, after the statement guard
+ * admits it as `sql.query.read`'s input contract admits the same statement on the execution profile (a refusal is the
+ * pipeline's audited input denial, and nothing is acquired or sent). It is bounded the way the curated reads are: a
+ * result over the run's row budget, or over its byte budget by each row's UTF-8 JSON bytes summed, is refused rather
+ * than cut, and a read that outlasts the time the call was granted, at whatever wait of the host's, is refused as a
+ * timeout, which `readSchemaStatistics` reports like any other read that did not complete. The read counts against the
+ * run's concurrency until its provider call settles, as a read-only statement does, and a failure after Studio stopped
+ * waiting is logged under `agent/statistics` by kind and code.
  */
 export async function readStatisticsForGrounding(
   context: AgentToolContext,
@@ -3286,22 +3272,30 @@ export async function readStatisticsForGrounding(
     invoke: async (_validatedInput, budget, phase, holdUntilSettled) => {
       const provider = await context.acquireProvider(context.connection, AGENT_OPERATIONS_PROFILE);
       const startedAtMs = context.clock?.() ?? Date.now();
+      const reading = runComposedStatement(provider, {
+        statement: sql,
+        deadline: Date.now() + budget.statementTimeoutMs,
+        timeRefusal: () =>
+          new StudioTimeoutRefusal("the statistics read did not answer in time", dialect, budget.statementTimeoutMs),
+        route: STATISTICS_ROUTE,
+        holdUntilSettled,
+      });
       phase.statementSent = true;
       let read: QueryResult;
       try {
-        read = await withinGrantedTime(
-          provider.query(sql),
-          budget.statementTimeoutMs,
-          () =>
-            new StudioTimeoutRefusal("the statistics read did not answer in time", dialect, budget.statementTimeoutMs),
-          holdUntilSettled,
-        );
+        read = await reading;
       } catch (error) {
         throw asReadingFailure(error, dialect);
       }
-      if (read.rows.length > budget.maxResultRows || JSON.stringify(read.rows).length > budget.maxResultBytes) {
-        throw new AgentCuratedReadError("READING_OVER_BUDGET");
-      }
+      // Each row's UTF-8 JSON bytes summed, a bigint as its decimal text, as the read-only path measures (B172).
+      holdReadOnlyRows(read.rows, {
+        type: dialect,
+        statement: sql,
+        maxRows: budget.maxResultRows,
+        maxBytes: budget.maxResultBytes,
+        refuseRows: () => new AgentCuratedReadError("READING_OVER_BUDGET"),
+        refuseBytes: () => new AgentCuratedReadError("READING_OVER_BUDGET"),
+      });
       // The estimates are a catalog kind, so they are kept as that kind's mapped rows, mapped once the engine's own
       // answer is inside the budget, as on the read-only path; the probe is no catalog kind.
       const mapRows = statement === "estimates" ? catalogRowMapper(dialect, "statistics") : undefined;
@@ -3317,6 +3311,9 @@ export async function readStatisticsForGrounding(
 }
 
 const STATISTICS_AVAILABILITY_LABEL = "statistics availability";
+
+/** The route the statistics read's failures after Studio stopped waiting are logged under. */
+const STATISTICS_ROUTE = "agent/statistics";
 
 /** The dialect's availability probe. Asked for only where `readSchemaStatistics` found one, so its absence is a defect. */
 function availabilityProbe(dialect: DatabaseConnection["type"]): string {
@@ -3775,7 +3772,7 @@ const CURATED_READING_ROUTE = "agent/inspect_operations";
  * The reading is bounded by the time its call was granted: `budget.statementTimeoutMs`,
  * already clamped to what is left of the run, from the reading's start right after the
  * acquisition, with no slack, as the run's other bounded non-statement reads take it
- * (`withinGrantedTime`). The provider's members take no budget of their own, so the
+ * (the grounding walk and the statistics read). The provider's members take no budget of their own, so the
  * deadline bounds THE RUN rather than the database: the host core stops waiting at it
  * and the reading is refused as a timeout, while the provider's call is not cancelled.
  * Its settlement is handed to `holdUntilSettled`, so the run's `maxConcurrentExecutions`

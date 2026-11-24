@@ -619,8 +619,9 @@ What it costs is ONE statement of the run's budget, and that one statement is no
 inside it the walk issues `listContainers` per container level, then one `countObjects` per container,
 then one `listObjects` per container-and-kind pair the count did not answer zero for, up to the pair
 bound of 1,000. So the budget charge is a charge for the READING and not a measure of the traffic, and
-an engine with many containers pays for the reading in latency rather than in budget. The audit stream
-carries the one call, and the deadline this call was granted is what bounds the whole walk.
+an engine with many containers pays for the reading in latency rather than in budget.
+The audit stream carries the one call.
+Every read of the walk is a host core tree call under one deadline, the time this call was granted, which bounds the whole walk ([`docs/providers/CONTRACT.md`](./providers/CONTRACT.md), clause C-80).
 
 **IT CARRIES COLUMNS TOO, and the join is gone.** This used to be an identity read with no columns,
 joined afterwards to a second, FLAT reading that had them: the key was every suffix of the object's
@@ -670,15 +671,15 @@ Apache Spark declares it with `whenNoDefault`, so a connection is walked in its 
 Kubernetes declares both: its Secrets kind is withheld from grounding and, listed in `machineRedaction.maskedNameKinds`, masked in its agent reads, while namespace names pass, in the inventory and in agent reads alike, because a namespace is what a statement has to name; and its walk reads the session's Default namespace and `Cluster`, so the inventory says how many other namespaces it did not read, and a kind past its 1,000-object listing cap is counted as a floor ([`docs/providers/kubernetes.md`](./providers/kubernetes.md) section 9).
 RabbitMQ declares a scope with no named containers: its walk reads the virtual host `/` alone when the account lists it, at most 7 management GETs whatever the broker holds, and the inventory says how many other virtual hosts it did not read; when `/` is not listed, the walk reads no virtual host and the model sees only that count ([`docs/providers/rabbitmq.md`](./providers/rabbitmq.md#8-ai-agent-and-mcp)).
 A provider whose inventory is configuration the connection keeps, because its engine has no request that lists what it holds, declares `inventoryNeedsConfiguration`, which answers its own reason where the connection lacks that configuration.
-The walk asks it first and, given a reason, lists nothing and marks every kind `unavailable` with it, so the packing says, on Modbus, "None of the Coils, Discrete inputs, Input registers and Holding registers could be listed:" followed by the reason, and closes with "Nothing was listed, so this inventory says nothing about which tables the database holds." rather than "This database reported no tables.", and the rail's Schema captured line reads "no tables listed" with the reason rather than "0 tables".
+The walk's first read, the top-level container listing, carries that reason as the tree answer's `needsConfiguration`, and given one the walk reads nothing more and marks every kind `unavailable` with it, so the packing says, on Modbus, "None of the Coils, Discrete inputs, Input registers and Holding registers could be listed:" followed by the reason, and closes with "Nothing was listed, so this inventory says nothing about which tables the database holds." rather than "This database reported no tables.", and the rail's Schema captured line reads "no tables listed" with the reason rather than "0 tables".
 Modbus declares it when the connection keeps no register map ([`docs/providers/modbus.md`](./providers/modbus.md#84-values-and-what-each-path-reads) section 8.4).
 An absence the model was not told about is read as an absence in the database, which is #414 in one sentence.
 
 **What the provider path costs, and what it cannot promise.** One statement of the run's budget, where
-PostgreSQL costs three and SQLite two. No object method takes a budget on any provider, so the call is
-raced against the timeout this call was granted — which bounds THE RUN and not the database: the driver
-call is not cancelled, this run simply stops waiting, and the capture is then `unavailable` whole
-rather than partial. And the reading may be BOUNDED by the provider itself — Redis scans 1000 keys
+PostgreSQL costs three and SQLite two.
+No object method takes a budget on any provider, so each read of the walk is a host core tree call under the one deadline this call was granted, which bounds THE RUN and not the database.
+At that deadline the read in flight is not cancelled: this run stops waiting for it, counts it against its concurrency until it settles, and sends no further read, and the capture is then `unavailable` whole rather than partial.
+And the reading may be BOUNDED by the provider itself: Redis scans 1000 keys
 and LibreDB 10000, and each says so through `sampledFrom`, which makes that kind's count and listing
 a floor — so the preface says the inventory is what the inspection found and not proof that nothing
 else exists. MongoDB is NOT one of them, measured: `listCollections` is tallied whole, with no cap,
@@ -855,7 +856,8 @@ Three consequences worth stating plainly, because each is easy to assume the oth
    statistics read (two on SQLite: the `sqlite_stat1` availability probe has to be its own statement,
    because SQLite resolves table names at prepare time). On the other forty-one it is **one**, the
    single `db.schema.read` call, except on SQL Server and libSQL, whose overlays supply `statistics` without a `catalogCapture`.
-   SQL Server adds one statistics read and libSQL two, its `sqlite_stat1` availability probe first, each audited as a `db.schema.read` too and sent through `provider.query` only after the statement guard admits it as `sql.query.read`'s input contract would; a statement it refuses is audited as an input denial and never sent.
+   SQL Server adds one statistics read and libSQL two, its `sqlite_stat1` availability probe first, each audited as a `db.schema.read` too and sent only after the statement guard admits it as `sql.query.read`'s input contract would; a statement it refuses is audited as an input denial and never sent.
+   An admitted statement is sent through the host core's console execute, on a session that hands the provider's plain `query` the statement exactly as composed, with no page bound appended, under the time its call was granted ([`docs/providers/CONTRACT.md`](./providers/CONTRACT.md), clause C-80), and its rows are held to the run's row budget and to its byte budget by each row's UTF-8 JSON bytes summed.
    The other thirty-nine hold no statistics this run knows how to read.
    Since #789 an engine that declares object kinds costs **one more**, the
    object-surface reading above; an engine that declares none is charged nothing extra, because a read
@@ -3356,7 +3358,7 @@ the role's own grants are the whole boundary (A3).
 - **B169**: on Couchbase a user-defined function call the agent user may not run is answered as "Error evaluating projection", because the server keeps the missing role only in the error's structured reason, so neither agent mode nor MCP's `run_read_query` names the role the call needed.
 - **B170**: OPC UA proves its read roots on every agent and MCP read, with nothing held between reads, so a read of one value repeats the walk down from the roots; a cache keyed by seed id, identity and root list waits for a fixture where the walk dominates a read.
 - **B171**: an OPC UA operator cannot exclude one node beneath a read root, so a vendor identity or credential node that no prune table names is answered inside a declared root until the roots are moved below it.
-- **B172**: an operational reading and the plan-mode statistics read are held to the byte budget by the length of their JSON text, not its UTF-8 bytes, so a reading of text outside ASCII can pass at up to three times the budget, and a bigint cell in one fails the call instead of being measured.
+- **B172**: an operational reading is held to the byte budget by the length of its JSON text, not its UTF-8 bytes, so a reading of text outside ASCII can pass at up to three times the budget, and a bigint cell in one fails the call instead of being measured; plan mode's statistics read sums each row's UTF-8 JSON bytes, as the read-only path does.
 - **B173**: the hand-over route answers an execution-profile refusal at replay, an engine off the review record or a principal whose privileges are too broad among them, as a `500` `INTERNAL_ERROR` logged as an unhandled error, because `createErrorResponse` has no branch for `ExecutionProfileError`, so a refusal that is the boundary working reads as a server fault.
 - **B174**: the resume sweep stops at a run ledger it cannot parse, a malformed line or an event kind no pack declares, so no stale run listed after it is resumed, on that pass or any later one.
 - **B175**: stopping a run that still has a statement in flight answers `500` `INTERNAL_ERROR`, logged as an unhandled error, where pausing it answers the same refusal `409`, because the stop route passes `AgentRunServiceError` to `createErrorResponse`.

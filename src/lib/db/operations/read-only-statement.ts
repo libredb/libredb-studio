@@ -63,7 +63,8 @@
  * MCP read-only statement passes, beside the acquisition's own reading of the record, and the host core's read-only
  * execute reads it first too, for every agent and hand-over statement. The one
  * composed statement that does not pass it is plan mode's statistics read on an engine whose catalog read is not a
- * composed statement (`readStatisticsForGrounding` under `agent-operations`, through `query()`), which stays on
+ * composed statement (`readStatisticsForGrounding` under `agent-operations`, through the plain `query()` of the host
+ * core's composed statement session, `runComposedStatement`), which stays on
  * reviewed engines only because its composer belongs to an engine overlay, an overlay needs a statement language, and
  * the language census ties every language to the record.
  *

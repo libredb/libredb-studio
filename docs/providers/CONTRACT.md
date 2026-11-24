@@ -1911,7 +1911,8 @@ So a provider moves onto the contract without a behaviour change.
 A provider is built from the connection's fields and from the marks core sets beside them under symbol keys: the tunnel's far end and route, the literal seed-file mark, the file core admitted and the host paths core admitted.
 A census over Studio's own types holds this, one record over the connection's fields and one over its marks, and the shapes the open context shares with Studio, the TLS settings, the egress decision, the trust material, the pool settings, the tunnel's far end and the admitted host paths, are each mutually assignable with Studio's own.
 The census covers today's transaction surface too, the transaction methods the transaction route calls, begin's options and result and the arguments of a statement inside the transaction, each placed on the transaction facet's actions, its request and answer, or console execute, C-57.
-It covers today's object tree surface, the five provider members that list containers and objects, count them and describe them, each placed on an action of `objects.tree` and each argument on a member of that action's request, except the billed-read allowance, which stays with the host, C-61.
+It covers today's object tree surface, the five provider members that list containers and objects, count them and describe them, each placed on an action of `objects.tree` and each argument on a member of that action's request, except the billed-read allowance, which stays with the host and reaches a legacy provider's tree reads through the bridge's session input, C-50 and C-61.
+The inventory's configuration question a provider may answer is placed on the top-level containers answer's `needsConfiguration`, C-61.
 The tree's answer shapes, the container, the object and its read range, the kind count, the column, index, foreign key and exclusion constraint and the object's detail and its batch, are each mutually assignable with Studio's own and have its keys, and each answer form's member is Studio's answer, a list compared by its items, since Studio's lists are mutable and the SDK's are not.
 It covers today's maintenance surface, the run and the preview the maintenance routes call, each placed on its maintenance facet and each argument on a member of that facet's request, and the engine principal the maintenance audit row names, placed on the open answer, C-67.
 The run's answer and the preview are mutually assignable with Studio's maintenance result and preview and have their keys, the run's rows and fields compared by their items, and the maintenance vocabulary is Studio's.
@@ -2597,8 +2598,10 @@ Each answers the provider's answer by reference, never calls `forCatalog`, and p
 The session's maintenance is the provider's declaration before it connects, narrowed through `sessionMaintenance` by the refinement the bridge answers from the connected provider's capabilities, C-68.
 That refinement names, for each declared operation with a spec, the placements both the declaration and the connected provider say true, both false where the connected provider no longer lists the operation, and only where that differs from the declaration, so the session's maintenance never offers more than the declaration.
 Its tree call runs the provider's own member for the action with a fresh copy of each path and today's arguments: `listContainers` with one argument, the parent or `undefined` at the top level, `countObjects`, `listObjects`, `describeObject`, and `describeObjects` with the limit, `defaultSql` passed only when the request sends it.
-It answers the member's answer by reference in its action's form, never calls `forCatalog` and passes no read allowance, and a provider's error passes by reference.
-The agent's and MCP's tree reads, and the source, edit and key scan routes, still call the provider themselves until they move onto the host core.
+It answers the member's answer by reference in its action's form, never calls `forCatalog`, and a provider's error passes by reference.
+A top-level `containers` read of a provider that answers the inventory's configuration question, `inventoryNeedsConfiguration`, a function on the provider or its prototype, asks it first: a reason answers no container and the reason as `needsConfiguration` without listing, C-61, and no reason lists as before; below the top level, and for a provider without the member, the read lists as before.
+The bridge's session takes a host-side input a tree request does not carry, the billed-read allowance: a session built with one hands a fresh options object holding it by reference as the trailing argument of `countObjects`, `listObjects` and `describeObjects`, beside `defaultSql` where the request sends it, and a session built without one passes today's arguments.
+MCP's tree reads, and the source, edit and key scan routes, still call the provider themselves until they move onto the host core; the agent's grounding walk reads through it, C-80.
 Its transaction call runs the provider's own method for the action, a begin with `requireReportedState` as the transaction route has always passed it, answering `stateReported` exactly when the provider answered a result, and `state` runs nothing.
 Every transaction answer's session state is the provider's `isInTransaction()` read after the call, so through the bridge a state is `in-transaction` or `not-in-transaction`, and the bridge keeps none between calls.
 A statement sent with `transaction` runs the provider's prepare, the probe row past the page and `queryInTransaction` with a new array of the request's params, with no run id, no scope and no transaction ender, since it runs on the transaction's own connection, and answers the session state read after it.
@@ -2616,10 +2619,16 @@ Its open refuses a provider without `queryReadOnly` by name, in the words the ex
 Its calls offer execute alone, honouring `readOnly`.
 Its execute runs `queryReadOnly` with the statement, a fresh budget of the open's statement timeout and billed-read allowance, by reference, and the request's rows and bytes, and the request's mode, and never the prepare, the probe or the plain query.
 It answers one source per result set, the main rows first, its page not applied, and its page's row limit is every row the provider returned, at least one, within one page.
+A statement Studio composed and its statement guard admitted, which must reach the provider exactly as composed, is served as a composed statement session of its own, built per call by its facade, C-80.
+Its calls offer execute alone, honouring no request field, and it is no read-only statement session.
+Its execute runs the provider's plain `query` with exactly one argument, the request's statement, and never the prepare, the probe, params, a run id or a scope, so no page bound is appended to the statement.
+It answers and limits its page as the read-only statement session does, and reads no engine row.
 
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a read-only statement session runs the provider's queryReadOnly with the request's rows, bytes and mode and the open's timeout and read allowance, and never its plain query"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a read-only statement session over a provider without queryReadOnly is refused at its open by name, and nothing is called"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the bridge's console session is no read-only statement session, and the read-only one offers nothing but execute"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a composed statement session runs the provider's plain query with the statement as composed and nothing else, never prepareQuery or the probe"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a composed statement session offers execute alone, honouring no request field, and is no read-only statement session"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session honours params and offset, offers cancel only where the provider cancels, and endScope only where the provider ends its query path's transactions"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged endScope runs the provider's ender on the scope it is sent and answers its outcome, its failure by reference"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session offers the transaction facet exactly where the provider is a TransactionProvider"
@@ -2638,7 +2647,12 @@ It answers one source per result set, the main rows first, its page not applied,
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session's maintenance is the provider's declaration, narrowed through sessionMaintenance by what the connected provider still accepts"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session's maintenance never offers more than the declaration"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged tree call runs the provider's own member for each action with today's arguments, and answers its answer by reference"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged tree call never calls forCatalog and passes no read allowance"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged tree call never calls forCatalog"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged tree call hands the session's read allowance by reference to count, list and describeMany, and today's arguments where the session has none"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged top-level containers read asks the provider whether its inventory needs configuration first, and given a reason answers no container and the reason without listing"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged containers read below the top level, or of a provider that cannot say, lists as before and carries no reason"
+- test `tests/unit/db/modbus/index.test.ts` "a connection with no register map answers its top-level tree listing with no unit and the reason, and a malformed map with the error its listing raises"
+- test `tests/isolated/inventory-configuration-census.test.ts` "every shipped provider that answers the inventory's configuration question declares a container level, so the grounding walk asks it on its top-level listing"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged tree call whose member throws passes the error by reference"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a legacy tree member that writes the paths it receives changes nothing the host froze"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged begin, COMMIT, ROLLBACK and state read call the provider's methods and answer its state after each"
@@ -2973,6 +2987,8 @@ Only the legacy bridge calls a provider's `endOpenQueryTransaction`.
 
 `objects.tree` is one object facet, offered or not in `calls.objects.tree`, and implemented as one function under the implementation's `objects` whose request names its action, one of `TREE_ACTIONS`.
 `containers` lists the containers under `parent`, or at the top level when the request sends none.
+A top-level listing that answers no container may carry `needsConfiguration`, the provider's sentence for why its inventory cannot be listed without configuration the session lacks, completing "could be listed:"; a listing with a container, or below the top level, never carries it.
+An engine with no container level reads no top-level listing, so it is never asked the question.
 `count` answers each kind's count of objects in one container, keyed by the kind: a count, a count read from a bounded sample with the provider's sentence for what bounded it, or the engine's sentence for a read that was refused.
 `list` answers one kind's objects in one container, by name and path, with no columns.
 `describe` answers one object's columns, indexes and foreign keys, its indexes the engine's sentence where that read was refused.
@@ -2991,12 +3007,15 @@ The answer shapes are Studio's own object tree shapes, declared by the SDK and h
 - test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement may withdraw objects.tree, and never offer it where the manifest does not"
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "a tree request is one of its actions, each with its own members"
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "a tree answer is exactly one of its five forms, each read as its closed shape"
+- test `packages/provider-sdk/tests/testing/frames.test.ts` "a containers answer may carry needsConfiguration as text, read as part of its closed shape"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a served tree call crosses each action's request and answer as frames, and the provider receives decoded frozen copies"
+- test `packages/provider-sdk/tests/testing/serve.test.ts` "a containers answer that says the inventory needs configuration crosses as a frame with its sentence"
 
 ### C-62 (informative): A tree answer is read by reference
 
 In process the host reads a tree answer by reference and decides nothing on its values; what a caller reads of one stays the caller's.
 The caller facade of the object tree reads the member its action answers, and answers an answer without it as a defect of Studio's bridge, naming the action and the member, C-65, except a `describeMany` batch, which the bridge passes through by reference, so a batch without `details` is answered as the provider's answer without it.
+It answers a containers answer that carries `needsConfiguration` beside a container, or on a listing below the top level, as the provider's defect, naming where it was said, C-61.
 The host's reader of a native provider's tree answer, which checks that the form answers the action, arrives with the first native provider.
 
 ### C-63 (informative): A provider honours every member of a tree request
@@ -3032,6 +3051,7 @@ An inventory's and a search's walks take one deadline per read, not one per requ
 A read the caller left is answered at once as `QueryCancelledError`, outcome unknown, or not-sent when refused before the call, and one past its deadline as `StudioTimeoutRefusal` naming the read, the statement timeout and the slack.
 A read's later failure is logged by kind and code, never its text.
 The facade takes the provider its caller resolved and no catalog, so no catalog choice is honoured on this path, M-57.
+Its container listing answers the containers alone, so a top-level listing that says the inventory needs configuration answers no container, as the provider's own listing does, C-61.
 Each route's and handler's own checks and scrubs run where they ran.
 
 - test `tests/unit/lib/api/object-tree.test.ts` "each tree read is one host core tree call with a fresh request, on a deadline of the statement timeout plus ten seconds from its own start"
@@ -3043,6 +3063,8 @@ Each route's and handler's own checks and scrubs run where they ran.
 - test `tests/unit/lib/api/object-tree.test.ts` "a tree read refused for any other reason is answered as a defect of Studio's bridge, named by its rule"
 - test `tests/unit/lib/api/object-tree.test.ts` "an answer without its action's member is answered as a defect of Studio's bridge, or of the provider for the batch the bridge passes through, naming the action and the member"
 - test `tests/unit/lib/api/object-tree.test.ts` "a tree read before the host core is installed fails by name and reaches no provider"
+- test `tests/unit/lib/api/object-tree.test.ts` "a containers answer that says the inventory needs configuration reaches the granted tree whole and the editor's listing as its containers alone"
+- test `tests/unit/lib/api/object-tree.test.ts` "a needsConfiguration beside a container, or below the top level, is answered as the provider's defect, named"
 - test `tests/unit/lib/api/object-tree-bounds.test.ts` "a tree read that never answers is stopped at its deadline, StudioTimeoutRefusal naming the read"
 - test `tests/unit/db/container-walk.test.ts` "the walk reads any container source, not only a provider"
 - test `tests/api/db-objects.test.ts` "a tree route whose request leaves while the provider reads answers 499 at once, outcome unknown"
@@ -3465,6 +3487,57 @@ MCP's statements keep their own read path until they move onto the host core.
 - test `tests/api/agent/handover.test.ts` "a hand-over row larger than one page is refused by the host's page budget"
 - test `tests/api/agent/handover.test.ts` "a provider with no read-only statement path is a server fault, not a fallback"
 
+### C-80 (normative): The agent's grounding walk and statistics read on the host
+
+The agent's grounding inventory walk reads every container listing, count, object listing and bulk description through the granted tree facade and the host core's tree call, C-64, on one session the legacy bridge serves for the whole walk, C-50, of the provider the run acquired for its grounding.
+The walk holds one deadline, the time its call was granted, the run's statement timeout already clamped to what is left of the run, taken right after the acquisition, and one signal that aborts at it alone, so it keeps one timer however many reads it makes.
+Each read's context is fresh and carries that deadline, that signal and the empty environment, never a credential, and its request is a fresh copy with copies of the walk's arrays.
+Its caller signal is one that never aborts, made for the walk, as for the curated readings, C-76, so the accessor, C-51, reads every end as the deadline's: a read its deadline stopped, or a read refused at its start because the deadline passed between reads, answers the walk's own time refusal, which the run reports as an inventory that timed out.
+A stopped read's settlement is handed to the run before the refusal is thrown, so the run counts the read in flight as an execution until it settles, and the walk sends no further read.
+A read's failure after the stop is logged under the walk's route, the tree action, kind and code, never its text, and a later answer is dropped.
+A provider's error passes as the same object into the walk's own handling.
+The run's billed-read allowance reaches each count, listing and bulk description by reference through the bridge's session input, C-50, never through the tree request, which carries no allowance.
+The walk's first read, where the engine declares a container level, is the top-level listing: a listing that says the inventory needs configuration, C-61, marks every kind unavailable with the provider's sentence, scrubbed, and no further read is sent; otherwise its containers are the walk's first level.
+The facade reads the host core and builds the session when the walk starts, so a walk made before the host core is installed throws by name before any read and is never taken for a provider's failure.
+
+Plan mode's statistics read under the operations profile, a statement Studio composed and its statement guard admitted, runs through the composed statement facade and the host core's console execute, C-48, on the composed statement session the legacy bridge serves, C-50, so the provider receives the statement exactly as composed, with no page bound appended.
+The facade reads the host core and builds the session when the read starts, so a read made before the install throws by name before any promise.
+Its request is a fresh one of the statement and every row as its page, and its context carries the time its call was granted, a signal that aborts at it alone and the empty environment.
+The answer is the provider's result by reference, its page released once read, and the read holds its rows to the run's row budget and to its byte budget by each row's UTF-8 JSON bytes summed, a bigint measured as its decimal text, refusing a reading past either.
+The host pumps the first result within one page, C-53, so a row larger than one page is refused as `StudioByteBudgetRefusal` with the page's sentence, and an answer over 1 MiB waits for the host's large-page slot within the time granted.
+A stop at whatever wait of the run, and a start refused at the deadline, is the read's own time refusal, the stopped call's settlement handed to the run first, and a failure after the stop is logged under the read's route by kind and code, never its text.
+
+- test `tests/unit/lib/api/object-tree.test.ts` "each granted read is one host core tree call on the walk's one bridged session, a fresh request, and a fresh context on the grant's one deadline and one signal, of deadline, signal and env alone"
+- test `tests/unit/lib/api/object-tree.test.ts` "a granted read hands the grant's read allowance to the bridge by reference, and none where the grant has none"
+- test `tests/unit/lib/api/object-tree.test.ts` "a granted read its deadline stopped answers the grant's own time refusal, hands the stopped read's settlement to the grant's hold, and logs a later failure by kind and code only"
+- test `tests/unit/lib/api/object-tree.test.ts` "a granted read after the grant's deadline is refused before the call with the grant's own time refusal and reads nothing"
+- test `tests/unit/lib/api/object-tree.test.ts` "a granted read passes the provider's error as the same object"
+- test `tests/unit/lib/api/object-tree.test.ts` "a granted tree before the host core is installed throws by name and reads nothing"
+- test `tests/unit/lib/api/object-tree-bounds.test.ts` "a granted tree read that never answers ends at the grant's deadline in the grant's own time refusal"
+- test `tests/unit/lib/agent/grounding-walk.test.ts` "every read of the walk is a host core tree call on one deadline, the time its call was granted"
+- test `tests/unit/lib/agent/grounding-walk.test.ts` "the drive's allowance reaches each count, listing and bulk describe by reference through the host's tree call"
+- test `tests/unit/lib/agent/grounding-walk.test.ts` "a walk whose grant ends sends no further read and answers timed-out, and the run counts only the read in flight until it settles"
+- test `tests/unit/lib/agent/grounding-walk.test.ts` "the walk reads its top-level listing once, and it is the walk's first level"
+- test `tests/unit/lib/agent/grounding-walk.test.ts` "is read from the provider's declaration, lists nothing and carries the reason on every kind"
+- test `tests/unit/lib/agent/context-snapshot.test.ts` "a reading that overruns the time it was granted loses the whole snapshot, under its own code"
+- test `tests/unit/lib/agent/context-snapshot.test.ts` "a reading that overruns its grant counts against the run's concurrency until its provider call settles"
+- test `tests/unit/lib/api/composed-statement.test.ts` "a composed statement runs once through one host core execute call on a composed statement session, on a fresh request of its statement and every row and a context of deadline, signal and env alone"
+- test `tests/unit/lib/api/composed-statement.test.ts` "its answer is the provider's result by reference, and its page is released"
+- test `tests/unit/lib/api/composed-statement.test.ts` "a composed statement its deadline stopped answers the grant's own time refusal, its settlement handed to the hold, and a later failure is logged by kind and code only"
+- test `tests/unit/lib/api/composed-statement.test.ts` "a stop at any wait of the run answers the grant's time refusal"
+- test `tests/unit/lib/api/composed-statement.test.ts` "a composed statement whose deadline passed before its call is refused with the grant's time refusal, not-sent, and never reaches the provider"
+- test `tests/unit/lib/api/composed-statement.test.ts` "a row larger than one page is refused by the host's page budget"
+- test `tests/unit/lib/api/composed-statement.test.ts` "a provider's error passes as the same object"
+- test `tests/unit/lib/api/composed-statement.test.ts` "before the host core is installed it throws by name and calls no provider"
+- test `tests/unit/lib/api/composed-statement-bounds.test.ts` "a composed statement whose provider never answers ends at the grant's deadline in the grant's own time refusal"
+- test `tests/unit/lib/agent/schema-stats.test.ts` "the operations-profile statistics read runs through the host core's console execute on a composed statement session, its statement exactly as composed"
+- test `tests/unit/lib/agent/schema-stats.test.ts` "a statistics reading past the byte budget in UTF-8 bytes is refused, though its text is shorter than the budget"
+- test `tests/unit/lib/agent/schema-stats.test.ts` "a bigint cell in a statistics reading is measured as its decimal text"
+- test `tests/unit/lib/agent/schema-stats.test.ts` "the statistics read that outlasts its time is recorded as Studio's refusal"
+- test `tests/isolated/composed-statistics-statement.test.ts` "every dialect that reads statistics under the operations profile hands its provider the composed statement unchanged"
+- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "only the agent's statistics read opens a composed statement session, under the operations profile"
+- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "the agent, hand-over and MCP sources call query() nowhere: the statistics read sends its statement through the host core's composed statement session"
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:
@@ -3567,3 +3640,8 @@ Against this contract's earlier text:
 - A provider without `queryReadOnly` handed to the agent's statement path is refused at the read-only statement session's open with the acquisition's refusal, C-39 and C-79, where the run threw a plain error.
 - The hand-over replay runs through the host core's read-only execute under its request's signal, C-79: a client that leaves while the statement runs is answered at once, and a row larger than one page is refused by the host's page budget, where the replay waited for the statement and answered such a row.
 - Each engine's SQL grammar row is composed from its declaration's SQL text, M-15 and M-78, where each row was a module beside its provider, and its redaction is read from `SQL_TEXT_REDACTION`, Studio's hand-written record, M-54; a declared trailing limit clause is anchored as a whole, at its start and at the statement's end, S-6.
+- A top-level containers answer that lists no container may say the inventory needs configuration the session lacks, C-61, where a containers answer carried its containers alone.
+- The legacy bridge's top-level containers read asks a provider that answers the inventory's configuration question first, and its tree reads take the billed-read allowance from the session's input, C-50, where it asked nothing and passed no allowance.
+- The legacy bridge serves a composed statement session that sends the statement exactly as composed, C-50.
+- The agent's grounding walk reads through the host core's tree call under one deadline, the time its call was granted, C-80: a walk whose time ends sends no further read and the run counts only the read in flight, where the run stopped waiting and the walk went on reading to its end; a read that fails after the stop is logged by kind and code, where it was released silently.
+- Plan mode's statistics read runs through the host core's console execute on a composed statement session, C-80, the statement exactly as composed: its rows are held to the byte budget by each row's UTF-8 JSON bytes summed, where it measured their JSON text's length, a row larger than one page is refused by the host's page budget, and an answer over 1 MiB waits for the host's large-page slot.

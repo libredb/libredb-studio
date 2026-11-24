@@ -106,6 +106,7 @@ async function planDrive(
   const [listed] = capabilities.objectKinds ?? [];
   if (listed === undefined) throw new Error(`${connection.type} declares no object kind to list`);
   const provider = {
+    type: connection.type,
     listContainers: async () => [],
     countObjects: async () => ({ [listed.id]: { count: 1 } }),
     listObjects: async (_container: readonly string[], kind: string) =>
@@ -250,6 +251,7 @@ async function kubectlDrive(
   const connection = kubernetesConnection({ id: "conn_k8s", database: "shop" });
   const engine = new KubernetesProvider(connection);
   const provider = {
+    type: connection.type,
     listContainers: async () => {
       if (unreadable) throw new QueryError("namespaces is forbidden", "kubernetes");
       return [{ path: ["shop"], name: "shop", level: 0, isSessionDefault: true, kinds: ["pods"] }];
@@ -1059,6 +1061,7 @@ async function agentDrive(
   dataDirs.push(dataDir);
   const [listed] = declared.capabilities.objectKinds ?? [];
   const provider = {
+    type: connection.type,
     queryReadOnly: async (): Promise<QueryResult> => ({
       rows: [{ n: 1 }],
       fields: ["n"],
@@ -1402,6 +1405,7 @@ async function planDriveRefusingReadOnly(
   // One container per declared level, so the table sits where the engine's own walk would find it.
   const levels = ["app", "dbo"].slice(0, capabilities.containerLevels?.length ?? 0);
   const provider = {
+    type: connection.type,
     listContainers: async (parent: readonly string[] = []) =>
       parent.length < levels.length
         ? [{ path: levels.slice(0, parent.length + 1), name: levels[parent.length], level: parent.length }]

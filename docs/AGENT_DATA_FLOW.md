@@ -292,6 +292,7 @@ SQLite the server composes a catalog statement per kind and executes it read-onl
 forty-one it invokes `db.schema.read`, which walks the connection's own OBJECT SURFACE, the same
 `listContainers`, `countObjects`, `listObjects` and `describeObjects` the sidebar walks when it lists
 your objects, and composes no statement at all.
+Each of those reads is a host core tree call, as the sidebar's are, under the one deadline the walk's call was granted ([`docs/providers/CONTRACT.md`](./providers/CONTRACT.md), clause C-80).
 **Forty-one counts type-ids the factory can build, not engines a user would name**: the engine catalog holds
 forty-three, two of them supply a `catalogCapture`, and the remainder is what this second reading covers.
 Every other count said about grounding in these docs counts the same thing. libSQL is one of the

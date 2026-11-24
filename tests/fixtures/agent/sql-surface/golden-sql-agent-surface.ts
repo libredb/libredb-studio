@@ -102,6 +102,8 @@ async function driveFirstTurn(
   const [listed] = capabilities.objectKinds ?? [];
   if (listed === undefined) throw new Error(`${engine} declares no object kind to list`);
   const provider = {
+    // The engine it stands for, whose engine row the bridged session of the grounding walk reads.
+    type: engine,
     queryReadOnly: async (): Promise<QueryResult> => ({ rows: [], fields: [], rowCount: 0, executionTime: 1 }),
     // The statistics read a plan run takes under the operations profile, which arrives here rather than above.
     query: async (): Promise<QueryResult> => ({ rows: [], fields: [], rowCount: 0, executionTime: 1 }),

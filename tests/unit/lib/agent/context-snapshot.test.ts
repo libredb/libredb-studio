@@ -250,7 +250,7 @@ function harness(
 ): Harness {
   const fallback = type === "sqlite" ? answerSqlite : answerPostgres;
   const queryReadOnly = mock(answer ?? (async (sql: string) => fallback(sql)));
-  const provider = { queryReadOnly } as unknown as DatabaseProvider;
+  const provider = { type, queryReadOnly } as unknown as DatabaseProvider;
   const artifacts = new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 });
 
   return {
@@ -1318,6 +1318,7 @@ describe("captureContextSnapshot — the provider's own inventory", () => {
       })),
     }));
     const provider = {
+      type: "mongodb",
       listContainers: mock(async () => []),
       countObjects: mock(async () => ({ table: { count: (await read()).length } })),
       listObjects: mock(async () =>
@@ -1994,6 +1995,7 @@ describe("captureContextSnapshot — the object surface that says what each entr
     );
 
     const provider = {
+      type: options.type ?? "mongodb",
       describeObjects: mock(async (container: readonly string[], kind: string, limit?: number) =>
         options.describeObjects !== undefined
           ? options.describeObjects(container, kind, limit)

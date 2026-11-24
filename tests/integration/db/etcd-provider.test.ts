@@ -32,7 +32,7 @@
  *
  * A section number below, "spec 4.7" for example, is a section of #1089's design.
  */
-import { describe, expect, spyOn, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
@@ -79,6 +79,12 @@ import {
 import { KEY_SPACE_HEADER, keySpaceRange, permissionDenied } from "../../helpers/etcd-key-space";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { howItFailed } from "../../helpers/spawn-outcome";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The agent's grounding walk reads through the host core's tree calls, so this file composes its own core.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The provider that relays every inventory this file packs. */
 const RELAYED_BY = providerAuthor("etcd");

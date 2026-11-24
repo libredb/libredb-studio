@@ -91,6 +91,7 @@ async function drive(
   dataDirs.push(dataDir);
   const [listed] = declared.capabilities.objectKinds ?? [];
   const provider = {
+    type: connection.type,
     queryReadOnly: async (): Promise<QueryResult> => ({
       rows: [{ n: 1 }],
       fields: ["n"],

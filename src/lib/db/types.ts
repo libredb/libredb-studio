@@ -2473,9 +2473,11 @@ export interface DatabaseProvider {
    * Optional, declared only by a provider whose engine has no request that lists what it holds, so its inventory is
    * the configuration a connection keeps: Modbus, whose objects are the connection's register map. With none kept,
    * such a provider lists no container, and a reader of that empty answer could not tell "holds nothing" from
-   * "was asked nothing". The agent's grounding reads this before it walks (`walkObjectInventory` in
-   * `src/lib/agent/tools.ts`), marks every kind unavailable with this sentence and says nothing was listed, instead of
-   * "reported no tables". The sentence completes "could be listed:", so it is written in lower case and with no stop.
+   * "was asked nothing". The legacy bridge asks it on the tree's top-level `containers` listing and answers its reason
+   * as the containers answer's `needsConfiguration` (docs/providers/CONTRACT.md, clauses C-50 and C-61), which the
+   * agent's grounding walk reads first (`walkObjectInventory` in `src/lib/agent/tools.ts`), marking every kind
+   * unavailable with this sentence and saying nothing was listed, instead of "reported no tables". The sentence
+   * completes "could be listed:", so it is written in lower case and with no stop.
    */
   inventoryNeedsConfiguration?(): Promise<string | undefined>;
   /** Per-kind counts for one container. A refused read is `{ unavailable }`, never 0. */
@@ -3654,10 +3656,11 @@ export interface DescribeObjectsOptions extends ObjectReadOptions {
  * What an object-surface read of an agent run carries: the run's billed-read allowance (`read-allowance.ts`).
  *
  * The grounding walk reads `countObjects`, `listObjects` and `describeObjects` with no statement budget, so on an
- * engine that bills every read those reads would be the run's only spending that nothing charged. The walk hands each
- * of them the allowance its drive carries, and an engine that bills charges it before every request the read sends and
- * sends nothing when a read carries none; every other engine ignores it. Absent on every other caller, the editor's
- * routes included.
+ * engine that bills every read those reads would be the run's only spending that nothing charged. The walk's session
+ * of the legacy bridge hands each of them the allowance its drive carries, by reference (`bridgedConsole`'s third
+ * input, docs/providers/CONTRACT.md clause C-50), and an engine that bills charges it before every request the read
+ * sends and sends nothing when a read carries none; every other engine ignores it. Absent on every other caller, the
+ * editor's routes included.
  */
 export interface ObjectReadOptions {
   readonly readAllowance?: RunReadAllowance;
