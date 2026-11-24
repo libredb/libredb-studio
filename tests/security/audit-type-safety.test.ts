@@ -58,6 +58,12 @@ mock.module("@/lib/seed/resolve-connection", () => {
 
 mock.module("@/lib/db", () => ({
   getOrCreateProvider: mockGetOrCreateProvider,
+  // The route reads the provider's declarations once its own checks pass; the request here is refused before.
+  readProviderDeclarations: mock(async () => ({
+    capabilities: mockProvider.getCapabilities(),
+    labels: mockProvider.getLabels(),
+    supportsQueryCancel: false,
+  })),
   createDatabaseProvider: mock(async () => mockProvider),
   removeProvider: mock(async () => {}),
   clearProviderCache: mock(async () => {}),

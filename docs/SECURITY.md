@@ -459,7 +459,7 @@ the application's main runtime, so the module-level ring buffer it pushes to is 
 never the Admin Audit tab. The tab discloses that rather than presenting its buffer as the whole
 log.
 
-A maintenance row names the engine principal the connection acts as, when the provider implements `engineUser()`: `engineUser` on the event and `engine_user` on the `libredb.audit.v1` stdout line, on the completed, failed (`success: false`) and thrown rows of `POST /api/db/maintenance` alike.
+A maintenance row names the engine principal the connection acts as, when the provider implements `engineUser()`: `engineUser` on the event and `engine_user` on the `libredb.audit.v1` stdout line, on the completed, failed (`success: false`), thrown and unknown-outcome rows of `POST /api/db/maintenance` alike.
 It is a user name and never any part of a secret, and a row whose provider names no engine principal carries no such key.
 Milvus's provider implements it: the Milvus user name, the user name before the colon when Password or token carries a `user:password` token with User empty, or the word `token` for a token with no colon.
 

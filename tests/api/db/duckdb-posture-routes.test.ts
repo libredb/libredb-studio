@@ -152,6 +152,12 @@ const BUILDS_ITS_OWN = new Set(["test-connection"]);
  */
 const READS_DECLARATIONS = new Set(["provider-meta", "statement/analyze"]);
 
+/**
+ * The routes that read a provider's declarations after they opened it, for the session's maintenance
+ * (docs/providers/CONTRACT.md, clause C-70): the read takes the posture the open took.
+ */
+const READS_DECLARATIONS_AFTER_OPEN = new Set(["maintenance"]);
+
 const workDir = mkdtempSync(join(tmpdir(), "libredb-duckdb-posture-routes-"));
 const seedConfigFile = join(workDir, "seed-connections.json");
 writeFileSync(
@@ -197,6 +203,9 @@ async function postureFrom(route: string, target: Record<string, unknown>): Prom
   // A tree route takes no editor provider, and no other route a metadata session.
   const other = READS_THE_TREE.has(route) ? mockGetOrCreateProvider : mockGetOrCreateMetadataProvider;
   expect([route, other.mock.calls.length]).toEqual([route, 0]);
+  if (READS_DECLARATIONS_AFTER_OPEN.has(route)) {
+    expect([route, mockReadProviderDeclarations.mock.calls[0]?.[1]]).toEqual([route, opener.mock.calls[0]?.[2]]);
+  }
   return opener.mock.calls[0]?.[2];
 }
 

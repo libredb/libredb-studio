@@ -335,7 +335,11 @@ export type AuditReason =
   // Kept apart from the reasonless failure row an engine's own `success: false` writes: a thrown
   // run may have reached the engine before it failed, so its disposition is not the engine's
   // answer, and an operator reading the log needs to tell the two apart.
-  | "maintenance_execution_failed";
+  | "maintenance_execution_failed"
+  // `POST /api/db/maintenance` when Studio stopped waiting for the run, at its deadline or when its caller left, so
+  // whether the engine completed it is not known: the engine's own record holds the answer. Kept apart from a thrown
+  // run, which the engine or its driver answered, and from the reasonless row of an engine's own `success: false`.
+  | "maintenance_outcome_unknown";
 
 export interface AuditEvent {
   id: string;

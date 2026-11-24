@@ -429,6 +429,7 @@ const PROVIDER_TEXT_PATHS = [
   join("src", "lib", "api", "editor-query.ts"),
   join("src", "lib", "api", "editor-transaction.ts"),
   join("src", "lib", "api", "object-tree.ts"),
+  join("src", "lib", "api", "provider-maintenance.ts"),
   join("src", "lib", "provider-host"),
   join("src", "lib", "api", "test-connection.ts"),
   join("src", "lib", "query-events"),
@@ -570,6 +571,14 @@ const LEGACY_TREE_ANSWER =
   "a legacy tree answer carried by reference through the host core's tree call to its caller, which answers it through its core scrubs";
 
 /**
+ * The reason the legacy bridge's maintenance reads are no crossing of their own: the bridge hands each answer by
+ * reference to the host core's maintenance calls, and the maintenance facade hands it to its route, which scrubs it
+ * where it always did.
+ */
+const LEGACY_MAINTENANCE_ANSWER =
+  "a legacy maintenance answer carried by reference through the host core's maintenance calls and providerMaintenance to its route, which answers it through its core scrubs";
+
+/**
  * Every read of such a text on the three paths outside a recorded crossing, each with the reason it is not a
  * provider's text, or is one a crossing already scrubbed.
  */
@@ -612,6 +621,8 @@ const NOT_PROVIDER_TEXT: Readonly<Record<string, string>> = {
   [`${providerHost("legacy-bridge.ts")}: legacyTree: provider.countObjects`]: LEGACY_TREE_ANSWER,
   [`${providerHost("legacy-bridge.ts")}: legacyTree: provider.describeObject`]: LEGACY_TREE_ANSWER,
   [`${providerHost("legacy-bridge.ts")}: legacyTree: provider.describeObjects`]: LEGACY_TREE_ANSWER,
+  [`${providerHost("legacy-bridge.ts")}: legacyRun: provider.runMaintenance`]: LEGACY_MAINTENANCE_ANSWER,
+  [`${providerHost("legacy-bridge.ts")}: bridgedConsole: provider.previewMaintenance`]: LEGACY_MAINTENANCE_ANSWER,
   [`${join("src", "lib", "api", "editor-transaction.ts")}: readTransactionState: read.error.message`]:
     "the accessor's own sentence for a state read the host stopped waiting for or refused before the call, Studio's: no provider text reaches it",
   [`${providerHost("core", "console.ts")}: runExecute: answer.warnings`]:

@@ -21,6 +21,14 @@
  * copy of the frozen request's path, so a legacy member may write what it receives. Each answers the provider's answer
  * by reference, never calls `forCatalog`, and passes a provider's error by reference.
  *
+ * The session's maintenance is `bridgedMaintenance`'s answer, which the caller lays beside the session: the provider's
+ * maintenance as declared before it connects, in the engine declaration's form, narrowed through the SDK's own
+ * `sessionMaintenance` by a refinement the bridge answers from the connected provider's capabilities. The refinement
+ * names, for each declared operation with a spec, the placements both the declaration and the connected provider say
+ * true, both false when the connected provider no longer lists the operation, and only where that differs from the
+ * declaration, so it never names an operation the declaration does not list and never widens it
+ * (tests/unit/provider-sdk/call-surface-parity.test.ts holds it to `narrowMaintenance` for every shipped spec).
+ *
  * Its tree call runs the provider's own member for the action with today's arguments: `listContainers` with one
  * argument, the parent or `undefined` at the top level, `countObjects`, `listObjects`, `describeObject`, and
  * `describeObjects` with the limit, and `{ defaultSql: true }` as a fourth argument only when the request sends it.
@@ -65,17 +73,20 @@ import {
   type CancelRequest,
   type EndScopeAnswer,
   type EndScopeRequest,
+  type EngineMaintenance,
   type ExecuteAnswer,
   type ExecuteRequest,
   type MaintenancePreview,
   type MaintenancePreviewRequest,
   type MaintenanceRunAnswer,
   type MaintenanceRunRequest,
+  type MaintenanceAccepted,
   PAGE_MAX_BYTES,
   type PumpLimits,
   type ResultSource,
   type RowBatch,
   sessionCalls,
+  sessionMaintenance,
   type TransactionAnswer,
   type TransactionRequest,
   type TreeAnswer,
@@ -83,13 +94,18 @@ import {
   type Warning,
 } from "@libredb/provider-sdk/calls";
 import type { SessionState } from "@libredb/provider-sdk/errors";
+import type { MaintenanceSpec } from "@libredb/provider-sdk/manifest";
 import { probePastPage } from "@/lib/api/page-probe";
 import { type QueryCancelProvider, supportsQueryCancel } from "@/lib/db/query-cancel";
 import {
   type DatabaseProvider,
   endsOpenQueryTransactions,
   isTransactionProvider,
+  type MaintenanceDeclaration,
+  type MaintenanceOperation,
+  type MaintenanceOperationSpec,
   type PreparedQuery,
+  type ProviderCapabilities,
   type QueryPrepareOptions,
   type TransactionProvider,
 } from "@/lib/db/types";
@@ -282,6 +298,63 @@ async function legacyTree(provider: DatabaseProvider, request: TreeRequest): Pro
         ? provider.describeObjects([...request.container], request.kind, request.limit, { defaultSql: true })
         : provider.describeObjects([...request.container], request.kind, request.limit);
   }
+}
+
+/** One spec of Studio's in the engine declaration's form, every member Studio leaves out written as null or false. */
+function declaredSpec(operation: MaintenanceOperation, spec: MaintenanceOperationSpec): MaintenanceSpec {
+  return {
+    operation,
+    label: spec.label,
+    perEntity: spec.perEntity,
+    global: spec.global,
+    title: spec.title ?? null,
+    description: spec.description ?? null,
+    confirmation: spec.confirmation ?? null,
+    preview: spec.preview === true,
+    kinds: spec.kinds === undefined ? null : [...spec.kinds],
+  };
+}
+
+/** Studio's maintenance declaration in the engine declaration's form: the operations in order, one spec for each that has one. */
+function declarationForm(declared: MaintenanceDeclaration): EngineMaintenance {
+  const specs = declared.maintenanceOperationSpecs ?? {};
+  return {
+    maintenance: [...declared.maintenanceOperations],
+    maintenanceSpecs: declared.maintenanceOperations.flatMap((operation) => {
+      const spec = specs[operation];
+      return spec === undefined ? [] : [declaredSpec(operation, spec)];
+    }),
+  };
+}
+
+/**
+ * The placements `connected`, the connected provider's capabilities, still accepts for each operation `declared` lists
+ * with a spec, where they differ from the declaration: both placements the two say true, and both false for an
+ * operation the connected provider no longer lists, its list read as empty when it does not support maintenance.
+ */
+function acceptedPlacements(declared: EngineMaintenance, connected: ProviderCapabilities): MaintenanceAccepted[] {
+  const listed: readonly MaintenanceOperation[] =
+    connected.supportsMaintenance === true ? connected.maintenanceOperations : [];
+  const items: MaintenanceAccepted[] = [];
+  for (const spec of declared.maintenanceSpecs) {
+    const stillListed = listed.includes(spec.operation);
+    const now = connected.maintenanceOperationSpecs?.[spec.operation];
+    const perEntity = stillListed && spec.perEntity && (now?.perEntity ?? true);
+    const global = stillListed && spec.global && (now?.global ?? true);
+    if (stillListed && perEntity === spec.perEntity && global === spec.global) continue;
+    items.push({ operation: spec.operation, perEntity, global });
+  }
+  return items;
+}
+
+/**
+ * The maintenance of a session the bridge serves for `provider`: `declared`, the provider's maintenance before it
+ * connects, in the engine declaration's form, narrowed through `sessionMaintenance` by the placements the connected
+ * provider's capabilities still accept, frozen at every depth.
+ */
+export function bridgedMaintenance(provider: DatabaseProvider, declared: MaintenanceDeclaration): EngineMaintenance {
+  const form = declarationForm(declared);
+  return sessionMaintenance(form, { maintenance: acceptedPlacements(form, provider.getCapabilities()) });
 }
 
 /**

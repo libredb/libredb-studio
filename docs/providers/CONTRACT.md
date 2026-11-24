@@ -2319,6 +2319,8 @@ It offers `objects.tree` on every session, since every legacy provider holds the
 It offers `maintenance.run` on every session, since every legacy provider holds `runMaintenance`, and `maintenance.preview` exactly where the provider holds `previewMaintenance`.
 Its run calls `runMaintenance` with exactly three arguments, the operation, the target and the container, `undefined` for an absent one, and its preview calls `previewMaintenance` with the operation and a fresh copy of the path.
 Each answers the provider's answer by reference, never calls `forCatalog`, and passes a provider's error by reference.
+The session's maintenance is the provider's declaration before it connects, narrowed through `sessionMaintenance` by the refinement the bridge answers from the connected provider's capabilities, C-68.
+That refinement names, for each declared operation with a spec, the placements both the declaration and the connected provider say true, both false where the connected provider no longer lists the operation, and only where that differs from the declaration, so the session's maintenance never offers more than the declaration.
 Its tree call runs the provider's own member for the action with a fresh copy of each path and today's arguments: `listContainers` with one argument, the parent or `undefined` at the top level, `countObjects`, `listObjects`, `describeObject`, and `describeObjects` with the limit, `defaultSql` passed only when the request sends it.
 It answers the member's answer by reference in its action's form, never calls `forCatalog` and passes no read allowance, and a provider's error passes by reference.
 The agent's and MCP's tree reads, and the source, edit and key scan routes, still call the provider themselves until they move onto the host core.
@@ -2342,6 +2344,8 @@ The page's row limit is set once execute answered: one past the page when the pr
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged maintenance run calls runMaintenance with the operation, the target and the container, undefined where absent, and answers its result by reference"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged maintenance preview calls previewMaintenance with a copy of the path and answers its preview by reference"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged maintenance call whose member throws passes the error by reference"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session's maintenance is the provider's declaration, narrowed through sessionMaintenance by what the connected provider still accepts"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session's maintenance never offers more than the declaration"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged tree call runs the provider's own member for each action with today's arguments, and answers its answer by reference"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged tree call never calls forCatalog and passes no read allowance"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged tree call whose member throws passes the error by reference"
@@ -2841,6 +2845,7 @@ The host keeps the narrowed maintenance with the session, beside its calls, and 
 - test `packages/provider-sdk/tests/calls/refinement.test.ts` "no maintenance narrowing refusal carries a value of the refinement"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a served open whose maintenance narrowing names an operation its engine does not list is refused, and the session it opened is closed"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "a session's maintenance is narrowMaintenance's answer for every shipped spec and every placement a server accepts"
+- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "a bridged session's maintenance is narrowMaintenance's answer for every shipped spec and every placement a connected server accepts"
 
 ### C-69 (normative): The host's maintenance calls
 
@@ -2861,6 +2866,40 @@ A session that offers a facet with no function for it is a defect of the host's 
 - test `tests/unit/lib/provider-host/core/maintenance.test.ts` "a session that offers a maintenance facet with no function is a host defect, named"
 - test `tests/unit/lib/provider-host/core/maintenance-bounds.test.ts` "a maintenance run that never settles is stopped at the call's deadline"
 - test `tests/unit/lib/provider-host/core/maintenance-bounds.test.ts` "a maintenance preview that never settles is stopped at the call's deadline"
+
+### C-70 (normative): Maintenance on the host
+
+Both maintenance routes run and preview through one caller facade and the host core's maintenance calls, C-69, on the session the legacy bridge serves, C-50, of the provider the route resolved.
+Each call waits until its own deadline, the statement timeout plus 10 s from its start, and the request's signal.
+A call the caller left is answered at once as `QueryCancelledError`, outcome unknown, or not-sent when refused before the call, and one past its deadline as `StudioTimeoutRefusal` naming the run or the preview, the statement timeout and the slack.
+A later failure is logged by kind and code, never its text, and a run that answers later is logged by route and facet, never its answer.
+A run the host stopped waiting for is audited as an unknown outcome, and one refused before the call, or failed before it by an error the host raised, writes no audit row.
+The routes read the provider's declarations after their own checks.
+Each route's doors, checks, confirmations, scrubs and error mapping run where they ran, an operation the engine does not offer is still refused before any provider is built, and a run of an operation placed nowhere, `kill`, still passes.
+
+- test `tests/unit/lib/api/provider-maintenance.test.ts` "each maintenance run and preview is one host core call with a fresh request, on a deadline of the statement timeout plus ten seconds from its own start"
+- test `tests/unit/lib/api/provider-maintenance.test.ts` "a run and a preview answer the provider's own answer by reference, and the preview's offer is the bridged session's"
+- test `tests/unit/lib/api/provider-maintenance.test.ts` "an error the provider raises reaches the caller as the same object"
+- test `tests/unit/lib/api/provider-maintenance.test.ts` "a caller that leaves while the provider runs is answered a stop at once, QueryCancelledError outcome unknown, and the later failure is logged by kind and code, never its text"
+- test `tests/unit/lib/api/provider-maintenance.test.ts` "a run the caller stopped waiting for that answers afterwards is logged by route and facet, never its text"
+- test `tests/unit/lib/api/provider-maintenance.test.ts` "a caller already gone sends nothing and is answered not-sent"
+- test `tests/unit/lib/api/provider-maintenance.test.ts` "a maintenance call past its deadline answers StudioTimeoutRefusal naming the run or the preview, the statement timeout and the slack"
+- test `tests/unit/lib/api/provider-maintenance.test.ts` "a maintenance call refused for any other reason is answered as a defect of Studio's bridge, named by its rule"
+- test `tests/unit/lib/api/provider-maintenance.test.ts` "a maintenance call before the host core is installed fails by name and reaches no provider"
+- test `tests/unit/lib/api/provider-maintenance-bounds.test.ts` "a maintenance run that never answers is stopped at its deadline, StudioTimeoutRefusal naming the run"
+- test `tests/api/db/maintenance.test.ts` "the route reads the provider's declarations once, after its own checks, and none for a request it refuses"
+- test `tests/api/db/maintenance.test.ts` "a run whose request leaves while the provider runs answers 499 at once, outcome unknown, and is audited as an unknown outcome"
+- test `tests/api/db/maintenance.test.ts` "a run whose request is already gone answers 499 not-sent, asks the provider nothing and writes no audit row"
+- test `tests/api/db/maintenance.test.ts` "a run past its deadline answers 504 studio-timeout-refusal naming the run, and is audited as an unknown outcome"
+- test `tests/api/db/maintenance.test.ts` "a run the host refuses before the call answers as a defect of Studio and writes no audit row"
+- test `tests/api/db/maintenance.test.ts` "kill's session target passes the host's placement check, which neither placement describes"
+- test `tests/api/db/maintenance.test.ts` "an error the host raises before the provider is called is not audited as an execution failure"
+- test `tests/api/db/maintenance.test.ts` "a connection whose connected maintenance is narrower than its declaration is refused the placement its session's maintenance withdrew"
+- test `tests/api/db/maintenance.test.ts` "the provider is asked once with the operation, the target the request names, none for an empty one, and the container, and the answer is its result"
+- test `tests/api/db/maintenance-preview.test.ts` "a preview whose request leaves while the provider reads answers 499 at once, outcome unknown"
+- test `tests/api/db/maintenance-preview.test.ts` "a preview whose request is already gone answers 499 not-sent and asks the provider nothing"
+- test `tests/api/db/maintenance-preview.test.ts` "a preview past its deadline answers 504 studio-timeout-refusal naming the preview"
+- test `tests/api/db/maintenance-preview.test.ts` "whether a preview is offered is read from the bridged session"
 
 ## Not yet in this contract
 

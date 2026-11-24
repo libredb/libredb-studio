@@ -94,6 +94,12 @@ mock.module("@/lib/audit", () => ({
 
 mock.module("@/lib/db", () => ({
   getOrCreateProvider: mock(async () => provider),
+  // The maintenance routes read the provider's declarations for the session's maintenance: the provider's own.
+  readProviderDeclarations: mock(async () => ({
+    capabilities: provider.getCapabilities(),
+    labels: provider.getLabels(),
+    supportsQueryCancel: false,
+  })),
   createDatabaseProvider: mock(async () => provider),
   removeProvider: mock(async () => {}),
   clearProviderCache: mock(async () => {}),

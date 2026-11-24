@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getOrCreateProvider, type MaintenanceOperation } from "@/lib/db";
+import { type MaintenanceOperation, readProviderDeclarations } from "@/lib/db";
 import { emitAuditEvent } from "@/lib/audit";
 import { createErrorResponse } from "@/lib/api/errors";
 import { type ProviderTextScrub, providerTextScrub, scrubMaintenanceResult } from "@/lib/db/operations/provider-text";
@@ -9,6 +9,9 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
+import { editorExecutionContext } from "@/lib/api/execution-context";
+import { type MaintenanceRunOutcome, providerMaintenance } from "@/lib/api/provider-maintenance";
+import { QueryCancelledError } from "@/lib/db/errors";
 import { assertMaintenanceAccepted, assertMaintenanceOffered } from "@/lib/db/engine-facets/maintenance";
 import { clientAddress } from "@/lib/api/client-address";
 import { ApiErrorCode } from "@/lib/api/error-codes";
@@ -27,6 +30,13 @@ import { logger } from "@/lib/logger";
  * present and text; `container` and `target` text or absent; the operation listed in the `maintenance` of the
  * engine's `ENGINE_FACETS` row, before any provider is built (`400 FACET_NOT_OFFERED`); then, on the connected
  * provider, the operation the server accepts (the same code) and the placement its spec declares.
+ *
+ * The run goes through the host core (docs/providers/CONTRACT.md, clause C-70): after those checks the route reads the
+ * provider's declarations, as the query route reads them, and runs the operation through `providerMaintenance` on the
+ * session's maintenance, the declaration narrowed by what the connected provider accepts, until the statement timeout
+ * plus ten seconds and until the request leaves. A run the host refused before the call, or failed before it by an
+ * error the host raised, reached no provider and writes no audit row; a run Studio stopped waiting for is audited as
+ * an unknown outcome, since the engine may still complete it, and answers 499 or 504 with outcome unknown.
  */
 export async function POST(request: Request) {
   // Session, rate limit and denial audit share the same door as every other provider-reaching
@@ -97,6 +107,8 @@ export async function POST(request: Request) {
     // as the whole-database form below. Nothing here may hand a provider a value that its own
     // falsy test would have refused anyway, because the audit row below records what arrived.
     const requestedContainer: string | undefined = container || undefined;
+    // The same reading for `target`: an empty one is the whole-database form, so no provider is sent empty text.
+    const requestedTarget: string | undefined = target || undefined;
 
     // The engine facets row (FND-4), read before any provider is built: an operation the engine does not offer is
     // refused 400 FACET_NOT_OFFERED by name, and no provider, SSH tunnel or connection is opened for it.
@@ -162,6 +174,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error }, { status: 400 });
     }
 
+    // The provider's maintenance as declared before it connects, read as the query route reads it, under the session's
+    // editor posture: the session's maintenance is this declaration narrowed by what the connected provider accepts.
+    const { capabilities: declared } = await readProviderDeclarations(
+      connection,
+      editorExecutionContext(guard.session, connection),
+    );
+    const maintenance = providerMaintenance(provider, declared, request.signal, "POST /api/db/maintenance");
+
     // The engine principal this connection acts as, for a provider that can name one (spec 3.11): a user name, never
     // any part of a secret, so it is recorded beside the Studio user on every row below.
     const engineUser = provider.engineUser?.();
@@ -198,9 +218,9 @@ export async function POST(request: Request) {
     }
 
     const startTime = Date.now();
-    let result: Awaited<ReturnType<typeof provider.runMaintenance>>;
+    let outcome: MaintenanceRunOutcome;
     try {
-      result = await provider.runMaintenance(type, target, requestedContainer);
+      outcome = await maintenance.run(type as MaintenanceOperation, requestedTarget, requestedContainer);
     } catch (error) {
       recordMaintenanceEvent("error");
       // A run that THREW is still a run: it may have reached the engine before it failed, and
@@ -226,6 +246,30 @@ export async function POST(request: Request) {
       // own fault answers 400 with the engine's sentence, and anything else keeps a 5xx.
       throw mapDatabaseError(error, connection.type);
     }
+    // A run that ended without the provider's answer is Studio's own error, answered as the accessor built it and
+    // never mapped as the engine's: a caller that left is `cancelled`, every other end an `error`.
+    if (outcome.kind !== "answered") {
+      recordMaintenanceEvent(outcome.error instanceof QueryCancelledError ? "cancelled" : "error");
+    }
+    // Refused, or failed by an error the host raised, before the call: nothing reached the provider, so no maintenance
+    // row is written.
+    if (outcome.kind === "not-sent") throw outcome.error;
+    if (outcome.kind === "stopped") {
+      // Studio stopped waiting while the provider ran: the engine may still complete the operation, so the row records
+      // an unknown outcome and the time waited, never a failure the engine answered. Isolated as the rows below are.
+      try {
+        emitAuditEvent({
+          ...auditFields,
+          result: "failure",
+          reason: "maintenance_outcome_unknown",
+          duration: Date.now() - startTime,
+        });
+      } catch (auditError) {
+        logger.error("Failed to record maintenance audit event", auditError, { route: "POST /api/db/maintenance" });
+      }
+      throw outcome.error;
+    }
+    const result = outcome.result;
     const duration = Date.now() - startTime;
     // The engine's verdict, read as the audit row below reads it.
     recordMaintenanceEvent(result.success === false ? "error" : "success");

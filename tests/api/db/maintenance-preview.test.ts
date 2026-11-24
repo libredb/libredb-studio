@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { afterAll, beforeAll, describe, test, expect, mock, beforeEach, spyOn } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
@@ -23,6 +23,15 @@ import { SYNTHETIC_ENTITY_CAPABILITIES, SYNTHETIC_PREVIEW } from "../../fixtures
 import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import { TIMEOUT_SENTENCE } from "@/lib/api/error-body";
 import { errorKind } from "@/lib/db/error-record";
+import { logger } from "@/lib/logger";
+import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
+import type { MaintenancePreviewRecord } from "@/lib/provider-host/core/maintenance";
+import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The route previews through the process's host core (src/lib/provider-host/instance.ts), so this file composes its
+// own.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /**
  * `POST /api/db/maintenance/preview` (spec 3.11, E36): an admin-only read beside the maintenance route. It makes the
@@ -38,6 +47,15 @@ const mockPreviewMaintenance = mock(
   async (_type: MaintenanceOperation, _path: readonly string[]): Promise<MaintenancePreview> => SYNTHETIC_PREVIEW,
 );
 const mockGetOrCreateProvider = mock(async () => mockProvider as never);
+/**
+ * The provider the factory stand-in last built, whose capabilities the declarations read answers: a route's connected
+ * checks and the session's maintenance then agree, as they do for every shipped provider.
+ */
+let lastBuilt: { getCapabilities(): unknown } = mockProvider;
+const mockReadProviderDeclarations = mock(async (...args: unknown[]) => {
+  void args;
+  return { capabilities: lastBuilt.getCapabilities(), labels: {}, supportsQueryCancel: false };
+});
 const mockGetSession = mock(
   async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
 );
@@ -85,7 +103,14 @@ mock.module("@/lib/audit", () => ({
 }));
 
 mock.module("@/lib/db", () => ({
-  getOrCreateProvider: mockGetOrCreateProvider,
+  getOrCreateProvider: async (...args: unknown[]) => {
+    const built = await (mockGetOrCreateProvider as (...given: unknown[]) => Promise<{ getCapabilities(): unknown }>)(
+      ...args,
+    );
+    lastBuilt = built;
+    return built;
+  },
+  readProviderDeclarations: mockReadProviderDeclarations,
   createDatabaseProvider: mock(async () => mockProvider),
   removeProvider: mock(async () => {}),
   clearProviderCache: mock(async () => {}),
@@ -576,5 +601,109 @@ describe("what the preview route answers today, which the host core keeps", () =
       expect([body, mockPreviewMaintenance.mock.calls]).toEqual([body, [args]]);
       expect([body, answer]).toEqual([body, { preview: answered }]);
     }
+  });
+});
+
+describe("the preview route on the host core", () => {
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetSession.mockImplementation(async () => ({ role: "admin", username: "admin" }));
+    mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
+    (mockProvider.getCapabilities as ReturnType<typeof mock>).mockImplementation(() => declaredCapabilities);
+    mockPreviewMaintenance.mockReset();
+    mockPreviewMaintenance.mockImplementation(async () => SYNTHETIC_PREVIEW);
+    (mockProvider as { previewMaintenance?: unknown }).previewMaintenance = mockPreviewMaintenance;
+    mockReadProviderDeclarations.mockClear();
+    mockAuditPush.mockClear();
+  });
+
+  /** A preview request whose signal is `signal`, as a browser that may leave sends it. */
+  function previewWith(signal?: AbortSignal): Promise<Response> {
+    return POST(
+      new Request("http://localhost:3000/api/db/maintenance/preview", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: "compact", target: "orders", container: "app", connection: validConnection }),
+        ...(signal === undefined ? {} : { signal }),
+      }) as never,
+    );
+  }
+
+  test("a preview whose request leaves while the provider reads answers 499 at once, outcome unknown", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    const pending = Promise.withResolvers<never>();
+    const reached = Promise.withResolvers<void>();
+    mockPreviewMaintenance.mockImplementation(() => {
+      reached.resolve();
+      return pending.promise;
+    });
+    const caller = new AbortController();
+    try {
+      const answering = previewWith(caller.signal);
+      await reached.promise;
+      caller.abort(new DOMException("The request went away.", "AbortError"));
+      const response = await answering;
+
+      expect(response.status).toBe(499);
+      expect(await parseResponseJSON(response)).toMatchObject({ code: "QUERY_CANCELLED", outcome: "unknown" });
+      expect(mockAuditPush).not.toHaveBeenCalled();
+      pending.reject(new Error(crypto.randomUUID()));
+      await pending.promise.catch(() => undefined);
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a preview whose request is already gone answers 499 not-sent and asks the provider nothing", async () => {
+    const caller = new AbortController();
+    caller.abort(new DOMException("The request went away.", "AbortError"));
+
+    const response = await previewWith(caller.signal);
+
+    expect(response.status).toBe(499);
+    expect(await parseResponseJSON(response)).toMatchObject({ code: "QUERY_CANCELLED", outcome: "not-sent" });
+    expect(mockPreviewMaintenance).not.toHaveBeenCalled();
+  });
+
+  test("a preview past its deadline answers 504 studio-timeout-refusal naming the preview", async () => {
+    const real = hostCore();
+    const stopping: HostCore = {
+      ...real,
+      maintenancePreviewCall: async (): Promise<MaintenancePreviewRecord> => ({
+        kind: "stopped",
+        reason: new DOMException("The call's deadline has passed.", "TimeoutError"),
+        settled: Promise.resolve(),
+      }),
+    };
+    forgetHostCore();
+    installHostCore(stopping, "test");
+    let response: Response;
+    try {
+      response = await previewWith();
+    } finally {
+      forgetHostCore();
+      installHostCore(real, "test");
+    }
+    const body = await parseResponseJSON<Record<string, unknown>>(response);
+
+    expect(response.status).toBe(504);
+    expect(body).toMatchObject({ code: "TIMEOUT_ERROR", kind: "studio-timeout-refusal", outcome: "unknown" });
+    expect(body.error).toBe(
+      "The maintenance preview did not answer within the statement timeout of 60 seconds and 10 seconds more for the engine's own answer, so Studio stopped waiting for it.",
+    );
+  });
+
+  test("whether a preview is offered is read from the bridged session", async () => {
+    const offered = await previewWith();
+    delete (mockProvider as { previewMaintenance?: unknown }).previewMaintenance;
+    const withdrawn = await previewWith();
+
+    expect(offered.status).toBe(200);
+    expect(withdrawn.status).toBe(400);
+    expect(await errorOf(withdrawn)).toBe("This operation has no preview");
+    // The bridged session is built once the declarations are read, so both requests read them.
+    expect(mockReadProviderDeclarations).toHaveBeenCalledTimes(2);
+    expect(mockPreviewMaintenance).toHaveBeenCalledTimes(1);
   });
 });

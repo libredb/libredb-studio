@@ -35,14 +35,17 @@ import {
   type BeginTransactionResult,
   type DatabaseProvider,
   isTransactionProvider,
+  type MaintenanceDeclaration,
+  narrowMaintenance,
   type PreparedQuery,
+  type ProviderCapabilities,
   type QueryPrepareOptions,
 } from "@/lib/db/types";
 import type { ConsoleSession } from "@/lib/provider-host/core/console";
 import { runEditorQuery } from "@/lib/api/editor-query";
 import { providerTextScrub } from "@/lib/db/operations/provider-text";
 import { appendedBoundNote } from "@/lib/db/utils/query-limiter";
-import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
+import { bridgedConsole, bridgedMaintenance } from "@/lib/provider-host/legacy-bridge";
 import type { QueryResult } from "@/lib/types";
 import { createMockProvider } from "../../../helpers/mock-provider";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
@@ -865,6 +868,133 @@ describe("bridgedConsole", () => {
     expect(known).toEqual({ cancelled: true });
     expect(unknown).toEqual({ cancelled: false });
     expect(callsOf(cancelQuery)[0]).toEqual(["known"]);
+  });
+});
+
+/** A PostgreSQL-shaped declaration in Studio's form: vacuum, analyze and reindex on a row and whole, kill on neither. */
+const POSTGRES_DECLARED: Required<MaintenanceDeclaration> = {
+  maintenanceOperations: ["vacuum", "analyze", "reindex", "kill"],
+  maintenanceOperationSpecs: {
+    vacuum: { label: "Vacuum", perEntity: true, global: true, description: "Reclaims space." },
+    analyze: { label: "Analyze", perEntity: true, global: true },
+    reindex: { label: "Reindex", perEntity: true, global: true, confirmation: "typed-target", kinds: ["table"] },
+    kill: { label: "Terminate", perEntity: false, global: false },
+  },
+};
+
+/** A provider whose connected capabilities hold `maintenance`, with `supportsMaintenance` as given. */
+function connectedWith(maintenance: MaintenanceDeclaration, supportsMaintenance = true): DatabaseProvider {
+  const provider = fake(resultOf([]));
+  const capabilities = { ...provider.getCapabilities(), ...maintenance, supportsMaintenance } as ProviderCapabilities;
+  return Object.assign(provider, { getCapabilities: () => capabilities });
+}
+
+/** Whether `value` and every object it holds are frozen. */
+function deepFrozen(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return true;
+  return Object.isFrozen(value) && Object.values(value).every((member) => deepFrozen(member));
+}
+
+/** Each spec of the PostgreSQL-shaped declaration in the declaration's form, as `buildMaintenanceSpecs` writes it. */
+const POSTGRES_SPECS = {
+  vacuum: {
+    operation: "vacuum",
+    label: "Vacuum",
+    perEntity: true,
+    global: true,
+    title: null,
+    description: "Reclaims space.",
+    confirmation: null,
+    preview: false,
+    kinds: null,
+  },
+  analyze: {
+    operation: "analyze",
+    label: "Analyze",
+    perEntity: true,
+    global: true,
+    title: null,
+    description: null,
+    confirmation: null,
+    preview: false,
+    kinds: null,
+  },
+  reindex: {
+    operation: "reindex",
+    label: "Reindex",
+    perEntity: true,
+    global: true,
+    title: null,
+    description: null,
+    confirmation: "typed-target",
+    preview: false,
+    kinds: ["table"],
+  },
+  kill: {
+    operation: "kill",
+    label: "Terminate",
+    perEntity: false,
+    global: false,
+    title: null,
+    description: null,
+    confirmation: null,
+    preview: false,
+    kinds: null,
+  },
+} as const;
+
+describe("bridgedMaintenance", () => {
+  test("a bridged session's maintenance is the provider's declaration, narrowed through sessionMaintenance by what the connected provider still accepts", () => {
+    const unchanged = bridgedMaintenance(connectedWith(POSTGRES_DECLARED), POSTGRES_DECLARED);
+    const cockroachLike = narrowMaintenance(POSTGRES_DECLARED, {
+      vacuum: { perEntity: false, global: true },
+      reindex: { perEntity: false, global: false },
+    });
+    const narrowed = bridgedMaintenance(connectedWith(cockroachLike), POSTGRES_DECLARED);
+    const killWithdrawn = bridgedMaintenance(
+      connectedWith({ ...POSTGRES_DECLARED, maintenanceOperations: ["vacuum", "analyze", "reindex"] }),
+      POSTGRES_DECLARED,
+    );
+    const notSupported = bridgedMaintenance(connectedWith(POSTGRES_DECLARED, false), POSTGRES_DECLARED);
+
+    expect(unchanged).toEqual({
+      maintenance: ["vacuum", "analyze", "reindex", "kill"],
+      maintenanceSpecs: [POSTGRES_SPECS.vacuum, POSTGRES_SPECS.analyze, POSTGRES_SPECS.reindex, POSTGRES_SPECS.kill],
+    });
+    expect(deepFrozen(unchanged)).toBe(true);
+    expect(narrowed).toEqual({
+      maintenance: ["vacuum", "analyze", "kill"],
+      maintenanceSpecs: [{ ...POSTGRES_SPECS.vacuum, perEntity: false }, POSTGRES_SPECS.analyze, POSTGRES_SPECS.kill],
+    });
+    expect(deepFrozen(narrowed)).toBe(true);
+    expect(killWithdrawn.maintenance).toEqual(["vacuum", "analyze", "reindex"]);
+    expect(notSupported).toEqual({ maintenance: [], maintenanceSpecs: [] });
+    expect(POSTGRES_DECLARED.maintenanceOperations).toEqual(["vacuum", "analyze", "reindex", "kill"]);
+  });
+
+  test("a bridged session's maintenance never offers more than the declaration", () => {
+    const declared: Required<MaintenanceDeclaration> = {
+      maintenanceOperations: ["vacuum", "kill"],
+      maintenanceOperationSpecs: {
+        vacuum: { label: "Vacuum", perEntity: false, global: true },
+        kill: { label: "Terminate", perEntity: false, global: false },
+      },
+    };
+    const wider = connectedWith({
+      maintenanceOperations: ["vacuum", "kill", "optimize"],
+      maintenanceOperationSpecs: {
+        vacuum: { label: "Vacuum", perEntity: true, global: true },
+        kill: { label: "Terminate", perEntity: true, global: true },
+        optimize: { label: "Optimize", perEntity: true, global: true },
+      },
+    });
+
+    const maintenance = bridgedMaintenance(wider, declared);
+
+    expect(maintenance).toEqual({
+      maintenance: ["vacuum", "kill"],
+      maintenanceSpecs: [{ ...POSTGRES_SPECS.vacuum, description: null, perEntity: false }, POSTGRES_SPECS.kill],
+    });
   });
 });
 
