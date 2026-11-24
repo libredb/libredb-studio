@@ -727,8 +727,9 @@ an alias of `get_current_timestamp()`, and the client context object carries onl
 the session nothing: measured, the very next statement runs normally. Any OTHER rollback failure is
 raised rather than read as an answer.
 
-Both query routes call this in a `finally` and report the outcome, `POST /api/db/multi-query` and
-`POST /api/db/query`, each under a call scope of its own (D74, D87).
+`POST /api/db/query` ends its run's scope through the host core's `console.endScope` after the run
+([`CONTRACT.md`](CONTRACT.md), C-60), and `POST /api/db/multi-query` calls this in a `finally`, each
+under a call scope of its own (D74, D87), and each reports the outcome.
 
 **WHAT IS NOT CLOSED: the ender cannot tell whose transaction it is ending.** The `scope` parameter
 is declared on the interface and ignored here, because this provider holds ONE connection and there

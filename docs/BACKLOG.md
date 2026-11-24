@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D580, U17 · 369
+- [Drivers and connections](#drivers-and-connections) — D1-D620, U17 · 370
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -4344,8 +4344,8 @@ Found 2026-11-02 while verifying `run_libredb_read`.
 
 ### D428. The Redis editor fails every query for a read-only ACL user, because the transaction check sends `PING`
 
-After every editor query `src/lib/api/editor-query.ts` awaits `endOpenQueryTransaction()` in a `finally`, and on Redis that sends `PING` to learn whether a `MULTI` is open (`src/lib/db/providers/keyvalue/redis.ts`).
-`PING` is in Redis's `@connection` category, not `@read`, so a user the agent's read-only proof admits, such as `ACL SETUSER ro on >pw ~* +@read` (`docs/providers/redis.md` section 16), is refused it with `NOPERM`, and the refusal raised in the `finally` replaces the query's own answer.
+After every editor query Studio ends the run's scope through the legacy bridge's `console.endScope`, which awaits `endOpenQueryTransaction()`, and an end that fails is answered in the query's place; on Redis that sends `PING` to learn whether a `MULTI` is open (`src/lib/db/providers/keyvalue/redis.ts`).
+`PING` is in Redis's `@connection` category, not `@read`, so a user the agent's read-only proof admits, such as `ACL SETUSER ro on >pw ~* +@read` (`docs/providers/redis.md` section 16), is refused it with `NOPERM`, and that refusal replaces the query's own answer.
 So such a user can open the connection and browse keys, but every command typed in the editor answers an error after it ran.
 `docs/providers/redis.md` measures the check with `+@read +ping +info`, where `PING` is granted, and does not state that a user without `+ping` loses the editor.
 Found 2026-11-02 while verifying `run_redis_read` with a least-privilege seed user.
@@ -4917,6 +4917,19 @@ Measured 2026-11-23 with the real `mssql` `Transaction` over a fake pool and con
 GOV23 is the same driver behaviour met by the timer's rollback.
 
 **Done when:** a COMMIT or ROLLBACK the driver refuses with `EREQINPROG` leaves the provider holding the transaction, so a later COMMIT or ROLLBACK can still end it, the mssql document states it, and a test with a `Transaction` double that answers `EREQINPROG` shows `isInTransaction()` still true and the connection released once the transaction ends.
+
+### D620. A pooled client a scoped Postgres statement left in a transaction goes back to the pool before its scope ends, so another request can run inside that transaction and lose its work
+
+`PostgresProvider.query` in `src/lib/db/providers/sql/postgres.ts` releases its pooled client to the pool while the server's ReadyForQuery status reports the transaction open (`T` or `E`), and records that client under the call scope.
+`endOpenQueryTransaction(scope)` later rolls it back on that client object.
+A request that borrows the client in between, another user's statement or an interactive session's `beginTransaction()` off the pool's LIFO idle list, runs its statement inside that transaction, and the rollback discards it while that request was answered success.
+A request already waiting for a client is handed it at the release, which happens before any end, so that case predates the end's move onto `console.endScope`.
+Since a run's scope ends through `console.endScope` after the run (`docs/providers/CONTRACT.md`, clause C-60), the end comes after the host core's pump: one event-loop turn later for a page of one batch, which covers every page under 1 MiB and the editor's default page, and for a larger page the whole pump plus any wait for the large-page slot (clauses C-49 and C-53), bounded by the statement's deadline.
+C-60 requires a provider that offers `console.endScope` to keep that connection to its scope until the scope's end has answered, and this provider does not.
+Read from the code on 2026-11-24 while moving the end onto `console.endScope`; the wider window was not measured, and the interactive-session case was measured at provider level on 2026-09-15 (`docs/providers/postgres.md` section 8.1).
+
+**Done when:** the provider keeps a client a scoped statement left in a transaction checked out under that scope until the scope's end, and runs the scope's later statements on it, as clause C-60 requires, with a route or integration test that holds the end and shows a concurrent request is not handed that client.
+The change must weigh multi-query scripts, whose statements today each borrow a client.
 
 ## Value interpolation
 

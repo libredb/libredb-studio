@@ -1888,13 +1888,14 @@ The lint holds the members `DatabaseProvider` declares, so a capability read by 
 
 ### C-47 (normative): A cleanup call runs under a context of its own
 
-A cleanup call ends work another call started: a close, and the cancel the host sends when it stops waiting for a run.
+A cleanup call ends work another call started: a close, the cancel the host sends when it stops waiting for a run, and the end of a run's scope, C-60.
 It never runs under the context of the call it follows, which may have aborted, but under `cleanupContext`: a deadline `CLEANUP_DEADLINE_MS`, 10 s, after it starts, a signal that aborts only at that deadline, and the reader of the call it follows.
 The memory transport closes the session of an open answer it refuses under such a context, and the host core's teardown waits for a close at most the same 10 s, C-45.
 
 - test `packages/provider-sdk/tests/calls/deadline.test.ts` "a cleanup call gets a context of its own, ten seconds ahead and never aborted"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a refused open answer's session is closed with a context of its own, not the open's aborted one"
 - test `tests/unit/lib/provider-host/core/teardown.test.ts` "the close deadline is the SDK's cleanup deadline"
+- test `tests/unit/lib/api/editor-query.test.ts` "the scope's end runs under a cleanup context of its own, ten seconds from its start, which the caller's leaving does not end"
 
 ### C-48 (normative): The host's console calls
 
@@ -1960,23 +1961,25 @@ The turn is the host's and not the SDK pump's, since the pump is also the kit's 
 
 ### C-50 (normative): The legacy bridge serves today's providers as contract sessions
 
-The legacy bridge serves a provider of the legacy interface, `DatabaseProvider`, as one session of console execute, cancel and transaction, built per call by the caller's facade, so today's providers run through the host core's console calls, C-48.
+The legacy bridge serves a provider of the legacy interface, `DatabaseProvider`, as one session of console execute, cancel, endScope and transaction, built per call by the caller's facade, so today's providers run through the host core's console calls, C-48.
 Its execute honours `params` and `offset` for every engine, so each provider answers both as it always has, its own refusal of an offset included.
-It offers `console.cancel` exactly when the provider can cancel a run, and does not offer `console.endScope`: the run's open transaction is ended inside its execute, as the editor query always ended it, until that moves onto `console.endScope`.
+It offers `console.cancel` exactly when the provider can cancel a run.
+It offers `console.endScope` exactly where the provider ends the transactions its query path left open, and its `endScope` runs the provider's `endOpenQueryTransaction` with the request's scope and answers its outcome; its execute hands the provider the request's scope and ends nothing itself.
 It offers `console.transaction` exactly when the provider holds a transaction session, the duck typing of begin, commit and rollback the transaction route has always read.
 Its transaction call runs the provider's own method for the action, a begin with `requireReportedState` as the transaction route has always passed it, answering `stateReported` exactly when the provider answered a result, and `state` runs nothing.
 Every transaction answer's session state is the provider's `isInTransaction()` read after the call, so through the bridge a state is `in-transaction` or `not-in-transaction`, and the bridge keeps none between calls.
 A statement sent with `transaction` runs the provider's prepare, the probe row past the page and `queryInTransaction` with a new array of the request's params, with no run id, no scope and no transaction ender, since it runs on the transaction's own connection, and answers the session state read after it.
 A provider's error passes by reference.
 The transaction route's script of several statements still calls `queryInTransaction` itself, statement by statement, until it moves with `POST /api/db/multi-query`, and reads only the state after them through the host, C-59.
-Its execute hands the provider a fresh copy of the caller's own page options and a new array of the request's params, so a provider that writes what it receives changes nothing the host froze, and runs the provider's prepare, the probe row past the page, the statement and the transaction's end as the editor query always ran them.
+Its execute hands the provider a fresh copy of the caller's own page options and a new array of the request's params, so a provider that writes what it receives changes nothing the host froze, and runs the provider's prepare, the probe row past the page and the statement as the editor query always ran them.
 It answers one source per result set, the main rows first.
 A source reads each row positionally under the result's columns in its value codec form, or, when the codec refuses a cell, in the JSON form the answer writes for that row, sizes it with the pull's measure, C-15, and answers that same array, so each row is measured once, in the form closest to its answer.
 Which cells the codec refuses is read before encoding, the codec's domain read as the codec reads it, so no codec error is thrown per row, and every error measuring a row throws passes by reference.
 A key a row holds outside its columns is answered and not measured.
 The page's row limit is set once execute answered: one past the page when the provider applied the page, otherwise every row the provider returned, at least one.
 
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session honours params and offset, offers cancel only where the provider cancels, and offers no scope"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session honours params and offset, offers cancel only where the provider cancels, and endScope only where the provider ends its query path's transactions"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged endScope runs the provider's ender on the scope it is sent and answers its outcome, its failure by reference"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session offers the transaction facet exactly where the provider is a TransactionProvider"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged begin, COMMIT, ROLLBACK and state read call the provider's methods and answer its state after each"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged begin hands the provider requireReportedState as the route always did, true only when asked"
@@ -1984,7 +1987,7 @@ The page's row limit is set once execute answered: one past the page when the pr
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged transaction call whose provider throws passes the error by reference"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session reads the provider's state on every call, and keeps none"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a legacy provider that writes what it receives changes nothing the host froze"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the run prepares, probes, queries and ends its transaction as runEditorQuery did"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the run prepares, probes and queries with the request's own scope, and ends nothing itself"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "every result set is a source, the main rows first"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the bridge sizes every row it answers with the pull's measure, and answers that same array"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a cell outside the value codec is measured in its JSON form and answered unchanged"
@@ -2004,7 +2007,7 @@ A refusal of a passed deadline or of any other aborted signal, and any other sto
 A row no page can hold is `StudioByteBudgetRefusal`, naming the page's bytes and the row's size, outcome unknown, since the statement ran.
 A refusal before the call was made answers outcome not-sent, E-5; once the provider was called the outcome stays unknown.
 A call's wait for its provider's open that ended answers `QueryCancelledError` when its reason is the caller's own and `StudioTimeoutRefusal` naming the open otherwise, both outcome not-sent, since no statement was sent; any other failure of the open passes as the same object.
-Every other refusal is a defect of Studio's own bridge, which honours every request field and offers no scope: a plain error naming each refusal's sentence.
+Every other refusal is a defect of Studio's own bridge, which honours every request field and is sent a scope only where it offers `console.endScope`: a plain error naming each refusal's sentence.
 A refused offset and refused params of a session that refuses a field arrive with the first such session.
 
 - test `tests/unit/lib/provider-host/access.test.ts` "a call the caller left is answered as QueryCancelledError, not-sent before the call and unknown after it"
@@ -2264,6 +2267,37 @@ The transaction route's script of several statements is excepted, C-50.
 - test `tests/api/db/transaction.test.ts` "governance: a rollback after a credential change waits on Studio's own 5 s allowance, and one the host stops waiting for answers 409 unconfirmed"
 - test `tests/api/db/transaction.test.ts` "the transaction route reads no session state but through the host"
 
+### C-60 (normative): A run's scope ends through console.endScope, after the run
+
+The caller that runs statements in a scope mints it, one per request, sends it with every execute of the request and only to a session that offers `console.endScope`, C-9, and ends it once through `endScopeCall`, C-48, under a cleanup context the caller's leaving does not end, C-47.
+A provider that offers `console.endScope` keeps the connection that holds a transaction a scope's statements opened to that scope while the transaction is open, and lends it to no other scope or caller, until `endScope` for that scope has answered.
+The legacy bridge's postgres provider does not hold this rule today: its `query()` returns such a client to its pool, and the end comes after the run's pump, so another request can borrow the client in between and run inside that transaction; the backlog tracks it as [D620](../BACKLOG.md).
+The editor query ends its run's scope once its execute answered or failed, before its answer is built, and after a stop once the stopped call's `settled` resolved; a run refused before its call ran nothing and ends none.
+An end that fails is answered in the run's place, its error by reference, and an end its deadline stopped answers `StudioTimeoutRefusal` naming the end, outcome unknown; after a stop, either is logged by kind and code, since the stop was already answered.
+The answer carries `openTransaction: "rolled-back"` only when the end answered it.
+`POST /api/db/query` and the VS Code backend's `query/run` end their run's scope so.
+
+- test `tests/unit/lib/api/editor-query.test.ts` "the run on a session that offers console.endScope is sent a scope of its own, and that scope is ended once after the run"
+- test `tests/unit/lib/api/editor-query.test.ts` "a provider that declares no transaction ender is sent no scope and asked to end none, and answers no openTransaction key"
+- test `tests/unit/lib/api/editor-query.test.ts` "the scope is ended when the statement throws, and the statement's error is answered"
+- test `tests/unit/lib/api/editor-query.test.ts` "a transaction the run left open and the provider rolled back is answered (D74)"
+- test `tests/unit/lib/api/editor-query.test.ts` "an end that fails is answered in the run's place, its error by reference, and the page record is released once"
+- test `tests/unit/lib/api/editor-query.test.ts` "the scope's end is sent before the answer body is built"
+- test `tests/unit/lib/api/editor-query.test.ts` "a page refused after the call ends its scope before the refusal is answered"
+- test `tests/unit/lib/api/editor-query.test.ts` "a run refused before its call ends no scope"
+- test `tests/unit/lib/api/editor-query.test.ts` "the scope's end runs under a cleanup context of its own, ten seconds from its start, which the caller's leaving does not end"
+- test `tests/unit/lib/api/editor-query.test.ts` "an end its cleanup deadline stops answers StudioTimeoutRefusal naming the end, outcome unknown"
+- test `tests/unit/lib/api/editor-query.test.ts` "an end the host refuses is answered as a defect of Studio's bridge, named by its rule"
+- test `tests/unit/lib/api/editor-query.test.ts` "a caller that leaves while the statement runs is answered at once, and the scope is ended once the statement has settled"
+- test `tests/unit/lib/api/editor-query.test.ts` "the end of a stopped run's scope that fails or is stopped is logged by kind and code, never its text"
+- test `tests/unit/lib/api/editor-scope-bounds.test.ts` "an end that never answers is cut at the cleanup deadline, and the run answers StudioTimeoutRefusal naming it"
+- test `tests/api/db/query.test.ts` "ends the transaction its own statement left open and says so"
+- test `tests/api/db/query.test.ts` "ends the transaction a FAILING statement left open, which is where they come from"
+- test `tests/api/db/query.test.ts` "leaves a provider that cannot name its own session exactly as it found it"
+- test `tests/api/db/query.test.ts` "governance: a rollback that fails after the statement answered is answered in the statement's place and recorded as the run's error, as the finally always did"
+- test `vscode-extension/test/unit/backend-handlers.test.ts` "answers a transaction the statement left open as rolled back (D74)"
+- test `vscode-extension/test/unit/backend-handlers.test.ts` "ends the statement's own scope after the run, and answers an end that fails in the run's place"
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:
@@ -2324,3 +2358,4 @@ Against this contract's earlier text:
 - The legacy bridge offers `console.transaction` where its provider is a transaction provider, C-50, where it first offered it nowhere.
 - C-58 is normative: the host's half of the unknown state arrived with the host's transaction calls, C-58 and C-59.
 - A row is measured once on the host's path: the pump hands each pull its own measure and takes the size it recorded for the row a source answers, C-13 to C-16 and C-50, where a source and the pump each measured every row.
+- The legacy bridge offers `console.endScope` where its provider ends what its query path left open, and a run's scope ends through it after the run, C-50 and C-60, where the bridge ended the run's open transaction inside its execute.

@@ -554,6 +554,12 @@ Each such page waits within its own statement's deadline, and a page of one batc
 A page whose deadline passes while it waits answers `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`, since the statement ran: "The statement answered, but its page waited for another large page to be answered past its timeout of 60 seconds and 10 seconds more, so Studio stopped waiting for it.", with the connection's own timeout in place of 60 seconds.
 A caller that goes away while its page waits is answered `499 QUERY_CANCELLED` with `outcome: "unknown"`.
 
+A transaction the statement left open, on an engine whose provider can end one, is rolled back after the run through the provider host core ([`docs/providers/CONTRACT.md`](providers/CONTRACT.md), clause C-60), and the answer then carries `openTransaction: "rolled-back"`.
+That rollback is waited for at most 10 seconds of its own, never ended by the request's leaving.
+Past that the answer is `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`: "Ending the transaction this request may have left open did not answer within 10 seconds, so Studio stopped waiting for it."
+A rollback that fails is answered in the statement's place, its own error and status.
+After a caller went away, the transaction is rolled back once the statement's own end arrives, and a failure there is logged by its kind and code, never its text.
+
 A caller that goes away while the statement runs, a browser that drops the request, is answered at once with `499 QUERY_CANCELLED` and `outcome: "unknown"`, and the server sends the run's cancel under the `queryId` the request named, when the provider can cancel.
 The statement's own end arrives after that answer; a failure there is logged by its kind and code, never its text, except the engine's cancellation answer to the cancel the server sent, which is the run's expected end.
 A request already aborted when the statement is to start runs nothing and answers `499 QUERY_CANCELLED` with `outcome: "not-sent"`.

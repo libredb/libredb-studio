@@ -1,5 +1,12 @@
 import { afterAll, beforeAll, afterEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { BATCH_MAX_BYTES, envReader, PAGE_MAX_BYTES, type ResultSource } from "@libredb/provider-sdk/calls";
+import {
+  BATCH_MAX_BYTES,
+  type CallContext,
+  CLEANUP_DEADLINE_MS,
+  envReader,
+  PAGE_MAX_BYTES,
+  type ResultSource,
+} from "@libredb/provider-sdk/calls";
 import {
   checkEditorQuery,
   type EditorQueryRefusal,
@@ -29,7 +36,8 @@ import type { DatabaseConnection, DatabaseType, QueryResult } from "@/lib/types"
 import { createMockProvider } from "../../../helpers/mock-provider";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../../../helpers/stand-in-vocabulary";
 import { serverOnlyReach, valueImportClosure } from "../../../helpers/value-import-closure";
-import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { HOST_DEFECT_PREFIX } from "@/lib/provider-host/access";
+import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
 
 // The editor query reads the process's host core (src/lib/provider-host/instance.ts), so this file composes its own.
@@ -85,6 +93,24 @@ const runOf = (over: Partial<Parameters<typeof runEditorQuery>[1]> = {}) => ({
 });
 /** The mock behind a fake's method, read back for its recorded calls. */
 const callsOf = (fn: unknown) => (fn as ReturnType<typeof mock>).mock.calls;
+/** Studio's sentence for an end of a run's scope its cleanup deadline stopped. */
+const END_SCOPE_SENTENCE =
+  "Ending the transaction this request may have left open did not answer within 10 seconds, so Studio stopped waiting for it.";
+/** The line a late end of a stopped run's scope that failed or was stopped is logged under. */
+const END_LATE_LINE = "Ending the transaction a run Studio stopped waiting for may have left open failed";
+
+/** Runs `body` with `core` installed in place of the file's own, and puts the file's own back after it. */
+async function withCore<T>(core: HostCore, body: () => Promise<T>): Promise<T> {
+  const real = hostCore();
+  forgetHostCore();
+  installHostCore(core, "test");
+  try {
+    return await body();
+  } finally {
+    forgetHostCore();
+    installHostCore(real, "test");
+  }
+}
 
 describe("checkEditorQuery", () => {
   let remove: (() => void) | undefined;
@@ -195,12 +221,7 @@ describe("runEditorQuery", () => {
       ["SELECT n FROM t", { limit: 2 }],
       ["SELECT n FROM t", { limit: 3, unlimited: false }],
     ]);
-    expect(callsOf(provider.query)[0]).toEqual([
-      "SELECT n FROM t LIMIT 3 OFFSET 0",
-      undefined,
-      undefined,
-      expect.any(String),
-    ]);
+    expect(callsOf(provider.query)[0]).toEqual(["SELECT n FROM t LIMIT 3 OFFSET 0", undefined, undefined, undefined]);
     expect(answer).toEqual({
       body: {
         rows: [{ n: 1 }, { n: 2 }],
@@ -257,14 +278,30 @@ describe("runEditorQuery", () => {
     expect(answer.body.pagination.hasMore).toBe(false);
   });
 
-  test("the run gets a call scope and the bound params, and the scope's transaction is ended", async () => {
-    const endOpenQueryTransaction = mock(async () => "none");
-    const provider = fake(resultOf(rowsOf(1)), { endOpenQueryTransaction });
+  test("the run on a session that offers console.endScope is sent a scope of its own, and that scope is ended once after the run", async () => {
+    const order: string[] = [];
+    const endOpenQueryTransaction = mock(async () => {
+      order.push("end");
+      return "none";
+    });
+    const provider = fake(resultOf(rowsOf(1)), {
+      endOpenQueryTransaction,
+      query: mock(async () => {
+        order.push("query");
+        return resultOf(rowsOf(1));
+      }),
+    });
+
     const answer = await runEditorQuery(provider, runOf({ params: ["a"] }));
-    const call = callsOf(provider.query)[0];
-    expect(call[1]).toEqual(["a"]);
-    expect(typeof call[3]).toBe("string");
-    expect(callsOf(endOpenQueryTransaction)).toEqual([[call[3]]]);
+    await runEditorQuery(provider, runOf());
+
+    const [first, second] = callsOf(provider.query);
+    expect(first[1]).toEqual(["a"]);
+    expect(typeof first[3]).toBe("string");
+    expect(typeof second[3]).toBe("string");
+    expect(second[3]).not.toBe(first[3]);
+    expect(callsOf(endOpenQueryTransaction)).toEqual([[first[3]], [second[3]]]);
+    expect(order).toEqual(["query", "end", "query", "end"]);
     expect("openTransaction" in answer.body).toBe(false);
   });
 
@@ -274,17 +311,315 @@ describe("runEditorQuery", () => {
     expect(answer.body.openTransaction).toBe("rolled-back");
   });
 
-  test("a provider that declares no transaction ender answers no openTransaction key", async () => {
-    const answer = await runEditorQuery(fake(resultOf(rowsOf(1))), runOf());
+  test("a provider that declares no transaction ender is sent no scope and asked to end none, and answers no openTransaction key", async () => {
+    const real = hostCore();
+    const ends: unknown[] = [];
+    const provider = fake(resultOf(rowsOf(1)));
+    const answer = await withCore(
+      {
+        ...real,
+        endScopeCall: async (...args) => {
+          ends.push(args);
+          return real.endScopeCall(...args);
+        },
+      },
+      () => runEditorQuery(provider, runOf()),
+    );
+    expect(callsOf(provider.query)[0]?.[3]).toBeUndefined();
+    expect(ends).toEqual([]);
     expect("openTransaction" in answer.body).toBe(false);
   });
 
-  test("the transaction ender runs when the statement throws", async () => {
+  test("the scope is ended when the statement throws, and the statement's error is answered", async () => {
     const boom = new Error("boom");
     const endOpenQueryTransaction = mock(async () => "rolled-back");
     const provider = fake(boom, { endOpenQueryTransaction });
-    await expect(runEditorQuery(provider, runOf())).rejects.toBe(boom);
-    expect(callsOf(endOpenQueryTransaction)).toHaveLength(1);
+    const caught = await runEditorQuery(provider, runOf()).catch((error: unknown) => error);
+    expect(caught).toBe(boom);
+    expect(callsOf(endOpenQueryTransaction)).toEqual([[callsOf(provider.query)[0]?.[3]]]);
+  });
+
+  test("an end that fails is answered in the run's place, its error by reference, and the page record is released once", async () => {
+    const real = hostCore();
+    let releases = 0;
+    const counting: HostCore = {
+      ...real,
+      executeCall: async (...args) => {
+        const record = await real.executeCall(...args);
+        if (record.kind !== "page") return record;
+        return {
+          ...record,
+          release: () => {
+            releases += 1;
+            record.release();
+          },
+        };
+      },
+    };
+    const failing = new QueryError(`rollback failed ${crypto.randomUUID()}`, "postgres");
+    const ender = mock(async () => {
+      throw failing;
+    });
+
+    const afterPage = await withCore(counting, () =>
+      runEditorQuery(fake(resultOf(rowsOf(1)), { endOpenQueryTransaction: ender }), runOf()).catch(
+        (error: unknown) => error,
+      ),
+    );
+    const afterThrow = await runEditorQuery(fake(new Error("boom"), { endOpenQueryTransaction: ender }), runOf()).catch(
+      (error: unknown) => error,
+    );
+
+    expect(afterPage).toBe(failing);
+    expect(releases).toBe(1);
+    expect(afterThrow).toBe(failing);
+    expect(callsOf(ender)).toHaveLength(2);
+  });
+
+  test("the scope's end is sent before the answer body is built", async () => {
+    const real = hostCore();
+    const order: string[] = [];
+    const ordering: HostCore = {
+      ...real,
+      executeCall: async (...args) => {
+        const record = await real.executeCall(...args);
+        if (record.kind !== "page") return record;
+        return {
+          ...record,
+          release: () => {
+            order.push("release");
+            record.release();
+          },
+        };
+      },
+    };
+    const endOpenQueryTransaction = mock(async () => {
+      order.push("end");
+      return "rolled-back";
+    });
+
+    const answer = await withCore(ordering, () =>
+      runEditorQuery(fake(resultOf(rowsOf(1)), { endOpenQueryTransaction }), runOf()),
+    );
+
+    expect(order).toEqual(["end", "release"]);
+    expect(answer.body.openTransaction).toBe("rolled-back");
+  });
+
+  test("a page refused after the call ends its scope before the refusal is answered", async () => {
+    const endOpenQueryTransaction = mock(async () => "rolled-back");
+    const provider = fake(resultOf([{ n: "x".repeat(33 * 1_048_576) }]), { endOpenQueryTransaction });
+
+    const caught = await runEditorQuery(provider, runOf({ statement: "SELECT n FROM t LIMIT 5" })).catch(
+      (error: unknown) => error,
+    );
+
+    expect(caught).toBeInstanceOf(StudioByteBudgetRefusal);
+    expect(callsOf(endOpenQueryTransaction)).toEqual([[callsOf(provider.query)[0]?.[3]]]);
+  });
+
+  test("a run refused before its call ends no scope", async () => {
+    const endOpenQueryTransaction = mock(async () => "rolled-back");
+    const late = Object.assign(fake(resultOf(rowsOf(1)), { endOpenQueryTransaction }), {
+      config: connectionWith({ queryTimeout: -EXECUTE_SLACK_MS - 60_000 }),
+    });
+    const gone = new AbortController();
+    gone.abort(new DOMException("The request went away.", "AbortError"));
+
+    const pastDeadline = await runEditorQuery(late, runOf()).catch((error: unknown) => error);
+    const callerGone = await runEditorQuery(
+      fake(resultOf(rowsOf(1)), { endOpenQueryTransaction }),
+      runOf({ signal: gone.signal }),
+    ).catch((error: unknown) => error);
+
+    expect(pastDeadline).toBeInstanceOf(StudioTimeoutRefusal);
+    expect(errorOutcome(pastDeadline)).toBe("not-sent");
+    expect(callerGone).toBeInstanceOf(QueryCancelledError);
+    expect(errorOutcome(callerGone)).toBe("not-sent");
+    expect(callsOf(endOpenQueryTransaction)).toEqual([]);
+  });
+
+  test("the scope's end runs under a cleanup context of its own, ten seconds from its start, which the caller's leaving does not end", async () => {
+    const real = hostCore();
+    const seen: { ctx: CallContext; scope: string }[] = [];
+    const spying: HostCore = {
+      ...real,
+      endScopeCall: (session, request, ctx, ports) => {
+        seen.push({ ctx, scope: request.scope });
+        return real.endScopeCall(session, request, ctx, ports);
+      },
+    };
+    const caller = new AbortController();
+    const provider = fake(resultOf(rowsOf(1)), { endOpenQueryTransaction: mock(async () => "none") });
+
+    const before = Date.now();
+    await withCore(spying, () => runEditorQuery(provider, runOf({ signal: caller.signal })));
+    const after = Date.now();
+    caller.abort(new DOMException("The request went away.", "AbortError"));
+
+    expect(seen).toHaveLength(1);
+    const { ctx, scope } = seen[0] as { ctx: CallContext; scope: string };
+    expect(scope).toBe(callsOf(provider.query)[0]?.[3]);
+    expect(ctx.deadline).toBeGreaterThanOrEqual(before + CLEANUP_DEADLINE_MS);
+    expect(ctx.deadline).toBeLessThanOrEqual(after + CLEANUP_DEADLINE_MS);
+    expect(ctx.signal).not.toBe(caller.signal);
+    expect(ctx.signal.aborted).toBe(false);
+  });
+
+  test("an end its cleanup deadline stops answers StudioTimeoutRefusal naming the end, outcome unknown", async () => {
+    const real = hostCore();
+    let releases = 0;
+    const stopping: HostCore = {
+      ...real,
+      executeCall: async (...args) => {
+        const record = await real.executeCall(...args);
+        if (record.kind !== "page") return record;
+        return {
+          ...record,
+          release: () => {
+            releases += 1;
+            record.release();
+          },
+        };
+      },
+      endScopeCall: async () => ({
+        kind: "stopped",
+        reason: new DOMException("The call's deadline has passed.", "TimeoutError"),
+        settled: Promise.resolve(),
+      }),
+    };
+
+    const caught = await withCore(stopping, () =>
+      runEditorQuery(fake(resultOf(rowsOf(1)), { endOpenQueryTransaction: mock(async () => "none") }), runOf()).catch(
+        (error: unknown) => error,
+      ),
+    );
+
+    expect(caught).toBeInstanceOf(StudioTimeoutRefusal);
+    expect((caught as Error).message).toBe(END_SCOPE_SENTENCE);
+    expect(errorOutcome(caught)).toBe("unknown");
+    expect(databaseErrorBody(caught)?.body).toMatchObject({
+      code: "TIMEOUT_ERROR",
+      statusCode: 504,
+      kind: "studio-timeout-refusal",
+      outcome: "unknown",
+    });
+    expect(releases).toBe(1);
+  });
+
+  test("an end the host refuses is answered as a defect of Studio's bridge, named by its rule", async () => {
+    const real = hostCore();
+    const refusing: HostCore = {
+      ...real,
+      endScopeCall: async () => ({
+        kind: "refused",
+        called: false,
+        refusals: [{ rule: "facet-not-offered", pointer: "/console/endScope", name: "console.endScope" }],
+      }),
+    };
+
+    const caught = await withCore(refusing, () =>
+      runEditorQuery(fake(resultOf(rowsOf(1)), { endOpenQueryTransaction: mock(async () => "none") }), runOf()).catch(
+        (error: unknown) => error,
+      ),
+    );
+
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message.startsWith(HOST_DEFECT_PREFIX)).toBe(true);
+    expect((caught as Error).message).toContain("console.endScope");
+  });
+
+  test("a caller that leaves while the statement runs is answered at once, and the scope is ended once the statement has settled", async () => {
+    const statement = Promise.withResolvers<QueryResult>();
+    const started = Promise.withResolvers<void>();
+    const ended = Promise.withResolvers<void>();
+    const endOpenQueryTransaction = mock(async () => {
+      ended.resolve();
+      return "rolled-back";
+    });
+    const provider = fake(resultOf(rowsOf(1)), {
+      endOpenQueryTransaction,
+      query: mock(() => {
+        started.resolve();
+        return statement.promise;
+      }),
+    });
+    const caller = new AbortController();
+
+    const running = runEditorQuery(provider, runOf({ signal: caller.signal }));
+    await started.promise;
+    caller.abort(new DOMException("The request went away.", "AbortError"));
+    const caught = await running.catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(QueryCancelledError);
+    expect(callsOf(endOpenQueryTransaction)).toEqual([]);
+    statement.resolve(resultOf(rowsOf(1)));
+    await ended.promise;
+    expect(callsOf(endOpenQueryTransaction)).toEqual([[callsOf(provider.query)[0]?.[3]]]);
+  });
+
+  test("the end of a stopped run's scope that fails or is stopped is logged by kind and code, never its text", async () => {
+    const secret = crypto.randomUUID();
+    const logged: unknown[][] = [];
+    let onLog: () => void = () => {};
+    const warn = spyOn(logger, "warn").mockImplementation((...args: unknown[]) => {
+      if (args[0] !== END_LATE_LINE) return;
+      logged.push(args);
+      onLog();
+    });
+    /** Runs a statement the caller leaves, settles it, and waits for the late end's log line. */
+    const leaveThenSettle = async (provider: DatabaseProvider, statement: PromiseWithResolvers<QueryResult>) => {
+      const line = Promise.withResolvers<void>();
+      onLog = () => line.resolve();
+      const caller = new AbortController();
+      const running = runEditorQuery(provider, runOf({ signal: caller.signal, route: "end-route" }));
+      await new Promise((resolve) => setImmediate(resolve));
+      caller.abort(new DOMException("The request went away.", "AbortError"));
+      expect(await running.catch((error: unknown) => error)).toBeInstanceOf(QueryCancelledError);
+      statement.resolve(resultOf(rowsOf(1)));
+      await line.promise;
+    };
+    try {
+      const failingStatement = Promise.withResolvers<QueryResult>();
+      await leaveThenSettle(
+        fake(resultOf(rowsOf(1)), {
+          query: mock(() => failingStatement.promise),
+          endOpenQueryTransaction: mock(async () => {
+            throw new QueryError(`rollback of ${secret} failed`, "postgres");
+          }),
+        }),
+        failingStatement,
+      );
+
+      const real = hostCore();
+      const stoppedStatement = Promise.withResolvers<QueryResult>();
+      await withCore(
+        {
+          ...real,
+          endScopeCall: async () => ({
+            kind: "stopped",
+            reason: new DOMException("The call's deadline has passed.", "TimeoutError"),
+            settled: Promise.resolve(),
+          }),
+        },
+        () =>
+          leaveThenSettle(
+            fake(resultOf(rowsOf(1)), {
+              query: mock(() => stoppedStatement.promise),
+              endOpenQueryTransaction: mock(async () => "none"),
+            }),
+            stoppedStatement,
+          ),
+      );
+
+      expect(logged).toEqual([
+        [END_LATE_LINE, { route: "end-route", kind: "query", code: "QUERY_ERROR" }],
+        [END_LATE_LINE, { route: "end-route", kind: "studio-timeout-refusal", code: "TIMEOUT_ERROR" }],
+      ]);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(secret);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   test("an abort while the statement runs cancels it under the request's id", async () => {

@@ -302,7 +302,7 @@ describe("POST /api/db/query", () => {
       "SELECT * FROM users LIMIT 50",
       undefined,
       "query-42",
-      expect.any(String),
+      undefined,
     );
   });
 
@@ -352,7 +352,7 @@ describe("POST /api/db/query", () => {
       `UPDATE users SET "name" = $1 WHERE "id" = $2 LIMIT 50`,
       ["\\' WHERE 1=1 -- ", 7],
       undefined,
-      expect.any(String),
+      undefined,
     );
   });
 
@@ -380,7 +380,7 @@ describe("POST /api/db/query", () => {
       `UPDATE users SET "name" = $1 WHERE "id" = $2 LIMIT 50`,
       ["Alice", 7],
       "query-42",
-      expect.any(String),
+      undefined,
     );
   });
 
@@ -1199,7 +1199,7 @@ describe("POST /api/db/query — the editor path stays outside the agent policy 
 
     expect(res.status).toBe(200);
     // Reached the driver verbatim: not refused, not rewritten, not downgraded.
-    expect(writeProvider.query).toHaveBeenCalledWith(writeStatement, undefined, undefined, expect.any(String));
+    expect(writeProvider.query).toHaveBeenCalledWith(writeStatement, undefined, undefined, undefined);
     // The shared, fully-privileged provider cache - never an execution profile.
     expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
   });
@@ -1300,7 +1300,7 @@ describe("POST /api/db/query with an explain request", () => {
       "EXPLAIN (FORMAT JSON) SELECT * FROM users LIMIT 50",
       undefined,
       undefined,
-      expect.any(String),
+      undefined,
     );
     expect(data.explainFormat).toBe("postgres-json");
   });
@@ -1321,7 +1321,7 @@ describe("POST /api/db/query with an explain request", () => {
       "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT * FROM users LIMIT 50",
       undefined,
       undefined,
-      expect.any(String),
+      undefined,
     );
   });
 
@@ -1507,7 +1507,7 @@ describe("POST /api/db/query with an explain request", () => {
       "EXPLAIN (FORMAT JSON) SELECT * FROM users WHERE id = $1 LIMIT 50",
       [7],
       undefined,
-      expect.any(String),
+      undefined,
     );
     expect(data.explainFormat).toBe("postgres-json");
   });
@@ -1541,12 +1541,7 @@ describe("POST /api/db/query with an explain request", () => {
     const data = await parseResponseJSON<Record<string, unknown>>(res);
 
     expect(res.status).toBe(200);
-    expect(mockProvider.query).toHaveBeenCalledWith(
-      "SELECT * FROM users LIMIT 50",
-      undefined,
-      undefined,
-      expect.any(String),
-    );
+    expect(mockProvider.query).toHaveBeenCalledWith("SELECT * FROM users LIMIT 50", undefined, undefined, undefined);
     expect("explainFormat" in data).toBe(false);
   });
 });
@@ -1735,6 +1730,8 @@ describe("POST /api/db/query and the transaction its own statement left open", (
 
     expect(res.status).toBe(200);
     expect("openTransaction" in data).toBe(false);
+    // A session that offers no console.endScope is sent no scope (docs/providers/CONTRACT.md, clause C-60).
+    expect((provider.query as ReturnType<typeof mock>).mock.calls[0]?.[3]).toBeUndefined();
   });
 });
 
@@ -2413,6 +2410,29 @@ describe("POST /api/db/query: query events under governance", () => {
     expect(events[0]).toMatchObject({ source: "editor", status: "error", error_code: "42P01", row_count: null });
   });
 
+  test("governance: a rollback that fails after the statement answered is answered in the statement's place and recorded as the run's error, as the finally always did", async () => {
+    const failing = new DatabaseError(
+      "Could not roll back the transaction this request left open on 1 of 1 pooled clients",
+      "postgres",
+    );
+    const provider = Object.assign(createMockProvider(), {
+      endOpenQueryTransaction: mock(async () => {
+        throw failing;
+      }),
+    });
+    mockGetOrCreateProvider.mockImplementation(async () => provider);
+
+    const res = await run({ connectionId: "seed:orders", sql: "BEGIN" });
+    const data = await parseResponseJSON<{ code: string }>(res);
+
+    expect(res.status).toBe(500);
+    expect(data.code).toBe("DATABASE_ERROR");
+    expect(provider.endOpenQueryTransaction).toHaveBeenCalledTimes(1);
+    const events = await recordedEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ source: "editor", status: "error", row_count: null });
+  });
+
   test("governance: a cancelled statement records status cancelled", async () => {
     (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => {
       throw new QueryCancelledError("The query was cancelled.");
@@ -2436,7 +2456,7 @@ describe("POST /api/db/query: query events under governance", () => {
       "EXPLAIN (FORMAT JSON) SELECT * FROM orders LIMIT 50",
       undefined,
       undefined,
-      expect.any(String),
+      undefined,
     );
     const events = await recordedEvents();
     expect(events).toHaveLength(1);

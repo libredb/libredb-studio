@@ -490,9 +490,10 @@ The library surface never reads the slot, so an embedder of the npm package comp
 `register()` runs once per server process, `next dev` included, and a dev server does not reload instrumentation or the core when either is edited, so a change under `src/lib/provider-host/core/` needs a restart of the dev server.
 
 Beside core, in the calling bundle, sit the two pieces that serve today's providers through it.
-`src/lib/provider-host/legacy-bridge.ts` serves a legacy `DatabaseProvider` as one session of console execute, cancel and transaction (clause C-50), and `src/lib/provider-host/access.ts`, the accessor, builds Studio's error classes from the records core answers (clause C-51).
+`src/lib/provider-host/legacy-bridge.ts` serves a legacy `DatabaseProvider` as one session of console execute, cancel, endScope and transaction (clause C-50), and `src/lib/provider-host/access.ts`, the accessor, builds Studio's error classes from the records core answers (clause C-51).
 The caller facades are `src/lib/api/editor-query.ts` and `src/lib/api/editor-transaction.ts`.
 `runEditorQuery` and `cancelEditorRun` keep the shape `POST /api/db/query`, `POST /api/db/cancel` and the VS Code backend child's `query/run` and `query/cancel` have always called, and run each call through the bridge, core and the accessor under the call's deadline: the statement timeout plus 10 s for a statement, 10 s for a cancel.
+`runEditorQuery` mints the run's scope for a session that offers `console.endScope` and ends it through the bridge's `console.endScope` and core's `endScopeCall` after the run, under the 10 s cleanup deadline, never the run's own (clause C-60).
 The transaction facade serves `POST /api/db/transaction`: its begin, statement, COMMIT, ROLLBACK and state read run through the bridge's transaction session and core's transaction and execute calls under the deadlines of clause C-59, and answer the session state each call answered, never one kept between calls (clause C-58).
 
 ## 5. Directory Structure

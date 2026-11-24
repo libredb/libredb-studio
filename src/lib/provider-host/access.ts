@@ -11,8 +11,8 @@
  * (`openStopError`) is `QueryCancelledError` when the caller left and `StudioTimeoutRefusal` with the caller's sentence
  * otherwise, both `not-sent`, since no statement was sent.
  *
- * Every other refusal is a defect of Studio's own bridge, which honours every request field and offers no scope, so no
- * provider can cause one: a plain `Error` naming each refusal's sentence, answered 500. Two rows of the host's mapping
+ * Every other refusal is a defect of Studio's own bridge, which honours every request field and is sent a scope only
+ * where it offers `console.endScope`, so no provider can cause one: a plain `Error` naming each refusal's sentence, answered 500. Two rows of the host's mapping
  * wait for the first session that refuses a request field, a native provider: a refused offset as
  * `OffsetUnsupportedError` and refused params as `FacetNotOfferedError`.
  */
