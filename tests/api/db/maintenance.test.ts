@@ -143,6 +143,25 @@ mock.module("@/lib/db", () => ({
   mapDatabaseError,
 }));
 
+// ─── Mock @/lib/db/factory BEFORE importing the route ───────────────────────
+/**
+ * The metadata session a kill runs on (docs/providers/CONTRACT.md, clause C-66), answered by default with the same
+ * `mockProvider` the editor's stand-in answers, so a kill test written against the editor's provider passes unchanged.
+ * It records what it built, as the barrel's `getOrCreateProvider` wrapper does, so the declarations read agrees.
+ */
+const mockGetOrCreateMetadataProvider = mock<(...args: unknown[]) => Promise<never>>(async () => mockProvider as never);
+mock.module("@/lib/db/factory", () => ({
+  getOrCreateMetadataProvider: async (...args: unknown[]) => {
+    const built = await (
+      mockGetOrCreateMetadataProvider as (...given: unknown[]) => Promise<{ getCapabilities(): unknown }>
+    )(...args);
+    lastBuilt = built;
+    return built;
+  },
+  // src/lib/api/editor-provider.ts imports it, and the route loads that module; this route reads no cached provider.
+  findCachedProvider: mock(() => null),
+}));
+
 // ─── Mock the query event sink and the admission gate (docs/GOVERNANCE.md#query-events) ───
 // The recorder captures each event the route describes, and a test builds its row with the real builder. The gate
 // admits by default, which is what it does with governance off; a test makes it refuse.
@@ -247,6 +266,8 @@ describe("POST /api/db/maintenance", () => {
       async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
     );
     mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
+    mockGetOrCreateMetadataProvider.mockReset();
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => mockProvider as never);
     (mockProvider.runMaintenance as ReturnType<typeof mock>).mockImplementation(async () => ({
       success: true,
       executionTime: 100,
@@ -1418,6 +1439,8 @@ describe("what the maintenance route answers today, which the host core keeps", 
       async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
     );
     mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
+    mockGetOrCreateMetadataProvider.mockReset();
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => mockProvider as never);
     mockAdmitQueryExecution.mockReset();
     runMaintenance.mockReset();
     (mockProvider.getCapabilities as ReturnType<typeof mock>).mockImplementation(() => ({
@@ -1547,6 +1570,8 @@ describe("the maintenance route on the host core", () => {
     );
     mockGetOrCreateProvider.mockReset();
     mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
+    mockGetOrCreateMetadataProvider.mockReset();
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => mockProvider as never);
     mockReadProviderDeclarations.mockClear();
     mockAuditPush.mockClear();
     mockRecordQueryEvent.mockClear();
@@ -1846,5 +1871,114 @@ describe("the maintenance route on the host core", () => {
     expect(response.status).toBe(200);
     expect(runMaintenance.mock.calls).toEqual([["kill", "4711", undefined]]);
     expect(auditRows()).toEqual([expect.objectContaining({ type: "kill_session", result: "success" })]);
+  });
+
+  /** A provider of the KILLING capabilities whose `runMaintenance` answers `answer`, apart from `mockProvider`. */
+  function killingProvider(answer: () => Promise<unknown>, extra: Record<string, unknown> = {}) {
+    const provider = createMockProvider();
+    (provider.getCapabilities as ReturnType<typeof mock>).mockImplementation(KILLING);
+    (provider.runMaintenance as ReturnType<typeof mock>).mockImplementation(answer);
+    return Object.assign(provider, extra);
+  }
+
+  test("a kill runs on the connection's metadata session, opened with the editor's connection and posture, and every other operation on the editor's provider", async () => {
+    const metadata = killingProvider(async () => ({ success: true, executionTime: 1, message: "Terminated" }), {
+      engineUser: () => "studio_admin",
+    });
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => metadata as never);
+
+    const killed = await post({ type: "kill", target: "4711" });
+
+    expect(killed.status).toBe(200);
+    expect(await parseResponseJSON(killed)).toMatchObject({ success: true, message: "Terminated" });
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockGetOrCreateMetadataProvider).toHaveBeenCalledTimes(1);
+    const [connection, options, execution] = mockGetOrCreateMetadataProvider.mock.calls[0] ?? [];
+    expect(connection).toEqual(validConnection);
+    expect(options).toEqual({});
+    // The execution the declarations read receives: the session's editor posture.
+    expect(execution).toEqual(mockReadProviderDeclarations.mock.calls[0]?.[1]);
+    expect(execution).toBeDefined();
+    expect((metadata.runMaintenance as ReturnType<typeof mock>).mock.calls).toEqual([["kill", "4711", undefined]]);
+    expect(runMaintenance).not.toHaveBeenCalled();
+    expect(auditRows()).toEqual([
+      expect.objectContaining({ type: "kill_session", result: "success", engineUser: "studio_admin" }),
+    ]);
+
+    mockAuditPush.mockClear();
+    const vacuumed = await post({ type: "vacuum", target: "users" });
+    const analyzed = await post({ type: "analyze", target: "users" });
+
+    expect([vacuumed.status, analyzed.status]).toEqual([200, 200]);
+    expect(mockGetOrCreateMetadataProvider).toHaveBeenCalledTimes(1);
+    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(2);
+    expect(runMaintenance.mock.calls).toEqual([
+      ["vacuum", "users", undefined],
+      ["analyze", "users", undefined],
+    ]);
+    expect((metadata.runMaintenance as ReturnType<typeof mock>).mock.calls).toHaveLength(1);
+  });
+
+  test("a kill answers while the editor's provider holds every run, without waiting for it", async () => {
+    // The editor's provider holds: its run signals `reached` and settles only when this test rejects it.
+    const held = Promise.withResolvers<never>();
+    const reached = Promise.withResolvers<"editor held">();
+    runMaintenance.mockImplementation(() => {
+      reached.resolve("editor held");
+      return held.promise;
+    });
+    const marker = `killed ${crypto.randomUUID()}`;
+    const metadata = killingProvider(async () => ({ success: true, executionTime: 1, message: marker }));
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => metadata as never);
+
+    const answering = post({ type: "kill", target: "4711" });
+    const first = await Promise.race([answering, reached.promise]);
+    held.reject(new Error("released by the test"));
+    const response = await answering;
+    await held.promise.catch(() => undefined);
+
+    expect(first).toBeInstanceOf(Response);
+    expect(response.status).toBe(200);
+    expect(await parseResponseJSON(response)).toMatchObject({ success: true, message: marker });
+    expect(runMaintenance).not.toHaveBeenCalled();
+    expect((metadata.runMaintenance as ReturnType<typeof mock>).mock.calls).toEqual([["kill", "4711", undefined]]);
+  });
+
+  test("a kill's catalog runs on that database's session of the metadata session, and a catalog the connection cannot honour is refused as the editor's provider refuses it, with nothing run or audited", async () => {
+    const shop = killingProvider(async () => ({ success: true, executionTime: 1, message: "Terminated in shop" }));
+    const serverLevel = { ...validConnection, database: "" };
+    const root = killingProvider(async () => ({ success: true, executionTime: 1, message: "root" }), {
+      config: serverLevel,
+      forCatalog: mock(async (catalog: string) => (catalog === "shop" ? shop : undefined)),
+    });
+    (root.getCapabilities as ReturnType<typeof mock>).mockImplementation(() => ({
+      ...KILLING(),
+      catalogSessions: true,
+    }));
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => root as never);
+
+    const inShop = await post({ type: "kill", target: "4711", catalog: "shop", connection: serverLevel });
+
+    expect(inShop.status).toBe(200);
+    expect(await parseResponseJSON(inShop)).toMatchObject({ message: "Terminated in shop" });
+    expect((shop.runMaintenance as ReturnType<typeof mock>).mock.calls).toEqual([["kill", "4711", undefined]]);
+    expect(root.runMaintenance).not.toHaveBeenCalled();
+    expect(root.forCatalog).toHaveBeenCalledWith("shop");
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+
+    // A connection that names its database honours no catalog, on the metadata session as on the editor's.
+    mockAuditPush.mockClear();
+    mockRecordQueryEvent.mockClear();
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => mockProvider as never);
+    const killRefused = await post({ type: "kill", target: "4711", catalog: "shop" });
+    const vacuumRefused = await post({ type: "vacuum", target: "users", catalog: "shop" });
+
+    expect([killRefused.status, vacuumRefused.status]).toEqual([400, 400]);
+    const killBody = await parseResponseJSON<Record<string, unknown>>(killRefused);
+    expect(killBody).toEqual(await parseResponseJSON<Record<string, unknown>>(vacuumRefused));
+    expect(killBody.error).toContain('cannot run one in "shop"');
+    expect(runMaintenance).not.toHaveBeenCalled();
+    expect(auditRows()).toEqual([]);
+    expect(mockRecordQueryEvent).not.toHaveBeenCalled();
   });
 });

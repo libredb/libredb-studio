@@ -9,7 +9,7 @@
  * reads the name (`namesInMemoryDatabase` in `./provider-files`). It serves several otherwise.
  *
  * The class decides sharing only and authorizes nothing: the provider factory reads it to choose which session a tree
- * read runs on (`getOrCreateMetadataProvider` in `./factory`), and both sessions pass the same checks.
+ * read or a kill runs on (`getOrCreateMetadataProvider` in `./factory`), and both sessions pass the same checks.
  */
 import type { DatabaseConnection } from "@/lib/types";
 import { SERVES_ONE_SESSION } from "./compatibility";

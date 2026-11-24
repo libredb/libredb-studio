@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D730, U17 · 376
+- [Drivers and connections](#drivers-and-connections) — D1-D770, U17 · 377
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -4967,13 +4967,14 @@ The Sessions panel, where an administrator looks for what holds the database, is
 
 **Done when:** monitoring and health reads on a pooled connection run on a session apart from the editor's pool, except where Studio's record says the connection serves one session, and a test that holds every editor connection shows a monitoring read and a health read answer at once.
 
-### D711. A kill from the Sessions panel waits for a free editor connection, and can then end its own connection instead of its target
+### D711. A kill handed the backend it targets ends its own connection instead of its target
 
-`POST /api/db/maintenance` runs `kill` on the editor's provider (`editorProvider` in `src/lib/api/editor-provider.ts`), and the PostgreSQL provider takes a client from the editor's pool for it (`runMaintenance` in `src/lib/db/providers/sql/postgres.ts`).
-Measured on 2026-11-24 against `postgres:18-alpine` with Studio's default pool of 10, every connection held by `SELECT pg_sleep(8)`: a kill of one of the holding backends answered after 7,247 ms, when a holder ended by itself, and the client it was handed was the killed backend's own, so it terminated itself and answered "terminating connection due to administrator command".
-So a kill cannot end a statement of a connection whose editor pool its own statements hold, and with a statement longer than the acquire timeout, 60 seconds by default, it answers a pool timeout instead.
+`POST /api/db/maintenance` runs `kill` on the connection's metadata session (`metadataProvider` in `src/lib/api/editor-provider.ts`), and the PostgreSQL and MySQL providers take a client from that session's pool and send `pg_terminate_backend(<pid>)` or `KILL <id>` on it (`runMaintenance` in `src/lib/db/providers/sql/postgres.ts` and `src/lib/db/providers/sql/mysql.ts`), with no check that the client is not the target.
+Measured on 2026-11-24 against `postgres:18-alpine`: a kill naming the metadata session's own idle backend was handed that backend and answered "terminating connection due to administrator command", and the same kill on the editor's provider ended the editor's own idle backend alike.
+On PostgreSQL only an API request names such a backend, since the Sessions panel lists no Studio connection (`ACTIVE_SESSIONS_SQL` leaves out every session named `libredb-studio`); on MySQL the Sessions panel lists every connection of the database, Studio's own idle ones included (`ACTIVE_SESSIONS_BODY_SQL`), so a Terminate on one is reachable from the UI.
+SQL Server refuses `KILL` of the caller's own session and Oracle `ALTER SYSTEM KILL SESSION` of the current one.
 
-**Done when:** a kill runs on a connection apart from the editor's pool, or the route refuses it by name when none is free, and a test that holds every editor connection shows a kill ends its target and leaves its own connection open.
+**Done when:** the PostgreSQL and MySQL providers refuse by name, or never send on, a client whose own process or thread id is the target, and a test against each engine shows a kill naming its own client's id refused by name with the client still open.
 
 ### D730. A maintenance run Studio stopped waiting for goes on in the engine, and no cancel reaches it
 
@@ -4982,6 +4983,16 @@ The engine is not told: no provider's `runMaintenance` takes a run id or a signa
 On PostgreSQL and SQL Server the engine's own statement timeout ends the run first.
 
 **Done when:** a run Studio stops waiting for is cancelled in the engine wherever the engine has a cancel, and a test that stops a pending run shows the cancel sent and the audit row naming whether it reached the engine.
+
+### D770. On a server-level PostgreSQL connection the metadata session's catalog sessions take pools of three connections each, not its own two
+
+The metadata session opens with a pool of at most two connections (`METADATA_POOL_MAX` in `src/lib/db/factory.ts`, clause C-66).
+On a server-level PostgreSQL connection a tree read in a database, and a kill with a `catalog`, run on the catalog session the metadata session opens for that database (`forCatalog` in `src/lib/db/providers/sql/postgres.ts`), and each catalog session takes `CATALOG_SESSION_POOL`, a pool of up to three, in place of the metadata session's two, for up to `CATALOG_SESSION_LIMIT` databases, five.
+Measured on 2026-11-24 against `postgres:18-alpine`: the catalog session a kill opened on the metadata session reported a pool of `max: 3`.
+So one owner's metadata session on such a connection can hold up to seventeen connections, the bound C-66 and the PostgreSQL doc state; a governed connection is never server-level, so docs/GOVERNANCE.md's counts do not change.
+The open question is whether the metadata session's catalog sessions should be sized like its own pool of two, which would bring that bound down to twelve.
+
+**Done when:** either a catalog session opened from the metadata session takes the metadata session's pool size, with C-66 and the PostgreSQL doc stating the new bound, or the pools of three are kept with the reason recorded in C-66; either way a factory test pins the connections a metadata session on a server-level connection can hold.
 
 ## Value interpolation
 

@@ -2844,12 +2844,16 @@ Each route's and handler's own checks and scrubs run where they ran.
 The host classes each connection's session capacity, one or several, from Studio's own records and the connection, never from a manifest or a provider.
 It is one where Studio's record of the engines that serve their tree from one session, `SERVES_ONE_SESSION`, names a reason, which it does for every engine that keeps one handle per file, and where the connection's database is in memory, one database per handle, as the file admission reads it; it is several otherwise.
 A manifest has no member for it, and a built provider's declaration never reaches it, M-57.
-The class decides only which session a tree read runs on; it never authorizes anything.
+The class decides only which session a tree read or a kill runs on; it never authorizes anything.
 On a connection of class several, the tree routes and the VS Code backend's tree calls, `selectStatement`'s describe among them, read on a metadata session of the connection's own, opened beside the editor's session from the same connection, with the same credentials, file-access posture and owner, through the same checks in the same order, and keyed by the editor session's key with a metadata frame, so it is each owner's own under governance.
-Its pool holds at most two sessions and opens none until a read asks.
-On a connection of class one they read on the editor's session.
+Its pool holds at most two sessions and opens none until a read or a kill asks.
+The maintenance route runs a kill on the same metadata session, under the editor's posture and through the same checks, and every other operation on the editor's provider, C-70.
+On a connection of class one they read, and a kill runs, on the editor's session.
 A metadata session opens once per key, C-44, is torn down with the caches under the teardown's deadlines, C-45, leaves with the idle sweep and with every removal that names its connection, its owner or its record's key, and keeps the connection's SSH tunnel open while it serves the connection.
-It takes no catalog, so no catalog choice is honoured on it, M-57.
+A tree read takes no catalog, so no catalog choice is honoured on it, M-57.
+A kill's catalog is honoured on the metadata session through the same catalog choice as on the editor's provider, and a catalog the connection cannot honour is refused in the same words, M-57.
+On a server-level connection, a tree read inside one of its databases and a kill in a catalog run on the catalog session the metadata session opens for that database, which takes the pool its provider gives every catalog session in place of the metadata session's two.
+The legacy bridge's postgres provider, the one provider that declares catalog sessions, gives each catalog session a pool of at most three sessions that opens none until a read asks, and keeps at most five databases open at once, so its metadata session on a server-level connection holds at most seventeen sessions.
 A native provider's metadata session is an open like the editor's with a smaller `pool`, and the open names no role.
 
 - test `tests/unit/db/session-capacity.test.ts` "every shipped engine's session capacity is one exactly where Studio's record names a reason"
@@ -2874,6 +2878,11 @@ A native provider's metadata session is an open like the editor's with a smaller
 - test `tests/api/db-objects.test.ts` "handleObjectRequest resolves the editor's provider by default and the metadata session when asked, after the guard and the connection's resolution"
 - test `vscode-extension/test/unit/backend-handlers.test.ts` "each tree call reads through the host core's tree call, on the provider of the connection's metadata session"
 - test `vscode-extension/test/unit/backend-handlers.test.ts` "a tree call answers while the editor's provider holds every read, without waiting for it"
+- test `tests/unit/lib/api/editor-provider.test.ts` "opens the connection's metadata session with the editor's connection and posture, and without a catalog runs on it"
+- test `tests/unit/lib/api/editor-provider.test.ts` "a catalog runs on that database's session of the metadata session, and a connection without sessions refuses one"
+- test `tests/api/db/maintenance.test.ts` "a kill runs on the connection's metadata session, opened with the editor's connection and posture, and every other operation on the editor's provider"
+- test `tests/api/db/maintenance.test.ts` "a kill answers while the editor's provider holds every run, without waiting for it"
+- test `tests/api/db/maintenance.test.ts` "a kill's catalog runs on that database's session of the metadata session, and a catalog the connection cannot honour is refused as the editor's provider refuses it, with nothing run or audited"
 
 ### C-67 (normative): The maintenance facets
 
@@ -2945,7 +2954,7 @@ A session that offers a facet with no function for it is a defect of the host's 
 
 ### C-70 (normative): Maintenance on the host
 
-Both maintenance routes run and preview through one caller facade and the host core's maintenance calls, C-69, on the session the legacy bridge serves, C-50, of the provider the route resolved.
+Both maintenance routes run and preview through one caller facade and the host core's maintenance calls, C-69, on the session the legacy bridge serves, C-50, of the provider the route resolved: the connection's metadata session for a kill, C-66, and the editor's provider for every other operation and every preview.
 Each call waits until its own deadline, the statement timeout plus 10 s from its start, and the request's signal.
 A call the caller left is answered at once as `QueryCancelledError`, outcome unknown, or not-sent when refused before the call, and one past its deadline as `StudioTimeoutRefusal` naming the run or the preview, the statement timeout and the slack.
 A later failure is logged by kind and code, never its text, and a run that answers later is logged by route and facet, never its answer.
@@ -2970,6 +2979,7 @@ Each route's doors, checks, confirmations, scrubs and error mapping run where th
 - test `tests/api/db/maintenance.test.ts` "a run the host refuses before the call answers as a defect of Studio and writes no audit row"
 - test `tests/api/db/maintenance.test.ts` "a broken audit sink does not change the answer for a run Studio stopped waiting for"
 - test `tests/api/db/maintenance.test.ts` "kill's session target passes the host's placement check, which neither placement describes"
+- test `tests/api/db/maintenance.test.ts` "a kill runs on the connection's metadata session, opened with the editor's connection and posture, and every other operation on the editor's provider"
 - test `tests/api/db/maintenance.test.ts` "an error the host raises before the provider is called is not audited as an execution failure"
 - test `tests/api/db/maintenance.test.ts` "a connection whose connected maintenance is narrower than its declaration is refused the placement its session's maintenance withdrew"
 - test `tests/api/db/maintenance.test.ts` "the provider is asked once with the operation, the target the request names, none for an empty one, and the container, and the answer is its result"
@@ -3103,3 +3113,4 @@ Against this contract's earlier text:
 - The connection form and each engine's display name are projections of the declarations, M-15 and M-72, each named function bound by Studio's function table, where Studio kept each form in a hand-written entry.
 - An engine's monitoring panel is refused only where its package does not offer `monitoring.panel`, C-4, where every offered panel was refused as having no call.
 - Health is a mandatory call, C-3 and C-72, where the calls chapter left it out.
+- A kill runs on the connection's metadata session where the host's session capacity class is several, C-66 and C-70, where it ran on the editor's.

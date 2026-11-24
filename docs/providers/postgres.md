@@ -1442,7 +1442,9 @@ server. Paste the certificate content instead.
 
 ### 4.2 Connection pooling
 
-The object tree reads on a pool of its own, the connection's metadata session, of at most 2 connections and none while idle, so a listing never waits for the editor's pool ([`CONTRACT.md`](CONTRACT.md), clause C-66; the live check in [§13.5](#135-live-checks-ci-runs)).
+The object tree reads, and a session kill runs, on a pool of its own, the connection's metadata session, of at most 2 connections and none while idle, so a listing or a kill never waits for the editor's pool ([`CONTRACT.md`](CONTRACT.md), clause C-66; the live check in [§13.5](#135-live-checks-ci-runs)).
+On a server-level connection, a tree read inside a database and a kill in a catalog run on the catalog session the metadata session opens for that database.
+Each catalog session takes a pool of its own of at most 3 connections with a minimum of none (`CATALOG_SESSION_POOL`), in place of the metadata session's 2, and at most 5 databases are open at once (`CATALOG_SESSION_LIMIT`), so the metadata session of a server-level connection holds at most 17 connections.
 
 `connect()` builds a `pg.Pool` ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)) and
 validates it by acquiring and releasing one client. Pool **sizing** comes from `ProviderOptions.pool`
@@ -2875,6 +2877,9 @@ They are not part of `bun run test`.
 One more starts its own container the same way and runs by hand, not in CI: `bun tests/live/postgres-metadata-session-live.ts`.
 It holds every connection of the editor's pool with `pg_sleep(4)`, the shared pool of 10 and an owned pool of 3, and fails unless a listing on the connection's metadata session answers within 1,000 ms while the editor's listing waits for the holders ([`CONTRACT.md`](CONTRACT.md), clause C-66).
 Measured on 24 November 2026 against PostgreSQL 18: 4 ms on the metadata session against 3,913 ms on the shared editor pool, and 3 ms against 4,004 ms on the owned one.
+Then it runs a session kill as `POST /api/db/maintenance` runs it, on the metadata session through the host core, against one statement holding the editor's pool: once on the shared pool of 10, and once in the catalog `postgres` of a server-level copy, whose editor catalog session of 3 is held.
+It fails unless the editor's pool is full at the kill, the kill answers success within 1,000 ms, its target is gone, the metadata session's own backend is still connected, and exactly one holder ended by the administrator's command.
+Measured on 24 November 2026 against PostgreSQL 18: the kill answered in 2 ms on the pinned connection and in 1 ms in the catalog, each with the editor's pool held at 10 of 10 and 3 of 3; the same kill sent on the editor's provider waited 3,845 ms for a holder to end.
 
 ---
 

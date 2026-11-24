@@ -1470,6 +1470,11 @@ When the engine itself refuses the statement, the reply is the engine's answer, 
 
 An empty `target` is the whole-database form, and the provider is sent no target for it, never empty text.
 
+A `kill` runs on the connection's metadata session (`docs/providers/CONTRACT.md`, clause C-66), the pool the object tree reads on, opened with the connection's own credentials and through the same checks as the editor's provider, so it never waits for a connection the editor's statements hold.
+A `catalog` is honoured on it as on the editor's provider, and on a connection that serves one session it runs on the editor's provider.
+Every other operation runs on the editor's provider.
+A kill whose target is a connection of the pool it runs on can still end that connection instead (BACKLOG D711).
+
 The run goes through the provider host core (`docs/providers/CONTRACT.md`, clause C-70), which waits for it until the connection's statement timeout plus 10 seconds and until the request leaves.
 A request that leaves while the run is in flight is answered at once with `499` and `code: "QUERY_CANCELLED"`, `outcome: "unknown"`, since the engine may still complete it; one that had left before the run was sent answers `499` with `outcome: "not-sent"`.
 A run with no answer at that deadline answers `504` with `code: "TIMEOUT_ERROR"`, `kind: "studio-timeout-refusal"` and `outcome: "unknown"`, in a sentence naming the maintenance run, the statement timeout and the 10 seconds.

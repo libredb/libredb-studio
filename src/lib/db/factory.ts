@@ -1381,7 +1381,7 @@ function withProfile(profile: string, key: string): string {
 // ============================================================================
 // The metadata cache (docs/providers/CONTRACT.md, clause C-66)
 // ----------------------------------------------------------------------------
-// Each connection's tree session, beside its editor's, so a tree read never waits for the editor's statements.
+// Each connection's tree session, beside its editor's, so a tree read or a kill never waits for the editor's statements.
 // Physically separate from both caches above, as the profiled cache is, so `getProviderCacheStats` keeps answering
 // editor providers only. Keyed by the editor's key with `METADATA_FRAME` framed onto it.
 // ============================================================================
@@ -1721,19 +1721,20 @@ export async function getOrCreateProvider(
 }
 
 /**
- * The provider a tree read of `connection` runs on (docs/providers/CONTRACT.md, clause C-66): on a connection of session
- * capacity class several (`sessionCapacity` in `./session-capacity`), a metadata session of the connection's own,
- * opened beside the editor's from the same connection, with the same file-access posture and owner, through the same
- * checks in the same order as `getOrCreateProvider`, and cached apart from it under the editor's key with a metadata
- * frame, so it is each owner's own under governance. Its pool holds at most `METADATA_POOL_MAX` sessions and opens none
- * until a read asks, owned or shared alike. On a connection of class one, the editor's own provider, as
- * `getOrCreateProvider` answers it.
+ * The provider a tree read or a kill of `connection` runs on (docs/providers/CONTRACT.md, clause C-66): on a connection
+ * of session capacity class several (`sessionCapacity` in `./session-capacity`), a metadata session of the connection's
+ * own, opened beside the editor's from the same connection, with the same file-access posture and owner, through the
+ * same checks in the same order as `getOrCreateProvider`, and cached apart from it under the editor's key with a
+ * metadata frame, so it is each owner's own under governance. Its pool holds at most `METADATA_POOL_MAX` sessions and
+ * opens none until a read or a kill asks, owned or shared alike. On a connection of class one, the editor's own
+ * provider, as `getOrCreateProvider` answers it.
  *
- * The class decides only which session a tree read runs on and authorizes nothing: every refusal here is
- * `getOrCreateProvider`'s own, raised by the same check. The metadata session takes no catalog, and no caller waits for
- * its open with a signal of its own, so it takes no wait. It opens once per key (C-44), leaves with the idle sweep and
- * with every removal that names its connection, its owner or its record's key, is torn down with the caches under the
- * teardown's deadlines (C-45), and keeps the connection's SSH tunnel open while it serves the connection.
+ * The class decides only which session a tree read or a kill runs on and authorizes nothing: every refusal here is
+ * `getOrCreateProvider`'s own, raised by the same check. The metadata session takes no catalog: a kill's caller scopes
+ * it (`metadataProvider` in src/lib/api/editor-provider.ts). No caller waits for its open with a signal of its own, so
+ * it takes no wait. It opens once per key (C-44), leaves with the idle sweep and with every removal that names its
+ * connection, its owner or its record's key, is torn down with the caches under the teardown's deadlines (C-45), and
+ * keeps the connection's SSH tunnel open while it serves the connection.
  *
  * @throws UnknownProviderError if the connection's type is absent or names no provider, as `getOrCreateProvider`.
  */
@@ -1747,8 +1748,9 @@ export async function getOrCreateMetadataProvider(
 
 /**
  * The body of `getOrCreateProvider` and `getOrCreateMetadataProvider`: the checks, the session `reads` resolves to, its
- * key, a cached entry's reuse and the open shared per key. A tree read (`"tree"`) of a connection whose session
- * capacity class is several takes the metadata session (`METADATA_SESSION`); every other call takes the editor's.
+ * key, a cached entry's reuse and the open shared per key. A tree read or a kill (`"tree"`) of a connection whose
+ * session capacity class is several takes the metadata session (`METADATA_SESSION`); every other call takes the
+ * editor's.
  */
 async function openWritable(
   connection: DatabaseConnection,
@@ -1794,7 +1796,7 @@ async function openWritable(
   // they never disagree.
   const owner = providerOwner(connection, execution.owner);
   // Which session serves the call (docs/providers/CONTRACT.md, clause C-66): the host's class, from Studio's records and
-  // the connection alone, decides whether a tree read shares the editor's session.
+  // the connection alone, decides whether a tree read or a kill shares the editor's session.
   const session = reads === "tree" && sessionCapacity(connection) === "several" ? METADATA_SESSION : EDITOR_SESSION;
   const cacheKey = session.key(await editorCacheKey(connection, execution));
   // The metadata session's pool size, shared or owned: the caller's other pool options stand, and the owner's share is
