@@ -462,7 +462,7 @@ export const SeedConnectionSchema = z
     // OPC UA only: the read roots, the node ids beneath which agent mode and MCP read. Declared for the reason
     // skipObjectScan is: zod strips an undeclared key silently, and a seed's roots would validate and vanish, leaving
     // every agent and MCP read refused for roots the file did declare. Accepted here whatever it holds, so that the
-    // engine's load check (OPCUA_CONNECTION_STRING.validateSeed, which runs readRootRefusals) answers every case in
+    // engine's load check (OPCUA_SEED_CHECK, which runs readRootRefusals) answers every case in
     // its own words, a value that is not a list of strings included, framed with the connection's id. Never resolved
     // from a reference, and refused on every other type through SEED_ONLY_FIELDS.opcua.
     agentReadRoots: z.custom<readonly string[]>(() => true).optional(),

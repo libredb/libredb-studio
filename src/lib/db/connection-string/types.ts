@@ -212,7 +212,11 @@ export interface ConnectionStringPaste {
   readonly formats: readonly string[];
 }
 
-/** What one engine's connection string is: the scheme shown for it, the TLS its URL query carries, its seed checks. */
+/**
+ * What one engine's connection string is: the scheme shown for it, the TLS its URL query carries, its seed checks. Each
+ * row is composed from the engine's declaration, `connection.connectionString`, and the functions Studio's connection
+ * string function table binds to the names the declaration gives (src/lib/db/connection-string/index.ts).
+ */
 export interface ConnectionStringSpec {
   /**
    * The canonical URI scheme the engine is reachable by, for the engines that HAVE one, otherwise `null`.
@@ -244,3 +248,21 @@ export interface ConnectionStringSpec {
     | ((conn: SeedCheckedFields, isReference: (value: string | undefined) => boolean) => readonly SeedFieldRefusal[])
     | null;
 }
+
+/**
+ * An engine's URL TLS reader, the function a declaration's `connection.connectionString.urlTls` names: the TLS a URL
+ * carries in its query string.
+ */
+export type UrlTlsReader = NonNullable<ConnectionStringSpec["readTls"]>;
+
+/**
+ * An engine's paste reader, the function a declaration's `connection.connectionString.paste.reader` names: the three
+ * operations of a paste under one name, which its row's paste holds beside the declared catch-all flag and formats.
+ */
+export type ConnectionStringPasteReader = Pick<ConnectionStringPaste, "claims" | "names" | "parse">;
+
+/**
+ * An engine's seed load check, the function a declaration's `connection.connectionString.seedCheck` names: the checks
+ * its provider makes before any socket, run on the fields a seed file writes.
+ */
+export type SeedCheck = NonNullable<ConnectionStringSpec["validateSeed"]>;

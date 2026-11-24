@@ -131,7 +131,7 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     module: "src/lib/db/connection-string/index.ts",
     name: "CONNECTION_STRING",
     destination:
-      "engine declaration: connection.connectionString, its scheme, urlTls, paste with its reader, catch-all and formats, and seedCheck, each function named by the slot it fills",
+      "engine declaration: connection.connectionString, its scheme, urlTls, paste with its reader, catch-all and formats, and seedCheck, authored in each declaration and composed from the generated connection strings, each named function bound by Studio's connection string function table",
   },
   {
     module: "src/lib/db/connection-string/index.ts",
@@ -174,6 +174,13 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     name: "BUNDLED_CONNECTION_FORMS",
     destination: projected(
       "displayName, connection.defaults, connection.tls, connection.dialog, connection.hostUriSchemes, connection.fieldRules, connection.hostHint, connection.hostIdentity and connection.import",
+    ),
+  },
+  {
+    module: "src/lib/db/engine-catalog/connection-string.generated.ts",
+    name: "BUNDLED_CONNECTION_STRINGS",
+    destination: projected(
+      "connection.connectionString.scheme, connection.connectionString.urlTls, connection.connectionString.paste and connection.connectionString.seedCheck",
     ),
   },
   {

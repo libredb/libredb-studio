@@ -1,12 +1,13 @@
 /**
  * Studio's engine catalog, which engines it ships, where each lives and how long its open may take, its data-only
- * connection tables and its connection forms, projected from the engine declarations the catalog generator admits
- * (docs/providers/CONTRACT.md, clauses M-70, M-71 and M-72).
+ * connection tables, its connection forms and its connection strings, projected from the engine declarations the
+ * catalog generator admits (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72 and M-74).
  *
  * `scripts/generate-engine-catalog.ts` projects the committed declarations' authored members with `projectCatalog`,
- * `projectConnectionTables` and `projectConnectionForms`, renders the projections into
- * `src/lib/db/engine-catalog/catalog.generated.ts`, `connection.generated.ts`, `connection-flags.generated.ts` and
- * `connection-form.generated.ts`, the modules Studio's readers read, and holds each to
+ * `projectConnectionTables`, `projectConnectionForms` and `projectConnectionStrings`, renders the projections into
+ * `src/lib/db/engine-catalog/catalog.generated.ts`, `connection.generated.ts`, `connection-flags.generated.ts`,
+ * `connection-form.generated.ts` and `connection-string.generated.ts`, the modules Studio's readers read, and holds
+ * each to
  * the set it admits through the SDK's digest-checked validator. This file holds the projections, the admission, the
  * generated modules' bytes, the readers that answer from them, and `bun run engines:generate` end to end on a scratch
  * copy of the sources it reads.
@@ -32,10 +33,12 @@ import {
   ENGINE_CONNECTION_FLAGS_MODULE,
   ENGINE_CONNECTION_FORM_MODULE,
   ENGINE_CONNECTION_MODULE,
+  ENGINE_CONNECTION_STRING_MODULE,
   ENGINE_DECLARATIONS_DIRECTORY,
   renderCatalog,
   renderConnectionFlags,
   renderConnectionForms,
+  renderConnectionStrings,
   renderConnectionTables,
 } from "../../../scripts/generate-engine-catalog";
 import { EXTERNAL_DATABASE_TYPES, isExternalDatabaseType, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
@@ -52,12 +55,15 @@ import {
   BUNDLED_READS_TRUST_MATERIAL,
 } from "@/lib/db/engine-catalog/connection-flags.generated";
 import { BUNDLED_CONNECTION_FORMS } from "@/lib/db/engine-catalog/connection-form.generated";
+import { BUNDLED_CONNECTION_STRINGS } from "@/lib/db/engine-catalog/connection-string.generated";
 import {
   type ConnectionFormEntry,
   type ConnectionForms,
+  type ConnectionStringEntry,
   type ConnectionTables,
   projectCatalog,
   projectConnectionForms,
+  projectConnectionStrings,
   projectConnectionTables,
 } from "@/lib/db/engine-catalog/projection";
 import type { DatabaseType } from "@/lib/types";
@@ -164,6 +170,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     expect(() => projectCatalog(twice)).toThrow('The engine id "postgres" is declared twice.');
     expect(() => projectConnectionTables(twice)).toThrow('The engine id "postgres" is declared twice.');
     expect(() => projectConnectionForms(twice)).toThrow('The engine id "postgres" is declared twice.');
+    expect(() => projectConnectionStrings(twice)).toThrow('The engine id "postgres" is declared twice.');
   });
 
   test("the catalog reads only the members a declaration authors", () => {
@@ -359,6 +366,77 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     expect(differs((d) => d.location)).toBeGreaterThan(0);
   });
 
+  test("the connection strings hold one entry per declaration, keyed in ascending id order whatever order they come in", () => {
+    const strings = projectConnectionStrings([admitted("snowflake"), admitted("mssql"), admitted("bigquery")]);
+
+    expect(Object.keys(strings)).toEqual(["bigquery", "mssql", "snowflake"]);
+    // Each entry holds the four connection string members a declaration authors, in one order, as it states them.
+    const entryOf = ({ connection: { connectionString } }: EngineDeclaration): ConnectionStringEntry => ({
+      scheme: connectionString.scheme,
+      urlTls: connectionString.urlTls,
+      paste: connectionString.paste,
+      seedCheck: connectionString.seedCheck,
+    });
+    for (const id of Object.keys(strings)) {
+      expect(strings[id]).toEqual(entryOf(admitted(id)));
+      expect(Object.keys(strings[id] ?? {})).toEqual(["scheme", "urlTls", "paste", "seedCheck"]);
+    }
+    expect(strings.bigquery).toEqual({ scheme: null, urlTls: null, paste: null, seedCheck: null });
+    // Functions stay names, and a paste keeps its reader's name, its catch-all flag and its formats in order.
+    expect(strings.mssql).toEqual({
+      scheme: "mssql",
+      urlTls: "urlTls",
+      paste: { reader: "pasteReader", catchAll: false, formats: ["mssql://", "Server=\u2026 (ADO.NET)"] },
+      seedCheck: null,
+    });
+    expect(Object.keys(strings.mssql?.paste ?? {})).toEqual(["reader", "catchAll", "formats"]);
+    expect(strings.snowflake?.seedCheck).toBe("seedCheck");
+    // An id sorts after the id it begins with, given in either order.
+    expect(Object.keys(projectConnectionStrings([admitted("influxdb3"), admitted("influxdb")]))).toEqual([
+      "influxdb",
+      "influxdb3",
+    ]);
+
+    // Frozen at every level, and a copy: no list or record of the declaration is handed out.
+    const frozen = (value: unknown): boolean =>
+      typeof value !== "object" || value === null || (Object.isFrozen(value) && Object.values(value).every(frozen));
+    expect(frozen(strings)).toBe(true);
+    expect(strings.mssql?.paste).not.toBe(admitted("mssql").connection.connectionString.paste);
+    expect(strings.mssql?.paste?.formats).not.toBe(admitted("mssql").connection.connectionString.paste?.formats);
+  });
+
+  test("the connection strings read only the members a declaration authors", () => {
+    // Every member but the authored ones replaced with postgres's: the connection strings the generator writes first,
+    // before the declaration generator rewrites those members, are therefore already the final ones.
+    const postgres = admitted("postgres");
+    const replaced = ADMITTED.map(
+      (d): EngineDeclaration => ({
+        ...postgres,
+        id: d.id,
+        connection: {
+          ...postgres.connection,
+          connectionString: {
+            ...postgres.connection.connectionString,
+            scheme: d.connection.connectionString.scheme,
+            urlTls: d.connection.connectionString.urlTls,
+            paste: d.connection.connectionString.paste,
+            seedCheck: d.connection.connectionString.seedCheck,
+          },
+        },
+      }),
+    );
+
+    expect(projectConnectionStrings(replaced)).toEqual(projectConnectionStrings(ADMITTED));
+    // Vacuity: the replacement changed members the connection strings would read if they read them.
+    const differs = (read: (d: EngineDeclaration) => unknown) =>
+      replaced.filter((d, index) => JSON.stringify(read(d)) !== JSON.stringify(read(ADMITTED[index]))).length;
+    expect(differs((d) => d.connection.connectionString.accepted)).toBeGreaterThan(0);
+    expect(differs((d) => d.connection.connectionString.dialogOffersUri)).toBeGreaterThan(0);
+    expect(differs((d) => d.connection.sshTunnel)).toBeGreaterThan(0);
+    expect(differs((d) => d.connection.dialog)).toBeGreaterThan(0);
+    expect(differs((d) => d.location)).toBeGreaterThan(0);
+  });
+
   test("every committed declaration is admitted through the SDK's digest-checked validator before it is projected", () => {
     expect(ADMITTED.map((d) => d.id)).toEqual([...SHIPPED_DATABASE_TYPES]);
     expect(ADMITTED.length).toBe(SHIPPED_DATABASE_TYPES.length);
@@ -430,6 +508,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       expect(projectConnectionTables(authoredDeclarations(directory))).toEqual(projectConnectionTables(ADMITTED));
       expect(projectCatalog(authoredDeclarations(directory))).toEqual(projectCatalog(ADMITTED));
       expect(projectConnectionForms(authoredDeclarations(directory))).toEqual(projectConnectionForms(ADMITTED));
+      expect(projectConnectionStrings(authoredDeclarations(directory))).toEqual(projectConnectionStrings(ADMITTED));
     } finally {
       scratch.remove();
     }
@@ -497,6 +576,27 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     const frozen = (value: unknown): boolean =>
       typeof value !== "object" || value === null || (Object.isFrozen(value) && Object.values(value).every(frozen));
     expect(frozen(BUNDLED_CONNECTION_FORMS)).toBe(true);
+  });
+
+  test("the committed connection string module is what the generator renders from the admitted declarations", () => {
+    const committed = readFileSync(path.join(ROOT, ENGINE_CONNECTION_STRING_MODULE), "utf8");
+    const strings = projectConnectionStrings(ADMITTED);
+
+    expect(committed).toBe(renderConnectionStrings(strings));
+    expect(BUNDLED_CONNECTION_STRINGS).toEqual(strings);
+    expect(Object.keys(BUNDLED_CONNECTION_STRINGS)).toEqual(Object.keys(strings));
+    expect(committed).toContain("bun run engines:generate");
+    expect([...committed.matchAll(/^export const (\w+)/gm)].map((match) => match[1])).toEqual([
+      "BUNDLED_CONNECTION_STRINGS",
+    ]);
+    // Type imports only, so a reader of the module loads no other module through it.
+    const imports = [...committed.matchAll(/^import .*$/gm)].map((match) => match[0]);
+    expect(imports.length).toBeGreaterThan(0);
+    expect(imports.every((line) => line.startsWith("import type "))).toBe(true);
+    // Frozen at every level, as the projection answers it.
+    const frozen = (value: unknown): boolean =>
+      typeof value !== "object" || value === null || (Object.isFrozen(value) && Object.values(value).every(frozen));
+    expect(frozen(BUNDLED_CONNECTION_STRINGS)).toBe(true);
   });
 
   test("the renderer writes a backslash, a character outside ASCII and a number as the formatter leaves them, and refuses a control character by name", () => {
@@ -635,14 +735,17 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       const connection = path.join(dir, "connection.generated.ts");
       const flags = path.join(dir, "connection-flags.generated.ts");
       const form = path.join(dir, "connection-form.generated.ts");
-      expect(written.stdout.toString()).toBe(`Wrote ${catalog}\nWrote ${connection}\nWrote ${flags}\nWrote ${form}\n`);
+      const strings = path.join(dir, "connection-string.generated.ts");
+      expect(written.stdout.toString()).toBe(
+        `Wrote ${catalog}\nWrote ${connection}\nWrote ${flags}\nWrote ${form}\nWrote ${strings}\n`,
+      );
       expect(readFileSync(connection, "utf8")).toBe(readFileSync(path.join(ROOT, ENGINE_CONNECTION_MODULE), "utf8"));
       expect(readFileSync(flags, "utf8")).toBe(readFileSync(path.join(ROOT, ENGINE_CONNECTION_FLAGS_MODULE), "utf8"));
       expect(readFileSync(catalog, "utf8")).toBe(readFileSync(path.join(ROOT, ENGINE_CATALOG_MODULE), "utf8"));
       const current = run("--check", "--out", dir);
       expect(current.exitCode).toBe(0);
       expect(current.stdout.toString()).toBe(
-        `${catalog} is up to date\n${connection} is up to date\n${flags} is up to date\n${form} is up to date\n`,
+        `${catalog} is up to date\n${connection} is up to date\n${flags} is up to date\n${form} is up to date\n${strings} is up to date\n`,
       );
 
       const text = readFileSync(connection, "utf8");
@@ -701,6 +804,40 @@ describe("the engine catalog, projected from the admitted declarations", () => {
 
       expect(run("--write", "--out", dir).exitCode).toBe(0);
       expect(readFileSync(form, "utf8")).toBe(text);
+      expect(run("--check", "--out", dir).exitCode).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    // Each run admits every declaration, a fraction of a second; well inside ten times that.
+  }, 20000);
+
+  test("--check names a stale connection string module, and --write writes every projected module", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "engine-connection-string-module-"));
+    const run = (...args: string[]) =>
+      Bun.spawnSync([process.execPath, SCRIPT, ...args], { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
+    try {
+      expect(run("--write", "--out", dir).exitCode).toBe(0);
+      const strings = path.join(dir, "connection-string.generated.ts");
+      const text = readFileSync(strings, "utf8");
+      expect(text).toBe(readFileSync(path.join(ROOT, ENGINE_CONNECTION_STRING_MODULE), "utf8"));
+
+      // A format edited by hand in the generated module is named, and only that module.
+      writeFileSync(strings, text.replace('"libsql://"', '"libsql://, https://"'));
+      const stale = run("--check", "--out", dir);
+      expect(stale.exitCode).toBe(1);
+      expect(stale.stderr.toString()).toBe(
+        `${strings} is not what the engine declarations project\nrun: bun run engines:generate\n`,
+      );
+
+      rmSync(strings);
+      const missing = run("--check", "--out", dir);
+      expect(missing.exitCode).toBe(1);
+      expect(missing.stderr.toString()).toBe(
+        `${strings} is not what the engine declarations project\nrun: bun run engines:generate\n`,
+      );
+
+      expect(run("--write", "--out", dir).exitCode).toBe(0);
+      expect(readFileSync(strings, "utf8")).toBe(text);
       expect(run("--check", "--out", dir).exitCode).toBe(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -795,6 +932,87 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       copy.remove();
     }
     // Copying the sources and the three generator runs take a few seconds; well inside ten times that.
+  }, 60000);
+
+  test("bun run engines:generate regenerates an authored connection string change in one run", () => {
+    const copy = generatingCopy();
+    try {
+      const file = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY, "postgres.json");
+      const committed = JSON.parse(readFileSync(file, "utf8"));
+      const formats = ["postgres://", "postgresql://"];
+      const connectionString = {
+        ...committed.connection.connectionString,
+        paste: { ...committed.connection.connectionString.paste, formats },
+      };
+      writeFileSync(
+        file,
+        `${JSON.stringify({ ...committed, connection: { ...committed.connection, connectionString } }, null, 2)}\n`,
+      );
+
+      const run = copy.generate();
+      expect(run.stderr).not.toContain("refused");
+      expect(run.exitCode).toBe(0);
+
+      const directory = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY);
+      const regenerated = admittedDeclarations(directory);
+      const postgres = regenerated.find((d) => d.id === "postgres");
+      expect(postgres?.connection.connectionString.paste?.formats).toEqual(formats);
+      // The declaration's other members are the committed ones: only the authored format list changed.
+      expect({
+        ...postgres,
+        connection: {
+          ...postgres?.connection,
+          connectionString: {
+            ...postgres?.connection.connectionString,
+            paste: committed.connection.connectionString.paste,
+          },
+        },
+      }).toEqual(admitted("postgres"));
+      expect(readFileSync(path.join(copy.root, ENGINE_CONNECTION_STRING_MODULE), "utf8")).toBe(
+        renderConnectionStrings(projectConnectionStrings(regenerated)),
+      );
+      expect(readFileSync(path.join(copy.root, ENGINE_CONNECTION_STRING_MODULE), "utf8")).not.toBe(
+        readFileSync(path.join(ROOT, ENGINE_CONNECTION_STRING_MODULE), "utf8"),
+      );
+      for (const generated of [
+        ENGINE_CATALOG_MODULE,
+        ENGINE_CONNECTION_MODULE,
+        ENGINE_CONNECTION_FLAGS_MODULE,
+        ENGINE_CONNECTION_FORM_MODULE,
+      ]) {
+        expect(readFileSync(path.join(copy.root, generated), "utf8")).toBe(
+          readFileSync(path.join(ROOT, generated), "utf8"),
+        );
+      }
+      // Every other declaration is the committed one, byte for byte.
+      for (const declaration of ADMITTED.filter((d) => d.id !== "postgres")) {
+        const name = `${declaration.id}.json`;
+        expect(readFileSync(path.join(directory, name), "utf8")).toBe(readFileSync(path.join(DIRECTORY, name), "utf8"));
+      }
+    } finally {
+      copy.remove();
+    }
+    // Copying the sources and the three generator runs take a few seconds; well inside ten times that.
+  }, 60000);
+
+  test("bun run engines:generate exits 1 naming the function when a declaration names a connection string function Studio holds none for", () => {
+    const copy = generatingCopy();
+    try {
+      const file = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY, "postgres.json");
+      const committed = JSON.parse(readFileSync(file, "utf8"));
+      const connectionString = { ...committed.connection.connectionString, urlTls: "urlTlsV2" };
+      writeFileSync(
+        file,
+        `${JSON.stringify({ ...committed, connection: { ...committed.connection, connectionString } }, null, 2)}\n`,
+      );
+
+      const refused = copy.generate();
+      expect(refused.exitCode).toBe(1);
+      expect(refused.stderr).toContain('postgres names the function "urlTlsV2", which Studio holds no function for.');
+    } finally {
+      copy.remove();
+    }
+    // Copying the sources and the generator runs take a few seconds; well inside ten times that.
   }, 60000);
 
   test("SHIPPED_DATABASE_TYPES is the catalog's engines in its order", () => {

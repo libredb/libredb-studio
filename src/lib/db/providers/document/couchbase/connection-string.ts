@@ -1,5 +1,5 @@
 import { safeDecodeURIComponent, withSSLMode } from "@/lib/db/connection-string/shared";
-import type { ConnectionStringSpec, ParsedConnection } from "@/lib/db/connection-string/types";
+import type { ConnectionStringPasteReader, ParsedConnection } from "@/lib/db/connection-string/types";
 
 /**
  * Parse a Couchbase connection string. Only the management port is stored — 8091 for
@@ -46,18 +46,11 @@ function parseCouchbasePaste(text: string): ParsedConnection | null {
 const claimsCouchbase = (text: string): boolean => text.startsWith("couchbase://") || text.startsWith("couchbases://");
 
 /**
- * `couchbase`: the `couchbase://` scheme, no TLS in the URL query (for `couchbases://` the scheme IS the transport and
- * already decided), a paste of `couchbase://` or `couchbases://`, no seed load check.
+ * `couchbase`'s paste reader, of `couchbase://` or `couchbases://`: it reads no TLS from the URL query, since for
+ * `couchbases://` the scheme IS the transport and already decided.
  */
-export const COUCHBASE_CONNECTION_STRING: ConnectionStringSpec = {
-  scheme: "couchbase",
-  readTls: null,
-  paste: {
-    catchAll: false,
-    claims: claimsCouchbase,
-    names: claimsCouchbase,
-    parse: parseCouchbasePaste,
-    formats: ["couchbase://"],
-  },
-  validateSeed: null,
-};
+export const COUCHBASE_PASTE_READER: ConnectionStringPasteReader = Object.freeze({
+  claims: claimsCouchbase,
+  names: claimsCouchbase,
+  parse: parseCouchbasePaste,
+});

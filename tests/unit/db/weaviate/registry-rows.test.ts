@@ -1,14 +1,13 @@
 /**
- * The `weaviate` rows of the five contract registries (#1566 spec 4, 5.9, 9, Migration DDL): each declared beside the
- * provider and registered as its row, and each saying what the design says, since a Weaviate console request is not
- * SQL text and nothing it runs writes.
+ * The `weaviate` rows of the five contract registries (#1566 spec 4, 5.9, 9, Migration DDL): four declared beside the
+ * provider and registered as its row, the connection string composed from its declaration, and each saying what the
+ * design says, since a Weaviate console request is not SQL text and nothing it runs writes.
  */
 import { describe, expect, test } from "bun:test";
 import { CONNECTION_STRING } from "@/lib/db/connection-string";
 import { EXECUTION_UI } from "@/lib/db/execution-ui";
 import { SQL_COMMIT_KEYWORD } from "@/lib/db/execution-ui/shared";
 import { MIGRATION_DDL } from "@/lib/db/migration-ddl";
-import { WEAVIATE_CONNECTION_STRING } from "@/lib/db/providers/vector/weaviate/connection-string";
 import { WEAVIATE_EXECUTION_UI } from "@/lib/db/providers/vector/weaviate/execution-ui";
 import { WEAVIATE_MIGRATION_DDL } from "@/lib/db/providers/vector/weaviate/migration-ddl";
 import { WEAVIATE_SQL_GRAMMAR } from "@/lib/db/providers/vector/weaviate/sql-grammar";
@@ -23,7 +22,6 @@ describe("each row is the registry's weaviate row", () => {
     ["SQL_GRAMMAR", SQL_GRAMMAR.weaviate, WEAVIATE_SQL_GRAMMAR],
     ["SQL_WRITING", SQL_WRITING.weaviate, WEAVIATE_SQL_WRITING],
     ["MIGRATION_DDL", MIGRATION_DDL.weaviate, WEAVIATE_MIGRATION_DDL],
-    ["CONNECTION_STRING", CONNECTION_STRING.weaviate, WEAVIATE_CONNECTION_STRING],
     ["EXECUTION_UI", EXECUTION_UI.weaviate, WEAVIATE_EXECUTION_UI],
   ] as const)("%s", (_name, registered, declared) => {
     expect(registered).toBe(declared as never);
@@ -58,7 +56,7 @@ describe("the rows", () => {
   });
 
   test("there is no connection string scheme", () => {
-    expect(WEAVIATE_CONNECTION_STRING).toEqual({ scheme: null, readTls: null, paste: null, validateSeed: null });
+    expect(CONNECTION_STRING.weaviate).toEqual({ scheme: null, readTls: null, paste: null, validateSeed: null });
   });
 
   test("the execution UI names COMMIT and has no consent deadline", () => {

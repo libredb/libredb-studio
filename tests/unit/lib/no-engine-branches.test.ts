@@ -139,8 +139,20 @@ export const REGISTRIES: readonly Listed[] = [
         "a data-only connection table, generated from the declarations and compile-enforced over the type-id union",
     }),
   ),
+  {
+    path: "src/lib/db/engine-catalog/connection-string.generated.ts",
+    declaration: "BUNDLED_CONNECTION_STRINGS",
+    count: 1,
+    reason: "the connection strings, generated from the declarations and compile-enforced over the type-id union",
+  },
+  {
+    path: "src/lib/db/connection-string/index.ts",
+    declaration: "CONNECTION_STRING",
+    count: 2,
+    reason:
+      "each engine's connection string row, composed from the generated connection strings and typed over the type-id union",
+  },
   ...[
-    ["src/lib/db/connection-string/index.ts", "CONNECTION_STRING"],
     ["src/lib/db/engine-facets/index.ts", "ENGINE_FACETS"],
     ["src/lib/db/execution-ui/index.ts", "EXECUTION_UI"],
     ["src/lib/db/migration-ddl/index.ts", "MIGRATION_DDL"],

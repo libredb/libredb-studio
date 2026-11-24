@@ -9,6 +9,7 @@ const GENERATED_CONNECTION_TABLES = [
   "src/lib/db/engine-catalog/connection.generated.ts",
   "src/lib/db/engine-catalog/connection-flags.generated.ts",
   "src/lib/db/engine-catalog/connection-form.generated.ts",
+  "src/lib/db/engine-catalog/connection-string.generated.ts",
 ] as const;
 
 /**

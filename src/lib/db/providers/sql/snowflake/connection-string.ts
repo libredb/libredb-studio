@@ -1,4 +1,9 @@
-import type { ConnectionStringSpec, SeedCheckedFields, SeedFieldRefusal } from "@/lib/db/connection-string/types";
+import type {
+  ConnectionStringPasteReader,
+  SeedCheck,
+  SeedCheckedFields,
+  SeedFieldRefusal,
+} from "@/lib/db/connection-string/types";
 import {
   checkSnowflakeAccount,
   SNOWFLAKE_FIELD_SENTENCES,
@@ -42,20 +47,15 @@ function snowflakeLoadRefusals(
 }
 
 /**
- * `snowflake`: no connection string scheme, no TLS read from a URL query, a paste of a `jdbc:snowflake://`,
- * `snowflake://` or Snowflake `https://` URL or a bare Snowflake host, its provider's checks run at seed load.
+ * `snowflake`'s paste reader, of a `jdbc:snowflake://`, `snowflake://` or Snowflake `https://` URL or a bare Snowflake
+ * host. An account identifier with no `.snowflakecomputing.com` suffix is not read, and its declaration lists no such
+ * format: it is a single word, which would claim any text pasted.
  */
-export const SNOWFLAKE_CONNECTION_STRING: ConnectionStringSpec = {
-  scheme: null,
-  readTls: null,
-  paste: {
-    catchAll: false,
-    claims: isSnowflakePaste,
-    names: isSnowflakePaste,
-    parse: parseSnowflakeURL,
-    // An account identifier with no `.snowflakecomputing.com` suffix is not offered: it is a single word, which would
-    // claim any text pasted.
-    formats: ["jdbc:snowflake://", "snowflake://", "a Snowflake account URL or host"],
-  },
-  validateSeed: snowflakeLoadRefusals,
-};
+export const SNOWFLAKE_PASTE_READER: ConnectionStringPasteReader = Object.freeze({
+  claims: isSnowflakePaste,
+  names: isSnowflakePaste,
+  parse: parseSnowflakeURL,
+});
+
+/** `snowflake`'s seed load check: its provider's checks, run at seed load. */
+export const SNOWFLAKE_SEED_CHECK: SeedCheck = snowflakeLoadRefusals;

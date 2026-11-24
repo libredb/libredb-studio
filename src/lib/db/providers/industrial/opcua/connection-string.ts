@@ -1,4 +1,4 @@
-import type { ConnectionStringSpec, SeedCheckedFields, SeedFieldRefusal } from "@/lib/db/connection-string/types";
+import type { SeedCheck, SeedCheckedFields, SeedFieldRefusal } from "@/lib/db/connection-string/types";
 import { readRootRefusals, readRootSentence } from "./agent-roots";
 
 /**
@@ -14,10 +14,5 @@ function opcuaLoadRefusals(conn: SeedCheckedFields): readonly SeedFieldRefusal[]
   }));
 }
 
-/** `opcua`: no connection string scheme, no TLS read from a URL query, and the read roots checked at load. */
-export const OPCUA_CONNECTION_STRING: ConnectionStringSpec = {
-  scheme: null,
-  readTls: null,
-  paste: null,
-  validateSeed: opcuaLoadRefusals,
-};
+/** `opcua`'s seed load check: the read roots checked at load. */
+export const OPCUA_SEED_CHECK: SeedCheck = opcuaLoadRefusals;

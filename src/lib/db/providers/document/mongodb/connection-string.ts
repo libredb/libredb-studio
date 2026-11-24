@@ -1,5 +1,10 @@
 import { readBooleanTLS } from "@/lib/db/connection-string/shared";
-import type { ConnectionStringSpec, ParsedConnection, RawParam, TLSIntent } from "@/lib/db/connection-string/types";
+import type {
+  ConnectionStringPasteReader,
+  ParsedConnection,
+  RawParam,
+  TLSIntent,
+} from "@/lib/db/connection-string/types";
 
 /**
  * The MongoDB URI's TLS options, read for both schemes.
@@ -128,21 +133,13 @@ function parseMongoDBString(uri: string): ParsedConnection {
 const claimsMongoDB = (text: string): boolean => text.startsWith("mongodb://") || text.startsWith("mongodb+srv://");
 
 /**
- * `mongodb`: the `mongodb://` scheme, no TLS read here, a paste of `mongodb://` or `mongodb+srv://`, no seed load
- * check.
+ * `mongodb`'s paste reader, of `mongodb://` or `mongodb+srv://`.
  *
- * MongoDB's URI TLS is read by `readMongoTLS` above, which parses it by hand because `mongodb+srv://` is not a URL the
- * query-string reader's caller can build.
+ * Its declaration names no URL TLS reader: MongoDB's URI TLS is read by `readMongoTLS` above, which parses it by hand
+ * because `mongodb+srv://` is not a URL the query-string reader's caller can build.
  */
-export const MONGODB_CONNECTION_STRING: ConnectionStringSpec = {
-  scheme: "mongodb",
-  readTls: null,
-  paste: {
-    catchAll: false,
-    claims: claimsMongoDB,
-    names: claimsMongoDB,
-    parse: parseMongoDBString,
-    formats: ["mongodb://"],
-  },
-  validateSeed: null,
-};
+export const MONGODB_PASTE_READER: ConnectionStringPasteReader = Object.freeze({
+  claims: claimsMongoDB,
+  names: claimsMongoDB,
+  parse: parseMongoDBString,
+});
