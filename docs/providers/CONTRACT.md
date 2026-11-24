@@ -2637,7 +2637,7 @@ Each route's and handler's own checks and scrubs run where they ran.
 - test `tests/api/db-objects.test.ts` "a tree route past its deadline answers 504 studio-timeout-refusal naming the read"
 - test `tests/api/db-objects.test.ts` "every read of an inventory, its container walk included, is a host core tree call with a deadline of its own"
 - test `tests/api/db-objects.test.ts` "a tree route reads no catalog, and its provider's forCatalog is never called"
-- test `vscode-extension/test/unit/backend-handlers.test.ts` "each tree call reads through the host core's tree call, the provider resolved as before"
+- test `vscode-extension/test/unit/backend-handlers.test.ts` "each tree call reads through the host core's tree call, on the provider of the connection's metadata session"
 - test `vscode-extension/test/unit/backend-handlers.test.ts` "a tree call whose request is cancelled while the provider reads answers QUERY_CANCELLED at once, outcome unknown"
 - test `vscode-extension/test/unit/backend-handlers.test.ts` "a tree call whose request is already cancelled reads nothing and answers QUERY_CANCELLED, not-sent"
 - test `vscode-extension/test/unit/backend-handlers.test.ts` "a tree call past its deadline answers TIMEOUT_ERROR naming the read"
@@ -2649,7 +2649,7 @@ The host classes each connection's session capacity, one or several, from Studio
 It is one where Studio's record of the engines that serve their tree from one session, `SERVES_ONE_SESSION`, names a reason, which it does for every engine that keeps one handle per file, and where the connection's database is in memory, one database per handle, as the file admission reads it; it is several otherwise.
 A manifest has no member for it, and a built provider's declaration never reaches it, M-57.
 The class decides only which session a tree read runs on; it never authorizes anything.
-On a connection of class several, the tree routes read on a metadata session of the connection's own, opened beside the editor's session from the same connection, with the same credentials, file-access posture and owner, through the same checks in the same order, and keyed by the editor session's key with a metadata frame, so it is each owner's own under governance.
+On a connection of class several, the tree routes and the VS Code backend's tree calls, `selectStatement`'s describe among them, read on a metadata session of the connection's own, opened beside the editor's session from the same connection, with the same credentials, file-access posture and owner, through the same checks in the same order, and keyed by the editor session's key with a metadata frame, so it is each owner's own under governance.
 Its pool holds at most two sessions and opens none until a read asks.
 On a connection of class one they read on the editor's session.
 A metadata session opens once per key, C-44, is torn down with the caches under the teardown's deadlines, C-45, leaves with the idle sweep and with every removal that names its connection, its owner or its record's key, and keeps the connection's SSH tunnel open while it serves the connection.
@@ -2676,6 +2676,8 @@ A native provider's metadata session is an open like the editor's with a smaller
 - test `tests/api/db-objects.test.ts` "each tree route reads on the connection's metadata session, and the source and edit routes on the editor's"
 - test `tests/api/db-objects.test.ts` "a tree route answers while the editor's provider holds every read, without waiting for it"
 - test `tests/api/db-objects.test.ts` "handleObjectRequest resolves the editor's provider by default and the metadata session when asked, after the guard and the connection's resolution"
+- test `vscode-extension/test/unit/backend-handlers.test.ts` "each tree call reads through the host core's tree call, on the provider of the connection's metadata session"
+- test `vscode-extension/test/unit/backend-handlers.test.ts` "a tree call answers while the editor's provider holds every read, without waiting for it"
 
 ## Not yet in this contract
 

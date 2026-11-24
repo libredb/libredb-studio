@@ -25,7 +25,12 @@ import {
   withheldProviderError,
 } from "@/lib/db/operations/provider-text";
 import { executionUiFor } from "@/lib/db/execution-ui";
-import type { clearProviderCache, enabledProviderTypes, getOrCreateProvider } from "@/lib/db/factory";
+import type {
+  clearProviderCache,
+  enabledProviderTypes,
+  getOrCreateMetadataProvider,
+  getOrCreateProvider,
+} from "@/lib/db/factory";
 import { findKind, kindHasColumns } from "@/lib/db/object-kinds";
 import { supportsQueryCancel } from "@/lib/db/query-cancel";
 import type { Container, DatabaseObject, KindCount, ObjectDetail, QueryPrepareOptions } from "@/lib/db/types";
@@ -59,6 +64,8 @@ import { ConnectionRegistry, notOpenSentence, type OpenRecord } from "./registry
 /** The factory functions the handlers call, as one object. */
 export interface BackendFactory {
   getOrCreateProvider: typeof getOrCreateProvider;
+  /** The tree calls' provider, on the connection's metadata session (docs/providers/CONTRACT.md, clause C-66). */
+  getOrCreateMetadataProvider: typeof getOrCreateMetadataProvider;
   /** Never a scope: the child serves one person's process (part 1). */
   removeProvider(connectionId: string): Promise<void>;
   clearProviderCache: typeof clearProviderCache;
@@ -283,6 +290,12 @@ export function createHandlers(
   // As handleObjectRequest (src/lib/api/object-route.ts) resolves it: the cached provider, or a new one opened from
   // the record after the idle sweep closed the old one. Engine-shape checks of a path stay with the provider.
   const providerOf = (record: OpenRecord) => factory.getOrCreateProvider(record.connection, {}, record.posture);
+  // The provider the four tree calls and selectStatement's describe read on, as the six tree routes resolve theirs: the
+  // connection's metadata session, beside the editor's, so a tree call never waits for the editor's statements,
+  // except on a connection that serves one session, whose tree reads on the editor's (docs/providers/CONTRACT.md,
+  // clause C-66). The record's connection is the one the editor opens before its per-run catalog scope.
+  const treeProviderOf = (record: OpenRecord) =>
+    factory.getOrCreateMetadataProvider(record.connection, {}, record.posture);
   // The same provider, waited for only within an editor call's open wait, its engine's connect budget
   // (`openWithinCall`), as the query and cancel routes wait for theirs: the call stops waiting when the wait ends, and
   // the open goes on for the next call.
@@ -395,7 +408,7 @@ export function createHandlers(
       const record = openRecord(connectionId);
       return await underCancellation(token, (signal) =>
         answeringFor(record.connection, async () =>
-          objectTree(await providerOf(record), signal, METHODS.listContainers).listContainers(path),
+          objectTree(await treeProviderOf(record), signal, METHODS.listContainers).listContainers(path),
         ),
       );
     },
@@ -410,7 +423,7 @@ export function createHandlers(
         answeringFor(record.connection, async () =>
           scrubKindCounts(
             providerTextScrub(record.connection, "any"),
-            await objectTree(await providerOf(record), signal, METHODS.countObjects).countObjects(container),
+            await objectTree(await treeProviderOf(record), signal, METHODS.countObjects).countObjects(container),
           ),
         ),
       );
@@ -423,7 +436,7 @@ export function createHandlers(
       const record = openRecord(connectionId);
       return await underCancellation(token, (signal) =>
         answeringFor(record.connection, async () =>
-          objectTree(await providerOf(record), signal, METHODS.listObjects).listObjects(container, kind),
+          objectTree(await treeProviderOf(record), signal, METHODS.listObjects).listObjects(container, kind),
         ),
       );
     },
@@ -439,7 +452,7 @@ export function createHandlers(
         answeringFor(record.connection, async () =>
           scrubObjectDetail(
             providerTextScrub(record.connection, "any"),
-            await objectTree(await providerOf(record), signal, METHODS.describeObject).describeObject(path, kind),
+            await objectTree(await treeProviderOf(record), signal, METHODS.describeObject).describeObject(path, kind),
           ),
         ),
       );
@@ -559,7 +572,7 @@ export function createHandlers(
       const record = openRecord(connectionId);
       return await underCancellation(token, (signal) =>
         answeringFor(record.connection, async () => {
-          const provider = await providerOf(record);
+          const provider = await treeProviderOf(record);
           const capabilities = provider.getCapabilities();
           let columns: readonly ColumnSchema[] | undefined;
           if (capabilities.previewProjection !== undefined && kindHasColumns(findKind(capabilities, object.kind))) {
