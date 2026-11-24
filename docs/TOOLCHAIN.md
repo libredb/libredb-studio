@@ -256,14 +256,19 @@ Measured cost on main's dist: pack about 1.4 s, load about 1.4 s, scan under 1 s
 attw, `lib:closure` and `lib:load` check that the package resolves and loads, and none of them reads what a published type holds.
 The engine id type is the one whose members move with Studio's engines, so `tests/unit/exports-database-type.test.ts` pins it as an exported-type snapshot.
 It pins four things: the package's entries, as tsup's `entry` gives them and held one to one to the types exports of `package.json`; the form of `DatabaseType` in `src/lib/types.ts`, a union of string literals written in its own declaration, so it never moves with a table, a generated module or the engine catalog; the `index` and `types` entries exporting that one declaration; and its members and every published position whose type names it, such as `DatabaseConnection.type` and `WorkspaceConnection.type`.
+Each position is pinned with how it is written: `?` when its declaration is optional, then its declaration's whole type, so `WorkspaceConnection.type: DatabaseType` becoming `DatabaseType | string`, `Exclude<DatabaseType, "postgres">` or optional fails the test although it still names the alias.
+A reference outside its declaration's written type, such as a type parameter's constraint or a heritage clause, has no such form, and the test refuses it by name until it learns to key one.
 It reads source with the TypeScript checker, not the built `dist/`, so it runs in `bun run test` on every platform of the unit matrix without a build.
-The program has the package's entries as roots and `tsconfig.lib.json`'s options, and the walk follows type references from every export through every declaration of the repository it reaches, skipping function bodies, because only a declared shape is published.
+The program has the package's entries as roots and `tsconfig.lib.json`'s options, and the walk reads only the types the declaration emitter publishes, following their type references from every export through every declaration of the repository it reaches: a declaration's written type, its type parameters and parameters, heritage clauses and members, and for a declaration written without a type, the type the checker infers for it, which is the type the emitter writes.
+It never reads an initializer, a function body or an expression body, so a `satisfies` or a cast there is no position, and it skips a `private` or `#private` class member, which the declarations publish without its type.
+A position spelled as an import type, `import("./types").DatabaseType`, is recorded like any other reference; an indexed access such as `DatabaseConnection["type"]` is not, since it follows a base position that is pinned in its own right.
 When the test was written, its positions were exactly the places where `build:lib`'s declarations name `DatabaseType`, compared by a `grep` over `dist/*.d.ts`.
 The file builds its program once, in about two seconds and 1.2 GB of resident memory on a developer machine, under a 60 s timeout per test.
 
 A difference is classed by kind, and the failure names each id or position under `added` or `removed`.
 An added id or an added position is a deliberate edit of the test's frozen list, made by the change that ships it and stated in that PR as a new member or position of a published type: not breaking for a value a consumer passes in, a new case for one it receives.
 A removed id, a removed position, or the alias or a position opened to other text is breaking and waits for the library's next major.
+A position whose written type or optionality changes is reported removed under its old form and added under its new one, so it is held as a removed position.
 The change that first gives core an engine id outside the union declares the library's alias apart from core's and keeps every published position on that alias.
 
 ## Phase 5 - knip (keep, verify)

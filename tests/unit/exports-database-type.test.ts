@@ -6,12 +6,22 @@
  * WHAT IT PINS. The package's entries (tsup's `entry`, held one to one to the types exports of package.json); the
  * alias's form, a union of string literals written in its own declaration, so it never moves with a table, a generated
  * module or a catalog; the entries that export it and the one declaration they export; its members, compared as a set;
- * and the published positions that name it, each keyed `<repository path> :: <dotted owner path>`.
+ * and the published positions that name it, each keyed `<repository path> :: <dotted owner path>` followed by how it
+ * is written: `?` when its declaration is optional, then its declaration's whole type, such as
+ * `src/lib/types.ts :: DatabaseConnection.type: DatabaseType`.
  *
  * HOW IT READS. One TypeScript program over the package's entries with tsconfig.lib.json's options, built once and
- * shared by the tests below. From every export of every entry, the walk follows type references through every
- * declaration of the repository it reaches, skipping function bodies, because only a declared shape is published, and
- * records each place whose type reference resolves to the alias. It reads source, not the built `dist/`, so it runs in
+ * shared by the tests below. From every export of every entry, the walk reads only the types the declaration emitter
+ * publishes and follows their type references through every declaration of the repository it reaches: a declaration's
+ * written type, its type parameters and parameters, an interface's or a class's heritage clauses and members, and for
+ * a declaration written without a type, the type the checker infers for it, which is the type the emitter writes. It
+ * never reads an initializer, a function body or an expression body, so a `satisfies` or a cast there is no position,
+ * and it skips a `private` or `#private` class member, which the declarations publish without its type. It records
+ * each place whose type reference or import type, such as `import("./types").DatabaseType`, resolves to the alias,
+ * and keys an inferred type that names it by the type the checker prints for its declaration. An indexed access such
+ * as `DatabaseConnection["type"]` is not recorded, since it follows a base position that is pinned in its own right. A
+ * reference outside its declaration's written type, such as a type parameter's constraint or a heritage clause, is
+ * refused by name, because it has no written form to key. It reads source, not the built `dist/`, so it runs in
  * `bun run test` on every platform without a build. Measured when it was written: the positions it finds are exactly
  * the ones rollup-plugin-dts names `DatabaseType` at in the built declarations (docs/TOOLCHAIN.md, "The published
  * engine id type (`DatabaseType`)").
@@ -19,7 +29,9 @@
  * WHAT A DIFFERENCE MEANS. An added id or an added position is a deliberate edit of the frozen list below, made by the
  * change that ships it and stated in its PR as a new member or position of a published type: not breaking for a value
  * a consumer passes in, a new case for one it receives. A removed id, a removed position, or the alias or a position
- * opened to other text is breaking and waits for the library's next major. The change that first gives core an engine
+ * opened to other text is breaking and waits for the library's next major. A position whose written type or whose
+ * optionality changes, widened, narrowed or opened while it still names the alias, is reported removed under its old
+ * form and added under its new one, so it is held as a removed position. The change that first gives core an engine
  * id outside the union declares the library's alias apart and keeps every published position on it.
  */
 import { describe, expect, test } from "bun:test";
@@ -82,18 +94,21 @@ const FROZEN_ENGINE_IDS: readonly string[] = [
   "weaviate",
 ];
 
-/** The published positions whose type names the alias, frozen until the library's next major. */
+/**
+ * The published positions whose type names the alias, frozen until the library's next major, each with how it is
+ * written: `?` when its declaration is optional, then its declaration's whole type.
+ */
 const FROZEN_POSITIONS: readonly string[] = [
-  "src/components/QueryEditor.tsx :: QueryEditorProps.databaseType",
-  "src/components/ResultsGrid.tsx :: ResultsGridProps.databaseType",
-  "src/lib/db/editor-language/types.ts :: EditorCompletionContext.databaseType",
-  "src/lib/db/types.ts :: DatabaseProvider.type",
-  "src/lib/db/types.ts :: ObjectEditPlan.type",
-  "src/lib/types.ts :: DatabaseConnection.type",
-  "src/lib/types.ts :: SavedQuery.connectionType",
-  "src/lib/types.ts :: SchemaSnapshot.databaseType",
-  "src/workspace/types.ts :: StudioWorkspaceProps.onTestConnection.config.type",
-  "src/workspace/types.ts :: WorkspaceConnection.type",
+  "src/components/QueryEditor.tsx :: QueryEditorProps.databaseType?: DatabaseType",
+  "src/components/ResultsGrid.tsx :: ResultsGridProps.databaseType?: DatabaseType",
+  "src/lib/db/editor-language/types.ts :: EditorCompletionContext.databaseType?: DatabaseType",
+  "src/lib/db/types.ts :: DatabaseProvider.type: DatabaseType",
+  "src/lib/db/types.ts :: ObjectEditPlan.type: DatabaseType",
+  "src/lib/types.ts :: DatabaseConnection.type: DatabaseType",
+  "src/lib/types.ts :: SavedQuery.connectionType: DatabaseType",
+  "src/lib/types.ts :: SchemaSnapshot.databaseType: DatabaseType",
+  "src/workspace/types.ts :: StudioWorkspaceProps.onTestConnection.config.type: DatabaseType",
+  "src/workspace/types.ts :: WorkspaceConnection.type: DatabaseType",
 ];
 
 /** The entries that export the alias, each under its own name. */
@@ -254,11 +269,136 @@ function ownerPath(node: ts.Node): string {
   return segments.join(".");
 }
 
+/** The innermost named declaration that encloses a node. */
+function ownerOf(node: ts.Node, where: string): ts.Node {
+  for (let current = node.parent; current !== undefined; current = current.parent) {
+    if (ownerSegment(current) !== undefined) return current;
+  }
+  throw new Error(`${where} names ${ALIAS_NAME} outside any named declaration`);
+}
+
+/** The type a declaration is written with: a property's, a parameter's or a variable's, an alias's, or a return type. */
+function declaredTypeNode(node: ts.Node): ts.TypeNode | undefined {
+  if (
+    ts.isPropertySignature(node) ||
+    ts.isPropertyDeclaration(node) ||
+    ts.isParameter(node) ||
+    ts.isVariableDeclaration(node) ||
+    ts.isTypeAliasDeclaration(node) ||
+    ts.isMethodSignature(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isFunctionDeclaration(node)
+  ) {
+    return node.type;
+  }
+  return undefined;
+}
+
+function isOptional(node: ts.Node): boolean {
+  return (
+    (ts.isPropertySignature(node) ||
+      ts.isPropertyDeclaration(node) ||
+      ts.isParameter(node) ||
+      ts.isMethodSignature(node) ||
+      ts.isMethodDeclaration(node)) &&
+    node.questionToken !== undefined
+  );
+}
+
+/**
+ * How a position that names the alias is written: `?` when the declaration that owns it is optional, then that
+ * declaration's whole type, whitespace collapsed. A reference outside its declaration's written type, such as a type
+ * parameter's constraint or a heritage clause, has no such text, so it is refused by name rather than keyed by owner.
+ */
+function writtenPosition(reference: ts.Node, where: string): string {
+  const owner = ownerOf(reference, where);
+  const type = declaredTypeNode(owner);
+  if (type === undefined || reference.pos < type.pos || reference.end > type.end) {
+    throw new Error(`${where} names ${ALIAS_NAME} outside its declaration's written type, which this test cannot key`);
+  }
+  return `${isOptional(owner) ? "?" : ""}: ${type.getText().replace(/\s+/g, " ")}`;
+}
+
 /** The name a type reference resolves through, or `undefined` for a node that is no type reference. */
 function referencedName(node: ts.Node): ts.Node | undefined {
   if (ts.isTypeReferenceNode(node)) return node.typeName;
   if (ts.isTypeQueryNode(node)) return node.exprName;
+  if (ts.isImportTypeNode(node)) return node.qualifier;
   if (ts.isExpressionWithTypeArguments(node)) return node.expression;
+  return undefined;
+}
+
+/**
+ * A class member the declarations publish without its type: a `private` or `#private` one. A `private` parameter
+ * property is not one, since the constructor's published signature keeps its type.
+ */
+function isPrivateMember(member: ts.ClassElement): boolean {
+  const modifiers = ts.canHaveModifiers(member) ? (ts.getModifiers(member) ?? []) : [];
+  return (
+    (member.name !== undefined && ts.isPrivateIdentifier(member.name)) ||
+    modifiers.some((modifier) => modifier.kind === ts.SyntaxKind.PrivateKeyword)
+  );
+}
+
+function present(...nodes: readonly (ts.Node | undefined)[]): ts.Node[] {
+  return nodes.filter((node): node is ts.Node => node !== undefined);
+}
+
+/**
+ * The children of a node that hold types the declaration emitter publishes as written: a declaration's type
+ * annotation, its type parameters and parameters, an interface's or a class's heritage clauses and members, and every
+ * type inside a type. Never an initializer, a function body or an expression body, and never a private class member,
+ * since the declarations publish none of them as written. A node of a kind the walk has not classed is refused by name.
+ */
+function publishedChildren(node: ts.Node): readonly ts.Node[] {
+  // A name resolves at the reference that holds it; a literal type holds no reference.
+  if (ts.isTypeReferenceNode(node) || ts.isTypeQueryNode(node) || ts.isImportTypeNode(node)) {
+    return node.typeArguments ?? [];
+  }
+  if (ts.isExpressionWithTypeArguments(node)) return node.typeArguments ?? [];
+  if (ts.isLiteralTypeNode(node)) return [];
+  if (ts.isTypeNode(node)) {
+    const children: ts.Node[] = [];
+    ts.forEachChild(node, (child) => {
+      children.push(child);
+    });
+    return children;
+  }
+  if (ts.isPropertySignature(node) || ts.isPropertyDeclaration(node) || ts.isParameter(node)) return present(node.type);
+  if (ts.isVariableDeclaration(node)) return present(node.type);
+  if (ts.isFunctionLike(node)) return [...(node.typeParameters ?? []), ...node.parameters, ...present(node.type)];
+  if (ts.isTypeParameterDeclaration(node)) return present(node.constraint, node.default);
+  if (ts.isTypeAliasDeclaration(node)) return [...(node.typeParameters ?? []), node.type];
+  if (ts.isInterfaceDeclaration(node)) {
+    return [...(node.typeParameters ?? []), ...(node.heritageClauses ?? []), ...node.members];
+  }
+  if (ts.isClassDeclaration(node)) {
+    const members = node.members.filter(
+      (member) => !isPrivateMember(member) && !ts.isClassStaticBlockDeclaration(member),
+    );
+    return [...(node.typeParameters ?? []), ...(node.heritageClauses ?? []), ...members];
+  }
+  if (ts.isHeritageClause(node)) return node.types;
+  if (ts.isIdentifier(node) || ts.isQualifiedName(node) || ts.isPrivateIdentifier(node)) return [];
+  if (ts.isEnumDeclaration(node) || ts.isEnumMember(node) || ts.isSemicolonClassElement(node)) return [];
+  throw new Error(`the walk has not classed which children of a ${ts.SyntaxKind[node.kind]} are published`);
+}
+
+/**
+ * The type the declarations publish for a declaration written without one, which the emitter takes from the checker:
+ * a variable's, a property's or a parameter's inferred type, or a function's inferred return type. `undefined` when
+ * the declaration is written with its type or publishes none.
+ */
+function inferredType(checker: ts.TypeChecker, node: ts.Node): ts.Type | undefined {
+  if ((ts.isVariableDeclaration(node) || ts.isPropertyDeclaration(node) || ts.isParameter(node)) && !node.type) {
+    return checker.getTypeAtLocation(node.name);
+  }
+  if (
+    (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) || ts.isGetAccessorDeclaration(node)) &&
+    !node.type
+  ) {
+    return checker.getSignatureFromDeclaration(node)?.getReturnType();
+  }
   return undefined;
 }
 
@@ -287,15 +427,68 @@ class PositionWalk {
   }
 
   private visit(node: ts.Node, modulePath: string): void {
-    // A body is never published: only the declared shape reaches the declarations.
-    if (ts.isBlock(node)) return;
     const name = referencedName(node);
     const target = name === undefined ? undefined : this.checker.getSymbolAtLocation(name);
     if (target !== undefined) {
-      if (resolveAlias(this.checker, target) === this.alias) this.positions.add(`${modulePath} :: ${ownerPath(node)}`);
-      else this.walkSymbol(target);
+      if (resolveAlias(this.checker, target) === this.alias) {
+        const where = `${modulePath} :: ${ownerPath(node)}`;
+        this.positions.add(`${where}${writtenPosition(node, where)}`);
+      } else {
+        this.walkSymbol(target);
+      }
     }
-    ts.forEachChild(node, (child) => this.visit(child, modulePath));
+    for (const child of publishedChildren(node)) this.visit(child, modulePath);
+    const inferred = inferredType(this.checker, node);
+    if (inferred !== undefined) {
+      const written = this.checker.typeToString(inferred, node, ts.TypeFormatFlags.NoTruncation);
+      const position = `${modulePath} :: ${ownerPath(node)}${isOptional(node) ? "?" : ""}: ${written}`;
+      this.walkType(inferred, new Set(), () => this.positions.add(position));
+    }
+  }
+
+  /**
+   * Walks an inferred type as the emitter writes it: an alias by its name and type arguments, a reference to an
+   * interface or a class by its declarations and type arguments, a union or an intersection by its members, and any
+   * other object type by its properties, signatures and index types. `onAlias` records the position when the type
+   * names the alias.
+   */
+  private walkType(type: ts.Type, seen: Set<ts.Type>, onAlias: () => void): void {
+    const aliasSymbol = type.aliasSymbol;
+    if (aliasSymbol !== undefined && resolveAlias(this.checker, aliasSymbol) === this.alias) {
+      onAlias();
+      return;
+    }
+    if (seen.has(type)) return;
+    seen.add(type);
+    const walk = (inner: ts.Type): void => this.walkType(inner, seen, onAlias);
+    if (aliasSymbol !== undefined) {
+      this.walkSymbol(aliasSymbol);
+      for (const argument of type.aliasTypeArguments ?? []) walk(argument);
+      return;
+    }
+    if (type.isUnionOrIntersection()) {
+      for (const member of type.types) walk(member);
+      return;
+    }
+    if (!(type.flags & ts.TypeFlags.Object)) return;
+    const objectFlags = (type as ts.ObjectType).objectFlags;
+    if (objectFlags & ts.ObjectFlags.Reference) {
+      const reference = type as ts.TypeReference;
+      // A tuple's target has no symbol: its elements are its type arguments.
+      if (reference.target.symbol !== undefined) this.walkSymbol(reference.target.symbol);
+      for (const argument of this.checker.getTypeArguments(reference)) walk(argument);
+      return;
+    }
+    if (objectFlags & ts.ObjectFlags.ClassOrInterface) {
+      this.walkSymbol(type.symbol);
+      return;
+    }
+    for (const property of this.checker.getPropertiesOfType(type)) walk(this.checker.getTypeOfSymbol(property));
+    for (const signature of [...type.getCallSignatures(), ...type.getConstructSignatures()]) {
+      for (const parameter of signature.getParameters()) walk(this.checker.getTypeOfSymbol(parameter));
+      walk(signature.getReturnType());
+    }
+    for (const info of this.checker.getIndexInfosOfType(type)) walk(info.type);
   }
 }
 
