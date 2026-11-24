@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D670, U17 · 373
+- [Drivers and connections](#drivers-and-connections) — D1-D700, U17 · 373
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -4941,17 +4941,6 @@ A level that opens another database without `catalogSessions` is the provider's 
 
 **Done when:** on a connection whose provider declares `catalogSessions` and a `catalog` level (`declaresCatalogSessions`) and that `catalogChoice` does not honour, the object routes refuse a path naming a catalog, by name, before the provider is asked, and a test with a provider declaring both on a connection naming a database shows the refusal.
 
-### D660. A tree, count or describe read waits behind the editor's statements on a pooled connection, because both use the editor's pool
-
-The object routes and the VS Code backend's tree calls read on the editor's provider (`handleObjectRequest` in `src/lib/api/object-route.ts`), so a listing takes a connection from the pool the editor's statements run on.
-Measured on 2026-11-24 against `postgres:18-alpine` with Studio's default pool of 10: with every connection held by a running `SELECT pg_sleep(6)`, a listing answered after 5,503 ms, against 1 ms on an idle pool and 7 ms with one connection free; with `pg_sleep(3)` it answered after 2,503 ms.
-A statement that runs longer than the pool's acquire timeout, 60 seconds by default, leaves the tree read waiting until then.
-Since the tree reads moved onto the host core, a read waiting for a connection is answered at the connection's statement timeout plus 10 seconds when that comes first.
-Under governance each user's provider has a pool of 3 by default, so three running statements of one user hold that user's tree.
-The agent and MCP read the tree on a provider of their own and do not wait.
-
-**Done when:** a tree read on a pooled connection runs on a session of its own, apart from the editor's pool, except where Studio's record says the engine or the connection serves one session, and a test that holds every editor connection shows a listing answers at once.
-
 ### D670. The VS Code backend's tree calls hand the provider container paths the object routes refuse
 
 The object routes check a container path before the provider is asked: `assertContainerDepth` refuses a `parent` deeper than the engine declares on `POST /api/db/objects/containers`, and `assertContainerAddress` refuses a `container` in a shape the engine does not declare on `counts`, `list` and `inventory` (both in `src/lib/api/object-route.ts`).
@@ -4960,6 +4949,14 @@ So one path is refused with a 400 in Studio's words on one channel and answered 
 Both channels read the tree through one caller facade, but the checks run before it, in the route module, which the backend child does not import.
 
 **Done when:** both channels refuse the same container paths with the same sentence before the provider is asked, from one module both import, and a test per channel sends a too-deep `parent` and a container in an undeclared shape.
+
+### D700. A NETCONF tree read sent while an editor request is in flight on the provider's one session is refused rather than answered
+
+A NETCONF connection serves its object tree from the editor's session (`SERVES_ONE_SESSION` in `src/lib/db/compatibility.ts`): the provider holds one NETCONF session, and a device may admit few, while no real device has been measured against Studio's session limits (docs/providers/netconf.md).
+The session sends one request at a time and refuses a second while one is in flight (`request` in `src/lib/db/providers/network/netconf/session.ts`), so a count or a listing of a module's nodes sent while a long `get` the editor sent is pending is refused as a request already in flight.
+The other engines whose tree reads the server read it on a metadata session of their own (docs/providers/CONTRACT.md, C-66).
+
+**Done when:** the session limits of at least two real NETCONF implementations are measured, and NETCONF's row follows the measurement, with a test that a tree read answers while an editor request is pending where a second session is admitted.
 
 ## Value interpolation
 
