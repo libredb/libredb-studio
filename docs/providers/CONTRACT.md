@@ -2892,6 +2892,7 @@ Each route's doors, checks, confirmations, scrubs and error mapping run where th
 - test `tests/api/db/maintenance.test.ts` "a run whose request is already gone answers 499 not-sent, asks the provider nothing and writes no audit row"
 - test `tests/api/db/maintenance.test.ts` "a run past its deadline answers 504 studio-timeout-refusal naming the run, and is audited as an unknown outcome"
 - test `tests/api/db/maintenance.test.ts` "a run the host refuses before the call answers as a defect of Studio and writes no audit row"
+- test `tests/api/db/maintenance.test.ts` "a broken audit sink does not change the answer for a run Studio stopped waiting for"
 - test `tests/api/db/maintenance.test.ts` "kill's session target passes the host's placement check, which neither placement describes"
 - test `tests/api/db/maintenance.test.ts` "an error the host raises before the provider is called is not audited as an execution failure"
 - test `tests/api/db/maintenance.test.ts` "a connection whose connected maintenance is narrower than its declaration is refused the placement its session's maintenance withdrew"

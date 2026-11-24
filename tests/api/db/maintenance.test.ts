@@ -1694,6 +1694,32 @@ describe("the maintenance route on the host core", () => {
     expect(mockRecordQueryEvent.mock.calls.map((call) => call[0].status)).toEqual(["error"]);
   });
 
+  test("a broken audit sink does not change the answer for a run Studio stopped waiting for", async () => {
+    const logged = spyOn(logger, "error").mockImplementation(() => {});
+    mockAuditPush.mockImplementationOnce(() => {
+      throw new Error("audit sink down");
+    });
+    try {
+      const response = await withCore(
+        (real) => ({
+          ...real,
+          maintenanceRunCall: async (): Promise<MaintenanceRunRecord> => ({
+            kind: "stopped",
+            reason: new DOMException("The call's deadline has passed.", "TimeoutError"),
+            settled: Promise.resolve(),
+          }),
+        }),
+        () => post({ type: "vacuum" }),
+      );
+
+      expect(response.status).toBe(504);
+      expect(await parseResponseJSON(response)).toMatchObject({ kind: "studio-timeout-refusal" });
+      expect(logged.mock.calls.map((call) => call[0])).toContain("Failed to record maintenance audit event");
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
   test("a run the host refuses before the call answers as a defect of Studio and writes no audit row", async () => {
     const error = mock(() => {});
     const logged = spyOn(logger, "error").mockImplementation(error);
