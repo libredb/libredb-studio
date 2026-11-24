@@ -3500,6 +3500,13 @@ The run's billed-read allowance reaches each count, listing and bulk description
 The walk's first read, where the engine declares a container level, is the top-level listing: a listing that says the inventory needs configuration, C-61, marks every kind unavailable with the provider's sentence, scrubbed, and no further read is sent; otherwise its containers are the walk's first level.
 The facade reads the host core and builds the session when the walk starts, so a walk made before the host core is installed throws by name before any read and is never taken for a provider's failure.
 
+Plan mode's statistics read under the operations profile, a statement Studio composed and its statement guard admitted, runs through the composed statement facade and the host core's console execute, C-48, on the composed statement session the legacy bridge serves, C-50, so the provider receives the statement exactly as composed, with no page bound appended.
+The facade reads the host core and builds the session when the read starts, so a read made before the install throws by name before any promise.
+Its request is a fresh one of the statement and every row as its page, and its context carries the time its call was granted, a signal that aborts at it alone and the empty environment.
+The answer is the provider's result by reference, its page released once read, and the read holds its rows to the run's row budget and to its byte budget by each row's UTF-8 JSON bytes summed, a bigint measured as its decimal text, refusing a reading past either.
+The host pumps the first result within one page, C-53, so a row larger than one page is refused as `StudioByteBudgetRefusal` with the page's sentence, and an answer over 1 MiB waits for the host's large-page slot within the time granted.
+A stop at whatever wait of the run, and a start refused at the deadline, is the read's own time refusal, the stopped call's settlement handed to the run first, and a failure after the stop is logged under the read's route by kind and code, never its text.
+
 - test `tests/unit/lib/api/object-tree.test.ts` "each granted read is one host core tree call on the walk's one bridged session, a fresh request, and a fresh context on the grant's one deadline and one signal, of deadline, signal and env alone"
 - test `tests/unit/lib/api/object-tree.test.ts` "a granted read hands the grant's read allowance to the bridge by reference, and none where the grant has none"
 - test `tests/unit/lib/api/object-tree.test.ts` "a granted read its deadline stopped answers the grant's own time refusal, hands the stopped read's settlement to the grant's hold, and logs a later failure by kind and code only"
@@ -3514,6 +3521,22 @@ The facade reads the host core and builds the session when the walk starts, so a
 - test `tests/unit/lib/agent/grounding-walk.test.ts` "is read from the provider's declaration, lists nothing and carries the reason on every kind"
 - test `tests/unit/lib/agent/context-snapshot.test.ts` "a reading that overruns the time it was granted loses the whole snapshot, under its own code"
 - test `tests/unit/lib/agent/context-snapshot.test.ts` "a reading that overruns its grant counts against the run's concurrency until its provider call settles"
+- test `tests/unit/lib/api/composed-statement.test.ts` "a composed statement runs once through one host core execute call on a composed statement session, on a fresh request of its statement and every row and a context of deadline, signal and env alone"
+- test `tests/unit/lib/api/composed-statement.test.ts` "its answer is the provider's result by reference, and its page is released"
+- test `tests/unit/lib/api/composed-statement.test.ts` "a composed statement its deadline stopped answers the grant's own time refusal, its settlement handed to the hold, and a later failure is logged by kind and code only"
+- test `tests/unit/lib/api/composed-statement.test.ts` "a stop at any wait of the run answers the grant's time refusal"
+- test `tests/unit/lib/api/composed-statement.test.ts` "a composed statement whose deadline passed before its call is refused with the grant's time refusal, not-sent, and never reaches the provider"
+- test `tests/unit/lib/api/composed-statement.test.ts` "a row larger than one page is refused by the host's page budget"
+- test `tests/unit/lib/api/composed-statement.test.ts` "a provider's error passes as the same object"
+- test `tests/unit/lib/api/composed-statement.test.ts` "before the host core is installed it throws by name and calls no provider"
+- test `tests/unit/lib/api/composed-statement-bounds.test.ts` "a composed statement whose provider never answers ends at the grant's deadline in the grant's own time refusal"
+- test `tests/unit/lib/agent/schema-stats.test.ts` "the operations-profile statistics read runs through the host core's console execute on a composed statement session, its statement exactly as composed"
+- test `tests/unit/lib/agent/schema-stats.test.ts` "a statistics reading past the byte budget in UTF-8 bytes is refused, though its text is shorter than the budget"
+- test `tests/unit/lib/agent/schema-stats.test.ts` "a bigint cell in a statistics reading is measured as its decimal text"
+- test `tests/unit/lib/agent/schema-stats.test.ts` "the statistics read that outlasts its time is recorded as Studio's refusal"
+- test `tests/isolated/composed-statistics-statement.test.ts` "every dialect that reads statistics under the operations profile hands its provider the composed statement unchanged"
+- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "only the agent's statistics read opens a composed statement session, under the operations profile"
+- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "the agent, hand-over and MCP sources call query() nowhere: the statistics read sends its statement through the host core's composed statement session"
 
 ## Not yet in this contract
 
@@ -3621,3 +3644,4 @@ Against this contract's earlier text:
 - The legacy bridge's top-level containers read asks a provider that answers the inventory's configuration question first, and its tree reads take the billed-read allowance from the session's input, C-50, where it asked nothing and passed no allowance.
 - The legacy bridge serves a composed statement session that sends the statement exactly as composed, C-50.
 - The agent's grounding walk reads through the host core's tree call under one deadline, the time its call was granted, C-80: a walk whose time ends sends no further read and the run counts only the read in flight, where the run stopped waiting and the walk went on reading to its end; a read that fails after the stop is logged by kind and code, where it was released silently.
+- Plan mode's statistics read runs through the host core's console execute on a composed statement session, C-80, the statement exactly as composed: its rows are held to the byte budget by each row's UTF-8 JSON bytes summed, where it measured their JSON text's length, a row larger than one page is refused by the host's page budget, and an answer over 1 MiB waits for the host's large-page slot.

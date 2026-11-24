@@ -18,9 +18,12 @@ import ts from "typescript";
  * and `readWorkloadProfile`, are held the same way: each is read once outside provider code, in the one agent function
  * that hands it to `runReadOnlyReading`, so a second caller cannot skip core's row, byte and time check either.
  *
- * The same paths never fall back to the writable path: under the agent, hand-over and MCP sources the only call of a
- * method named `query` is the operations-profile statistics read, which sends a statement the statement guard has
- * admitted. There the rule counts calls, since other objects on those paths carry a plain `query` field.
+ * The same paths never fall back to the writable path: under the agent, hand-over and MCP sources no function calls a
+ * method named `query`. There the rule counts calls, since other objects on those paths carry a plain `query` field.
+ * The one plain query on those paths is the operations-profile statistics read's, which sends a statement the
+ * statement guard has admitted through the host core's composed statement session (`runComposedStatement`,
+ * src/lib/api/composed-statement.ts), whose execute the legacy bridge serves with the plain query
+ * (`bridgedComposedStatements`); only that read opens one, under the operations profile.
  *
  * Both scans read the TypeScript syntax tree, so a comment or a docblock that names a method is never a finding, and
  * a finding names its file and its innermost declaration.
@@ -42,6 +45,10 @@ const AGENT_AND_MCP_SOURCES = [
   join("src", "app", "api", "mcp"),
 ];
 const STATISTICS_READ = "readStatisticsForGrounding";
+/** The legacy bridge's composed statement session, the plain query the statistics read reaches. */
+const COMPOSED_SESSION = "bridgedComposedStatements";
+/** The composed statement facade, the one opener of that session. */
+const COMPOSED_FACADE = join("src", "lib", "api", "composed-statement.ts");
 const CORE_READING = "runReadOnlyReading";
 /** Each budgeted read that is not a statement, and the one function outside provider code that reads it. */
 const BUDGETED_READS = [
@@ -387,15 +394,15 @@ describe("the protected read path", () => {
     ]);
   });
 
-  test("the agent, hand-over and MCP sources call query() only in the operations-profile statistics read", () => {
+  test("the agent, hand-over and MCP sources call query() nowhere: the statistics read sends its statement through the host core's composed statement session", () => {
     const files = AGENT_AND_MCP_SOURCES.flatMap(sourceFiles);
     expect(files.length).toBeGreaterThan(0);
     const calls = files.flatMap((file) => queryCalls(file, readFileSync(join(ROOT, file), "utf8")));
-    expect(calls.filter((call) => !call.functions.includes(STATISTICS_READ)).map(label)).toEqual([]);
-    // The one call is still there, so the rule above is not vacuous.
-    expect(calls.map((call) => `${call.file} in ${call.functions.at(-1)}`)).toEqual([
-      `${join("src", "lib", "agent", "tools.ts")} in ${STATISTICS_READ}`,
-    ]);
+    expect(calls.map(label)).toEqual([]);
+    // The plain query the statistics read reaches is the composed statement session's, so the rule above is not
+    // vacuous: the bridge's session still calls it.
+    const bridged = queryCalls(BRIDGE, readFileSync(join(ROOT, BRIDGE), "utf8"));
+    expect(bridged.some((call) => call.functions.includes(COMPOSED_SESSION))).toBe(true);
   });
 });
 
@@ -476,6 +483,20 @@ describe("the agent's statements and the hand-over replay on the host core", () 
       const profile = profiles[`${call.file} in ${call.declaration}`] as string;
       expect([call.declaration, call.names.has(profile)]).toEqual([call.declaration, true]);
     }
+  }, 60_000);
+
+  test("only the agent's statistics read opens a composed statement session, under the operations profile", () => {
+    // The session sends its statement through the plain query, unprepared, so its callers are held here: one facade,
+    // called by the one read that composes its statement under the operations profile.
+    const sessions = callsOutsideProviders(COMPOSED_SESSION);
+    expect(sessions.map((call) => `${call.file} in ${call.declaration}`)).toEqual([
+      `${COMPOSED_FACADE} in runComposedStatement`,
+    ]);
+    // The one call is in the audited invoke the statistics read hands its pipeline, which acquires its provider.
+    const facade = callsOutsideProviders("runComposedStatement");
+    expect(facade.map((call) => `${call.file} in ${call.declaration}`)).toEqual([`${AGENT_TOOLS} in invoke`]);
+    expect(facade[0]?.names.has("AGENT_OPERATIONS_PROFILE")).toBe(true);
+    expect(firstCall(declaredFunction(AGENT_TOOLS, STATISTICS_READ), "runComposedStatement")).toBeGreaterThan(-1);
   }, 60_000);
 });
 

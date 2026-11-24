@@ -210,8 +210,9 @@ function workflowBudget(input: {
      * The run loop is sequential: one read at a time. Each read counts until its
      * provider call settles, also one Studio stopped waiting for at its timeout
      * (`runReadOnlyExecute`, `runReadOnlyReading`) or at the time its call was granted
-     * (`withinGrantedTime` in `tools.ts`), through `executeAuditedOperation`'s hold, and
-     * the run's next call waits for it (`runAuditedAgentCall`).
+     * (`budgetGrantEnd` in `src/lib/api/provider-monitoring.ts`, for the grounding walk
+     * and the statistics read), through `executeAuditedOperation`'s hold, and the run's
+     * next call waits for it (`runAuditedAgentCall`).
      */
     maxConcurrentExecutions: 1,
     /** A whole drive — catalog reads, drafts, repairs, plan inspections, curated readings. */

@@ -401,8 +401,9 @@ describe("who wrote a refusal", () => {
     const agentLayer = (file: { file: string }) => file.file.startsWith(join("src", "lib", "agent") + sep);
     expect(constructed("TimeoutError", agentLayer)).toEqual([]);
     expect(constructed("StudioTimeoutRefusal", agentLayer)).toEqual([
-      // The statistics read's own time limit, raised inside the `invoke` of `readStatisticsForGrounding`.
-      `${join("src", "lib", "agent", "tools.ts")}: invoke`,
+      // The statistics read's own time limit, built by the `timeRefusal` of the grant the `invoke` of
+      // `readStatisticsForGrounding` hands `runComposedStatement`.
+      `${join("src", "lib", "agent", "tools.ts")}: timeRefusal`,
     ]);
   });
 

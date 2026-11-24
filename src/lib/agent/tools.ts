@@ -8,8 +8,10 @@
  * composed, and no provider method reached outside a registered operation: a reach
  * that skipped this module would be a defect by the milestone's own constraint, not a
  * shortcut. The one `provider.query()` is `readStatisticsForGrounding` under the
- * operations profile, which sends a statement it composes itself, and only after the
- * statement guard admits it as `sql.query.read`'s input contract would. Every
+ * operations profile, which sends a statement it composes itself, exactly as composed,
+ * through the host core's console execute (`runComposedStatement`,
+ * `src/lib/api/composed-statement.ts`), and only after the statement guard admits it as
+ * `sql.query.read`'s input contract would. Every other
  * statement goes through `runReadOnlyExecute` (`src/lib/api/read-only-execute.ts`), the
  * host core's read-only execute, which holds the provider's answer to the row, byte and
  * time budget this layer handed out.
@@ -73,6 +75,7 @@ import {
 import { z } from "zod";
 import { type GrantedObjectTree, grantedObjectTree } from "@/lib/api/object-tree";
 import { driveCaller, type GrantedRead, readGrantedHealth, readGrantedPanel } from "@/lib/api/provider-monitoring";
+import { runComposedStatement } from "@/lib/api/composed-statement";
 import { runReadOnlyExecute } from "@/lib/api/read-only-execute";
 import { type AuditReason, emitAuditEvent } from "@/lib/audit";
 import type { PanelMember } from "@/lib/db/engine-facets/monitoring";
@@ -116,6 +119,7 @@ import {
   refuseAuditedInput,
 } from "@/lib/db/operations/execution";
 import type { ExecutionActor, ExecutionPolicy, PolicyDenyCode, TargetScope } from "@/lib/db/operations/policy";
+import { holdReadOnlyRows } from "@/lib/db/operations/read-only-statement";
 import type { OperationRegistry } from "@/lib/db/operations/registry";
 import {
   admitComposedStatement,
@@ -1653,9 +1657,10 @@ export interface AuditedAgentCall {
   /**
    * A statement this call sends that its descriptor's input does not carry, set by the operations-profile statistics
    * read alone: it is audited under `db.schema.read`, whose input is empty, and sends a composed statement through
-   * `provider.query`. The statement is validated with `agentQueryReadSqlInput`, the input contract `sql.query.read`
-   * applies, before the pipeline is consulted, and a refusal is the pipeline's own input denial (`refuseAuditedInput`):
-   * audited, answered and recorded in the repair ledger as one, with nothing acquired, charged or sent.
+   * the provider's plain `query`, on the host core's composed statement session (`runComposedStatement`). The statement
+   * is validated with `agentQueryReadSqlInput`, the input contract `sql.query.read` applies, before the pipeline is
+   * consulted, and a refusal is the pipeline's own input denial (`refuseAuditedInput`): audited, answered and recorded
+   * in the repair ledger as one, with nothing acquired, charged or sent.
    */
   readonly guardedStatement?: { readonly sql: string; readonly composed?: ComposedStatementAdmission };
   readonly invoke: (
@@ -2625,32 +2630,6 @@ export async function readCatalogForGrounding(
 }
 
 /**
- * `work`, or `overrun()` once `grantedMs` has passed, whichever comes first.
- *
- * For a provider call that takes no budget of its own, so what this bounds is THE RUN and not the database: the call
- * is not cancelled, and this run simply stops waiting for it. `work` is handed to `holdUntilSettled` first, so the
- * run's `maxConcurrentExecutions` counts it until the provider's call settles, as it counts a read-only statement
- * (`runReadOnlyExecute`), and the run's next call and its end wait for it.
- */
-async function withinGrantedTime<T>(
-  work: Promise<T>,
-  grantedMs: number,
-  overrun: () => Error,
-  holdUntilSettled: AuditedInvocation["holdUntilSettled"],
-): Promise<T> {
-  holdUntilSettled(work);
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const overran = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(overrun()), grantedMs);
-  });
-  try {
-    return await Promise.race([work, overran]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/**
  * The provider object read overran the time this call was granted.
  *
  * A sentinel rather than a refusal code, for the same reason `AgentCuratedReadError`
@@ -3253,13 +3232,16 @@ export type AgentStatisticsStatement = "availability" | "estimates";
  * it is the curated family `readObjectInventoryForGrounding` belongs to, and audited the same way, under the
  * `db.schema.read` descriptor with an empty input: the statement is composed HERE from the dialect's own composers,
  * the caller names only which of the two it wants, and no text from a caller or a model reaches the engine. It is sent
- * through `provider.query`, because the operations profile opens no read-only statement path, after the statement
- * guard admits it as `sql.query.read`'s input contract admits the same statement on the execution profile (a refusal
- * is the pipeline's audited input denial, and nothing is acquired or sent), and it is bounded the way the curated
- * reads are: a result over the run's row or byte budget is refused rather than cut, and a read that
- * outlasts the time the call was granted is refused as a timeout, which `readSchemaStatistics` reports like any other
- * read that did not complete. The read counts against the run's concurrency until its provider call settles, as a
- * read-only statement does (`withinGrantedTime`).
+ * through the host core's console execute on the legacy bridge's composed statement session (`runComposedStatement`),
+ * which hands the provider's plain `query` the statement exactly as composed, because the operations profile opens no
+ * read-only statement path and the console session's prepare would append a page bound, after the statement guard
+ * admits it as `sql.query.read`'s input contract admits the same statement on the execution profile (a refusal is the
+ * pipeline's audited input denial, and nothing is acquired or sent). It is bounded the way the curated reads are: a
+ * result over the run's row budget, or over its byte budget by each row's UTF-8 JSON bytes summed, is refused rather
+ * than cut, and a read that outlasts the time the call was granted, at whatever wait of the host's, is refused as a
+ * timeout, which `readSchemaStatistics` reports like any other read that did not complete. The read counts against the
+ * run's concurrency until its provider call settles, as a read-only statement does, and a failure after Studio stopped
+ * waiting is logged under `agent/statistics` by kind and code.
  */
 export async function readStatisticsForGrounding(
   context: AgentToolContext,
@@ -3290,22 +3272,30 @@ export async function readStatisticsForGrounding(
     invoke: async (_validatedInput, budget, phase, holdUntilSettled) => {
       const provider = await context.acquireProvider(context.connection, AGENT_OPERATIONS_PROFILE);
       const startedAtMs = context.clock?.() ?? Date.now();
+      const reading = runComposedStatement(provider, {
+        statement: sql,
+        deadline: Date.now() + budget.statementTimeoutMs,
+        timeRefusal: () =>
+          new StudioTimeoutRefusal("the statistics read did not answer in time", dialect, budget.statementTimeoutMs),
+        route: STATISTICS_ROUTE,
+        holdUntilSettled,
+      });
       phase.statementSent = true;
       let read: QueryResult;
       try {
-        read = await withinGrantedTime(
-          provider.query(sql),
-          budget.statementTimeoutMs,
-          () =>
-            new StudioTimeoutRefusal("the statistics read did not answer in time", dialect, budget.statementTimeoutMs),
-          holdUntilSettled,
-        );
+        read = await reading;
       } catch (error) {
         throw asReadingFailure(error, dialect);
       }
-      if (read.rows.length > budget.maxResultRows || JSON.stringify(read.rows).length > budget.maxResultBytes) {
-        throw new AgentCuratedReadError("READING_OVER_BUDGET");
-      }
+      // Each row's UTF-8 JSON bytes summed, a bigint as its decimal text, as the read-only path measures (B172).
+      holdReadOnlyRows(read.rows, {
+        type: dialect,
+        statement: sql,
+        maxRows: budget.maxResultRows,
+        maxBytes: budget.maxResultBytes,
+        refuseRows: () => new AgentCuratedReadError("READING_OVER_BUDGET"),
+        refuseBytes: () => new AgentCuratedReadError("READING_OVER_BUDGET"),
+      });
       // The estimates are a catalog kind, so they are kept as that kind's mapped rows, mapped once the engine's own
       // answer is inside the budget, as on the read-only path; the probe is no catalog kind.
       const mapRows = statement === "estimates" ? catalogRowMapper(dialect, "statistics") : undefined;
@@ -3321,6 +3311,9 @@ export async function readStatisticsForGrounding(
 }
 
 const STATISTICS_AVAILABILITY_LABEL = "statistics availability";
+
+/** The route the statistics read's failures after Studio stopped waiting are logged under. */
+const STATISTICS_ROUTE = "agent/statistics";
 
 /** The dialect's availability probe. Asked for only where `readSchemaStatistics` found one, so its absence is a defect. */
 function availabilityProbe(dialect: DatabaseConnection["type"]): string {
@@ -3779,7 +3772,7 @@ const CURATED_READING_ROUTE = "agent/inspect_operations";
  * The reading is bounded by the time its call was granted: `budget.statementTimeoutMs`,
  * already clamped to what is left of the run, from the reading's start right after the
  * acquisition, with no slack, as the run's other bounded non-statement reads take it
- * (`withinGrantedTime`). The provider's members take no budget of their own, so the
+ * (the grounding walk and the statistics read). The provider's members take no budget of their own, so the
  * deadline bounds THE RUN rather than the database: the host core stops waiting at it
  * and the reading is refused as a timeout, while the provider's call is not cancelled.
  * Its settlement is handed to `holdUntilSettled`, so the run's `maxConcurrentExecutions`
