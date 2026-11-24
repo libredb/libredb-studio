@@ -8,13 +8,24 @@
  * The real host core is installed for the file; a case that needs a record the real core would answer only at a real
  * deadline installs a core of its own around the real one and restores it. Every double signals when the call reaches
  * it, and no assertion follows a timer. `provider-monitoring-bounds.test.ts` holds a dashboard read whose panels never
- * answer, with a real deadline, in a bounded Node child.
+ * answer, with a real deadline, in a bounded Node child, and a granted panel read and a granted health read the same.
+ *
+ * The granted reads, the agent's curated readings' facade (clause C-76), run under a deadline the caller was granted
+ * and no signal of the caller's own; their cases build each grant here.
  */
 import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import type { CallContext, HealthInfo, MonitoringPanelRequest } from "@libredb/provider-sdk/calls";
 import { EXECUTE_SLACK_MS, executeDeadline } from "@/lib/api/editor-query";
-import { monitoringOptionsRefusal, providerMonitoring, readHealthWithin } from "@/lib/api/provider-monitoring";
+import {
+  type GrantedRead,
+  monitoringOptionsRefusal,
+  providerMonitoring,
+  readGrantedHealth,
+  readGrantedPanel,
+  readHealthWithin,
+} from "@/lib/api/provider-monitoring";
+import { engineFacetsFor } from "@/lib/db/engine-facets";
 import { MONITORING_PANELS, type MonitoringPanel } from "@/lib/db/engine-facets/types";
 import { errorOutcome } from "@/lib/db/error-record";
 import { QueryCancelledError, StudioTimeoutRefusal, waitedSeconds } from "@/lib/db/errors";
@@ -681,6 +692,207 @@ describe("readHealthWithin", () => {
     expect(
       await failure(() => readHealthWithin(provider, Date.now() + 60_000, new AbortController().signal, ROUTE)),
     ).toBe(thrown);
+  });
+});
+
+/** A grant of `deadline`, its sentence drawn at run time, and a hold that records what it is handed. */
+function grantOf(deadline: number): GrantedRead & { readonly held: Promise<unknown>[] } {
+  const held: Promise<unknown>[] = [];
+  return {
+    deadline,
+    deadlineSentence: `The reading did not answer within ${marker()}.`,
+    route: ROUTE,
+    holdUntilSettled: (settled) => {
+      held.push(settled);
+    },
+    held,
+  };
+}
+
+/** A grant a minute ahead. */
+const minuteGrant = () => grantOf(Date.now() + 60_000);
+
+describe("granted reads", () => {
+  test("a granted panel read answers the panel's member through one host core panel call, on a fresh request and a context of deadline, signal and env alone", async () => {
+    const provider = providerOf();
+    const tables = [
+      {
+        schemaName: marker(),
+        tableName: marker(),
+        tableSize: "1 MB",
+        tableSizeBytes: 1,
+        totalSize: "1 MB",
+        totalSizeBytes: 1,
+      },
+    ];
+    mockOf(provider.getTableStats).mockImplementation(async () => tables);
+    const calls: { request: MonitoringPanelRequest; ctx: CallContext }[] = [];
+    const request = { panel: "tables", schema: marker() } as const;
+    const grant = minuteGrant();
+    const read = await withCore(
+      (real) => ({
+        ...real,
+        panelCall: (session, sent, ctx, ports) => {
+          calls.push({ request: sent, ctx });
+          return real.panelCall(session, sent, ctx, ports);
+        },
+      }),
+      () => readGrantedPanel(provider, request, grant),
+    );
+
+    expect(read).toEqual({ kind: "answered", member: tables });
+    expect(read.kind === "answered" && read.member).toBe(tables);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.request).toEqual(request);
+    expect(calls[0]?.request).not.toBe(request);
+    expect(Object.isFrozen(calls[0]?.request)).toBe(true);
+    expect(Object.isFrozen(request)).toBe(false);
+    expect(Reflect.ownKeys(calls[0]?.ctx ?? {}).sort()).toEqual(["deadline", "env", "signal"]);
+    expect(calls[0]?.ctx.deadline).toBe(grant.deadline);
+    expect(calls[0]?.ctx.signal.aborted).toBe(false);
+    expect(mockOf(provider.getTableStats).mock.calls).toEqual([[{ schema: request.schema }]]);
+    expect(grant.held).toEqual([]);
+  });
+
+  test("a granted panel read of a panel the session does not offer answers not-offered and reads nothing", async () => {
+    const row = engineFacetsFor("cassandra").monitoring;
+    const unoffered = MONITORING_PANELS.filter((panel) => row[panel] === "not-offered");
+    const cassandra = createMockProvider({ type: "cassandra" });
+    const lacking = Object.assign(providerOf(), { getStorageStats: undefined });
+    const grant = minuteGrant();
+
+    expect(unoffered).toContain("storage");
+    expect(await readGrantedPanel(cassandra, { panel: "storage" }, grant)).toEqual({ kind: "not-offered" });
+    expect(await readGrantedPanel(lacking, { panel: "storage" }, grant)).toEqual({ kind: "not-offered" });
+    expect(mockOf(cassandra.getStorageStats)).not.toHaveBeenCalled();
+    expect(grant.held).toEqual([]);
+  });
+
+  test("a granted read whose deadline passed before it started is StudioTimeoutRefusal not-sent and reads nothing", async () => {
+    const provider = providerOf();
+    const grant = grantOf(Date.now() - 1);
+
+    const panel = await failure(() => readGrantedPanel(provider, { panel: "storage" }, grant));
+    const health = await failure(() => readGrantedHealth(provider, grant));
+
+    for (const error of [panel, health]) {
+      expect(error).toBeInstanceOf(StudioTimeoutRefusal);
+      expect((error as Error).message).toBe(grant.deadlineSentence);
+      expect(errorOutcome(error)).toBe("not-sent");
+    }
+    expect(mockOf(provider.getStorageStats)).not.toHaveBeenCalled();
+    expect(mockOf(provider.getHealth)).not.toHaveBeenCalled();
+    expect(grant.held).toEqual([]);
+  });
+
+  test("a granted read its deadline stopped is StudioTimeoutRefusal, hands its caller the stopped call's settlement and logs a later failure by kind and code only", async () => {
+    const secret = marker();
+    const provider = providerOf();
+    const pending = Promise.withResolvers<never>();
+    mockOf(provider.getActiveSessions).mockImplementation(() => pending.promise);
+    const grant = grantOf(Date.now() + 30);
+    let settledSeen = false;
+    const warned = await warningsOf(async () => {
+      const stopped = await failure(() => readGrantedPanel(provider, { panel: "activeSessions", limit: 5 }, grant));
+
+      expect(stopped).toBeInstanceOf(StudioTimeoutRefusal);
+      expect((stopped as Error).message).toBe(grant.deadlineSentence);
+      expect(errorOutcome(stopped)).toBe("unknown");
+      expect(grant.held).toHaveLength(1);
+      const held = grant.held[0]?.then(() => {
+        settledSeen = true;
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(settledSeen).toBe(false);
+      pending.reject(new Error(secret));
+      await held;
+      expect(settledSeen).toBe(true);
+      await new Promise((resolve) => setImmediate(resolve));
+    });
+
+    expect(mockOf(provider.getActiveSessions).mock.calls).toEqual([[{ limit: 5 }]]);
+    expect(warned).toEqual([
+      [
+        "A monitoring read Studio stopped waiting for failed afterwards",
+        { route: ROUTE, facet: "panel", panel: "activeSessions", kind: "internal", code: "INTERNAL_ERROR" },
+      ],
+    ]);
+    expect(JSON.stringify(warned)).not.toContain(secret);
+  });
+
+  test("a granted read passes the provider's error as the same object", async () => {
+    const provider = providerOf();
+    const thrown = new Error(marker());
+    mockOf(provider.getSlowQueries).mockImplementation(async () => {
+      throw thrown;
+    });
+    void healthMember(provider, async () => {
+      throw thrown;
+    });
+
+    expect(await failure(() => readGrantedPanel(provider, { panel: "slowQueries", limit: 3 }, minuteGrant()))).toBe(
+      thrown,
+    );
+    expect(await failure(() => readGrantedHealth(provider, minuteGrant()))).toBe(thrown);
+  });
+
+  test("a granted read before the host core is installed throws by name before any read", () => {
+    const provider = providerOf();
+    const grant = minuteGrant();
+    const real = hostCore();
+    forgetHostCore();
+    try {
+      expect(() => readGrantedPanel(provider, { panel: "storage" }, grant)).toThrow(HostCoreBootOrderError);
+      expect(() => readGrantedHealth(provider, grant)).toThrow(HostCoreBootOrderError);
+    } finally {
+      installHostCore(real, "test");
+    }
+
+    expect(mockOf(provider.getStorageStats)).not.toHaveBeenCalled();
+    expect(mockOf(provider.getHealth)).not.toHaveBeenCalled();
+  });
+
+  test("a granted health read follows the same rules over the host core's health call", async () => {
+    const secret = marker();
+    const provider = providerOf();
+    const health = healthOf();
+    void healthMember(provider, async () => health);
+    const contexts: CallContext[] = [];
+    const grant = minuteGrant();
+    const answered = await withCore(
+      (real) => ({
+        ...real,
+        healthCall: (session, ctx, ports) => {
+          contexts.push(ctx);
+          return real.healthCall(session, ctx, ports);
+        },
+      }),
+      () => readGrantedHealth(provider, grant),
+    );
+
+    expect(answered).toBe(health);
+    expect(contexts).toHaveLength(1);
+    expect(Reflect.ownKeys(contexts[0] ?? {}).sort()).toEqual(["deadline", "env", "signal"]);
+    expect(contexts[0]?.deadline).toBe(grant.deadline);
+
+    const stalled = providerOf();
+    const pending = Promise.withResolvers<never>();
+    void healthMember(stalled, () => pending.promise);
+    const short = grantOf(Date.now() + 30);
+    const warned = await warningsOf(async () => {
+      const stopped = await failure(() => readGrantedHealth(stalled, short));
+      expect(stopped).toBeInstanceOf(StudioTimeoutRefusal);
+      expect((stopped as Error).message).toBe(short.deadlineSentence);
+      expect(errorOutcome(stopped)).toBe("unknown");
+      expect(short.held).toHaveLength(1);
+      pending.reject(new Error(secret));
+      await short.held[0];
+      await new Promise((resolve) => setImmediate(resolve));
+    });
+
+    expect(warned).toEqual([HEALTH_LATE]);
+    expect(JSON.stringify(warned)).not.toContain(secret);
+    expect(grant.held).toEqual([]);
   });
 });
 

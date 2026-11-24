@@ -3272,6 +3272,34 @@ Each route's doors, checks, scrubs and answers run where they ran.
 - test `tests/unit/lib/api/test-connection.test.ts` "checks or a health read still pending at the deadline answer the test's ConnectionError, never a caution or a degraded success"
 - test `tests/unit/lib/api/test-connection-bounds.test.ts` "a health read that never settles is cut at the test's deadline"
 
+### C-76 (normative): The agent's curated readings on the host
+
+The agent's curated readings read through the monitoring facade and the host core, C-73, on the session the legacy bridge serves, C-50, of the provider the run acquired under the operations profile.
+A panel reading is one panel call for the panel `AGENT_READING_PANELS` names for it, its request the limit or the schema the reading takes, and the health reading is one health call.
+Each call's deadline is the time its call was granted, the run's statement timeout already clamped to what is left of the run, from the reading's start, with no slack, and its signal is that deadline's alone.
+Its caller signal is one that never aborts, made for that call, since the agent's drive has no signal of its own and cannot leave a call mid-way, its cancellation being the run's checkpoint between tool calls, so the accessor, C-51, reads a call that ended as its deadline's.
+Its context carries the deadline, that signal and the empty environment, never a credential, and its request is a fresh copy.
+A panel the session does not offer answers that it is not offered, with no call, and the reading is refused as a kind the provider does not serve.
+So a run whose header predates the engine field, offered every kind, has a kind whose panel its engine does not offer refused that way, and the provider's member is never called.
+A reading its deadline stopped is `StudioTimeoutRefusal` with a sentence naming the reading and the time granted, outcome unknown, refused to the model as a repairable failure, and the stopped call's settlement is handed to the run, which counts the call as an execution until it settles.
+A refused start is `StudioTimeoutRefusal`, outcome not-sent, and no member is called.
+A provider's error passes as the same object, and a failure after the stop is logged under the reading's route, the facet and the panel by kind and code, never its text.
+A reading made before the host core is installed throws by name before any promise, so it is never taken for a provider's failure.
+
+- test `tests/unit/lib/api/provider-monitoring.test.ts` "a granted panel read answers the panel's member through one host core panel call, on a fresh request and a context of deadline, signal and env alone"
+- test `tests/unit/lib/api/provider-monitoring.test.ts` "a granted panel read of a panel the session does not offer answers not-offered and reads nothing"
+- test `tests/unit/lib/api/provider-monitoring.test.ts` "a granted read whose deadline passed before it started is StudioTimeoutRefusal not-sent and reads nothing"
+- test `tests/unit/lib/api/provider-monitoring.test.ts` "a granted read its deadline stopped is StudioTimeoutRefusal, hands its caller the stopped call's settlement and logs a later failure by kind and code only"
+- test `tests/unit/lib/api/provider-monitoring.test.ts` "a granted read passes the provider's error as the same object"
+- test `tests/unit/lib/api/provider-monitoring.test.ts` "a granted read before the host core is installed throws by name before any read"
+- test `tests/unit/lib/api/provider-monitoring.test.ts` "a granted health read follows the same rules over the host core's health call"
+- test `tests/unit/lib/api/provider-monitoring-bounds.test.ts` "a granted panel read and a granted health read whose provider never answers each end at their own deadline"
+- test `tests/unit/lib/agent/tools.test.ts` "a curated reading reads through the host core's panel call, with the reading's panel, the model's limit or the run's ceiling, and the schema where named"
+- test `tests/unit/lib/agent/tools.test.ts` "the health reading reads through the host core's health call"
+- test `tests/unit/lib/agent/tools.test.ts` "a curated reading that outlives the time its call was granted is refused as a timeout, and the run counts it until the provider's call settles"
+- test `tests/unit/lib/agent/tools.test.ts` "a provider that does not serve a kind is REFUSED, not crashed"
+- test `tests/unit/lib/agent/operations-readings.test.ts` "a context without an engine on kafka asking for a kind whose panel kafka's row does not offer is refused as KIND_UNSUPPORTED_BY_PROVIDER, its member never called"
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:
@@ -3362,4 +3390,6 @@ Against this contract's earlier text:
 - An engine's TLS offer lists the TLS modes the engine takes, M-73, where it was a word offering every mode of Studio's or none.
 - Each engine's connection string is a projection of the declarations, M-15 and M-74, each named function bound by Studio's connection string function table, where each engine kept a row beside its provider.
 - Each engine's commit keyword, consent deadline and fence aliases are a projection of the declarations, M-15 and M-75, where each engine kept an execution UI row beside its provider and Studio kept one table of fence tags.
+- The agent's curated readings read through the host core's panel and health calls, C-76, each within the time its call was granted, where they called the provider's members with no bound.
+- A run whose header predates the engine field, on an engine that does not offer a kind's panel, such as Apache Kafka or SQLite, has that reading refused as a kind its provider does not serve, C-76, where it called the provider's member.
 - An engine's agent reading is refused only where its package does not offer the call that serves it, C-4, where every reading was refused as having no call, so `engine-facet-without-call` left the definition rules; a reading whose monitoring panel its engine does not offer is refused, M-76.

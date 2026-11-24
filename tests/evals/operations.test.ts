@@ -1,9 +1,11 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
 import { DEPARTMENTS, type EvalEngine, type EvalRun, openEvalRun } from "../isolated/fixtures/agent-eval-harness";
 import { type Turn, answersProse, callsTool, promptText, reportOn } from "../isolated/fixtures/agent-scripted-model";
 import { chatToolCallStream } from "../isolated/fixtures/agent-transport";
 import { QueryError } from "@/lib/db/errors";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 
 /**
  * The `operations` template, driven end to end, including on an engine outside
@@ -20,6 +22,10 @@ import { QueryError } from "@/lib/db/errors";
  */
 
 const runs: EvalRun[] = [];
+// The readings run through the host core's monitoring calls, so the file installs one for its runs.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
+
 let consoleSpy: ReturnType<typeof spyOn<Console, "log">>;
 
 beforeEach(() => {
@@ -64,12 +70,19 @@ const reads = (kind: string, extra: Record<string, unknown> = {}) =>
 
 const operationsArc = [reads("sessions"), reportOn("One session has been blocked on a lock for over four minutes.")];
 
+/**
+ * The arc on `engine`, its reading one the engine's provider serves: SQLite's session offers no sessions panel, so its
+ * arc reads storage, whose panel it offers.
+ */
+const arcOn = (engine: EvalEngine) =>
+  engine === "sqlite" ? [reads("storage"), reportOn("The database file is ninety-one percent full.")] : operationsArc;
+
 describe("the operations arc, on every engine including one agent mode otherwise refuses", () => {
   for (const engine of ["postgres", "sqlite", "mysql"] as const) {
     test(`${engine}: takes a reading, settles it as an artifact, and answers`, async () => {
       const run = await open(engine);
 
-      const drive = await run.drive(operationsArc);
+      const drive = await run.drive(arcOn(engine));
 
       // `context-captured` appears exactly where a catalog can be read (#411): the two
       // engines that supply a `catalogCapture` ground the run before its first turn, and every
@@ -101,7 +114,7 @@ describe("the operations arc, on every engine including one agent mode otherwise
       // this one.
       const run = await open(engine);
 
-      const drive = await run.drive(operationsArc);
+      const drive = await run.drive(arcOn(engine));
 
       expect(drive.modelStatements).toEqual([]);
       // And the server's own reads are the grounding reads and nothing else: on MySQL

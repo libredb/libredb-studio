@@ -1537,14 +1537,17 @@ no inventory, and an ungrounded one is never handed a sentence saying it has one
 
 `inspect_operations` takes a **kind** and nothing a model wrote:
 
-| Kind | Provider method | What comes back |
+| Kind | Host call that serves it | What comes back |
 | --- | --- | --- |
-| `sessions` | `getActiveSessions` | Who is connected, what each is running, for how long, and whether it is blocked |
-| `slow-queries` | `getSlowQueries` | The statements the engine reports as costly, with call counts and times |
-| `table-stats` | `getTableStats` | Row counts and sizes, plus dead rows where the engine tracks them |
-| `index-stats` | `getIndexStats` | Size and scan counts, so an unused index is visible |
-| `storage` | `getStorageStats` | Space and its growth |
-| `health` | `getHealth` | One row of connection, size and cache figures |
+| `sessions` | `monitoring.panel`, the `activeSessions` panel | Who is connected, what each is running, for how long, and whether it is blocked |
+| `slow-queries` | `monitoring.panel`, the `slowQueries` panel | The statements the engine reports as costly, with call counts and times |
+| `table-stats` | `monitoring.panel`, the `tables` panel | Row counts and sizes, plus dead rows where the engine tracks them |
+| `index-stats` | `monitoring.panel`, the `indexes` panel | Size and scan counts, so an unused index is visible |
+| `storage` | `monitoring.panel`, the `storage` panel | Space and its growth |
+| `health` | `health` | One row of connection, size and cache figures |
+
+Each reading is one host core call on the bridged session of the provider the run acquired under the operations profile (`readGrantedPanel` and `readGrantedHealth` in `src/lib/api/provider-monitoring.ts`), its panel the one `AGENT_READING_PANELS` of `@libredb/provider-sdk/calls` names for the kind.
+Over the legacy bridge each panel is still read through the provider's own member, `getActiveSessions`, `getSlowQueries`, `getTableStats`, `getIndexStats` or `getStorageStats`, and health through `getHealth`.
 
 **A run is offered only the kinds its engine offers agent mode.**
 Each engine's `ENGINE_FACETS` row declares them as `agentReadings`: the kind of each monitoring panel the row offers whose read the agent handle answers, and `health` unless the agent handle withholds it.
@@ -1552,6 +1555,7 @@ Each engine's `ENGINE_FACETS` row declares them as `agentReadings`: the kind of 
 A call naming any other kind is refused by name, `unavailable` with `READING_NOT_OFFERED`, before a provider is acquired, the budget is charged or the repair ledger records anything, and the step settles as a `not-sent` refusal whose detail names the kind and the readings the engine offers.
 The handler parses with the six-kind contract on purpose: a native call whose kind fails the per-engine enum still reaches it, so the model hears that refusal rather than a generic `INVALID_TOOL_INPUT`.
 A run recorded before the engine field is offered the six kinds it was opened with.
+On an engine whose row does not offer a kind's panel, Apache Kafka or SQLite among them, such a run's reading of that kind is refused with `KIND_UNSUPPORTED_BY_PROVIDER`, since the host core refuses a panel its session's engine does not offer; it used to call the provider's member.
 An engine that offers none does not open this workflow for an agent run: the operations variant requires `agent-readings`, which holds on every engine whose row offers a reading, so Start answers `400` with that requirement's sentence on MQTT, Sparkplug B, OPC UA and MTConnect, and a header recording such a run is refused when its ledger is read; plan mode still drafts there.
 The run's rules name no kind, and the `no-reading` notice names the offered ones.
 
@@ -1568,7 +1572,8 @@ Four properties carry the template:
   route and the rail's "Show result" all work unchanged. The columns are **declared per kind**, not
   derived from the first row, so an empty reading still says what it would have contained.
 - **A provider that cannot serve a kind is refused, not crashed.** Three shapes, all typed. A
-  missing method and an over-large reading are `reading-refused` refusals carrying
+  kind whose panel the provider's session does not offer, which the bridge answers for a provider
+  that lacks the panel's member, and an over-large reading are `reading-refused` refusals carrying
   `KIND_UNSUPPORTED_BY_PROVIDER` and `READING_OVER_BUDGET` — refusals rather than run-loop outcomes
   because by then the pipeline has allowed the call, a statement of the run's budget is spent and an
   execution is on the audit stream, so a step that settled as "never attempted" would contradict the
@@ -1579,6 +1584,11 @@ Four properties carry the template:
   `DatabaseError` is wrapped at the seam rather than allowed to propagate and end the run `internal`.
   An over-large reading is refused rather than truncated, because a partial operational reading is a
   misleading one.
+- **A reading is bounded by the time its call was granted.**
+  Its deadline is the statement timeout the run's deadline granted the call, from the reading's start right after the acquisition, with no slack.
+  A reading that outlives it is refused as a timeout, a repairable `database-error` refusal in Studio's own sentence naming the reading and the time, while the provider's call is not cancelled.
+  The run counts that call as an execution until it settles, so the run's next call and its end wait for it.
+  The agent's drive has no signal of its own, so a stopped reading is always its deadline's, never a cancellation.
 - **`limit` and `schema` are applied by the server, not merely passed on.** Only
   `getActiveSessions` and `getSlowQueries` take a limit at all, and four of the curated methods take
   no options whatsoever (`oracle.getTableStats`, `mssql.getTableStats`, `mssql.getIndexStats`,

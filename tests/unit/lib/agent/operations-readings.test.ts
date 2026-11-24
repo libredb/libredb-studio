@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { modelToolJsonSchema } from "@/lib/agent/model-tool-schema";
@@ -18,14 +18,21 @@ import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { CURATED_OPERATION_KINDS, createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import type { DatabaseType, QueryResult } from "@/lib/types";
 import { TABLE_LABELS } from "../../../fixtures/provider-labels";
 
 /**
  * The curated readings agent mode is offered (FND-4 slice 3): `inspect_operations` offers each run exactly the kinds
  * its recorded engine's `ENGINE_FACETS` row declares, says nothing about every engine, and refuses any other kind by
- * name before it acquires a provider, charges the budget or makes a repair entry. No module is mocked here.
+ * name before it acquires a provider, charges the budget or makes a repair entry. No module is mocked here; a reading
+ * that is taken runs through the host core, which the file installs, on the bridged session of a provider of the
+ * connection's type.
  */
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 type OperationsRun = Pick<AgentRunRecord, "mode" | "workflowType" | "statementLanguage" | "engine">;
 
@@ -131,6 +138,7 @@ function readingHarness(engine: DatabaseType | undefined, type: DatabaseType) {
     activeSessions: [],
   }));
   const provider = {
+    type,
     getActiveSessions: read,
     getSlowQueries: read,
     getTableStats: read,
@@ -160,7 +168,7 @@ function readingHarness(engine: DatabaseType | undefined, type: DatabaseType) {
     acquireProvider,
     clock: () => 1_000,
   };
-  return { context, acquireProvider, tracker, repairs };
+  return { context, acquireProvider, tracker, repairs, read };
 }
 
 const REFUSED: readonly (readonly [DatabaseType, string, string])[] = [
@@ -209,12 +217,26 @@ describe("inspectOperationsTool on a run's recorded engine", () => {
   });
 
   test("a context without an engine reads every kind, as a run recorded before the field does", async () => {
-    const h = readingHarness(undefined, "kafka");
+    // A PostgreSQL connection, whose provider's session offers the sessions panel the reading is read through.
+    const h = readingHarness(undefined, "postgres");
 
     const outcome = await inspectOperationsTool(h.context, { kind: "sessions" });
 
     expect(outcome.kind).toBe("completed");
     expect(h.acquireProvider).toHaveBeenCalledTimes(1);
+  });
+
+  test("a context without an engine on kafka asking for a kind whose panel kafka's row does not offer is refused as KIND_UNSUPPORTED_BY_PROVIDER, its member never called", async () => {
+    // A run recorded before the engine field is offered every kind, but its reading is read through the host core,
+    // which refuses a panel the session's engine does not offer, so the provider's own member is never reached.
+    const h = readingHarness(undefined, "kafka");
+
+    const outcome = await inspectOperationsTool(h.context, { kind: "sessions" });
+
+    if (outcome.kind !== "refused") throw new Error("expected refused");
+    expect(outcome.refusal).toMatchObject({ class: "reading-refused", reasonCode: "KIND_UNSUPPORTED_BY_PROVIDER" });
+    expect(h.acquireProvider).toHaveBeenCalledTimes(1);
+    expect(h.read).not.toHaveBeenCalled();
   });
 
   test("a kind that is no reading at all is still refused as invalid input, before the engine is asked", async () => {

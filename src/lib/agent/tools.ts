@@ -64,8 +64,11 @@
  * imported, so the profile literal still cannot drift from the factory's vocabulary.
  */
 
+import { AGENT_READING_PANELS, type HealthInfo, type MonitoringPanelRequest } from "@libredb/provider-sdk/calls";
 import { z } from "zod";
+import { type GrantedRead, readGrantedHealth, readGrantedPanel } from "@/lib/api/provider-monitoring";
 import { type AuditReason, emitAuditEvent } from "@/lib/audit";
+import type { PanelMember } from "@/lib/db/engine-facets/monitoring";
 import type { ExecutionProfile } from "@/lib/db/factory";
 import {
   ConnectionError,
@@ -75,6 +78,7 @@ import {
   QueryError,
   RefusedBeforeSendError,
   StudioTimeoutRefusal,
+  waitedSeconds,
 } from "@/lib/db/errors";
 import type { ErrorKind } from "@libredb/provider-sdk/errors";
 import type { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
@@ -3508,19 +3512,21 @@ export async function runReadQueryTool(
 const instant = (value: Date | undefined): string | null => (value === undefined ? null : value.toISOString());
 
 /**
- * One curated reading: the provider method that answers it, the columns it projects
- * to, and the name it is fenced under.
+ * One curated reading: the host call that answers it, the columns it projects to, and
+ * the name it is fenced under.
  *
  * The columns are DECLARED rather than derived from the first row, and that is what
  * makes the artifact a `QueryResult` a reader can trust: a reading that came back
  * empty still says what it would have contained, so `fields` is never a function of
  * whether the engine happened to have anything to report.
  *
- * `method` is named separately from `read` so a provider that does not actually carry
- * the method can be refused before it is called. Every provider DECLARES all six on
- * the interface, so this is the defensive case rather than the common one — but a
- * `TypeError` out of this layer would end a run, and the workflow's whole promise is
- * that an engine which cannot answer says so.
+ * Every reading but `health` is one monitoring panel call through the host core, its
+ * panel the one `AGENT_READING_PANELS` names for it, and `health` is the host core's
+ * health call (`readGrantedPanel` and `readGrantedHealth` in
+ * src/lib/api/provider-monitoring.ts). A panel the provider's session does not offer
+ * answers `not-offered` with no call, so a provider that cannot serve a kind is
+ * refused by name rather than crashed: the workflow's whole promise is that an engine
+ * which cannot answer says so.
  *
  * `schemaColumn` is what makes the `schema` selector mean the same thing on every
  * engine. The provider methods are asked to narrow where their signature allows it,
@@ -3533,7 +3539,6 @@ const instant = (value: Date | undefined): string | null => (value === undefined
  */
 interface CuratedReading {
   readonly label: string;
-  readonly method: keyof DatabaseProvider;
   readonly fields: readonly string[];
   /** The projected column `input.schema` narrows on, or absent when the reading has no schema dimension. */
   readonly schemaColumn?: string;
@@ -3547,17 +3552,82 @@ interface CuratedReading {
    * declaration can say so (#1085 6.2).
    */
   readonly scope?: (labels: ProviderLabels) => string | undefined;
+  /**
+   * The reading's host call within `grant`, started synchronously, so a read made before the host core is installed
+   * throws by name rather than as the promise's rejection.
+   */
   readonly read: (
     provider: DatabaseProvider,
     input: AgentCuratedReadInput,
     limit: number,
-  ) => Promise<Record<string, unknown>[]>;
+    grant: GrantedRead,
+  ) => Promise<CuratedRows>;
+}
+
+/** What a curated reading's host call answered: its projected rows, or that the session does not offer its panel. */
+type CuratedRows =
+  | { readonly kind: "answered"; readonly rows: Record<string, unknown>[] }
+  | { readonly kind: "not-offered" };
+
+const NOT_OFFERED: CuratedRows = Object.freeze({ kind: "not-offered" });
+
+/** One panel call for `request` within `grant`, its member projected by `project`. */
+function panelRows<R extends MonitoringPanelRequest>(
+  provider: DatabaseProvider,
+  request: R,
+  grant: GrantedRead,
+  project: (member: PanelMember<R["panel"]>) => Record<string, unknown>[],
+): Promise<CuratedRows> {
+  return readGrantedPanel(provider, request, grant).then((read) =>
+    read.kind === "answered" ? { kind: "answered", rows: project(read.member) } : NOT_OFFERED,
+  );
+}
+
+/** The request of a table or index panel: the schema only where the model named one. */
+function schemaRequest<P extends "tables" | "indexes">(panel: P, input: AgentCuratedReadInput) {
+  return input.schema === undefined ? { panel } : { panel, schema: input.schema };
+}
+
+/**
+ * The MEASURED scalars of a health answer only. `HealthInfo` also nests its own slow-query and session
+ * lists, and those are the two readings that have their own kind — projecting them
+ * here as well would give one fact two shapes and two ways to be cited. Their
+ * LENGTHS used to travel here, and that was the same defect one size down: every
+ * provider that fills either list caps it (5 slow-query rows on MySQL's
+ * `HEALTH_SLOW_QUERY_LIMIT`, PostgreSQL's `LIMIT 5`, SQL Server's `TOP 5`, Oracle's
+ * `ROWNUM <= 5`, MongoDB's `.limit(5)`, Couchbase and ClickHouse `{ limit: 5 }`; and
+ * 10 sessions on those seven plus Druid, 10 on BOTH of Trino's — one
+ * `TRINO_HEALTH_LIMIT` serves its slow queries and its sessions alike — and 50 on
+ * Cassandra's `DEFAULT_SESSION_LIMIT`), and none of the slow-query
+ * statements carries a slowness predicate at all — "slow" is the ORDERING. So the
+ * length was the cap, permanently, on any server with that many digests; and where
+ * the source could not be read it was 0, or 1, or 2 (PostgreSQL and MongoDB still
+ * push a sentence wearing a row's clothes, and SQLite's list is two integrity rows).
+ * No name fixes a figure with no referent: the `slow-queries` and `sessions` kinds
+ * carry those facts with their rows visible, which is the only form in which they
+ * mean anything (#513).
+ */
+function healthRows(health: HealthInfo): CuratedRows {
+  return {
+    kind: "answered",
+    rows: [
+      {
+        // `HealthInfo.activeConnections` is absent when the engine cannot measure
+        // it (ScyllaDB has no `system_views` keyspace; a denied Cassandra grant
+        // reads the same way). `null` here, the same convention this projection
+        // uses for every other optional reading above, tells the model the count
+        // is not published rather than reporting a fabricated 0.
+        activeConnections: health.activeConnections ?? null,
+        databaseSize: health.databaseSize,
+        cacheHitRatio: health.cacheHitRatio,
+      },
+    ],
+  };
 }
 
 const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> = Object.freeze({
   sessions: {
     label: "active sessions",
-    method: "getActiveSessions",
     fields: [
       "pid",
       "user",
@@ -3572,41 +3642,43 @@ const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> =
       "waitEvent",
       "blocked",
     ],
-    read: async (provider, _input, limit) =>
-      (await provider.getActiveSessions({ limit })).map((session) => ({
-        pid: session.pid,
-        user: session.user,
-        database: session.database,
-        applicationName: session.applicationName ?? null,
-        clientAddr: session.clientAddr ?? null,
-        state: session.state,
-        query: session.query,
-        duration: session.duration,
-        durationMs: session.durationMs,
-        waitEventType: session.waitEventType ?? null,
-        waitEvent: session.waitEvent ?? null,
-        blocked: session.blocked ?? false,
-      })),
+    read: (provider, _input, limit, grant) =>
+      panelRows(provider, { panel: AGENT_READING_PANELS.sessions, limit }, grant, (sessions) =>
+        sessions.map((session) => ({
+          pid: session.pid,
+          user: session.user,
+          database: session.database,
+          applicationName: session.applicationName ?? null,
+          clientAddr: session.clientAddr ?? null,
+          state: session.state,
+          query: session.query,
+          duration: session.duration,
+          durationMs: session.durationMs,
+          waitEventType: session.waitEventType ?? null,
+          waitEvent: session.waitEvent ?? null,
+          blocked: session.blocked ?? false,
+        })),
+      ),
   },
   "slow-queries": {
     label: "slow queries",
-    method: "getSlowQueries",
     fields: ["queryId", "query", "calls", "totalTime", "avgTime", "minTime", "maxTime", "rows"],
-    read: async (provider, _input, limit) =>
-      (await provider.getSlowQueries({ limit })).map((entry) => ({
-        queryId: entry.queryId ?? null,
-        query: entry.query,
-        calls: entry.calls,
-        totalTime: entry.totalTime,
-        avgTime: entry.avgTime,
-        minTime: entry.minTime ?? null,
-        maxTime: entry.maxTime ?? null,
-        rows: entry.rows,
-      })),
+    read: (provider, _input, limit, grant) =>
+      panelRows(provider, { panel: AGENT_READING_PANELS["slow-queries"], limit }, grant, (entries) =>
+        entries.map((entry) => ({
+          queryId: entry.queryId ?? null,
+          query: entry.query,
+          calls: entry.calls,
+          totalTime: entry.totalTime,
+          avgTime: entry.avgTime,
+          minTime: entry.minTime ?? null,
+          maxTime: entry.maxTime ?? null,
+          rows: entry.rows,
+        })),
+      ),
   },
   "table-stats": {
     label: "table statistics",
-    method: "getTableStats",
     schemaColumn: "schemaName",
     scope: (labels) => labels.tableStatsCaption,
     fields: [
@@ -3622,24 +3694,25 @@ const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> =
       "lastAnalyze",
       "bloatRatio",
     ],
-    read: async (provider, input) =>
-      (await provider.getTableStats(input.schema === undefined ? {} : { schema: input.schema })).map((table) => ({
-        schemaName: table.schemaName,
-        tableName: table.tableName,
-        rowCount: table.rowCount ?? null,
-        deadRowCount: table.deadRowCount ?? null,
-        tableSize: table.tableSize,
-        tableSizeBytes: table.tableSizeBytes,
-        indexSizeBytes: table.indexSizeBytes ?? null,
-        totalSizeBytes: table.totalSizeBytes,
-        lastVacuum: instant(table.lastVacuum),
-        lastAnalyze: instant(table.lastAnalyze),
-        bloatRatio: table.bloatRatio ?? null,
-      })),
+    read: (provider, input, _limit, grant) =>
+      panelRows(provider, schemaRequest(AGENT_READING_PANELS["table-stats"], input), grant, (tables) =>
+        tables.map((table) => ({
+          schemaName: table.schemaName,
+          tableName: table.tableName,
+          rowCount: table.rowCount ?? null,
+          deadRowCount: table.deadRowCount ?? null,
+          tableSize: table.tableSize,
+          tableSizeBytes: table.tableSizeBytes,
+          indexSizeBytes: table.indexSizeBytes ?? null,
+          totalSizeBytes: table.totalSizeBytes,
+          lastVacuum: instant(table.lastVacuum),
+          lastAnalyze: instant(table.lastAnalyze),
+          bloatRatio: table.bloatRatio ?? null,
+        })),
+      ),
   },
   "index-stats": {
     label: "index statistics",
-    method: "getIndexStats",
     schemaColumn: "schemaName",
     fields: [
       "schemaName",
@@ -3653,84 +3726,62 @@ const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> =
       "scans",
       "usageRatio",
     ],
-    read: async (provider, input) =>
-      (await provider.getIndexStats(input.schema === undefined ? {} : { schema: input.schema })).map((index) => ({
-        schemaName: index.schemaName,
-        tableName: index.tableName,
-        indexName: index.indexName,
-        indexType: index.indexType ?? null,
-        columns: index.columns.join(", "),
-        isUnique: index.isUnique,
-        isPrimary: index.isPrimary,
-        indexSizeBytes: index.indexSizeBytes ?? null,
-        scans: index.scans,
-        usageRatio: index.usageRatio ?? null,
-      })),
+    read: (provider, input, _limit, grant) =>
+      panelRows(provider, schemaRequest(AGENT_READING_PANELS["index-stats"], input), grant, (indexes) =>
+        indexes.map((index) => ({
+          schemaName: index.schemaName,
+          tableName: index.tableName,
+          indexName: index.indexName,
+          indexType: index.indexType ?? null,
+          columns: index.columns.join(", "),
+          isUnique: index.isUnique,
+          isPrimary: index.isPrimary,
+          indexSizeBytes: index.indexSizeBytes ?? null,
+          scans: index.scans,
+          usageRatio: index.usageRatio ?? null,
+        })),
+      ),
   },
   storage: {
     label: "storage",
-    method: "getStorageStats",
     fields: ["name", "location", "size", "sizeBytes", "usagePercent", "walSizeBytes"],
-    read: async (provider) =>
-      (await provider.getStorageStats()).map((store) => ({
-        name: store.name,
-        location: store.location ?? null,
-        size: store.size,
-        sizeBytes: store.sizeBytes,
-        usagePercent: store.usagePercent ?? null,
-        walSizeBytes: store.walSizeBytes ?? null,
-      })),
+    read: (provider, _input, _limit, grant) =>
+      panelRows(provider, { panel: AGENT_READING_PANELS.storage }, grant, (stores) =>
+        stores.map((store) => ({
+          name: store.name,
+          location: store.location ?? null,
+          size: store.size,
+          sizeBytes: store.sizeBytes,
+          usagePercent: store.usagePercent ?? null,
+          walSizeBytes: store.walSizeBytes ?? null,
+        })),
+      ),
   },
   health: {
     label: "health",
-    method: "getHealth",
-    // The MEASURED scalars only. `HealthInfo` also nests its own slow-query and session
-    // lists, and those are the two readings that have their own kind — projecting them
-    // here as well would give one fact two shapes and two ways to be cited. Their
-    // LENGTHS used to travel here, and that was the same defect one size down: every
-    // provider that fills either list caps it (5 slow-query rows on MySQL's
-    // `HEALTH_SLOW_QUERY_LIMIT`, PostgreSQL's `LIMIT 5`, SQL Server's `TOP 5`, Oracle's
-    // `ROWNUM <= 5`, MongoDB's `.limit(5)`, Couchbase and ClickHouse `{ limit: 5 }`; and
-    // 10 sessions on those seven plus Druid, 10 on BOTH of Trino's — one
-    // `TRINO_HEALTH_LIMIT` serves its slow queries and its sessions alike — and 50 on
-    // Cassandra's `DEFAULT_SESSION_LIMIT`), and none of the slow-query
-    // statements carries a slowness predicate at all — "slow" is the ORDERING. So the
-    // length was the cap, permanently, on any server with that many digests; and where
-    // the source could not be read it was 0, or 1, or 2 (PostgreSQL and MongoDB still
-    // push a sentence wearing a row's clothes, and SQLite's list is two integrity rows).
-    // No name fixes a figure with no referent: the `slow-queries` and `sessions` kinds
-    // carry those facts with their rows visible, which is the only form in which they
-    // mean anything (#513).
     fields: ["activeConnections", "databaseSize", "cacheHitRatio"],
-    read: async (provider) => {
-      const health = await provider.getHealth();
-      return [
-        {
-          // `HealthInfo.activeConnections` is absent when the engine cannot measure
-          // it (ScyllaDB has no `system_views` keyspace; a denied Cassandra grant
-          // reads the same way). `null` here, the same convention this projection
-          // uses for every other optional reading above, tells the model the count
-          // is not published rather than reporting a fabricated 0.
-          activeConnections: health.activeConnections ?? null,
-          databaseSize: health.databaseSize,
-          cacheHitRatio: health.cacheHitRatio,
-        },
-      ];
-    },
+    read: (provider, _input, _limit, grant) => readGrantedHealth(provider, grant).then(healthRows),
   },
 } satisfies Record<CuratedOperationKind, CuratedReading>);
 
+/** The route a curated reading's late failures are logged under. */
+const CURATED_READING_ROUTE = "agent/inspect_operations";
+
 /**
- * Calls the one curated method the reading names and projects what it returns.
+ * Calls the one host call the reading names and projects what it returns.
  *
- * HONEST LIMIT, and it is a real weakening of this run's bounds rather than an
- * oversight: `budget.statementTimeoutMs` cannot be enforced here. On the SQL path it
- * becomes PostgreSQL's `SET LOCAL statement_timeout`, because a statement is what is
- * being sent; `getSlowQueries(options?: {limit?})` and its five siblings take no
- * budget at all, so the deadline's clamp is ADVISORY on this path. What still binds
- * is everything else: the run deadline decides whether the call is admitted, the
- * statement budget counts it, and the row and byte caps are applied below by this
- * projection instead of by the engine.
+ * The reading is bounded by the time its call was granted: `budget.statementTimeoutMs`,
+ * already clamped to what is left of the run, from the reading's start right after the
+ * acquisition, with no slack, as the run's other bounded non-statement reads take it
+ * (`withinGrantedTime`). The provider's members take no budget of their own, so the
+ * deadline bounds THE RUN rather than the database: the host core stops waiting at it
+ * and the reading is refused as a timeout, while the provider's call is not cancelled.
+ * Its settlement is handed to `holdUntilSettled`, so the run's `maxConcurrentExecutions`
+ * counts it until the provider's call settles, as it counts a read-only statement. The
+ * agent's drive has no signal of its own, so a stopped reading is always the deadline's
+ * (its caller signal, `driveCaller`, never aborts). What else binds: the run deadline decides
+ * whether the call is admitted, the statement budget counts it, and the row and byte
+ * caps are applied below by this projection instead of by the engine.
  *
  * The two BOUNDS both REFUSE, and the only CUT there is was asked for. `maxResultRows`
  * and `maxResultBytes` are this run's ceilings rather than anything the model named, so
@@ -3757,13 +3808,17 @@ async function runCuratedRead(
   validatedInput: unknown,
   budget: ExecutionBudget,
   phase: { statementSent: boolean },
+  holdUntilSettled: AuditedInvocation["holdUntilSettled"],
 ): Promise<QueryResult> {
   const input = validatedInput as AgentCuratedReadInput;
   const reading = CURATED_READINGS[input.kind];
   const provider = await context.acquireProvider(context.connection, AGENT_OPERATIONS_PROFILE);
-  if (typeof provider[reading.method] !== "function") {
-    throw new AgentCuratedReadError("KIND_UNSUPPORTED_BY_PROVIDER");
-  }
+  const grant: GrantedRead = {
+    deadline: Date.now() + budget.statementTimeoutMs,
+    deadlineSentence: `The ${reading.label} reading did not answer within the ${waitedSeconds(budget.statementTimeoutMs)} its call was granted, so Studio stopped waiting for it.`,
+    route: CURATED_READING_ROUTE,
+    holdUntilSettled,
+  };
 
   // A model-supplied `limit` is a REQUEST, and only a limit BELOW this run's ceiling is
   // one: a wider one is a request for rows the run may not carry, which the budget has to
@@ -3777,12 +3832,17 @@ async function runCuratedRead(
   // sets it: anything that threw while we were still connecting is not the model's.
   phase.statementSent = true;
 
-  let read: Record<string, unknown>[];
+  // Started outside the `try`, so only the call's own failure is read as the reading's: a host core read before its
+  // install throws here by name and is never taken for a provider's error.
+  const started = reading.read(provider, input, limit, grant);
+  let answered: CuratedRows;
   try {
-    read = await reading.read(provider, input, limit);
+    answered = await started;
   } catch (error) {
     throw asReadingFailure(error, context.connection.type);
   }
+  if (answered.kind === "not-offered") throw new AgentCuratedReadError("KIND_UNSUPPORTED_BY_PROVIDER");
+  const read = answered.rows;
 
   const narrowed =
     reading.schemaColumn === undefined || input.schema === undefined
@@ -3870,7 +3930,8 @@ export async function inspectOperationsTool(context: AgentToolContext, input: un
     fingerprintSource: `operations:${selector.kind}:${selector.limit ?? ""}:${selector.schema ?? ""}`,
     input: selector,
     label: scope === undefined ? reading.label : `${reading.label} (${scope})`,
-    invoke: (validatedInput, budget, phase) => runCuratedRead(context, validatedInput, budget, phase),
+    invoke: (validatedInput, budget, phase, holdUntilSettled) =>
+      runCuratedRead(context, validatedInput, budget, phase, holdUntilSettled),
     ...(selector.schema === undefined ? {} : { target: { schema: selector.schema } }),
   });
 }

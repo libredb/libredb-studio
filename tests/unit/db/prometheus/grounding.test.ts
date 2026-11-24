@@ -5,7 +5,7 @@
  * kind out with that sentence and keeps every other kind, and the Operate run's storage reading is a refusal the
  * model reads rather than a server it could not reach, which would end the run with no report.
  */
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { captureContextSnapshot } from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
@@ -19,6 +19,8 @@ import type { PrometheusEndpoint } from "@/lib/db/providers/timeseries/prometheu
 import { PrometheusProvider } from "@/lib/db/providers/timeseries/prometheus/index";
 import type { InboundResponse, SendRequest } from "@/lib/db/providers/timeseries/prometheus/request";
 import type { ProviderExecutionContext, QueryResult } from "@/lib/db/types";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import type { DatabaseConnection } from "@/lib/types";
 import { capture, captureVm } from "../../../helpers/prometheus-fixtures";
 
@@ -153,6 +155,10 @@ describe("grounding on a server that does not serve the scrape pool listing", ()
 });
 
 describe("an Operate run's storage reading on a server that does not serve the runtime read", () => {
+  // The readings reach the provider through the host core's monitoring calls.
+  beforeAll(() => installHostCore(createHostCore(), "test"));
+  afterAll(forgetHostCore);
+
   test("is a refusal the model reads, so the run goes on to its report", async () => {
     const provider = await opened(OPERATIONS);
 

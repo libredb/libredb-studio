@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { asSchema } from "ai";
 import { z } from "zod";
 import {
@@ -100,6 +100,13 @@ import { typeIdRefusal, unknownTypeSentence } from "@/lib/db/type-id";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
 import { TABLE_LABELS } from "../../../fixtures/provider-labels";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
+import type { MonitoringPanelRequest } from "@libredb/provider-sdk/calls";
+import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The curated readings run through the host core's monitoring calls, so the file installs one for its cases.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /**
  * The tool layer over the M1 operations (#329 T6).
@@ -5873,7 +5880,10 @@ function curatedHarness(
     })),
   };
 
-  const provider = { ...curated, ...providerOverrides } as unknown as DatabaseProvider;
+  // The readings reach the provider through the host core's panel and health calls on its bridged session, whose
+  // panels are its engine's row: a PostgreSQL provider's, which offers every panel, so each kind's member is reached,
+  // while the run's connection stays the engine with no read-only statement path.
+  const provider = { type: "postgres", ...curated, ...providerOverrides } as unknown as DatabaseProvider;
   const acquireProvider = mock(async () => provider);
   const tracker = new ExecutionBudgetTracker();
   const artifacts = new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 });
@@ -5924,6 +5934,114 @@ function curatedHarness(
 }
 
 describe("inspectOperationsTool — what the engine says about ITSELF", () => {
+  /** Runs `body` with a core that records each panel request and counts each health call, then restores the real one. */
+  async function recordingCore<T>(body: () => Promise<T>) {
+    const panels: MonitoringPanelRequest[] = [];
+    let healthCalls = 0;
+    const real = hostCore();
+    const recording: HostCore = {
+      ...real,
+      panelCall: (session, request, ctx, ports) => {
+        panels.push(request);
+        return real.panelCall(session, request, ctx, ports);
+      },
+      healthCall: (session, ctx, ports) => {
+        healthCalls += 1;
+        return real.healthCall(session, ctx, ports);
+      },
+    };
+    forgetHostCore();
+    installHostCore(recording, "test");
+    try {
+      const answered = await body();
+      return { answered, panels, healthCalls: () => healthCalls };
+    } finally {
+      forgetHostCore();
+      installHostCore(real, "test");
+    }
+  }
+
+  test("a curated reading reads through the host core's panel call, with the reading's panel, the model's limit or the run's ceiling, and the schema where named", async () => {
+    const h = curatedHarness();
+    const ceiling = AGENT_WORKFLOW_BUDGETS.operations.policy.budgets.maxResultRows;
+    const selectors = [
+      { kind: "sessions", limit: 5 },
+      { kind: "slow-queries" },
+      { kind: "table-stats", schema: "public" },
+      { kind: "index-stats" },
+      { kind: "storage" },
+    ];
+
+    // One reading after another, so the panel requests are recorded in the selectors' order.
+    const { answered, panels, healthCalls } = await recordingCore(() =>
+      selectors.reduce<Promise<string[]>>(
+        (earlier, selector) =>
+          earlier.then(async (kinds) => [...kinds, (await inspectOperationsTool(h.context, selector)).kind]),
+        Promise.resolve([]),
+      ),
+    );
+
+    expect(answered).toEqual(selectors.map(() => "completed"));
+    expect(panels).toEqual([
+      { panel: "activeSessions", limit: 5 },
+      { panel: "slowQueries", limit: ceiling },
+      { panel: "tables", schema: "public" },
+      { panel: "indexes" },
+      { panel: "storage" },
+    ]);
+    expect(healthCalls()).toBe(0);
+    expect(h.curated.getActiveSessions).toHaveBeenCalledWith({ limit: 5 });
+    expect(h.curated.getSlowQueries).toHaveBeenCalledWith({ limit: ceiling });
+    expect(h.curated.getTableStats).toHaveBeenCalledWith({ schema: "public" });
+    expect(h.curated.getIndexStats).toHaveBeenCalledWith({ schema: undefined });
+    expect(h.acquireProvider.mock.calls.map((call) => call[1])).toEqual(selectors.map(() => AGENT_OPERATIONS_PROFILE));
+  });
+
+  test("the health reading reads through the host core's health call", async () => {
+    const h = curatedHarness();
+
+    const { answered, panels, healthCalls } = await recordingCore(() =>
+      inspectOperationsTool(h.context, { kind: "health" }),
+    );
+
+    if (answered.kind !== "completed") throw new Error(`expected completed, got ${answered.kind}`);
+    expect(healthCalls()).toBe(1);
+    expect(panels).toEqual([]);
+    expect(h.curated.getHealth.mock.calls).toEqual([[]]);
+    expect(h.artifacts.get(answered.artifact.correlationId, 1_000)?.value.rows).toEqual([
+      { activeConnections: 4, databaseSize: "20 MB", cacheHitRatio: "99.1" },
+    ]);
+  });
+
+  test("a curated reading that outlives the time its call was granted is refused as a timeout, and the run counts it until the provider's call settles", async () => {
+    // 300 ms left on the run grants the reading's call 300 ms, above the 250 ms a call needs at least.
+    const pending = Promise.withResolvers<never>();
+    const h = curatedHarness(
+      { deadline: new AgentRunDeadline(300, frozenClock) },
+      { getStorageStats: mock(() => pending.promise) },
+    );
+
+    const outcome = await inspectOperationsTool(h.context, { kind: "storage" });
+
+    if (outcome.kind !== "refused") throw new Error(`expected refused, got ${outcome.kind}`);
+    expect(outcome.refusal).toMatchObject({
+      class: "database-error",
+      message:
+        "The storage reading did not answer within the 0.3 seconds its call was granted, so Studio stopped waiting for it.",
+    });
+    expect(h.tracker.usage("run-1")).toMatchObject({ activeExecutions: 1, executedStatements: 1 });
+    let idle = false;
+    const whenIdle = h.tracker.whenIdle("run-1").then(() => {
+      idle = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(idle).toBe(false);
+
+    pending.reject(new Error(crypto.randomUUID()));
+    await whenIdle;
+    expect(h.tracker.usage("run-1").activeExecutions).toBe(0);
+  });
+
   test("acquires under the OPERATIONS profile, not the read-only statement one", async () => {
     // The engine gate, seen from the tool: this provider has no `queryReadOnly` and
     // the call still completes, because the profile it asks for does not require one.
@@ -6217,8 +6335,10 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
    * The measured spans: `curatedHarness`'s clock advances 3 ms per read, so the settled
    * sessions reading is charged 9 ms — `executeAuditedOperation` reads the clock around
    * the call and the curated path measures its OWN `executionTime` inside the invoke
-   * callback, four reads in all — while the unsupported kind is refused before that
-   * inner measurement and is charged 3. The tracker's running total after both is 12.
+   * callback, four reads in all — while the unsupported kind is refused once the host
+   * core answers that the provider's session does not offer its panel, after that inner
+   * measurement started and before it ended, three reads, and is charged 6. The
+   * tracker's running total after both is 15.
    */
   test("a refused reading records THIS execution's span, not the run's running total", async () => {
     const h = curatedHarness({}, { getStorageStats: undefined });
@@ -6233,8 +6353,8 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
     if (outcome.kind !== "refused" || outcome.refusal.class !== "reading-refused") {
       throw new Error(`expected a refused reading, got ${JSON.stringify(outcome)}`);
     }
-    expect(h.tracker.usage(h.context.runId).totalElapsedMs).toBe(12);
-    expect(outcome.refusal.elapsedMs).toBe(3);
+    expect(h.tracker.usage(h.context.runId).totalElapsedMs).toBe(15);
+    expect(outcome.refusal.elapsedMs).toBe(6);
     expect(outcome.refusal.elapsedMs).not.toBe(h.tracker.usage(h.context.runId).totalElapsedMs);
   });
 

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -38,6 +38,8 @@ import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
 import { InfluxDB3Provider, InfluxDBProvider } from "@/lib/db/providers/timeseries/influxdb/index";
 import type { DatabaseProvider, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 import { KEY_PATTERN_LABELS, SEARCH_INDEX_LABELS, TABLE_LABELS } from "../fixtures/provider-labels";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import { LLMAuthError, LLMConfigError, LLMStreamError } from "@/lib/llm/types";
 import type {
   ColumnSchema,
@@ -97,6 +99,10 @@ import {
  * failures onto the REAL `@/lib/llm` error classes, which `tests/api/ai/*.test.ts`
  * replaces process-wide with stubs.
  */
+
+// A run that takes a curated reading reaches its provider through the host core's monitoring calls.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 const ACTOR: AgentRunActor = { sessionId: "sess_1", role: "admin" };
 
@@ -204,7 +210,10 @@ function boot(dataDir: string, options: BootOptions = {}): Boot {
     ((): Promise<readonly GroundedObject[]> => {
       throw new QueryError("this database refused to describe its own objects");
     });
+  // The connection's type, as a real provider carries it: a curated reading reaches the provider through the host core
+  // on its bridged session, which reads its engine's panels by that type.
   const provider = {
+    type: CONNECTION.type,
     queryReadOnly,
     listContainers: async () => [],
     countObjects: async () => ({ table: { count: (await describes()).length } }),
