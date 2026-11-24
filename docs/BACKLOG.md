@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D850, U17 · 381
+- [Drivers and connections](#drivers-and-connections) — D1-D880, U17 · 382
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -3866,7 +3866,7 @@ Found on #1847, #1849 and #1850, none of which touches these tests.
 
 ### D378. Two declarations answer how an engine quotes a name, and four engines get two different answers
 
-`SqlWritingSpec.quoteIdentifier`, declared beside each provider and read through `sqlWritingFor` (`src/lib/db/sql-writing/index.ts`), answers for all 42 type-ids; `quoteIdentifier` in `src/lib/sql/identifier.ts` reads it for inline editing, result export, the pivot table, table profiles, migration DDL and Databend's objects.
+`SqlWritingSpec.quoteIdentifier`, declared in each engine's declaration and bound by Studio's SQL writing function table, and read through `sqlWritingFor` (`src/lib/db/sql-writing/index.ts`), answers for all 42 type-ids; `quoteIdentifier` in `src/lib/sql/identifier.ts` reads it for inline editing, result export, the pivot table, table profiles, migration DDL and Databend's objects.
 `quoteIdentifier` in `src/lib/query-generators.ts` answers from the capabilities instead: `ProviderCapabilities.identifierQuoting` through `DECLARED_QUOTING` where an engine declares one (BigQuery and OpenSearch `backtick`, Db2, DuckDB, Elasticsearch and Trino `double`, InfluxDB 3 and Snowflake `double-always`, Databend and Spark `backtick-always`), the query language for the JSON, Cypher and InfluxQL engines, and the default port for the rest.
 Since the change that reads an SQL engine's generator forms by its type id, that last answer is the engine's row in `SQL_ENGINE_GENERATORS`, or the shared default where it has none, never the default port.
 Probed on 2026-10-20 on `main` at `6e611bf73` with eight names through both answers for every type-id, comparing the spec with the generators' `always` form, since the spec always quotes:
@@ -5041,6 +5041,17 @@ Neither pilot provider bills its reads.
 Found 2026-11-24 while moving the agent's statements and the hand-over replay onto the host core.
 
 **Done when:** the contract carries the allowance in a form that crosses a frame, for example the units a call may spend in its request and what it spent in its answer, charged by the host before the run's next call, a native provider of a billing engine draws on it, the object tree's reads take it the same way, and tests through the memory transport hold each.
+
+### D880. The inline edit takes ClickHouse's wrappers off a declared type in core, not through the engine's declared numeric wrapper
+
+`unwrappedType` in `src/lib/db/sql-writing/shared.ts` strips `Nullable(` and `LowCardinality(` in any case for every engine, while the result export reads each engine's `sqlWriting.export.typeVocabulary.numericWrapper`, case-sensitive.
+So a package engine with other wrappers would have them read by the export and not by the inline edit, and SQL Server's own bound edit, `MSSQL_BOUND_EDIT`, calls the same function with no engine at hand.
+Measured 2026-11-24 over the 799 declared types of the inline edit and export fixtures and the inline editing hook's tests: reading the engine's wrapper answers every one alike, and three planted case variants, `nullable(datetime)`, `NULLABLE(DateTime)` and `lowcardinality(nullable(string))`, are unwrapped today and would not be.
+Reading the wrapper case-insensitively would change the export's own reading instead, so no reading keeps both answers.
+
+Found 2026-11-24 while projecting each engine's SQL writing from its declaration.
+
+**Done when:** the inline edit reads the engine's declared wrapper with the export's bound, SQL Server's bound edit receives what it needs to do the same, and the answers that change, a wrapper spelled in another case, are stated as breaking with a test.
 
 ## Value interpolation
 
