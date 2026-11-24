@@ -47,8 +47,13 @@
  * `describeObjects` with the limit, and `{ defaultSql: true }` as a fourth argument only when the request sends it.
  * Each path is a fresh copy of the frozen request's array, so a legacy member may write what it receives. It answers
  * the member's answer by reference in its action's form (`{ containers }`, `{ counts }`, `{ objects }`, `{ detail }`,
- * or the batch itself), never calls `forCatalog` and passes no read allowance. A provider's error passes by reference.
- * The facade that reads it is `objectTree` in src/lib/api/object-tree.ts.
+ * or the batch itself) and never calls `forCatalog`. A provider's error passes by reference. A top-level `containers`
+ * read of a provider holding `inventoryNeedsConfiguration` (a function on the provider or its prototype) asks it
+ * first, and a reason answers `{ containers: [], needsConfiguration }` without listing (clause C-61). The session's
+ * third input, `objectReads`, is the host-side input a tree request does not carry: a session built with a billed-read
+ * allowance hands a fresh `{ readAllowance }` as the trailing argument of `countObjects`, `listObjects` and
+ * `describeObjects`, and one built without passes today's arguments. The facades that read it are `objectTree` and
+ * `grantedObjectTree` in src/lib/api/object-tree.ts.
  *
  * Its transaction call runs the provider's own method for the action: `beginTransaction` with `requireReportedState`
  * as the transaction route has always passed it, answering `stateReported` exactly when the provider answered a result,
@@ -88,6 +93,12 @@
  * timeout and read allowance, by reference, and the request's rows and bytes, and the request's mode, and answers one
  * source per result set, `pageApplied` false. Its page limits read every row the provider returned, at least one,
  * within one page, and it keeps the legacy result for the facade to answer from.
+ *
+ * A statement Studio composed, which must reach the provider exactly as composed, is served by
+ * `bridgedComposedStatements`, a session of its own built per call by `runComposedStatement` in
+ * src/lib/api/composed-statement.ts: its calls offer execute alone, honouring no request field, and its execute runs
+ * the plain `query` with the statement alone, never `prepareQuery` or the probe, so no page bound is appended. It
+ * answers and limits its page as the read-only statement session does, through the same result record.
  */
 import {
   BATCH_MAX_BYTES,
@@ -116,11 +127,13 @@ import {
   type TransactionAnswer,
   type TransactionRequest,
   type TreeAnswer,
+  type TreeContainersAnswer,
+  type TreeDescribeManyRequest,
   type TreeRequest,
   type Warning,
 } from "@libredb/provider-sdk/calls";
 import type { SessionState } from "@libredb/provider-sdk/errors";
-import type { Calls, MaintenanceSpec } from "@libredb/provider-sdk/manifest";
+import type { Calls, ExecuteRequestField, MaintenanceSpec } from "@libredb/provider-sdk/manifest";
 import { probePastPage } from "@/lib/api/page-probe";
 import { engineFacetsFor } from "@/lib/db/engine-facets";
 import { StudioProfileRefusal } from "@/lib/db/errors";
@@ -134,6 +147,7 @@ import {
   type MaintenanceDeclaration,
   type MaintenanceOperation,
   type MaintenanceOperationSpec,
+  type ObjectReadOptions,
   type PreparedQuery,
   type ProviderCapabilities,
   type QueryPrepareOptions,
@@ -317,27 +331,89 @@ async function legacyTransaction(
   return { sessionState: sessionStateOf(provider) };
 }
 
+/** A provider's answer to the inventory's configuration question, which only some providers declare. */
+interface ConfigurationAsker {
+  inventoryNeedsConfiguration(): Promise<string | undefined>;
+}
+
+/**
+ * Whether `provider` asks the configuration question: `inventoryNeedsConfiguration` is a function on it or its
+ * prototype.
+ */
+function asksConfiguration(provider: DatabaseProvider): provider is DatabaseProvider & ConfigurationAsker {
+  return (
+    "inventoryNeedsConfiguration" in provider &&
+    typeof (provider as Partial<ConfigurationAsker>).inventoryNeedsConfiguration === "function"
+  );
+}
+
+/**
+ * The containers answer for `parent`: at the top level, on a provider that asks the configuration question, its reason
+ * answers no container and the reason without listing; otherwise `listContainers` with one argument, by reference.
+ */
+async function legacyContainers(
+  provider: DatabaseProvider,
+  parent: readonly string[] | undefined,
+): Promise<TreeContainersAnswer> {
+  if (parent === undefined && asksConfiguration(provider)) {
+    const needsConfiguration = await provider.inventoryNeedsConfiguration();
+    if (needsConfiguration !== undefined) return { containers: [], needsConfiguration };
+  }
+  return { containers: await provider.listContainers(parent === undefined ? undefined : [...parent]) };
+}
+
 /**
  * Runs `request`'s action on `provider`'s own tree member with today's arguments, each path a fresh copy of the
- * request's array, and answers the member's answer by reference in its action's form.
+ * request's array, and answers the member's answer by reference in its action's form. A session built with a read
+ * allowance hands a fresh `{ readAllowance }` holding it by reference as the trailing argument of the count, the
+ * listing and the bulk describe; a session built without one passes today's argument counts.
  */
-async function legacyTree(provider: DatabaseProvider, request: TreeRequest): Promise<TreeAnswer> {
+async function legacyTree(
+  provider: DatabaseProvider,
+  request: TreeRequest,
+  objectReads: ObjectReadOptions,
+): Promise<TreeAnswer> {
+  const { readAllowance } = objectReads;
+  const billed = readAllowance === undefined ? undefined : { readAllowance };
   switch (request.action) {
     case "containers":
-      return {
-        containers: await provider.listContainers(request.parent === undefined ? undefined : [...request.parent]),
-      };
+      return legacyContainers(provider, request.parent);
     case "count":
-      return { counts: await provider.countObjects([...request.container]) };
+      return {
+        counts: await (billed === undefined
+          ? provider.countObjects([...request.container])
+          : provider.countObjects([...request.container], billed)),
+      };
     case "list":
-      return { objects: await provider.listObjects([...request.container], request.kind) };
+      return {
+        objects: await (billed === undefined
+          ? provider.listObjects([...request.container], request.kind)
+          : provider.listObjects([...request.container], request.kind, billed)),
+      };
     case "describe":
       return { detail: await provider.describeObject([...request.path], request.kind) };
     case "describeMany":
-      return request.defaultSql === true
-        ? provider.describeObjects([...request.container], request.kind, request.limit, { defaultSql: true })
-        : provider.describeObjects([...request.container], request.kind, request.limit);
+      return legacyDescribeMany(provider, request, billed);
   }
+}
+
+/**
+ * `describeObjects` with the request's limit, and a fourth argument only where the request sends `defaultSql` or the
+ * session holds a read allowance: `defaultSql: true` and a fresh `readAllowance` beside it, each only where present.
+ */
+function legacyDescribeMany(
+  provider: DatabaseProvider,
+  request: TreeDescribeManyRequest,
+  billed: ObjectReadOptions | undefined,
+): Promise<TreeAnswer> {
+  const container = [...request.container];
+  if (request.defaultSql !== true && billed === undefined) {
+    return provider.describeObjects(container, request.kind, request.limit);
+  }
+  return provider.describeObjects(container, request.kind, request.limit, {
+    ...(request.defaultSql === true ? { defaultSql: true } : {}),
+    ...billed,
+  });
 }
 
 /** One spec of Studio's in the engine declaration's form, every member Studio leaves out written as null or false. */
@@ -447,9 +523,15 @@ function bridgedPanels(provider: DatabaseProvider): MonitoringPanelOffer {
 
 /**
  * `provider` served as one session of console execute, cancel and transaction, of the object tree, of maintenance and
- * of monitoring, its execute run with a copy of `options`, the caller's own page options.
+ * of monitoring, its execute run with a copy of `options`, the caller's own page options. `objectReads` is the
+ * host-side input a tree request does not carry: the billed-read allowance its count, listing and bulk describe are
+ * handed.
  */
-export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepareOptions): BridgedConsole {
+export function bridgedConsole(
+  provider: DatabaseProvider,
+  options: QueryPrepareOptions,
+  objectReads: ObjectReadOptions = {},
+): BridgedConsole {
   const canceller: QueryCancelProvider | undefined = supportsQueryCancel(provider) ? provider : undefined;
   const transactional: TransactionProvider | undefined = isTransactionProvider(provider) ? provider : undefined;
   const ender = endsOpenQueryTransactions(provider) ? provider : undefined;
@@ -527,7 +609,7 @@ export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepare
       calls,
       readOnlyStatements: false,
       execute,
-      tree: (request: TreeRequest) => legacyTree(provider, request),
+      tree: (request: TreeRequest) => legacyTree(provider, request, objectReads),
       run: (request: MaintenanceRunRequest) => legacyRun(provider, request),
       panels: bridgedPanels(provider),
       panel: (request: MonitoringPanelRequest) => readPanel(provider, request),
@@ -575,7 +657,11 @@ export interface ReadOnlyStatementsOpen {
   readonly readAllowance?: RunReadAllowance;
 }
 
-/** A bridged read-only statement session, the legacy result its execute answered, and the page limits read from it. */
+/**
+ * A bridged read-only statement session, or, typed as `BridgedComposedStatements`, a bridged composed statement session
+ * whose execute sends the statement exactly as composed, as plan mode's statistics read is sent; the legacy result its
+ * execute answered, and the page limits read from it.
+ */
 export interface BridgedReadOnlyStatements {
   readonly session: ConsoleSession;
   /**
@@ -592,21 +678,26 @@ export interface BridgedReadOnlyStatements {
   readonly pumpLimits: (answer: ExecuteAnswer) => PumpLimits;
 }
 
-/** The calls of every read-only statement session: execute alone, honouring `readOnly`. */
-const READ_ONLY_STATEMENT_CALLS: Calls = sessionCalls(
-  {
-    console: {
-      execute: { honours: ["readOnly"] },
-      cancel: "not-offered",
-      endScope: "not-offered",
-      transaction: "not-offered",
+/** The calls of a session that offers execute alone, honouring `honours`. */
+function executeAloneCalls(honours: readonly ExecuteRequestField[]): Calls {
+  return sessionCalls(
+    {
+      console: {
+        execute: { honours: [...honours] },
+        cancel: "not-offered",
+        endScope: "not-offered",
+        transaction: "not-offered",
+      },
+      objects: { tree: "not-offered" },
+      maintenance: { run: "not-offered", preview: "not-offered" },
+      monitoring: { panel: "not-offered", poolStats: "not-offered" },
     },
-    objects: { tree: "not-offered" },
-    maintenance: { run: "not-offered", preview: "not-offered" },
-    monitoring: { panel: "not-offered", poolStats: "not-offered" },
-  },
-  undefined,
-);
+    undefined,
+  );
+}
+
+/** The calls of every read-only statement session: execute alone, honouring `readOnly`. */
+const READ_ONLY_STATEMENT_CALLS: Calls = executeAloneCalls(["readOnly"]);
 
 /**
  * `provider`'s read-only statement path served as a read-only statement session (clause C-50): its open refuses, by
@@ -631,7 +722,7 @@ export function bridgedReadOnlyStatements(
     );
   }
   const queryReadOnly = provider.queryReadOnly.bind(provider);
-  let answeredResult: QueryResult | undefined;
+  const record = resultRecord("read-only statement");
 
   async function execute(request: ExecuteRequest): Promise<ExecuteAnswer> {
     const { readOnly } = request;
@@ -646,27 +737,71 @@ export function bridgedReadOnlyStatements(
       maxResultBytes: readOnly.budget.maxBytes,
       ...(open.readAllowance === undefined ? {} : { readAllowance: open.readAllowance }),
     };
-    const result = await queryReadOnly(request.statement, budget, readOnly.mode);
-    answeredResult = result;
-    return answerOf(result, false);
-  }
-
-  function answered(): QueryResult {
-    if (answeredResult === undefined) {
-      throw new Error(
-        "The bridge's read-only statement run was read before its execute answered, a defect of the host.",
-      );
-    }
-    return answeredResult;
+    return record.keep(await queryReadOnly(request.statement, budget, readOnly.mode));
   }
 
   return {
     session: Object.freeze({ calls: READ_ONLY_STATEMENT_CALLS, readOnlyStatements: true, execute }),
+    answered: record.answered,
+    pumpLimits: record.pumpLimits,
+  };
+}
+
+/**
+ * The legacy result one statement session's execute answered: `keep` records it and answers its execute answer, one
+ * source per result set, `pageApplied` false; `answered` reads it back, and `pumpLimits` reads every row it holds, at
+ * least one, within one page. `session` names the session in the defect a read before execute answered is.
+ */
+function resultRecord(session: string): {
+  readonly keep: (result: QueryResult) => ExecuteAnswer;
+  readonly answered: () => QueryResult;
+  readonly pumpLimits: (answer: ExecuteAnswer) => PumpLimits;
+} {
+  let kept: QueryResult | undefined;
+  function answered(): QueryResult {
+    if (kept === undefined) {
+      throw new Error(`The bridge's ${session} run was read before its execute answered, a defect of the host.`);
+    }
+    return kept;
+  }
+  return {
+    keep: (result) => {
+      kept = result;
+      return answerOf(result, false);
+    },
     answered,
     pumpLimits: () => ({
       maxRows: Math.max(1, answered().rows.length),
       maxBytes: PAGE_MAX_BYTES,
       batchMaxBytes: BATCH_MAX_BYTES,
     }),
+  };
+}
+
+/** A bridged composed statement session, the legacy result its execute answered, and the page limits read from it. */
+export type BridgedComposedStatements = BridgedReadOnlyStatements;
+
+/** The calls of every composed statement session: execute alone, honouring no request field. */
+const COMPOSED_STATEMENT_CALLS: Calls = executeAloneCalls([]);
+
+/**
+ * `provider`'s plain `query` served as a composed statement session (clause C-50), for a statement Studio composed and
+ * its statement guard admitted, which must reach the provider exactly as composed: its execute runs `query` with
+ * exactly one argument, the request's statement, never `prepareQuery`, the probe, params, a run id or a scope, so no
+ * page bound is appended to it. Its calls offer execute alone, honouring no request field, and it is no read-only
+ * statement session. It reads no `type` and no monitoring row. Its one caller is `runComposedStatement` in
+ * src/lib/api/composed-statement.ts.
+ */
+export function bridgedComposedStatements(provider: DatabaseProvider): BridgedComposedStatements {
+  const record = resultRecord("composed statement");
+  return {
+    session: Object.freeze({
+      calls: COMPOSED_STATEMENT_CALLS,
+      readOnlyStatements: false,
+      execute: async (request: ExecuteRequest): Promise<ExecuteAnswer> =>
+        record.keep(await provider.query(request.statement)),
+    }),
+    answered: record.answered,
+    pumpLimits: record.pumpLimits,
   };
 }

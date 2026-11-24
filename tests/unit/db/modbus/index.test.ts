@@ -28,6 +28,8 @@ import { ModbusValveDefect } from "@/lib/db/providers/industrial/modbus/valve";
 import { QUERY_DIALECTS } from "@/lib/db/query-dialects";
 import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/types";
+import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
+import { type CallContext, envReader, freezeData } from "@libredb/provider-sdk/calls";
 
 const connection = (extra: Record<string, unknown> = {}) =>
   ({
@@ -40,6 +42,12 @@ const connection = (extra: Record<string, unknown> = {}) =>
   }) as unknown as DatabaseConnection;
 
 const provider = (extra: Record<string, unknown> = {}) => new ModbusProvider(connection(extra));
+
+const callContext = (): CallContext => ({
+  deadline: Date.now() + 60_000,
+  signal: new AbortController().signal,
+  env: envReader([], () => undefined),
+});
 
 const MAP = JSON.stringify([
   { name: "run", unitId: 1, table: "coil", address: 0, type: "bool" },
@@ -196,6 +204,31 @@ describe("the tree comes from the map, with no device traffic", () => {
 
   test("declares nothing once a map is kept, since the map is then the inventory", async () => {
     expect(await provider({ registerMap: MAP }).inventoryNeedsConfiguration()).toBeUndefined();
+  });
+
+  test("a connection with no register map answers its top-level tree listing with no unit and the reason, and a malformed map with the error its listing raises", async () => {
+    const topLevel = async (p: ReturnType<typeof provider>) => {
+      const { tree } = bridgedConsole(p, {}).session;
+      return (tree as NonNullable<typeof tree>)(freezeData({ action: "containers" }), callContext());
+    };
+
+    expect(await topLevel(provider())).toEqual({
+      containers: [],
+      needsConfiguration: MODBUS_NO_MAP_INVENTORY_SENTENCE,
+    });
+    expect(await topLevel(provider({ registerMap: "[]" }))).toEqual({
+      containers: [],
+      needsConfiguration: MODBUS_NO_MAP_INVENTORY_SENTENCE,
+    });
+    const mapped = provider({ registerMap: MAP });
+    expect(await topLevel(mapped)).toEqual({ containers: await mapped.listContainers() });
+
+    const malformed = provider({ registerMap: "{not json" });
+    const throughTree = await topLevel(malformed).catch((e: unknown) => e);
+    const listing = await malformed.listContainers().catch((e: unknown) => e);
+    expect(throughTree).toBeInstanceOf(DatabaseConfigError);
+    expect((throughTree as Error).constructor).toBe((listing as Error).constructor);
+    expect((throughTree as Error).message).toBe((listing as Error).message);
   });
 
   test("with a map the units are listed in numeric order", async () => {

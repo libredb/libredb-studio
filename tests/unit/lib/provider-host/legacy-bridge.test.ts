@@ -41,6 +41,7 @@ import {
   isTransactionProvider,
   type MaintenanceDeclaration,
   narrowMaintenance,
+  type ObjectReadOptions,
   type PreparedQuery,
   type ProviderCapabilities,
   type QueryPrepareOptions,
@@ -50,7 +51,12 @@ import { runEditorQuery } from "@/lib/api/editor-query";
 import { providerTextScrub } from "@/lib/db/operations/provider-text";
 import { engineFacetsFor } from "@/lib/db/engine-facets";
 import { appendedBoundNote } from "@/lib/db/utils/query-limiter";
-import { bridgedConsole, bridgedMaintenance, bridgedReadOnlyStatements } from "@/lib/provider-host/legacy-bridge";
+import {
+  bridgedComposedStatements,
+  bridgedConsole,
+  bridgedMaintenance,
+  bridgedReadOnlyStatements,
+} from "@/lib/provider-host/legacy-bridge";
 import { StudioProfileRefusal } from "@/lib/db/errors";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import type { QueryResult } from "@/lib/types";
@@ -140,6 +146,14 @@ function requestOf(over: Partial<ExecuteRequest> = {}): ExecuteRequest {
 }
 
 const PAGE = { maxRows: 1_000, maxBytes: PAGE_MAX_BYTES, batchMaxBytes: BATCH_MAX_BYTES } as const;
+
+/** The tree call of the console session the bridge serves for `provider`, built with `objectReads` where given. */
+function treeOf(provider: DatabaseProvider, objectReads?: ObjectReadOptions) {
+  const { tree } = (
+    objectReads === undefined ? bridgedConsole(provider, {}) : bridgedConsole(provider, {}, objectReads)
+  ).session;
+  return tree as NonNullable<typeof tree>;
+}
 
 /** What `run` threw; a run that does not throw fails the case. */
 async function failure(run: () => Promise<unknown>): Promise<unknown> {
@@ -555,21 +569,140 @@ describe("bridgedConsole", () => {
     expect(provider.prepareQuery).not.toHaveBeenCalled();
   });
 
-  test("a bridged tree call never calls forCatalog and passes no read allowance", async () => {
+  test("a bridged tree call never calls forCatalog", async () => {
     const forCatalog = mock(async () => fake(resultOf([])));
     const provider = Object.assign(fake(resultOf([])), { forCatalog });
     const { session } = bridgedConsole(provider, {});
     const tree = session.tree as NonNullable<typeof session.tree>;
 
+    await tree(freezeData({ action: "containers" }), contextOf());
     await tree(freezeData({ action: "count", container: ["app"] }), contextOf());
     await tree(freezeData({ action: "list", container: ["app"], kind: "table" }), contextOf());
+    await tree(freezeData({ action: "describe", path: ["app", "orders"], kind: "table" }), contextOf());
     await tree(freezeData({ action: "describeMany", container: ["app"], kind: "table", limit: 3 }), contextOf());
 
     expect(forCatalog).not.toHaveBeenCalled();
+  });
+
+  test("a bridged tree call hands the session's read allowance by reference to count, list and describeMany, and today's arguments where the session has none", async () => {
+    const readAllowance = new RunReadAllowance(5);
+    const provider = fake(resultOf([]));
+    const { session } = bridgedConsole(provider, {}, { readAllowance });
+    const tree = session.tree as NonNullable<typeof session.tree>;
+
+    await tree(freezeData({ action: "containers", parent: ["app"] }), contextOf());
+    await tree(freezeData({ action: "count", container: ["app"] }), contextOf());
+    await tree(freezeData({ action: "list", container: ["app"], kind: "table" }), contextOf());
+    await tree(freezeData({ action: "describe", path: ["app", "orders"], kind: "table" }), contextOf());
+    await tree(freezeData({ action: "describeMany", container: ["app"], kind: "table", limit: 3 }), contextOf());
+    await tree(
+      freezeData({ action: "describeMany", container: ["app"], kind: "table", limit: 3, defaultSql: true }),
+      contextOf(),
+    );
+
+    expect(callsOf(provider.listContainers)).toEqual([[["app"]]]);
+    expect(callsOf(provider.describeObject)).toEqual([[["app", "orders"], "table"]]);
+    expect(callsOf(provider.countObjects)).toEqual([[["app"], { readAllowance }]]);
+    expect(callsOf(provider.listObjects)).toEqual([[["app"], "table", { readAllowance }]]);
+    expect(callsOf(provider.describeObjects)).toEqual([
+      [["app"], "table", 3, { readAllowance }],
+      [["app"], "table", 3, { defaultSql: true, readAllowance }],
+    ]);
+    const handed = [
+      callsOf(provider.countObjects)[0]?.[1],
+      callsOf(provider.listObjects)[0]?.[2],
+      callsOf(provider.describeObjects)[0]?.[3],
+      callsOf(provider.describeObjects)[1]?.[3],
+    ] as { readonly readAllowance: RunReadAllowance }[];
+    for (const options of handed) expect(options.readAllowance).toBe(readAllowance);
+    expect(new Set(handed).size).toBe(handed.length);
+
+    const unbilled = fake(resultOf([]));
+    const plain = treeOf(unbilled, {});
+    await plain(freezeData({ action: "count", container: ["app"] }), contextOf());
+    await plain(freezeData({ action: "list", container: ["app"], kind: "table" }), contextOf());
+    await plain(freezeData({ action: "describeMany", container: ["app"], kind: "table", limit: 3 }), contextOf());
+    await plain(
+      freezeData({ action: "describeMany", container: ["app"], kind: "table", limit: 3, defaultSql: true }),
+      contextOf(),
+    );
+
     // A read allowance would be the count's second argument, the listing's third or the batch's fourth.
-    expect(callsOf(provider.countObjects)[0]).toHaveLength(1);
-    expect(callsOf(provider.listObjects)[0]).toHaveLength(2);
-    expect(callsOf(provider.describeObjects)[0]).toHaveLength(3);
+    expect(callsOf(unbilled.countObjects)[0]).toHaveLength(1);
+    expect(callsOf(unbilled.listObjects)[0]).toHaveLength(2);
+    expect(callsOf(unbilled.describeObjects)).toEqual([
+      [["app"], "table", 3],
+      [["app"], "table", 3, { defaultSql: true }],
+    ]);
+  });
+
+  test("a bridged top-level containers read asks the provider whether its inventory needs configuration first, and given a reason answers no container and the reason without listing", async () => {
+    const reason = marker();
+    const asks = mock<() => Promise<string | undefined>>(async () => reason);
+    const provider = Object.assign(fake(resultOf([])), { inventoryNeedsConfiguration: asks });
+    const tree = treeOf(provider);
+
+    expect(await tree(freezeData({ action: "containers" }), contextOf())).toEqual({
+      containers: [],
+      needsConfiguration: reason,
+    });
+    expect(callsOf(asks)).toEqual([[]]);
+    expect(callsOf(provider.listContainers)).toEqual([]);
+
+    const containers = [{ path: ["1"], name: "1", level: 0 }];
+    const listable = Object.assign(fake(resultOf([])), {
+      inventoryNeedsConfiguration: mock<() => Promise<string | undefined>>(async () => undefined),
+      listContainers: mock(async () => containers),
+    });
+    const listed = await treeOf(listable)(freezeData({ action: "containers" }), contextOf());
+    expect(callsOf(listable.inventoryNeedsConfiguration)).toEqual([[]]);
+    expect(callsOf(listable.listContainers)).toEqual([[undefined]]);
+    expect(Object.keys(listed as object)).toEqual(["containers"]);
+    expect((listed as { containers: unknown }).containers).toBe(containers);
+
+    const inherited: DatabaseProvider = Object.assign(
+      Object.create({ inventoryNeedsConfiguration: async () => reason }),
+      fake(resultOf([])),
+    );
+    expect(await treeOf(inherited)(freezeData({ action: "containers" }), contextOf())).toEqual({
+      containers: [],
+      needsConfiguration: reason,
+    });
+    expect(callsOf(inherited.listContainers)).toEqual([]);
+
+    const thrown = new Error(marker());
+    const throwing = Object.assign(fake(resultOf([])), {
+      inventoryNeedsConfiguration: mock(async () => {
+        throw thrown;
+      }),
+    });
+    const caught = await failure(() => treeOf(throwing)(freezeData({ action: "containers" }), contextOf()));
+    expect(caught).toBe(thrown);
+    expect(callsOf(throwing.listContainers)).toEqual([]);
+  });
+
+  test("a bridged containers read below the top level, or of a provider that cannot say, lists as before and carries no reason", async () => {
+    const containers = [{ path: ["1", "a"], name: "a", level: 1 }];
+    const asks = mock<() => Promise<string | undefined>>(async () => marker());
+    const provider = Object.assign(fake(resultOf([])), {
+      inventoryNeedsConfiguration: asks,
+      listContainers: mock(async () => containers),
+    });
+    const tree = treeOf(provider);
+
+    const below = await tree(freezeData({ action: "containers", parent: ["1"] }), contextOf());
+
+    expect(callsOf(asks)).toEqual([]);
+    expect(callsOf(provider.listContainers)).toEqual([[["1"]]]);
+    expect(Object.keys(below as object)).toEqual(["containers"]);
+    expect((below as { containers: unknown }).containers).toBe(containers);
+
+    const silent = Object.assign(fake(resultOf([])), { listContainers: mock(async () => []) });
+    expect("inventoryNeedsConfiguration" in silent).toBe(false);
+    const top = await treeOf(silent)(freezeData({ action: "containers" }), contextOf());
+    expect(top).toEqual({ containers: [] });
+    expect(Object.keys(top as object)).toEqual(["containers"]);
+    expect(callsOf(silent.listContainers)).toEqual([[undefined]]);
   });
 
   test("a bridged tree call whose member throws passes the error by reference", async () => {
@@ -1317,6 +1450,75 @@ describe("bridgedReadOnlyStatements", () => {
         readOnlyRequest({ budget: { maxRows: 1, maxBytes: 1 } }),
         contextOf(),
       ),
+    );
+    expect(failed).toBe(rejection);
+  });
+});
+
+function composedRequest(statement: string): ExecuteRequest {
+  return freezeData({ statement, page: { unlimited: true } });
+}
+
+describe("bridgedComposedStatements", () => {
+  test("a composed statement session runs the provider's plain query with the statement as composed and nothing else, never prepareQuery or the probe", async () => {
+    const result = resultOf(rowsOf(3), {
+      resultSets: [
+        { rows: rowsOf(3), fields: ["n"] },
+        { rows: [{ m: 9 }], fields: ["m"] },
+      ],
+      warnings: [{ message: marker() }],
+    });
+    const provider = fake(result);
+    const bridged = bridgedComposedStatements(provider);
+    const statement = `SELECT ${marker()} FROM sys.tables`;
+
+    const answer = await bridged.session.execute(composedRequest(statement), contextOf());
+
+    expect(callsOf(provider.query)).toEqual([[statement]]);
+    expect(callsOf(provider.query)[0]).toHaveLength(1);
+    expect(callsOf(provider.prepareQuery)).toEqual([]);
+    expect(answer.results.map((source) => source.columns)).toEqual([[{ name: "n" }], [{ name: "m" }]]);
+    expect(answer.results[0]?.rowCount).toBe(3);
+    expect(answer.pageApplied).toBe(false);
+    expect(answer.warnings).toEqual(result.warnings as never);
+    expect(bridged.answered()).toBe(result);
+    expect(bridged.pumpLimits(answer)).toEqual({
+      maxRows: 3,
+      maxBytes: PAGE_MAX_BYTES,
+      batchMaxBytes: BATCH_MAX_BYTES,
+    });
+
+    const empty = bridgedComposedStatements(fake(resultOf([])));
+    const none = await empty.session.execute(composedRequest(statement), contextOf());
+    expect(empty.pumpLimits(none).maxRows).toBe(1);
+  });
+
+  test("a composed statement session offers execute alone, honouring no request field, and is no read-only statement session", async () => {
+    const provider = fake(resultOf([]));
+    const bridged = bridgedComposedStatements(provider);
+
+    expect(bridged.session.readOnlyStatements).toBe(false);
+    expect(bridged.session.calls).toEqual({
+      console: {
+        execute: { honours: [] },
+        cancel: "not-offered",
+        endScope: "not-offered",
+        transaction: "not-offered",
+      },
+      objects: { tree: "not-offered" },
+      maintenance: { run: "not-offered", preview: "not-offered" },
+      monitoring: { panel: "not-offered", poolStats: "not-offered" },
+    });
+    expect(Object.isFrozen(bridged.session)).toBe(true);
+    expect(Object.keys(bridged.session).sort()).toEqual(["calls", "execute", "readOnlyStatements"]);
+    expect(() => bridged.answered()).toThrow(
+      "The bridge's composed statement run was read before its execute answered, a defect of the host.",
+    );
+    expect(callsOf(provider.query)).toEqual([]);
+
+    const rejection = new Error(marker());
+    const failed = await failure(() =>
+      bridgedComposedStatements(fake(rejection)).session.execute(composedRequest(marker()), contextOf()),
     );
     expect(failed).toBe(rejection);
   });

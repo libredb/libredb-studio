@@ -215,6 +215,12 @@ type TreePlacement =
         readonly note?: string;
       };
     }[TreeAction]
+  | {
+      readonly where: "tree-answer";
+      readonly action: "containers";
+      readonly member: Exclude<keyof TreeContainersAnswer, "containers">;
+      readonly note?: string;
+    }
   | { readonly where: "options"; readonly census: "ObjectReadOptions" | "DescribeObjectsOptions" }
   | HostOnly;
 
@@ -532,25 +538,39 @@ const READ_ONLY_BUDGET_CENSUS = {
 
 /**
  * Today's object tree surface: the five provider members the object routes, the VS Code backend's tree calls and the
- * inventory read. `Pick` fails typecheck when one of them is renamed or removed.
+ * inventory read, and the inventory's configuration question the grounding walk asks. `Pick` fails typecheck when one
+ * of them is renamed or removed.
  */
 type ObjectTreeProvider = Pick<
   DatabaseProvider,
-  "listContainers" | "countObjects" | "listObjects" | "describeObject" | "describeObjects"
+  | "listContainers"
+  | "inventoryNeedsConfiguration"
+  | "countObjects"
+  | "listObjects"
+  | "describeObject"
+  | "describeObjects"
 >;
 
 const TREE_MEMBER_CENSUS = {
   listContainers: { where: "objects-call", call: "tree", action: "containers" },
+  inventoryNeedsConfiguration: {
+    where: "tree-answer",
+    action: "containers",
+    member: "needsConfiguration",
+    note: "answered only on a top-level listing that lists no container",
+  },
   countObjects: { where: "objects-call", call: "tree", action: "count" },
   listObjects: { where: "objects-call", call: "tree", action: "list" },
   describeObject: { where: "objects-call", call: "tree", action: "describe" },
   describeObjects: { where: "objects-call", call: "tree", action: "describeMany" },
-} as const satisfies { readonly [K in keyof ObjectTreeProvider]: TreePlacement };
+} as const satisfies { readonly [K in keyof ObjectTreeProvider]-?: TreePlacement };
 
 /** Each member's arguments, in order, each placed. */
 const LIST_CONTAINERS_ARGUMENT_CENSUS = {
   parent: { where: "tree-request", action: "containers", member: "parent", note: "absent means the top level" },
 } as const satisfies Record<string, TreePlacement>;
+
+const INVENTORY_NEEDS_CONFIGURATION_ARGUMENT_CENSUS = {} as const satisfies Record<string, TreePlacement>;
 
 const COUNT_OBJECTS_ARGUMENT_CENSUS = {
   container: { where: "tree-request", action: "count", member: "container" },
@@ -576,8 +596,11 @@ const DESCRIBE_OBJECTS_ARGUMENT_CENSUS = {
 } as const satisfies Record<string, TreePlacement>;
 
 /** Each member's argument count, held to its census's length by the test. */
-const TREE_ARGUMENT_COUNTS: { readonly [K in keyof ObjectTreeProvider]: number } = {
+const TREE_ARGUMENT_COUNTS: { readonly [K in keyof ObjectTreeProvider]-?: number } = {
   listContainers: 1 satisfies Required<Parameters<ObjectTreeProvider["listContainers"]>>["length"],
+  inventoryNeedsConfiguration: 0 satisfies Required<
+    Parameters<NonNullable<ObjectTreeProvider["inventoryNeedsConfiguration"]>>
+  >["length"],
   countObjects: 2 satisfies Required<Parameters<ObjectTreeProvider["countObjects"]>>["length"],
   listObjects: 3 satisfies Required<Parameters<ObjectTreeProvider["listObjects"]>>["length"],
   describeObject: 2 satisfies Required<Parameters<ObjectTreeProvider["describeObject"]>>["length"],
@@ -586,7 +609,7 @@ const TREE_ARGUMENT_COUNTS: { readonly [K in keyof ObjectTreeProvider]: number }
 
 /** Why the billed-read allowance stays with the host. */
 const READ_ALLOWANCE_REASON =
-  "The billed-read allowance is the per-run ledger of the agent and MCP, which read the tree on the profiled cache; the object routes and the VS Code backend never pass one, and it moves with the agent surface.";
+  "The billed-read allowance is the per-run ledger of the agent and MCP, which read the tree on the profiled cache; the object routes and the VS Code backend never pass one, and it reaches a legacy provider's tree reads through the bridge's session input until the contract carries it.";
 
 const OBJECT_READ_OPTIONS_CENSUS = {
   readAllowance: { where: "host", reason: READ_ALLOWANCE_REASON },
@@ -893,6 +916,7 @@ function placements(): [string, string, Placement][] {
     ReadOnlyStatementBudget: READ_ONLY_BUDGET_CENSUS,
     tree: TREE_MEMBER_CENSUS,
     "listContainers arguments": LIST_CONTAINERS_ARGUMENT_CENSUS,
+    "inventoryNeedsConfiguration arguments": INVENTORY_NEEDS_CONFIGURATION_ARGUMENT_CENSUS,
     "countObjects arguments": COUNT_OBJECTS_ARGUMENT_CENSUS,
     "listObjects arguments": LIST_OBJECTS_ARGUMENT_CENSUS,
     "describeObject arguments": DESCRIBE_OBJECT_ARGUMENT_CENSUS,
@@ -1018,8 +1042,9 @@ describe("the call surface census", () => {
   });
 
   test("every member of today's object tree surface has a place in the objects calls", () => {
-    const argumentCensuses: { readonly [K in keyof ObjectTreeProvider]: Record<string, TreePlacement> } = {
+    const argumentCensuses: { readonly [K in keyof ObjectTreeProvider]-?: Record<string, TreePlacement> } = {
       listContainers: LIST_CONTAINERS_ARGUMENT_CENSUS,
+      inventoryNeedsConfiguration: INVENTORY_NEEDS_CONFIGURATION_ARGUMENT_CENSUS,
       countObjects: COUNT_OBJECTS_ARGUMENT_CENSUS,
       listObjects: LIST_OBJECTS_ARGUMENT_CENSUS,
       describeObject: DESCRIBE_OBJECT_ARGUMENT_CENSUS,
@@ -1029,12 +1054,14 @@ describe("the call surface census", () => {
 
     expect(Object.keys(TREE_MEMBER_CENSUS)).toEqual([
       "listContainers",
+      "inventoryNeedsConfiguration",
       "countObjects",
       "listObjects",
       "describeObject",
       "describeObjects",
     ]);
     expect(tree.map(([, , placement]) => ("action" in placement ? placement.action : placement.where))).toEqual([
+      "containers",
       "containers",
       "count",
       "list",
@@ -1064,7 +1091,14 @@ describe("the call surface census", () => {
         if (placement.where === "tree-request") expect([member, placement.action]).toEqual([member, action]);
       }
     }
+    expect(TREE_MEMBER_CENSUS.inventoryNeedsConfiguration).toEqual({
+      where: "tree-answer",
+      action: "containers",
+      member: "needsConfiguration",
+      note: "answered only on a top-level listing that lists no container",
+    });
     expect(OBJECT_READ_OPTIONS_CENSUS.readAllowance.where).toBe("host");
+    expect(READ_ALLOWANCE_REASON).toMatch(/through the bridge's session input/);
     expect(DESCRIBE_OBJECTS_OPTIONS_CENSUS.readAllowance.where).toBe("host");
     expect(DESCRIBE_OBJECTS_OPTIONS_CENSUS.defaultSql.member).toBe("defaultSql");
   });
@@ -1097,11 +1131,15 @@ describe("the call surface census", () => {
         Element<TreeContainersAnswer["containers"]>,
         Element<Awaited<ReturnType<ObjectTreeProvider["listContainers"]>>>
       >,
+      Mutual<
+        TreeContainersAnswer["needsConfiguration"],
+        Awaited<ReturnType<NonNullable<ObjectTreeProvider["inventoryNeedsConfiguration"]>>>
+      >,
       Mutual<TreeCountAnswer["counts"], Awaited<ReturnType<ObjectTreeProvider["countObjects"]>>>,
       Mutual<Element<TreeListAnswer["objects"]>, Element<Awaited<ReturnType<ObjectTreeProvider["listObjects"]>>>>,
       Mutual<TreeDescribeAnswer["detail"], Awaited<ReturnType<ObjectTreeProvider["describeObject"]>>>,
       Mutual<SdkObjectDetailBatch, Awaited<ReturnType<ObjectTreeProvider["describeObjects"]>>>,
-    ] = [true, true, true, true, true];
+    ] = [true, true, true, true, true, true];
 
     // A sample of each answer crosses both ways, Studio's mutable lists into the SDK's readonly ones and back by element.
     const containers: Container[] = [{ path: ["public"], name: "public", level: 0, kinds: ["table"] }];
@@ -1138,7 +1176,7 @@ describe("the call surface census", () => {
 
     expect(parity).toEqual([true, true, true, true, true, true, true, true, true, true]);
     expect(keys).toEqual([true, true, true, true, true, true, true, true]);
-    expect(answers).toEqual([true, true, true, true, true]);
+    expect(answers).toEqual([true, true, true, true, true, true]);
     expect(back).toEqual([containers, counts, objects, detail, batch]);
   });
 
