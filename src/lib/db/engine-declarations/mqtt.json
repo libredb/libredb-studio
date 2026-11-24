@@ -317,12 +317,138 @@
     "readsFileAccessPosture": false,
     "deniedFileAccessRefusal": null,
     "singleWriterFile": false,
-    "readRootsRequired": false
+    "readRootsRequired": false,
+    "agentCredentialForm": "pair",
+    "maskingExemptColumns": null
   },
   "mcp": {
     "exposable": true,
     "statementRead": true,
     "metadataReadChangesState": false,
     "agentCredentialRequired": false
+  },
+  "safeguards": {
+    "writePaths": {
+      "editor": {
+        "reach": "absent",
+        "proof": {
+          "module": "src/lib/db/providers/keyvalue/mqtt/valve.ts",
+          "symbol": "guardOutboundPacket"
+        }
+      },
+      "objectEdit": {
+        "reach": "absent",
+        "proof": null
+      },
+      "maintenance": {
+        "reach": "absent",
+        "proof": null
+      },
+      "transaction": {
+        "reach": "absent",
+        "proof": null
+      }
+    },
+    "metadataOnly": [
+      {
+        "operation": "window",
+        "columns": [
+          {
+            "column": "window_ms",
+            "kind": "count"
+          },
+          {
+            "column": "listened_ms",
+            "kind": "count"
+          },
+          {
+            "column": "stop_reason",
+            "kind": "name"
+          },
+          {
+            "column": "scope",
+            "kind": "name"
+          },
+          {
+            "column": "broker_reason_code",
+            "kind": "count"
+          },
+          {
+            "column": "topics_seen",
+            "kind": "count"
+          },
+          {
+            "column": "messages",
+            "kind": "count"
+          },
+          {
+            "column": "retained_messages",
+            "kind": "count"
+          },
+          {
+            "column": "payload_bytes",
+            "kind": "count"
+          },
+          {
+            "column": "messages_lost",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "topic",
+        "columns": [
+          {
+            "column": "window_ms",
+            "kind": "count"
+          },
+          {
+            "column": "listened_ms",
+            "kind": "count"
+          },
+          {
+            "column": "stop_reason",
+            "kind": "name"
+          },
+          {
+            "column": "scope",
+            "kind": "name"
+          },
+          {
+            "column": "broker_reason_code",
+            "kind": "count"
+          },
+          {
+            "column": "seen",
+            "kind": "flag"
+          },
+          {
+            "column": "messages",
+            "kind": "count"
+          },
+          {
+            "column": "retained",
+            "kind": "flag"
+          },
+          {
+            "column": "delivered_qos",
+            "kind": "count"
+          },
+          {
+            "column": "payload_bytes",
+            "kind": "count"
+          },
+          {
+            "column": "last_seen_ms",
+            "kind": "count"
+          },
+          {
+            "column": "messages_lost",
+            "kind": "count"
+          }
+        ]
+      }
+    ],
+    "inlineEditRefusedColumns": null
   }
 }

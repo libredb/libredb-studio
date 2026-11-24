@@ -299,12 +299,166 @@
     "readsFileAccessPosture": false,
     "deniedFileAccessRefusal": null,
     "singleWriterFile": false,
-    "readRootsRequired": false
+    "readRootsRequired": false,
+    "agentCredentialForm": "pair",
+    "maskingExemptColumns": null
   },
   "mcp": {
     "exposable": true,
     "statementRead": true,
     "metadataReadChangesState": false,
     "agentCredentialRequired": false
+  },
+  "safeguards": {
+    "writePaths": {
+      "editor": {
+        "reach": "open"
+      },
+      "objectEdit": {
+        "reach": "open"
+      },
+      "maintenance": {
+        "reach": "open"
+      },
+      "transaction": {
+        "reach": "open"
+      }
+    },
+    "metadataOnly": [
+      {
+        "operation": "DBSIZE",
+        "columns": [
+          {
+            "column": "keys",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "TYPE",
+        "columns": [
+          {
+            "column": "type",
+            "kind": "name"
+          }
+        ]
+      },
+      {
+        "operation": "EXISTS",
+        "columns": [
+          {
+            "column": "exists",
+            "kind": "flag"
+          }
+        ]
+      },
+      {
+        "operation": "TTL",
+        "columns": [
+          {
+            "column": "exists",
+            "kind": "flag"
+          },
+          {
+            "column": "expires",
+            "kind": "flag"
+          },
+          {
+            "column": "ttl_seconds",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "PTTL",
+        "columns": [
+          {
+            "column": "exists",
+            "kind": "flag"
+          },
+          {
+            "column": "expires",
+            "kind": "flag"
+          },
+          {
+            "column": "ttl_milliseconds",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "STRLEN",
+        "columns": [
+          {
+            "column": "length",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "LLEN",
+        "columns": [
+          {
+            "column": "length",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "HLEN",
+        "columns": [
+          {
+            "column": "length",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "SCARD",
+        "columns": [
+          {
+            "column": "length",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "ZCARD",
+        "columns": [
+          {
+            "column": "length",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "XLEN",
+        "columns": [
+          {
+            "column": "length",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "OBJECT ENCODING",
+        "columns": [
+          {
+            "column": "encoding",
+            "kind": "name"
+          }
+        ]
+      },
+      {
+        "operation": "MEMORY USAGE",
+        "columns": [
+          {
+            "column": "bytes",
+            "kind": "count"
+          }
+        ]
+      }
+    ],
+    "inlineEditRefusedColumns": null
   }
 }

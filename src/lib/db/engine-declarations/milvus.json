@@ -328,12 +328,261 @@
     "readsFileAccessPosture": false,
     "deniedFileAccessRefusal": null,
     "singleWriterFile": false,
-    "readRootsRequired": false
+    "readRootsRequired": false,
+    "agentCredentialForm": "pair",
+    "maskingExemptColumns": null
   },
   "mcp": {
     "exposable": true,
     "statementRead": true,
     "metadataReadChangesState": false,
     "agentCredentialRequired": false
+  },
+  "safeguards": {
+    "writePaths": {
+      "editor": {
+        "reach": "absent",
+        "proof": {
+          "module": "src/lib/db/providers/vector/milvus/routes.ts",
+          "symbol": "MILVUS_ROUTES"
+        }
+      },
+      "objectEdit": {
+        "reach": "absent",
+        "proof": null
+      },
+      "maintenance": {
+        "reach": "gated",
+        "gate": {
+          "module": "src/lib/db/providers/vector/milvus/write-policy.ts",
+          "symbol": "refuseReadOnly"
+        }
+      },
+      "transaction": {
+        "reach": "absent",
+        "proof": null
+      }
+    },
+    "metadataOnly": [
+      {
+        "operation": "databases",
+        "columns": [
+          {
+            "column": "database",
+            "kind": "name"
+          }
+        ]
+      },
+      {
+        "operation": "database",
+        "columns": [
+          {
+            "column": "database",
+            "kind": "name"
+          },
+          {
+            "column": "properties",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "collections",
+        "columns": [
+          {
+            "column": "collection",
+            "kind": "name"
+          }
+        ]
+      },
+      {
+        "operation": "collection",
+        "columns": [
+          {
+            "column": "name",
+            "kind": "name"
+          },
+          {
+            "column": "kind",
+            "kind": "name"
+          },
+          {
+            "column": "type",
+            "kind": "name"
+          },
+          {
+            "column": "element_type",
+            "kind": "name"
+          },
+          {
+            "column": "dimension",
+            "kind": "count"
+          },
+          {
+            "column": "max_length",
+            "kind": "count"
+          },
+          {
+            "column": "primary",
+            "kind": "flag"
+          },
+          {
+            "column": "nullable",
+            "kind": "flag"
+          },
+          {
+            "column": "dynamic",
+            "kind": "flag"
+          },
+          {
+            "column": "partition_key",
+            "kind": "flag"
+          },
+          {
+            "column": "function_output",
+            "kind": "flag"
+          },
+          {
+            "column": "index",
+            "kind": "name"
+          },
+          {
+            "column": "index_type",
+            "kind": "name"
+          },
+          {
+            "column": "metric",
+            "kind": "name"
+          },
+          {
+            "column": "shards",
+            "kind": "count"
+          },
+          {
+            "column": "partitions",
+            "kind": "count"
+          },
+          {
+            "column": "consistency",
+            "kind": "name"
+          },
+          {
+            "column": "load_state",
+            "kind": "name"
+          }
+        ]
+      },
+      {
+        "operation": "statistics",
+        "columns": [
+          {
+            "column": "collection",
+            "kind": "name"
+          },
+          {
+            "column": "row_count",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "load_state",
+        "columns": [
+          {
+            "column": "collection",
+            "kind": "name"
+          },
+          {
+            "column": "load_state",
+            "kind": "name"
+          },
+          {
+            "column": "progress",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "partitions",
+        "columns": [
+          {
+            "column": "partition",
+            "kind": "name"
+          }
+        ]
+      },
+      {
+        "operation": "indexes",
+        "columns": [
+          {
+            "column": "index",
+            "kind": "name"
+          },
+          {
+            "column": "field",
+            "kind": "name"
+          },
+          {
+            "column": "index_type",
+            "kind": "name"
+          },
+          {
+            "column": "metric",
+            "kind": "name"
+          },
+          {
+            "column": "state",
+            "kind": "name"
+          },
+          {
+            "column": "indexed_rows",
+            "kind": "count"
+          },
+          {
+            "column": "total_rows",
+            "kind": "count"
+          },
+          {
+            "column": "pending_rows",
+            "kind": "count"
+          },
+          {
+            "column": "failed",
+            "kind": "flag"
+          }
+        ]
+      },
+      {
+        "operation": "aliases",
+        "columns": [
+          {
+            "column": "alias",
+            "kind": "name"
+          },
+          {
+            "column": "collection",
+            "kind": "name"
+          }
+        ]
+      },
+      {
+        "operation": "alias",
+        "columns": [
+          {
+            "column": "alias",
+            "kind": "name"
+          },
+          {
+            "column": "collection",
+            "kind": "name"
+          },
+          {
+            "column": "database",
+            "kind": "name"
+          }
+        ]
+      }
+    ],
+    "inlineEditRefusedColumns": null
   }
 }

@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "1fcef8e653ddd72e40a72d0c2fce5af9f0e23a39f44681e338009d23911d80c1";
+export const MANIFEST_SCHEMA_SHA256 = "21ba88431b1b29fc4d39d1b8b396bd7fd4af4de0cc7da6e43c864db1aa070515";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -116,6 +116,7 @@ export interface EngineDeclaration {
   readonly sqlGenerators: SqlGenerators;
   readonly policy: PolicyClaims;
   readonly mcp: McpClaims;
+  readonly safeguards: Safeguards;
 }
 
 /** external: a database the user already runs, which Studio is pointed at. embedded: a store Studio carries and creates itself. */
@@ -1051,7 +1052,7 @@ export type SqlGenerators = {
 /** The count Generate Count Query writes for the engine, COUNT(*) where the engine's is the shared one: one aggregate call over every row, a letter, then letters, digits or underscores, then (*), up to 64 characters, so it fills one expression of the statement Studio writes and never adds a clause or a statement. */
 export type CountExpression = string;
 
-/** What the engine asks of the gates Studio decides before a provider exists. Every member is a claim: a request, never a fact Studio believes as declared. Studio grants a request only as far as its own review record of the claim, or an operator's audited grant, allows, and reads a claim with neither at its restrictive value, named at the end of each member's description. */
+/** What the engine asks of the gates Studio decides before or around a provider. Every member is a claim: a request, never a fact Studio believes as declared. Studio grants a request only as far as its own review record of the claim, or an operator's audited grant, allows, and reads a claim with neither at its restrictive value, named at the end of each member's description. */
 export interface PolicyClaims {
   readonly writeReach: WriteReachClaim;
   /** Whether the engine's provider opens its handle under a file-access posture, opening with external file access off where the caller's is denied, so a denied handle and a full-reach one never share a cached provider or a borrowed handle. Restrictive value: true. */
@@ -1062,7 +1063,20 @@ export interface PolicyClaims {
   readonly singleWriterFile: boolean;
   /** Whether agent mode and MCP read the engine only beneath read roots a seed declares, refusing a connection that declares none. Restrictive value: true. */
   readonly readRootsRequired: boolean;
+  readonly agentCredentialForm: AgentCredentialFormClaim;
+  readonly maskingExemptColumns: MaskingExemption;
 }
+
+/** The form of the agent credential every agent acquisition of the engine takes. pair: a user and a password, both required. token: a password alone, sent as the bearer token instead of the connection's own, with no user. service-account-key: a password alone holding a service-account key, from which the provider mints its own access token, with no user. dedicated-user: a user other than the connection's own and that user's password, both required. none: the engine has no principal to sign an agent in as, so every agent credential is refused. The forms are unordered: a host reads a request that differs from Studio's record at its restrictive value. Restrictive value: none. */
+export type AgentCredentialFormClaim = "pair" | "token" | "service-account-key" | "dedicated-user" | "none";
+
+/** The result columns no masking rule of Studio masks on the engine, and why; null where the engine exempts no column. Restrictive value: null, so every column the masking rules match stays masked. */
+export type MaskingExemption = {
+  /** A regular expression over a result column's name, compiled with no flag, that matches whole names only: it opens with ^, closes with an unescaped $ and keeps every alternative inside a group. */
+  readonly column: string;
+  /** Why the columns the pattern matches hold no value a masking rule protects. */
+  readonly reason: string;
+} | null;
 
 /** What Studio's code can write on the engine. none: no code of the provider can send a write on any write path. guarded: every write path it has is refused by a named gate while read-only mode holds. open: at least one path sends a write no Studio gate refuses. Studio keeps a connection's read-only mode only where the reach is not open, so no manifest states read-only enforcement. Restrictive value: open, under which read-only mode is refused, ordered open, guarded, none from the most restrictive. */
 export type WriteReachClaim = "none" | "guarded" | "open";
@@ -1078,6 +1092,70 @@ export interface McpClaims {
   /** Whether MCP reads the engine only under an agent credential of the seed's own, refusing a connection that has none. Restrictive value: true. */
   readonly agentCredentialRequired: boolean;
 }
+
+/** What the engine's provider states its own code does: the reach of each write path, the answer of its metadata-only read and the result columns its inline editor refuses. Every member is a fact the provider declares, never a request: no gate of Studio reads it, so none is a claim, and Studio's census reads each back to the provider's own declaration. A review reads them as the evidence of the policy claims. */
+export interface Safeguards {
+  readonly writePaths: WritePaths;
+  /** Each operation the engine's metadata-only read permits, in the provider's order, with the columns its answer holds; null where the provider answers its machine surfaces as it reads, which no empty list states. */
+  readonly metadataOnly: readonly MetadataOnlyOperation[] | null;
+  readonly inlineEditRefusedColumns: InlineEditRefusal;
+}
+
+/** What the provider's code can send on each of Studio's four write paths: the query editor, object edit, maintenance and transactions. A provider that states no path is written open on every path, the reading Studio gives that absence. The policy claim writeReach is their summary: open where any path is open, else guarded where any is gated, else none. */
+export interface WritePaths {
+  readonly editor: WritePathEvidence;
+  readonly objectEdit: WritePathEvidence;
+  readonly maintenance: WritePathEvidence;
+  readonly transaction: WritePathEvidence;
+}
+
+/** One write path's reach: absent, gated or open. */
+export type WritePathEvidence = WritePathAbsent | WritePathGated | WritePathOpen;
+
+/** The provider has no code on the path that can send a write. On the editor path it names the structural proof that keeps it so; elsewhere the proof is null where it names none. */
+export interface WritePathAbsent {
+  readonly reach: "absent";
+  readonly proof: WritePathProof | null;
+}
+
+/** Provider code refuses every write on the path while read-only mode holds, naming the mode, before any request, and the gate names that code. */
+export interface WritePathGated {
+  readonly reach: "gated";
+  readonly gate: WritePathProof;
+}
+
+/** The path sends a write no Studio gate refuses. */
+export interface WritePathOpen {
+  readonly reach: "open";
+}
+
+/** The export that keeps a write path's answer: its module by its path relative to the root of the package declaring the engine, under src/ with no dot segment and ending in .ts, and the export's name. */
+export interface WritePathProof {
+  readonly module: string;
+  readonly symbol: string;
+}
+
+/** One operation a metadata-only read permits, by the name the provider gives it, and the columns its answer holds, in the answer's order, each named once. */
+export interface MetadataOnlyOperation {
+  readonly operation: string;
+  readonly columns: readonly MetadataOnlyColumn[];
+}
+
+/** One column of a metadata-only answer and the kind of fact it holds. */
+export interface MetadataOnlyColumn {
+  readonly column: string;
+  readonly kind: MetadataOnlyKind;
+}
+
+/** name: a name the store keeps for an object of its own, printable, 1 to 512 characters. count: a non-negative safe integer. flag: true or false. */
+export type MetadataOnlyKind = "name" | "count" | "flag";
+
+/** The result columns the engine's inline editor refuses to edit, by their type, and the reason a refused cell shows; null where it refuses none by type. */
+export type InlineEditRefusal = {
+  /** A regular expression over a result column's type name, compiled with no flag. */
+  readonly type: string;
+  readonly reason: string;
+} | null;
 
 /** One product the package was measured against: the engine that serves it, the versions claimed and the versions tested. */
 export interface CompatibilityEntry {

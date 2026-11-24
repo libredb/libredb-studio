@@ -76,6 +76,16 @@
  * row.
  * The claims of the connection, facets, agent and SQL text segments are written the same way: each is the row of the
  * review record docs/providers/CONTRACT.md, clause M-53, names for it.
+ * Two more policy claims come from records of their own: `agentCredentialForm` from `AGENT_CREDENTIAL_FORM`, whose null
+ * row, the user and password together, is written `pair`, and `maskingExemptColumns` from `MASKING_EXEMPT_COLUMNS`
+ * (clauses M-58 and M-59).
+ *
+ * The safeguards are no claims but the provider's own statements of what its code does, so they come from its
+ * capabilities, read as the editor facts are (clause M-60): `writePaths` from `writeReach`, path by path in the order
+ * of `WRITE_PATHS` (`src/lib/db/write-reach.ts`) with a proof the provider names none of written null, and every path
+ * open where the provider declares no write reach, the reading Studio gives that absence; `metadataOnly` from
+ * `metadataOnly`, one entry per operation in the capability's key order; and `inlineEditRefusedColumns` from
+ * `inlineEditRefusedColumns`. The last two are null where the provider declares none.
  *
  * The editor facts come from `EXECUTION_UI`, the fence tag tables (`ALIAS_ENGINES` and `QUERY_FENCE_ALIASES`),
  * `QUERY_DIALECTS`, the editor language tables (`EDITOR_LANGUAGES` and `DIALECT_EDITORS`) and each engine's
@@ -122,6 +132,7 @@ import type {
   NameQuote,
   PlaceableFieldName,
   QueryDialectRow,
+  Safeguards,
   SelectFieldName,
   SqlGenerators,
   SqlText,
@@ -129,6 +140,7 @@ import type {
   StatementRedaction,
   TypeFamilies,
   TypePattern,
+  WritePathEvidence,
 } from "@libredb/provider-sdk/manifest";
 import type { SqlGrammar } from "@libredb/provider-sdk/sql";
 import { AGENT_STATEMENT_LANGUAGE } from "../src/lib/agent/agent-manifest";
@@ -137,6 +149,7 @@ import {
   CONNECTION_STRING_ACCEPTED,
   HOST_PATH_FIELDS,
   isExternalDatabaseType,
+  MASKING_EXEMPT_COLUMNS,
   MCP_AGENT_CREDENTIAL_REQUIRED,
   MCP_EXPOSABLE,
   MCP_METADATA_READ_CHANGES_STATE,
@@ -153,6 +166,7 @@ import {
   WRITE_REACH,
 } from "../src/lib/db/compatibility";
 import {
+  AGENT_CREDENTIAL_FORM,
   CONNECTION_FIELD_DESCRIPTORS,
   CONNECTION_FIELDS,
   type ConnectionField,
@@ -181,7 +195,7 @@ import { SQL_GRAMMAR } from "../src/lib/db/sql-grammar";
 import type { SqlGrammarSpec, SqlRedaction } from "../src/lib/db/sql-grammar/types";
 import { SQL_WRITING } from "../src/lib/db/sql-writing";
 import type { InferredKind, SqlWritingSpec } from "../src/lib/db/sql-writing/types";
-import type { ProviderCapabilities } from "../src/lib/db/types";
+import type { ProviderCapabilities, WritePath, WritePathReach } from "../src/lib/db/types";
 import type { NonFiniteWord } from "../src/lib/non-finite";
 import { DIALECT_EDITORS, type DialectEditor } from "../src/lib/editor/dialect-editors";
 import { resolveTabType } from "../src/lib/editor/tab-language";
@@ -1071,6 +1085,59 @@ export function buildSqlGenerators(
   };
 }
 
+/** One write path's answer as the provider declares it, in the declaration's form: a proof the provider names none of null. */
+function writePathEvidence(path: WritePathReach): WritePathEvidence {
+  if (path.reach === "gated") return { reach: "gated", gate: { module: path.gate.module, symbol: path.gate.symbol } };
+  if (path.reach === "open") return { reach: "open" };
+  return {
+    reach: "absent",
+    proof: path.proof === undefined ? null : { module: path.proof.module, symbol: path.proof.symbol },
+  };
+}
+
+/**
+ * One engine's safeguards, read from its provider's capabilities: the write paths in `WRITE_PATHS` order, every path
+ * open where the provider declares no write reach, the reading Studio gives that absence, and a declared write reach
+ * that misses a path refused by name; the metadata-only answer as
+ * one entry per operation in the capability's key order, each column in its order, or null; and the inline edit
+ * refusal or null.
+ */
+function buildSafeguards(type: DatabaseType, capabilities: ProviderCapabilities): Safeguards {
+  const { writeReach, metadataOnly, inlineEditRefusedColumns } = capabilities;
+  const evidence = (path: WritePath): WritePathEvidence => {
+    if (writeReach === undefined) return { reach: "open" };
+    const declared: WritePathReach | undefined = writeReach[path];
+    if (declared === undefined) throw new Error(`${type}: the provider declares a write reach with no ${path} path`);
+    return writePathEvidence(declared);
+  };
+  return {
+    // Written out path by path, in WRITE_PATHS order, so a path the schema and Studio disagree on fails to compile here.
+    writePaths: {
+      editor: evidence("editor"),
+      objectEdit: evidence("objectEdit"),
+      maintenance: evidence("maintenance"),
+      transaction: evidence("transaction"),
+    },
+    metadataOnly:
+      metadataOnly === undefined
+        ? null
+        : Object.entries(metadataOnly).map(([operation, columns]) => ({
+            operation,
+            columns: columns.map(({ column, kind }) => ({ column, kind })),
+          })),
+    inlineEditRefusedColumns:
+      inlineEditRefusedColumns === undefined
+        ? null
+        : { type: inlineEditRefusedColumns.type, reason: inlineEditRefusedColumns.reason },
+  };
+}
+
+/** The engine's masking exemption, `MASKING_EXEMPT_COLUMNS`'s row as its column pattern and reason, or null. */
+function maskingExemption(type: DatabaseType): EngineDeclaration["policy"]["maskingExemptColumns"] {
+  const row = MASKING_EXEMPT_COLUMNS[type];
+  return row === null ? null : { column: row.column, reason: row.reason };
+}
+
 /** One engine's declaration, read from every table the contract states for it and from its provider's capabilities. */
 export function buildEngineDeclaration(type: DatabaseType, capabilities: ProviderCapabilities): EngineDeclaration {
   const form = CONNECTION_FORM[type];
@@ -1149,6 +1216,8 @@ export function buildEngineDeclaration(type: DatabaseType, capabilities: Provide
       deniedFileAccessRefusal: REFUSES_DENIED_FILE_ACCESS[type],
       singleWriterFile: SINGLE_WRITER_FILE[type],
       readRootsRequired: READ_ROOTS_REQUIRED[type],
+      agentCredentialForm: AGENT_CREDENTIAL_FORM[type] ?? "pair",
+      maskingExemptColumns: maskingExemption(type),
     },
     mcp: {
       exposable: MCP_EXPOSABLE[type],
@@ -1156,6 +1225,7 @@ export function buildEngineDeclaration(type: DatabaseType, capabilities: Provide
       metadataReadChangesState: MCP_METADATA_READ_CHANGES_STATE[type],
       agentCredentialRequired: MCP_AGENT_CREDENTIAL_REQUIRED[type],
     },
+    safeguards: buildSafeguards(type, capabilities),
   };
 }
 

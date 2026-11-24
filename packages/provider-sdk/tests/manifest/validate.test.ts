@@ -304,6 +304,54 @@ const mcpOf = (m: Json): Json => m.engines[0].mcp;
 /** The pointer of the fixture's one engine's MCP claims. */
 const MCP = "/engines/0/mcp";
 
+/** The safeguards of the fixture's one engine. */
+const safeguardsOf = (m: Json): Json => m.engines[0].safeguards;
+
+/** The write paths of the fixture's one engine. */
+const writePathsOf = (m: Json): Json => m.engines[0].safeguards.writePaths;
+
+/** The pointer of the fixture's one engine's safeguards. */
+const SAFEGUARDS = "/engines/0/safeguards";
+
+/** The pointer of the fixture's one engine's write paths. */
+const WRITE_PATHS = `${SAFEGUARDS}/writePaths`;
+
+/** The pointer of the fixture's one engine's metadata-only answer. */
+const METADATA_ONLY = `${SAFEGUARDS}/metadataOnly`;
+
+/** A module and an export that keep a write path's answer, as a package names them. */
+const WRITE_PROOF = { module: "src/exampledb/read-policy.ts", symbol: "EXAMPLEDB_READS" };
+
+/** The four write paths, each with the reach `reach` gives it. */
+function writePaths(reach: (path: string) => Json): Json {
+  return Object.fromEntries(["editor", "objectEdit", "maintenance", "transaction"].map((path) => [path, reach(path)]));
+}
+
+/** Every write path open, the paths the write reach `open` is the summary of. */
+const openPaths = (): Json => writePaths(() => ({ reach: "open" }));
+
+/** Every write path absent, the editor naming its proof: the paths the write reach `none` is the summary of. */
+const absentPaths = (): Json =>
+  writePaths((path) => ({ reach: "absent", proof: path === "editor" ? { ...WRITE_PROOF } : null }));
+
+/** The editor path gated and the others absent: the paths the write reach `guarded` is the summary of. */
+const guardedPaths = (): Json => ({ ...absentPaths(), editor: { reach: "gated", gate: { ...WRITE_PROOF } } });
+
+/** A metadata-only operation named `operation` whose columns are `columns`, each a name. */
+function metadataOperation(operation: string, columns: readonly string[] = ["name"]): Json {
+  return { operation, columns: columns.map((column) => ({ column, kind: "name" })) };
+}
+
+/** A masking exemption whose column pattern is `column`. */
+function maskingExemption(column: string): Json {
+  return { column, reason: "The address is a register number, not a stored value." };
+}
+
+/** An inline edit refusal whose type pattern is `type`. */
+function inlineEditRefusal(type: string): Json {
+  return { type, reason: "Large object columns are refused, since a cell shows only part of one." };
+}
+
 /** A refusal sentence a test states as an engine's denied file access refusal. */
 const DENIED_FILE_ACCESS_REFUSAL =
   "Kafka connections require an administrator because this client cannot confine file access.";
@@ -311,7 +359,8 @@ const DENIED_FILE_ACCESS_REFUSAL =
 /**
  * Every claim of the fixture's one engine at its restrictive value, the value under which every gate that reads the
  * claim refuses, withholds or keeps apart the most, with the seeds declaring read roots so the rules hold on an engine
- * that has an agent credential form, as Kafka's has.
+ * that has an agent credential form, as Kafka's has, and every write path open, the paths the write reach `open` is the
+ * summary of.
  */
 function restrictiveClaims(m: Json): void {
   Object.assign(policyOf(m), {
@@ -320,7 +369,10 @@ function restrictiveClaims(m: Json): void {
     deniedFileAccessRefusal: DENIED_FILE_ACCESS_REFUSAL,
     singleWriterFile: false,
     readRootsRequired: true,
+    agentCredentialForm: "none",
+    maskingExemptColumns: null,
   });
+  safeguardsOf(m).writePaths = openPaths();
   Object.assign(mcpOf(m), {
     exposable: false,
     statementRead: false,
@@ -683,12 +735,22 @@ describe("schema refusals", () => {
     ]),
     ["policy", (m: Json) => delete m.engines[0].policy, "/engines/0", "policy"],
     ["mcp", (m: Json) => delete m.engines[0].mcp, "/engines/0", "mcp"],
+    ["safeguards", (m: Json) => delete m.engines[0].safeguards, "/engines/0", "safeguards"],
     ...missingRows("policy", policyOf, POLICY, [
       "writeReach",
       "readsFileAccessPosture",
       "deniedFileAccessRefusal",
       "singleWriterFile",
       "readRootsRequired",
+      "agentCredentialForm",
+      "maskingExemptColumns",
+    ]),
+    ...missingRows("safeguards", safeguardsOf, SAFEGUARDS, ["writePaths", "metadataOnly", "inlineEditRefusedColumns"]),
+    ...missingRows("safeguards.writePaths", writePathsOf, WRITE_PATHS, [
+      "editor",
+      "objectEdit",
+      "maintenance",
+      "transaction",
     ]),
     ...missingRows("mcp", mcpOf, MCP, [
       "exposable",
@@ -1872,7 +1934,10 @@ describe("schema refusals", () => {
       deniedFileAccessRefusal: null,
       singleWriterFile: false,
       readRootsRequired: false,
+      agentCredentialForm: "pair",
+      maskingExemptColumns: null,
     });
+    expect(writePathsOf(manifest())).toEqual(openPaths());
     expect(mcpOf(manifest())).toEqual({
       exposable: false,
       statementRead: false,
@@ -1889,6 +1954,7 @@ describe("schema refusals", () => {
       agentCredentialRequired: false,
     });
     expect(refusalsFor(kafkaManifest())).toEqual([]);
+    expect(policyOf(restrictive)).toMatchObject({ agentCredentialForm: "none", maskingExemptColumns: null });
     expect(refusalsFor(restrictive)).toEqual([]);
   });
 
@@ -1921,9 +1987,148 @@ describe("schema refusals", () => {
 
       expect(refusalsFor(changed)).toEqual([refusal("value-not-allowed", `${POLICY}/writeReach`)]);
     }
-    for (const reach of ["none", "guarded", "open"]) {
-      expect(refusalsFor(manifest((m) => (policyOf(m).writeReach = reach)))).toEqual([]);
+    for (const [reach, paths] of [
+      ["none", absentPaths()],
+      ["guarded", guardedPaths()],
+      ["open", openPaths()],
+    ] as const) {
+      const admitted = manifest((m) => {
+        policyOf(m).writeReach = reach;
+        safeguardsOf(m).writePaths = paths;
+      });
+
+      expect(refusalsFor(admitted)).toEqual([]);
     }
+  });
+
+  test("an agent credential form outside the claim's values is refused as value-not-allowed, and null as wrong-type beside it", () => {
+    for (const form of ["user", "PAIR", "secret"]) {
+      const changed = manifest((m) => (policyOf(m).agentCredentialForm = form));
+
+      expect(refusalsFor(changed)).toEqual([refusal("value-not-allowed", `${POLICY}/agentCredentialForm`)]);
+    }
+    expect(refusalsFor(manifest((m) => (policyOf(m).agentCredentialForm = null)))).toEqual([
+      refusal("value-not-allowed", `${POLICY}/agentCredentialForm`),
+      refusal("wrong-type", `${POLICY}/agentCredentialForm`),
+    ]);
+    for (const form of ["pair", "token", "service-account-key", "dedicated-user", "none"]) {
+      expect(refusalsFor(manifest((m) => (policyOf(m).agentCredentialForm = form)))).toEqual([]);
+    }
+  });
+
+  test("a masking exemption or inline edit refusal whose pattern or reason is empty or past its bound is refused as out-of-range", () => {
+    const masking = (exemption: Json) => manifest((m) => (policyOf(m).maskingExemptColumns = exemption));
+    const inline = (stated: Json) => manifest((m) => (safeguardsOf(m).inlineEditRefusedColumns = stated));
+    const MASKING = `${POLICY}/maskingExemptColumns`;
+    const INLINE = `${SAFEGUARDS}/inlineEditRefusedColumns`;
+
+    expect(refusalsFor(masking(maskingExemption("^")))).toEqual([refusal("out-of-range", `${MASKING}/column`)]);
+    expect(refusalsFor(masking(maskingExemption(`^${"a".repeat(511)}$`)))).toEqual([
+      refusal("out-of-range", `${MASKING}/column`),
+    ]);
+    expect(refusalsFor(masking({ column: "^address$", reason: "" }))).toEqual([
+      refusal("out-of-range", `${MASKING}/reason`),
+    ]);
+    expect(refusalsFor(masking({ column: "^address$", reason: "x".repeat(2001) }))).toEqual([
+      refusal("out-of-range", `${MASKING}/reason`),
+    ]);
+    expect(refusalsFor(inline(inlineEditRefusal("")))).toEqual([refusal("out-of-range", `${INLINE}/type`)]);
+    expect(refusalsFor(inline(inlineEditRefusal("a".repeat(513))))).toEqual([
+      refusal("out-of-range", `${INLINE}/type`),
+    ]);
+    expect(refusalsFor(inline({ type: "^BLOB$", reason: "" }))).toEqual([refusal("out-of-range", `${INLINE}/reason`)]);
+    expect(refusalsFor(inline({ type: "^BLOB$", reason: "x".repeat(2001) }))).toEqual([
+      refusal("out-of-range", `${INLINE}/reason`),
+    ]);
+    expect(refusalsFor(masking({ column: `^${"a".repeat(510)}$`, reason: "x".repeat(2000) }))).toEqual([]);
+    expect(refusalsFor(inline({ type: "a".repeat(512), reason: "x".repeat(2000) }))).toEqual([]);
+  });
+
+  test("a write path that is not one of the three reaches, or whose gate or proof is not a .ts module under src with an export name, is refused as no-variant at the path", () => {
+    const proof = (module: string, symbol = "EXAMPLEDB_READS") => ({ reach: "absent", proof: { module, symbol } });
+    const refused = [
+      { reach: "partial" },
+      { reach: "open", proof: null },
+      { reach: "gated" },
+      { reach: "absent" },
+      { reach: "gated", gate: null },
+      ...["lib/x.ts", "src/../x.ts", "src/./x.ts", "src/x.js", "src/x.d.ts", "/src/x.ts", "src/", "src/x"].map(
+        (module) => proof(module),
+      ),
+      proof("src/x.ts", "a-b"),
+      proof("src/x.ts", "1a"),
+      { reach: "gated", gate: { module: "src/x.ts", symbol: "a-b" } },
+      { reach: "absent", proof: { ...WRITE_PROOF, bogus: 1 } },
+    ];
+    for (const path of refused) {
+      const changed = manifest((m) => (writePathsOf(m).editor = path));
+
+      expect(refusalsFor(changed)).toEqual([refusal("no-variant", `${WRITE_PATHS}/editor`)]);
+    }
+    const admitted = [
+      { reach: "absent", proof: { module: "src/a/b-c_d.ts", symbol: "_X1" } },
+      { reach: "gated", gate: { module: "src/readOnlyGate.ts", symbol: "refuseWrites" } },
+      { reach: "open" },
+    ];
+    for (const path of admitted) {
+      expect(refusalsFor(manifest((m) => (writePathsOf(m).editor = path)))).toEqual([]);
+    }
+  });
+
+  test("a metadata-only answer with no operation or an operation with no column is refused as too-few, and a kind outside name, count and flag as value-not-allowed", () => {
+    const answering = (operations: unknown) => manifest((m) => (safeguardsOf(m).metadataOnly = operations));
+    const valueKind = metadataOperation("window", ["name"]);
+    valueKind.columns[0].kind = "value";
+
+    expect(refusalsFor(answering([]))).toEqual([refusal("too-few", METADATA_ONLY)]);
+    expect(refusalsFor(answering([metadataOperation("window", [])]))).toEqual([
+      refusal("too-few", `${METADATA_ONLY}/0/columns`),
+    ]);
+    expect(refusalsFor(answering([valueKind]))).toEqual([
+      refusal("value-not-allowed", `${METADATA_ONLY}/0/columns/0/kind`),
+    ]);
+    expect(
+      refusalsFor(
+        answering([
+          {
+            operation: "topics",
+            columns: [
+              { column: "topic", kind: "name" },
+              { column: "partitions", kind: "count" },
+            ],
+          },
+          { operation: "brokers", columns: [{ column: "offline", kind: "flag" }] },
+        ]),
+      ),
+    ).toEqual([]);
+  });
+
+  test("a metadata operation or column name outside its pattern is refused as pattern-mismatch", () => {
+    const answering = (operation: Json) => manifest((m) => (safeguardsOf(m).metadataOnly = [operation]));
+
+    for (const operation of [" window", "window ", "win/dow", "1window", ""]) {
+      expect(refusalsFor(answering(metadataOperation(operation)))).toEqual([
+        refusal("pattern-mismatch", `${METADATA_ONLY}/0/operation`),
+      ]);
+    }
+    for (const column of ["1st", "a-b", "a b", ""]) {
+      expect(refusalsFor(answering(metadataOperation("window", [column])))).toEqual([
+        refusal("pattern-mismatch", `${METADATA_ONLY}/0/columns/0/column`),
+      ]);
+    }
+    for (const operation of ["OBJECT ENCODING", "lease timetolive", "load_state", "list-buckets", "edgeNode", "x"]) {
+      expect(refusalsFor(answering(metadataOperation(operation)))).toEqual([]);
+    }
+  });
+
+  test("the machine redaction, billed compute and the write paths are no claims, each refused as unknown-key where it is not a member", () => {
+    const redaction = manifest((m) => (safeguardsOf(m).machineRedaction = { maskedNameKinds: ["secrets"] }));
+    const billed = manifest((m) => (safeguardsOf(m).resumesBilledCompute = true));
+    const paths = manifest((m) => (policyOf(m).writePaths = openPaths()));
+
+    expect(refusalsFor(redaction)).toEqual([refusal("unknown-key", SAFEGUARDS, "machineRedaction")]);
+    expect(refusalsFor(billed)).toEqual([refusal("unknown-key", SAFEGUARDS, "resumesBilledCompute")]);
+    expect(refusalsFor(paths)).toEqual([refusal("unknown-key", POLICY, "writePaths")]);
   });
 
   test("a claim that is not of its type is refused as wrong-type", () => {
@@ -2590,6 +2795,110 @@ describe("rules the schema cannot state", () => {
     expect(refusalsFor(read)).toEqual([]);
   });
 
+  test("a write reach claim that is not the summary of the engine's write paths is refused as write-reach-summary-differs", () => {
+    const kafka = (change: (m: Json) => void) => {
+      const changed = kafkaManifest();
+      change(changed);
+      return changed;
+    };
+    const differs = [refusal("write-reach-summary-differs", `${POLICY}/writeReach`)];
+
+    expect(writePathsOf(kafkaManifest()).editor.reach).toBe("absent");
+    for (const reach of ["guarded", "open"]) {
+      expect(refusalsFor(kafka((m) => (policyOf(m).writeReach = reach)))).toEqual(differs);
+    }
+    const gatedMaintenance = (m: Json) => (writePathsOf(m).maintenance = { reach: "gated", gate: { ...WRITE_PROOF } });
+    const openTransaction = (m: Json) => (writePathsOf(m).transaction = { reach: "open" });
+    for (const reach of ["none", "open"]) {
+      expect(refusalsFor(kafka((m) => (gatedMaintenance(m), (policyOf(m).writeReach = reach))))).toEqual(differs);
+    }
+    for (const reach of ["none", "guarded"]) {
+      expect(refusalsFor(kafka((m) => (openTransaction(m), (policyOf(m).writeReach = reach))))).toEqual(differs);
+    }
+    expect(refusalsFor(kafka((m) => (gatedMaintenance(m), (policyOf(m).writeReach = "guarded"))))).toEqual([]);
+    expect(refusalsFor(kafka((m) => (openTransaction(m), (policyOf(m).writeReach = "open"))))).toEqual([]);
+    expect(
+      refusalsFor(kafka((m) => (gatedMaintenance(m), openTransaction(m), (policyOf(m).writeReach = "open")))),
+    ).toEqual([]);
+    expect(refusalsFor(manifest((m) => (policyOf(m).writeReach = "none")))).toEqual(differs);
+    expect(refusalsFor(manifest((m) => (policyOf(m).writeReach = "guarded")))).toEqual(differs);
+  });
+
+  test("an absent editor write path that names no proof is refused as editor-write-path-unproven", () => {
+    const unproven = kafkaManifest();
+    writePathsOf(unproven).editor.proof = null;
+    const objectEditProven = kafkaManifest();
+    writePathsOf(objectEditProven).objectEdit.proof = { ...WRITE_PROOF };
+
+    expect(writePathsOf(kafkaManifest()).objectEdit).toEqual({ reach: "absent", proof: null });
+    expect(refusalsFor(unproven)).toEqual([refusal("editor-write-path-unproven", `${WRITE_PATHS}/editor/proof`)]);
+    expect(refusalsFor(objectEditProven)).toEqual([]);
+  });
+
+  test("a masking exemption whose column pattern does not match whole names only is refused as masking-exemption-unanchored", () => {
+    const exempting = (column: string) =>
+      manifest((m) => (policyOf(m).maskingExemptColumns = maskingExemption(column)));
+
+    for (const column of [
+      "address",
+      "^address",
+      "address$",
+      "^address\\$",
+      "^address$|ip",
+      "^a$|^b$",
+      "^address$(?=x)",
+      "^[$]",
+      "^a(b|c$)",
+    ]) {
+      expect([column, refusalsFor(exempting(column))]).toEqual([
+        column,
+        [refusal("masking-exemption-unanchored", `${POLICY}/maskingExemptColumns/column`)],
+      ]);
+    }
+    for (const column of ["^address$", "^(?:address|value)$", "^[|]address$", "^address\\\\$", "^[\\]$]x$", "^.*$"]) {
+      expect([column, refusalsFor(exempting(column))]).toEqual([column, []]);
+    }
+  });
+
+  test("a masking exemption or inline edit refusal pattern that does not compile is refused as pattern-invalid", () => {
+    const masking = manifest((m) => (policyOf(m).maskingExemptColumns = maskingExemption("^(address$")));
+    const inline = manifest((m) => (safeguardsOf(m).inlineEditRefusedColumns = inlineEditRefusal("(")));
+
+    expect(refusalsFor(masking)).toEqual([refusal("pattern-invalid", `${POLICY}/maskingExemptColumns/column`)]);
+    expect(refusalsFor(inline)).toEqual([refusal("pattern-invalid", `${SAFEGUARDS}/inlineEditRefusedColumns/type`)]);
+  });
+
+  test("a metadata operation named twice is refused as metadata-operation-duplicate, at the later one", () => {
+    const changed = manifest(
+      (m) =>
+        (safeguardsOf(m).metadataOnly = [
+          metadataOperation("window"),
+          metadataOperation("other"),
+          metadataOperation("window"),
+        ]),
+    );
+
+    expect(refusalsFor(changed)).toEqual([refusal("metadata-operation-duplicate", `${METADATA_ONLY}/2/operation`)]);
+  });
+
+  test("a column named twice in one metadata operation is refused as metadata-column-duplicate, and the same column in two operations is admitted", () => {
+    const repeated = manifest(
+      (m) => (safeguardsOf(m).metadataOnly = [metadataOperation("window", ["count", "name", "count"])]),
+    );
+    const shared = manifest(
+      (m) =>
+        (safeguardsOf(m).metadataOnly = [
+          metadataOperation("window", ["count"]),
+          metadataOperation("other", ["count"]),
+        ]),
+    );
+
+    expect(refusalsFor(repeated)).toEqual([
+      refusal("metadata-column-duplicate", `${METADATA_ONLY}/0/columns/2/column`),
+    ]);
+    expect(refusalsFor(shared)).toEqual([]);
+  });
+
   test("a sign-in shaped like Snowflake's is admitted", () => {
     expect(refusalsFor(manifest(signInShaped))).toEqual([]);
   });
@@ -2864,6 +3173,28 @@ describe("one engine declaration", () => {
     });
   });
 
+  test("an engine declaration's safeguards and its new claims are held to their rules, at pointers into it", () => {
+    const declaration = kafkaManifest().engines[0] as Json;
+    declaration.policy.writeReach = "open";
+    declaration.policy.maskingExemptColumns = maskingExemption("address");
+    declaration.safeguards.writePaths.editor.proof = null;
+    declaration.safeguards.inlineEditRefusedColumns = inlineEditRefusal("(");
+    declaration.safeguards.metadataOnly.push(structuredClone(declaration.safeguards.metadataOnly[0]));
+    declaration.safeguards.metadataOnly[1].columns.push({ column: "rack", kind: "name" });
+
+    expect(validator.validateEngine(declaration)).toEqual({
+      admitted: false,
+      refusals: [
+        refusal("masking-exemption-unanchored", "/policy/maskingExemptColumns/column"),
+        refusal("write-reach-summary-differs", "/policy/writeReach"),
+        refusal("pattern-invalid", "/safeguards/inlineEditRefusedColumns/type"),
+        refusal("metadata-column-duplicate", "/safeguards/metadataOnly/1/columns/3/column"),
+        refusal("metadata-operation-duplicate", "/safeguards/metadataOnly/4/operation"),
+        refusal("editor-write-path-unproven", "/safeguards/writePaths/editor/proof"),
+      ],
+    });
+  });
+
   test("an engine declaration's write reach is refused at its own pointer under validateEngine", () => {
     const declaration = kafkaManifest().engines[0] as Json;
     declaration.policy.writeReach = "partial";
@@ -2963,6 +3294,23 @@ describe("refusals carry no value", () => {
     expect(ruledRefusals).toEqual([refusal("denied-file-access-unread", `${POLICY}/deniedFileAccessRefusal`)]);
     expect(JSON.stringify(ruledRefusals)).not.toContain(sentence);
     for (const item of ruledRefusals) expect(refusalSentence(item)).not.toContain(sentence);
+
+    const name = randomUUID()
+      .replaceAll("-", "")
+      .replace(/[0-9]/g, (digit) => "ghijklmnop".charAt(Number(digit)));
+    const safeguarded = manifest((m) => {
+      policyOf(m).maskingExemptColumns = maskingExemption(name);
+      safeguardsOf(m).metadataOnly = [metadataOperation(name, [name]), metadataOperation(name, [name, name])];
+    });
+    const safeguardRefusals = refusalsFor(safeguarded);
+
+    expect(safeguardRefusals).toEqual([
+      refusal("masking-exemption-unanchored", `${POLICY}/maskingExemptColumns/column`),
+      refusal("metadata-column-duplicate", `${METADATA_ONLY}/1/columns/1/column`),
+      refusal("metadata-operation-duplicate", `${METADATA_ONLY}/1/operation`),
+    ]);
+    expect(JSON.stringify(safeguardRefusals)).not.toContain(name);
+    for (const item of safeguardRefusals) expect(refusalSentence(item)).not.toContain(name);
   });
 
   test("no SQL writing rule refusal carries the pattern or the type name it refuses", () => {

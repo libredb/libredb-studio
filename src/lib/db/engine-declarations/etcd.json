@@ -304,12 +304,218 @@
     "readsFileAccessPosture": false,
     "deniedFileAccessRefusal": null,
     "singleWriterFile": false,
-    "readRootsRequired": false
+    "readRootsRequired": false,
+    "agentCredentialForm": "pair",
+    "maskingExemptColumns": null
   },
   "mcp": {
     "exposable": true,
     "statementRead": true,
     "metadataReadChangesState": false,
     "agentCredentialRequired": false
+  },
+  "safeguards": {
+    "writePaths": {
+      "editor": {
+        "reach": "gated",
+        "gate": {
+          "module": "src/lib/db/providers/keyvalue/etcd/write-policy.ts",
+          "symbol": "refuseBeforeSend"
+        }
+      },
+      "objectEdit": {
+        "reach": "gated",
+        "gate": {
+          "module": "src/lib/db/providers/keyvalue/etcd/write-policy.ts",
+          "symbol": "refuseReadOnly"
+        }
+      },
+      "maintenance": {
+        "reach": "gated",
+        "gate": {
+          "module": "src/lib/db/providers/keyvalue/etcd/write-policy.ts",
+          "symbol": "refuseReadOnly"
+        }
+      },
+      "transaction": {
+        "reach": "absent",
+        "proof": null
+      }
+    },
+    "metadataOnly": [
+      {
+        "operation": "endpoint status",
+        "columns": [
+          {
+            "column": "version",
+            "kind": "name"
+          },
+          {
+            "column": "storage_version",
+            "kind": "name"
+          },
+          {
+            "column": "member_id",
+            "kind": "name"
+          },
+          {
+            "column": "leader_id",
+            "kind": "name"
+          },
+          {
+            "column": "is_learner",
+            "kind": "flag"
+          },
+          {
+            "column": "db_size_bytes",
+            "kind": "count"
+          },
+          {
+            "column": "db_size_in_use_bytes",
+            "kind": "count"
+          },
+          {
+            "column": "db_size_quota_bytes",
+            "kind": "count"
+          },
+          {
+            "column": "raft_term",
+            "kind": "count"
+          },
+          {
+            "column": "raft_index",
+            "kind": "count"
+          },
+          {
+            "column": "raft_applied_index",
+            "kind": "count"
+          },
+          {
+            "column": "errors",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "member list",
+        "columns": [
+          {
+            "column": "member_id",
+            "kind": "name"
+          },
+          {
+            "column": "name",
+            "kind": "name"
+          },
+          {
+            "column": "is_learner",
+            "kind": "flag"
+          },
+          {
+            "column": "peer_urls",
+            "kind": "count"
+          },
+          {
+            "column": "client_urls",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "alarm list",
+        "columns": [
+          {
+            "column": "member_id",
+            "kind": "name"
+          },
+          {
+            "column": "alarm",
+            "kind": "name"
+          }
+        ]
+      },
+      {
+        "operation": "auth status",
+        "columns": [
+          {
+            "column": "enabled",
+            "kind": "flag"
+          },
+          {
+            "column": "auth_revision",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "lease list",
+        "columns": [
+          {
+            "column": "lease_id",
+            "kind": "name"
+          }
+        ]
+      },
+      {
+        "operation": "lease timetolive",
+        "columns": [
+          {
+            "column": "lease_id",
+            "kind": "name"
+          },
+          {
+            "column": "exists",
+            "kind": "flag"
+          },
+          {
+            "column": "ttl_seconds",
+            "kind": "count"
+          },
+          {
+            "column": "granted_ttl_seconds",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "key count",
+        "columns": [
+          {
+            "column": "keys",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "key metadata",
+        "columns": [
+          {
+            "column": "exists",
+            "kind": "flag"
+          },
+          {
+            "column": "create_revision",
+            "kind": "count"
+          },
+          {
+            "column": "mod_revision",
+            "kind": "count"
+          },
+          {
+            "column": "version",
+            "kind": "count"
+          },
+          {
+            "column": "lease_id",
+            "kind": "name"
+          },
+          {
+            "column": "value_bytes",
+            "kind": "count"
+          }
+        ]
+      }
+    ],
+    "inlineEditRefusedColumns": null
   }
 }

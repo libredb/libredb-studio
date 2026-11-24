@@ -299,12 +299,396 @@
     "readsFileAccessPosture": false,
     "deniedFileAccessRefusal": null,
     "singleWriterFile": false,
-    "readRootsRequired": false
+    "readRootsRequired": false,
+    "agentCredentialForm": "pair",
+    "maskingExemptColumns": null
   },
   "mcp": {
     "exposable": true,
     "statementRead": true,
     "metadataReadChangesState": false,
     "agentCredentialRequired": false
+  },
+  "safeguards": {
+    "writePaths": {
+      "editor": {
+        "reach": "absent",
+        "proof": {
+          "module": "src/lib/db/providers/industrial/sparkplug/encoder.ts",
+          "symbol": "PACKET"
+        }
+      },
+      "objectEdit": {
+        "reach": "absent",
+        "proof": null
+      },
+      "maintenance": {
+        "reach": "absent",
+        "proof": null
+      },
+      "transaction": {
+        "reach": "absent",
+        "proof": null
+      }
+    },
+    "metadataOnly": [
+      {
+        "operation": "window",
+        "columns": [
+          {
+            "column": "window_ms",
+            "kind": "count"
+          },
+          {
+            "column": "listened_ms",
+            "kind": "count"
+          },
+          {
+            "column": "stop_reason",
+            "kind": "name"
+          },
+          {
+            "column": "scope",
+            "kind": "name"
+          },
+          {
+            "column": "broker_reason_code",
+            "kind": "count"
+          },
+          {
+            "column": "subscriptions_refused",
+            "kind": "count"
+          },
+          {
+            "column": "groups_seen",
+            "kind": "count"
+          },
+          {
+            "column": "edge_nodes_seen",
+            "kind": "count"
+          },
+          {
+            "column": "devices_seen",
+            "kind": "count"
+          },
+          {
+            "column": "messages",
+            "kind": "count"
+          },
+          {
+            "column": "nbirth",
+            "kind": "count"
+          },
+          {
+            "column": "ndeath",
+            "kind": "count"
+          },
+          {
+            "column": "ndata",
+            "kind": "count"
+          },
+          {
+            "column": "dbirth",
+            "kind": "count"
+          },
+          {
+            "column": "ddeath",
+            "kind": "count"
+          },
+          {
+            "column": "ddata",
+            "kind": "count"
+          },
+          {
+            "column": "other_messages",
+            "kind": "count"
+          },
+          {
+            "column": "metrics",
+            "kind": "count"
+          },
+          {
+            "column": "payload_bytes",
+            "kind": "count"
+          },
+          {
+            "column": "messages_not_decodable",
+            "kind": "count"
+          },
+          {
+            "column": "payloads_not_kept",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "group",
+        "columns": [
+          {
+            "column": "window_ms",
+            "kind": "count"
+          },
+          {
+            "column": "listened_ms",
+            "kind": "count"
+          },
+          {
+            "column": "stop_reason",
+            "kind": "name"
+          },
+          {
+            "column": "scope",
+            "kind": "name"
+          },
+          {
+            "column": "broker_reason_code",
+            "kind": "count"
+          },
+          {
+            "column": "subscriptions_refused",
+            "kind": "count"
+          },
+          {
+            "column": "seen",
+            "kind": "flag"
+          },
+          {
+            "column": "messages",
+            "kind": "count"
+          },
+          {
+            "column": "nbirth",
+            "kind": "count"
+          },
+          {
+            "column": "ndeath",
+            "kind": "count"
+          },
+          {
+            "column": "ndata",
+            "kind": "count"
+          },
+          {
+            "column": "dbirth",
+            "kind": "count"
+          },
+          {
+            "column": "ddeath",
+            "kind": "count"
+          },
+          {
+            "column": "ddata",
+            "kind": "count"
+          },
+          {
+            "column": "birth_seen",
+            "kind": "flag"
+          },
+          {
+            "column": "death_seen",
+            "kind": "flag"
+          },
+          {
+            "column": "last_seen_ms",
+            "kind": "count"
+          },
+          {
+            "column": "metrics",
+            "kind": "count"
+          },
+          {
+            "column": "payload_bytes",
+            "kind": "count"
+          },
+          {
+            "column": "messages_not_decodable",
+            "kind": "count"
+          },
+          {
+            "column": "payloads_not_kept",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "edgeNode",
+        "columns": [
+          {
+            "column": "window_ms",
+            "kind": "count"
+          },
+          {
+            "column": "listened_ms",
+            "kind": "count"
+          },
+          {
+            "column": "stop_reason",
+            "kind": "name"
+          },
+          {
+            "column": "scope",
+            "kind": "name"
+          },
+          {
+            "column": "broker_reason_code",
+            "kind": "count"
+          },
+          {
+            "column": "subscriptions_refused",
+            "kind": "count"
+          },
+          {
+            "column": "seen",
+            "kind": "flag"
+          },
+          {
+            "column": "messages",
+            "kind": "count"
+          },
+          {
+            "column": "nbirth",
+            "kind": "count"
+          },
+          {
+            "column": "ndeath",
+            "kind": "count"
+          },
+          {
+            "column": "ndata",
+            "kind": "count"
+          },
+          {
+            "column": "dbirth",
+            "kind": "count"
+          },
+          {
+            "column": "ddeath",
+            "kind": "count"
+          },
+          {
+            "column": "ddata",
+            "kind": "count"
+          },
+          {
+            "column": "birth_seen",
+            "kind": "flag"
+          },
+          {
+            "column": "death_seen",
+            "kind": "flag"
+          },
+          {
+            "column": "last_seen_ms",
+            "kind": "count"
+          },
+          {
+            "column": "metrics",
+            "kind": "count"
+          },
+          {
+            "column": "payload_bytes",
+            "kind": "count"
+          },
+          {
+            "column": "messages_not_decodable",
+            "kind": "count"
+          },
+          {
+            "column": "payloads_not_kept",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "device",
+        "columns": [
+          {
+            "column": "window_ms",
+            "kind": "count"
+          },
+          {
+            "column": "listened_ms",
+            "kind": "count"
+          },
+          {
+            "column": "stop_reason",
+            "kind": "name"
+          },
+          {
+            "column": "scope",
+            "kind": "name"
+          },
+          {
+            "column": "broker_reason_code",
+            "kind": "count"
+          },
+          {
+            "column": "subscriptions_refused",
+            "kind": "count"
+          },
+          {
+            "column": "seen",
+            "kind": "flag"
+          },
+          {
+            "column": "messages",
+            "kind": "count"
+          },
+          {
+            "column": "nbirth",
+            "kind": "count"
+          },
+          {
+            "column": "ndeath",
+            "kind": "count"
+          },
+          {
+            "column": "ndata",
+            "kind": "count"
+          },
+          {
+            "column": "dbirth",
+            "kind": "count"
+          },
+          {
+            "column": "ddeath",
+            "kind": "count"
+          },
+          {
+            "column": "ddata",
+            "kind": "count"
+          },
+          {
+            "column": "birth_seen",
+            "kind": "flag"
+          },
+          {
+            "column": "death_seen",
+            "kind": "flag"
+          },
+          {
+            "column": "last_seen_ms",
+            "kind": "count"
+          },
+          {
+            "column": "metrics",
+            "kind": "count"
+          },
+          {
+            "column": "payload_bytes",
+            "kind": "count"
+          },
+          {
+            "column": "messages_not_decodable",
+            "kind": "count"
+          },
+          {
+            "column": "payloads_not_kept",
+            "kind": "count"
+          }
+        ]
+      }
+    ],
+    "inlineEditRefusedColumns": null
   }
 }

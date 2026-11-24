@@ -408,12 +408,142 @@
     "readsFileAccessPosture": false,
     "deniedFileAccessRefusal": null,
     "singleWriterFile": false,
-    "readRootsRequired": false
+    "readRootsRequired": false,
+    "agentCredentialForm": "dedicated-user",
+    "maskingExemptColumns": null
   },
   "mcp": {
     "exposable": true,
     "statementRead": true,
     "metadataReadChangesState": false,
     "agentCredentialRequired": true
+  },
+  "safeguards": {
+    "writePaths": {
+      "editor": {
+        "reach": "absent",
+        "proof": {
+          "module": "src/lib/db/providers/objectstore/s3/console/commands.ts",
+          "symbol": "S3_COMMAND_TABLE"
+        }
+      },
+      "objectEdit": {
+        "reach": "absent",
+        "proof": null
+      },
+      "maintenance": {
+        "reach": "absent",
+        "proof": null
+      },
+      "transaction": {
+        "reach": "absent",
+        "proof": null
+      }
+    },
+    "metadataOnly": [
+      {
+        "operation": "list-buckets",
+        "columns": [
+          {
+            "column": "bucket",
+            "kind": "name"
+          },
+          {
+            "column": "created",
+            "kind": "name"
+          }
+        ]
+      },
+      {
+        "operation": "head-bucket",
+        "columns": [
+          {
+            "column": "bucket",
+            "kind": "name"
+          },
+          {
+            "column": "exists",
+            "kind": "flag"
+          },
+          {
+            "column": "region",
+            "kind": "name"
+          }
+        ]
+      },
+      {
+        "operation": "get-bucket-location",
+        "columns": [
+          {
+            "column": "bucket",
+            "kind": "name"
+          },
+          {
+            "column": "location",
+            "kind": "name"
+          }
+        ]
+      },
+      {
+        "operation": "get-bucket-versioning",
+        "columns": [
+          {
+            "column": "bucket",
+            "kind": "name"
+          },
+          {
+            "column": "status",
+            "kind": "name"
+          },
+          {
+            "column": "mfa_delete",
+            "kind": "name"
+          }
+        ]
+      },
+      {
+        "operation": "summary",
+        "columns": [
+          {
+            "column": "bucket",
+            "kind": "name"
+          },
+          {
+            "column": "objects",
+            "kind": "count"
+          },
+          {
+            "column": "total_size_bytes",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "head-object",
+        "columns": [
+          {
+            "column": "bucket",
+            "kind": "name"
+          },
+          {
+            "column": "exists",
+            "kind": "flag"
+          },
+          {
+            "column": "size_bytes",
+            "kind": "count"
+          },
+          {
+            "column": "last_modified",
+            "kind": "name"
+          },
+          {
+            "column": "storage_class",
+            "kind": "name"
+          }
+        ]
+      }
+    ],
+    "inlineEditRefusedColumns": null
   }
 }

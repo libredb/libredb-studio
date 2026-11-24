@@ -308,12 +308,35 @@
     "readsFileAccessPosture": false,
     "deniedFileAccessRefusal": null,
     "singleWriterFile": false,
-    "readRootsRequired": false
+    "readRootsRequired": false,
+    "agentCredentialForm": "pair",
+    "maskingExemptColumns": null
   },
   "mcp": {
     "exposable": true,
     "statementRead": true,
     "metadataReadChangesState": false,
     "agentCredentialRequired": false
+  },
+  "safeguards": {
+    "writePaths": {
+      "editor": {
+        "reach": "open"
+      },
+      "objectEdit": {
+        "reach": "open"
+      },
+      "maintenance": {
+        "reach": "open"
+      },
+      "transaction": {
+        "reach": "open"
+      }
+    },
+    "metadataOnly": null,
+    "inlineEditRefusedColumns": {
+      "type": "^(CLOB|DBCLOB|BLOB)$",
+      "reason": "Not editable inline: db2-node writes nothing, and reports no error, for a value bound to a CLOB, DBCLOB or BLOB column declared 32768 bytes or longer (docs/providers/db2.md, K24). Change it with an UPDATE of your own that writes the value as a literal."
+    }
   }
 }

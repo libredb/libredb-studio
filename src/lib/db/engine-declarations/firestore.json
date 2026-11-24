@@ -312,12 +312,83 @@
     "readsFileAccessPosture": false,
     "deniedFileAccessRefusal": null,
     "singleWriterFile": false,
-    "readRootsRequired": false
+    "readRootsRequired": false,
+    "agentCredentialForm": "pair",
+    "maskingExemptColumns": null
   },
   "mcp": {
     "exposable": false,
     "statementRead": false,
     "metadataReadChangesState": false,
     "agentCredentialRequired": false
+  },
+  "safeguards": {
+    "writePaths": {
+      "editor": {
+        "reach": "absent",
+        "proof": {
+          "module": "src/lib/db/providers/document/firestore/requests.ts",
+          "symbol": "buildRequest"
+        }
+      },
+      "objectEdit": {
+        "reach": "absent",
+        "proof": null
+      },
+      "maintenance": {
+        "reach": "absent",
+        "proof": null
+      },
+      "transaction": {
+        "reach": "absent",
+        "proof": null
+      }
+    },
+    "metadataOnly": [
+      {
+        "operation": "list-collections",
+        "columns": [
+          {
+            "column": "collection",
+            "kind": "name"
+          }
+        ]
+      },
+      {
+        "operation": "count",
+        "columns": [
+          {
+            "column": "collection",
+            "kind": "name"
+          },
+          {
+            "column": "documents",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "document",
+        "columns": [
+          {
+            "column": "collection",
+            "kind": "name"
+          },
+          {
+            "column": "exists",
+            "kind": "flag"
+          },
+          {
+            "column": "created",
+            "kind": "name"
+          },
+          {
+            "column": "updated",
+            "kind": "name"
+          }
+        ]
+      }
+    ],
+    "inlineEditRefusedColumns": null
   }
 }

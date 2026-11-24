@@ -323,12 +323,171 @@
     "readsFileAccessPosture": false,
     "deniedFileAccessRefusal": null,
     "singleWriterFile": false,
-    "readRootsRequired": false
+    "readRootsRequired": false,
+    "agentCredentialForm": "token",
+    "maskingExemptColumns": null
   },
   "mcp": {
     "exposable": true,
     "statementRead": true,
     "metadataReadChangesState": false,
     "agentCredentialRequired": false
+  },
+  "safeguards": {
+    "writePaths": {
+      "editor": {
+        "reach": "absent",
+        "proof": {
+          "module": "src/lib/db/providers/vector/qdrant/routes.ts",
+          "symbol": "QDRANT_ROUTES"
+        }
+      },
+      "objectEdit": {
+        "reach": "absent",
+        "proof": null
+      },
+      "maintenance": {
+        "reach": "absent",
+        "proof": null
+      },
+      "transaction": {
+        "reach": "absent",
+        "proof": null
+      }
+    },
+    "metadataOnly": [
+      {
+        "operation": "version",
+        "columns": [
+          {
+            "column": "version",
+            "kind": "name"
+          },
+          {
+            "column": "commit",
+            "kind": "name"
+          }
+        ]
+      },
+      {
+        "operation": "collections",
+        "columns": [
+          {
+            "column": "collection",
+            "kind": "name"
+          }
+        ]
+      },
+      {
+        "operation": "collection",
+        "columns": [
+          {
+            "column": "name",
+            "kind": "name"
+          },
+          {
+            "column": "kind",
+            "kind": "name"
+          },
+          {
+            "column": "status",
+            "kind": "name"
+          },
+          {
+            "column": "type",
+            "kind": "name"
+          },
+          {
+            "column": "size",
+            "kind": "count"
+          },
+          {
+            "column": "points",
+            "kind": "count"
+          },
+          {
+            "column": "indexed_vectors",
+            "kind": "count"
+          },
+          {
+            "column": "segments",
+            "kind": "count"
+          },
+          {
+            "column": "shards",
+            "kind": "count"
+          },
+          {
+            "column": "replication_factor",
+            "kind": "count"
+          },
+          {
+            "column": "optimizer_status",
+            "kind": "name"
+          }
+        ]
+      },
+      {
+        "operation": "exists",
+        "columns": [
+          {
+            "column": "collection",
+            "kind": "name"
+          },
+          {
+            "column": "exists",
+            "kind": "flag"
+          }
+        ]
+      },
+      {
+        "operation": "aliases",
+        "columns": [
+          {
+            "column": "alias",
+            "kind": "name"
+          },
+          {
+            "column": "collection",
+            "kind": "name"
+          }
+        ]
+      },
+      {
+        "operation": "count",
+        "columns": [
+          {
+            "column": "collection",
+            "kind": "name"
+          },
+          {
+            "column": "count",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "cluster",
+        "columns": [
+          {
+            "column": "shard",
+            "kind": "count"
+          },
+          {
+            "column": "location",
+            "kind": "name"
+          },
+          {
+            "column": "state",
+            "kind": "name"
+          },
+          {
+            "column": "points",
+            "kind": "count"
+          }
+        ]
+      }
+    ],
+    "inlineEditRefusedColumns": null
   }
 }

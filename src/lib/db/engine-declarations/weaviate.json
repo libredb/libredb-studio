@@ -314,12 +314,209 @@
     "readsFileAccessPosture": false,
     "deniedFileAccessRefusal": null,
     "singleWriterFile": false,
-    "readRootsRequired": false
+    "readRootsRequired": false,
+    "agentCredentialForm": "token",
+    "maskingExemptColumns": null
   },
   "mcp": {
     "exposable": true,
     "statementRead": true,
     "metadataReadChangesState": false,
     "agentCredentialRequired": false
+  },
+  "safeguards": {
+    "writePaths": {
+      "editor": {
+        "reach": "absent",
+        "proof": {
+          "module": "src/lib/languages/weaviateapi/routes.ts",
+          "symbol": "WEAVIATE_ROUTES"
+        }
+      },
+      "objectEdit": {
+        "reach": "absent",
+        "proof": null
+      },
+      "maintenance": {
+        "reach": "absent",
+        "proof": null
+      },
+      "transaction": {
+        "reach": "absent",
+        "proof": null
+      }
+    },
+    "metadataOnly": [
+      {
+        "operation": "meta",
+        "columns": [
+          {
+            "column": "version",
+            "kind": "name"
+          },
+          {
+            "column": "modules",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "schema",
+        "columns": [
+          {
+            "column": "collection",
+            "kind": "name"
+          },
+          {
+            "column": "vectorizer",
+            "kind": "name"
+          },
+          {
+            "column": "properties",
+            "kind": "count"
+          },
+          {
+            "column": "named_vectors",
+            "kind": "count"
+          },
+          {
+            "column": "multi_tenant",
+            "kind": "flag"
+          },
+          {
+            "column": "auto_tenant_activation",
+            "kind": "flag"
+          },
+          {
+            "column": "replication_factor",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "collection",
+        "columns": [
+          {
+            "column": "property",
+            "kind": "name"
+          },
+          {
+            "column": "data_type",
+            "kind": "name"
+          },
+          {
+            "column": "tokenization",
+            "kind": "name"
+          },
+          {
+            "column": "filterable",
+            "kind": "flag"
+          },
+          {
+            "column": "searchable",
+            "kind": "flag"
+          }
+        ]
+      },
+      {
+        "operation": "shards",
+        "columns": [
+          {
+            "column": "shard",
+            "kind": "name"
+          },
+          {
+            "column": "status",
+            "kind": "name"
+          },
+          {
+            "column": "vector_queue_size",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "tenants",
+        "columns": [
+          {
+            "column": "tenant",
+            "kind": "name"
+          },
+          {
+            "column": "status",
+            "kind": "name"
+          }
+        ]
+      },
+      {
+        "operation": "aliases",
+        "columns": [
+          {
+            "column": "alias",
+            "kind": "name"
+          },
+          {
+            "column": "collection",
+            "kind": "name"
+          }
+        ]
+      },
+      {
+        "operation": "nodes",
+        "columns": [
+          {
+            "column": "node",
+            "kind": "name"
+          },
+          {
+            "column": "status",
+            "kind": "name"
+          },
+          {
+            "column": "version",
+            "kind": "name"
+          },
+          {
+            "column": "objects",
+            "kind": "count"
+          },
+          {
+            "column": "shards",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "node-shards",
+        "columns": [
+          {
+            "column": "node",
+            "kind": "name"
+          },
+          {
+            "column": "collection",
+            "kind": "name"
+          }
+        ]
+      },
+      {
+        "operation": "aggregate",
+        "columns": [
+          {
+            "column": "collection",
+            "kind": "name"
+          },
+          {
+            "column": "tenant",
+            "kind": "name"
+          },
+          {
+            "column": "count",
+            "kind": "count"
+          }
+        ]
+      }
+    ],
+    "inlineEditRefusedColumns": null
   }
 }
