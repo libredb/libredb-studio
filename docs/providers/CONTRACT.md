@@ -675,7 +675,7 @@ Each such member is a claim: a request, never a fact Studio believes as declared
 A declared fact is a claim when a gate Studio decides reads it, a value lets that gate pass what another value stops on the strength of what the provider or the engine does, and it has a restrictive value; any other declared fact is not a claim.
 A fact whose values only add to what a gate stops, from an open-ended vocabulary, such as a credential warning, has no restrictive value and is not a claim, and where it is absent the gate answers at core's own default.
 Studio's review record of each claim is the table of Studio's source the declaration is generated from, except the confirmation gate's claims, whose record is `CONFIRMATION_CLAIM_REVIEW` (S-8), and every gate reads that record.
-No module of Studio reads a declaration, so a declared claim alone never reaches a gate.
+Only the modules `tests/unit/db/engine-declaration-readers.test.ts` lists read a declaration or a projection of the declarations, and none of them reads a claim, so a declared claim alone never reaches a gate.
 For every engine Studio ships, each request is its record's row.
 Read-only enforcement is no member: Studio keeps a connection's read-only mode wherever the write reach is not `open`.
 The engines agent and MCP statements run on are Studio's record alone, C-39, and S-8 applies the same rule to the confirmation gate's claims.
@@ -689,8 +689,9 @@ The engines agent and MCP statements run on are Studio's record alone, C-39, and
 - test `tests/unit/db/engine-declarations.test.ts` "READ_ONLY_ENFORCED is true exactly where the declaration's write reach is not open"
 - test `tests/unit/db/engine-declarations.test.ts` "each declaration's policy and MCP segments hold exactly the claims Studio keeps a review record of"
 - test `tests/unit/db/engine-declarations.test.ts` "MCP serves statements on exactly the engines the declarations' claims and Studio's agent execution record give it"
-- test `tests/unit/db/engine-declaration-readers.test.ts` "no module of Studio's source reads an engine declaration, so a claim reaches a gate only through Studio's review record"
-- test `tests/unit/db/engine-declaration-readers.test.ts` "the scan finds each way a module could read a declaration, and passes over a backticked path in a comment"
+- test `tests/unit/db/engine-declaration-readers.test.ts` "only the modules DECLARATION_READERS lists read an engine declaration or a projection of the declarations"
+- test `tests/unit/db/engine-declaration-readers.test.ts` "no listed reader reads a claim, so a declared claim reaches a gate only through Studio's review record"
+- test `tests/unit/db/engine-declaration-readers.test.ts` "the scan finds each way a module could read a declaration or a projection, and passes over a backticked path in a comment"
 - test `tests/unit/mcp/served-engines.test.ts` "an engine agent mode does not execute on is not served, whatever its rows say"
 - test `tests/unit/db/write-reach-capability.test.ts` "READ_ONLY_ENFORCED, now derived from the record, answers what it answered before, bar the flipped entries"
 

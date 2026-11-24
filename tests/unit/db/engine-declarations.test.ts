@@ -93,6 +93,7 @@ import {
   renderEngineDeclaration,
 } from "../../../scripts/generate-engine-declarations";
 import { refuseInexactJson } from "../../../scripts/read-engine-capabilities";
+import { SEGMENT_CLAIMS } from "./engine-declarations/claims";
 import {
   AGENT_REQUIREMENT_ENGINES,
   AGENT_STATEMENT_LANGUAGE,
@@ -3852,7 +3853,7 @@ describe("the census", () => {
     expect(readBack.filter(([, ids]) => ids.length > 0).map(([claim, ids]) => `${claim}: ${ids.join(", ")}`)).toEqual(
       [],
     );
-    expect(readBack.length).toBe(9);
+    expect(readBack.map(([member]) => member)).toEqual([...SEGMENT_CLAIMS]);
   });
 
   test("each claim the census reads back is a member of the schema's engine declaration", () => {
@@ -3872,7 +3873,7 @@ describe("the census", () => {
     };
 
     expect(Object.keys(SEGMENT_CLAIM_RECORDS).filter((claim) => !isMember(claim))).toEqual([]);
-    expect(Object.keys(SEGMENT_CLAIM_RECORDS).length).toBe(9);
+    expect(Object.keys(SEGMENT_CLAIM_RECORDS)).toEqual([...SEGMENT_CLAIMS]);
     expect(isMember("agent.overlay.dialect.catalogRead.unknown")).toBe(false);
     expect(isMember("agent.overlay.dialect.catalogRead")).toBe(true);
   });
