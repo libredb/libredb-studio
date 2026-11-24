@@ -60,9 +60,21 @@ function hasRule(refusals: readonly CallRefusal[], rule: CallRefusal["rule"]): b
   return refusals.some((refusal) => refusal.rule === rule);
 }
 
-/** The error a call that ended answers: `QueryCancelledError` with the caller gone, otherwise `timeRefusal()`. */
-function endedError<E extends Error>(left: boolean, timeRefusal: () => E): QueryCancelledError | E {
-  return left ? new QueryCancelledError(QUERY_CANCELLED_SENTENCE) : timeRefusal();
+/** The error a call answers when its caller left. */
+function cancelledError(): QueryCancelledError {
+  return new QueryCancelledError(QUERY_CANCELLED_SENTENCE);
+}
+
+/**
+ * The error a call that ended with `reason` answers: `QueryCancelledError` when the reason is the caller's own,
+ * otherwise `timeRefusal()`.
+ */
+function endedError<E extends Error>(
+  reason: unknown,
+  caller: AbortSignal,
+  timeRefusal: () => E,
+): QueryCancelledError | E {
+  return callerLeft(reason, caller) ? cancelledError() : timeRefusal();
 }
 
 /** The `StudioTimeoutRefusal` a call `view` reads answers at its deadline, with the caller's sentence. */
@@ -75,7 +87,7 @@ function refusalOf(record: RefusedRecord, caller: AbortSignal, timeRefusal: () =
   const { refusals } = record;
   if (hasRule(refusals, "call-signal-aborted") || hasRule(refusals, "call-deadline-passed")) {
     const left = hasRule(refusals, "call-signal-aborted") && callerLeft(record.cause, caller);
-    const error = endedError(left, timeRefusal);
+    const error = left ? cancelledError() : timeRefusal();
     if (!record.called) markNotSent(error);
     return error;
   }
@@ -95,7 +107,7 @@ export function refusalError(record: RefusedRecord, view: CallerView): Error {
 
 /** The error a stopped record answers, this bundle's class, outcome unknown: the statement may have run. */
 export function stopError(reason: unknown, view: CallerView): QueryCancelledError | StudioTimeoutRefusal {
-  return endedError(callerLeft(reason, view.caller), timeoutOf(view));
+  return endedError(reason, view.caller, timeoutOf(view));
 }
 
 /**
@@ -111,7 +123,7 @@ export function budgetRefusalError(record: RefusedRecord, view: BudgetView): Err
  * the caller's own, otherwise the view's own time refusal, by reference, whatever wait the stop ended.
  */
 export function budgetStopError(reason: unknown, view: BudgetView): Error {
-  return endedError(callerLeft(reason, view.caller), view.timeRefusal);
+  return endedError(reason, view.caller, view.timeRefusal);
 }
 
 /**
@@ -120,7 +132,7 @@ export function budgetStopError(reason: unknown, view: BudgetView): Error {
  * sentence, which names the open's allowance. Both are outcome not-sent: the provider was never handed the statement.
  */
 export function openStopError(reason: unknown, view: CallerView): QueryCancelledError | StudioTimeoutRefusal {
-  const error = endedError(callerLeft(reason, view.caller), timeoutOf(view));
+  const error = endedError(reason, view.caller, timeoutOf(view));
   markNotSent(error);
   return error;
 }
