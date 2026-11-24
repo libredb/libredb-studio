@@ -1061,6 +1061,9 @@ Removing an engine's declaration gives exactly the tables a fresh build from the
 - test `tests/unit/db/engine-catalog.test.ts` "--check names a stale connection module, and --write writes every projected module"
 - test `tests/unit/db/connection-fields/census.test.ts` "a seed-only refusal writes each value in its place once, a value holding a placeholder or a replacement pattern included"
 - test `tests/unit/db/engine-declarations.test.ts` "connection.seedOnly is the engine's SEED_ONLY_FIELDS row, and every refusal Studio renders from it is the sentence the table gave"
+- test `tests/unit/db/engine-projections-removal.test.ts` "the fixture engine's declaration is admitted by the schema's engine declaration and its rules"
+- test `tests/unit/db/engine-projections-removal.test.ts` "the connection tables built with the fixture engine hold its rows, and with it removed are exactly a fresh build from the remaining set and the committed module"
+- test `tests/unit/db/engine-projections-removal.test.ts` "the connection tables are the same whatever order the declarations are admitted in"
 
 ## Values
 

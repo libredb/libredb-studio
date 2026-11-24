@@ -1,18 +1,36 @@
 import type { EngineDeclaration } from "@libredb/provider-sdk/manifest";
 
 /**
- * The fixture engine of the removal tests (docs/providers/CONTRACT.md, clause M-70): `base` declared as `acmefoo`, the
- * id the FND-1 tests give a stored connection of an engine no provider serves, named "Acme Foo", with a connect budget
- * of 90 s.
+ * The fixture engine of the removal tests (docs/providers/CONTRACT.md, clauses M-70 and M-71): `base` declared as
+ * `acmefoo`, the id the FND-1 tests give a stored connection of an engine no provider serves, named "Acme Foo", with a
+ * connect budget of 90 s.
  *
- * Every authored member differs from every shipped engine's, so its catalog entry is one no shipped engine has: adding
- * it to the admitted set adds exactly that entry, and removing it again is visible in every projection that read it.
+ * Its authored members differ from every shipped engine's in combination: it reads the trust material, offers a URI
+ * mode in its dialog, refuses `schema` by name and warns about a connection with no secret, so its catalog entry and
+ * its connection rows are ones no shipped engine has. Adding it to the admitted set adds exactly those rows, and
+ * removing it again is visible in every projection that read it. It carries no credential value: its one warning is
+ * `no-secret`.
  */
 export function fixtureEngineDeclaration(base: EngineDeclaration): EngineDeclaration {
   return {
     ...base,
     id: "acmefoo",
     displayName: "Acme Foo",
-    connection: { ...base.connection, connectBudgetMs: 90_000 },
+    connection: {
+      ...base.connection,
+      refused: [
+        { field: "schema", refusal: "Acme Foo connections take no Schema: clear the field. Nothing was sent." },
+      ],
+      connectionString: { ...base.connection.connectionString, dialogOffersUri: true },
+      readsTrustMaterial: true,
+      credentialWarnings: [
+        {
+          kind: "no-secret",
+          message:
+            "An Acme Foo server accepts a connection with no password, so a read-only seed without one promises a boundary the server does not keep.",
+        },
+      ],
+      connectBudgetMs: 90_000,
+    },
   };
 }
