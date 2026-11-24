@@ -487,7 +487,7 @@ describe("a stopped wait", () => {
     const record = await running;
     const after = Date.now();
 
-    expect(record).toEqual({ kind: "stopped", reason });
+    expect(record).toEqual({ kind: "stopped", reason, settled: expect.any(Promise) });
     expect((record as { readonly reason: unknown }).reason).toBe(reason);
     expect(fx.cancels).toHaveLength(1);
     const cancel = fx.cancels[0] as Seen;
@@ -604,6 +604,42 @@ describe("a stopped wait", () => {
     expect(now.cancelFailed).toEqual([thrownNow]);
   });
 
+  test("a stopped execute's record settles once the run it stopped waiting for settles, answered or failed", async () => {
+    /** Stops the call while it runs, then settles it as `settle` says. */
+    async function stopThenSettle(settle: "answered" | "failed"): Promise<void> {
+      const answer = held<ExecuteAnswer>();
+      const fx = sessionOf(() => answer.promise);
+      const { ports } = portsOf();
+      const controller = new AbortController();
+
+      const running = executeCall(
+        fx.session,
+        requestOf({ runId: marker() }),
+        contextOf(controller),
+        () => LIMITS,
+        ports,
+      );
+      await fx.executeCalled;
+      controller.abort(new Error(marker()));
+      const record = await running;
+      if (record.kind !== "stopped") throw new Error(`A stop was expected, not ${record.kind}.`);
+      let settled = false;
+      const watched = record.settled.then(() => {
+        settled = true;
+      });
+      await turn();
+      expect(settled).toBe(false);
+
+      if (settle === "answered") answer.resolve(answerOf([]));
+      else answer.reject(new Error(marker()));
+      await watched;
+      expect(settled).toBe(true);
+    }
+
+    await stopThenSettle("answered");
+    await stopThenSettle("failed");
+  });
+
   test("a provider that throws its own signal's reason is answered as a stop", async () => {
     const fx = sessionOf(
       (_, ctx) =>
@@ -621,7 +657,7 @@ describe("a stopped wait", () => {
     const record: ExecuteRecord = await running;
     await turn();
 
-    expect(record).toEqual({ kind: "stopped", reason });
+    expect(record).toEqual({ kind: "stopped", reason, settled: expect.any(Promise) });
     expect(fx.cancels).toHaveLength(1);
     expect(late).toEqual([]);
   });
@@ -690,10 +726,33 @@ describe("cancelCall", () => {
     const thrown = new Error(marker());
     answer.reject(thrown);
 
-    expect(record).toEqual({ kind: "stopped", reason });
+    expect(record).toEqual({ kind: "stopped", reason, settled: expect.any(Promise) });
     expect(await firstLate).toBe(thrown);
     await turn();
     expect(late).toEqual([thrown]);
+  });
+
+  test("a stopped cancel's record settles once the cancel it stopped waiting for settles", async () => {
+    const answer = held<CancelAnswer>();
+    const fx = sessionOf(async () => answerOf([]), { cancel: () => answer.promise });
+    const { ports } = portsOf();
+    const controller = new AbortController();
+
+    const running = cancelCall(fx.session, { runId: marker() }, contextOf(controller), ports);
+    await fx.cancelCalled;
+    controller.abort(new Error(marker()));
+    const record = await running;
+    if (record.kind !== "stopped") throw new Error(`A stop was expected, not ${record.kind}.`);
+    let settled = false;
+    const watched = record.settled.then(() => {
+      settled = true;
+    });
+    await turn();
+    expect(settled).toBe(false);
+
+    answer.resolve({ cancelled: true });
+    await watched;
+    expect(settled).toBe(true);
   });
 
   test("a cancel that fails reaches the caller as the same object", async () => {

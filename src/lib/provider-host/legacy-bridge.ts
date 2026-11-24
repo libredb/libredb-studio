@@ -1,15 +1,23 @@
 /**
  * The legacy bridge (docs/providers/CONTRACT.md, clause C-50): a legacy `DatabaseProvider` served as one session of
- * console execute and cancel, so today's providers run through the host core's console calls. It lives in the calling
- * bundle, beside the accessor, and is built per call by the caller's facade (`runEditorQuery` and `cancelEditorRun` in
- * src/lib/api/editor-query.ts); the bridge and the facade leave together, once every provider is a contract provider.
+ * console execute, cancel and transaction, so today's providers run through the host core's console calls. It lives in
+ * the calling bundle, beside the accessor, and is built per call by the caller's facade (`runEditorQuery` and
+ * `cancelEditorRun` in src/lib/api/editor-query.ts, the transaction calls in src/lib/api/editor-transaction.ts); the
+ * bridge and the facades leave together, once every provider is a contract provider.
  *
  * Its calls are declared once: execute honours `params` and `offset` for every engine, so each provider answers both as
  * it always has, its own `OffsetUnsupportedError` included; `console.cancel` is offered exactly when the provider can
  * cancel (`supportsQueryCancel`); `console.endScope` is not offered, since the run's open transaction is ended inside
- * execute, as `runEditorQuery` always ended it, until it moves onto `console.endScope`; `console.transaction` is not
- * offered, since the transaction route still calls a provider's transaction methods itself until they move onto the
- * host core.
+ * execute, as `runEditorQuery` always ended it, until it moves onto `console.endScope`; `console.transaction` is
+ * offered exactly when the provider holds a transaction session (`isTransactionProvider`).
+ *
+ * Its transaction call runs the provider's own method for the action: `beginTransaction` with `requireReportedState`
+ * as the transaction route has always passed it, answering `stateReported` exactly when the provider answered a result,
+ * `commitTransaction`, `rollbackTransaction`, or nothing for `state`. Every answer's session state is the provider's
+ * `isInTransaction()` read after the call, so it is `in-transaction` or `not-in-transaction` and never a state the
+ * bridge kept. A statement sent with `transaction` runs `prepareQuery`, the probe and `queryInTransaction` with the
+ * probe's text and a new array of the request's params, with no run id, no scope and no ender, since it runs on the
+ * transaction's own connection, and answers the state read after it. A provider's error passes by reference.
  *
  * Its execute runs today's provider steps: `prepareQuery` on a fresh copy of the caller's own options object (the
  * request's resolved page is the contract's view; the options are what a legacy provider has always received), the
@@ -44,17 +52,22 @@ import {
   type ResultSource,
   type RowBatch,
   sessionCalls,
+  type TransactionAnswer,
+  type TransactionRequest,
   type Warning,
 } from "@libredb/provider-sdk/calls";
+import type { SessionState } from "@libredb/provider-sdk/errors";
 import { probePastPage } from "@/lib/api/page-probe";
 import { type QueryCancelProvider, supportsQueryCancel } from "@/lib/db/query-cancel";
 import {
   type DatabaseProvider,
   endsOpenQueryTransactions,
+  isTransactionProvider,
   newQueryCallScope,
   type OpenQueryTransactionOutcome,
   type PreparedQuery,
   type QueryPrepareOptions,
+  type TransactionProvider,
 } from "@/lib/db/types";
 import { noteAppendedBound } from "@/lib/db/utils/query-limiter";
 import type { ConsoleSession } from "@/lib/provider-host/core/console";
@@ -188,12 +201,46 @@ function legacySource(
   });
 }
 
+/** The session state a legacy transaction provider reports now: its `isInTransaction()`, read once. */
+function sessionStateOf(provider: TransactionProvider): SessionState {
+  return provider.isInTransaction() ? "in-transaction" : "not-in-transaction";
+}
+
+/** The execute answer over a legacy `result` its `prepared` query produced: one source per result set. */
+function answerOf(result: QueryResult, prepared: PreparedQuery): ExecuteAnswer {
+  const others = (result.resultSets ?? []).slice(1).map((set) => legacySource(set.fields, set.rows));
+  return {
+    results: [legacySource(result.fields, result.rows, result.rowCount), ...others],
+    warnings: (result.warnings ?? []).map((warning) => contractWarning(warning)),
+    executionTimeMs: result.executionTime,
+    pageApplied: prepared.wasLimited,
+    ...(result.pagination?.wasLimited === true ? { boundApplied: true as const } : {}),
+    ...(result.explainPlan === undefined ? {} : { explainPlan: result.explainPlan }),
+  };
+}
+
+/** Runs `request`'s action on `provider` and answers the session state read after it. */
+async function legacyTransaction(
+  provider: TransactionProvider,
+  request: TransactionRequest,
+): Promise<TransactionAnswer> {
+  if (request.action === "begin") {
+    // `void` from a provider that reads no transaction state when it opens one: it reports nothing either way.
+    const opened = await provider.beginTransaction({ requireReportedState: request.requireReportedState === true });
+    return { sessionState: sessionStateOf(provider), ...(opened ? { stateReported: opened.stateReported } : {}) };
+  }
+  if (request.action === "commit") await provider.commitTransaction();
+  if (request.action === "rollback") await provider.rollbackTransaction();
+  return { sessionState: sessionStateOf(provider) };
+}
+
 /**
- * `provider` served as one session of console execute and cancel, its execute run with a copy of `options`, the
- * caller's own page options.
+ * `provider` served as one session of console execute, cancel and transaction, its execute run with a copy of
+ * `options`, the caller's own page options.
  */
 export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepareOptions): BridgedConsole {
   const canceller: QueryCancelProvider | undefined = supportsQueryCancel(provider) ? provider : undefined;
+  const transactional: TransactionProvider | undefined = isTransactionProvider(provider) ? provider : undefined;
   const run: LegacyRun = { openTransaction: "none", cancelSent: false };
 
   async function execute(request: ExecuteRequest): Promise<ExecuteAnswer> {
@@ -204,6 +251,22 @@ export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepare
     // The statement that runs asks for a row past the page (#1440); see `probePastPage`.
     const probe = probePastPage(provider, statement, ownOptions, prepared);
     const params = request.params === undefined ? undefined : [...request.params];
+    if (Object.hasOwn(request, "transaction")) {
+      // On the transaction's own connection, which the transaction's own calls end: no run id, no scope, no ender.
+      if (transactional === undefined) {
+        throw new Error(
+          "The bridge was sent a statement inside a transaction for a provider that holds no transaction session, a defect of the host.",
+        );
+      }
+      let inTransaction: QueryResult;
+      try {
+        inTransaction = await transactional.queryInTransaction(probe.query, params);
+      } catch (error) {
+        throw noteAppendedBound(error, statement, probe.query);
+      }
+      run.result = inTransaction;
+      return { ...answerOf(inTransaction, prepared), sessionState: sessionStateOf(transactional) };
+    }
     const cancelId = canceller === undefined ? undefined : request.runId;
     // A SINGLE STATEMENT CAN LEAVE A TRANSACTION OPEN, SO THIS RUN ENDS IT (D74).
     //
@@ -236,15 +299,7 @@ export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepare
       if (endsOpenQueryTransactions(provider)) run.openTransaction = await provider.endOpenQueryTransaction(scope);
     }
     run.result = result;
-    const others = (result.resultSets ?? []).slice(1).map((set) => legacySource(set.fields, set.rows));
-    return {
-      results: [legacySource(result.fields, result.rows, result.rowCount), ...others],
-      warnings: (result.warnings ?? []).map((warning) => contractWarning(warning)),
-      executionTimeMs: result.executionTime,
-      pageApplied: prepared.wasLimited,
-      ...(result.pagination?.wasLimited === true ? { boundApplied: true as const } : {}),
-      ...(result.explainPlan === undefined ? {} : { explainPlan: result.explainPlan }),
-    };
+    return answerOf(result, prepared);
   }
 
   const calls = sessionCalls(
@@ -253,7 +308,7 @@ export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepare
         execute: { honours: ["params", "offset"] },
         cancel: canceller === undefined ? "not-offered" : "offered",
         endScope: "not-offered",
-        transaction: "not-offered",
+        transaction: transactional === undefined ? "not-offered" : "offered",
       },
     },
     undefined,
@@ -285,6 +340,9 @@ export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepare
               return { cancelled: await canceller.cancelQuery(request.runId) };
             },
           }),
+      ...(transactional === undefined
+        ? {}
+        : { transaction: (request: TransactionRequest) => legacyTransaction(transactional, request) }),
     }),
     run,
     answered,

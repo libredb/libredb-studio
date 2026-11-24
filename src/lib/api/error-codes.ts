@@ -176,6 +176,15 @@ export const ApiErrorCode = {
   TRANSACTION_NOT_OWNED: "TRANSACTION_NOT_OWNED",
 
   /**
+   * A call of the caller's that Studio stopped waiting for, its caller gone or its deadline passed, is still running on
+   * the caller's transaction (409, src/app/api/db/transaction/route.ts): until it settles nothing about the session's
+   * state is known, so a BEGIN, a statement, a COMMIT or a ROLLBACK is refused before it is sent rather than queued
+   * behind that call, which may end the transaction first. The status action is still answered; the request succeeds
+   * once that call has finished. Distinct from TRANSACTION_NOT_OWNED: the transaction is the caller's own.
+   */
+  TRANSACTION_CALL_RUNNING: "TRANSACTION_CALL_RUNNING",
+
+  /**
    * The database session a held transaction ran on has ended (503): the server ended the transaction with it, so the
    * provider holds none from then on. Distinct from CONNECTION_ERROR, after which a transaction may still be open: the
    * editor leaves transaction mode for this code (`transactionGone()` in src/hooks/use-transaction-control.ts).

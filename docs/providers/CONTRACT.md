@@ -1891,7 +1891,7 @@ The memory transport closes the session of an open answer it refuses under such 
 
 ### C-48 (normative): The host's console calls
 
-The host core makes each console call through `executeCall` or `cancelCall`, which answer a record of how the call ended and pass a provider's error by reference.
+The host core makes each console call through `executeCall`, `cancelCall` or `transactionCall`, which answer a record of how the call ended and pass a provider's error by reference.
 Before the call it checks the context with `checkCallStart`, C-27, and the request with `checkExecuteRequest`, C-9, or the facet with `checkConsoleFacet`, C-17, and answers each refusal as a record, the signal's reason as its cause when the signal aborted, without calling the provider.
 It then freezes the context and the request in place, C-12, and waits for the call with `awaitWithin` until the context's signal, C-28.
 An execute's run pumps the first result with `pumpPage` within the limits the caller sets from the execute answer, C-15, under the core's page budget, C-53, closes every other result once, and answers a refusal the pump throws as a record.
@@ -1899,6 +1899,9 @@ A call is stopped exactly when its signal aborted and the wait rejected with tha
 A stop that ends an execute after its execute answered is marked by the part of the run it ended, since the statement ran: the slot while the page waits for one, C-54, the page from its first pull until the pump answered it, and the other results while the run closes them after that.
 The caller answers a stop marked as waiting for the page or for the other results as C-54 answers one waiting for the slot, `QueryCancelledError` when its own signal ended the wait and otherwise `StudioTimeoutRefusal` with Studio's sentence saying the statement answered and, for the other results, that its page was read, both outcome unknown.
 A stopped execute sends the run's cancel when the session offers `console.cancel` and the request names a run, under a cleanup context of its own, C-47, and a cancel that fails or is cut is handed to the caller, never left as a detached rejection.
+A transaction call is checked with `checkCallStart` and with `checkConsoleFacet` for `console.transaction`, frozen, and waited for until its signal; its answer is read with `checkTransactionAnswer`, C-57, and refused after the call, as a record, when the host cannot read it.
+A statement sent with `transaction` has its execute answer read with `checkTransactionStatement` before its page is pumped; an answer the host cannot read is refused after the call, as a record, with every source closed once, and otherwise its page record carries the session state the execute answered.
+A stopped transaction call or statement carries no session state.
 Core constructs no error class a caller tests with `instanceof`: the caller builds its own classes from the records, C-51.
 
 - test `tests/unit/lib/provider-host/core/console.test.ts` "a call whose signal aborted or whose deadline passed is refused as a record, and the provider is never called"
@@ -1918,6 +1921,16 @@ Core constructs no error class a caller tests with `instanceof`: the caller buil
 - test `tests/unit/lib/provider-host/core/console.test.ts` "a cancel whose signal already aborted is refused as a record"
 - test `tests/unit/lib/provider-host/core/console.test.ts` "a cancel the caller stops waiting for answers a stop, and its later failure reaches the late handler once"
 - test `tests/unit/lib/provider-host/core/console-bounds.test.ts` "an execute that never settles is stopped at the call's deadline"
+- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "a transaction call whose signal aborted or whose deadline passed is refused as a record, and the provider is never called"
+- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "a transaction call to a session without console.transaction is refused as a record before the call"
+- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "a transaction call answers the session state it was answered, and stateReported only for a begin"
+- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "an answer the host cannot read is refused as a record after the call, never read as any state"
+- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "an error the provider throws reaches the caller as the same object"
+- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "a transaction call the caller stops waiting for answers a stop at once with no state, and its later failure reaches the late handler once"
+- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "a statement sent inside a transaction answers its page with the session state after it"
+- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "a statement inside a transaction whose answer carries no readable session state is refused as a record, and every source is closed once"
+- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "a statement inside a transaction that its caller stops answers a stop with no state"
+- test `tests/unit/lib/provider-host/core/console-bounds.test.ts` "a transaction call that never settles is stopped at the call's deadline"
 
 ### C-49 (normative): A turn of the event loop before every pull
 
@@ -1931,10 +1944,15 @@ The turn is the host's and not the SDK pump's, since the pump is also the kit's 
 
 ### C-50 (normative): The legacy bridge serves today's providers as contract sessions
 
-The legacy bridge serves a provider of the legacy interface, `DatabaseProvider`, as one session of console execute and cancel, built per call by the caller's facade, so today's providers run through the host core's console calls, C-48.
+The legacy bridge serves a provider of the legacy interface, `DatabaseProvider`, as one session of console execute, cancel and transaction, built per call by the caller's facade, so today's providers run through the host core's console calls, C-48.
 Its execute honours `params` and `offset` for every engine, so each provider answers both as it always has, its own refusal of an offset included.
 It offers `console.cancel` exactly when the provider can cancel a run, and does not offer `console.endScope`: the run's open transaction is ended inside its execute, as the editor query always ended it, until that moves onto `console.endScope`.
-It does not offer `console.transaction` either, for any provider: the transaction route still calls a provider's transaction methods itself, until they move onto the host core.
+It offers `console.transaction` exactly when the provider holds a transaction session, the duck typing of begin, commit and rollback the transaction route has always read.
+Its transaction call runs the provider's own method for the action, a begin with `requireReportedState` as the transaction route has always passed it, answering `stateReported` exactly when the provider answered a result, and `state` runs nothing.
+Every transaction answer's session state is the provider's `isInTransaction()` read after the call, so through the bridge a state is `in-transaction` or `not-in-transaction`, and the bridge keeps none between calls.
+A statement sent with `transaction` runs the provider's prepare, the probe row past the page and `queryInTransaction` with a new array of the request's params, with no run id, no scope and no transaction ender, since it runs on the transaction's own connection, and answers the session state read after it.
+A provider's error passes by reference.
+The transaction route's script of several statements still calls `queryInTransaction` itself, statement by statement, until it moves with `POST /api/db/multi-query`, and reads only the state after them through the host, C-59.
 Its execute hands the provider a fresh copy of the caller's own page options and a new array of the request's params, so a provider that writes what it receives changes nothing the host froze, and runs the provider's prepare, the probe row past the page, the statement and the transaction's end as the editor query always ran them.
 It answers one source per result set, the main rows first.
 A source reads each row positionally under the result's columns in its value codec form, or, when the codec refuses a cell, in the JSON form the answer writes for that row, sizes it with the pull's measure, C-15, and answers that same array, so each row is measured once, in the form closest to its answer.
@@ -1943,7 +1961,12 @@ A key a row holds outside its columns is answered and not measured.
 The page's row limit is set once execute answered: one past the page when the provider applied the page, otherwise every row the provider returned, at least one.
 
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session honours params and offset, offers cancel only where the provider cancels, and offers no scope"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session offers no transaction facet, since the transaction route still calls the provider's transaction methods itself"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session offers the transaction facet exactly where the provider is a TransactionProvider"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged begin, COMMIT, ROLLBACK and state read call the provider's methods and answer its state after each"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged begin hands the provider requireReportedState as the route always did, true only when asked"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged statement inside the transaction prepares, probes and runs queryInTransaction, with no run id, no scope and no ender, and answers the state after it"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged transaction call whose provider throws passes the error by reference"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session reads the provider's state on every call, and keeps none"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a legacy provider that writes what it receives changes nothing the host froze"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the run prepares, probes, queries and ends its transaction as runEditorQuery did"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "every result set is a source, the main rows first"
@@ -2121,12 +2144,109 @@ Each reads the answer by its own property descriptors, never calls a getter, and
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a served transaction call crosses its request and answer as frames, and a statement inside the transaction carries its session state back"
 - test `packages/provider-sdk/tests/testing/frames.test.ts` "a transaction request is one of its actions, and only begin carries requireReportedState"
 
-### C-58 (informative): A provider that cannot tell answers unknown
+### C-58 (normative): An unknown session state is never read as closed
 
 A provider answers `unknown` when it cannot tell whether the session holds a transaction, such as after its connection was lost mid-statement.
 An aborted transaction block, one a failed statement left that accepts only a rollback, is `in-transaction`.
-The host's half arrives with the host's transaction calls: the host never reads `unknown` as `not-in-transaction`, the transaction route keeps its record of a transaction while the state is unknown, and the host keeps no copy of a session state between calls, so every reader asks the session.
-No host call reads the state yet, which is why this clause is informative until those calls bring its enforcers.
+The host keeps no copy of a session state between calls and asks the session on every call: every record carries the state its own call answered.
+A stopped transaction call or statement answers no state, and its caller reads it as `unknown`.
+Its record carries the settle of the call the host stopped waiting for, which resolves once that call has settled, answered or failed, since until then it may still change the session.
+After a provider's failure of a COMMIT, a ROLLBACK or a statement, the caller reads the state at once; a read that is stopped or fails answers `unknown`.
+The transaction route keeps its record of a transaction and its owner while the state is unknown, records no terminal event for it, and resolves it by the next answer or by the state read every request makes, but only once every call Studio stopped waiting for has settled.
+Until then no read resolves or releases the record, whatever state it finds: a provider may report the transaction open only because that call still runs, or closed only because a BEGIN it still runs has not opened it yet.
+The route's status answer says the state is unknown until then, whatever the read found.
+The route's five-minute watch for the provider's own timeout records no end while such a call still runs: it looks again a second later.
+Every state read of the route is awaited, so a read that began before another request of the same owner claimed, changed or ended the record is not about it, and neither releases nor settles it: the record carries a generation every change bumps, and a read acts only when the record and its generation are the ones it began with.
+The route counts each call of the owner's that may change the session, a BEGIN on an existing record, a statement, a script for its whole run, a COMMIT or a ROLLBACK, on the record from before it is sent until it answers, and a call Studio stops waiting for moves to the calls that have not settled; each change bumps the generation, and a call's own answer is read against the mark taken after its own count.
+While any such call is in flight, or stopped and still running, no read acts on the record: the reconcile keeps it and records nothing, the watch records nothing and looks again, and the status answer says the state is unknown.
+The status answer also says the state is unknown when the record changed while its read ran.
+The watch takes a mark before its own read, and when the record changed while that read ran it records nothing and looks again.
+The watch's repeated looks stop once the record's lease has lapsed, which leaves the record to the next request's lease check.
+While such a call still runs, the route refuses a BEGIN, a statement, a COMMIT or a ROLLBACK of the owner's with 409 `TRANSACTION_CALL_RUNNING` before it is sent, never queued: on a connection that runs one call at a time it would queue behind that call, which may end the transaction first; the state read is still answered.
+An end the route sees after an unknown state is recorded `unknown`, never `timed-out` or `rolled-back`, unless Studio's own rollback answered while no call of the owner's was in flight or stopped and still running.
+When the owner's credential changes while such a call is in flight or still running, or a record whose state is unknown finds no transaction left to roll back, Studio's rollback is still sent where a transaction is open, the end is recorded `unknown` and the answer says `rolledBack: false`, since that call may have ended the transaction first.
+An answered statement or script after which the session holds no transaction records the terminal `unknown`, since Studio cannot tell whether the statement or the provider's own timer ended it.
+A teardown of the owner's providers by a governance reload records `unknown`, never `rolled-back`, while a call of the owner's is in flight or stopped and still running on the record, since that call may end the transaction before the teardown's rollback.
+A BEGIN that replaces a record whose end no path recorded records that end `unknown`, since the provider opened a new transaction and how the old one ended is not known.
+A COMMIT that fails after it may have reached the database, its outcome not `not-sent`, E-5, and leaves no transaction is recorded `unknown`, never rolled back.
+
+- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "the core asks the session on every call and keeps no state between calls"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session reads the provider's state on every call, and keeps none"
+- test `tests/unit/lib/api/editor-transaction.test.ts` "a COMMIT the caller leaves answers QueryCancelledError outcome unknown and an unknown state, with no state read"
+- test `tests/unit/lib/api/editor-transaction.test.ts` "a COMMIT or ROLLBACK the provider fails answers its error by reference and the state read at once after it"
+- test `tests/unit/lib/api/editor-transaction.test.ts` "a state read after a failure that is stopped or fails answers unknown, and a failing read is logged by kind and code"
+- test `tests/unit/lib/api/editor-transaction.test.ts` "a state read answers the session's state, and a stopped read answers unknown"
+- test `tests/unit/lib/api/editor-transaction.test.ts` "an unknown state is answered as inTransaction null, never false"
+- test `tests/unit/lib/api/transaction-ownership.test.ts` "the owner's own call settles the record by the state it answered"
+- test `tests/unit/lib/api/transaction-ownership.test.ts` "the reconcile resolves a record by the state it read, and an end seen on an unknown state is recorded unknown"
+- test `tests/unit/lib/api/transaction-ownership.test.ts` "a lease that lapses on an unknown state records unknown, never timed-out"
+- test `tests/unit/lib/api/transaction-ownership.test.ts` "the watch records unknown for an unresolved record its read finds closed, and nothing for an open or unknown one"
+- test `tests/unit/lib/api/transaction-ownership.test.ts` "a reload that takes the grant away records unknown for a record whose state is unknown"
+- test `tests/api/db/transaction.test.ts` "a statement whose caller leaves answers 499 with outcome unknown, and keeps the transaction and its owner"
+- test `tests/api/db/transaction.test.ts` "a COMMIT whose caller leaves answers 499 with outcome unknown, and keeps the transaction and its owner"
+- test `tests/api/db/transaction.test.ts` "an unknown state answers inTransaction null, and the next read that finds the transaction resolves it"
+- test `tests/api/db/transaction.test.ts` "a script whose state read after its statements fails answers the statements' results with inTransaction null, and keeps the transaction and its owner unresolved"
+- test `tests/api/db/transaction.test.ts` "while a BEGIN whose caller left still runs, the status read answers inTransaction null, and who holds the record"
+- test `tests/api/db/transaction.test.ts` "governance: an unknown state records no terminal event, and a later read that finds no transaction records unknown, never timed-out or rolled-back"
+- test `tests/api/db/transaction.test.ts` "governance: an unknown state the next read finds still open is resolved, and a later provider timeout records timed-out"
+- test `tests/api/db/transaction.test.ts` "governance: a COMMIT that fails after it may have reached the database and leaves no transaction records unknown, never rolled-back"
+- test `tests/api/db/transaction.test.ts` "governance: a COMMIT refused before it was sent that leaves no transaction records rolled-back"
+- test `tests/api/db/transaction.test.ts` "governance: a COMMIT whose caller leaves records an open event, and the end a later read finds is recorded unknown"
+- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "a stopped transaction call's record settles once the call it stopped waiting for settles, answered or failed"
+- test `tests/unit/lib/provider-host/core/console.test.ts` "a stopped execute's record settles once the run it stopped waiting for settles, answered or failed"
+- test `tests/unit/lib/api/transaction-ownership.test.ts` "a call Studio stopped waiting for keeps the record unresolved until it settles, whatever a read or answer finds open"
+- test `tests/api/db/transaction.test.ts` "governance: a read that finds the transaction open while a COMMIT whose caller left still runs keeps the state unknown, and the end found after it is recorded unknown"
+- test `tests/api/db/transaction.test.ts` "governance: a ROLLBACK sent while a COMMIT whose caller left still runs is refused and sends nothing, and the end the read after the COMMIT settled finds is recorded unknown"
+- test `tests/api/db/transaction.test.ts` "governance: a COMMIT sent while a ROLLBACK whose caller left still runs is refused and sends nothing, and the end the read after the ROLLBACK settled finds is recorded unknown"
+- test `tests/api/db/transaction.test.ts` "a BEGIN, statement, COMMIT or ROLLBACK sent while a COMMIT whose caller left still runs is refused 409 by name and sends nothing, and once it settled the ROLLBACK is sent and answers by its own outcome"
+- test `tests/unit/lib/api/transaction-ownership.test.ts` "a read that finds no transaction while a call Studio stopped waiting for still runs keeps the record unresolved, and one after it settled releases it"
+- test `tests/unit/lib/api/transaction-ownership.test.ts` "the watch records nothing while a call Studio stopped waiting for still runs, and looks again until it has settled"
+- test `tests/unit/lib/api/transaction-ownership.test.ts` "the watch records nothing for a read a call Studio stopped waiting for began during, and looks again"
+- test `tests/unit/lib/api/transaction-ownership.test.ts` "a state read taken before the record was claimed, changed or ended neither settles nor resolves it"
+- test `tests/api/db/transaction.test.ts` "a state read that began before the owner's newer BEGIN claimed the record neither releases nor settles it when it answers"
+- test `tests/unit/lib/api/transaction-ownership.test.ts` "a call of the owner's in flight keeps every read from acting on the record, and its own answer settles it"
+- test `tests/unit/lib/api/transaction-ownership.test.ts` "the watch looks again and records nothing while a call of the owner's is in flight, and once it answered a read that finds no transaction records timed-out once"
+- test `tests/unit/lib/api/transaction-ownership.test.ts` "the watch records nothing for a read the record changed during, and looks again"
+- test `tests/unit/lib/api/transaction-ownership.test.ts` "the watch's repeated looks stop once the record's lease has lapsed"
+- test `tests/api/db/transaction.test.ts` "governance: a read that answers while the owner's COMMIT has committed but not yet answered keeps the record and records nothing, and the COMMIT records committed"
+- test `tests/api/db/transaction.test.ts` "a BEGIN the owner sends on their own record that Studio stops waiting for holds the record's calls until it settles"
+- test `tests/api/db/transaction.test.ts` "governance: a credential change while the owner's stopped COMMIT still runs records unknown, never rolled-back, and answers rolledBack false"
+- test `tests/api/db/transaction.test.ts` "governance: a provider timeout that ends the transaction while a statement runs is recorded unknown once the statement answers"
+- test `tests/api/db/transaction.test.ts` "governance: a typed COMMIT statement, alone or ending a script, records exactly one terminal event, unknown"
+- test `tests/unit/lib/api/transaction-ownership.test.ts` "a reload that takes the grant away records unknown while a call of the owner's is in flight or stopped"
+- test `tests/api/db/transaction.test.ts` "governance: a reload that tears down the owner's providers while their COMMIT still runs records unknown, never rolled-back"
+- test `tests/unit/lib/api/transaction-ownership.test.ts` "a claim over a record whose end was not recorded records that end unknown, once"
+- test `tests/api/db/transaction.test.ts` "governance: a BEGIN that opens a new transaction while the owner's statement still runs on the old record records the old one's end unknown"
+- test `tests/api/db/transaction.test.ts` "governance: a read that finds no transaction while a BEGIN whose caller left still runs keeps the record, so the transaction it opens stays its caller's and its end is recorded unknown"
+- test `tests/api/db/transaction.test.ts` "governance: a lease that lapses on an unknown state records unknown, never timed-out"
+- test `tests/api/db/transaction.test.ts` "governance: a credential change on a transaction whose state is unknown records unknown unless a rollback answered"
+
+### C-59 (normative): The transaction route on the host
+
+`POST /api/db/transaction` makes every call on its session through the host core, behind its caller facade: a begin, a COMMIT, a ROLLBACK and the state read are transaction calls, C-57, and one statement inside the transaction is console execute sent with `transaction`.
+A begin, a statement, a COMMIT and a ROLLBACK wait until the statement timeout plus 10 s, and the state read until the cleanup deadline, C-47, each also ended by the request's signal.
+A call the request left is answered at once as `QueryCancelledError`, and a call past its deadline as `StudioTimeoutRefusal` in a sentence naming the statement and what it may have left, both outcome unknown, or not-sent when refused before the call.
+The connection opens within its engine's connect budget and while the request stays, C-51 and C-55.
+A statement's page is held to the host's page budget, C-53, and answered as the editor query answers it.
+The rollback after a credential change reads the state and rolls back within 5 s of Studio's own, under a signal the request's leaving does not end, since it is Studio's cleanup, which the caller did not ask for.
+A begin Studio stopped waiting for, on a key with no record whose session held no transaction before it, is claimed for its caller alone, its state unknown, since it may have opened a transaction only that caller can own.
+A begin the session answers with no transaction held claims nothing and is refused in Studio's words.
+The transaction route's script of several statements is excepted, C-50.
+
+- test `tests/unit/lib/api/editor-transaction.test.ts` "each transaction call's deadline is the statement timeout plus ten seconds, and a state read's the cleanup deadline"
+- test `tests/unit/lib/api/editor-transaction.test.ts` "a begin past its deadline is refused before the provider is called, not-sent"
+- test `tests/unit/lib/api/editor-transaction.test.ts` "a BEGIN, COMMIT or ROLLBACK past its deadline answers StudioTimeoutRefusal naming it, outcome unknown, state unknown"
+- test `tests/unit/lib/api/editor-transaction.test.ts` "a statement inside the transaction answers its page as runEditorQuery does, with the session state after it"
+- test `tests/unit/lib/api/editor-transaction.test.ts` "the rollback after a credential change runs on Studio's own 5 s allowance, never the caller's"
+- test `tests/unit/lib/api/editor-transaction-bounds.test.ts` "a rollback after a credential change that never answers is abandoned at its 5 s allowance, unconfirmed"
+- test `tests/unit/lib/api/editor-transaction-bounds.test.ts` "a COMMIT that never answers is stopped at its deadline, its state unknown"
+- test `tests/api/db/transaction.test.ts` "a begin whose caller leaves claims for its caller alone the transaction it may have opened"
+- test `tests/api/db/transaction.test.ts` "a call past its deadline answers 504 with outcome unknown, and keeps the transaction and its owner"
+- test `tests/api/db/transaction.test.ts` "a request that leaves while its connection opens answers 499 not-sent and runs nothing"
+- test `tests/api/db/transaction.test.ts` "a begin whose session answers it holds no transaction answers 400 with the reason, and holds nothing"
+- test `tests/api/db/transaction.test.ts` "a statement's page is held to the host's page budget, as on POST /api/db/query"
+- test `tests/api/db/transaction.test.ts` "governance: a rollback after a credential change waits on Studio's own 5 s allowance, and one the host stops waiting for answers 409 unconfirmed"
+- test `tests/api/db/transaction.test.ts` "the transaction route reads no session state but through the host"
 
 ## Not yet in this contract
 
@@ -2185,4 +2305,6 @@ Against this contract's earlier text:
 
 - A provider may claim not-sent for a failure of its checkout of a connection or session before it sends, E-5, where only `refused-before-send` could.
 - A provider may claim not-sent for a call on a held transaction whose session it found ended before it sent anything, by raising `transaction-lost` with `beforeSend`, E-5, and a transaction's begin takes its connection through `checkoutPhase` like a statement.
+- The legacy bridge offers `console.transaction` where its provider is a transaction provider, C-50, where it first offered it nowhere.
+- C-58 is normative: the host's half of the unknown state arrived with the host's transaction calls, C-58 and C-59.
 - A row is measured once on the host's path: the pump hands each pull its own measure and takes the size it recorded for the row a source answers, C-13 to C-16 and C-50, where a source and the pump each measured every row.

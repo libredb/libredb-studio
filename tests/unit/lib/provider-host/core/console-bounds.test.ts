@@ -1,5 +1,5 @@
 /**
- * A console execute that never settles, with a real deadline, in a bounded Node child
+ * A console execute and a transaction call that never settle, with a real deadline, in a bounded Node child
  * (src/lib/provider-host/core/console.ts; docs/providers/CONTRACT.md, clause C-48): the call's wait ends at the
  * deadline's signal and answers a stop, so the child answers within its spawn timeout. Without the wait the child
  * waits until the spawn timeout kills it, and the case fails within seconds; the child holds a referenced interval, so
@@ -26,8 +26,8 @@ const child = boundedChild({
     { from: path.join(CORE, "console.ts"), names: ["consoleCalls"] },
     { from: path.join(CORE, "page-budget.ts"), names: ["createPageBudget"] },
   ],
-  runCase: async (deps: ChildDeps) => {
-    const { executeCall } = deps.consoleCalls(deps.createPageBudget(1));
+  runCase: async (deps: ChildDeps, name: string) => {
+    const { executeCall, transactionCall } = deps.consoleCalls(deps.createPageBudget(1));
     const deadline = Date.now() + 50;
     const session = {
       calls: {
@@ -35,11 +35,21 @@ const child = boundedChild({
           execute: { honours: [] },
           cancel: "not-offered",
           endScope: "not-offered",
-          transaction: "not-offered",
+          transaction: "offered",
         },
       },
       execute: () => new Promise<never>(() => {}),
+      transaction: () => new Promise<never>(() => {}),
     } as unknown as Parameters<typeof executeCall>[0];
+    if (name === "transaction-never-settles") {
+      const answered = await transactionCall(
+        session,
+        { action: "commit" },
+        { deadline, signal: AbortSignal.timeout(50), env: { get: () => undefined } },
+        { late: () => {} },
+      );
+      return answered.kind === "stopped" ? `stopped ${(answered.reason as Error).name}` : answered.kind;
+    }
     const record = await executeCall(
       session,
       { statement: "never", page: { limit: 1, offset: 0 } },
@@ -64,5 +74,9 @@ afterAll(() => {
 describe("a console execute in a bounded child", () => {
   test("an execute that never settles is stopped at the call's deadline", async () => {
     expect(await child.run<unknown>("never-settles")).toBe("stopped TimeoutError");
+  });
+
+  test("a transaction call that never settles is stopped at the call's deadline", async () => {
+    expect(await child.run<unknown>("transaction-never-settles")).toBe("stopped TimeoutError");
   });
 });

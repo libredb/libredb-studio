@@ -18,10 +18,10 @@ import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { logger } from "@/lib/logger";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 import { type CallerView, openStopError, refusalError, stopError } from "@/lib/provider-host/access";
-import type { HostCallPorts, StoppedRecord } from "@/lib/provider-host/core/console";
+import type { HostCallPorts, PageRecord, StoppedRecord } from "@/lib/provider-host/core/console";
 import type { OpenWait } from "@/lib/provider-host/core/open-once";
 import { hostCore } from "@/lib/provider-host/instance";
-import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
+import { type AnsweredRun, bridgedConsole } from "@/lib/provider-host/legacy-bridge";
 import type { DatabaseType, QueryPagination, QueryResult } from "@/lib/types";
 
 /*
@@ -143,7 +143,7 @@ export const EXECUTE_SLACK_MS = 10_000;
 const NO_ENVIRONMENT = envReader([], () => undefined);
 
 /** The statement timeout `provider` was built with: the connection's own, or Studio's default. */
-function statementTimeout(provider: Pick<DatabaseProvider, "config">): number {
+export function statementTimeout(provider: Pick<DatabaseProvider, "config">): number {
   return provider.config.queryTimeout ?? DEFAULT_QUERY_TIMEOUT;
 }
 
@@ -187,7 +187,7 @@ export async function openWithinCall<T>(
 }
 
 /** The page a request asks for, as the contract states it: every row, or a limit and an offset. */
-function pageBound(options: QueryPrepareOptions): PageBound {
+export function pageBound(options: QueryPrepareOptions): PageBound {
   if (options.unlimited === true) return { unlimited: true };
   return { limit: options.limit ?? DEFAULT_QUERY_LIMIT, offset: options.offset ?? 0 };
 }
@@ -197,7 +197,7 @@ function pageBound(options: QueryPrepareOptions): PageBound {
  * and a failed cancel, each by its kind and code and never its text, which can carry a server's words. Once the run's
  * cancel was sent (`cancelSent`), a `QueryCancelledError` after it is the run's expected end and is not logged.
  */
-function hostPorts(route: string, cancelSent: () => boolean = () => false): HostCallPorts {
+export function hostPorts(route: string, cancelSent: () => boolean = () => false): HostCallPorts {
   return {
     late: (failure) => {
       if (failure instanceof QueryCancelledError && cancelSent()) return;
@@ -217,7 +217,7 @@ function hostPorts(route: string, cancelSent: () => boolean = () => false): Host
 }
 
 /** A call's context: `deadline`, and a signal that aborts at it or when `caller` aborts first. */
-function callContext(deadline: number, caller: AbortSignal): CallContext {
+export function callContext(deadline: number, caller: AbortSignal): CallContext {
   return { deadline, signal: deadlineSignal(deadline, caller), env: NO_ENVIRONMENT };
 }
 
@@ -244,27 +244,31 @@ function callContext(deadline: number, caller: AbortSignal): CallContext {
  * answer to that cancel. A provider that never answers is cut at the deadline, `StudioTimeoutRefusal`, answered 504.
  */
 
-/** Runs one statement on `provider` and answers its first result set's page. */
-export async function runEditorQuery(provider: DatabaseProvider, run: EditorQueryRun): Promise<EditorQueryAnswer> {
-  const core = hostCore();
-  const deadline = executeDeadline(provider, Date.now());
+/** How the accessor reads an execute's records: the view of the call, and the view of a stop by the wait it ended. */
+export interface ExecuteViews {
+  readonly view: CallerView;
+  readonly stopView: (record: StoppedRecord) => CallerView;
+}
+
+/** The views of an execute on `provider` for `caller`, each naming the statement timeout and the host's slack. */
+export function executeViews(provider: Pick<DatabaseProvider, "config">, caller: AbortSignal): ExecuteViews {
   const view: CallerView = {
-    caller: run.signal,
+    caller,
     deadlineSentence: `The statement did not answer within its timeout of ${waitedSeconds(statementTimeout(provider))} and ${waitedSeconds(EXECUTE_SLACK_MS)} more for the engine's own answer, so Studio stopped waiting for it.`,
   };
   // The statement answered, but its page waited for the core's large-page slot until the deadline (clause C-54).
   const slotView: CallerView = {
-    caller: run.signal,
+    caller,
     deadlineSentence: `The statement answered, but its page waited for another large page to be answered past its timeout of ${waitedSeconds(statementTimeout(provider))} and ${waitedSeconds(EXECUTE_SLACK_MS)} more, so Studio stopped waiting for it.`,
   };
   // The statement answered, but its page was still being read at the deadline (clause C-48).
   const pageView: CallerView = {
-    caller: run.signal,
+    caller,
     deadlineSentence: `The statement answered, but Studio did not finish reading its page within its timeout of ${waitedSeconds(statementTimeout(provider))} and ${waitedSeconds(EXECUTE_SLACK_MS)} more, so it stopped waiting for it.`,
   };
   // The statement answered and its page was read, but its other results were still being closed (clause C-48).
   const otherResultsView: CallerView = {
-    caller: run.signal,
+    caller,
     deadlineSentence: `The statement answered and Studio read its page, but closing its other results did not finish within its timeout of ${waitedSeconds(statementTimeout(provider))} and ${waitedSeconds(EXECUTE_SLACK_MS)} more, so Studio stopped waiting for them.`,
   };
   const stopViews: Readonly<Record<NonNullable<StoppedRecord["waitingFor"]>, CallerView>> = {
@@ -272,26 +276,20 @@ export async function runEditorQuery(provider: DatabaseProvider, run: EditorQuer
     page: pageView,
     "other-results": otherResultsView,
   };
-  const bridged = bridgedConsole(provider, run.options);
-  const request: ExecuteRequest = {
-    statement: run.statement,
-    page: pageBound(run.options),
-    ...(run.params === undefined ? {} : { params: [...run.params] }),
-    ...(run.queryId === undefined ? {} : { runId: run.queryId }),
-  };
-  const record = await core.executeCall(
-    bridged.session,
-    request,
-    callContext(deadline, run.signal),
-    bridged.pumpLimits,
-    hostPorts(run.route, () => bridged.run.cancelSent),
-  );
-  if (record.kind === "refused") throw refusalError(record, view);
-  if (record.kind === "stopped") {
-    throw stopError(record.reason, record.waitingFor === undefined ? view : stopViews[record.waitingFor]);
-  }
+  return { view, stopView: (record) => (record.waitingFor === undefined ? view : stopViews[record.waitingFor]) };
+}
+
+/**
+ * The answer body of the page `record` holds, built from what the bridged execute that answered left (`answeredRun`),
+ * its warnings through `scrub`; the record is released once, in a `finally`, whether or not the body was built.
+ */
+export function editorPageBody(
+  record: PageRecord,
+  answeredRun: () => AnsweredRun,
+  scrub: ProviderTextScrub,
+): EditorQueryAnswer {
   try {
-    const { prepared, result, openTransaction } = bridged.answered();
+    const { prepared, result, openTransaction } = answeredRun();
     // The page the host pumped holds the rows that fit the page's row limit and its 32 MiB; the answer is the legacy
     // rows themselves, as the provider returned them, by that count.
     const pumped = result.rows.slice(0, record.page.rows.length);
@@ -319,7 +317,7 @@ export async function runEditorQuery(provider: DatabaseProvider, run: EditorQuer
     const probed = pageOfProbe(prepared, pumped);
     const hasMore = probed.hasMore || (byteCut && prepared.wasLimited);
     const pageRows = probed.rows;
-    const answered = firstResultSet(withScrubbedWarnings(run.scrub, result));
+    const answered = firstResultSet(withScrubbedWarnings(scrub, result));
     return {
       body: {
         ...answered,
@@ -355,6 +353,30 @@ export async function runEditorQuery(provider: DatabaseProvider, run: EditorQuer
   } finally {
     record.release();
   }
+}
+
+/** Runs one statement on `provider` and answers its first result set's page. */
+export async function runEditorQuery(provider: DatabaseProvider, run: EditorQueryRun): Promise<EditorQueryAnswer> {
+  const core = hostCore();
+  const deadline = executeDeadline(provider, Date.now());
+  const views = executeViews(provider, run.signal);
+  const bridged = bridgedConsole(provider, run.options);
+  const request: ExecuteRequest = {
+    statement: run.statement,
+    page: pageBound(run.options),
+    ...(run.params === undefined ? {} : { params: [...run.params] }),
+    ...(run.queryId === undefined ? {} : { runId: run.queryId }),
+  };
+  const record = await core.executeCall(
+    bridged.session,
+    request,
+    callContext(deadline, run.signal),
+    bridged.pumpLimits,
+    hostPorts(run.route, () => bridged.run.cancelSent),
+  );
+  if (record.kind === "refused") throw refusalError(record, views.view);
+  if (record.kind === "stopped") throw stopError(record.reason, views.stopView(record));
+  return editorPageBody(record, bridged.answered, run.scrub);
 }
 
 /** What a cancel answers: the provider cannot cancel, or whether the engine stopped the run. */

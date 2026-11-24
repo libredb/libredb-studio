@@ -19,7 +19,14 @@ import {
   pumpPage,
   type ResultSource,
 } from "@libredb/provider-sdk/calls";
-import type { DatabaseProvider, PreparedQuery, QueryPrepareOptions } from "@/lib/db/types";
+import {
+  type BeginTransactionResult,
+  type DatabaseProvider,
+  isTransactionProvider,
+  type PreparedQuery,
+  type QueryPrepareOptions,
+} from "@/lib/db/types";
+import type { ConsoleSession } from "@/lib/provider-host/core/console";
 import { runEditorQuery } from "@/lib/api/editor-query";
 import { providerTextScrub } from "@/lib/db/operations/provider-text";
 import { appendedBoundNote } from "@/lib/db/utils/query-limiter";
@@ -69,6 +76,39 @@ function fake(answer: QueryResult | Error, extra: Record<string, unknown> = {}):
 
 const callsOf = (fn: unknown) => (fn as ReturnType<typeof mock>).mock.calls;
 
+/**
+ * A provider with the five transaction methods, over a session whose state the test sets through `open`: a begin opens
+ * it, a COMMIT or ROLLBACK closes it, and `isInTransaction` reads it. A begin answers `begun` when given.
+ */
+function transactionalFake(begun?: BeginTransactionResult, extra: Record<string, unknown> = {}) {
+  const fx = {
+    open: false,
+    provider: undefined as unknown as DatabaseProvider & {
+      beginTransaction: ReturnType<typeof mock>;
+      commitTransaction: ReturnType<typeof mock>;
+      rollbackTransaction: ReturnType<typeof mock>;
+      isInTransaction: ReturnType<typeof mock>;
+      queryInTransaction: ReturnType<typeof mock>;
+    },
+  };
+  fx.provider = Object.assign(fake(resultOf([])), {
+    beginTransaction: mock(async () => {
+      fx.open = true;
+      return begun;
+    }),
+    commitTransaction: mock(async () => {
+      fx.open = false;
+    }),
+    rollbackTransaction: mock(async () => {
+      fx.open = false;
+    }),
+    isInTransaction: mock(() => fx.open),
+    queryInTransaction: mock(async () => resultOf([])),
+    ...extra,
+  });
+  return fx;
+}
+
 function contextOf(): CallContext {
   return { deadline: Date.now() + HOUR, signal: new AbortController().signal, env: envReader([], () => undefined) };
 }
@@ -109,20 +149,152 @@ describe("bridgedConsole", () => {
     expect(Object.isFrozen(cancelling.session.calls.console.execute.honours)).toBe(true);
   });
 
-  test("a bridged session offers no transaction facet, since the transaction route still calls the provider's transaction methods itself", () => {
-    const transactional = fake(resultOf([]), {
+  test("a bridged session offers the transaction facet exactly where the provider is a TransactionProvider", () => {
+    const transactional = transactionalFake();
+    const missingOne = fake(resultOf([]), {
       beginTransaction: mock(async () => {}),
       commitTransaction: mock(async () => {}),
-      rollbackTransaction: mock(async () => {}),
-      queryInTransaction: mock(async () => resultOf([])),
-      isInTransaction: mock(() => true),
+      isInTransaction: mock(() => false),
     });
 
-    for (const provider of [transactional, fake(resultOf([]))]) {
-      const bridged = bridgedConsole(provider, {});
-      expect(bridged.session.calls.console.transaction).toBe("not-offered");
-      expect(Object.hasOwn(bridged.session, "transaction")).toBe(false);
+    const bridged = bridgedConsole(transactional.provider, {});
+    expect(bridged.session.calls.console.transaction).toBe("offered");
+    expect(typeof bridged.session.transaction).toBe("function");
+    for (const provider of [missingOne, fake(resultOf([]))]) {
+      const plain = bridgedConsole(provider, {});
+      expect(plain.session.calls.console.transaction).toBe("not-offered");
+      expect(Object.hasOwn(plain.session, "transaction")).toBe(false);
     }
+    expect(isTransactionProvider(transactional.provider)).toBe(true);
+    expect(isTransactionProvider(missingOne)).toBe(false);
+    expect(isTransactionProvider(null)).toBe(false);
+    expect(isTransactionProvider("provider")).toBe(false);
+  });
+
+  test("a bridged begin, COMMIT, ROLLBACK and state read call the provider's methods and answer its state after each", async () => {
+    const fx = transactionalFake();
+    const { session } = bridgedConsole(fx.provider, {});
+    const transaction = session.transaction as NonNullable<typeof session.transaction>;
+
+    const begin = await transaction({ action: "begin" }, contextOf());
+    const state = await transaction({ action: "state" }, contextOf());
+    const commit = await transaction({ action: "commit" }, contextOf());
+    fx.open = true;
+    const rollback = await transaction({ action: "rollback" }, contextOf());
+
+    expect(begin).toEqual({ sessionState: "in-transaction" });
+    expect(state).toEqual({ sessionState: "in-transaction" });
+    expect(commit).toEqual({ sessionState: "not-in-transaction" });
+    expect(rollback).toEqual({ sessionState: "not-in-transaction" });
+    expect(callsOf(fx.provider.beginTransaction)).toHaveLength(1);
+    expect(callsOf(fx.provider.commitTransaction)).toHaveLength(1);
+    expect(callsOf(fx.provider.rollbackTransaction)).toHaveLength(1);
+    expect(callsOf(fx.provider.isInTransaction)).toHaveLength(4);
+    expect(callsOf(fx.provider.query)).toHaveLength(0);
+    expect(callsOf(fx.provider.queryInTransaction)).toHaveLength(0);
+  });
+
+  test("a bridged begin hands the provider requireReportedState as the route always did, true only when asked", async () => {
+    const reporting = transactionalFake({ stateReported: false });
+    const silent = transactionalFake();
+    const reportingTransaction = bridgedConsole(reporting.provider, {}).session.transaction as NonNullable<
+      ConsoleSession["transaction"]
+    >;
+    const silentTransaction = bridgedConsole(silent.provider, {}).session.transaction as NonNullable<
+      ConsoleSession["transaction"]
+    >;
+
+    const asked = await reportingTransaction({ action: "begin", requireReportedState: true }, contextOf());
+    const plain = await silentTransaction({ action: "begin" }, contextOf());
+
+    expect(callsOf(reporting.provider.beginTransaction)).toEqual([[{ requireReportedState: true }]]);
+    expect(callsOf(silent.provider.beginTransaction)).toEqual([[{ requireReportedState: false }]]);
+    expect(asked).toEqual({ sessionState: "in-transaction", stateReported: false });
+    expect(plain).toEqual({ sessionState: "in-transaction" });
+  });
+
+  test("a bridged statement inside the transaction prepares, probes and runs queryInTransaction, with no run id, no scope and no ender, and answers the state after it", async () => {
+    const endOpenQueryTransaction = mock(async () => "rolled-back");
+    const fx = transactionalFake(undefined, { endOpenQueryTransaction, cancelQuery: mock(async () => true) });
+    fx.open = true;
+    fx.provider.queryInTransaction.mockImplementation(async () => {
+      // The statement was a COMMIT the server ended the transaction with.
+      fx.open = false;
+      return resultOf(rowsOf(3));
+    });
+    const bridged = bridgedConsole(fx.provider, { limit: 2 });
+    const value = marker();
+
+    const answer = await bridged.session.execute(
+      requestOf({ params: [value], runId: marker(), transaction: true }),
+      contextOf(),
+    );
+
+    expect(callsOf(fx.provider.prepareQuery)).toEqual([
+      ["SELECT n FROM t", { limit: 2 }],
+      ["SELECT n FROM t", { limit: 3, unlimited: false }],
+    ]);
+    expect(callsOf(fx.provider.queryInTransaction)).toEqual([["SELECT n FROM t LIMIT 3 OFFSET 0", [value]]]);
+    expect(callsOf(fx.provider.query)).toHaveLength(0);
+    expect(callsOf(endOpenQueryTransaction)).toHaveLength(0);
+    expect(answer.sessionState).toBe("not-in-transaction");
+    expect(answer.pageApplied).toBe(true);
+    expect(bridged.run.openTransaction).toBe("none");
+    expect(bridged.answered().result.rows).toEqual(rowsOf(3));
+    expect(bridged.pumpLimits(answer).maxRows).toBe(3);
+
+    const failing = new Error('syntax error at or near "LIMIT"');
+    const thrower = transactionalFake();
+    thrower.provider.queryInTransaction.mockImplementation(async () => {
+      throw failing;
+    });
+    const caught = await failure(() =>
+      bridgedConsole(thrower.provider, { limit: 2 }).session.execute(requestOf({ transaction: true }), contextOf()),
+    );
+    expect(caught).toBe(failing);
+    expect(failing.message).toBe(`syntax error at or near "LIMIT" ${appendedBoundNote("LIMIT 3 OFFSET 0")}`);
+    expect(callsOf(thrower.provider.queryInTransaction)[0]).toEqual(["SELECT n FROM t LIMIT 3 OFFSET 0", undefined]);
+
+    // A provider that holds no transaction session is never sent a statement inside one: the host's check refuses it
+    // before the call, so reaching the bridge with one is a defect of the host.
+    const defect = await failure(() =>
+      bridgedConsole(fake(resultOf([])), {}).session.execute(requestOf({ transaction: true }), contextOf()),
+    );
+    expect((defect as Error).message).toBe(
+      "The bridge was sent a statement inside a transaction for a provider that holds no transaction session, a defect of the host.",
+    );
+  });
+
+  test("a bridged transaction call whose provider throws passes the error by reference", async () => {
+    const fx = transactionalFake();
+    const thrown = new Error(marker());
+    fx.provider.commitTransaction.mockImplementation(async () => {
+      throw thrown;
+    });
+    const transaction = bridgedConsole(fx.provider, {}).session.transaction as NonNullable<
+      ConsoleSession["transaction"]
+    >;
+
+    const caught = await failure(() => transaction({ action: "commit" }, contextOf()));
+
+    expect(caught).toBe(thrown);
+    expect(callsOf(fx.provider.isInTransaction)).toHaveLength(0);
+  });
+
+  test("a bridged session reads the provider's state on every call, and keeps none", async () => {
+    const fx = transactionalFake();
+    const transaction = bridgedConsole(fx.provider, {}).session.transaction as NonNullable<
+      ConsoleSession["transaction"]
+    >;
+
+    fx.open = true;
+    const first = await transaction({ action: "state" }, contextOf());
+    // The provider ended the transaction on its own timer, with no call of the session behind it.
+    fx.open = false;
+    const second = await transaction({ action: "state" }, contextOf());
+
+    expect([first, second]).toEqual([{ sessionState: "in-transaction" }, { sessionState: "not-in-transaction" }]);
+    expect(callsOf(fx.provider.isInTransaction)).toHaveLength(2);
   });
 
   test("a legacy provider that writes what it receives changes nothing the host froze", async () => {

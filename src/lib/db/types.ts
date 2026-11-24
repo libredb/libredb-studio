@@ -2169,6 +2169,21 @@ export interface TransactionProvider {
 }
 
 /**
+ * Whether `provider` holds the transaction session `POST /api/db/transaction` drives: the duck typing of begin, commit
+ * and rollback the route has always read, shared with the legacy bridge, which offers `console.transaction` exactly
+ * for such a provider (docs/providers/CONTRACT.md, clause C-50).
+ */
+export function isTransactionProvider(provider: unknown): provider is TransactionProvider {
+  return (
+    typeof provider === "object" &&
+    provider !== null &&
+    "beginTransaction" in provider &&
+    "commitTransaction" in provider &&
+    "rollbackTransaction" in provider
+  );
+}
+
+/**
  * A fresh name for one caller's call scope (D87). One per request, minted by the route
  * that will also end it, so that the token cannot collide with another request's and
  * cannot be supplied by the client: a caller-chosen scope would let one request end

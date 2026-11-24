@@ -1,4 +1,6 @@
-import { describe, test, expect, mock, beforeEach, afterEach, jest, spyOn } from "bun:test";
+import { describe, test, expect, mock, beforeAll, afterAll, beforeEach, afterEach, spyOn, jest } from "bun:test";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { admittedConnection, grantedSnapshot } from "../../helpers/governance/granted-snapshot";
@@ -21,10 +23,15 @@ import {
   isAuthenticationError,
   TransactionLostError,
   QueryCancelledError,
+  NO_ACTIVE_TRANSACTION,
   NO_TRANSACTION_OPENED,
   ProviderTextWithheldError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import { markNotSent, waitedSeconds } from "@/lib/db/errors";
+import { EXECUTE_SLACK_MS } from "@/lib/api/editor-query";
+import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
 import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import type { BeginTransactionOptions, BeginTransactionResult } from "@/lib/db/types";
 import type { QueryEventInput } from "@/lib/query-events/types";
@@ -151,7 +158,59 @@ mock.module("@/lib/query-events/admission", () => ({ admitQueryExecution: mockAd
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
 const { POST } = await import("@/app/api/db/transaction/route");
-const { releaseTransaction, transactionKey } = await import("@/lib/api/transaction-ownership");
+const {
+  OWNERSHIP_IDLE_MS,
+  releaseTransaction,
+  TRANSACTION_TIMEOUT_CHECK_MS,
+  TRANSACTION_TIMEOUT_RECHECK_MS,
+  transactionKey,
+  transactionOwner,
+} = await import("@/lib/api/transaction-ownership");
+
+// The route's calls run through the process's host core (src/lib/provider-host/instance.ts), so this file composes its
+// own.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
+
+/** Runs `body` with a core `make` builds around the real one installed, then puts the real one back. */
+async function withCore<T>(make: (real: HostCore) => HostCore, body: () => Promise<T>): Promise<T> {
+  const real = hostCore();
+  forgetHostCore();
+  installHostCore(make(real), "test");
+  try {
+    return await body();
+  } finally {
+    forgetHostCore();
+    installHostCore(real, "test");
+  }
+}
+
+/** The reason a call's deadline aborts its signal with. */
+const deadlineReason = () => new DOMException("The call's deadline has passed.", "TimeoutError");
+
+/** A held answer, and a promise that resolves once a call reached it. */
+function heldCall<T>() {
+  const answer = Promise.withResolvers<T>();
+  const reached = Promise.withResolvers<void>();
+  return {
+    answer,
+    reached: reached.promise,
+    call: () => {
+      reached.resolve();
+      return answer.promise;
+    },
+  };
+}
+
+/** A transaction request the caller can leave, through `signal`. */
+function leavingRequest(body: Record<string, unknown>, signal: AbortSignal): Request {
+  return new Request("http://localhost:3000/api/db/transaction", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+}
 const { registerOwnerRemoval } = await import("@/lib/db/owner-removal");
 const { swapGovernanceSnapshot } = await import("@/lib/governance/snapshot");
 const { recordGovernanceSnapshot, resetGovernanceState } = await import("@/lib/governance/state");
@@ -1370,17 +1429,491 @@ describe("POST /api/db/transaction", () => {
       expect(await heldForAnother("e23-socket-lost")).toEqual({ status: 409, code: "TRANSACTION_NOT_OWNED" });
     });
   });
+
+  describe("an unknown session state keeps the transaction and its owner (E21-K2, Q3)", () => {
+    interface ErrorBody {
+      readonly code: string;
+      readonly kind?: string;
+      readonly outcome?: string;
+      readonly error?: string;
+    }
+
+    /** The status of a call and the code, kind and outcome of its body. */
+    async function answerOf(response: Response) {
+      const body = await parseResponseJSON<ErrorBody>(response);
+      return { status: response.status, code: body.code, kind: body.kind, outcome: body.outcome };
+    }
+
+    /** Whether another session finds the transaction still held: its begin is refused as not owned. */
+    async function heldForAnother(connectionId: string) {
+      asSession("bob", "admin");
+      const res = await call(connectionId, { action: "begin" });
+      return { status: res.status, code: (await parseResponseJSON<{ code?: string }>(res)).code };
+    }
+
+    /** A call on `connectionId` its caller leaves through the controller answered. */
+    function leaving(connectionId: string, body: Record<string, unknown>) {
+      const controller = new AbortController();
+      const response = POST(
+        leavingRequest({ connection: { ...validConnection, id: connectionId }, ...body }, controller.signal) as never,
+      );
+      return { controller, response };
+    }
+
+    const statementResult = { rows: [{ id: 1, name: "Alice" }], fields: ["id", "name"], rowCount: 1, executionTime: 1 };
+
+    test("a statement whose caller leaves answers 499 with outcome unknown, and keeps the transaction and its owner", async () => {
+      openableProvider();
+      asSession("alice");
+      expect((await call("k2-statement-left", { action: "begin" })).status).toBe(200);
+      const statement = heldCall<typeof statementResult>();
+      mockTxProvider.queryInTransaction.mockImplementationOnce(statement.call);
+
+      const left = leaving("k2-statement-left", { action: "query", sql: "UPDATE t SET n = 1" });
+      await statement.reached;
+      left.controller.abort();
+      // The statement answers after its caller left: its answer is nobody's.
+      statement.answer.resolve(statementResult);
+      const answered = await answerOf(await left.response);
+
+      expect(answered).toEqual({ status: 499, code: "QUERY_CANCELLED", kind: "cancelled", outcome: "unknown" });
+      expect(await heldForAnother("k2-statement-left")).toEqual({ status: 409, code: "TRANSACTION_NOT_OWNED" });
+      asSession("alice");
+      expect(await parseResponseJSON(await call("k2-statement-left", { action: "status" }))).toMatchObject({
+        inTransaction: true,
+        ownedByYou: true,
+      });
+      expect((await call("k2-statement-left", { action: "rollback" })).status).toBe(200);
+    });
+
+    test("a COMMIT whose caller leaves answers 499 with outcome unknown, and keeps the transaction and its owner", async () => {
+      openableProvider();
+      asSession("alice");
+      expect((await call("k2-commit-left", { action: "begin" })).status).toBe(200);
+      const commit = heldCall<void>();
+      mockTxProvider.commitTransaction.mockImplementationOnce(commit.call);
+
+      const left = leaving("k2-commit-left", { action: "commit" });
+      await commit.reached;
+      const readsBefore = mockTxProvider.isInTransaction.mock.calls.length;
+      left.controller.abort();
+      const answered = await answerOf(await left.response);
+      // Nothing reads the state after the stop: the COMMIT's own end is unknown.
+      expect(mockTxProvider.isInTransaction.mock.calls.length).toBe(readsBefore);
+      commit.answer.resolve();
+
+      expect(answered).toEqual({ status: 499, code: "QUERY_CANCELLED", kind: "cancelled", outcome: "unknown" });
+      expect(await heldForAnother("k2-commit-left")).toEqual({ status: 409, code: "TRANSACTION_NOT_OWNED" });
+      asSession("alice");
+      expect((await call("k2-commit-left", { action: "rollback" })).status).toBe(200);
+    });
+
+    test("a BEGIN, statement, COMMIT or ROLLBACK sent while a COMMIT whose caller left still runs is refused 409 by name and sends nothing, and once it settled the ROLLBACK is sent and answers by its own outcome", async () => {
+      let open = false;
+      mockTxProvider.isInTransaction.mockImplementation(() => open);
+      mockTxProvider.beginTransaction.mockImplementation(async () => {
+        open = true;
+      });
+      // As every provider that implements the transaction interface answers a ROLLBACK with no transaction open.
+      mockTxProvider.rollbackTransaction.mockImplementation(async () => {
+        if (!open) throw new QueryError(NO_ACTIVE_TRANSACTION, "postgres");
+        open = false;
+      });
+      asSession("alice");
+      expect((await call("k2-refused", { action: "begin" })).status).toBe(200);
+      const commit = heldCall<void>();
+      const committed = Promise.withResolvers<void>();
+      mockTxProvider.commitTransaction.mockImplementationOnce(async () => {
+        await commit.call();
+        // The COMMIT committed after its caller left.
+        open = false;
+        committed.resolve();
+      });
+      const left = leaving("k2-refused", { action: "commit" });
+      await commit.reached;
+      left.controller.abort();
+      expect((await left.response).status).toBe(499);
+
+      const responses: Response[] = [];
+      for (const body of [
+        { action: "begin" },
+        { action: "query", sql: "UPDATE t SET n = 1" },
+        { action: "commit" },
+        { action: "rollback" },
+      ]) {
+        // oxlint-disable-next-line no-await-in-loop -- one request at a time, as the editor sends them.
+        responses.push(await call("k2-refused", body));
+      }
+      const refusals = await Promise.all(
+        responses.map(async (res) => {
+          const answer = await parseResponseJSON<{ code?: string; error?: string }>(res);
+          return [res.status, answer.code, answer.error, transactionGone(answer)];
+        }),
+      );
+      const refused = (named: string) => [
+        409,
+        "TRANSACTION_CALL_RUNNING",
+        `The ${named} was not sent: a call Studio stopped waiting for is still running on this connection's transaction. Send it again once that call has finished; the status action reads the transaction's state.`,
+        false,
+      ];
+      expect(refusals).toEqual([refused("BEGIN"), refused("statement"), refused("COMMIT"), refused("ROLLBACK")]);
+      // Nothing reached the provider but the BEGIN and the COMMIT before the stop.
+      expect(mockTxProvider.beginTransaction).toHaveBeenCalledTimes(1);
+      expect(mockTxProvider.queryInTransaction).not.toHaveBeenCalled();
+      expect(mockTxProvider.commitTransaction).toHaveBeenCalledTimes(1);
+      expect(mockTxProvider.rollbackTransaction).not.toHaveBeenCalled();
+      // The state read is still answered, and says the state is unknown.
+      expect(await parseResponseJSON(await call("k2-refused", { action: "status" }))).toMatchObject({
+        inTransaction: null,
+        ownedByYou: true,
+      });
+
+      commit.answer.resolve();
+      await committed.promise;
+      await mockTxProvider.commitTransaction.mock.results.at(-1)?.value;
+      const rollback = await call("k2-refused", { action: "rollback" });
+
+      expect(mockTxProvider.rollbackTransaction).toHaveBeenCalledTimes(1);
+      expect([rollback.status, (await parseResponseJSON<{ error?: string }>(rollback)).error]).toEqual([
+        400,
+        NO_ACTIVE_TRANSACTION,
+      ]);
+    });
+
+    test("while a BEGIN whose caller left still runs, the status read answers inTransaction null, and who holds the record", async () => {
+      let open = false;
+      mockTxProvider.isInTransaction.mockImplementation(() => open);
+      mockTxProvider.rollbackTransaction.mockImplementation(async () => {
+        open = false;
+      });
+      const begin = heldCall<void>();
+      const opened = Promise.withResolvers<void>();
+      mockTxProvider.beginTransaction.mockImplementationOnce(async () => {
+        await begin.call();
+        // The BEGIN opened the transaction after its caller left.
+        open = true;
+        opened.resolve();
+      });
+      asSession("alice");
+      const left = leaving("k2-status-null", { action: "begin" });
+      await begin.reached;
+      left.controller.abort();
+      expect((await left.response).status).toBe(499);
+
+      // The provider answers no transaction, only because the BEGIN it still runs has not opened one.
+      expect(await parseResponseJSON(await call("k2-status-null", { action: "status" }))).toMatchObject({
+        inTransaction: null,
+        ownedByYou: true,
+        heldByAnotherSession: false,
+      });
+      asSession("bob", "admin");
+      expect(await parseResponseJSON(await call("k2-status-null", { action: "status" }))).toMatchObject({
+        inTransaction: null,
+        ownedByYou: false,
+        heldByAnotherSession: true,
+      });
+
+      begin.answer.resolve();
+      await opened.promise;
+      await mockTxProvider.beginTransaction.mock.results.at(-1)?.value;
+      asSession("alice");
+      expect(await parseResponseJSON(await call("k2-status-null", { action: "status" }))).toMatchObject({
+        inTransaction: true,
+        ownedByYou: true,
+      });
+      expect((await call("k2-status-null", { action: "rollback" })).status).toBe(200);
+    });
+
+    test("a state read that began before the owner's newer BEGIN claimed the record neither releases nor settles it when it answers", async () => {
+      openableProvider();
+      asSession("alice");
+      const readTaken = Promise.withResolvers<void>();
+      const answerRead = Promise.withResolvers<void>();
+      let reads = 0;
+      const claimed = await withCore(
+        (real) => ({
+          ...real,
+          transactionCall: async (session, request, ctx, ports) => {
+            if (request.action !== "state" || reads++ > 0) return real.transactionCall(session, request, ctx, ports);
+            // The older request's read is taken while no transaction is open, and answers only after the newer BEGIN.
+            const answer = await real.transactionCall(session, request, ctx, ports);
+            readTaken.resolve();
+            await answerRead.promise;
+            return answer;
+          },
+        }),
+        async () => {
+          const older = call("k2-race", { action: "status" });
+          await readTaken.promise;
+          expect((await call("k2-race", { action: "begin" })).status).toBe(200);
+          const record = transactionOwner(transactionKey("k2-race"));
+          answerRead.resolve();
+          expect(await parseResponseJSON(await older)).toMatchObject({ inTransaction: null, ownedByYou: true });
+          return record;
+        },
+      );
+
+      expect(claimed).not.toBeNull();
+      expect(transactionOwner(transactionKey("k2-race"))).toBe(claimed);
+      expect(await heldForAnother("k2-race")).toEqual({ status: 409, code: "TRANSACTION_NOT_OWNED" });
+      asSession("alice");
+      expect((await call("k2-race", { action: "rollback" })).status).toBe(200);
+    });
+
+    test("a BEGIN the owner sends on their own record that Studio stops waiting for holds the record's calls until it settles", async () => {
+      openableProvider();
+      asSession("alice");
+      expect((await call("k2-begin-again", { action: "begin" })).status).toBe(200);
+      const begin = heldCall<void>();
+      mockTxProvider.beginTransaction.mockImplementationOnce(async () => {
+        await begin.call();
+        throw new QueryError("Transaction already active", "postgres");
+      });
+      const left = leaving("k2-begin-again", { action: "begin" });
+      await begin.reached;
+      left.controller.abort();
+      expect((await left.response).status).toBe(499);
+
+      const refused = await call("k2-begin-again", { action: "commit" });
+      expect([refused.status, (await parseResponseJSON<{ code?: string }>(refused)).code]).toEqual([
+        409,
+        "TRANSACTION_CALL_RUNNING",
+      ]);
+      expect(mockTxProvider.commitTransaction).not.toHaveBeenCalled();
+      expect(await parseResponseJSON(await call("k2-begin-again", { action: "status" }))).toMatchObject({
+        inTransaction: null,
+        ownedByYou: true,
+      });
+
+      begin.answer.resolve();
+      await Promise.allSettled([mockTxProvider.beginTransaction.mock.results.at(-1)?.value as Promise<void>]);
+      expect((await call("k2-begin-again", { action: "commit" })).status).toBe(200);
+    });
+
+    test("a begin whose caller leaves claims for its caller alone the transaction it may have opened", async () => {
+      let open = false;
+      mockTxProvider.isInTransaction.mockImplementation(() => open);
+      mockTxProvider.rollbackTransaction.mockImplementation(async () => {
+        open = false;
+      });
+      const begin = heldCall<void>();
+      mockTxProvider.beginTransaction.mockImplementationOnce(() => {
+        // The server opened the transaction; its answer has not reached Studio.
+        open = true;
+        return begin.call();
+      });
+      asSession("alice");
+
+      const left = leaving("k2-begin-left", { action: "begin" });
+      await begin.reached;
+      left.controller.abort();
+      begin.answer.resolve();
+      const answered = await answerOf(await left.response);
+
+      expect(answered).toEqual({ status: 499, code: "QUERY_CANCELLED", kind: "cancelled", outcome: "unknown" });
+      expect(await heldForAnother("k2-begin-left")).toEqual({ status: 409, code: "TRANSACTION_NOT_OWNED" });
+      asSession("alice");
+      expect(await parseResponseJSON(await call("k2-begin-left", { action: "status" }))).toMatchObject({
+        inTransaction: true,
+        ownedByYou: true,
+      });
+      expect((await call("k2-begin-left", { action: "rollback" })).status).toBe(200);
+    });
+
+    test("a call past its deadline answers 504 with outcome unknown, and keeps the transaction and its owner", async () => {
+      openableProvider();
+      asSession("alice");
+      expect((await call("k2-deadline", { action: "begin" })).status).toBe(200);
+      const waited = `${waitedSeconds(60_000)} and ${waitedSeconds(EXECUTE_SLACK_MS)} more for the engine's own answer`;
+
+      const [statement, commit] = await withCore(
+        (real) => ({
+          ...real,
+          executeCall: async () => ({ kind: "stopped", reason: deadlineReason(), settled: Promise.resolve() }),
+          transactionCall: async (session, request, ctx, ports) =>
+            request.action === "state"
+              ? real.transactionCall(session, request, ctx, ports)
+              : { kind: "stopped", reason: deadlineReason(), settled: Promise.resolve() },
+        }),
+        async () => [
+          await call("k2-deadline", { action: "query", sql: "UPDATE t SET n = 1" }),
+          await call("k2-deadline", { action: "commit" }),
+        ],
+      );
+      const statementBody = await parseResponseJSON<ErrorBody>(statement);
+      const commitBody = await parseResponseJSON<ErrorBody>(commit);
+
+      expect([statement.status, statementBody.code, statementBody.kind, statementBody.outcome]).toEqual([
+        504,
+        "TIMEOUT_ERROR",
+        "studio-timeout-refusal",
+        "unknown",
+      ]);
+      expect(statementBody.error).toBe(
+        `The statement did not answer within its timeout of ${waited}, so Studio stopped waiting for it.`,
+      );
+      expect([commit.status, commitBody.code, commitBody.kind, commitBody.outcome]).toEqual([
+        504,
+        "TIMEOUT_ERROR",
+        "studio-timeout-refusal",
+        "unknown",
+      ]);
+      expect(commitBody.error).toBe(
+        `The COMMIT did not answer within the statement timeout of ${waited}, so Studio stopped waiting for it, and the transaction may have been committed or rolled back.`,
+      );
+      expect(await heldForAnother("k2-deadline")).toEqual({ status: 409, code: "TRANSACTION_NOT_OWNED" });
+      asSession("alice");
+      expect((await call("k2-deadline", { action: "rollback" })).status).toBe(200);
+    });
+
+    test("an unknown state answers inTransaction null, and the next read that finds the transaction resolves it", async () => {
+      openableProvider();
+      asSession("alice");
+      expect((await call("k2-null", { action: "begin" })).status).toBe(200);
+      let reads = 0;
+
+      const [first, second] = await withCore(
+        (real) => ({
+          ...real,
+          transactionCall: async (session, request, ctx, ports) => {
+            if (request.action === "state" && reads++ === 0) return { kind: "answered", sessionState: "unknown" };
+            return real.transactionCall(session, request, ctx, ports);
+          },
+        }),
+        async () => [
+          await parseResponseJSON(await call("k2-null", { action: "status" })),
+          await parseResponseJSON(await call("k2-null", { action: "status" })),
+        ],
+      );
+
+      expect(first).toMatchObject({ inTransaction: null, ownedByYou: true });
+      expect(second).toMatchObject({ inTransaction: true, ownedByYou: true });
+      expect((await call("k2-null", { action: "rollback" })).status).toBe(200);
+    });
+
+    test("a script whose state read after its statements fails answers the statements' results with inTransaction null, and keeps the transaction and its owner unresolved", async () => {
+      openableProvider();
+      asSession("alice");
+      expect((await call("k2-script-read", { action: "begin" })).status).toBe(200);
+      let ran = 0;
+      mockTxProvider.queryInTransaction.mockImplementation(async () => {
+        ran += 1;
+        return { rows: [], fields: [], rowCount: 1, executionTime: 1 };
+      });
+      // The read after the script's two statements fails once, as a provider whose session cannot answer would.
+      mockTxProvider.isInTransaction.mockImplementation(() => {
+        if (ran === 2) {
+          ran = 0;
+          throw new DatabaseError("The session state could not be read", "postgres");
+        }
+        return true;
+      });
+      const warn = spyOn(logger, "warn");
+      try {
+        const res = await call("k2-script-read", { action: "query", sql: "UPDATE t SET n = 1; UPDATE t SET n = 2" });
+        const data = await parseResponseJSON<{
+          executedCount: number;
+          hasError: boolean;
+          inTransaction: boolean | null;
+          statements: { status: string }[];
+        }>(res);
+
+        expect([res.status, data.executedCount, data.hasError, data.inTransaction]).toEqual([200, 2, false, null]);
+        expect(data.statements.map((statement) => statement.status)).toEqual(["success", "success"]);
+        expect(warn).toHaveBeenCalledWith("A transaction state read failed, so the state is unknown", {
+          route: "api/db/transaction",
+          kind: "database",
+          code: "DATABASE_ERROR",
+        });
+      } finally {
+        warn.mockRestore();
+      }
+      expect(transactionOwner(transactionKey("k2-script-read"))?.unresolved).toBe(true);
+      expect(await heldForAnother("k2-script-read")).toEqual({ status: 409, code: "TRANSACTION_NOT_OWNED" });
+      asSession("alice");
+      expect((await call("k2-script-read", { action: "rollback" })).status).toBe(200);
+    });
+
+    test("a request that leaves while its connection opens answers 499 not-sent and runs nothing", async () => {
+      const opening = Promise.withResolvers<void>();
+      mockGetOrCreateProvider.mockImplementationOnce(async (...args: unknown[]) => {
+        const wait = args[3] as { signal: AbortSignal } | undefined;
+        opening.resolve();
+        return new Promise<never>((_resolve, reject) => {
+          wait?.signal.addEventListener("abort", () => reject(wait.signal.reason), { once: true });
+        });
+      });
+      asSession("alice");
+
+      const left = leaving("k2-open-left", { action: "query", sql: "UPDATE t SET n = 1" });
+      await opening.promise;
+      left.controller.abort();
+      const answered = await answerOf(await left.response);
+
+      expect(answered).toEqual({ status: 499, code: "QUERY_CANCELLED", kind: "cancelled", outcome: "not-sent" });
+      expect(mockTxProvider.isInTransaction).not.toHaveBeenCalled();
+      expect(mockTxProvider.queryInTransaction).not.toHaveBeenCalled();
+    });
+
+    test("a begin whose session answers it holds no transaction answers 400 with the reason, and holds nothing", async () => {
+      mockTxProvider.isInTransaction.mockImplementation(() => false);
+      asSession("alice");
+
+      const res = await call("k2-begin-none", { action: "begin" });
+      const data = await parseResponseJSON<{ error: string }>(res);
+
+      expect(res.status).toBe(400);
+      expect(data.error).toBe(NO_TRANSACTION_OPENED);
+      expect(await parseResponseJSON(await call("k2-begin-none", { action: "status" }))).toMatchObject({
+        inTransaction: false,
+        ownedByYou: false,
+        heldByAnotherSession: false,
+      });
+    });
+
+    test("a statement's page is held to the host's page budget, as on POST /api/db/query", async () => {
+      const MIB = 1_048_576;
+      const mebibyte = "x".repeat(MIB);
+      // How many rows of a small id and a one MiB name a 32 MiB page holds: each measures its MiB and a few bytes.
+      const pageHolds = 31;
+      mockTxProvider.queryInTransaction.mockImplementationOnce(async () => ({
+        rows: Array.from({ length: 40 }, (_, id) => ({ id, name: mebibyte })),
+        fields: ["id", "name"],
+        rowCount: 40,
+        executionTime: 1,
+      }));
+      asSession("alice");
+
+      const res = await call("k2-page", { action: "query", sql: "SELECT n FROM t" });
+      const data = await parseResponseJSON<{
+        rows: unknown[];
+        rowCount: number;
+        inTransaction: boolean;
+        pagination: { hasMore: boolean; wasLimited: boolean; totalReturned: number };
+      }>(res);
+
+      expect(res.status).toBe(200);
+      expect(data.rows).toHaveLength(pageHolds);
+      expect(data.rowCount).toBe(pageHolds);
+      expect(data.pagination).toMatchObject({ hasMore: true, wasLimited: true, totalReturned: pageHolds });
+      expect(data.inTransaction).toBe(true);
+    });
+  });
 });
 
 // ─── Server-level connections (#1530) ───────────────────────────────────────
 describe("POST /api/db/transaction on a server-level connection (#1530)", () => {
+  /** One database's session: a begin opens its transaction, as a server that opened one does. */
   function session() {
+    const isInTransaction = mock(() => false);
     return {
       ...baseMockProvider,
-      beginTransaction: mock(async () => {}),
+      beginTransaction: mock(async () => {
+        isInTransaction.mockImplementation(() => true);
+      }),
       commitTransaction: mock(async () => {}),
       rollbackTransaction: mock(async () => {}),
-      isInTransaction: mock(() => false),
+      isInTransaction,
       queryInTransaction: mock(async () => ({ rows: [], fields: [], rowCount: 0, executionTime: 1 })),
     };
   }
@@ -1440,6 +1973,10 @@ describe("POST /api/db/transaction on a server-level connection (#1530)", () => 
 // identity provider subject, and the ownership record is keyed and owned by that subject too. Without
 // it, a user whose own provider holds no transaction would drop another user's record on reconcile, and
 // that user's transaction would become anyone's to end.
+/** The 409 a credential change answers when a call of the owner's whose outcome is not known may have ended the transaction. */
+const CREDENTIAL_CHANGED_OUTCOME_UNKNOWN =
+  "Your access to this connection changed while your transaction was open, so the transaction cannot continue. A call of yours whose outcome Studio does not know may have ended it before Studio's rollback, so Studio cannot tell whether its changes were committed or rolled back; check the data before you run its work again. Begin a new transaction to continue with your current access.";
+
 describe("POST /api/db/transaction under governance", () => {
   let savedSource: string | undefined;
 
@@ -1724,39 +2261,56 @@ describe("POST /api/db/transaction under governance", () => {
     }
   });
 
-  test("governance: a rollback that does not finish within 5 s is abandoned, and the answer is still 409", async () => {
-    const providers = providerPerKey();
+  test("governance: a rollback after a credential change waits on Studio's own 5 s allowance, and one the host stops waiting for answers 409 unconfirmed", async () => {
+    providerPerKey();
     const errors = spyOn(logger, "error").mockImplementation(() => {});
-    as("alice@example.com", "alice-subject");
-    expect((await send({ action: "begin" }, "writer")).status).toBe(200);
-    const writer = providers.of("writer", "alice-subject");
-    writer?.rollbackTransaction.mockImplementationOnce(() => new Promise<void>(() => {}));
-
-    jest.useFakeTimers();
     try {
-      let answered = false;
-      const pending = send({ action: "query", sql: "SELECT 1" }, "reader").then((res) => {
-        answered = true;
-        return res;
-      });
-      // Bun's fake timers leave setImmediate real, so this lets the request run up to the rollback it waits on.
-      for (let turn = 0; turn < 50 && writer?.rollbackTransaction.mock.calls.length === 0; turn++) {
-        // oxlint-disable-next-line no-await-in-loop -- a poll: each turn lets the request run one step further.
-        await new Promise((resolve) => setImmediate(resolve));
-      }
-      expect(writer?.rollbackTransaction).toHaveBeenCalledTimes(1);
+      as("alice@example.com", "alice-subject");
+      expect((await send({ action: "begin" }, "writer")).status).toBe(200);
+      recordedEvents.length = 0;
+      const controller = new AbortController();
+      const seen: { deadline: number; abortedAfterCallerLeft: boolean }[] = [];
+      const startedAt = Date.now();
 
-      jest.advanceTimersByTime(4999);
-      await new Promise((resolve) => setImmediate(resolve));
-      expect(answered).toBe(false);
+      const res = await withCore(
+        (real) => ({
+          ...real,
+          transactionCall: async (session, request, ctx, ports) => {
+            if (request.action !== "rollback") return real.transactionCall(session, request, ctx, ports);
+            // The caller leaves while the rollback runs: the allowance is Studio's own, so its signal stays.
+            controller.abort();
+            seen.push({ deadline: ctx.deadline, abortedAfterCallerLeft: ctx.signal.aborted });
+            return { kind: "stopped", reason: deadlineReason(), settled: Promise.resolve() };
+          },
+        }),
+        () =>
+          POST(
+            leavingRequest(
+              {
+                connection: { ...validConnection, id: "seed:orders", grantLevel: "read", user: "reader" },
+                action: "query",
+                sql: "SELECT 1",
+              },
+              controller.signal,
+            ) as never,
+          ),
+      );
+      const endedAt = Date.now();
 
-      jest.advanceTimersByTime(1);
-      const res = await pending;
       expect(res.status).toBe(409);
       expect(await parseResponseJSON(res)).toMatchObject({ code: "TRANSACTION_CREDENTIAL_CHANGED", rolledBack: false });
-      expect(String(errors.mock.calls[0]?.[1])).toContain("timed out after 5000ms");
+      expect(seen).toHaveLength(1);
+      expect(seen[0]?.deadline).toBeGreaterThanOrEqual(startedAt + 5_000);
+      expect(seen[0]?.deadline).toBeLessThanOrEqual(endedAt + 5_000);
+      expect(seen[0]?.abortedAfterCallerLeft).toBe(false);
+      expect(errors).toHaveBeenCalledTimes(1);
+      expect((errors.mock.calls[0]?.[1] as Error | undefined)?.message).toBe(
+        "The rollback after a credential change did not answer within 5 seconds, so Studio stopped waiting for it.",
+      );
+      expect(recordedEvents.map((event) => [event.transactionOutcome, event.statement, event.status])).toEqual([
+        ["rolled-back", "ROLLBACK", "error"],
+      ]);
     } finally {
-      jest.useRealTimers();
       errors.mockRestore();
     }
   });
@@ -1807,6 +2361,58 @@ describe("POST /api/db/transaction under governance", () => {
       expect((await send({ action: "begin" }, "reader")).status).toBe(200);
       expect(providers.of("reader", "alice-subject")?.isInTransaction()).toBe(true);
       expect((await send({ action: "rollback" }, "reader")).status).toBe(200);
+    } finally {
+      unregister();
+      resetGovernanceState();
+      for (const spy of quiet) spy.mockRestore();
+    }
+  });
+
+  test("governance: a reload that tears down the owner's providers while their COMMIT still runs records unknown, never rolled-back", async () => {
+    const providers = providerPerKey();
+    const unregister = registerOwnerRemoval(async (connectionId, scope) => {
+      await providers.removeOwner(connectionId, scope.owner);
+    });
+    const ORDERS = admittedConnection("orders", { write: true });
+    const granted = (level: "read" | "write") =>
+      grantedSnapshot([ORDERS], [{ subject: "alice-subject", connection: ORDERS, level }]);
+    const quiet = [spyOn(logger, "info"), spyOn(logger, "debug")].map((spy) => spy.mockImplementation(() => {}));
+    try {
+      recordGovernanceSnapshot(granted("write"));
+      as("alice@example.com", "alice-subject");
+      expect((await send({ action: "begin" }, "writer")).status).toBe(200);
+      const writer = providers.of("writer", "alice-subject");
+      if (writer === undefined) throw new Error("alice's writer provider was expected to be resolved by her begin.");
+      const committedUnanswered = Promise.withResolvers<void>();
+      const answerCommit = Promise.withResolvers<void>();
+
+      await withCore(
+        (real) => ({
+          ...real,
+          transactionCall: async (session, request, ctx, ports) => {
+            const answer = await real.transactionCall(session, request, ctx, ports);
+            if (request.action !== "commit") return answer;
+            // The provider committed; the COMMIT's answer has not reached its request yet.
+            committedUnanswered.resolve();
+            await answerCommit.promise;
+            return answer;
+          },
+        }),
+        async () => {
+          const committing = send({ action: "commit" }, "writer");
+          await committedUnanswered.promise;
+          // The control plane downgrades the grant while her COMMIT is still answering: the reload tears her
+          // providers down and records the end of her transaction.
+          await swapGovernanceSnapshot(granted("read"));
+          answerCommit.resolve();
+          expect((await committing).status).toBe(200);
+        },
+      );
+      expect(writer.commitTransaction).toHaveBeenCalledTimes(1);
+
+      expect(recordedEvents.map((event) => [event.transactionOutcome, event.statement, event.status])).toEqual([
+        ["unknown", "ROLLBACK", "success"],
+      ]);
     } finally {
       unregister();
       resetGovernanceState();
@@ -1983,7 +2589,7 @@ describe("POST /api/db/transaction under governance", () => {
     expect((await send({ action: "begin" })).status).toBe(200);
   });
 
-  test("governance: a COMMIT that ends the transaction in failure records rolled-back, one that leaves it open records open", async () => {
+  test("governance: a COMMIT that fails and ends the transaction records unknown, one that leaves it open records open", async () => {
     const providers = providerPerOwner();
     as("alice@example.com", "alice-subject");
     expect((await send({ action: "begin" })).status).toBe(200);
@@ -2002,8 +2608,9 @@ describe("POST /api/db/transaction under governance", () => {
     });
     expect((await send({ action: "rollback" })).status).toBe(503);
 
+    // The COMMIT may have reached the server and committed, so its end is not recorded as a rollback (Q3).
     expect(recordedEvents.map((event) => [event.transactionOutcome, event.statement, event.status])).toEqual([
-      ["rolled-back", "COMMIT", "error"],
+      ["unknown", "COMMIT", "error"],
       ["open", "ROLLBACK", "error"],
     ]);
     expect(recordedEvents[1]?.transactionId).not.toBe(recordedEvents[0]?.transactionId);
@@ -2040,6 +2647,598 @@ describe("POST /api/db/transaction under governance", () => {
       ["ROLLBACK", "error", "40001"],
     ]);
     expect((await send({ action: "rollback" })).status).toBe(200);
+  });
+
+  /** `send` for a request its caller leaves through the controller answered. */
+  function sendLeaving(body: Record<string, unknown>) {
+    const controller = new AbortController();
+    const response = POST(
+      leavingRequest(
+        { connection: { ...validConnection, id: "seed:orders", grantLevel: "write" }, ...body },
+        controller.signal,
+      ) as never,
+    );
+    return { controller, response };
+  }
+
+  const ended = () => recordedEvents.map((event) => [event.transactionOutcome, event.statement, event.status]);
+  const emptyResult = { rows: [], fields: [], rowCount: 0, executionTime: 1 };
+
+  /** Begins alice's transaction, then runs a statement whose caller leaves, so its session state is unknown. */
+  async function statementLeft(providers: ReturnType<typeof providerPerOwner>) {
+    as("alice@example.com", "alice-subject");
+    expect((await send({ action: "begin" })).status).toBe(200);
+    const provider = providers.of("alice-subject");
+    const statement = heldCall<typeof emptyResult>();
+    provider?.queryInTransaction.mockImplementationOnce(statement.call);
+    const left = sendLeaving({ action: "query", sql: "UPDATE t SET n = 1" });
+    await statement.reached;
+    left.controller.abort();
+    statement.answer.resolve(emptyResult);
+    expect((await left.response).status).toBe(499);
+    return provider;
+  }
+
+  test("governance: an unknown state records no terminal event, and a later read that finds no transaction records unknown, never timed-out or rolled-back", async () => {
+    const providers = providerPerOwner();
+    const provider = await statementLeft(providers);
+    expect(
+      recordedEvents.map((event) => [event.transactionOutcome, event.statement, event.status, event.errorCode]),
+    ).toEqual([["open", "UPDATE t SET n = 1", "error", "QUERY_CANCELLED"]]);
+
+    // The transaction ends without a call of Studio's: a COMMIT Studio stopped waiting for may have committed it.
+    await provider?.rollbackTransaction();
+    expect((await send({ action: "status" })).status).toBe(200);
+    expect((await send({ action: "status" })).status).toBe(200);
+
+    expect(ended()).toEqual([
+      ["open", "UPDATE t SET n = 1", "error"],
+      ["unknown", null, "cancelled"],
+    ]);
+  });
+
+  test("governance: an unknown state the next read finds still open is resolved, and a later provider timeout records timed-out", async () => {
+    const providers = providerPerOwner();
+    const provider = await statementLeft(providers);
+    expect(await parseResponseJSON(await send({ action: "status" }))).toMatchObject({ inTransaction: true });
+
+    // The provider's TX_TIMEOUT_MS rolled it back with no session behind it.
+    await provider?.rollbackTransaction();
+    expect((await send({ action: "status" })).status).toBe(200);
+
+    expect(ended()).toEqual([
+      ["open", "UPDATE t SET n = 1", "error"],
+      ["timed-out", null, "cancelled"],
+    ]);
+  });
+
+  test("governance: a COMMIT that fails after it may have reached the database and leaves no transaction records unknown, never rolled-back", async () => {
+    const providers = providerPerOwner();
+    as("alice@example.com", "alice-subject");
+    expect((await send({ action: "begin" })).status).toBe(200);
+    const provider = providers.of("alice-subject");
+    // The connection was lost after the COMMIT was sent: the server may have committed before it closed.
+    provider?.commitTransaction.mockImplementationOnce(async () => {
+      await provider.rollbackTransaction();
+      throw new ConnectionError("Connection terminated unexpectedly", "postgres");
+    });
+
+    expect((await send({ action: "commit" })).status).toBe(503);
+    expect((await send({ action: "status" })).status).toBe(200);
+
+    expect(ended()).toEqual([["unknown", "COMMIT", "error"]]);
+  });
+
+  test("governance: a COMMIT refused before it was sent that leaves no transaction records rolled-back", async () => {
+    const providers = providerPerOwner();
+    as("alice@example.com", "alice-subject");
+    expect((await send({ action: "begin" })).status).toBe(200);
+    const provider = providers.of("alice-subject");
+    // The transaction's connection was gone before the COMMIT could be sent, so no COMMIT reached the server.
+    provider?.commitTransaction.mockImplementationOnce(async () => {
+      await provider.rollbackTransaction();
+      const refused = new ConnectionError("The transaction's connection is closed.", "postgres");
+      markNotSent(refused);
+      throw refused;
+    });
+
+    expect((await send({ action: "commit" })).status).toBe(503);
+    expect((await send({ action: "status" })).status).toBe(200);
+
+    expect(ended()).toEqual([["rolled-back", "COMMIT", "error"]]);
+  });
+
+  test("governance: a COMMIT whose caller leaves records an open event, and the end a later read finds is recorded unknown", async () => {
+    const providers = providerPerOwner();
+    as("alice@example.com", "alice-subject");
+    expect((await send({ action: "begin" })).status).toBe(200);
+    const provider = providers.of("alice-subject");
+    const commit = heldCall<void>();
+    provider?.commitTransaction.mockImplementationOnce(async () => {
+      await commit.call();
+      // The COMMIT committed after its caller left.
+      await provider.rollbackTransaction();
+    });
+
+    const left = sendLeaving({ action: "commit" });
+    await commit.reached;
+    left.controller.abort();
+    commit.answer.resolve();
+    expect((await left.response).status).toBe(499);
+    expect(
+      recordedEvents.map((event) => [event.transactionOutcome, event.statement, event.status, event.errorCode]),
+    ).toEqual([["open", "COMMIT", "error", "QUERY_CANCELLED"]]);
+
+    await provider?.commitTransaction.mock.results.at(-1)?.value;
+    expect((await send({ action: "status" })).status).toBe(200);
+
+    expect(ended()).toEqual([
+      ["open", "COMMIT", "error"],
+      ["unknown", null, "cancelled"],
+    ]);
+  });
+
+  /** Begins alice's transaction, then sends a COMMIT whose caller leaves while the provider still holds it. */
+  async function commitLeftRunning(providers: ReturnType<typeof providerPerOwner>) {
+    as("alice@example.com", "alice-subject");
+    expect((await send({ action: "begin" })).status).toBe(200);
+    const provider = providers.of("alice-subject");
+    if (provider === undefined) throw new Error("alice's provider was expected to be resolved by her begin.");
+    const commit = heldCall<void>();
+    const committed = Promise.withResolvers<void>();
+    provider.commitTransaction.mockImplementationOnce(async () => {
+      await commit.call();
+      // The COMMIT committed after its caller left, which ends the session's transaction.
+      await provider.commitTransaction();
+      committed.resolve();
+    });
+    const left = sendLeaving({ action: "commit" });
+    await commit.reached;
+    left.controller.abort();
+    expect((await left.response).status).toBe(499);
+    return { provider, commit, committed: committed.promise };
+  }
+
+  test("governance: a read that finds the transaction open while a COMMIT whose caller left still runs keeps the state unknown, and the end found after it is recorded unknown", async () => {
+    const providers = providerPerOwner();
+    const { commit, committed } = await commitLeftRunning(providers);
+
+    // The provider reports the transaction open until the COMMIT it still runs settles, which is no evidence of its state.
+    expect(await parseResponseJSON(await send({ action: "status" }))).toMatchObject({
+      inTransaction: null,
+      ownedByYou: true,
+    });
+    commit.answer.resolve();
+    await committed;
+    expect((await send({ action: "status" })).status).toBe(200);
+
+    expect(ended()).toEqual([
+      ["open", "COMMIT", "error"],
+      ["unknown", null, "cancelled"],
+    ]);
+  });
+
+  /** The 409 a state-changing call sent while a call Studio stopped waiting for still runs is answered. */
+  async function refusedWhileRunning(response: Response) {
+    const answer = await parseResponseJSON<{ code?: string }>(response);
+    return [response.status, answer.code];
+  }
+
+  test("governance: a ROLLBACK sent while a COMMIT whose caller left still runs is refused and sends nothing, and the end the read after the COMMIT settled finds is recorded unknown", async () => {
+    const providers = providerPerOwner();
+    const { provider, commit, committed } = await commitLeftRunning(providers);
+
+    // On a connection that runs one call at a time the ROLLBACK would queue behind the COMMIT, which may commit first.
+    expect(await refusedWhileRunning(await send({ action: "rollback" }))).toEqual([409, "TRANSACTION_CALL_RUNNING"]);
+    expect(provider.rollbackTransaction).not.toHaveBeenCalled();
+    commit.answer.resolve();
+    await committed;
+    await provider.commitTransaction.mock.results[0]?.value;
+    // The transaction the COMMIT ended is gone, and the ROLLBACK is answered as for any caller who owns none.
+    expect((await send({ action: "rollback" })).status).toBe(400);
+    expect(provider.rollbackTransaction).not.toHaveBeenCalled();
+
+    expect(ended()).toEqual([
+      ["open", "COMMIT", "error"],
+      ["unknown", null, "cancelled"],
+    ]);
+  });
+
+  test("governance: a COMMIT sent while a ROLLBACK whose caller left still runs is refused and sends nothing, and the end the read after the ROLLBACK settled finds is recorded unknown", async () => {
+    const providers = providerPerOwner();
+    as("alice@example.com", "alice-subject");
+    expect((await send({ action: "begin" })).status).toBe(200);
+    const provider = providers.of("alice-subject");
+    if (provider === undefined) throw new Error("alice's provider was expected to be resolved by her begin.");
+    const rollback = heldCall<void>();
+    const rolledBack = Promise.withResolvers<void>();
+    provider.rollbackTransaction.mockImplementationOnce(async () => {
+      await rollback.call();
+      // The ROLLBACK rolled back after its caller left, which ends the session's transaction.
+      await provider.rollbackTransaction();
+      rolledBack.resolve();
+    });
+    const left = sendLeaving({ action: "rollback" });
+    await rollback.reached;
+    left.controller.abort();
+    expect((await left.response).status).toBe(499);
+
+    expect(await refusedWhileRunning(await send({ action: "commit" }))).toEqual([409, "TRANSACTION_CALL_RUNNING"]);
+    expect(provider.commitTransaction).not.toHaveBeenCalled();
+    rollback.answer.resolve();
+    await rolledBack.promise;
+    await provider.rollbackTransaction.mock.results[0]?.value;
+    expect((await send({ action: "commit" })).status).toBe(400);
+    expect(provider.commitTransaction).not.toHaveBeenCalled();
+
+    expect(ended()).toEqual([
+      ["open", "ROLLBACK", "error"],
+      ["unknown", null, "cancelled"],
+    ]);
+  });
+
+  test("governance: a read that answers while the owner's COMMIT has committed but not yet answered keeps the record and records nothing, and the COMMIT records committed", async () => {
+    providerPerOwner();
+    as("alice@example.com", "alice-subject");
+    expect((await send({ action: "begin" })).status).toBe(200);
+    const key = transactionKey("seed:orders", undefined, "alice-subject");
+    const committedUnanswered = Promise.withResolvers<void>();
+    const answerCommit = Promise.withResolvers<void>();
+
+    await withCore(
+      (real) => ({
+        ...real,
+        transactionCall: async (session, request, ctx, ports) => {
+          const answer = await real.transactionCall(session, request, ctx, ports);
+          if (request.action !== "commit") return answer;
+          // The provider committed; the COMMIT's answer has not reached its request yet.
+          committedUnanswered.resolve();
+          await answerCommit.promise;
+          return answer;
+        },
+      }),
+      async () => {
+        const commit = send({ action: "commit" });
+        await committedUnanswered.promise;
+        // The read finds no transaction only because the owner's COMMIT, still unanswered, ended it.
+        expect(await parseResponseJSON(await send({ action: "status" }))).toMatchObject({
+          inTransaction: null,
+          ownedByYou: true,
+          heldByAnotherSession: false,
+        });
+        expect(transactionOwner(key)).not.toBeNull();
+        expect(recordedEvents).toEqual([]);
+        answerCommit.resolve();
+        expect((await commit).status).toBe(200);
+      },
+    );
+
+    expect(ended()).toEqual([["committed", "COMMIT", "success"]]);
+    expect(transactionOwner(key)).toBeNull();
+  });
+
+  test("governance: a provider timeout that ends the transaction while a statement runs is recorded unknown once the statement answers", async () => {
+    jest.useFakeTimers();
+    try {
+      const providers = providerPerOwner();
+      as("alice@example.com", "alice-subject");
+      expect((await send({ action: "begin" })).status).toBe(200);
+      const provider = providers.of("alice-subject");
+      if (provider === undefined) throw new Error("alice's provider was expected to be resolved by her begin.");
+      const key = transactionKey("seed:orders", undefined, "alice-subject");
+      jest.advanceTimersByTime(TRANSACTION_TIMEOUT_CHECK_MS - 2000);
+      const record = transactionOwner(key);
+      if (record === null) throw new Error("alice's transaction record was expected to be live.");
+      // She acted a moment ago, so the lease is live when the watch looks.
+      record.lastActiveAt = Date.now();
+      const statement = heldCall<typeof emptyResult>();
+      provider.queryInTransaction.mockImplementationOnce(statement.call);
+
+      const run = send({ action: "query", sql: "SELECT * FROM big" });
+      await statement.reached;
+      // The provider's own timer ends the transaction while the statement runs, and clears its state at once, as
+      // MSSQLProvider and OracleProvider do.
+      await provider.rollbackTransaction();
+      // The watch's look: a call is in flight, so it records nothing and looks again.
+      jest.advanceTimersByTime(2000);
+      statement.answer.resolve(emptyResult);
+      expect(await parseResponseJSON(await run)).toMatchObject({ inTransaction: false });
+      jest.advanceTimersByTime(TRANSACTION_TIMEOUT_RECHECK_MS * 3);
+      await Promise.resolve();
+
+      expect(transactionOwner(key)).toBeNull();
+      expect(ended()).toEqual([
+        ["open", "SELECT * FROM big", "success"],
+        ["unknown", null, "success"],
+      ]);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test("governance: a typed COMMIT statement, alone or ending a script, records exactly one terminal event, unknown", async () => {
+    const providers = providerPerOwner();
+    as("alice@example.com", "alice-subject");
+    expect((await send({ action: "begin" })).status).toBe(200);
+    const provider = providers.of("alice-subject");
+    if (provider === undefined) throw new Error("alice's provider was expected to be resolved by her begin.");
+    // The server ends the transaction with the statement; Studio sees only that none is left.
+    const committing = async () => {
+      await provider.commitTransaction();
+      return emptyResult;
+    };
+    provider.queryInTransaction.mockImplementationOnce(committing);
+    expect(await parseResponseJSON(await send({ action: "query", sql: "COMMIT" }))).toMatchObject({
+      inTransaction: false,
+    });
+    expect((await send({ action: "status" })).status).toBe(200);
+
+    expect((await send({ action: "begin" })).status).toBe(200);
+    provider.queryInTransaction.mockImplementationOnce(async () => emptyResult).mockImplementationOnce(committing);
+    expect(await parseResponseJSON(await send({ action: "query", sql: "UPDATE t SET n = 1;\nCOMMIT;" }))).toMatchObject(
+      {
+        inTransaction: false,
+      },
+    );
+    expect((await send({ action: "status" })).status).toBe(200);
+
+    expect(ended()).toEqual([
+      ["open", "COMMIT", "success"],
+      ["unknown", null, "success"],
+      ["open", "UPDATE t SET n = 1;\nCOMMIT;", "success"],
+      ["unknown", null, "success"],
+    ]);
+  });
+
+  test("governance: a BEGIN that opens a new transaction while the owner's statement still runs on the old record records the old one's end unknown", async () => {
+    const providers = providerPerOwner();
+    as("alice@example.com", "alice-subject");
+    expect((await send({ action: "begin" })).status).toBe(200);
+    const provider = providers.of("alice-subject");
+    if (provider === undefined) throw new Error("alice's provider was expected to be resolved by her begin.");
+    const key = transactionKey("seed:orders", undefined, "alice-subject");
+    const first = transactionOwner(key);
+    const statement = heldCall<typeof emptyResult>();
+    provider.queryInTransaction.mockImplementationOnce(statement.call);
+    const run = send({ action: "query", sql: "SELECT * FROM big" });
+    await statement.reached;
+    // The provider's own timer ends the transaction while the statement runs; the reconcile keeps the record, since
+    // a call is in flight, and the BEGIN opens a new transaction.
+    await provider.rollbackTransaction();
+    expect((await send({ action: "begin" })).status).toBe(200);
+    const second = transactionOwner(key);
+    expect(second).not.toBe(first);
+    statement.answer.resolve(emptyResult);
+    expect((await run).status).toBe(200);
+
+    expect(
+      recordedEvents.map((event) => [event.transactionId === first?.transactionId, event.transactionOutcome]),
+    ).toEqual([
+      [true, "unknown"],
+      [true, "open"],
+    ]);
+    expect((await send({ action: "rollback" })).status).toBe(200);
+  });
+
+  test("governance: a statement whose caller left settles before a read that finds the transaction open, which resolves the state", async () => {
+    const providers = providerPerOwner();
+    const provider = await statementLeft(providers);
+    expect(await parseResponseJSON(await send({ action: "status" }))).toMatchObject({ inTransaction: true });
+    expect((await send({ action: "rollback" })).status).toBe(200);
+    expect(provider?.rollbackTransaction).toHaveBeenCalledTimes(1);
+
+    expect(ended()).toEqual([
+      ["open", "UPDATE t SET n = 1", "error"],
+      ["rolled-back", "ROLLBACK", "success"],
+    ]);
+  });
+
+  test("governance: a read that finds no transaction while a BEGIN whose caller left still runs keeps the record, so the transaction it opens stays its caller's and its end is recorded unknown", async () => {
+    const providers = providerPerOwner();
+    as("alice@example.com", "alice-subject");
+    // A status read resolves alice's own provider before her begin, so the test can hold that begin.
+    expect((await send({ action: "status" })).status).toBe(200);
+    const provider = providers.of("alice-subject");
+    if (provider === undefined) throw new Error("alice's provider was expected to be resolved by her status read.");
+    const begin = heldCall<void>();
+    const opened = Promise.withResolvers<void>();
+    provider.beginTransaction.mockImplementationOnce(async () => {
+      await begin.call();
+      // The BEGIN opened the transaction after its caller left.
+      await provider.beginTransaction();
+      opened.resolve();
+    });
+    const left = sendLeaving({ action: "begin" });
+    await begin.reached;
+    left.controller.abort();
+    expect((await left.response).status).toBe(499);
+    const key = transactionKey("seed:orders", undefined, "alice-subject");
+    const record = transactionOwner(key);
+    if (record === null) throw new Error("The BEGIN whose caller left was expected to claim the transaction.");
+
+    // The provider holds no transaction yet, only because the BEGIN it still runs has not opened it.
+    expect(await parseResponseJSON(await send({ action: "status" }))).toMatchObject({
+      inTransaction: null,
+      ownedByYou: true,
+    });
+    expect(transactionOwner(key)).toBe(record);
+    expect(record.unresolved).toBe(true);
+    expect(ended()).toEqual([]);
+
+    begin.answer.resolve();
+    await opened.promise;
+    expect(transactionOwner(key)).toBe(record);
+    expect(record.unresolved).toBe(true);
+    // The provider's own timeout rolls the transaction back before any read found it open.
+    await provider.rollbackTransaction();
+    expect((await send({ action: "status" })).status).toBe(200);
+
+    expect(transactionOwner(key)).toBeNull();
+    expect(ended()).toEqual([["unknown", null, "cancelled"]]);
+  });
+
+  test("governance: a lease that lapses on an unknown state records unknown, never timed-out", async () => {
+    const providers = providerPerOwner();
+    await statementLeft(providers);
+    // The owner never comes back: the lease is aged past its idle bound, as the clock would.
+    const record = transactionOwner(transactionKey("seed:orders", undefined, "alice-subject"));
+    if (record === null) throw new Error("The transaction's record was expected to be kept.");
+    record.lastActiveAt -= OWNERSHIP_IDLE_MS;
+
+    expect((await send({ action: "status" })).status).toBe(200);
+
+    expect(ended()).toEqual([
+      ["open", "UPDATE t SET n = 1", "error"],
+      ["unknown", null, "cancelled"],
+    ]);
+  });
+
+  test("governance: a COMMIT the host refuses before it is sent records an open event and leaves the transaction as it was", async () => {
+    providerPerOwner();
+    as("alice@example.com", "alice-subject");
+    expect((await send({ action: "begin" })).status).toBe(200);
+
+    const refused = await withCore(
+      (real) => ({
+        ...real,
+        transactionCall: async (session, request, ctx, ports) =>
+          request.action === "commit"
+            ? { kind: "refused", called: false, refusals: [{ rule: "call-deadline-passed", pointer: "/deadline" }] }
+            : real.transactionCall(session, request, ctx, ports),
+      }),
+      () => send({ action: "commit" }),
+    );
+
+    expect(refused.status).toBe(504);
+    expect(await parseResponseJSON(refused)).toMatchObject({ code: "TIMEOUT_ERROR", outcome: "not-sent" });
+    expect(await parseResponseJSON(await send({ action: "status" }))).toMatchObject({
+      inTransaction: true,
+      ownedByYou: true,
+    });
+    expect((await send({ action: "rollback" })).status).toBe(200);
+    expect(
+      recordedEvents.map((event) => [event.transactionOutcome, event.statement, event.status, event.errorCode]),
+    ).toEqual([
+      ["open", "COMMIT", "error", "TIMEOUT_ERROR"],
+      ["rolled-back", "ROLLBACK", "success", undefined],
+    ]);
+  });
+
+  test("governance: a credential change on a transaction whose state is unknown records unknown unless a rollback answered", async () => {
+    const providers = providerPerKey();
+    as("alice@example.com", "alice-subject");
+    expect((await send({ action: "begin" }, "writer")).status).toBe(200);
+    const writer = providers.of("writer", "alice-subject");
+    const statement = heldCall<typeof emptyResult>();
+    writer?.queryInTransaction.mockImplementationOnce(statement.call);
+    const controller = new AbortController();
+    const left = POST(
+      leavingRequest(
+        {
+          connection: { ...validConnection, id: "seed:orders", grantLevel: "write", user: "writer" },
+          action: "query",
+          sql: "UPDATE t SET n = 1",
+        },
+        controller.signal,
+      ) as never,
+    );
+    await statement.reached;
+    controller.abort();
+    statement.answer.resolve(emptyResult);
+    expect((await left).status).toBe(499);
+    // The provider that holds it is gone: a disconnect ended the transaction, and how is not known.
+    providers.evict("writer", "alice-subject");
+
+    const res = await send({ action: "status" }, "reader");
+
+    // No transaction was left to roll back, and how the one the statement ran in ended is not known.
+    expect(res.status).toBe(409);
+    expect(await parseResponseJSON(res)).toEqual({
+      error: CREDENTIAL_CHANGED_OUTCOME_UNKNOWN,
+      code: "TRANSACTION_CREDENTIAL_CHANGED",
+      rolledBack: false,
+    });
+    expect(ended()).toEqual([
+      ["open", "UPDATE t SET n = 1", "error"],
+      ["unknown", "ROLLBACK", "success"],
+    ]);
+  });
+
+  test("governance: a credential change while the owner's stopped COMMIT still runs records unknown, never rolled-back, and answers rolledBack false", async () => {
+    const providers = providerPerKey();
+    as("alice@example.com", "alice-subject");
+    expect((await send({ action: "begin" }, "writer")).status).toBe(200);
+    const writer = providers.of("writer", "alice-subject");
+    if (writer === undefined) throw new Error("alice's writer provider was expected to be resolved by her begin.");
+    const commit = heldCall<void>();
+    const committed = Promise.withResolvers<void>();
+    writer.commitTransaction.mockImplementationOnce(async () => {
+      await commit.call();
+      // The COMMIT committed after its caller left.
+      await writer.commitTransaction();
+      committed.resolve();
+    });
+    const controller = new AbortController();
+    const left = POST(
+      leavingRequest(
+        {
+          connection: { ...validConnection, id: "seed:orders", grantLevel: "write", user: "writer" },
+          action: "commit",
+        },
+        controller.signal,
+      ) as never,
+    );
+    await commit.reached;
+    controller.abort();
+    expect((await left).status).toBe(499);
+    // Studio's ROLLBACK queues behind the COMMIT on the transaction's connection, and finds nothing left to roll back,
+    // which PostgreSQL answers with a warning, a success.
+    const rollback = heldCall<void>();
+    writer.rollbackTransaction.mockImplementationOnce(async () => {
+      void rollback.call();
+      await committed.promise;
+    });
+
+    // The grant was downgraded: her next request resolves the read credential.
+    const changed = send({ action: "status" }, "reader");
+    await rollback.reached;
+    commit.answer.resolve();
+    const res = await changed;
+
+    expect(res.status).toBe(409);
+    expect(await parseResponseJSON(res)).toEqual({
+      error: CREDENTIAL_CHANGED_OUTCOME_UNKNOWN,
+      code: "TRANSACTION_CREDENTIAL_CHANGED",
+      rolledBack: false,
+    });
+    expect(writer.rollbackTransaction).toHaveBeenCalledTimes(1);
+    expect(ended()).toEqual([
+      ["open", "COMMIT", "error"],
+      ["unknown", "ROLLBACK", "success"],
+    ]);
+  });
+
+  test("governance: a credential change whose old provider cannot be read is logged, and the answer is still 409 with rolledBack false", async () => {
+    providerPerKey();
+    const errors = spyOn(logger, "error").mockImplementation(() => {});
+    try {
+      as("alice@example.com", "alice-subject");
+      expect((await send({ action: "begin" }, "writer")).status).toBe(200);
+      const unreadable = new Error(crypto.randomUUID());
+      mockFindCachedProvider.mockImplementationOnce(() => {
+        throw unreadable;
+      });
+
+      const res = await send({ action: "status" }, "reader");
+
+      expect(res.status).toBe(409);
+      expect(await parseResponseJSON(res)).toMatchObject({ code: "TRANSACTION_CREDENTIAL_CHANGED", rolledBack: false });
+      expect(errors).toHaveBeenCalledTimes(1);
+      expect(errors.mock.calls[0]?.[1]).toBe(unreadable);
+      expect(ended()).toEqual([["rolled-back", "ROLLBACK", "error"]]);
+    } finally {
+      errors.mockRestore();
+    }
   });
 
   /** `send` with the connection's password set, so a provider's text can hold it. */
@@ -2395,6 +3594,10 @@ describe("POST /api/db/transaction: the server's confirmation of a run", () => {
 
     test("begin, commit and rollback are not classified", async () => {
       mockTxProvider.isInTransaction.mockImplementation(() => false);
+      // The session holds a transaction from the begin on, as a server that opened one does.
+      mockTxProvider.beginTransaction.mockImplementationOnce(async () => {
+        mockTxProvider.isInTransaction.mockImplementation(() => true);
+      });
       const begun = await run({ connection: validConnection, action: "begin", sql: "DROP TABLE t" });
       expect(begun.status).toBe(200);
       mockTxProvider.isInTransaction.mockImplementation(() => true);
@@ -2488,6 +3691,10 @@ describe("POST /api/db/transaction: the server's confirmation of a run", () => {
     test("begin, commit and rollback are not classified on production", async () => {
       process.env.LIBREDB_RUN_CONFIRMATION = "required";
       const production = { ...validConnection, name: crypto.randomUUID(), environment: "production" };
+      // The session holds a transaction from each begin on, as a server that opened one does.
+      mockTxProvider.beginTransaction.mockImplementation(async () => {
+        mockTxProvider.isInTransaction.mockImplementation(() => true);
+      });
       mockTxProvider.isInTransaction.mockImplementation(() => false);
       expect((await run({ connection: production, action: "begin" })).status).toBe(200);
       mockTxProvider.isInTransaction.mockImplementation(() => true);
@@ -2497,5 +3704,29 @@ describe("POST /api/db/transaction: the server's confirmation of a run", () => {
       mockTxProvider.isInTransaction.mockImplementation(() => true);
       expect((await run({ connection: production, action: "rollback" })).status).toBe(200);
     });
+  });
+});
+
+describe("the transaction route on the provider host", () => {
+  test("the transaction route reads no session state but through the host", () => {
+    const root = path.join(import.meta.dir, "..", "..", "..");
+    // The code of each file, its comment lines left out: a comment may name what the code no longer calls.
+    const code = (...parts: string[]) =>
+      readFileSync(path.join(root, ...parts), "utf8")
+        .split("\n")
+        .filter((line) => !/^\s*(\/\/|\/\*|\*)/.test(line))
+        .join("\n");
+    const route = code("src", "app", "api", "db", "transaction", "route.ts");
+    const ownership = code("src", "lib", "api", "transaction-ownership.ts");
+    // The script of several statements keeps its own calls until it moves with POST /api/db/multi-query.
+    const scriptStart = route.indexOf("async function runScriptInTransaction(");
+    const scriptEnd = route.indexOf("\n}\n", scriptStart);
+    expect(scriptStart).toBeGreaterThan(-1);
+    const outsideScript = route.slice(0, scriptStart) + route.slice(scriptEnd);
+
+    expect(route.includes("isInTransaction")).toBe(false);
+    expect(ownership.includes("isInTransaction")).toBe(false);
+    expect(outsideScript.includes("queryInTransaction")).toBe(false);
+    expect(route.slice(scriptStart, scriptEnd).includes("queryInTransaction")).toBe(true);
   });
 });

@@ -594,8 +594,14 @@ describe("runEditorQuery on the host core", () => {
     forgetHostCore();
     installHostCore(
       {
-        executeCall: async () => ({ kind: "stopped", reason: answers.shift(), waitingFor: "page" }),
+        executeCall: async () => ({
+          kind: "stopped",
+          reason: answers.shift(),
+          waitingFor: "page",
+          settled: Promise.resolve(),
+        }),
         cancelCall: real.cancelCall,
+        transactionCall: real.transactionCall,
       },
       "test",
     );
@@ -634,8 +640,14 @@ describe("runEditorQuery on the host core", () => {
     forgetHostCore();
     installHostCore(
       {
-        executeCall: async () => ({ kind: "stopped", reason: deadlineReason, waitingFor: "other-results" }),
+        executeCall: async () => ({
+          kind: "stopped",
+          reason: deadlineReason,
+          waitingFor: "other-results",
+          settled: Promise.resolve(),
+        }),
         cancelCall: real.cancelCall,
+        transactionCall: real.transactionCall,
       },
       "test",
     );

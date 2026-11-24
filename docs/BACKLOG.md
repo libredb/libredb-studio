@@ -43,7 +43,7 @@ None of it is a GitHub issue.
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B178 · 89
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP27 · 23
-- [Governance follow-ups](#governance-follow-ups) — GOV1-GOV35 · 33
+- [Governance follow-ups](#governance-follow-ups) — GOV1-GOV36 · 34
 
 ---
 
@@ -10651,7 +10651,7 @@ A seed connection is never closed by that route, which `docs/API_DOCS.md` docume
 ### GOV15. Under governance a disconnect with an open transaction records the transaction as `timed-out`
 
 The governed branch of `POST /api/db/disconnect` (`src/app/api/db/disconnect/route.ts`) calls `removeProvider(connectionId, { owner })`, and `teardownProvider` in `src/lib/db/factory.ts` rolls the caller's open transaction back, but the route records no terminal event and leaves the transaction's owner record in place.
-That record is closed later by `recordTimedOut` in `src/lib/api/transaction-ownership.ts`, from its watch timer about five minutes after `BEGIN`, the caller's next transaction request or the lapsed lease, which records `timed-out` with `status` `cancelled`.
+That record is closed later by `recordEndSeen` in `src/lib/api/transaction-ownership.ts`, from its watch timer about five minutes after `BEGIN`, the caller's next transaction request or the lapsed lease, which records `timed-out` with `status` `cancelled`, or `unknown` on a record whose session state was unknown.
 `docs/GOVERNANCE.md` reserves `timed-out` for the database driver rolling the transaction back at its five-minute limit, so the audit trail names the wrong cause at the wrong time, where the grant loader records `rolled-back` for the same rollback (`endRevokedTransactions` in `src/lib/governance/grant-diff.ts`).
 Only the API reaches it, since the UI disconnects only to delete a custom connection, which governance switches off, and at shutdown `closeCachesAtShutdown` rolls transactions back and records no terminal event at all.
 Recording one there is not enough on its own: the shutdown handler in `src/lib/shutdown-handler.ts` runs the shutdown hooks, the query event flush among them, before it closes the providers, so a row recorded during that rollback is never sent (GOV11).
@@ -10747,15 +10747,14 @@ Measured on 2026-10-17 with a probe test that changed the timeout of an owned pr
 
 **Done when:** the timeout change closes an owned provider through `teardownProvider`, or retires it without disconnecting while a transaction is open (D115), the transaction ends with one terminal row that names the cause, and a test with an open transaction shows the next request answered without waiting for the transaction timer.
 
-### GOV25. A statement that ends its own transaction records no terminal event
+### GOV25. A statement that ends its own transaction records its end as `unknown`, never `committed` or `rolled-back`
 
-In `POST` of `src/app/api/db/transaction/route.ts`, a statement after which `provider.isInTransaction()` is false, a typed `COMMIT` or `ROLLBACK` or, on MySQL, DDL with its implicit commit, releases the owner record (`releaseTransaction`) without `endTransactionEvent`, on the single-statement path and the script path alike.
-The watch timer (`watchTransactionTimeout` in `src/lib/api/transaction-ownership.ts`) and the reconcile then find no record, so nothing records the end later either.
-So the control plane sees a transaction that never ends, and under the default `queryLog.statementCapture` of `none` the `open` row carries no statement text to infer the end from; on MySQL, data committed by DDL has no `committed` row at all.
-`docs/GOVERNANCE.md#query-events` states the behaviour ("records only its `open` row") a few lines after "Exactly one terminal row ends a transaction", so the section contradicts itself.
-Measured on 2026-10-17 with a probe test that sent `COMMIT`, `ROLLBACK` and `CREATE TABLE` inside a governed transaction and ran six minutes past the timer and the lease: none of the three recorded a terminal row.
+In `POST` of `src/app/api/db/transaction/route.ts`, a statement after which the host's state read answers `not-in-transaction`, a typed `COMMIT` or `ROLLBACK` or, on MySQL, DDL with its implicit commit, releases the owner record (`settleTransaction`) and records the terminal `unknown` row (`recordEndFound`), on the single-statement path and the script path alike.
+From the session state alone Studio cannot tell whether the statement ended the transaction or the provider's own timer ended it while the statement ran, so it names neither `committed` nor `rolled-back`.
+So the control plane cannot tell a committed transaction from a rolled-back one, and under the default `queryLog.statementCapture` of `none` the `open` row carries no statement text to infer the end from; on MySQL, data committed by DDL has no `committed` row.
+Measured on 2026-10-17, before the `unknown` row, with a probe test that sent `COMMIT`, `ROLLBACK` and `CREATE TABLE` inside a governed transaction and ran six minutes past the timer and the lease: none of the three recorded a terminal row.
 
-**Done when:** a statement that ends the transaction records one terminal row, `committed` or `rolled-back`, with the outcome an implicit commit maps to stated in `docs/GOVERNANCE.md#query-events`, the section no longer contradicts itself, and a route test pins one terminal row for each of the three statements.
+**Done when:** a statement that ends the transaction records one terminal row, `committed` or `rolled-back`, where Studio can tell which, with the outcome an implicit commit maps to stated in `docs/GOVERNANCE.md#query-events`, and a route test pins one terminal row for each of the three statements.
 
 ### GOV26. While the sink refuses, `COMMIT` and `ROLLBACK` are refused too, so a user cannot end their own transaction
 
@@ -10800,7 +10799,7 @@ Measured on 2026-10-17 with a probe test: after a reload that added a revocation
 ### GOV30. The transaction watch timer keeps every `BEGIN`'s provider reachable for five minutes
 
 `watchTransactionTimeout` in `src/lib/api/transaction-ownership.ts` arms an unref'd timer of `TRANSACTION_TIMEOUT_CHECK_MS`, a little over five minutes, on every governed `BEGIN`, and nothing clears it on `COMMIT` or `ROLLBACK`.
-Its closure holds the owner record and the route's `() => provider.isInTransaction()`, so the request's provider stays reachable until the timer fires, with its pool object, even after it was evicted or torn down.
+Its closure holds the owner record and the route's state read through the host, `() => readTransactionStateOrUnknown(provider, watcher)`, so the request's provider stays reachable until the timer fires, with its pool object, even after it was evicted or torn down.
 Memory held this way grows with the number of `BEGIN`s in five minutes; without governance the timer is not armed.
 Read from the code, not measured.
 
@@ -10847,3 +10846,14 @@ The "Repeated signals" bullet of the docblock in `src/lib/shutdown-handler.ts` s
 Found 2026-11-22 while reviewing the change that starts the server with `NEXT_MANUAL_SIG_HANDLE=true` from every launcher on Node.js.
 
 **Done when:** on Windows neither launcher forwards SIGINT, both wait for the server and exit with its code, a Windows test shows the server's own shutdown completing, and the npx sentence in the "Repeated signals" bullet of the `src/lib/shutdown-handler.ts` docblock says what the launchers then do.
+
+### GOV36. A lease that lapses while the owner's call still runs releases the transaction under it
+
+`transactionOwner` in `src/lib/api/transaction-ownership.ts` releases a record once `OWNERSHIP_IDLE_MS` have passed since `lastActiveAt`, on any request's reconcile, and records its end through `recordEndSeen`.
+`lastActiveAt` moves only when a call of the owner's answers (`settleTransaction`), so a statement or COMMIT that runs longer than what is left of the lease loses its record while it runs, though `callsRunning` says a call is in flight.
+The end is then recorded `timed-out`, or `unknown` on an unresolved record, before the call answers, and another session is allowed to end the transaction as unowned while the owner's call still runs on it.
+Read from the code, not measured.
+
+Found 2026-11-24 while counting the owner's calls in flight on the transaction record.
+
+**Done when:** a record with a call in flight or a stopped call still running (`callsRunning`) is not released by its lease, or the lease is measured from the end of the owner's last call, with a route test that holds a statement past the lease and shows the record kept and no end recorded until the statement answers.
